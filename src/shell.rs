@@ -189,11 +189,11 @@ impl Shell {
     }
 
     pub fn run_source(&mut self, _name: &str, source: &str) -> Result<i32, ShellError> {
-        let program = syntax::parse_with_aliases(source, &self.aliases)?;
         if self.options.syntax_check_only {
+            let _ = syntax::parse_with_aliases(source, &self.aliases)?;
             return Ok(0);
         }
-        self.execute_program(&program)
+        self.execute_source_incrementally(source)
     }
 
     pub fn execute_program(&mut self, program: &Program) -> Result<i32, ShellError> {
@@ -203,8 +203,19 @@ impl Shell {
     }
 
     pub fn execute_string(&mut self, source: &str) -> Result<i32, ShellError> {
-        let program = syntax::parse_with_aliases(source, &self.aliases)?;
-        self.execute_program(&program)
+        self.execute_source_incrementally(source)
+    }
+
+    fn execute_source_incrementally(&mut self, source: &str) -> Result<i32, ShellError> {
+        let mut session = syntax::ParseSession::new(source)?;
+        let mut status = 0;
+        while let Some(item) = session.next_item(&self.aliases)? {
+            status = self.execute_program(&Program { items: vec![item] })?;
+            if !self.running || self.has_pending_control() {
+                break;
+            }
+        }
+        Ok(status)
     }
 
     pub fn capture_output(&mut self, source: &str) -> Result<String, ShellError> {
@@ -818,12 +829,24 @@ mod tests {
         assert_eq!(status, 0);
         assert_eq!(shell.get_var("VALUE").as_deref(), Some("ok"));
 
+        let status = shell
+            .execute_string("alias same='export SAME=1'; same")
+            .expect("run same-source alias");
+        assert_eq!(status, 0);
+        assert_eq!(shell.get_var("SAME").as_deref(), Some("1"));
+
         shell.aliases.insert("cond".into(), "if".into());
         let status = shell
             .execute_string("cond true; then export BRANCH=hit; fi")
             .expect("run reserved-word alias");
         assert_eq!(status, 0);
         assert_eq!(shell.get_var("BRANCH").as_deref(), Some("hit"));
+
+        let status = shell
+            .execute_string("alias cond2='if'; cond2 true; then export TOP=ok; fi")
+            .expect("run same-source reserved alias");
+        assert_eq!(status, 0);
+        assert_eq!(shell.get_var("TOP").as_deref(), Some("ok"));
 
         shell.aliases.insert("chain".into(), "eval ".into());
         shell.aliases.insert("word".into(), "VALUE=chain".into());
