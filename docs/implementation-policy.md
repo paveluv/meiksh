@@ -8,6 +8,7 @@ This document records `meiksh` behavior where POSIX leaves room for implementati
 - Dependency policy: `std` only, plus handwritten `extern "C"` bindings for required POSIX interfaces
 - Source policy: no reuse of existing shell source code
 - Semantic target: Issue 8 first, with Issue 7 compatibility notes when needed for validation
+- Conformance policy: POSIX behavior decisions must be based on the local POSIX reference documents in `docs/posix/`, not on probing whatever `/bin/sh` happens to do on the host system
 
 ## Current Policy Decisions
 
@@ -16,8 +17,8 @@ This document records `meiksh` behavior where POSIX leaves room for implementati
 - `meiksh` preserves raw quoting inside parsed words and defers most semantic interpretation to expansion time.
 - Alias expansion now runs at parser time for aliases already present in shell state before a parse begins. Top-level source execution reparses later list items after earlier ones execute, so aliases defined earlier in the same top-level source can affect later top-level commands. Nested program bodies are also reparsed with the updated alias table when they execute, including bodies that contain here-documents. Aliases ending in blank can expose the next simple-command word to alias substitution.
 - Here-document bodies are attached during parsing; `<<-` strips leading tab characters while reading, and expansions run only when the delimiter is unquoted.
-- `if`, `while`, `until`, `for`, and `case` are parsed as compound commands, but reserved-word coverage is still incomplete for the full POSIX grammar.
-- A standalone `!` is treated as pipeline negation only at pipeline start. In other positions, `!` remains an ordinary word.
+- `if`, `while`, `until`, `for`, and `case` are parsed as compound commands. Exact reserved words are no longer accepted as function names, but reserved-word coverage is still incomplete for the full POSIX grammar.
+- A standalone `!` is treated as pipeline negation only at pipeline start. A bare `!` in later command-start positions now fails as a syntax error instead of being parsed as a simple command name.
 - Self-referential aliases are not expanded indefinitely, but alias recursion does not yet have a dedicated POSIX-fidelity diagnostic model.
 
 ## Expansion
@@ -49,6 +50,11 @@ This document records `meiksh` behavior where POSIX leaves room for implementati
 - `meiksh` currently prefers explicit shell errors over emulating implementation quirks from historical shells.
 - Unsupported grammar or runtime features should fail with a diagnostic rather than silently degrade.
 - Special builtin argument/context errors currently surface as shell errors and terminate non-interactive execution instead of being ignored.
+
+## Test Policy
+
+- Unit tests must not spawn `/bin/sh` or any other system shell as an oracle for expected behavior.
+- Shell-to-shell comparisons, when needed, belong only in dedicated differential tests and must not override the POSIX documents as the source of truth.
 
 ## Performance Policy
 

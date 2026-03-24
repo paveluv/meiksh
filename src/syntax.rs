@@ -717,6 +717,11 @@ impl Parser {
 
     fn parse_command(&mut self) -> Result<Command, ParseError> {
         self.expand_alias_at_command_start()?;
+        if self.peek_bang_word() {
+            return Err(ParseError {
+                message: "expected command".to_string(),
+            });
+        }
         let command = if let Some(function_name) = self.try_peek_function_name() {
             self.index += 3;
             let body = self.parse_command()?;
@@ -1138,6 +1143,9 @@ impl Parser {
             TokenKind::Word(name) => name,
             _ => return None,
         };
+        if is_reserved_word(&name) {
+            return None;
+        }
         if !is_name(&name) {
             return None;
         }
@@ -1152,6 +1160,10 @@ impl Parser {
 
     fn peek_reserved_word(&self, word: &str) -> bool {
         matches!(self.peek_kind(), TokenKind::Word(text) if text == word)
+    }
+
+    fn peek_bang_word(&self) -> bool {
+        matches!(self.peek_kind(), TokenKind::Word(text) if text == "!")
     }
 
     fn at_reserved_stop(&self, stop_words: &[&str]) -> bool {
@@ -1217,6 +1229,25 @@ fn is_name(name: &str) -> bool {
         return false;
     }
     !chars.any(|ch| !(ch == '_' || ch.is_ascii_alphanumeric()))
+}
+
+fn is_reserved_word(word: &str) -> bool {
+    matches!(
+        word,
+        "if"
+            | "then"
+            | "else"
+            | "elif"
+            | "fi"
+            | "do"
+            | "done"
+            | "case"
+            | "esac"
+            | "while"
+            | "until"
+            | "for"
+            | "in"
+    )
 }
 
 #[cfg(test)]
@@ -1339,6 +1370,7 @@ mod tests {
             &program.items[0].and_or.first.commands[0],
             Command::FunctionDef(function) if function.name == "greet"
         ));
+        assert!(parse("if() { echo hi; }").is_err());
     }
 
     #[test]
@@ -1353,6 +1385,9 @@ mod tests {
     #[test]
     fn rejects_invalid_empty_command() {
         let error = parse("| wc").expect_err("parse should fail");
+        assert_eq!(error.message, "expected command");
+
+        let error = parse("echo hi | ! cat").expect_err("bang after pipe should fail");
         assert_eq!(error.message, "expected command");
     }
 
@@ -1467,6 +1502,8 @@ mod tests {
         assert_eq!(split_assignment("1NAME=value"), None);
         assert!(is_alias_word("alias_name"));
         assert!(!is_alias_word("'alias'"));
+        assert!(is_reserved_word("if"));
+        assert!(!is_reserved_word("name"));
         assert!(!is_name(""));
         assert!(!is_name("1abc"));
     }

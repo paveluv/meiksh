@@ -22,6 +22,21 @@ fn syntax_check_accepts_valid_script() {
 }
 
 #[test]
+fn syntax_check_rejects_reserved_word_misuse() {
+    let function_name = Command::new(meiksh())
+        .args(["-n", "-c", "if() { printf bad; }"])
+        .output()
+        .expect("run meiksh");
+    assert!(!function_name.status.success());
+
+    let bang_after_pipe = Command::new(meiksh())
+        .args(["-n", "-c", "echo hi | ! cat"])
+        .output()
+        .expect("run meiksh");
+    assert!(!bang_after_pipe.status.success());
+}
+
+#[test]
 fn executes_simple_command_string() {
     let output = Command::new(meiksh())
         .args(["-c", "printf hi"])
