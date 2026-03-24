@@ -2,7 +2,9 @@ use std::fs::OpenOptions;
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 
+use crate::expand;
 use crate::shell::{Shell, ShellError};
+use crate::sys;
 
 pub fn run(shell: &mut Shell) -> Result<i32, ShellError> {
     load_env_file(shell)?;
@@ -36,8 +38,14 @@ fn run_loop<R: BufRead, W: Write, E: Write>(
             continue;
         }
         append_history(shell, &line)?;
-        let status = shell.execute_string(&line)?;
-        shell.last_status = status;
+        match shell.execute_string(&line) {
+            Ok(status) => shell.last_status = status,
+            Err(error) => {
+                writeln!(stderr, "meiksh: {}", error.message)?;
+                shell.last_status = 1;
+                continue;
+            }
+        }
         if !shell.running {
             break;
         }
@@ -53,7 +61,14 @@ fn prompt(shell: &Shell) -> String {
 }
 
 fn load_env_file(shell: &mut Shell) -> Result<(), ShellError> {
-    let env_file = shell.get_var("ENV").map(PathBuf::from);
+    if !sys::has_same_real_and_effective_ids() {
+        return Ok(());
+    }
+    let env_file = shell
+        .get_var("ENV")
+        .map(|value| expand::expand_parameter_text(shell, &value))
+        .transpose()?
+        .map(PathBuf::from);
     if let Some(path) = env_file {
         if path.is_absolute() && path.exists() {
             let _ = shell.source_path(&path)?;
@@ -63,13 +78,18 @@ fn load_env_file(shell: &mut Shell) -> Result<(), ShellError> {
 }
 
 fn append_history(shell: &Shell, line: &str) -> Result<(), ShellError> {
-    let history = shell
-        .get_var("HISTFILE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(".meiksh_history"));
+    let history = history_path(shell);
     let mut file = OpenOptions::new().create(true).append(true).open(history)?;
     file.write_all(line.as_bytes())?;
     Ok(())
+}
+
+fn history_path(shell: &Shell) -> PathBuf {
+    shell
+        .get_var("HISTFILE")
+        .map(PathBuf::from)
+        .or_else(|| shell.get_var("HOME").map(|home| PathBuf::from(home).join(".sh_history")))
+        .unwrap_or_else(|| PathBuf::from(".sh_history"))
 }
 
 #[cfg(test)]
@@ -200,6 +220,49 @@ mod tests {
     }
 
     #[test]
+    fn load_env_file_expands_parameters() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let home = std::env::temp_dir().join(format!("meiksh-env-home-{unique}"));
+        fs::create_dir_all(&home).expect("mkdir home");
+        let path = home.join("env.sh");
+        fs::write(&path, "FROM_EXPANDED_ENV=1\n").expect("write env file");
+
+        let mut shell = test_shell();
+        shell.env.insert("HOME".into(), home.display().to_string());
+        shell.env.insert("ENV".into(), "${HOME}/env.sh".into());
+        load_env_file(&mut shell).expect("expanded env file");
+        assert_eq!(shell.get_var("FROM_EXPANDED_ENV").as_deref(), Some("1"));
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn load_env_file_respects_identity_guard() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let home = std::env::temp_dir().join(format!("meiksh-env-home-{unique}"));
+        fs::create_dir_all(&home).expect("mkdir home");
+        let path = home.join("env.sh");
+        fs::write(&path, "FROM_EXPANDED_ENV=1\n").expect("write env file");
+        let mut shell = test_shell();
+        shell.env.insert("HOME".into(), home.display().to_string());
+        shell.env.insert("ENV".into(), "${HOME}/env.sh".into());
+        crate::sys::with_process_ids_for_test((1, 2, 3, 3), || {
+            load_env_file(&mut shell).expect("guarded env file");
+        });
+        assert_eq!(shell.get_var("FROM_EXPANDED_ENV"), None);
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
     fn load_env_file_propagates_source_errors() {
         let mut shell = test_shell();
         let unique = SystemTime::now()
@@ -313,8 +376,10 @@ mod tests {
         let history = std::env::temp_dir().join(format!("meiksh-bad-history-{:#x}", shell.last_status));
         shell.env.insert("HISTFILE".into(), history.display().to_string());
         let mut reader = Cursor::new(b"echo 'unterminated\n".to_vec());
-        let error = run_loop(&mut shell, &mut reader, Vec::new(), Vec::new()).expect_err("parse failure");
-        assert!(!error.message.is_empty());
+        let mut stderr = Vec::new();
+        let status = run_loop(&mut shell, &mut reader, Vec::new(), &mut stderr).expect("parse handled");
+        assert_eq!(status, 1);
+        assert!(String::from_utf8(stderr).expect("stderr").contains("unterminated"));
         let _ = fs::remove_file(history);
     }
 
@@ -332,11 +397,16 @@ mod tests {
         let error = append_history(&shell, "echo hi\n").expect_err("directory should not open as file");
         assert!(!error.message.is_empty());
 
-        let default_name = PathBuf::from(".meiksh_history");
+        let home = std::env::temp_dir().join(format!("meiksh-history-home-{unique}"));
+        fs::create_dir_all(&home).expect("mkdir home");
+        let default_name = home.join(".sh_history");
         let _ = fs::remove_file(&default_name);
-        append_history(&test_shell(), "echo default\n").expect("default history");
+        let mut shell = test_shell();
+        shell.env.insert("HOME".into(), home.display().to_string());
+        append_history(&shell, "echo default\n").expect("default history");
         assert_eq!(fs::read_to_string(&default_name).expect("read history"), "echo default\n");
         let _ = fs::remove_file(default_name);
+        let _ = fs::remove_dir_all(home);
         let _ = fs::remove_dir_all(dir);
     }
 }

@@ -745,20 +745,30 @@ fn parse_options(args: &[String]) -> Result<ShellOptions, ShellError> {
             index += 1;
             continue;
         }
+        if arg == "-s" {
+            options.positional = args.iter().skip(index + 1).cloned().collect();
+            return Ok(options);
+        }
         if arg == "--" {
             index += 1;
             break;
         }
         if (arg.starts_with('-') || arg.starts_with('+')) && arg != "-" && arg != "+" {
             let enabled = arg.starts_with('-');
+            let mut read_stdin = false;
             for ch in arg[1..].chars() {
                 match ch {
                     'C' => options.noclobber = enabled,
                     'f' => options.noglob = enabled,
                     'i' => options.force_interactive = enabled,
                     'n' => options.syntax_check_only = enabled,
+                    's' if enabled => read_stdin = true,
                     _ => {}
                 }
+            }
+            if read_stdin {
+                options.positional = args.iter().skip(index + 1).cloned().collect();
+                return Ok(options);
             }
             index += 1;
             continue;
@@ -827,6 +837,14 @@ mod tests {
         assert!(options.noglob);
         assert_eq!(options.script_path, Some(PathBuf::from("script.sh")));
         assert_eq!(options.positional, vec!["a".to_string()]);
+
+        let options = parse_options(&["meiksh".into(), "-s".into(), "arg1".into(), "arg2".into()]).expect("parse -s");
+        assert_eq!(options.script_path, None);
+        assert_eq!(options.positional, vec!["arg1".to_string(), "arg2".to_string()]);
+
+        let options = parse_options(&["meiksh".into(), "-is".into(), "arg".into()]).expect("parse -is");
+        assert!(options.force_interactive);
+        assert_eq!(options.positional, vec!["arg".to_string()]);
 
         let error = parse_options(&["meiksh".into(), "-c".into()]).expect_err("missing arg");
         assert_eq!(error.message, "-c requires an argument");

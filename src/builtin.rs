@@ -1,4 +1,5 @@
 use std::env;
+use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command as ProcessCommand;
@@ -34,7 +35,7 @@ pub fn run(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellEr
         "eval" => eval(shell, argv)?,
         "." => dot(shell, argv)?,
         "exec" => exec_builtin(argv)?,
-        "jobs" => jobs(shell),
+        "jobs" => jobs(shell, argv),
         "fg" => fg(shell, argv)?,
         "bg" => bg(shell, argv)?,
         "wait" => wait(shell, argv)?,
@@ -91,14 +92,60 @@ pub fn is_builtin(name: &str) -> bool {
 const DEFAULT_COMMAND_PATH: &str = "/usr/bin:/bin";
 
 fn cd(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
-    let target = argv
-        .get(1)
-        .cloned()
-        .or_else(|| shell.get_var("HOME"))
-        .unwrap_or_else(|| ".".to_string());
+    let (target, print_new_pwd) = parse_cd_target(shell, argv)?;
+    let old_pwd = pwd_output(shell, true)?;
     env::set_current_dir(&target)?;
-    shell.set_var("PWD", env::current_dir()?.display().to_string())?;
+    let new_pwd = cd_pwd_value(&target)?;
+    shell.set_var("OLDPWD", old_pwd)?;
+    shell.set_var("PWD", new_pwd.clone())?;
+    if print_new_pwd {
+        println!("{new_pwd}");
+    }
     Ok(BuiltinOutcome::Status(0))
+}
+
+fn cd_pwd_value(target: &str) -> Result<String, ShellError> {
+    if logical_pwd_is_valid(target) {
+        return Ok(target.to_string());
+    }
+    Ok(env::current_dir()?.display().to_string())
+}
+
+fn parse_cd_target(shell: &Shell, argv: &[String]) -> Result<(String, bool), ShellError> {
+    let mut index = 1usize;
+    if argv.get(index).is_some_and(|arg| arg == "--") {
+        index += 1;
+    }
+    if argv.len() > index + 1 {
+        return Err(ShellError {
+            message: "cd: too many arguments".to_string(),
+        });
+    }
+    let Some(target) = argv.get(index) else {
+        return Ok((
+            shell.get_var("HOME").unwrap_or_else(|| ".".to_string()),
+            false,
+        ));
+    };
+    if target.is_empty() {
+        return Err(ShellError {
+            message: "cd: empty directory".to_string(),
+        });
+    }
+    if target == "-" {
+        return Ok((
+            shell.get_var("OLDPWD").ok_or_else(|| ShellError {
+                message: "cd: OLDPWD not set".to_string(),
+            })?,
+            true,
+        ));
+    }
+    if target.starts_with('-') {
+        return Err(ShellError {
+            message: format!("cd: invalid option: {target}"),
+        });
+    }
+    Ok((target.clone(), false))
 }
 
 fn pwd(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
@@ -255,8 +302,29 @@ fn dot(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError>
     let path = argv.get(1).ok_or_else(|| ShellError {
         message: ".: filename argument required".to_string(),
     })?;
-    let status = shell.source_path(&PathBuf::from(path))?;
+    if argv.len() > 2 {
+        return Err(ShellError {
+            message: ".: too many arguments".to_string(),
+        });
+    }
+    let resolved = resolve_dot_path(shell, path)?;
+    let status = shell.source_path(&resolved)?;
     Ok(BuiltinOutcome::Status(status))
+}
+
+fn resolve_dot_path(shell: &Shell, path: &str) -> Result<PathBuf, ShellError> {
+    if path.contains('/') {
+        let candidate = PathBuf::from(path);
+        if readable_regular_file(&candidate) {
+            return Ok(candidate);
+        }
+        return Err(ShellError {
+            message: format!(".: {path}: not found"),
+        });
+    }
+    search_path(path, shell, false, readable_regular_file).ok_or_else(|| ShellError {
+        message: format!(".: {path}: not found"),
+    })
 }
 
 fn exec_builtin(argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
@@ -331,9 +399,84 @@ fn parse_loop_count(name: &str, argv: &[String]) -> Result<usize, ShellError> {
     Ok(levels)
 }
 
-fn jobs(shell: &mut Shell) -> BuiltinOutcome {
-    shell.print_jobs();
+fn jobs(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
+    let (pid_only, index) = match parse_jobs_options(argv) {
+        Ok(value) => value,
+        Err(message) => {
+            eprintln!("{message}");
+            return BuiltinOutcome::Status(1);
+        }
+    };
+    let selected = match parse_jobs_operands(&argv[index..]) {
+        Ok(value) => value,
+        Err(message) => {
+            eprintln!("{message}");
+            return BuiltinOutcome::Status(1);
+        }
+    };
+    let finished = shell.reap_jobs();
+    let selected_contains = |id: usize| selected.as_ref().map_or(true, |ids| ids.contains(&id));
+
+    if !pid_only {
+        for (id, status) in finished {
+            if selected_contains(id) {
+                println!("[{id}] Done {status}");
+            }
+        }
+    }
+    for job in &shell.jobs {
+        if !selected_contains(job.id) {
+            continue;
+        }
+        if pid_only {
+            if let Some(pid) = job_display_pid(job) {
+                println!("{pid}");
+            }
+        } else {
+            println!("[{}] Running {}", job.id, job.command);
+        }
+    }
     BuiltinOutcome::Status(0)
+}
+
+fn parse_jobs_options(argv: &[String]) -> Result<(bool, usize), String> {
+    let mut pid_only = false;
+    let mut index = 1usize;
+    while let Some(arg) = argv.get(index) {
+        if !arg.starts_with('-') || arg == "-" {
+            break;
+        }
+        if arg == "--" {
+            index += 1;
+            break;
+        }
+        match arg.as_str() {
+            "-p" => pid_only = true,
+            _ => return Err(format!("jobs: invalid option: {arg}")),
+        }
+        index += 1;
+    }
+    Ok((pid_only, index))
+}
+
+fn parse_jobs_operands(operands: &[String]) -> Result<Option<Vec<usize>>, String> {
+    if operands.is_empty() {
+        return Ok(None);
+    }
+    let mut ids = Vec::new();
+    for operand in operands {
+        let Some(id) = parse_job_id_operand(Some(operand.as_str())) else {
+            return Err(format!("jobs: invalid job id: {operand}"));
+        };
+        ids.push(id);
+    }
+    Ok(Some(ids))
+}
+
+fn job_display_pid(job: &crate::shell::Job) -> Option<sys::Pid> {
+    job.pgid
+        .or_else(|| job.children.first().map(|child| child.id() as sys::Pid))
+        .or_else(|| job.last_pid.map(|pid| pid as sys::Pid))
 }
 
 fn fg(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
@@ -653,10 +796,28 @@ fn unalias(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellEr
             message: "unalias: name required".to_string(),
         });
     }
-    for item in &argv[1..] {
-        shell.aliases.remove(item);
+    if argv.len() == 2 && argv[1] == "-a" {
+        shell.aliases.clear();
+        return Ok(BuiltinOutcome::Status(0));
     }
-    Ok(BuiltinOutcome::Status(0))
+    if argv[1].starts_with('-') && argv[1] != "-" && argv[1] != "--" {
+        return Err(ShellError {
+            message: format!("unalias: invalid option: {}", argv[1]),
+        });
+    }
+    let start = usize::from(argv[1] == "--") + 1;
+    if start >= argv.len() {
+        return Err(ShellError {
+            message: "unalias: name required".to_string(),
+        });
+    }
+    let mut status = 0;
+    for item in &argv[start..] {
+        if shell.aliases.remove(item).is_none() {
+            status = 1;
+        }
+    }
+    Ok(BuiltinOutcome::Status(status))
 }
 
 fn times() -> BuiltinOutcome {
@@ -1296,9 +1457,13 @@ fn execute_command_utility(
 }
 
 fn which_in_path(name: &str, shell: &Shell, use_default_path: bool) -> Option<PathBuf> {
+    search_path(name, shell, use_default_path, path_exists)
+}
+
+fn search_path(name: &str, shell: &Shell, use_default_path: bool, predicate: fn(&Path) -> bool) -> Option<PathBuf> {
     if name.contains('/') {
         let path = PathBuf::from(name);
-        if path.exists() {
+        if predicate(&path) {
             return absolute_path(&path);
         }
         return None;
@@ -1316,11 +1481,19 @@ fn which_in_path(name: &str, shell: &Shell, use_default_path: bool) -> Option<Pa
     for dir in path_env.split(':') {
         let base = if dir.is_empty() { PathBuf::from(".") } else { PathBuf::from(dir) };
         let path = base.join(name);
-        if path.exists() {
+        if predicate(&path) {
             return absolute_path(&path);
         }
     }
     None
+}
+
+fn path_exists(path: &Path) -> bool {
+    path.exists()
+}
+
+fn readable_regular_file(path: &Path) -> bool {
+    fs::metadata(path).map(|metadata| metadata.is_file()).unwrap_or(false) && fs::File::open(path).is_ok()
 }
 
 fn absolute_path(path: &Path) -> Option<PathBuf> {
@@ -1446,6 +1619,7 @@ mod tests {
     fn alias_and_unalias_manage_alias_table() {
         let mut shell = test_shell();
         run(&mut shell, &["alias".into(), "ll=ls -l".into()]).expect("alias");
+        run(&mut shell, &["alias".into(), "la=ls -a".into()]).expect("alias");
         assert_eq!(shell.aliases.get("ll").map(String::as_str), Some("ls -l"));
 
         let outcome = run(&mut shell, &["alias".into(), "ll".into()]).expect("alias query");
@@ -1456,6 +1630,11 @@ mod tests {
 
         run(&mut shell, &["unalias".into(), "ll".into()]).expect("unalias");
         assert!(!shell.aliases.contains_key("ll"));
+        let outcome = run(&mut shell, &["unalias".into(), "missing".into()]).expect("unalias missing");
+        assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+        let outcome = run(&mut shell, &["unalias".into(), "-a".into()]).expect("unalias all");
+        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        assert!(shell.aliases.is_empty());
 
         let error = run(&mut shell, &["unalias".into()]).expect_err("missing alias");
         assert_eq!(error.message, "unalias: name required");
@@ -2120,6 +2299,172 @@ mod tests {
     }
 
     #[test]
+    fn cd_dash_updates_pwd_and_oldpwd() {
+        let _guard = cwd_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let original = env::current_dir().expect("cwd");
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("meiksh-m6-builtins-{unique}"));
+        let previous = root.join("previous");
+        fs::create_dir_all(&previous).expect("mkdir previous");
+
+        let mut shell = test_shell();
+        shell.env.insert("OLDPWD".into(), previous.display().to_string());
+        shell.env.insert("PWD".into(), original.display().to_string());
+        let original_display = original.display().to_string();
+
+        let outcome = run(&mut shell, &["cd".into(), "-".into()]).expect("cd dash");
+        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        assert_eq!(
+            PathBuf::from(shell.get_var("PWD").expect("pwd after cd"))
+                .canonicalize()
+                .expect("canonical pwd"),
+            env::current_dir()
+                .expect("cwd after cd")
+                .canonicalize()
+                .expect("canonical cwd")
+        );
+        assert_eq!(shell.get_var("OLDPWD").as_deref(), Some(original_display.as_str()));
+
+        env::set_current_dir(&original).expect("restore cwd");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn cd_helper_argument_paths_are_split_out() {
+        let mut shell = test_shell();
+        assert!(cd_pwd_value("./relative").is_ok());
+        assert_eq!(
+            parse_cd_target(&shell, &["cd".into(), "one".into(), "two".into()])
+                .expect_err("too many")
+                .message,
+            "cd: too many arguments"
+        );
+        assert_eq!(
+            parse_cd_target(&shell, &["cd".into()]).expect("default target"),
+            (".".to_string(), false)
+        );
+        assert_eq!(
+            parse_cd_target(&shell, &["cd".into(), "-".into()])
+                .expect_err("missing oldpwd")
+                .message,
+            "cd: OLDPWD not set"
+        );
+        shell.env.insert("OLDPWD".into(), "/tmp/oldpwd".into());
+        let error = run(&mut shell, &["cd".into(), "".into()]).expect_err("empty cd");
+        assert_eq!(error.message, "cd: empty directory");
+        assert!(parse_cd_target(&shell, &["cd".into(), "--".into(), "-".into()]).is_ok());
+        assert!(parse_cd_target(&shell, &["cd".into(), "-P".into()]).is_err());
+    }
+
+    #[test]
+    fn dot_path_search_sources_readable_file() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("meiksh-m6-dot-{unique}"));
+        fs::create_dir_all(&root).expect("mkdir root");
+        let dot_file = root.join("dot-script.sh");
+        fs::write(&dot_file, "M6_DOT=loaded\n").expect("write dot file");
+        fs::set_permissions(&dot_file, fs::Permissions::from_mode(0o644)).expect("chmod dot");
+
+        let mut shell = test_shell();
+        shell.env.insert("PATH".into(), root.display().to_string());
+        let status = run(&mut shell, &[".".into(), "dot-script.sh".into()]).expect("dot path");
+        assert!(matches!(status, BuiltinOutcome::Status(0)));
+        assert_eq!(shell.get_var("M6_DOT").as_deref(), Some("loaded"));
+        assert!(resolve_dot_path(&shell, "missing-dot.sh").is_err());
+
+        let _ = fs::remove_file(dot_file);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn jobs_option_and_operand_parsing_are_split_out() {
+        assert_eq!(
+            parse_jobs_options(&["jobs".into(), "-p".into(), "%1".into()]).expect("jobs -p"),
+            (true, 2)
+        );
+        assert_eq!(
+            parse_jobs_options(&["jobs".into(), "--".into(), "%1".into()]).expect("jobs --"),
+            (false, 2)
+        );
+        assert_eq!(
+            parse_jobs_operands(&["%1".into(), "%2".into()]).expect("job ids"),
+            Some(vec![1, 2])
+        );
+        assert!(parse_jobs_options(&["jobs".into(), "-l".into()]).is_err());
+        assert!(parse_jobs_operands(&["bad".into()]).is_err());
+    }
+
+    #[test]
+    fn job_display_pid_prefers_child_pid_when_no_pgid() {
+        let mut shell = test_shell();
+        let child = std::process::Command::new(&shell.current_exe)
+            .args(["-c", "sleep 0.05"])
+            .spawn()
+            .expect("spawn");
+        let child_pid = child.id() as sys::Pid;
+        shell.launch_background_job("sleep".into(), None, vec![child]);
+        assert_eq!(job_display_pid(&shell.jobs[0]), Some(child_pid));
+    }
+
+    #[test]
+    fn jobs_invalid_inputs_return_status_one() {
+        let mut shell = test_shell();
+        assert!(matches!(
+            run(&mut shell, &["jobs".into(), "-l".into()]).expect("bad jobs"),
+            BuiltinOutcome::Status(1)
+        ));
+        assert!(matches!(
+            run(&mut shell, &["jobs".into(), "bad".into()]).expect("bad job operand"),
+            BuiltinOutcome::Status(1)
+        ));
+    }
+
+    #[test]
+    fn jobs_selected_finished_job_path_is_split_out() {
+        let mut shell = test_shell();
+        let finished_child = std::process::Command::new(&shell.current_exe)
+            .args(["-c", "exit 7"])
+            .spawn()
+            .expect("spawn finished");
+        let mut finished_child = finished_child;
+        let _ = finished_child.wait();
+        let finished_id = shell.launch_background_job("done".into(), None, vec![finished_child]);
+        let running_child = std::process::Command::new(&shell.current_exe)
+            .args(["-c", "sleep 0.05"])
+            .spawn()
+            .expect("spawn running");
+        shell.launch_background_job("sleep".into(), None, vec![running_child]);
+        assert!(matches!(
+            jobs(&mut shell, &["jobs".into(), format!("%{finished_id}")]),
+            BuiltinOutcome::Status(0)
+        ));
+    }
+
+    #[test]
+    fn unalias_invalid_option_is_split_out() {
+        let mut shell = test_shell();
+        let error = run(&mut shell, &["unalias".into(), "-x".into()]).expect_err("unalias invalid");
+        assert_eq!(error.message, "unalias: invalid option: -x");
+    }
+
+    #[test]
+    fn unalias_requires_name_after_double_dash() {
+        let mut shell = test_shell();
+        assert_eq!(
+            run(&mut shell, &["unalias".into(), "--".into()])
+                .expect_err("unalias -- only")
+                .message,
+            "unalias: name required"
+        );
+    }
+
+    #[test]
     fn wait_fg_bg_success_paths_are_exercised() {
         let mut shell = test_shell();
         let child = std::process::Command::new(&shell.current_exe)
@@ -2222,5 +2567,7 @@ mod tests {
         )
         .expect_err("missing dot file");
         assert!(!error.message.is_empty());
+        let error = run(&mut shell, &[".".into(), "one".into(), "two".into()]).expect_err("dot args");
+        assert_eq!(error.message, ".: too many arguments");
     }
 }

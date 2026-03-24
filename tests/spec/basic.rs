@@ -309,6 +309,158 @@ fn trap_wait_and_job_control_paths_cover_milestone_five() {
 }
 
 #[test]
+fn unalias_and_dot_follow_milestone_six_paths() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("meiksh-m6-spec-{unique}"));
+    let path_dir = root.join("path");
+    fs::create_dir_all(&path_dir).expect("mkdir path");
+
+    let dot_script = path_dir.join("dot-script.sh");
+    fs::write(&dot_script, "M6_SPEC_DOT=loaded\n").expect("write dot script");
+    fs::set_permissions(&dot_script, fs::Permissions::from_mode(0o644)).expect("chmod dot script");
+
+    let script = format!(
+        "alias ll='printf no'; unalias -a; command -v ll >/dev/null 2>&1; printf 'unalias:%s\\n' $?; ORIGPATH=$PATH; PATH='{}'; . dot-script.sh; PATH=$ORIGPATH; printf 'dot:%s\\n' \"$M6_SPEC_DOT\"",
+        path_dir.display(),
+    );
+    let output = Command::new(meiksh())
+        .args(["-c", &script])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<_> = stdout.lines().filter(|line| !line.is_empty()).collect();
+    assert!(lines.contains(&"unalias:1"));
+    assert!(lines.contains(&"dot:loaded"));
+
+    let _ = fs::remove_file(dot_script);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn cd_dash_and_jobs_p_follow_milestone_six_paths() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("meiksh-m6-spec-{unique}"));
+    let target = root.join("target");
+    fs::create_dir_all(&target).expect("mkdir target");
+
+    let original = std::env::current_dir().expect("cwd");
+    let script = format!(
+        "cd '{}'; cd - >/dev/null; printf 'pwd:%s\\nold:%s\\n' \"$PWD\" \"$OLDPWD\"; sleep 0.1 & jobs -p",
+        target.display(),
+    );
+    let output = Command::new(meiksh())
+        .args(["-c", &script])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<_> = stdout.lines().filter(|line| !line.is_empty()).collect();
+    assert!(lines.contains(&format!("pwd:{}", original.display()).as_str()));
+    assert!(lines.contains(&format!("old:{}", target.display()).as_str()));
+    assert!(lines.last().is_some_and(|line| line.chars().all(|ch| ch.is_ascii_digit())));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn sh_s_option_sets_positionals_from_operands() {
+    let output = Command::new(meiksh())
+        .args(["-s", "alpha", "beta"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            child.stdin.as_mut().unwrap().write_all(b"printf '%s|%s' \"$1\" \"$2\"\n")?;
+            child.wait_with_output()
+        })
+        .expect("run meiksh -s");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "alpha|beta");
+}
+
+#[test]
+fn interactive_shell_expands_env_and_continues_after_error() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time")
+        .as_nanos();
+    let home = std::env::temp_dir().join(format!("meiksh-m6-home-{unique}"));
+    fs::create_dir_all(&home).expect("mkdir home");
+    let env_file = home.join("env.sh");
+    let history = home.join(".sh_history");
+    fs::write(&env_file, "export TEST_ENV_LOADED=1\n").expect("write env file");
+
+    let output = Command::new(meiksh())
+        .arg("-i")
+        .env("HOME", &home)
+        .env("ENV", "${HOME}/env.sh")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            child.stdin
+                .as_mut()
+                .unwrap()
+                .write_all(b"echo 'unterminated\nprintenv TEST_ENV_LOADED\nexit\n")?;
+            child.wait_with_output()
+        })
+        .expect("run meiksh interactive");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("1"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unterminated"));
+
+    let _ = fs::remove_file(env_file);
+    let _ = fs::remove_file(history);
+    let _ = fs::remove_dir_all(home);
+}
+
+#[test]
+fn interactive_shell_uses_home_history_default() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time")
+        .as_nanos();
+    let home = std::env::temp_dir().join(format!("meiksh-m6-home-{unique}"));
+    fs::create_dir_all(&home).expect("mkdir home");
+    let history = home.join(".sh_history");
+
+    let output = Command::new(meiksh())
+        .arg("-i")
+        .env("HOME", &home)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            child
+                .stdin
+                .as_mut()
+                .unwrap()
+                .write_all(b"printf ok\nexit\n")?;
+            child.wait_with_output()
+        })
+        .expect("run meiksh interactive");
+
+    assert!(output.status.success());
+    let history_contents = fs::read_to_string(&history).expect("history contents");
+    assert!(history_contents.contains("printf ok"));
+
+    let _ = fs::remove_file(history);
+    let _ = fs::remove_dir_all(home);
+}
+
+#[test]
 fn executes_shell_function() {
     let output = Command::new(meiksh())
         .args(["-c", "greet() { printf hello; }; greet"])

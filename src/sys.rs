@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
 use std::io;
-use std::os::raw::{c_char, c_int, c_long, c_ushort, c_ulong};
+use std::os::raw::{c_char, c_int, c_long, c_uint, c_ushort, c_ulong};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub type Pid = c_int;
@@ -28,6 +28,10 @@ const SIG_ERR_HANDLER: usize = usize::MAX;
 
 unsafe extern "C" {
     fn getpid() -> Pid;
+    fn getuid() -> c_uint;
+    fn geteuid() -> c_uint;
+    fn getgid() -> c_uint;
+    fn getegid() -> c_uint;
     fn waitpid(pid: Pid, status: *mut c_int, options: c_int) -> Pid;
     fn kill(pid: Pid, sig: c_int) -> c_int;
     fn signal(sig: c_int, handler: usize) -> usize;
@@ -157,6 +161,7 @@ fn default_syscalls() -> Syscalls {
 
 thread_local! {
     static TEST_SYSCALLS: RefCell<Option<Syscalls>> = const { RefCell::new(None) };
+    static TEST_PROCESS_IDS: RefCell<Option<(c_uint, c_uint, c_uint, c_uint)>> = const { RefCell::new(None) };
 }
 
 static PENDING_SIGNALS: AtomicUsize = AtomicUsize::new(0);
@@ -285,6 +290,27 @@ pub fn current_pid() -> Pid {
 
 pub fn is_interactive_fd(fd: c_int) -> bool {
     (syscalls().isatty)(fd) == 1
+}
+
+pub fn has_same_real_and_effective_ids() -> bool {
+    #[cfg(test)]
+    if let Some((uid, euid, gid, egid)) = TEST_PROCESS_IDS.with(|cell| *cell.borrow()) {
+        return uid == euid && gid == egid;
+    }
+    unsafe { getuid() == geteuid() && getgid() == getegid() }
+}
+
+#[cfg(test)]
+pub(crate) fn with_process_ids_for_test<T>(
+    ids: (c_uint, c_uint, c_uint, c_uint),
+    f: impl FnOnce() -> T,
+) -> T {
+    TEST_PROCESS_IDS.with(|cell| {
+        let previous = cell.replace(Some(ids));
+        let result = f();
+        cell.replace(previous);
+        result
+    })
 }
 
 pub fn wait_pid(pid: Pid, nohang: bool) -> io::Result<Option<WaitStatus>> {
@@ -619,6 +645,7 @@ mod tests {
     #[test]
     fn misc_sys_helpers_cover_successish_paths() {
         assert!(current_pid() > 0);
+        assert!(has_same_real_and_effective_ids());
         send_signal(current_pid(), 0).expect("signal 0");
         let child = Command::new(meiksh_bin_path())
             .args(["-c", "sleep 0.05"])
@@ -636,6 +663,12 @@ mod tests {
         duplicate_fd(read_fd, read_fd).expect("dup self");
         close_fd(read_fd).expect("close read");
         close_fd(write_fd).expect("close write");
+    }
+
+    #[test]
+    fn process_identity_helper_covers_mismatch_branch() {
+        assert!(!with_process_ids_for_test((1, 2, 3, 3), has_same_real_and_effective_ids));
+        assert!(!with_process_ids_for_test((1, 1, 3, 4), has_same_real_and_effective_ids));
     }
 
     #[test]
