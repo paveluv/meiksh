@@ -189,7 +189,7 @@ impl Shell {
     }
 
     pub fn run_source(&mut self, _name: &str, source: &str) -> Result<i32, ShellError> {
-        let program = syntax::parse(source)?;
+        let program = syntax::parse_with_aliases(source, &self.aliases)?;
         if self.options.syntax_check_only {
             return Ok(0);
         }
@@ -203,7 +203,7 @@ impl Shell {
     }
 
     pub fn execute_string(&mut self, source: &str) -> Result<i32, ShellError> {
-        let program = syntax::parse(source)?;
+        let program = syntax::parse_with_aliases(source, &self.aliases)?;
         self.execute_program(&program)
     }
 
@@ -808,6 +808,22 @@ mod tests {
         if let Some(id) = shell.jobs.first().map(|job| job.id) {
             let _ = shell.wait_for_job(id);
         }
+    }
+
+    #[test]
+    fn execute_string_uses_current_alias_table() {
+        let mut shell = test_shell();
+        shell.execute_string("alias setok='export VALUE=ok'").expect("define alias");
+        let status = shell.execute_string("setok").expect("run alias");
+        assert_eq!(status, 0);
+        assert_eq!(shell.get_var("VALUE").as_deref(), Some("ok"));
+
+        shell.aliases.insert("cond".into(), "if".into());
+        let status = shell
+            .execute_string("cond true; then export BRANCH=hit; fi")
+            .expect("run reserved-word alias");
+        assert_eq!(status, 0);
+        assert_eq!(shell.get_var("BRANCH").as_deref(), Some("hit"));
     }
 
     #[test]

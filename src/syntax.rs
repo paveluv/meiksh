@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fmt;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -177,7 +177,6 @@ enum TokenKind {
     GreatAnd,
     LessGreat,
     Clobber,
-    Bang,
     Eof,
 }
 
@@ -192,8 +191,16 @@ struct Tokenized {
 }
 
 pub fn parse(source: &str) -> Result<Program, ParseError> {
+    parse_with_aliases(source, &HashMap::new())
+}
+
+pub fn parse_with_aliases(
+    source: &str,
+    aliases: &HashMap<String, String>,
+) -> Result<Program, ParseError> {
     let tokenized = tokenize(source)?;
-    Parser::new(tokenized.tokens, tokenized.here_docs).parse_program_until(false, &[], false)
+    Parser::new(tokenized.tokens, tokenized.here_docs, aliases.clone())
+        .parse_program_until(false, &[], false)
 }
 
 fn tokenize(source: &str) -> Result<Tokenized, ParseError> {
@@ -393,18 +400,6 @@ fn tokenize(source: &str) -> Result<Tokenized, ParseError> {
                 );
                 tokens.push(Token {
                     kind: TokenKind::RBrace,
-                });
-                index += 1;
-            }
-            '!' if current.is_empty() => {
-                flush_word(
-                    &mut current,
-                    &mut tokens,
-                    &mut expect_here_doc_target,
-                    &mut pending_here_docs,
-                );
-                tokens.push(Token {
-                    kind: TokenKind::Bang,
                 });
                 index += 1;
             }
@@ -612,14 +607,16 @@ fn read_here_doc_body(
 struct Parser {
     tokens: Vec<Token>,
     here_docs: VecDeque<HereDoc>,
+    aliases: HashMap<String, String>,
     index: usize,
 }
 
 impl Parser {
-    fn new(tokens: Vec<Token>, here_docs: VecDeque<HereDoc>) -> Self {
+    fn new(tokens: Vec<Token>, here_docs: VecDeque<HereDoc>, aliases: HashMap<String, String>) -> Self {
         Self {
             tokens,
             here_docs,
+            aliases,
             index: 0,
         }
     }
@@ -633,11 +630,15 @@ impl Parser {
         let mut items = Vec::new();
         self.skip_separators();
 
-        while !self.is_eof()
-            && !(stop_on_closer && self.at_closer())
-            && !self.at_reserved_stop(stop_words)
-            && !(stop_on_dsemi && matches!(self.peek_kind(), TokenKind::DSemi))
-        {
+        loop {
+            self.expand_alias_at_command_start()?;
+            if self.is_eof()
+                || (stop_on_closer && self.at_closer())
+                || self.at_reserved_stop(stop_words)
+                || (stop_on_dsemi && matches!(self.peek_kind(), TokenKind::DSemi))
+            {
+                break;
+            }
             let and_or = self.parse_and_or()?;
             let asynchronous = self.consume_amp();
             items.push(ListItem {
@@ -667,7 +668,9 @@ impl Parser {
     }
 
     fn parse_pipeline(&mut self) -> Result<Pipeline, ParseError> {
+        self.expand_alias_at_command_start()?;
         let negated = self.consume_bang();
+        self.expand_alias_at_command_start()?;
         let mut commands = vec![self.parse_command()?];
         while matches!(self.peek_kind(), TokenKind::Pipe) {
             self.index += 1;
@@ -677,6 +680,7 @@ impl Parser {
     }
 
     fn parse_command(&mut self) -> Result<Command, ParseError> {
+        self.expand_alias_at_command_start()?;
         let command = if let Some(function_name) = self.try_peek_function_name() {
             self.index += 3;
             let body = self.parse_command()?;
@@ -1020,7 +1024,7 @@ impl Parser {
     }
 
     fn consume_bang(&mut self) -> bool {
-        if matches!(self.peek_kind(), TokenKind::Bang) {
+        if matches!(self.peek_kind(), TokenKind::Word(text) if text == "!") {
             self.index += 1;
             true
         } else {
@@ -1041,6 +1045,25 @@ impl Parser {
 
     fn peek_kind(&self) -> &TokenKind {
         &self.tokens[self.index].kind
+    }
+
+    fn expand_alias_at_command_start(&mut self) -> Result<(), ParseError> {
+        let Some(TokenKind::Word(text)) = self.tokens.get(self.index).map(|token| &token.kind) else {
+            return Ok(());
+        };
+        if !is_alias_word(text) {
+            return Ok(());
+        }
+        let Some(replacement) = self.aliases.get(text).cloned() else {
+            return Ok(());
+        };
+        let tokenized = tokenize(&replacement)?;
+        let mut replacement_tokens = tokenized.tokens;
+        if matches!(replacement_tokens.last().map(|token| &token.kind), Some(TokenKind::Eof)) {
+            replacement_tokens.pop();
+        }
+        self.tokens.splice(self.index..=self.index, replacement_tokens);
+        Ok(())
     }
 
     fn try_peek_function_name(&self) -> Option<String> {
@@ -1108,6 +1131,10 @@ fn split_assignment(input: &str) -> Option<(String, String)> {
         return None;
     }
     Some((name.to_string(), value.to_string()))
+}
+
+fn is_alias_word(word: &str) -> bool {
+    !word.is_empty() && !word.chars().any(|ch| matches!(ch, '\'' | '"' | '\\'))
 }
 
 fn is_name(name: &str) -> bool {
@@ -1351,24 +1378,60 @@ mod tests {
     #[test]
     fn parser_private_helpers_cover_remaining_branches() {
         let tokenized = tokenize("echo hi").expect("tokenize");
-        let mut parser = Parser::new(tokenized.tokens.clone(), VecDeque::new());
+        let mut parser = Parser::new(tokenized.tokens.clone(), VecDeque::new(), HashMap::new());
         assert!(!parser.consume_reserved_word("if"));
         assert!(!parser.at_reserved_stop(&["then"]));
         assert!(parser.expect_reserved_word("if").is_err());
         assert!(parser.expect(TokenKind::Semi, "semi").is_err());
 
         let func_tokens = tokenize("name( x").expect("tokenize");
-        let parser = Parser::new(func_tokens.tokens, VecDeque::new());
+        let parser = Parser::new(func_tokens.tokens, VecDeque::new(), HashMap::new());
         assert_eq!(parser.try_peek_function_name(), None);
 
         let closer_tokens = vec![Token { kind: TokenKind::RBrace }];
-        let parser = Parser::new(closer_tokens, VecDeque::new());
+        let parser = Parser::new(closer_tokens, VecDeque::new(), HashMap::new());
         assert!(parser.at_closer());
 
         assert_eq!(split_assignment("NAME=value"), Some(("NAME".into(), "value".into())));
         assert_eq!(split_assignment("1NAME=value"), None);
+        assert!(is_alias_word("alias_name"));
+        assert!(!is_alias_word("'alias'"));
         assert!(!is_name(""));
         assert!(!is_name("1abc"));
+    }
+
+    #[test]
+    fn aliases_and_standalone_bang_are_context_sensitive() {
+        let mut aliases = HashMap::new();
+        aliases.insert("say".to_string(), "printf hi".to_string());
+        let program = parse_with_aliases("say", &aliases).expect("parse alias");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(simple)
+                if simple.words.iter().map(|word| word.raw.as_str()).collect::<Vec<_>>() == vec!["printf", "hi"]
+        ));
+
+        let mut aliases = HashMap::new();
+        aliases.insert("cond".to_string(), "if".to_string());
+        let program = parse_with_aliases("cond true; then echo ok; fi", &aliases).expect("parse reserved alias");
+        assert!(matches!(program.items[0].and_or.first.commands[0], Command::If(_)));
+
+        let program = parse("echo !").expect("parse echo bang");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(simple)
+                if simple.words.iter().map(|word| word.raw.as_str()).collect::<Vec<_>>() == vec!["echo", "!"]
+        ));
+
+        let program = parse("!true").expect("parse bang word");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(simple)
+                if simple.words.iter().map(|word| word.raw.as_str()).collect::<Vec<_>>() == vec!["!true"]
+        ));
+
+        let program = parse("! true").expect("parse negation");
+        assert!(program.items[0].and_or.first.negated);
     }
 
     #[test]
@@ -1383,7 +1446,7 @@ mod tests {
             Token {
                 kind: TokenKind::Eof,
             },
-        ], VecDeque::new());
+        ], VecDeque::new(), HashMap::new());
         assert_eq!(
             parser.parse_case_command().expect_err("missing word").message,
             "expected case word"
@@ -1408,7 +1471,7 @@ mod tests {
             Token {
                 kind: TokenKind::Eof,
             },
-        ], VecDeque::new());
+        ], VecDeque::new(), HashMap::new());
         assert_eq!(
             parser.parse_case_command().expect_err("missing pattern").message,
             "expected case pattern"
@@ -1442,7 +1505,7 @@ mod tests {
             Token {
                 kind: TokenKind::Eof,
             },
-        ], VecDeque::new());
+        ], VecDeque::new(), HashMap::new());
         assert_eq!(
             parser.parse_case_command().expect_err("missing terminator").message,
             "expected ';;' or 'esac'"
@@ -1481,6 +1544,7 @@ mod tests {
                 },
             ],
             VecDeque::new(),
+            HashMap::new(),
         );
         assert_eq!(
             parser
@@ -1506,13 +1570,14 @@ mod tests {
                 },
             ],
             VecDeque::new(),
+            HashMap::new(),
         );
         assert_eq!(
             parser.try_parse_redirection().expect_err("invalid fd").message,
             "invalid redirection file descriptor"
         );
 
-        let parser = Parser::new(vec![Token { kind: TokenKind::Eof }], VecDeque::new());
+        let parser = Parser::new(vec![Token { kind: TokenKind::Eof }], VecDeque::new(), HashMap::new());
         assert!(parser.redirection_kind_at(99).is_err());
     }
 }
