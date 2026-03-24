@@ -561,4 +561,14 @@ fn executes_case_commands() {
         .expect("run meiksh");
     assert!(wildcard.status.success());
     assert_eq!(String::from_utf8_lossy(&wildcard.stdout), "yes");
+
+    let star = Command::new(meiksh())
+        .args([
+            "-c",
+            "name=beta; case $name in *) printf yes ;; esac",
+        ])
+        .output()
+        .expect("run meiksh");
+    assert!(star.status.success());
+    assert_eq!(String::from_utf8_lossy(&star.stdout), "yes");
 }

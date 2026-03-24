@@ -294,10 +294,10 @@ fn execute_for(shell: &mut Shell, for_command: &ForCommand) -> Result<i32, Shell
 }
 
 fn execute_case(shell: &mut Shell, case_command: &CaseCommand) -> Result<i32, ShellError> {
-    let word = expand::expand_word(shell, &case_command.word)?.join(" ");
+    let word = expand::expand_word_text(shell, &case_command.word)?;
     for arm in &case_command.arms {
         for pattern in &arm.patterns {
-            let pattern = expand::expand_word(shell, pattern)?.join(" ");
+            let pattern = expand::expand_word_text(shell, pattern)?;
             if case_pattern_matches(&word, &pattern) {
                 return execute_program(shell, &arm.body);
             }

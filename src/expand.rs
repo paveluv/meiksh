@@ -61,6 +61,11 @@ pub fn expand_word<C: Context>(ctx: &mut C, word: &Word) -> Result<Vec<String>, 
     Ok(result)
 }
 
+pub fn expand_word_text<C: Context>(ctx: &mut C, word: &Word) -> Result<String, ExpandError> {
+    let expanded = expand_raw(ctx, &word.raw)?;
+    Ok(flatten_pieces(&expanded.pieces))
+}
+
 fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, ExpandError> {
     let chars: Vec<char> = raw.chars().collect();
     let mut index = 0usize;
@@ -1004,6 +1009,20 @@ mod tests {
             Vec::<String>::new()
         );
         assert!(split_fields_from_pieces(&[], " \t\n").is_empty());
+    }
+
+    #[test]
+    fn expands_text_without_field_splitting_or_pathname_expansion() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert("WORDS".into(), "one two".into());
+        assert_eq!(
+            expand_word_text(&mut ctx, &Word { raw: "$WORDS".into() }).expect("expand"),
+            "one two"
+        );
+        assert_eq!(
+            expand_word_text(&mut ctx, &Word { raw: "*".into() }).expect("expand"),
+            "*"
+        );
     }
 
     #[test]
