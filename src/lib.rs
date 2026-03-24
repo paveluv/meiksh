@@ -10,6 +10,7 @@ pub use shell::run_from_env;
 
 #[cfg(test)]
 pub(crate) mod test_utils {
+    use std::sync::{Mutex, OnceLock};
     use std::path::PathBuf;
 
     pub(crate) fn meiksh_bin_path() -> PathBuf {
@@ -18,5 +19,10 @@ pub(crate) mod test_utils {
             .and_then(|p| p.parent())
             .map(|p| p.join("meiksh"))
             .expect("meiksh path")
+    }
+
+    pub(crate) fn cwd_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
     }
 }

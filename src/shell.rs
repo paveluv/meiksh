@@ -25,6 +25,7 @@ pub fn run_from_env() -> i32 {
 
 #[derive(Clone, Debug, Default)]
 pub struct ShellOptions {
+    pub allexport: bool,
     pub command_string: Option<String>,
     pub syntax_check_only: bool,
     pub force_interactive: bool,
@@ -33,6 +34,46 @@ pub struct ShellOptions {
     pub script_path: Option<PathBuf>,
     pub shell_name_override: Option<String>,
     pub positional: Vec<String>,
+}
+
+const REPORTABLE_OPTION_NAMES: [(&str, char); 4] = [
+    ("allexport", 'a'),
+    ("noclobber", 'C'),
+    ("noglob", 'f'),
+    ("noexec", 'n'),
+];
+
+impl ShellOptions {
+    pub fn set_short_option(&mut self, ch: char, enabled: bool) -> Result<(), ShellError> {
+        match ch {
+            'a' => self.allexport = enabled,
+            'C' => self.noclobber = enabled,
+            'f' => self.noglob = enabled,
+            'i' => self.force_interactive = enabled,
+            'n' => self.syntax_check_only = enabled,
+            _ => return Err(ShellError::with_status(2, format!("invalid option: {ch}"))),
+        }
+        Ok(())
+    }
+
+    pub fn set_named_option(&mut self, name: &str, enabled: bool) -> Result<(), ShellError> {
+        let Some((_, letter)) = REPORTABLE_OPTION_NAMES
+            .iter()
+            .find(|(option_name, _)| *option_name == name)
+        else {
+            return Err(ShellError::with_status(2, format!("invalid option name: {name}")));
+        };
+        self.set_short_option(*letter, enabled)
+    }
+
+    pub fn reportable_options(&self) -> [(&'static str, bool); 4] {
+        [
+            ("allexport", self.allexport),
+            ("noclobber", self.noclobber),
+            ("noglob", self.noglob),
+            ("noexec", self.syntax_check_only),
+        ]
+    }
 }
 
 #[derive(Debug)]
@@ -237,6 +278,11 @@ impl Shell {
         self.run_exit_trap(status)
     }
 
+    pub fn is_interactive(&self) -> bool {
+        self.options.force_interactive
+            || (sys::is_interactive_fd(sys::STDIN_FILENO) && sys::is_interactive_fd(sys::STDERR_FILENO))
+    }
+
     pub fn run_source(&mut self, _name: &str, source: &str) -> Result<i32, ShellError> {
         if self.options.syntax_check_only {
             let _ = syntax::parse_with_aliases(source, &self.aliases)?;
@@ -348,6 +394,9 @@ impl Shell {
             });
         }
         self.env.insert(name.to_string(), value);
+        if self.options.allexport {
+            self.exported.insert(name.to_string());
+        }
         Ok(())
     }
 
@@ -766,6 +815,7 @@ impl expand::Context for Shell {
             '$' => Some(sys::current_pid().to_string()),
             '!' => self.last_background.map(|pid| pid.to_string()),
             '#' => Some(self.positional.len().to_string()),
+            '-' => Some(self.active_option_flags()),
             '*' => Some(self.positional.join(
                 &self
                     .get_var("IFS")
@@ -833,6 +883,15 @@ fn parse_options(args: &[String]) -> Result<ShellOptions, ShellError> {
             index += 1;
             continue;
         }
+        if arg == "-o" || arg == "+o" {
+            let enabled = arg == "-o";
+            let name = args
+                .get(index + 1)
+                .ok_or_else(|| ShellError::with_status(2, format!("{arg} requires an argument")))?;
+            options.set_named_option(name, enabled)?;
+            index += 2;
+            continue;
+        }
         if arg == "-i" {
             options.force_interactive = true;
             index += 1;
@@ -855,14 +914,8 @@ fn parse_options(args: &[String]) -> Result<ShellOptions, ShellError> {
             let mut read_stdin = false;
             for ch in arg[1..].chars() {
                 match ch {
-                    'C' => options.noclobber = enabled,
-                    'f' => options.noglob = enabled,
-                    'i' => options.force_interactive = enabled,
-                    'n' => options.syntax_check_only = enabled,
                     's' if enabled => read_stdin = true,
-                    _ => {
-                        return Err(ShellError::with_status(2, format!("invalid option: {ch}")));
-                    }
+                    _ => options.set_short_option(ch, enabled)?,
                 }
             }
             if read_stdin {
@@ -883,6 +936,33 @@ fn parse_options(args: &[String]) -> Result<ShellOptions, ShellError> {
     }
 
     Ok(options)
+}
+
+impl Shell {
+    fn active_option_flags(&self) -> String {
+        let mut flags = String::new();
+        if self.options.allexport {
+            flags.push('a');
+        }
+        if self.options.noclobber {
+            flags.push('C');
+        }
+        if self.options.noglob {
+            flags.push('f');
+        }
+        if self.is_interactive() {
+            flags.push('i');
+        }
+        if self.options.syntax_check_only {
+            flags.push('n');
+        }
+        if self.options.command_string.is_some() {
+            flags.push('c');
+        } else if self.options.script_path.is_none() {
+            flags.push('s');
+        }
+        flags
+    }
 }
 
 fn resolve_script_path(shell: &Shell, script: &Path) -> Option<PathBuf> {
@@ -968,7 +1048,7 @@ mod tests {
         fn __error() -> *mut i32;
     }
 
-    use crate::test_utils::meiksh_bin_path;
+    use crate::test_utils::{cwd_lock, meiksh_bin_path};
 
     static SCRIPT_LOOKUP_ENV_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -1056,8 +1136,22 @@ mod tests {
         assert!(options.force_interactive);
         assert_eq!(options.positional, vec!["arg".to_string()]);
 
+        let options = parse_options(&["meiksh".into(), "-a".into(), "-o".into(), "noglob".into(), "script.sh".into()])
+            .expect("parse -a -o noglob");
+        assert!(options.allexport);
+        assert!(options.noglob);
+        assert_eq!(options.script_path, Some(PathBuf::from("script.sh")));
+
         let error = parse_options(&["meiksh".into(), "-c".into()]).expect_err("missing arg");
         assert_eq!(error.display_message(), "-c requires an argument");
+        assert_eq!(error.exit_status(), 2);
+
+        let error = parse_options(&["meiksh".into(), "-o".into()]).expect_err("missing -o arg");
+        assert_eq!(error.display_message(), "-o requires an argument");
+        assert_eq!(error.exit_status(), 2);
+
+        let error = parse_options(&["meiksh".into(), "-o".into(), "pipefail".into()]).expect_err("bad -o name");
+        assert_eq!(error.display_message(), "invalid option name: pipefail");
         assert_eq!(error.exit_status(), 2);
     }
 
@@ -1070,6 +1164,11 @@ mod tests {
         let env = shell.env_for_child();
         assert_eq!(env.get("A").map(String::as_str), Some("1"));
         assert!(!env.contains_key("B"));
+
+        shell.options.allexport = true;
+        shell.set_var("B", "3".into()).expect("allexport set");
+        let env = shell.env_for_child();
+        assert_eq!(env.get("B").map(String::as_str), Some("3"));
     }
 
     #[test]
@@ -1089,10 +1188,14 @@ mod tests {
         shell.positional = vec!["first".into(), "second".into()];
         shell.last_status = 17;
         shell.last_background = Some(42);
+        shell.options.allexport = true;
+        shell.options.noclobber = true;
+        shell.options.command_string = Some("printf ok".into());
         assert_eq!(expand::Context::special_param(&shell, '?').as_deref(), Some("17"));
         assert!(expand::Context::special_param(&shell, '$').is_some());
         assert_eq!(expand::Context::special_param(&shell, '#').as_deref(), Some("2"));
         assert_eq!(expand::Context::special_param(&shell, '!').as_deref(), Some("42"));
+        assert_eq!(expand::Context::special_param(&shell, '-').as_deref(), Some("aCc"));
         assert_eq!(expand::Context::special_param(&shell, '*').as_deref(), Some("first second"));
         assert_eq!(expand::Context::special_param(&shell, '@').as_deref(), Some("first second"));
         assert_eq!(expand::Context::special_param(&shell, '1').as_deref(), Some("first"));
@@ -1323,6 +1426,7 @@ mod tests {
 
     #[test]
     fn resolve_script_path_prefers_current_directory() {
+        let _guard = cwd_lock().lock().expect("cwd lock");
         let env = ScriptLookupTestEnv::new();
         let mut shell = test_shell();
         shell.env.insert("PATH".into(), env.path_dir.display().to_string());
@@ -1337,6 +1441,7 @@ mod tests {
 
     #[test]
     fn resolve_script_path_searches_executable_path_entries() {
+        let _guard = cwd_lock().lock().expect("cwd lock");
         let env = ScriptLookupTestEnv::new();
         let mut shell = test_shell();
         shell.env.insert("PATH".into(), env.path_dir.display().to_string());

@@ -294,7 +294,7 @@ fn expand_dollar<C: Context>(
                 })
             }
         }
-        '?' | '$' | '!' | '#' | '*' | '@' | '0' => {
+        '?' | '$' | '!' | '#' | '*' | '@' | '-' | '0' => {
             let ch = chars[1];
             let value = if ch == '0' {
                 ctx.shell_name().to_string()
@@ -341,7 +341,7 @@ fn expand_parameter_dollar<C: Context>(ctx: &mut C, chars: &[char]) -> Result<(S
             let value = expand_braced_parameter_text(ctx, &expr)?;
             Ok((value, index + 1))
         }
-        '?' | '$' | '!' | '#' | '*' | '@' | '0' => {
+        '?' | '$' | '!' | '#' | '*' | '@' | '-' | '0' => {
             let ch = chars[1];
             let value = if ch == '0' {
                 ctx.shell_name().to_string()
@@ -1235,6 +1235,7 @@ mod tests {
             match name {
                 '?' => Some("0".to_string()),
                 '#' => Some(self.positional.len().to_string()),
+                '-' => Some("aC".to_string()),
                 '*' => Some(
                     self.positional.join(
                         &self
@@ -1608,7 +1609,7 @@ mod tests {
     fn direct_expand_dollar_covers_fallbacks_and_nesting() {
         let mut ctx = FakeContext::new();
         assert_eq!(expand_dollar(&mut ctx, &['$'], false).expect("single"), ("$".to_string(), 1));
-        assert_eq!(expand_dollar(&mut ctx, &['$', '-'], false).expect("fallback"), ("$".to_string(), 1));
+        assert_eq!(expand_dollar(&mut ctx, &['$', '-'], false).expect("dash"), ("aC".to_string(), 2));
         assert_eq!(expand_dollar(&mut ctx, &['$', '$'], false).expect("pid default"), ("".to_string(), 2));
         assert_eq!(
             expand_dollar(&mut ctx, &['$', '@'], true).expect("quoted at"),
@@ -1659,7 +1660,7 @@ mod tests {
         assert_eq!(expand_parameter_dollar(&mut ctx, &['$', '?']).expect("special"), ("0".to_string(), 2));
         assert_eq!(expand_parameter_dollar(&mut ctx, &['$', '1']).expect("positional"), ("alpha".to_string(), 2));
         assert_eq!(expand_parameter_dollar(&mut ctx, &['$', 'H', 'O', 'M', 'E']).expect("name"), ("/tmp/home".to_string(), 5));
-        assert_eq!(expand_parameter_dollar(&mut ctx, &['$', '-']).expect("fallback"), ("$".to_string(), 1));
+        assert_eq!(expand_parameter_dollar(&mut ctx, &['$', '-']).expect("dash"), ("aC".to_string(), 2));
     }
 
     #[test]

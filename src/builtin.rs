@@ -275,6 +275,26 @@ fn set(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
         let mut index = 1usize;
         while let Some(arg) = argv.get(index) {
             match arg.as_str() {
+                "-o" | "+o" => {
+                    let reinput = arg == "+o";
+                    if let Some(name) = argv.get(index + 1) {
+                        if let Err(error) = shell.options.set_named_option(name, !reinput) {
+                            eprintln!("set: {}", error.display_message());
+                            return BuiltinOutcome::Status(error.exit_status());
+                        }
+                        index += 2;
+                    } else {
+                        for (name, enabled) in shell.options.reportable_options() {
+                            if reinput {
+                                let prefix = if enabled { '-' } else { '+' };
+                                println!("set {prefix}o {name}");
+                            } else {
+                                println!("{name} {}", if enabled { "on" } else { "off" });
+                            }
+                        }
+                        return BuiltinOutcome::Status(0);
+                    }
+                }
                 "--" => {
                     shell.set_positional(argv[index + 1..].to_vec());
                     return BuiltinOutcome::Status(0);
@@ -283,11 +303,13 @@ fn set(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
                     let enabled = arg.starts_with('-');
                     for ch in arg[1..].chars() {
                         match ch {
+                            'a' => shell.options.allexport = enabled,
                             'C' => shell.options.noclobber = enabled,
                             'f' => shell.options.noglob = enabled,
+                            'n' => shell.options.syntax_check_only = enabled,
                             _ => {
-                                shell.set_positional(argv[index..].to_vec());
-                                return BuiltinOutcome::Status(0);
+                                eprintln!("set: invalid option: {ch}");
+                                return BuiltinOutcome::Status(2);
                             }
                         }
                     }
@@ -1581,15 +1603,9 @@ mod tests {
     use std::fs;
     use std::io::{self, Cursor};
     use std::os::unix::fs::PermissionsExt;
-    use std::sync::{Mutex, OnceLock};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn cwd_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    use crate::test_utils::meiksh_bin_path;
+    use crate::test_utils::{cwd_lock, meiksh_bin_path};
 
     fn test_shell() -> Shell {
         Shell {
@@ -2034,9 +2050,26 @@ mod tests {
         assert!(shell.options.noclobber);
         assert_eq!(shell.positional, vec!["epsilon".to_string()]);
 
-        let outcome = run(&mut shell, &["set".into(), "+x".into(), "zeta".into()]).expect("set +x");
+        let outcome = run(&mut shell, &["set".into(), "-a".into()]).expect("set -a");
         assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-        assert_eq!(shell.positional, vec!["+x".to_string(), "zeta".to_string()]);
+        run(&mut shell, &["eval".into(), "AUTO=42".into()]).expect("allexport eval");
+        assert!(shell.exported.contains("AUTO"));
+
+        let outcome = run(&mut shell, &["set".into(), "-o".into(), "noexec".into()]).expect("set -o noexec");
+        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        assert!(shell.options.syntax_check_only);
+
+        let outcome = run(&mut shell, &["set".into(), "+o".into(), "noexec".into()]).expect("set +o noexec");
+        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        assert!(!shell.options.syntax_check_only);
+
+        let outcome = run(&mut shell, &["set".into(), "-n".into()]).expect("set -n");
+        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        assert!(shell.options.syntax_check_only);
+
+        let outcome = run(&mut shell, &["set".into(), "+n".into()]).expect("set +n");
+        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        assert!(!shell.options.syntax_check_only);
 
         shell.last_status = 0;
         let outcome = run(&mut shell, &["eval".into(), "VALUE=42".into()]).expect("eval");
@@ -2052,6 +2085,35 @@ mod tests {
 
         let outcome = run(&mut shell, &["exec".into()]).expect("exec no-op");
         assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+    }
+
+    #[test]
+    fn set_reports_named_options_and_rejects_invalid_ones() {
+        let mut shell = test_shell();
+        let report = ProcessCommand::new(&shell.current_exe)
+            .args(["-a", "-C", "-c", "set -o"])
+            .output()
+            .expect("run set -o");
+        let stdout = String::from_utf8_lossy(&report.stdout);
+        assert!(stdout.contains("allexport on"));
+        assert!(stdout.contains("noclobber on"));
+        assert!(stdout.contains("noglob off"));
+        assert!(stdout.contains("noexec off"));
+
+        let restore = ProcessCommand::new(&shell.current_exe)
+            .args(["-a", "-C", "-c", "set +o"])
+            .output()
+            .expect("run set +o");
+        let stdout = String::from_utf8_lossy(&restore.stdout);
+        assert!(stdout.contains("set -o allexport"));
+        assert!(stdout.contains("set -o noclobber"));
+        assert!(stdout.contains("set +o noglob"));
+        assert!(stdout.contains("set +o noexec"));
+
+        let outcome = run(&mut shell, &["set".into(), "-z".into()]).expect("invalid set");
+        assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+        let outcome = run(&mut shell, &["set".into(), "-o".into(), "pipefail".into()]).expect("invalid set -o");
+        assert!(matches!(outcome, BuiltinOutcome::Status(2)));
     }
 
     #[test]
