@@ -580,6 +580,7 @@ struct ReadOptions {
 }
 
 fn read(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
+    sys::ensure_blocking_read_fd(sys::STDIN_FILENO)?;
     let mut stdin = sys::FdReader::new(sys::STDIN_FILENO);
     read_with_input(shell, argv, &mut stdin)
 }

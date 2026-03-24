@@ -1,6 +1,25 @@
 use std::process::Command;
+use std::os::unix::process::CommandExt;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{fs, io::Write};
+
+const F_GETFL: i32 = 3;
+const F_SETFL: i32 = 4;
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "dragonfly"
+))]
+const O_NONBLOCK: i32 = 0x0004;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+const O_NONBLOCK: i32 = 0o4000;
+
+unsafe extern "C" {
+    fn fcntl(fd: i32, cmd: i32, ...) -> i32;
+}
 
 fn meiksh() -> &'static str {
     env!("CARGO_BIN_EXE_meiksh")
@@ -28,6 +47,39 @@ fn run_with_args_and_stdin(shell: &str, args: &[&str], stdin: &[u8]) -> (i32, St
         .expect("run shell");
     child.stdin.take().expect("stdin").write_all(stdin).expect("write stdin");
     let output = child.wait_with_output().expect("wait shell");
+    (
+        output.status.code().unwrap_or(128),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+fn run_with_nonblocking_stdin(shell: &str, args: &[&str], stdin: &[u8]) -> (i32, String, String) {
+    let mut command = Command::new(shell);
+    command.args(args);
+    unsafe {
+        command.pre_exec(|| {
+            let flags = fcntl(0, F_GETFL, 0);
+            if flags < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if fcntl(0, F_SETFL, flags | O_NONBLOCK) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut child = command
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("run shell");
+    let mut child_stdin = child.stdin.take().expect("stdin");
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    child_stdin.write_all(stdin).expect("write delayed stdin");
+    drop(child_stdin);
+    let output = child.wait_with_output().expect("wait for shell");
     (
         output.status.code().unwrap_or(128),
         String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -106,6 +158,13 @@ fn matches_system_sh_on_noninteractive_stdin_no_read_ahead_case() {
     let meiksh_stream = run_with_args_and_stdin(meiksh(), &[], b"cat\necho after\n");
     let sh_stream = run_with_args_and_stdin("sh", &[], b"cat\necho after\n");
     assert_eq!(meiksh_stream, sh_stream, "non-interactive stdin no-read-ahead mismatch");
+}
+
+#[test]
+fn matches_system_sh_on_nonblocking_standard_input_case() {
+    let meiksh_stream = run_with_nonblocking_stdin(meiksh(), &[], b"printf blocking\n");
+    let sh_stream = run_with_nonblocking_stdin("sh", &[], b"printf blocking\n");
+    assert_eq!(meiksh_stream, sh_stream, "non-blocking stdin handling mismatch");
 }
 
 #[test]

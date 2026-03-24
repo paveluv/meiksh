@@ -8,6 +8,7 @@ use crate::sys;
 
 pub fn run(shell: &mut Shell) -> Result<i32, ShellError> {
     load_env_file(shell)?;
+    sys::ensure_blocking_read_fd(sys::STDIN_FILENO)?;
     let stdin = io::stdin();
     let mut reader = stdin.lock();
     let stdout = io::stdout();

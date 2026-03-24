@@ -1,7 +1,9 @@
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
+use std::fs;
 use std::io::{self, Read};
 use std::os::raw::{c_char, c_int, c_long, c_uint, c_ushort, c_ulong};
+use std::os::unix::fs::FileTypeExt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub type Pid = c_int;
@@ -9,6 +11,19 @@ pub type FileModeMask = c_ushort;
 type ClockTicks = c_ulong;
 
 const SC_CLK_TCK: c_int = 3;
+const F_GETFL: c_int = 3;
+const F_SETFL: c_int = 4;
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "dragonfly"
+))]
+const O_NONBLOCK: c_int = 0x0004;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+const O_NONBLOCK: c_int = 0o4000;
 
 pub const STDIN_FILENO: c_int = 0;
 pub const STDOUT_FILENO: c_int = 1;
@@ -43,6 +58,7 @@ unsafe extern "C" {
     fn dup(fd: c_int) -> c_int;
     fn dup2(oldfd: c_int, newfd: c_int) -> c_int;
     fn close(fd: c_int) -> c_int;
+    fn fcntl(fd: c_int, cmd: c_int, ...) -> c_int;
     fn read(fd: c_int, buf: *mut u8, count: usize) -> isize;
     fn umask(cmask: FileModeMask) -> FileModeMask;
     fn times(buffer: *mut Tms) -> ClockTicks;
@@ -73,6 +89,7 @@ struct Syscalls {
     dup: fn(c_int) -> c_int,
     dup2: fn(c_int, c_int) -> c_int,
     close: fn(c_int) -> c_int,
+    fcntl: fn(c_int, c_int, c_int) -> c_int,
     read: fn(c_int, *mut u8, usize) -> isize,
     umask: fn(FileModeMask) -> FileModeMask,
     times: fn(*mut Tms) -> ClockTicks,
@@ -128,6 +145,10 @@ fn default_close(fd: c_int) -> c_int {
     unsafe { close(fd) }
 }
 
+fn default_fcntl(fd: c_int, cmd: c_int, arg: c_int) -> c_int {
+    unsafe { fcntl(fd, cmd, arg) }
+}
+
 fn default_read(fd: c_int, buf: *mut u8, count: usize) -> isize {
     unsafe { read(fd, buf, count) }
 }
@@ -158,6 +179,7 @@ fn default_syscalls() -> Syscalls {
         dup: default_dup,
         dup2: default_dup2,
         close: default_close,
+        fcntl: default_fcntl,
         read: default_read,
         umask: default_umask,
         times: default_times,
@@ -264,6 +286,20 @@ pub(crate) fn with_fd_ops_for_test<T>(
         dup: dup_fn,
         dup2: dup2_fn,
         close: close_fn,
+        ..default_syscalls()
+    };
+    tests::with_test_syscalls(syscalls, f)
+}
+
+#[cfg(test)]
+pub(crate) fn with_fcntl_and_isatty_for_test<T>(
+    fcntl_fn: fn(c_int, c_int, c_int) -> c_int,
+    isatty_fn: fn(c_int) -> c_int,
+    f: impl FnOnce() -> T,
+) -> T {
+    let syscalls = Syscalls {
+        fcntl: fcntl_fn,
+        isatty: isatty_fn,
         ..default_syscalls()
     };
     tests::with_test_syscalls(syscalls, f)
@@ -454,6 +490,41 @@ pub fn close_fd(fd: c_int) -> io::Result<()> {
     } else {
         Err(io::Error::last_os_error())
     }
+}
+
+fn fd_status_flags(fd: c_int) -> io::Result<c_int> {
+    let result = (syscalls().fcntl)(fd, F_GETFL, 0);
+    if result >= 0 {
+        Ok(result)
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+fn set_fd_status_flags(fd: c_int, flags: c_int) -> io::Result<()> {
+    let result = (syscalls().fcntl)(fd, F_SETFL, flags);
+    if result >= 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+fn fifo_like_fd(fd: c_int) -> bool {
+    fs::metadata(format!("/dev/fd/{fd}"))
+        .map(|metadata| metadata.file_type().is_fifo())
+        .unwrap_or(false)
+}
+
+pub fn ensure_blocking_read_fd(fd: c_int) -> io::Result<()> {
+    if !is_interactive_fd(fd) && !fifo_like_fd(fd) {
+        return Ok(());
+    }
+    let flags = fd_status_flags(fd)?;
+    if flags & O_NONBLOCK != 0 {
+        set_fd_status_flags(fd, flags & !O_NONBLOCK)?;
+    }
+    Ok(())
 }
 
 pub fn read_fd(fd: c_int, buf: &mut [u8]) -> io::Result<usize> {
@@ -748,6 +819,13 @@ mod tests {
         fn fake_close(_fd: c_int) -> c_int {
             0
         }
+        fn fake_fcntl(_fd: c_int, cmd: c_int, arg: c_int) -> c_int {
+            match cmd {
+                F_GETFL => arg,
+                F_SETFL => 0,
+                _ => -1,
+            }
+        }
         fn fake_read(_fd: c_int, buf: *mut u8, count: usize) -> isize {
             if count == 0 {
                 return 0;
@@ -789,6 +867,7 @@ mod tests {
             dup: fake_dup,
             dup2: fake_dup2,
             close: fake_close,
+            fcntl: fake_fcntl,
             read: fake_read,
             umask: fake_umask,
             times: fake_times,
@@ -908,6 +987,9 @@ mod tests {
         fn fake_close(_fd: c_int) -> c_int {
             -1
         }
+        fn fake_fcntl(_fd: c_int, _cmd: c_int, _arg: c_int) -> c_int {
+            -1
+        }
         fn fake_read(_fd: c_int, _buf: *mut u8, _count: usize) -> isize {
             -1
         }
@@ -937,6 +1019,7 @@ mod tests {
             dup: fake_dup,
             dup2: fake_dup2,
             close: fake_close,
+            fcntl: fake_fcntl,
             read: fake_read,
             umask: fake_umask,
             times: fake_times,
@@ -963,5 +1046,79 @@ mod tests {
         });
 
         assert_eq!(decode_wait_status(9), 137);
+    }
+
+    #[test]
+    fn ensure_blocking_read_fd_clears_nonblocking_for_ttys_and_fifos() {
+        static LAST_SET_FLAGS: AtomicUsize = AtomicUsize::new(usize::MAX);
+
+        fn fake_isatty(_fd: c_int) -> c_int {
+            1
+        }
+        fn fake_fcntl(_fd: c_int, cmd: c_int, flags: c_int) -> c_int {
+            match cmd {
+                F_GETFL => O_NONBLOCK | 0o2,
+                F_SETFL => {
+                    LAST_SET_FLAGS.store(flags as usize, Ordering::SeqCst);
+                    0
+                }
+                _ => -1,
+            }
+        }
+
+        with_fcntl_and_isatty_for_test(fake_fcntl, fake_isatty, || {
+            LAST_SET_FLAGS.store(usize::MAX, Ordering::SeqCst);
+            ensure_blocking_read_fd(STDIN_FILENO).expect("tty blocking");
+            assert_eq!(LAST_SET_FLAGS.load(Ordering::SeqCst), 0o2);
+        });
+
+        fn not_tty(_fd: c_int) -> c_int {
+            0
+        }
+
+        let (read_end, write_end) = create_pipe().expect("pipe");
+        with_fcntl_and_isatty_for_test(fake_fcntl, not_tty, || {
+            LAST_SET_FLAGS.store(usize::MAX, Ordering::SeqCst);
+            ensure_blocking_read_fd(read_end).expect("fifo blocking");
+            assert_eq!(LAST_SET_FLAGS.load(Ordering::SeqCst), 0o2);
+        });
+        close_fd(read_end).expect("close read");
+        close_fd(write_end).expect("close write");
+    }
+
+    #[test]
+    fn ensure_blocking_read_fd_skips_regular_files_and_surfaces_fcntl_errors() {
+        static FCNTL_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+        fn not_tty(_fd: c_int) -> c_int {
+            0
+        }
+        fn counting_fcntl(_fd: c_int, _cmd: c_int, _flags: c_int) -> c_int {
+            FCNTL_CALLS.fetch_add(1, Ordering::SeqCst);
+            0
+        }
+        fn failing_fcntl(_fd: c_int, _cmd: c_int, _flags: c_int) -> c_int {
+            -1
+        }
+
+        let path = std::env::temp_dir().join(format!(
+            "meiksh-sys-regular-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::write(&path, b"x").expect("write temp");
+        let file = std::fs::File::open(&path).expect("open temp");
+        with_fcntl_and_isatty_for_test(counting_fcntl, not_tty, || {
+            FCNTL_CALLS.store(0, Ordering::SeqCst);
+            ensure_blocking_read_fd(std::os::fd::AsRawFd::as_raw_fd(&file)).expect("regular file");
+            assert_eq!(FCNTL_CALLS.load(Ordering::SeqCst), 0);
+        });
+        std::fs::remove_file(&path).expect("remove temp");
+
+        with_fcntl_and_isatty_for_test(failing_fcntl, |_| 1, || {
+            assert!(ensure_blocking_read_fd(STDIN_FILENO).is_err());
+        });
     }
 }

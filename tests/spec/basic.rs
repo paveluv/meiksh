@@ -1,7 +1,26 @@
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+
+const F_GETFL: i32 = 3;
+const F_SETFL: i32 = 4;
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "dragonfly"
+))]
+const O_NONBLOCK: i32 = 0x0004;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+const O_NONBLOCK: i32 = 0o4000;
+
+unsafe extern "C" {
+    fn fcntl(fd: i32, cmd: i32, ...) -> i32;
+}
 
 fn meiksh() -> &'static str {
     env!("CARGO_BIN_EXE_meiksh")
@@ -16,6 +35,33 @@ fn run_meiksh_with_stdin(script: &str, stdin: &[u8]) -> std::process::Output {
         .spawn()
         .expect("spawn meiksh");
     child.stdin.take().expect("stdin").write_all(stdin).expect("write stdin");
+    child.wait_with_output().expect("wait for meiksh")
+}
+
+fn run_meiksh_with_nonblocking_stdin(stdin: &[u8]) -> std::process::Output {
+    let mut command = Command::new(meiksh());
+    unsafe {
+        command.pre_exec(|| {
+            let flags = fcntl(0, F_GETFL, 0);
+            if flags < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if fcntl(0, F_SETFL, flags | O_NONBLOCK) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn meiksh with nonblocking stdin");
+    let mut child_stdin = child.stdin.take().expect("stdin");
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    child_stdin.write_all(stdin).expect("write delayed stdin");
+    drop(child_stdin);
     child.wait_with_output().expect("wait for meiksh")
 }
 
@@ -463,6 +509,15 @@ fn sh_stdin_does_not_read_ahead_past_the_current_command() {
 
     assert!(output.status.success());
     assert_eq!(String::from_utf8_lossy(&output.stdout), "echo after\n");
+    assert!(String::from_utf8_lossy(&output.stderr).is_empty());
+}
+
+#[test]
+fn sh_forces_blocking_reads_on_nonblocking_standard_input() {
+    let output = run_meiksh_with_nonblocking_stdin(b"printf blocking\n");
+
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "blocking");
     assert!(String::from_utf8_lossy(&output.stderr).is_empty());
 }
 
