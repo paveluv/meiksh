@@ -595,7 +595,7 @@ mod tests {
     #[test]
     fn launch_and_wait_for_background_job_updates_state() {
         let mut shell = test_shell();
-        let child = ProcessCommand::new("sh")
+        let child = ProcessCommand::new(&shell.current_exe)
             .args(["-c", "exit 7"])
             .spawn()
             .expect("spawn");
@@ -637,7 +637,7 @@ mod tests {
     #[test]
     fn reap_jobs_and_run_builtin_cover_flow_variants() {
         let mut shell = test_shell();
-        let child = ProcessCommand::new("sh")
+        let child = ProcessCommand::new(&shell.current_exe)
             .args(["-c", "exit 0"])
             .spawn()
             .expect("spawn");
@@ -684,7 +684,7 @@ mod tests {
         }
 
         let mut shell = test_shell();
-        let child = ProcessCommand::new("sh")
+        let child = ProcessCommand::new(&shell.current_exe)
             .args(["-c", "exit 0"])
             .spawn()
             .expect("spawn");
@@ -796,7 +796,7 @@ mod tests {
     #[test]
     fn print_jobs_covers_running_and_finished_paths() {
         let mut shell = test_shell();
-        let finished_child = ProcessCommand::new("sh")
+        let finished_child = ProcessCommand::new(&shell.current_exe)
             .args(["-c", "exit 0"])
             .spawn()
             .expect("spawn");
@@ -809,7 +809,7 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
 
-        let running_child = ProcessCommand::new("sh")
+        let running_child = ProcessCommand::new(&shell.current_exe)
             .args(["-c", "sleep 0.05"])
             .spawn()
             .expect("spawn");
@@ -858,12 +858,12 @@ mod tests {
     #[test]
     fn print_jobs_emits_finished_branch_when_job_is_done() {
         let mut shell = test_shell();
-        let child = ProcessCommand::new("sh")
+        let child = ProcessCommand::new(&shell.current_exe)
             .args(["-c", "exit 0"])
             .spawn()
             .expect("spawn");
         shell.launch_background_job("done".into(), vec![child]);
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::thread::sleep(std::time::Duration::from_millis(200));
         shell.print_jobs();
         assert!(shell.jobs.is_empty());
     }
