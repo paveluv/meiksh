@@ -1278,15 +1278,9 @@ mod tests {
     use std::fs;
     use std::os::raw::c_int;
     use std::os::unix::fs::PermissionsExt;
-    use std::sync::{Mutex, OnceLock};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn cwd_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    use crate::test_utils::meiksh_bin_path;
+    use crate::test_utils::{cwd_lock, meiksh_bin_path};
 
     unsafe extern "C" {
         fn __error() -> *mut c_int;

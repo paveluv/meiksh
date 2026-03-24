@@ -109,6 +109,24 @@ fn matches_system_sh_on_noninteractive_stdin_no_read_ahead_case() {
 }
 
 #[test]
+fn matches_system_sh_on_allexport_startup_case() {
+    let meiksh_export = run(meiksh(), "set -a; AUTO=works; printenv AUTO");
+    let sh_export = run("sh", "set -a; AUTO=works; printenv AUTO");
+    assert_eq!(meiksh_export, sh_export, "set -a allexport behavior mismatch");
+
+    let meiksh_startup = run_with_args_and_stdin(meiksh(), &["-a", "-c", "AUTO=works; printenv AUTO"], b"");
+    let sh_startup = run_with_args_and_stdin("sh", &["-a", "-c", "AUTO=works; printenv AUTO"], b"");
+    assert_eq!(meiksh_startup, sh_startup, "startup -a behavior mismatch");
+}
+
+#[test]
+fn matches_system_sh_on_named_noglob_startup_case() {
+    let meiksh_noglob = run_with_args_and_stdin(meiksh(), &["-o", "noglob", "-c", "printf '%s' *.definitely_missing"], b"");
+    let sh_noglob = run_with_args_and_stdin("sh", &["-o", "noglob", "-c", "printf '%s' *.definitely_missing"], b"");
+    assert_eq!(meiksh_noglob, sh_noglob, "startup -o noglob behavior mismatch");
+}
+
+#[test]
 fn matches_system_sh_on_cd_dash_case() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

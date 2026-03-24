@@ -467,6 +467,30 @@ fn sh_stdin_does_not_read_ahead_past_the_current_command() {
 }
 
 #[test]
+fn sh_startup_option_subset_supports_allexport_named_o_and_dollar_dash() {
+    let export_output = Command::new(meiksh())
+        .args(["-a", "-c", "AUTO=works; printenv AUTO"])
+        .output()
+        .expect("run meiksh -a");
+    assert!(export_output.status.success());
+    assert_eq!(String::from_utf8_lossy(&export_output.stdout), "works\n");
+
+    let dash_output = Command::new(meiksh())
+        .args(["-a", "-C", "-c", "printf '%s' \"$-\""])
+        .output()
+        .expect("run meiksh dollar dash");
+    assert!(dash_output.status.success());
+    assert_eq!(String::from_utf8_lossy(&dash_output.stdout), "aCc");
+
+    let named_output = Command::new(meiksh())
+        .args(["-o", "noglob", "-c", "printf '%s' *.definitely_missing"])
+        .output()
+        .expect("run meiksh -o noglob");
+    assert!(named_output.status.success());
+    assert_eq!(String::from_utf8_lossy(&named_output.stdout), "*.definitely_missing");
+}
+
+#[test]
 fn sh_command_file_sets_special_parameter_zero_and_searches_path() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
