@@ -371,6 +371,26 @@ fn expand_braced_parameter<C: Context>(ctx: &mut C, expr: &str, quoted: bool) ->
                 Ok(String::new())
             }
         }
+        Some("%") => remove_parameter_pattern(
+            value.unwrap_or_default(),
+            &expand_parameter_pattern_word(ctx, &word.unwrap_or_default())?,
+            PatternRemoval::SmallestSuffix,
+        ),
+        Some("%%") => remove_parameter_pattern(
+            value.unwrap_or_default(),
+            &expand_parameter_pattern_word(ctx, &word.unwrap_or_default())?,
+            PatternRemoval::LargestSuffix,
+        ),
+        Some("#") => remove_parameter_pattern(
+            value.unwrap_or_default(),
+            &expand_parameter_pattern_word(ctx, &word.unwrap_or_default())?,
+            PatternRemoval::SmallestPrefix,
+        ),
+        Some("##") => remove_parameter_pattern(
+            value.unwrap_or_default(),
+            &expand_parameter_pattern_word(ctx, &word.unwrap_or_default())?,
+            PatternRemoval::LargestPrefix,
+        ),
         Some(_) => Err(ExpandError {
             message: "unsupported parameter expansion".to_string(),
         }),
@@ -396,6 +416,11 @@ fn assign_parameter<C: Context>(
 fn expand_parameter_word<C: Context>(ctx: &mut C, raw: &str, _quoted: bool) -> Result<String, ExpandError> {
     let expanded = expand_raw(ctx, raw)?;
     Ok(flatten_pieces(&expanded.pieces))
+}
+
+fn expand_parameter_pattern_word<C: Context>(ctx: &mut C, raw: &str) -> Result<String, ExpandError> {
+    let expanded = expand_raw(ctx, raw)?;
+    Ok(render_pattern_from_pieces(&expanded.pieces))
 }
 
 fn parse_parameter_expression(expr: &str) -> Result<(String, Option<String>, Option<String>), ExpandError> {
@@ -430,7 +455,7 @@ fn parse_parameter_expression(expr: &str) -> Result<(String, Option<String>, Opt
     }
 
     let rest: String = chars[index..].iter().collect();
-    for op in [":-", ":=", ":?", ":+", "-", "=", "?", "+"] {
+    for op in [":-", ":=", ":?", ":+", "%%", "##", "-", "=", "?", "+", "%", "#"] {
         if let Some(word) = rest.strip_prefix(op) {
             return Ok((name, Some(op.to_string()), Some(word.to_string())));
         }
@@ -558,8 +583,62 @@ fn flatten_piece_chars(pieces: &[(String, bool)]) -> Vec<(char, bool)> {
     chars
 }
 
+fn render_pattern_from_pieces(pieces: &[(String, bool)]) -> String {
+    let mut pattern = String::new();
+    for (ch, quoted) in flatten_piece_chars(pieces) {
+        if quoted {
+            pattern.push('\\');
+        }
+        pattern.push(ch);
+    }
+    pattern
+}
+
 fn is_glob_char(ch: char) -> bool {
     matches!(ch, '*' | '?' | '[')
+}
+
+#[derive(Clone, Copy)]
+enum PatternRemoval {
+    SmallestSuffix,
+    LargestSuffix,
+    SmallestPrefix,
+    LargestPrefix,
+}
+
+fn remove_parameter_pattern(value: String, pattern: &str, mode: PatternRemoval) -> Result<String, ExpandError> {
+    let chars: Vec<char> = value.chars().collect();
+    match mode {
+        PatternRemoval::SmallestPrefix => {
+            for end in 0..=chars.len() {
+                if pattern_matches(&chars[..end].iter().collect::<String>(), pattern) {
+                    return Ok(chars[end..].iter().collect());
+                }
+            }
+        }
+        PatternRemoval::LargestPrefix => {
+            for end in (0..=chars.len()).rev() {
+                if pattern_matches(&chars[..end].iter().collect::<String>(), pattern) {
+                    return Ok(chars[end..].iter().collect());
+                }
+            }
+        }
+        PatternRemoval::SmallestSuffix => {
+            for start in (0..=chars.len()).rev() {
+                if pattern_matches(&chars[start..].iter().collect::<String>(), pattern) {
+                    return Ok(chars[..start].iter().collect());
+                }
+            }
+        }
+        PatternRemoval::LargestSuffix => {
+            for start in 0..=chars.len() {
+                if pattern_matches(&chars[start..].iter().collect::<String>(), pattern) {
+                    return Ok(chars[..start].iter().collect());
+                }
+            }
+        }
+    }
+    Ok(value)
 }
 
 fn expand_pathname(pattern: &str) -> Vec<String> {
@@ -1228,8 +1307,16 @@ mod tests {
 
         let error = parse_parameter_expression("%oops").expect_err("invalid expr");
         assert_eq!(error.message, "invalid parameter expansion");
+        assert_eq!(
+            parse_parameter_expression("USER%%tail").expect("largest suffix"),
+            ("USER".to_string(), Some("%%".to_string()), Some("tail".to_string()))
+        );
+        assert_eq!(
+            parse_parameter_expression("USER/tail").expect("unknown operator"),
+            ("USER".to_string(), Some("/".to_string()), Some("tail".to_string()))
+        );
 
-        let error = expand_braced_parameter(&mut ctx, "USER%tail", false).expect_err("unsupported expr");
+        let error = expand_braced_parameter(&mut ctx, "USER/tail", false).expect_err("unsupported expr");
         assert_eq!(error.message, "unsupported parameter expansion");
     }
 
@@ -1272,6 +1359,63 @@ mod tests {
         assert_eq!(match_bracket(None, &['[', 'a', ']'], 0), None);
         assert_eq!(match_bracket(Some('a'), &['['], 0), None);
         assert_eq!(match_bracket(Some(']'), &['[', '\\', ']', ']'], 0), Some((true, 4)));
+        assert_eq!(render_pattern_from_pieces(&[("*".to_string(), true)]), "\\*".to_string());
+    }
+
+    #[test]
+    fn supports_pattern_removal_parameter_expansions() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert("PATHNAME".into(), "src/bin/main.rs".into());
+        ctx.env.insert("DOTTED".into(), "alpha.beta.gamma".into());
+
+        assert_eq!(
+            expand_word(&mut ctx, &Word { raw: "${PATHNAME#*/}".into() }).expect("small prefix"),
+            vec!["bin/main.rs".to_string()]
+        );
+        assert_eq!(
+            expand_word(&mut ctx, &Word { raw: "${PATHNAME##*/}".into() }).expect("large prefix"),
+            vec!["main.rs".to_string()]
+        );
+        assert_eq!(
+            expand_word(&mut ctx, &Word { raw: "${PATHNAME%/*}".into() }).expect("small suffix"),
+            vec!["src/bin".to_string()]
+        );
+        assert_eq!(
+            expand_word(&mut ctx, &Word { raw: "${PATHNAME%%/*}".into() }).expect("large suffix"),
+            vec!["src".to_string()]
+        );
+        assert_eq!(
+            expand_word(&mut ctx, &Word { raw: "${PATHNAME#\"src/\"}".into() }).expect("quoted pattern"),
+            vec!["bin/main.rs".to_string()]
+        );
+        assert_eq!(
+            expand_word(&mut ctx, &Word { raw: "${DOTTED#*.}".into() }).expect("wildcard prefix"),
+            vec!["beta.gamma".to_string()]
+        );
+        assert_eq!(
+            expand_word(&mut ctx, &Word { raw: "${DOTTED##*.}".into() }).expect("largest wildcard prefix"),
+            vec!["gamma".to_string()]
+        );
+        assert_eq!(
+            expand_word(&mut ctx, &Word { raw: "${DOTTED%.*}".into() }).expect("wildcard suffix"),
+            vec!["alpha.beta".to_string()]
+        );
+        assert_eq!(
+            expand_word(&mut ctx, &Word { raw: "${DOTTED%%.*}".into() }).expect("largest wildcard suffix"),
+            vec!["alpha".to_string()]
+        );
+        assert_eq!(
+            expand_word(&mut ctx, &Word { raw: "${DOTTED#\"*.\"}".into() }).expect("quoted wildcard"),
+            vec!["alpha.beta.gamma".to_string()]
+        );
+        assert_eq!(
+            expand_word(&mut ctx, &Word { raw: "${DOTTED%}".into() }).expect("empty suffix pattern"),
+            vec!["alpha.beta.gamma".to_string()]
+        );
+        assert_eq!(
+            expand_word(&mut ctx, &Word { raw: "${MISSING%%*.}".into() }).expect("unset value"),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
