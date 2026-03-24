@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::ffi::{CStr, CString};
 use std::io;
 use std::os::raw::{c_char, c_int, c_long, c_ushort, c_ulong};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub type Pid = c_int;
 pub type FileModeMask = c_ushort;
@@ -12,13 +13,24 @@ const SC_CLK_TCK: c_int = 3;
 pub const STDIN_FILENO: c_int = 0;
 pub const STDOUT_FILENO: c_int = 1;
 pub const STDERR_FILENO: c_int = 2;
+pub const SIGHUP: c_int = 1;
+pub const SIGINT: c_int = 2;
+pub const SIGQUIT: c_int = 3;
+pub const SIGABRT: c_int = 6;
+pub const SIGALRM: c_int = 14;
 pub const SIGCONT: c_int = 18;
+pub const SIGTERM: c_int = 15;
 pub const WNOHANG: c_int = 0x0000_0001;
+const EINTR: i32 = 4;
+const SIG_DFL_HANDLER: usize = 0;
+const SIG_IGN_HANDLER: usize = 1;
+const SIG_ERR_HANDLER: usize = usize::MAX;
 
 unsafe extern "C" {
     fn getpid() -> Pid;
     fn waitpid(pid: Pid, status: *mut c_int, options: c_int) -> Pid;
     fn kill(pid: Pid, sig: c_int) -> c_int;
+    fn signal(sig: c_int, handler: usize) -> usize;
     fn isatty(fd: c_int) -> c_int;
     fn tcgetpgrp(fd: c_int) -> Pid;
     fn tcsetpgrp(fd: c_int, pgrp: Pid) -> c_int;
@@ -47,6 +59,7 @@ struct Syscalls {
     getpid: fn() -> Pid,
     waitpid: fn(Pid, *mut c_int, c_int) -> Pid,
     kill: fn(Pid, c_int) -> c_int,
+    signal: fn(c_int, usize) -> usize,
     isatty: fn(c_int) -> c_int,
     tcgetpgrp: fn(c_int) -> Pid,
     tcsetpgrp: fn(c_int, Pid) -> c_int,
@@ -71,6 +84,10 @@ fn default_waitpid(pid: Pid, status: *mut c_int, options: c_int) -> Pid {
 
 fn default_kill(pid: Pid, sig: c_int) -> c_int {
     unsafe { kill(pid, sig) }
+}
+
+fn default_signal(sig: c_int, handler: usize) -> usize {
+    unsafe { signal(sig, handler) }
 }
 
 fn default_isatty(fd: c_int) -> c_int {
@@ -122,6 +139,7 @@ fn default_syscalls() -> Syscalls {
         getpid: default_getpid,
         waitpid: default_waitpid,
         kill: default_kill,
+        signal: default_signal,
         isatty: default_isatty,
         tcgetpgrp: default_tcgetpgrp,
         tcsetpgrp: default_tcsetpgrp,
@@ -139,6 +157,14 @@ fn default_syscalls() -> Syscalls {
 
 thread_local! {
     static TEST_SYSCALLS: RefCell<Option<Syscalls>> = const { RefCell::new(None) };
+}
+
+static PENDING_SIGNALS: AtomicUsize = AtomicUsize::new(0);
+
+extern "C" fn record_signal(sig: c_int) {
+    if let Some(mask) = signal_mask(sig) {
+        PENDING_SIGNALS.fetch_or(mask, Ordering::SeqCst);
+    }
 }
 
 fn syscalls() -> Syscalls {
@@ -160,6 +186,56 @@ pub(crate) fn with_execvp_for_test<T>(
 ) -> T {
     let syscalls = Syscalls {
         execvp: execvp_fn,
+        ..default_syscalls()
+    };
+    tests::with_test_syscalls(syscalls, f)
+}
+
+#[cfg(test)]
+pub(crate) fn with_signal_syscall_for_test<T>(signal_fn: fn(c_int, usize) -> usize, f: impl FnOnce() -> T) -> T {
+    let syscalls = Syscalls {
+        signal: signal_fn,
+        ..default_syscalls()
+    };
+    tests::with_test_syscalls(syscalls, f)
+}
+
+#[cfg(test)]
+pub(crate) fn with_waitpid_for_test<T>(
+    waitpid_fn: fn(Pid, *mut c_int, c_int) -> Pid,
+    f: impl FnOnce() -> T,
+) -> T {
+    let syscalls = Syscalls {
+        waitpid: waitpid_fn,
+        ..default_syscalls()
+    };
+    tests::with_test_syscalls(syscalls, f)
+}
+
+#[cfg(test)]
+pub(crate) fn set_pending_signals_for_test(signals: &[c_int]) {
+    let bits = signals
+        .iter()
+        .filter_map(|signal| signal_mask(*signal))
+        .fold(0usize, |acc, bit| acc | bit);
+    PENDING_SIGNALS.store(bits, Ordering::SeqCst);
+}
+
+#[cfg(test)]
+pub(crate) fn with_job_control_syscalls_for_test<T>(
+    isatty_fn: fn(c_int) -> c_int,
+    tcgetpgrp_fn: fn(c_int) -> Pid,
+    tcsetpgrp_fn: fn(c_int, Pid) -> c_int,
+    setpgid_fn: fn(Pid, Pid) -> c_int,
+    kill_fn: fn(Pid, c_int) -> c_int,
+    f: impl FnOnce() -> T,
+) -> T {
+    let syscalls = Syscalls {
+        isatty: isatty_fn,
+        tcgetpgrp: tcgetpgrp_fn,
+        tcsetpgrp: tcsetpgrp_fn,
+        setpgid: setpgid_fn,
+        kill: kill_fn,
         ..default_syscalls()
     };
     tests::with_test_syscalls(syscalls, f)
@@ -231,6 +307,56 @@ pub fn send_signal(pid: Pid, signal: c_int) -> io::Result<()> {
     } else {
         Err(io::Error::last_os_error())
     }
+}
+
+pub fn install_shell_signal_handler(signal: c_int) -> io::Result<()> {
+    let result = (syscalls().signal)(signal, record_signal as *const () as usize);
+    if result == SIG_ERR_HANDLER {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+pub fn ignore_signal(signal: c_int) -> io::Result<()> {
+    let result = (syscalls().signal)(signal, SIG_IGN_HANDLER);
+    if result == SIG_ERR_HANDLER {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+pub fn default_signal_action(signal: c_int) -> io::Result<()> {
+    let result = (syscalls().signal)(signal, SIG_DFL_HANDLER);
+    if result == SIG_ERR_HANDLER {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+pub fn has_pending_signal() -> Option<c_int> {
+    let bits = PENDING_SIGNALS.load(Ordering::SeqCst);
+    supported_trap_signals()
+        .into_iter()
+        .find(|signal| signal_mask(*signal).map(|mask| bits & mask != 0).unwrap_or(false))
+}
+
+pub fn take_pending_signals() -> Vec<c_int> {
+    let bits = PENDING_SIGNALS.swap(0, Ordering::SeqCst);
+    supported_trap_signals()
+        .into_iter()
+        .filter(|signal| signal_mask(*signal).map(|mask| bits & mask != 0).unwrap_or(false))
+        .collect()
+}
+
+pub fn supported_trap_signals() -> Vec<c_int> {
+    vec![SIGHUP, SIGINT, SIGQUIT, SIGABRT, SIGALRM, SIGTERM]
+}
+
+pub fn interrupted(error: &io::Error) -> bool {
+    error.raw_os_error() == Some(EINTR)
 }
 
 pub fn current_foreground_pgrp(fd: c_int) -> io::Result<Pid> {
@@ -374,6 +500,19 @@ pub fn format_signal_exit(status: c_int) -> Option<String> {
     }
 }
 
+fn signal_mask(signal: c_int) -> Option<usize> {
+    let bit = match signal {
+        SIGHUP => 0,
+        SIGINT => 1,
+        SIGQUIT => 2,
+        SIGABRT => 3,
+        SIGALRM => 4,
+        SIGTERM => 5,
+        _ => return None,
+    };
+    Some(1usize << bit)
+}
+
 fn wifexited(status: c_int) -> bool {
     (status & 0x7f) == 0
 }
@@ -412,7 +551,7 @@ mod tests {
     }
 
     pub(super) fn with_test_syscalls<T>(syscalls: Syscalls, f: impl FnOnce() -> T) -> T {
-        let _guard = syscall_lock().lock().expect("syscall lock");
+        let _guard = syscall_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         TEST_SYSCALLS.with(|cell| {
             let previous = cell.replace(Some(syscalls));
             let result = f();
@@ -513,6 +652,9 @@ mod tests {
         fn fake_kill(_pid: Pid, _sig: c_int) -> c_int {
             0
         }
+        fn fake_signal(_sig: c_int, _handler: usize) -> usize {
+            0
+        }
         fn fake_isatty(_fd: c_int) -> c_int {
             1
         }
@@ -564,6 +706,7 @@ mod tests {
             getpid: fake_getpid,
             waitpid: fake_waitpid,
             kill: fake_kill,
+            signal: fake_signal,
             isatty: fake_isatty,
             tcgetpgrp: fake_tcgetpgrp,
             tcsetpgrp: fake_tcsetpgrp,
@@ -615,6 +758,38 @@ mod tests {
     }
 
     #[test]
+    fn signal_helpers_cover_pending_ignore_default_and_error_paths() {
+        fn ok_signal(_sig: c_int, _handler: usize) -> usize {
+            0
+        }
+        fn err_signal(_sig: c_int, _handler: usize) -> usize {
+            SIG_ERR_HANDLER
+        }
+
+        with_signal_syscall_for_test(ok_signal, || {
+            install_shell_signal_handler(SIGINT).expect("install");
+            ignore_signal(SIGTERM).expect("ignore");
+            default_signal_action(SIGQUIT).expect("default");
+        });
+
+        with_signal_syscall_for_test(err_signal, || {
+            assert!(install_shell_signal_handler(SIGINT).is_err());
+            assert!(ignore_signal(SIGTERM).is_err());
+            assert!(default_signal_action(SIGQUIT).is_err());
+        });
+
+        set_pending_signals_for_test(&[SIGINT]);
+        assert_eq!(has_pending_signal(), Some(SIGINT));
+        assert_eq!(take_pending_signals(), vec![SIGINT]);
+        set_pending_signals_for_test(&[99]);
+        assert_eq!(has_pending_signal(), None);
+
+        let interrupted_error = io::Error::from_raw_os_error(EINTR);
+        assert!(interrupted(&interrupted_error));
+        assert_eq!(supported_trap_signals(), vec![SIGHUP, SIGINT, SIGQUIT, SIGABRT, SIGALRM, SIGTERM]);
+    }
+
+    #[test]
     fn sys_injected_error_paths_cover_remaining_branches() {
         fn fake_getpid() -> Pid {
             1
@@ -624,6 +799,9 @@ mod tests {
         }
         fn fake_kill(_pid: Pid, _sig: c_int) -> c_int {
             -1
+        }
+        fn fake_signal(_sig: c_int, _handler: usize) -> usize {
+            SIG_ERR_HANDLER
         }
         fn fake_isatty(_fd: c_int) -> c_int {
             0
@@ -666,6 +844,7 @@ mod tests {
             getpid: fake_getpid,
             waitpid: fake_waitpid,
             kill: fake_kill,
+            signal: fake_signal,
             isatty: fake_isatty,
             tcgetpgrp: fake_tcgetpgrp,
             tcsetpgrp: fake_tcsetpgrp,

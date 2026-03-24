@@ -76,7 +76,7 @@ fn append_history(shell: &Shell, line: &str) -> Result<(), ShellError> {
 mod tests {
     use super::*;
     use crate::shell::ShellOptions;
-    use std::collections::{BTreeSet, HashMap};
+    use std::collections::{BTreeMap, BTreeSet, HashMap};
     use std::io::{self, Cursor, Read};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -97,6 +97,9 @@ mod tests {
             last_background: None,
             running: true,
             jobs: Vec::new(),
+            known_pid_statuses: HashMap::new(),
+            known_job_statuses: HashMap::new(),
+            trap_actions: BTreeMap::new(),
             current_exe: meiksh_bin_path(),
             loop_depth: 0,
             function_depth: 0,
@@ -242,7 +245,7 @@ mod tests {
             .args(["-c", "exit 0"])
             .spawn()
             .expect("spawn");
-        shell.launch_background_job("done".into(), vec![child]);
+        shell.launch_background_job("done".into(), None, vec![child]);
         for _ in 0..20 {
             if !shell.reap_jobs().is_empty() {
                 break;
@@ -253,7 +256,7 @@ mod tests {
             .args(["-c", "exit 0"])
             .spawn()
             .expect("spawn");
-        shell.launch_background_job("done".into(), vec![child]);
+        shell.launch_background_job("done".into(), None, vec![child]);
         std::thread::sleep(std::time::Duration::from_millis(20));
 
         let mut reader = Cursor::new(b"\nexit 5\n".to_vec());

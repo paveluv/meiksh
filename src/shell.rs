@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Read};
@@ -83,6 +83,9 @@ pub struct Shell {
     pub last_background: Option<u32>,
     pub running: bool,
     pub jobs: Vec<Job>,
+    pub known_pid_statuses: HashMap<u32, i32>,
+    pub known_job_statuses: HashMap<usize, i32>,
+    pub trap_actions: BTreeMap<TrapCondition, TrapAction>,
     pub current_exe: PathBuf,
     pub loop_depth: usize,
     pub function_depth: usize,
@@ -92,7 +95,22 @@ pub struct Shell {
 pub struct Job {
     pub id: usize,
     pub command: String,
+    pub pgid: Option<sys::Pid>,
+    pub last_pid: Option<u32>,
+    pub last_status: Option<i32>,
     pub children: Vec<Child>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TrapCondition {
+    Exit,
+    Signal(sys::Pid),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TrapAction {
+    Ignore,
+    Command(String),
 }
 
 pub enum FlowSignal {
@@ -160,6 +178,9 @@ impl Shell {
             last_background: None,
             running: true,
             jobs: Vec::new(),
+            known_pid_statuses: HashMap::new(),
+            known_job_statuses: HashMap::new(),
+            trap_actions: BTreeMap::new(),
             current_exe: std::env::current_exe()?,
             loop_depth: 0,
             function_depth: 0,
@@ -168,24 +189,23 @@ impl Shell {
     }
 
     pub fn run(&mut self) -> Result<i32, ShellError> {
-        if let Some(command) = self.options.command_string.clone() {
-            return self.run_source("<command>", &command);
-        }
-
-        if let Some(script) = self.options.script_path.clone() {
+        let status = if let Some(command) = self.options.command_string.clone() {
+            self.run_source("<command>", &command)?
+        } else if let Some(script) = self.options.script_path.clone() {
             let contents = fs::read_to_string(&script)?;
-            return self.run_source(script.to_string_lossy().as_ref(), &contents);
-        }
-
-        let interactive = self.options.force_interactive
-            || (sys::is_interactive_fd(sys::STDIN_FILENO) && sys::is_interactive_fd(sys::STDERR_FILENO));
-        if interactive {
-            interactive::run(self)
+            self.run_source(script.to_string_lossy().as_ref(), &contents)?
         } else {
-            let mut buffer = String::new();
-            io::stdin().read_to_string(&mut buffer)?;
-            self.run_source("<stdin>", &buffer)
-        }
+            let interactive = self.options.force_interactive
+                || (sys::is_interactive_fd(sys::STDIN_FILENO) && sys::is_interactive_fd(sys::STDERR_FILENO));
+            if interactive {
+                interactive::run(self)?
+            } else {
+                let mut buffer = String::new();
+                io::stdin().read_to_string(&mut buffer)?;
+                self.run_source("<stdin>", &buffer)?
+            }
+        };
+        self.run_exit_trap(status)
     }
 
     pub fn run_source(&mut self, _name: &str, source: &str) -> Result<i32, ShellError> {
@@ -209,8 +229,10 @@ impl Shell {
     fn execute_source_incrementally(&mut self, source: &str) -> Result<i32, ShellError> {
         let mut session = syntax::ParseSession::new(source)?;
         let mut status = 0;
+        self.run_pending_traps()?;
         while let Some(item) = session.next_item(&self.aliases)? {
             status = self.execute_program(&Program { items: vec![item] })?;
+            self.run_pending_traps()?;
             if !self.running || self.has_pending_control() {
                 break;
             }
@@ -281,12 +303,24 @@ impl Shell {
         self.positional = values;
     }
 
-    pub fn launch_background_job(&mut self, command: String, children: Vec<Child>) -> usize {
+    pub fn launch_background_job(
+        &mut self,
+        command: String,
+        pgid: Option<sys::Pid>,
+        children: Vec<Child>,
+    ) -> usize {
         let id = self.jobs.last().map(|job| job.id + 1).unwrap_or(1);
         if let Some(last) = children.last() {
             self.last_background = Some(last.id());
         }
-        self.jobs.push(Job { id, command, children });
+        self.jobs.push(Job {
+            id,
+            command,
+            pgid,
+            last_pid: children.last().map(Child::id),
+            last_status: None,
+            children,
+        });
         id
     }
 
@@ -295,22 +329,31 @@ impl Shell {
         let mut remaining = Vec::new();
 
         for mut job in self.jobs.drain(..) {
-            let mut all_done = true;
-            let mut final_status = 0;
-            for child in &mut job.children {
-                match try_wait_child(child) {
+            let mut running = Vec::new();
+            for mut child in job.children.drain(..) {
+                match try_wait_child(&mut child) {
                     Ok(Some(status)) => {
-                        final_status = status.code().unwrap_or(128);
+                        let pid = child.id();
+                        let code = status.code().unwrap_or(128);
+                        self.known_pid_statuses.insert(pid, code);
+                        if job.last_pid == Some(pid) {
+                            job.last_status = Some(code);
+                        }
                     }
-                    Ok(None) => {
-                        all_done = false;
-                    }
+                    Ok(None) => running.push(child),
                     Err(_) => {
-                        final_status = 1;
+                        let pid = child.id();
+                        self.known_pid_statuses.insert(pid, 1);
+                        if job.last_pid == Some(pid) {
+                            job.last_status = Some(1);
+                        }
                     }
                 }
             }
-            if all_done {
+            job.children = running;
+            if job.children.is_empty() {
+                let final_status = job.last_status.unwrap_or(0);
+                self.known_job_statuses.insert(job.id, final_status);
                 finished.push((job.id, final_status));
             } else {
                 remaining.push(job);
@@ -322,6 +365,10 @@ impl Shell {
     }
 
     pub fn wait_for_job(&mut self, id: usize) -> Result<i32, ShellError> {
+        if let Some(status) = self.known_job_statuses.remove(&id) {
+            self.last_status = status;
+            return Ok(status);
+        }
         let index = self
             .jobs
             .iter()
@@ -329,11 +376,19 @@ impl Shell {
             .ok_or_else(|| ShellError {
                 message: format!("job {id}: not found"),
             })?;
+        let pgid = self.jobs[index].pgid;
+        let saved_foreground = self.foreground_handoff(pgid);
         let mut job = self.jobs.remove(index);
-        let mut status = 0;
+        let mut status = job.last_status.unwrap_or(0);
         for child in &mut job.children {
-            status = child.wait()?.code().unwrap_or(128);
+            let waited = self.wait_for_child_pid(child.id(), false)?;
+            status = waited;
+            self.known_pid_statuses.insert(child.id(), waited);
+            if job.last_pid == Some(child.id()) {
+                job.last_status = Some(waited);
+            }
         }
+        self.restore_foreground(saved_foreground);
         self.last_status = status;
         Ok(status)
     }
@@ -342,8 +397,12 @@ impl Shell {
         let job = self.jobs.iter().find(|job| job.id == id).ok_or_else(|| ShellError {
             message: format!("job {id}: not found"),
         })?;
-        for child in &job.children {
-            sys::send_signal(child.id() as i32, sys::SIGCONT)?;
+        if let Some(pgid) = job.pgid {
+            sys::send_signal(-pgid, sys::SIGCONT)?;
+        } else {
+            for child in &job.children {
+                sys::send_signal(child.id() as i32, sys::SIGCONT)?;
+            }
         }
         Ok(())
     }
@@ -356,10 +415,10 @@ impl Shell {
     pub fn print_jobs(&mut self) {
         let finished = self.reap_jobs();
         for (id, status) in finished {
-            eprintln!("[{id}] Done {status}");
+            println!("[{id}] Done {status}");
         }
         for job in &self.jobs {
-            eprintln!("[{}] Running {}", job.id, job.command);
+            println!("[{}] Running {}", job.id, job.command);
         }
     }
 
@@ -391,6 +450,225 @@ impl Shell {
 
     pub fn has_pending_control(&self) -> bool {
         self.pending_control.is_some()
+    }
+
+    pub fn trap_action(&self, condition: TrapCondition) -> Option<&TrapAction> {
+        self.trap_actions.get(&condition)
+    }
+
+    pub fn set_trap(&mut self, condition: TrapCondition, action: Option<TrapAction>) -> Result<(), ShellError> {
+        if let TrapCondition::Signal(signal) = condition {
+            match action.as_ref() {
+                Some(TrapAction::Ignore) => sys::ignore_signal(signal)?,
+                Some(TrapAction::Command(_)) => sys::install_shell_signal_handler(signal)?,
+                None => sys::default_signal_action(signal)?,
+            }
+        }
+        match action {
+            Some(action) => {
+                self.trap_actions.insert(condition, action);
+            }
+            None => {
+                self.trap_actions.remove(&condition);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn wait_for_job_operand(&mut self, id: usize) -> Result<i32, ShellError> {
+        if let Some(status) = self.known_job_statuses.remove(&id) {
+            self.remove_known_pids_for_job(id);
+            return Ok(status);
+        }
+        let index = match self.jobs.iter().position(|job| job.id == id) {
+            Some(index) => index,
+            None => return Ok(127),
+        };
+        self.wait_on_job_index(index, true)
+    }
+
+    pub fn wait_for_pid_operand(&mut self, pid: u32) -> Result<i32, ShellError> {
+        if let Some(status) = self.known_pid_statuses.remove(&pid) {
+            return Ok(status);
+        }
+        let (job_index, child_index) = match self.find_job_child(pid) {
+            Some(position) => position,
+            None => return Ok(127),
+        };
+        match self.wait_for_child_pid(pid, true) {
+            Ok(status) => {
+                self.record_completed_child(job_index, child_index, pid, status);
+                Ok(status)
+            }
+            Err(error) if error.message.starts_with("wait interrupted:") => {
+                let status = error
+                    .message
+                    .split(':')
+                    .nth(1)
+                    .and_then(|value| value.parse::<i32>().ok())
+                    .unwrap_or(130);
+                Ok(status)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    pub fn wait_for_all_jobs(&mut self) -> Result<i32, ShellError> {
+        let ids: Vec<usize> = self.jobs.iter().map(|job| job.id).collect();
+        for id in ids {
+            let status = self.wait_for_job_operand(id)?;
+            if status > 128 && sys::has_pending_signal().is_none() {
+                return Ok(status);
+            }
+        }
+        self.known_pid_statuses.clear();
+        self.known_job_statuses.clear();
+        Ok(0)
+    }
+
+    pub fn run_pending_traps(&mut self) -> Result<(), ShellError> {
+        for signal in sys::take_pending_signals() {
+            let Some(TrapAction::Command(action)) = self.trap_actions.get(&TrapCondition::Signal(signal)).cloned() else {
+                continue;
+            };
+            self.execute_trap_action(&action, self.last_status)?;
+            if !self.running {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    fn run_exit_trap(&mut self, status: i32) -> Result<i32, ShellError> {
+        let Some(TrapAction::Command(action)) = self.trap_actions.get(&TrapCondition::Exit).cloned() else {
+            self.last_status = status;
+            return Ok(status);
+        };
+        self.execute_trap_action(&action, status)
+    }
+
+    fn execute_trap_action(&mut self, action: &str, preserved_status: i32) -> Result<i32, ShellError> {
+        let was_running = self.running;
+        self.running = true;
+        self.last_status = preserved_status;
+        let status = self.execute_string(action)?;
+        if self.running {
+            self.running = was_running;
+            self.last_status = preserved_status;
+            Ok(preserved_status)
+        } else {
+            self.last_status = status;
+            Ok(status)
+        }
+    }
+
+    fn wait_on_job_index(&mut self, index: usize, interruptible: bool) -> Result<i32, ShellError> {
+        let pgid = self.jobs[index].pgid;
+        let saved_foreground = self.foreground_handoff(pgid);
+        let mut status = self.jobs[index].last_status.unwrap_or(0);
+        while !self.jobs[index].children.is_empty() {
+            let pid = self.jobs[index].children[0].id();
+            let child_index = 0;
+            match self.wait_for_child_pid(pid, interruptible) {
+                Ok(code) => {
+                    status = code;
+                    self.record_completed_child(index, child_index, pid, code);
+                }
+                Err(error) => {
+                    self.restore_foreground(saved_foreground);
+                    if let Some(interrupted_status) = self.consume_wait_interrupt(&error)? {
+                        return Ok(interrupted_status);
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        let job = self.jobs.remove(index);
+        let final_status = job.last_status.unwrap_or(status);
+        self.known_job_statuses.insert(job.id, final_status);
+        self.known_job_statuses.remove(&job.id);
+        self.restore_foreground(saved_foreground);
+        self.last_status = final_status;
+        Ok(final_status)
+    }
+
+    fn consume_wait_interrupt(&mut self, error: &ShellError) -> Result<Option<i32>, ShellError> {
+        if !error.message.starts_with("wait interrupted:") {
+            return Ok(None);
+        }
+        let status = error
+            .message
+            .split(':')
+            .nth(1)
+            .and_then(|value| value.parse::<i32>().ok())
+            .unwrap_or(130);
+        self.last_status = status;
+        self.run_pending_traps()?;
+        self.last_status = status;
+        Ok(Some(status))
+    }
+
+    pub fn wait_for_child_pid(&mut self, pid: u32, interruptible: bool) -> Result<i32, ShellError> {
+        loop {
+            match sys::wait_pid(pid as sys::Pid, false) {
+                Ok(Some(waited)) => return Ok(sys::decode_wait_status(waited.status)),
+                Ok(None) => continue,
+                Err(error) if interruptible && sys::interrupted(&error) && sys::has_pending_signal().is_some() => {
+                    let signal = sys::has_pending_signal().unwrap_or(sys::SIGINT);
+                    return Err(ShellError {
+                        message: format!("wait interrupted:{}", 128 + signal),
+                    });
+                }
+                Err(error) if sys::interrupted(&error) => continue,
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+
+    fn find_job_child(&self, pid: u32) -> Option<(usize, usize)> {
+        self.jobs.iter().enumerate().find_map(|(job_index, job)| {
+            job.children
+                .iter()
+                .position(|child| child.id() == pid)
+                .map(|child_index| (job_index, child_index))
+        })
+    }
+
+    fn record_completed_child(&mut self, job_index: usize, child_index: usize, pid: u32, status: i32) {
+        self.known_pid_statuses.insert(pid, status);
+        if self.jobs[job_index].last_pid == Some(pid) {
+            self.jobs[job_index].last_status = Some(status);
+        }
+        self.jobs[job_index].children.remove(child_index);
+    }
+
+    fn remove_known_pids_for_job(&mut self, id: usize) {
+        let Some(job) = self.jobs.iter().find(|job| job.id == id) else {
+            return;
+        };
+        for child in &job.children {
+            self.known_pid_statuses.remove(&child.id());
+        }
+    }
+
+    fn foreground_handoff(&self, pgid: Option<sys::Pid>) -> Option<sys::Pid> {
+        let Some(pgid) = pgid else {
+            return None;
+        };
+        if !(sys::is_interactive_fd(sys::STDIN_FILENO) && sys::is_interactive_fd(sys::STDERR_FILENO)) {
+            return None;
+        }
+        let Ok(saved) = sys::current_foreground_pgrp(sys::STDIN_FILENO) else {
+            return None;
+        };
+        let _ = sys::set_foreground_pgrp(sys::STDIN_FILENO, pgid);
+        Some(saved)
+    }
+
+    fn restore_foreground(&self, saved_foreground: Option<sys::Pid>) {
+        if let Some(pgid) = saved_foreground {
+            let _ = sys::set_foreground_pgrp(sys::STDIN_FILENO, pgid);
+        }
     }
 }
 
@@ -501,7 +779,12 @@ fn parse_options(args: &[String]) -> Result<ShellOptions, ShellError> {
 mod tests {
     use super::*;
     use std::process::Command as ProcessCommand;
+    use std::collections::BTreeMap;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    unsafe extern "C" {
+        fn __error() -> *mut i32;
+    }
 
     use crate::test_utils::meiksh_bin_path;
 
@@ -519,6 +802,9 @@ mod tests {
             last_background: None,
             running: true,
             jobs: Vec::new(),
+            known_pid_statuses: HashMap::new(),
+            known_job_statuses: HashMap::new(),
+            trap_actions: BTreeMap::new(),
             current_exe: meiksh_bin_path(),
             loop_depth: 0,
             function_depth: 0,
@@ -593,7 +879,7 @@ mod tests {
             .args(["-c", "exit 7"])
             .spawn()
             .expect("spawn");
-        let id = shell.launch_background_job("exit 7".into(), vec![child]);
+        let id = shell.launch_background_job("exit 7".into(), None, vec![child]);
         let status = shell.wait_for_job(id).expect("wait");
         assert_eq!(status, 7);
         assert_eq!(shell.last_status, 7);
@@ -635,7 +921,7 @@ mod tests {
             .args(["-c", "exit 0"])
             .spawn()
             .expect("spawn");
-        let id = shell.launch_background_job("exit 0".into(), vec![child]);
+        let id = shell.launch_background_job("exit 0".into(), None, vec![child]);
         let mut finished = Vec::new();
         for _ in 0..20 {
             finished = shell.reap_jobs();
@@ -682,7 +968,7 @@ mod tests {
             .args(["-c", "exit 0"])
             .spawn()
             .expect("spawn");
-        let id = shell.launch_background_job("exit 0".into(), vec![child]);
+        let id = shell.launch_background_job("exit 0".into(), None, vec![child]);
 
         let finished = with_try_wait_for_test(fake_try_wait, || shell.reap_jobs());
         assert_eq!(finished, vec![(id, 1)]);
@@ -794,7 +1080,7 @@ mod tests {
             .args(["-c", "exit 0"])
             .spawn()
             .expect("spawn");
-        shell.launch_background_job("done".into(), vec![finished_child]);
+        shell.launch_background_job("done".into(), None, vec![finished_child]);
 
         for _ in 0..20 {
             if !shell.reap_jobs().is_empty() {
@@ -807,7 +1093,7 @@ mod tests {
             .args(["-c", "sleep 0.05"])
             .spawn()
             .expect("spawn");
-        shell.launch_background_job("sleep".into(), vec![running_child]);
+        shell.launch_background_job("sleep".into(), None, vec![running_child]);
         shell.print_jobs();
 
         if let Some(id) = shell.jobs.first().map(|job| job.id) {
@@ -856,9 +1142,238 @@ mod tests {
             .args(["-c", "exit 0"])
             .spawn()
             .expect("spawn");
-        shell.launch_background_job("done".into(), vec![child]);
+        shell.launch_background_job("done".into(), None, vec![child]);
         std::thread::sleep(std::time::Duration::from_millis(200));
         shell.print_jobs();
         assert!(shell.jobs.is_empty());
+    }
+
+    #[test]
+    fn trap_and_wait_helpers_cover_remaining_signal_and_status_paths() {
+        fn fake_isatty(_fd: i32) -> i32 {
+            1
+        }
+        fn fake_tcgetpgrp(_fd: i32) -> sys::Pid {
+            77
+        }
+        fn fake_tcsetpgrp(_fd: i32, _pgid: sys::Pid) -> i32 {
+            0
+        }
+        fn fake_setpgid(_pid: sys::Pid, _pgid: sys::Pid) -> i32 {
+            0
+        }
+        fn fake_kill(_pid: sys::Pid, _sig: i32) -> i32 {
+            0
+        }
+        fn ok_signal(_sig: i32, _handler: usize) -> usize {
+            0
+        }
+
+        let mut shell = test_shell();
+        sys::with_signal_syscall_for_test(ok_signal, || {
+            shell
+                .set_trap(TrapCondition::Signal(sys::SIGTERM), Some(TrapAction::Ignore))
+                .expect("ignore");
+            assert!(matches!(
+                shell.trap_action(TrapCondition::Signal(sys::SIGTERM)),
+                Some(TrapAction::Ignore)
+            ));
+            shell.set_trap(TrapCondition::Signal(sys::SIGTERM), None).expect("default");
+            assert!(shell.trap_action(TrapCondition::Signal(sys::SIGTERM)).is_none());
+        });
+
+        shell.known_job_statuses.insert(9, 44);
+        assert_eq!(shell.wait_for_job_operand(9).expect("known job"), 44);
+        shell.known_pid_statuses.insert(55, 12);
+        assert_eq!(shell.wait_for_pid_operand(55).expect("known pid"), 12);
+        assert_eq!(shell.wait_for_job_operand(999).expect("unknown job"), 127);
+        assert_eq!(shell.wait_for_pid_operand(999_999).expect("unknown pid"), 127);
+
+        sys::with_job_control_syscalls_for_test(
+            fake_isatty,
+            fake_tcgetpgrp,
+            fake_tcsetpgrp,
+            fake_setpgid,
+            fake_kill,
+            || {
+                assert_eq!(shell.foreground_handoff(Some(88)), Some(77));
+                shell.restore_foreground(Some(77));
+            },
+        );
+        sys::with_job_control_syscalls_for_test(
+            fake_isatty,
+            |_fd| -1,
+            fake_tcsetpgrp,
+            fake_setpgid,
+            fake_kill,
+            || {
+                assert_eq!(shell.foreground_handoff(Some(88)), None);
+            },
+        );
+
+        assert_eq!(shell.execute_trap_action("exit 9", 3).expect("exit trap action"), 9);
+        assert!(!shell.running);
+        assert_eq!(shell.last_status, 9);
+        shell.running = true;
+
+        shell
+            .set_trap(TrapCondition::Signal(sys::SIGINT), Some(TrapAction::Command("printf trap".into())))
+            .expect("trap");
+        sys::set_pending_signals_for_test(&[sys::SIGINT]);
+        shell.run_pending_traps().expect("run traps");
+        assert_eq!(shell.last_status, 9);
+
+        shell
+            .set_trap(TrapCondition::Signal(sys::SIGINT), Some(TrapAction::Command("exit 7".into())))
+            .expect("exit trap");
+        sys::set_pending_signals_for_test(&[sys::SIGINT]);
+        shell.run_pending_traps().expect("run exit trap");
+        assert!(!shell.running);
+        shell.running = true;
+
+        shell
+            .set_trap(TrapCondition::Signal(sys::SIGTERM), Some(TrapAction::Ignore))
+            .expect("ignore trap");
+        sys::set_pending_signals_for_test(&[sys::SIGTERM]);
+        shell.run_pending_traps().expect("ignored pending");
+
+        let child = ProcessCommand::new(&shell.current_exe)
+            .args(["-c", "sleep 0.05"])
+            .spawn()
+            .expect("spawn");
+        let id = shell.launch_background_job("sleep".into(), Some(11), vec![child]);
+        sys::with_job_control_syscalls_for_test(
+            fake_isatty,
+            fake_tcgetpgrp,
+            fake_tcsetpgrp,
+            fake_setpgid,
+            fake_kill,
+            || shell.continue_job(id).expect("continue pgid job"),
+        );
+        shell.jobs.clear();
+    }
+
+    #[test]
+    fn wait_interrupt_and_foreground_paths_are_covered() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        fn fake_signal(_sig: i32, _handler: usize) -> usize {
+            0
+        }
+        fn fake_waitpid(_pid: sys::Pid, _status: *mut i32, options: i32) -> sys::Pid {
+            static CALLS: AtomicUsize = AtomicUsize::new(0);
+            let call = CALLS.fetch_add(1, Ordering::SeqCst);
+            if options == 0 && call == 0 {
+                unsafe {
+                    *__error() = 4;
+                }
+                -1
+            } else if options == 0 && call == 1 {
+                0
+            } else {
+                unsafe {
+                    *_status = 7 << 8;
+                }
+                99
+            }
+        }
+
+        let mut shell = test_shell();
+        shell
+            .set_trap(TrapCondition::Signal(sys::SIGINT), Some(TrapAction::Command(":".into())))
+            .expect("trap");
+        let child = ProcessCommand::new(&shell.current_exe)
+            .args(["-c", "sleep 0.05"])
+            .spawn()
+            .expect("spawn");
+        shell.launch_background_job("sleep".into(), None, vec![child]);
+        sys::set_pending_signals_for_test(&[sys::SIGINT]);
+        sys::with_waitpid_for_test(fake_waitpid, || {
+            assert_eq!(shell.wait_for_job_operand(1).expect("interrupted wait"), 130);
+        });
+        assert_eq!(shell.last_status, 130);
+        shell.jobs.clear();
+        sys::with_waitpid_for_test(fake_waitpid, || {
+            assert_eq!(shell.wait_for_child_pid(99, false).expect("retry after none"), 7);
+        });
+
+        sys::with_signal_syscall_for_test(fake_signal, || {
+            let message = ShellError {
+                message: "wait interrupted:140".into(),
+            };
+            assert_eq!(shell.consume_wait_interrupt(&message).expect("consume"), Some(140));
+            let message = ShellError {
+                message: "different".into(),
+            };
+            assert_eq!(shell.consume_wait_interrupt(&message).expect("non interrupt"), None);
+        });
+
+        fn echild_waitpid(_pid: sys::Pid, _status: *mut i32, _options: i32) -> sys::Pid {
+            unsafe {
+                *__error() = 10;
+            }
+            -1
+        }
+
+        let child = ProcessCommand::new(&shell.current_exe)
+            .args(["-c", "sleep 0.05"])
+            .spawn()
+            .expect("spawn");
+        shell.launch_background_job("sleep".into(), None, vec![child]);
+        sys::with_waitpid_for_test(echild_waitpid, || {
+            assert!(shell.wait_for_job_operand(1).is_err());
+            assert!(shell.wait_for_child_pid(99, false).is_err());
+        });
+
+        let child = ProcessCommand::new(&shell.current_exe)
+            .args(["-c", "sleep 0.05"])
+            .spawn()
+            .expect("spawn");
+        let pid = child.id();
+        shell.launch_background_job("sleep".into(), None, vec![child]);
+        sys::set_pending_signals_for_test(&[sys::SIGINT]);
+        sys::with_waitpid_for_test(fake_waitpid_all, || {
+            assert_eq!(shell.wait_for_pid_operand(pid).expect("pid interrupt"), 130);
+        });
+
+        let child = ProcessCommand::new(&shell.current_exe)
+            .args(["-c", "sleep 0.05"])
+            .spawn()
+            .expect("spawn");
+        let pid = child.id();
+        shell.launch_background_job("sleep".into(), None, vec![child]);
+        sys::with_waitpid_for_test(echild_waitpid, || {
+            assert!(shell.wait_for_pid_operand(pid).is_err());
+        });
+
+        fn fake_waitpid_all(_pid: sys::Pid, _status: *mut i32, _options: i32) -> sys::Pid {
+            unsafe {
+                *__error() = 4;
+            }
+            -1
+        }
+
+        let child = ProcessCommand::new(&shell.current_exe)
+            .args(["-c", "sleep 0.05"])
+            .spawn()
+            .expect("spawn");
+        shell.launch_background_job("sleep".into(), None, vec![child]);
+        sys::set_pending_signals_for_test(&[sys::SIGINT]);
+        sys::with_waitpid_for_test(fake_waitpid_all, || {
+            assert_eq!(shell.wait_for_all_jobs().expect("wait all status"), 130);
+        });
+
+        let child = ProcessCommand::new(&shell.current_exe)
+            .args(["-c", "sleep 0.05"])
+            .spawn()
+            .expect("spawn");
+        let id = shell.launch_background_job("sleep".into(), None, vec![child]);
+        if let Some(job) = shell.jobs.iter().find(|job| job.id == id) {
+            if let Some(pid) = job.last_pid {
+                shell.known_pid_statuses.insert(pid, 1);
+            }
+        }
+        shell.known_job_statuses.insert(id, 5);
+        assert_eq!(shell.wait_for_job_operand(id).expect("known job path"), 5);
     }
 }
