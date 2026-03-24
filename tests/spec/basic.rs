@@ -738,6 +738,26 @@ fn executes_for_loops() {
         .expect("run meiksh");
     assert!(positional.status.success());
     assert_eq!(String::from_utf8_lossy(&positional.stdout), "y");
+
+    let linebreak_before_in = Command::new(meiksh())
+        .args([
+            "-c",
+            "for item\nin alpha beta; do printf '%s|' \"$item\"; done",
+        ])
+        .output()
+        .expect("run meiksh");
+    assert!(linebreak_before_in.status.success());
+    assert_eq!(String::from_utf8_lossy(&linebreak_before_in.stdout), "alpha|beta|");
+
+    let reserved_words_in_wordlist = Command::new(meiksh())
+        .args([
+            "-c",
+            "for item in do done; do printf '%s|' \"$item\"; done",
+        ])
+        .output()
+        .expect("run meiksh");
+    assert!(reserved_words_in_wordlist.status.success());
+    assert_eq!(String::from_utf8_lossy(&reserved_words_in_wordlist.stdout), "do|done|");
 }
 
 #[test]

@@ -835,12 +835,11 @@ impl Parser {
             }
         };
 
-        let items = if self.consume_reserved_word("in") {
+        self.skip_linebreaks();
+        let items = if self.peek_reserved_word("in") {
+            self.index += 1;
             let mut items = Vec::new();
-            while !self.is_eof()
-                && !self.peek_reserved_word("do")
-                && !matches!(self.peek_kind(), TokenKind::Semi | TokenKind::Newline)
-            {
+            while !self.is_eof() && !matches!(self.peek_kind(), TokenKind::Semi | TokenKind::Newline) {
                 match self.peek_kind().clone() {
                     TokenKind::Word(text) => {
                         self.index += 1;
@@ -1056,6 +1055,12 @@ impl Parser {
         }
     }
 
+    fn skip_linebreaks(&mut self) {
+        while matches!(self.peek_kind(), TokenKind::Newline) {
+            self.index += 1;
+        }
+    }
+
     fn consume_amp(&mut self) -> bool {
         if matches!(self.peek_kind(), TokenKind::Amp) {
             self.index += 1;
@@ -1182,16 +1187,6 @@ impl Parser {
             Err(ParseError {
                 message: format!("expected '{word}'"),
             })
-        }
-    }
-
-    fn consume_reserved_word(&mut self, word: &str) -> bool {
-        if self.peek_reserved_word(word) {
-            self.index += 1;
-            self.skip_separators();
-            true
-        } else {
-            false
         }
     }
 
@@ -1443,6 +1438,25 @@ mod tests {
             &positional.items[0].and_or.first.commands[0],
             Command::For(for_command) if for_command.name == "item" && for_command.items.is_none()
         ));
+
+        let linebreak_before_in =
+            parse("for item\nin a b; do echo $item; done").expect("parse linebreak before in");
+        assert!(matches!(
+            &linebreak_before_in.items[0].and_or.first.commands[0],
+            Command::For(for_command)
+                if for_command.name == "item"
+                    && for_command.items.as_ref().map(|items| items.iter().map(|word| word.raw.as_str()).collect::<Vec<_>>())
+                        == Some(vec!["a", "b"])
+        ));
+
+        let reserved_words_as_items =
+            parse("for item in do done; do echo $item; done").expect("parse reserved words in wordlist");
+        assert!(matches!(
+            &reserved_words_as_items.items[0].and_or.first.commands[0],
+            Command::For(for_command)
+                if for_command.items.as_ref().map(|items| items.iter().map(|word| word.raw.as_str()).collect::<Vec<_>>())
+                    == Some(vec!["do", "done"])
+        ));
     }
 
     #[test]
@@ -1485,10 +1499,28 @@ mod tests {
     fn parser_private_helpers_cover_remaining_branches() {
         let tokenized = tokenize("echo hi").expect("tokenize");
         let mut parser = Parser::new(tokenized.tokens.clone(), VecDeque::new(), HashMap::new());
-        assert!(!parser.consume_reserved_word("if"));
+        assert!(!parser.peek_reserved_word("if"));
         assert!(!parser.at_reserved_stop(&["then"]));
         assert!(parser.expect_reserved_word("if").is_err());
         assert!(parser.expect(TokenKind::Semi, "semi").is_err());
+
+        let mut parser = Parser::new(
+            vec![
+                Token {
+                    kind: TokenKind::Newline,
+                },
+                Token {
+                    kind: TokenKind::Word("do".into()),
+                },
+                Token {
+                    kind: TokenKind::Eof,
+                },
+            ],
+            VecDeque::new(),
+            HashMap::new(),
+        );
+        parser.skip_linebreaks();
+        assert!(parser.peek_reserved_word("do"));
 
         let func_tokens = tokenize("name( x").expect("tokenize");
         let parser = Parser::new(func_tokens.tokens, VecDeque::new(), HashMap::new());
