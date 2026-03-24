@@ -2,6 +2,8 @@
 
 This document records `meiksh` behavior where POSIX leaves room for implementation-defined or unspecified choices, and it also records temporary project decisions while the shell is still under active development.
 
+It is not the primary conformance ledger. Requirement status belongs in `docs/spec-matrix.md` and the supporting files under `docs/requirements/`.
+
 ## Project Constraints
 
 - Language: Rust

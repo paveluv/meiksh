@@ -155,9 +155,12 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
                 }
             }
             '$' => {
-                only_quoted = false;
+                let dollar_single_quotes = chars.get(index + 1) == Some(&'\'');
+                if !dollar_single_quotes {
+                    only_quoted = false;
+                }
                 let (value, consumed) = expand_dollar(ctx, &chars[index..], false)?;
-                push_piece(&mut pieces, value, false);
+                push_piece(&mut pieces, value, dollar_single_quotes);
                 index += consumed;
             }
             '~' if index == 0 => {
@@ -230,6 +233,7 @@ fn expand_dollar<C: Context>(
     }
 
     match chars[1] {
+        '\'' if !quoted => parse_dollar_single_quoted(chars),
         '{' => {
             let mut index = 2usize;
             while index < chars.len() && chars[index] != '}' {
@@ -322,6 +326,7 @@ fn expand_parameter_dollar<C: Context>(ctx: &mut C, chars: &[char]) -> Result<(S
     }
 
     match chars[1] {
+        '\'' => parse_dollar_single_quoted(chars),
         '{' => {
             let mut index = 2usize;
             while index < chars.len() && chars[index] != '}' {
@@ -361,6 +366,106 @@ fn expand_parameter_dollar<C: Context>(ctx: &mut C, chars: &[char]) -> Result<(S
         }
         _ => Ok(("$".to_string(), 1)),
     }
+}
+
+fn parse_dollar_single_quoted(chars: &[char]) -> Result<(String, usize), ExpandError> {
+    let mut index = 2usize;
+    let mut result = String::new();
+    while index < chars.len() {
+        match chars[index] {
+            '\'' => return Ok((result, index + 1)),
+            '\\' => {
+                index += 1;
+                if index >= chars.len() {
+                    return Err(ExpandError {
+                        message: "unterminated dollar-single-quotes".to_string(),
+                    });
+                }
+                let ch = chars[index];
+                match ch {
+                    '"' => result.push('"'),
+                    '\'' => result.push('\''),
+                    '\\' => result.push('\\'),
+                    'a' => result.push('\u{0007}'),
+                    'b' => result.push('\u{0008}'),
+                    'e' => result.push('\u{001b}'),
+                    'f' => result.push('\u{000c}'),
+                    'n' => result.push('\n'),
+                    'r' => result.push('\r'),
+                    't' => result.push('\t'),
+                    'v' => result.push('\u{000b}'),
+                    'c' => {
+                        index += 1;
+                        if index >= chars.len() {
+                            return Err(ExpandError {
+                                message: "unterminated dollar-single-quotes".to_string(),
+                            });
+                        }
+                        result.push(control_escape(chars[index]));
+                    }
+                    'x' => {
+                        let (value, consumed) = parse_variable_base_escape(&chars[(index + 1)..], 16, 2);
+                        if consumed == 0 {
+                            result.push('x');
+                        } else {
+                            result.push(char::from(value));
+                            index += consumed;
+                        }
+                    }
+                    '0'..='7' => {
+                        let mut digits = String::from(ch);
+                        let mut consumed = 0usize;
+                        while consumed < 2
+                            && index + 1 + consumed < chars.len()
+                            && matches!(chars[index + 1 + consumed], '0'..='7')
+                        {
+                            digits.push(chars[index + 1 + consumed]);
+                            consumed += 1;
+                        }
+                        let value = u8::from_str_radix(&digits, 8).unwrap_or_default();
+                        result.push(char::from(value));
+                        index += consumed;
+                    }
+                    other => result.push(other),
+                }
+                index += 1;
+            }
+            ch => {
+                result.push(ch);
+                index += 1;
+            }
+        }
+    }
+    Err(ExpandError {
+        message: "unterminated dollar-single-quotes".to_string(),
+    })
+}
+
+fn control_escape(ch: char) -> char {
+    match ch {
+        '\\' => '\u{001c}',
+        '?' => '\u{007f}',
+        other => char::from((other as u8) & 0x1f),
+    }
+}
+
+fn parse_variable_base_escape(chars: &[char], base: u32, max_digits: usize) -> (u8, usize) {
+    let mut digits = String::new();
+    let mut consumed = 0usize;
+    while consumed < max_digits
+        && consumed < chars.len()
+        && chars[consumed].is_digit(base)
+    {
+        digits.push(chars[consumed]);
+        consumed += 1;
+    }
+    if digits.is_empty() {
+        return (0, 0);
+    }
+    (
+        u8::from_str_radix(&digits, base).unwrap_or_default(),
+        consumed,
+    )
 }
 
 fn expand_braced_parameter<C: Context>(ctx: &mut C, expr: &str, quoted: bool) -> Result<String, ExpandError> {
@@ -1130,7 +1235,20 @@ mod tests {
             match name {
                 '?' => Some("0".to_string()),
                 '#' => Some(self.positional.len().to_string()),
-                '*' | '@' => Some(self.positional.join(" ")),
+                '*' => Some(
+                    self.positional.join(
+                        &self
+                            .env
+                            .get("IFS")
+                            .cloned()
+                            .unwrap_or_else(|| " \t\n".to_string())
+                            .chars()
+                            .next()
+                            .map(|ch| ch.to_string())
+                            .unwrap_or_default(),
+                    ),
+                ),
+                '@' => Some(self.positional.join(" ")),
                 _ => None,
             }
         }
@@ -1217,15 +1335,70 @@ mod tests {
             expand_word(&mut ctx, &Word { raw: "\"cost:\\$USER\"".to_string() }).expect("expand"),
             vec!["cost:$USER".to_string()]
         );
+        assert_eq!(
+            expand_word(&mut ctx, &Word { raw: "$'a b'".to_string() }).expect("expand"),
+            vec!["a b".to_string()]
+        );
+        assert_eq!(
+            expand_word(&mut ctx, &Word { raw: "$'line\\nnext'".to_string() }).expect("expand"),
+            vec!["line\nnext".to_string()]
+        );
+        assert_eq!(
+            expand_word(&mut ctx, &Word { raw: "\"$'a b'\"".to_string() }).expect("expand"),
+            vec!["$'a b'".to_string()]
+        );
+        assert_eq!(
+            expand_parameter_text(&mut ctx, "$'tab\\tstop'").expect("parameter text"),
+            "tab\tstop".to_string()
+        );
     }
 
     #[test]
     fn rejects_unterminated_quotes_and_expansions() {
         let mut ctx = FakeContext::new();
-        for raw in ["'oops", "\"oops", "${USER", "$(echo", "$((1 + 2)"] {
+        for raw in ["'oops", "\"oops", "${USER", "$(echo", "$((1 + 2)", "$'oops"] {
             let error = expand_word(&mut ctx, &Word { raw: raw.to_string() }).expect_err("error");
             assert!(!error.message.is_empty());
         }
+    }
+
+    #[test]
+    fn dollar_single_quote_helpers_cover_escape_matrix() {
+        let chars: Vec<char> = "$'\\\"\\'\\\\\\a\\b\\e\\f\\n\\r\\t\\v\\cA\\c\\\\\\x41\\101Z'".chars().collect();
+        let (value, consumed) = parse_dollar_single_quoted(&chars).expect("parse");
+        assert_eq!(consumed, chars.len());
+        assert_eq!(
+            value,
+            format!(
+                "\"'\\{}\u{0008}\u{001b}\u{000c}\n\r\t\u{000b}\u{0001}\u{001c}\\x41AZ",
+                '\u{0007}'
+            )
+        );
+
+        let unterminated_backslash: Vec<char> = "$'\\".chars().collect();
+        assert!(parse_dollar_single_quoted(&unterminated_backslash).is_err());
+
+        let unterminated_control: Vec<char> = "$'\\c".chars().collect();
+        assert!(parse_dollar_single_quoted(&unterminated_control).is_err());
+
+        let no_hex_digits: Vec<char> = "$'\\xZ'".chars().collect();
+        let (value, _) = parse_dollar_single_quoted(&no_hex_digits).expect("parse no hex");
+        assert_eq!(value, "xZ");
+
+        let hex_digits: Vec<char> = "$'\\x41'".chars().collect();
+        let (value, _) = parse_dollar_single_quoted(&hex_digits).expect("parse hex");
+        assert_eq!(value, "A");
+
+        let unspecified_escape: Vec<char> = "$'\\z'".chars().collect();
+        let (value, _) = parse_dollar_single_quoted(&unspecified_escape).expect("parse unspecified");
+        assert_eq!(value, "z");
+
+        assert_eq!(control_escape('\\'), '\u{001c}');
+        assert_eq!(control_escape('?'), '\u{007f}');
+        assert_eq!(control_escape('A'), '\u{0001}');
+        assert_eq!(parse_variable_base_escape(&['4', '1', '2'], 16, 2), (0x41, 2));
+        assert_eq!(parse_variable_base_escape(&['1', '0', '1', '7'], 8, 3), (0o101, 3));
+        assert_eq!(parse_variable_base_escape(&['Z'], 16, 2), (0, 0));
     }
 
     #[test]
@@ -1256,6 +1429,9 @@ mod tests {
         assert_eq!(expand_word(&mut ctx, &Word { raw: "${10}".into() }).expect("expand"), vec!["j".to_string()]);
         assert_eq!(expand_word(&mut ctx, &Word { raw: "$10".into() }).expect("expand"), vec!["a0".to_string()]);
         assert_eq!(expand_word(&mut ctx, &Word { raw: "${#10}".into() }).expect("expand"), vec!["1".to_string()]);
+        ctx.env.insert("IFS".into(), ":".into());
+        assert_eq!(expand_word(&mut ctx, &Word { raw: "$*".into() }).expect("expand"), vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string(), "e".to_string(), "f".to_string(), "g".to_string(), "h".to_string(), "i".to_string(), "j".to_string()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: "\"$*\"".into() }).expect("expand"), vec!["a:b:c:d:e:f:g:h:i:j".to_string()]);
         assert_eq!(expand_word(&mut ctx, &Word { raw: "${UNSET-word}".into() }).expect("expand"), vec!["word".to_string()]);
         assert_eq!(expand_word(&mut ctx, &Word { raw: "${UNSET:-word}".into() }).expect("expand"), vec!["word".to_string()]);
         assert_eq!(expand_word(&mut ctx, &Word { raw: "${EMPTY-word}".into() }).expect("expand"), Vec::<String>::new());

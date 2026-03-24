@@ -1,6 +1,6 @@
 # Docs
 
-This directory contains project documentation and pointers to external standards material used while implementing `meiksh`.
+This directory contains project documentation and the local standards-material workflow used while implementing `meiksh`.
 
 ## POSIX Reference Material
 
@@ -8,8 +8,8 @@ The `docs/posix/` tree is intentionally not committed to the repository.
 
 Reason:
 - the source material is published by The Open Group
-- we use those pages locally as implementation references
-- we do not vendor the HTML into git for copyright reasons
+- `meiksh` uses those pages locally as the only standards source of truth for POSIX conformance work
+- the HTML is kept out of git for copyright reasons
 
 The path is ignored in `.gitignore`:
 
@@ -17,65 +17,55 @@ The path is ignored in `.gitignore`:
 docs/posix/
 ```
 
-## How To Populate `docs/posix`
+## Required Local Mirror
 
-Create the directory structure:
+For routine shell work, `meiksh` relies on a local mirror that includes:
+- Issue 8 shell language, `sh`, and shell rationale pages
+- Issue 7 shell language and `sh` pages for compatibility review
+- Issue 8 Base Definitions chapter pages that shell text frequently cross-references
+- shell-related utility pages under `docs/posix/utilities/`
+- shell-relevant system-interface pages under `docs/posix/functions/`
+- a publication index under `docs/posix/validation/`
 
-```sh
-mkdir -p docs/posix/{issue7,issue8,utilities,functions,validation}
-```
+The authoritative expected file list lives in `docs/posix-manifest.txt`.
 
-Fetch the main shell documents:
+## Fetch The Mirror
 
-```sh
-curl -LfsS "https://pubs.opengroup.org/onlinepubs/9799919799/utilities/V3_chap02.html" -o docs/posix/issue8/shell-command-language.html
-curl -LfsS "https://pubs.opengroup.org/onlinepubs/9799919799/utilities/sh.html" -o docs/posix/issue8/sh-utility.html
-curl -LfsS "https://pubs.opengroup.org/onlinepubs/9799919799/xrat/V4_xcu_chap01.html" -o docs/posix/issue8/shell-rationale.html
-
-curl -LfsS "https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html" -o docs/posix/issue7/shell-command-language.html
-curl -LfsS "https://pubs.opengroup.org/onlinepubs/9699919799/utilities/sh.html" -o docs/posix/issue7/sh-utility.html
-curl -LfsS "https://pubs.opengroup.org/onlinepubs/9799919799/utilities/contents.html" -o docs/posix/issue8/contents.html
-curl -LfsS "https://pubs.opengroup.org/onlinepubs/9699919799/utilities/contents.html" -o docs/posix/issue7/contents.html
-```
-
-Fetch shell-related utility pages:
+Use the manifest-driven fetch script:
 
 ```sh
-for spec in alias bg break cd command continue dot eval exec exit export fg jobs pwd read readonly return set shift times trap umask unalias unset wait; do
-  curl -LfsS "https://pubs.opengroup.org/onlinepubs/9799919799/utilities/${spec}.html" -o "docs/posix/utilities/${spec}.html"
-done
+./docs/fetch-posix-docs.sh
 ```
 
-Fetch shell-related function pages:
+That script reads `docs/posix-manifest.txt` and downloads every required page into the matching path under `docs/posix/`.
+
+## Validate The Mirror
+
+Check that the local mirror contains every required page:
 
 ```sh
-for func in close dup dup2 exec fork isatty kill open pipe setpgid sigaction tcgetpgrp tcsetpgrp wait waitid waitpid wordexp; do
-  curl -LfsS "https://pubs.opengroup.org/onlinepubs/9799919799/functions/${func}.html" -o "docs/posix/functions/${func}.html"
-done
+./scripts/check-posix-docs.sh
 ```
 
-Fetch shell chapter/index pages used by the main references:
+This validates presence and non-empty content for every manifest entry. It is the repository's basic guardrail before claiming a standards audit is complete.
 
-```sh
-curl -LfsS "https://pubs.opengroup.org/onlinepubs/9799919799/utilities/V3_chap01.html" -o docs/posix/utilities/V3_chap01.html
-curl -LfsS "https://pubs.opengroup.org/onlinepubs/9799919799/utilities/V3_chap02.html" -o docs/posix/utilities/V3_chap02.html
-curl -LfsS "https://pubs.opengroup.org/onlinepubs/9799919799/utilities/V3_chap03.html" -o docs/posix/utilities/V3_chap03.html
-curl -LfsS "https://pubs.opengroup.org/onlinepubs/9799919799/utilities/contents.html" -o docs/posix/utilities/contents.html
-curl -LfsS "https://pubs.opengroup.org/onlinepubs/9799919799/functions/V2_chap02.html" -o docs/posix/functions/V2_chap02.html
-curl -LfsS "https://pubs.opengroup.org/onlinepubs/9799919799/utilities/wait.html" -o docs/posix/utilities/wait.html
-curl -LfsS "https://pubs.opengroup.org/onlinepubs/9799919799/functions/waitpid.html" -o docs/posix/functions/waitpid.html
-```
+## Requirements Tracking
 
-Fetch the validation reference:
-
-```sh
-curl -LfsS "https://pubs.opengroup.org/onlinepubs/9799919799/" -o docs/posix/validation/posix-test-suites.html
-```
+The conformance docs are organized as follows:
+- `docs/spec-matrix.md`: top-level POSIX conformance ledger and status summary
+- `docs/requirements/README.md`: requirements-doc index and update rules
+- `docs/requirements/conventions.md`: REQ-ID scheme and status vocabulary
+- `docs/requirements/standards-inventory.md`: inventory of the local shell-conformance standards mirror
+- `docs/requirements/gap-register.md`: tracked remaining gaps and milestone-oriented backlog items
+- `docs/implementation-policy.md`: implementation-defined and temporary project choices that should reference the requirement ledger instead of replacing it
 
 ## Source URLs
 
-Primary source:
+Primary publication root:
 - <https://pubs.opengroup.org/onlinepubs/9799919799/>
+
+Issue 8 Base Definitions:
+- <https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/contents.html>
 
 Issue 8 shell command language:
 - <https://pubs.opengroup.org/onlinepubs/9799919799/utilities/V3_chap02.html>
@@ -94,6 +84,6 @@ Issue 7 `sh` utility:
 
 ## Notes
 
-- `docs/spec-matrix.md` references the expected local `docs/posix/` layout.
-- If you want a broader local mirror, fetch any additional linked `utilities/*.html` and `functions/*.html` pages referenced from the main shell documents.
+- `docs/posix-manifest.txt` is the mirror contract; `docs/fetch-posix-docs.sh` and `scripts/check-posix-docs.sh` are expected to stay in sync with it.
+- `docs/spec-matrix.md` and the files under `docs/requirements/` should reference exact local `docs/posix/...` paths and anchors when recording conformance status.
 - Keep the downloaded material untracked.

@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Read};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command as ProcessCommand, ExitStatus};
 
@@ -16,8 +17,8 @@ pub fn run_from_env() -> i32 {
     match Shell::from_env().and_then(|mut shell| shell.run()) {
         Ok(code) => code,
         Err(err) => {
-            eprintln!("meiksh: {err}");
-            1
+            eprintln!("meiksh: {}", err.display_message());
+            err.exit_status()
         }
     }
 }
@@ -30,6 +31,7 @@ pub struct ShellOptions {
     pub noclobber: bool,
     pub noglob: bool,
     pub script_path: Option<PathBuf>,
+    pub shell_name_override: Option<String>,
     pub positional: Vec<String>,
 }
 
@@ -38,9 +40,41 @@ pub struct ShellError {
     pub message: String,
 }
 
+const STATUS_PREFIX: &str = "__MEIKSH_STATUS__:";
+
+impl ShellError {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+
+    fn with_status(status: i32, message: impl Into<String>) -> Self {
+        Self {
+            message: format!("{STATUS_PREFIX}{status}:{}", message.into()),
+        }
+    }
+
+    fn split_status_metadata(&self) -> Option<(i32, &str)> {
+        let encoded = self.message.strip_prefix(STATUS_PREFIX)?;
+        let (status, message) = encoded.split_once(':')?;
+        status.parse::<i32>().ok().map(|status| (status, message))
+    }
+
+    pub fn display_message(&self) -> &str {
+        self.split_status_metadata()
+            .map(|(_, message)| message)
+            .unwrap_or(&self.message)
+    }
+
+    pub fn exit_status(&self) -> i32 {
+        self.split_status_metadata().map(|(status, _)| status).unwrap_or(1)
+    }
+}
+
 impl std::fmt::Display for ShellError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.message)
+        f.write_str(self.display_message())
     }
 }
 
@@ -48,25 +82,19 @@ impl std::error::Error for ShellError {}
 
 impl From<io::Error> for ShellError {
     fn from(value: io::Error) -> Self {
-        Self {
-            message: value.to_string(),
-        }
+        Self::new(value.to_string())
     }
 }
 
 impl From<syntax::ParseError> for ShellError {
     fn from(value: syntax::ParseError) -> Self {
-        Self {
-            message: value.to_string(),
-        }
+        Self::new(value.to_string())
     }
 }
 
 impl From<ExpandError> for ShellError {
     fn from(value: ExpandError) -> Self {
-        Self {
-            message: value.to_string(),
-        }
+        Self::new(value.to_string())
     }
 }
 
@@ -162,7 +190,10 @@ impl Shell {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
         let options = parse_options(&args)?;
-        let shell_name = sys::shell_name_from_args(&args).to_string();
+        let shell_name = options
+            .shell_name_override
+            .clone()
+            .unwrap_or_else(|| sys::shell_name_from_args(&args).to_string());
         let env: HashMap<String, String> = std::env::vars().collect();
         let exported: BTreeSet<String> = env.keys().cloned().collect();
         Ok(Self {
@@ -192,8 +223,8 @@ impl Shell {
         let status = if let Some(command) = self.options.command_string.clone() {
             self.run_source("<command>", &command)?
         } else if let Some(script) = self.options.script_path.clone() {
-            let contents = fs::read_to_string(&script)?;
-            self.run_source(script.to_string_lossy().as_ref(), &contents)?
+            let (resolved, contents) = self.load_script_source(&script)?;
+            self.run_source(resolved.to_string_lossy().as_ref(), &contents)?
         } else {
             let interactive = self.options.force_interactive
                 || (sys::is_interactive_fd(sys::STDIN_FILENO) && sys::is_interactive_fd(sys::STDERR_FILENO));
@@ -410,6 +441,14 @@ impl Shell {
     pub fn source_path(&mut self, path: &Path) -> Result<i32, ShellError> {
         let contents = fs::read_to_string(path)?;
         self.execute_string(&contents)
+    }
+
+    fn load_script_source(&self, script: &Path) -> Result<(PathBuf, String), ShellError> {
+        let resolved = resolve_script_path(self, script).ok_or_else(|| {
+            ShellError::with_status(127, format!("{}: not found", script.display()))
+        })?;
+        let contents = fs::read_to_string(&resolved).map_err(|error| classify_script_read_error(&resolved, error))?;
+        Ok((resolved, contents))
     }
 
     pub fn print_jobs(&mut self) {
@@ -683,7 +722,16 @@ impl expand::Context for Shell {
             '$' => Some(sys::current_pid().to_string()),
             '!' => self.last_background.map(|pid| pid.to_string()),
             '#' => Some(self.positional.len().to_string()),
-            '*' | '@' => Some(self.positional.join(" ")),
+            '*' => Some(self.positional.join(
+                &self
+                    .get_var("IFS")
+                    .unwrap_or_else(|| " \t\n".to_string())
+                    .chars()
+                    .next()
+                    .map(|ch| ch.to_string())
+                    .unwrap_or_default(),
+            )),
+            '@' => Some(self.positional.join(" ")),
             '0' => Some(self.shell_name.clone()),
             digit if digit.is_ascii_digit() => {
                 let index = digit.to_digit(10)? as usize;
@@ -729,9 +777,10 @@ fn parse_options(args: &[String]) -> Result<ShellOptions, ShellError> {
     while let Some(arg) = args.get(index) {
         if arg == "-c" {
             let command = args.get(index + 1).ok_or_else(|| ShellError {
-                message: "-c requires an argument".to_string(),
+                message: ShellError::with_status(2, "-c requires an argument").message,
             })?;
             options.command_string = Some(command.clone());
+            options.shell_name_override = args.get(index + 2).cloned();
             options.positional = args.iter().skip(index + 3).cloned().collect();
             return Ok(options);
         }
@@ -749,6 +798,10 @@ fn parse_options(args: &[String]) -> Result<ShellOptions, ShellError> {
             options.positional = args.iter().skip(index + 1).cloned().collect();
             return Ok(options);
         }
+        if arg == "-" {
+            index += 1;
+            continue;
+        }
         if arg == "--" {
             index += 1;
             break;
@@ -763,7 +816,9 @@ fn parse_options(args: &[String]) -> Result<ShellOptions, ShellError> {
                     'i' => options.force_interactive = enabled,
                     'n' => options.syntax_check_only = enabled,
                     's' if enabled => read_stdin = true,
-                    _ => {}
+                    _ => {
+                        return Err(ShellError::with_status(2, format!("invalid option: {ch}")));
+                    }
                 }
             }
             if read_stdin {
@@ -774,6 +829,7 @@ fn parse_options(args: &[String]) -> Result<ShellOptions, ShellError> {
             continue;
         }
         options.script_path = Some(PathBuf::from(arg));
+        options.shell_name_override = Some(arg.clone());
         options.positional = args.iter().skip(index + 1).cloned().collect();
         return Ok(options);
     }
@@ -785,11 +841,53 @@ fn parse_options(args: &[String]) -> Result<ShellOptions, ShellError> {
     Ok(options)
 }
 
+fn resolve_script_path(shell: &Shell, script: &Path) -> Option<PathBuf> {
+    if script.is_absolute() || script.to_string_lossy().contains('/') {
+        return Some(script.to_path_buf());
+    }
+
+    let cwd_path = PathBuf::from(script);
+    if cwd_path.exists() {
+        return Some(cwd_path);
+    }
+
+    search_script_path(shell, script.to_str()?)
+}
+
+fn search_script_path(shell: &Shell, name: &str) -> Option<PathBuf> {
+    let path_env = shell
+        .get_var("PATH")
+        .or_else(|| std::env::var("PATH").ok())
+        .unwrap_or_default();
+    for dir in path_env.split(':') {
+        let base = if dir.is_empty() { PathBuf::from(".") } else { PathBuf::from(dir) };
+        let candidate = base.join(name);
+        if executable_regular_file(&candidate) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn executable_regular_file(path: &Path) -> bool {
+    fs::metadata(path)
+        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+fn classify_script_read_error(path: &Path, error: io::Error) -> ShellError {
+    match error.kind() {
+        io::ErrorKind::NotFound => ShellError::with_status(127, format!("{}: not found", path.display())),
+        _ => ShellError::with_status(128, format!("{}: {}", path.display(), error)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::process::Command as ProcessCommand;
     use std::collections::BTreeMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     unsafe extern "C" {
@@ -797,6 +895,43 @@ mod tests {
     }
 
     use crate::test_utils::meiksh_bin_path;
+
+    static SCRIPT_LOOKUP_ENV_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    struct ScriptLookupTestEnv {
+        cwd_dir: PathBuf,
+        path_dir: PathBuf,
+        original_cwd: PathBuf,
+    }
+
+    impl ScriptLookupTestEnv {
+        fn new() -> Self {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos();
+            let counter = SCRIPT_LOOKUP_ENV_COUNTER.fetch_add(1, Ordering::SeqCst);
+            let cwd_dir = std::env::temp_dir().join(format!("meiksh-shell-lookup-cwd-{unique}-{counter}"));
+            let path_dir = std::env::temp_dir().join(format!("meiksh-shell-lookup-path-{unique}-{counter}"));
+            fs::create_dir(&cwd_dir).expect("create cwd dir");
+            fs::create_dir(&path_dir).expect("create path dir");
+            let original_cwd = std::env::current_dir().expect("cwd");
+            std::env::set_current_dir(&cwd_dir).expect("cd temp");
+            Self {
+                cwd_dir,
+                path_dir,
+                original_cwd,
+            }
+        }
+    }
+
+    impl Drop for ScriptLookupTestEnv {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.original_cwd);
+            let _ = fs::remove_dir_all(&self.cwd_dir);
+            let _ = fs::remove_dir_all(&self.path_dir);
+        }
+    }
 
     fn test_shell() -> Shell {
         Shell {
@@ -827,6 +962,7 @@ mod tests {
         let options = parse_options(&["meiksh".into(), "-c".into(), "echo ok".into(), "name".into(), "arg".into()])
             .expect("parse");
         assert_eq!(options.command_string.as_deref(), Some("echo ok"));
+        assert_eq!(options.shell_name_override.as_deref(), Some("name"));
         assert_eq!(options.positional, vec!["arg".to_string()]);
 
         let options =
@@ -847,7 +983,8 @@ mod tests {
         assert_eq!(options.positional, vec!["arg".to_string()]);
 
         let error = parse_options(&["meiksh".into(), "-c".into()]).expect_err("missing arg");
-        assert_eq!(error.message, "-c requires an argument");
+        assert_eq!(error.display_message(), "-c requires an argument");
+        assert_eq!(error.exit_status(), 2);
     }
 
     #[test]
@@ -1041,9 +1178,10 @@ mod tests {
             .expect("parse");
         assert_eq!(options.positional, vec!["arg1".to_string(), "arg2".to_string()]);
 
-        let options = parse_options(&["meiksh".into(), "-z".into(), "script.sh".into()])
-            .expect("parse");
-        assert_eq!(options.script_path, Some(PathBuf::from("script.sh")));
+        let error = parse_options(&["meiksh".into(), "-z".into(), "script.sh".into()])
+            .expect_err("invalid option");
+        assert_eq!(error.display_message(), "invalid option: z");
+        assert_eq!(error.exit_status(), 2);
 
         let options = parse_options(&["meiksh".into(), "-fC".into(), "+f".into(), "script.sh".into()])
             .expect("parse");
@@ -1056,6 +1194,11 @@ mod tests {
         assert!(options.force_interactive);
         assert!(!options.syntax_check_only);
         assert_eq!(options.script_path, Some(PathBuf::from("script.sh")));
+
+        let options = parse_options(&["meiksh".into(), "-".into()])
+            .expect("parse lone dash");
+        assert_eq!(options.script_path, None);
+        assert!(options.positional.is_empty());
     }
 
     #[test]
@@ -1076,6 +1219,53 @@ mod tests {
         let error = shell.capture_output("missing-command").expect_err("capture error");
         assert!(!error.message.is_empty());
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn shell_error_status_metadata_helpers_work() {
+        let error = ShellError::with_status(127, "missing script");
+        assert_eq!(error.exit_status(), 127);
+        assert_eq!(error.display_message(), "missing script");
+        assert_eq!(format!("{error}"), "missing script");
+    }
+
+    #[test]
+    fn resolve_script_path_prefers_current_directory() {
+        let env = ScriptLookupTestEnv::new();
+        let mut shell = test_shell();
+        shell.env.insert("PATH".into(), env.path_dir.display().to_string());
+
+        let cwd_script = env.cwd_dir.join("cwd-script");
+        fs::write(&cwd_script, "printf cwd").expect("write cwd script");
+        assert_eq!(
+            resolve_script_path(&shell, Path::new("cwd-script")),
+            Some(PathBuf::from("cwd-script"))
+        );
+    }
+
+    #[test]
+    fn resolve_script_path_searches_executable_path_entries() {
+        let env = ScriptLookupTestEnv::new();
+        let mut shell = test_shell();
+        shell.env.insert("PATH".into(), env.path_dir.display().to_string());
+
+        let path_script = env.path_dir.join("path-script");
+        fs::write(&path_script, "printf path").expect("write path script");
+        let mut permissions = fs::metadata(&path_script).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&path_script, permissions).expect("chmod");
+        assert_eq!(
+            resolve_script_path(&shell, Path::new("path-script")),
+            Some(env.path_dir.join("path-script"))
+        );
+    }
+
+    #[test]
+    fn classify_script_read_error_maps_to_sh_exit_statuses() {
+        let classified = classify_script_read_error(Path::new("missing"), io::Error::from(io::ErrorKind::NotFound));
+        assert_eq!(classified.exit_status(), 127);
+        let classified = classify_script_read_error(Path::new("bad"), io::Error::other("boom"));
+        assert_eq!(classified.exit_status(), 128);
     }
 
     #[test]

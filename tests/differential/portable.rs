@@ -61,6 +61,7 @@ fn matches_system_sh_on_portable_cases() {
         "{ printf inside; } >/dev/null; printf outside",
         "pwd >/dev/null; printf outside",
         "set -- a b c d e f g h i j; printf '%s|%s|%s' \"$10\" \"${10}\" \"${#10}\"",
+        "VALUE='a b'; unset IFS; printf '<%s>' $VALUE; IFS=; printf '|<%s>' $VALUE; set -- a b c; IFS=:; printf '|<%s><%s>' $* \"$*\"",
         "unset X; printf '<%s><%s><%s><%s>' \"${X-word}\" \"${X:-word}\" \"${X+alt}\" \"${X:+alt}\"; X=''; printf '|<%s><%s><%s><%s>' \"${X-word}\" \"${X:-word}\" \"${X+alt}\" \"${X:+alt}\"",
         "alias ll='printf nope'; unalias -a; alias ll >/dev/null 2>&1; printf :$?",
         "trap 'printf exit:$?' EXIT; false",
@@ -87,6 +88,20 @@ fn matches_system_sh_on_s_option_case() {
 }
 
 #[test]
+fn matches_system_sh_on_c_command_name_case() {
+    let meiksh_c = run_with_args_and_stdin(meiksh(), &["-c", "printf %s \"$0\"", "cmd-name"], b"");
+    let sh_c = run_with_args_and_stdin("sh", &["-c", "printf %s \"$0\"", "cmd-name"], b"");
+    assert_eq!(meiksh_c, sh_c, "-c command_name behavior mismatch");
+}
+
+#[test]
+fn matches_system_sh_on_lone_dash_case() {
+    let meiksh_dash = run_with_args_and_stdin(meiksh(), &["-"], b"printf ok\n");
+    let sh_dash = run_with_args_and_stdin("sh", &["-"], b"printf ok\n");
+    assert_eq!(meiksh_dash, sh_dash, "lone dash behavior mismatch");
+}
+
+#[test]
 fn matches_system_sh_on_cd_dash_case() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -99,5 +114,45 @@ fn matches_system_sh_on_cd_dash_case() {
     let meiksh_cd = run(meiksh(), &script);
     let sh_cd = run("sh", &script);
     assert_eq!(meiksh_cd, sh_cd, "cd - behavior mismatch");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn matches_system_sh_on_cdpath_case() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("meiksh-diff-cdpath-{unique}"));
+    let cdpath = root.join("cdpath");
+    let target = cdpath.join("target");
+    let elsewhere = root.join("elsewhere");
+    fs::create_dir_all(&target).expect("mkdir target");
+    fs::create_dir_all(&elsewhere).expect("mkdir elsewhere");
+    let script = "CDPATH='../cdpath'; cd target; printf '|%s|%s' \"$PWD\" \"$OLDPWD\"";
+
+    let meiksh_cd = Command::new(meiksh())
+        .current_dir(&elsewhere)
+        .args(["-c", script])
+        .output()
+        .expect("run meiksh");
+    let sh_cd = Command::new("sh")
+        .current_dir(&elsewhere)
+        .args(["-c", script])
+        .output()
+        .expect("run sh");
+    assert_eq!(
+        (
+            meiksh_cd.status.code().unwrap_or(128),
+            String::from_utf8_lossy(&meiksh_cd.stdout).into_owned(),
+            String::from_utf8_lossy(&meiksh_cd.stderr).into_owned(),
+        ),
+        (
+            sh_cd.status.code().unwrap_or(128),
+            String::from_utf8_lossy(&sh_cd.stdout).into_owned(),
+            String::from_utf8_lossy(&sh_cd.stderr).into_owned(),
+        ),
+        "cdpath behavior mismatch"
+    );
     let _ = fs::remove_dir_all(root);
 }
