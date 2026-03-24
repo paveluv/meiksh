@@ -102,18 +102,18 @@ This document maps the POSIX shell requirements mirrored under `docs/posix/` to 
 | `docs/posix/utilities/bg.html` | `src/builtin.rs`, `src/shell.rs` | partial | Basic resume-by-job-id path exists. tty/job-control fidelity is incomplete. |
 | `docs/posix/utilities/break.html` | `src/builtin.rs`, `src/exec.rs`, `src/shell.rs` | implemented with remaining edge review | Loop-depth validation and propagation exist. |
 | `docs/posix/utilities/cd.html` | `src/builtin.rs` | partial | Core directory-change behavior exists. Broader utility-page option and environment semantics still need review. |
-| `docs/posix/utilities/command.html` | `src/builtin.rs` | partial | Builtin exists for command lookup and execution. Full POSIX option surface is not covered. |
+| `docs/posix/utilities/command.html` | `src/builtin.rs` | partial | Builtin now executes utilities while bypassing shell functions, supports `-p`, `-v`, and `-V`, and reports aliases/reserved words/builtins/path lookups. Detailed special-builtin parity and some execution edge cases still need review. |
 | `docs/posix/utilities/continue.html` | `src/builtin.rs`, `src/exec.rs`, `src/shell.rs` | implemented with remaining edge review | Loop-depth validation and propagation exist. |
 | `docs/posix/utilities/dot.html` | `src/builtin.rs`, `src/shell.rs` | partial | Sourcing by pathname exists. Search semantics and related edge cases remain to be reviewed. |
 | `docs/posix/utilities/eval.html` | `src/builtin.rs`, `src/shell.rs` | partial | Re-executes joined arguments through the parser/executor. |
 | `docs/posix/utilities/exec.html` | `src/builtin.rs`, `src/sys.rs` | partial | No-argument no-op and replacement execution exist. |
 | `docs/posix/utilities/exit.html` | `src/builtin.rs`, `src/shell.rs` | implemented with remaining edge review | Basic status parsing and shell termination exist. |
-| `docs/posix/utilities/export.html` | `src/builtin.rs`, `src/shell.rs` | partial | Variable export exists. Full formatting and option behavior remains to be tightened. |
+| `docs/posix/utilities/export.html` | `src/builtin.rs`, `src/shell.rs` | partial | Variable export exists and `-p` now emits shell-reinput-safe quoting for exported names, including unset exported names. Remaining review is around unspecified no-operand behavior and finer special-builtin diagnostics. |
 | `docs/posix/utilities/fg.html` | `src/builtin.rs`, `src/shell.rs` | partial | Basic foreground wait path exists. tty foreground handoff and output details remain open. |
 | `docs/posix/utilities/jobs.html` | `src/builtin.rs`, `src/shell.rs` | partial | Job table printing exists, but POSIX output detail and state fidelity remain incomplete. |
-| `docs/posix/utilities/pwd.html` | `src/builtin.rs` | partial | Builtin exists. Physical/logical mode distinctions are not yet documented as complete. |
+| `docs/posix/utilities/pwd.html` | `src/builtin.rs` | partial | Builtin now parses `-L`/`-P` and prefers a valid logical `PWD` for the default logical mode. `cd` still does not preserve symlink-logical `PWD` state with full POSIX fidelity. |
 | `docs/posix/utilities/read.html` | `src/builtin.rs`, `src/shell.rs` | partial | Intrinsic builtin now reads from standard input into current-shell variables, supports `-r` and `-d`, distinguishes EOF from error, and applies `IFS`-driven assignment splitting. Multi-byte and some interactive prompt edge semantics still need tightening against the utility page. |
-| `docs/posix/utilities/readonly.html` | `src/builtin.rs`, `src/shell.rs` | partial | Marking variables readonly exists. Full utility output behavior remains to be tightened. |
+| `docs/posix/utilities/readonly.html` | `src/builtin.rs`, `src/shell.rs` | partial | Marking variables readonly exists and `-p` now emits shell-reinput-safe quoting for readonly names, including unset readonly names. Remaining work is finer special-builtin error handling review. |
 | `docs/posix/utilities/return.html` | `src/builtin.rs`, `src/exec.rs`, `src/shell.rs` | implemented with remaining edge review | Current-shell function return semantics exist. |
 | `docs/posix/utilities/set.html` | `src/builtin.rs`, `src/shell.rs`, `src/expand.rs`, `src/exec.rs` | partial | Positional-parameter handling and `-C`/`+C`, `-f`/`+f` exist. Most option surface is still missing. |
 | `docs/posix/utilities/shift.html` | `src/builtin.rs`, `src/shell.rs` | implemented with remaining edge review | Implemented. |
@@ -121,7 +121,7 @@ This document maps the POSIX shell requirements mirrored under `docs/posix/` to 
 | `docs/posix/utilities/trap.html` | `src/builtin.rs` | placeholder | Stub only; no real trap registration, output formatting, or eval semantics yet. |
 | `docs/posix/utilities/umask.html` | `src/builtin.rs`, `src/sys.rs` | partial | Builtin now reads and updates the current shell umask, supports octal masks, `-S` symbolic output, and a useful subset of symbolic mask operands. Full chmod-style symbolic surface still needs review. |
 | `docs/posix/utilities/unalias.html` | `src/builtin.rs` | partial | Builtin exists; option surface is not implemented. |
-| `docs/posix/utilities/unset.html` | `src/builtin.rs`, `src/shell.rs` | partial | Variable and alias removal exists. Full option distinctions are not implemented. |
+| `docs/posix/utilities/unset.html` | `src/builtin.rs`, `src/shell.rs` | partial | Variable unsetting now supports `-v`, function removal supports `-f`, and readonly-variable failures return a non-zero status without treating missing names as errors. Special-parameter handling and unspecified no-option function interactions still need review. |
 | `docs/posix/utilities/wait.html` | `src/builtin.rs`, `src/shell.rs`, `src/sys.rs` | partial | Waiting by internal job id and wait-all exist. Full POSIX `wait` semantics still need deeper `waitpid` integration. |
 
 ## Interactive Behavior, Job Control, And Signals

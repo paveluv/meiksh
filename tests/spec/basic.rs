@@ -80,6 +80,46 @@ fn export_visible_to_child() {
 }
 
 #[test]
+fn command_builtin_reports_and_executes_posix_like_lookups() {
+    let output = Command::new(meiksh())
+        .args([
+            "-c",
+            "printf() { echo bad; }; alias ll='printf alias'; command printf ok; command printf '\\n'; command -v export; command -V export; command -v ll; command -V if",
+        ])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<_> = stdout.lines().collect();
+    assert_eq!(lines[0], "ok");
+    assert_eq!(lines[1], "export");
+    assert!(lines[2].contains("export is a special built-in utility"));
+    assert_eq!(lines[3], "ll='printf alias'");
+    assert!(lines[4].contains("if is a reserved word"));
+    assert!(!stdout.contains("bad"));
+}
+
+#[test]
+fn export_readonly_unset_and_pwd_support_listing_and_options() {
+    let output = Command::new(meiksh())
+        .args([
+            "-c",
+            "export VALUE='a b' ONLY; readonly LOCK='x y' FLAG; f() { :; }; export -p; readonly -p; unset -f f; unset -v VALUE; command -V f; printf 'status=%s\\n' \"$?\"; pwd -L; pwd -P",
+        ])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<_> = stdout.lines().collect();
+    assert!(lines.contains(&"export ONLY"));
+    assert!(lines.contains(&"export VALUE='a b'"));
+    assert!(lines.contains(&"readonly FLAG"));
+    assert!(lines.contains(&"readonly LOCK='x y'"));
+    assert!(lines.contains(&"status=1"));
+    assert_eq!(lines[lines.len() - 2], lines[lines.len() - 1]);
+}
+
+#[test]
 fn read_builtin_assigns_variables_in_current_shell() {
     let output = run_meiksh_with_stdin(
         "read first second; STATUS=$?; printf %s \"$STATUS|$first|$second\"",

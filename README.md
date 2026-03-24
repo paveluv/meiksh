@@ -23,10 +23,11 @@ The current semantic target is POSIX Issue 8, with Issue 7 behavior still tracke
 - context-sensitive `!` pipeline negation
 - parameter expansion, command substitution, arithmetic expansion, field splitting, pathname expansion, and here-documents
 - current-shell redirections for builtins and compound commands, including numeric fd forms
-- a growing set of POSIX builtins such as `alias`, `bg`, `break`, `cd`, `command`, `continue`, `.`, `eval`, `exec`, `exit`, `export`, `fg`, `jobs`, `readonly`, `return`, `set`, `shift`, `unalias`, `unset`, and `wait`
+- a growing set of POSIX builtins such as `alias`, `bg`, `break`, `cd`, `command`, `continue`, `.`, `eval`, `exec`, `exit`, `export`, `fg`, `jobs`, `pwd`, `read`, `readonly`, `return`, `set`, `shift`, `times`, `umask`, `unalias`, `unset`, and `wait`
+- utility-specific progress on recent builtin fidelity work, including parser-aware alias behavior, `command -p/-v/-V`, `pwd -L/-P`, `export -p`, `readonly -p`, `unset -f/-v`, intrinsic `read`, and syscall-backed `times` and `umask`
 - interactive startup via `ENV`, prompt handling, simple history, and basic job tracking
 
-The project does **not** yet claim full POSIX conformance. Remaining gaps are tracked in `docs/spec-matrix.md`, with the largest open areas currently around remaining reserved-word grammar edge cases, unfinished expansion corners, `trap`, broader `set` option coverage, and full job-control/tty semantics.
+The project does **not** yet claim full POSIX conformance. Remaining gaps are tracked in `docs/spec-matrix.md`, with the largest open areas currently around remaining reserved-word grammar edge cases, `trap`, broader `set` option coverage, and full job-control/tty semantics.
 
 ## Repository Layout
 
