@@ -203,6 +203,38 @@ pub fn parse_with_aliases(
         .parse_program_until(false, &[], false)
 }
 
+pub struct ParseSession {
+    parser: Parser,
+}
+
+impl ParseSession {
+    pub fn new(source: &str) -> Result<Self, ParseError> {
+        let tokenized = tokenize(source)?;
+        Ok(Self {
+            parser: Parser::new(tokenized.tokens, tokenized.here_docs, HashMap::new()),
+        })
+    }
+
+    pub fn next_item(
+        &mut self,
+        aliases: &HashMap<String, String>,
+    ) -> Result<Option<ListItem>, ParseError> {
+        self.parser.aliases = aliases.clone();
+        self.parser.skip_separators();
+        self.parser.expand_alias_at_command_start()?;
+        if self.parser.is_eof() {
+            return Ok(None);
+        }
+        let and_or = self.parser.parse_and_or()?;
+        let asynchronous = self.parser.consume_amp();
+        self.parser.skip_separators();
+        Ok(Some(ListItem {
+            and_or,
+            asynchronous,
+        }))
+    }
+}
+
 fn tokenize(source: &str) -> Result<Tokenized, ParseError> {
     let chars: Vec<char> = source.chars().collect();
     let mut tokens = Vec::new();
@@ -1470,6 +1502,28 @@ mod tests {
             .expand_alias_after_blank_in_simple_command()
             .expect("clear stale alias marker");
         assert_eq!(parser.alias_expand_next_word_at, None);
+    }
+
+    #[test]
+    fn parse_session_uses_updated_aliases_between_items() {
+        let mut session = ParseSession::new("alias setok='printf ok'; setok").expect("session");
+        let first = session.next_item(&HashMap::new()).expect("first item").expect("some item");
+        assert!(matches!(
+            first.and_or.first.commands[0],
+            Command::Simple(_)
+        ));
+
+        let second = session
+            .next_item(&HashMap::from([(String::from("setok"), String::from("printf ok"))]))
+            .expect("second item")
+            .expect("some item");
+        assert!(matches!(
+            &second.and_or.first.commands[0],
+            Command::Simple(simple)
+                if simple.words.iter().map(|word| word.raw.as_str()).collect::<Vec<_>>() == vec!["printf", "ok"]
+        ));
+
+        assert!(session.next_item(&HashMap::new()).expect("eof").is_none());
     }
 
     #[test]

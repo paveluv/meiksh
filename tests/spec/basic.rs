@@ -241,6 +241,23 @@ fn negated_pipeline_flips_status() {
 }
 
 #[test]
+fn aliases_defined_earlier_in_same_source_affect_later_commands() {
+    let simple = Command::new(meiksh())
+        .args(["-c", "alias say='printf ok'; say"])
+        .output()
+        .expect("run meiksh");
+    assert!(simple.status.success());
+    assert_eq!(String::from_utf8_lossy(&simple.stdout), "ok");
+
+    let reserved = Command::new(meiksh())
+        .args(["-c", "alias cond='if'; cond true; then printf yes; fi"])
+        .output()
+        .expect("run meiksh");
+    assert!(reserved.status.success());
+    assert_eq!(String::from_utf8_lossy(&reserved.stdout), "yes");
+}
+
+#[test]
 fn executes_here_documents() {
     let output = Command::new(meiksh())
         .args(["-c", "VALUE=world; cat <<EOF\nhello $VALUE\nEOF\n"])
