@@ -824,6 +824,12 @@ mod tests {
             .expect("run reserved-word alias");
         assert_eq!(status, 0);
         assert_eq!(shell.get_var("BRANCH").as_deref(), Some("hit"));
+
+        shell.aliases.insert("chain".into(), "eval ".into());
+        shell.aliases.insert("word".into(), "VALUE=chain".into());
+        let status = shell.execute_string("chain word").expect("run blank alias chain");
+        assert_eq!(status, 0);
+        assert_eq!(shell.get_var("VALUE").as_deref(), Some("chain"));
     }
 
     #[test]

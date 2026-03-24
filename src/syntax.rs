@@ -608,6 +608,8 @@ struct Parser {
     tokens: Vec<Token>,
     here_docs: VecDeque<HereDoc>,
     aliases: HashMap<String, String>,
+    alias_expand_next_word_at: Option<usize>,
+    alias_expansions_remaining: usize,
     index: usize,
 }
 
@@ -617,6 +619,8 @@ impl Parser {
             tokens,
             here_docs,
             aliases,
+            alias_expand_next_word_at: None,
+            alias_expansions_remaining: 1024,
             index: 0,
         }
     }
@@ -890,6 +894,7 @@ impl Parser {
         let mut command = SimpleCommand::default();
 
         loop {
+            self.expand_alias_after_blank_in_simple_command()?;
             if let Some(redirection) = self.try_parse_redirection()? {
                 command.redirections.push(redirection);
                 continue;
@@ -1048,22 +1053,52 @@ impl Parser {
     }
 
     fn expand_alias_at_command_start(&mut self) -> Result<(), ParseError> {
-        let Some(TokenKind::Word(text)) = self.tokens.get(self.index).map(|token| &token.kind) else {
+        let _ = self.expand_alias_at_current_token()?;
+        Ok(())
+    }
+
+    fn expand_alias_after_blank_in_simple_command(&mut self) -> Result<(), ParseError> {
+        let Some(pending_index) = self.alias_expand_next_word_at else {
             return Ok(());
         };
-        if !is_alias_word(text) {
+        if self.index < pending_index {
             return Ok(());
         }
-        let Some(replacement) = self.aliases.get(text).cloned() else {
+        self.alias_expand_next_word_at = None;
+        if self.index != pending_index {
             return Ok(());
+        }
+        let _ = self.expand_alias_at_current_token()?;
+        Ok(())
+    }
+
+    fn expand_alias_at_current_token(&mut self) -> Result<bool, ParseError> {
+        let Some(TokenKind::Word(text)) = self.tokens.get(self.index).map(|token| &token.kind) else {
+            return Ok(false);
         };
+        if !is_alias_word(text) {
+            return Ok(false);
+        }
+        let Some(replacement) = self.aliases.get(text).cloned() else {
+            return Ok(false);
+        };
+        if self.alias_expansions_remaining == 0 {
+            return Err(ParseError {
+                message: "alias expansion too deep".to_string(),
+            });
+        };
+        self.alias_expansions_remaining -= 1;
         let tokenized = tokenize(&replacement)?;
         let mut replacement_tokens = tokenized.tokens;
         if matches!(replacement_tokens.last().map(|token| &token.kind), Some(TokenKind::Eof)) {
             replacement_tokens.pop();
         }
+        let inserted_len = replacement_tokens.len();
         self.tokens.splice(self.index..=self.index, replacement_tokens);
-        Ok(())
+        if alias_has_trailing_blank(&replacement) {
+            self.alias_expand_next_word_at = Some(self.index + inserted_len);
+        }
+        Ok(true)
     }
 
     fn try_peek_function_name(&self) -> Option<String> {
@@ -1135,6 +1170,10 @@ fn split_assignment(input: &str) -> Option<(String, String)> {
 
 fn is_alias_word(word: &str) -> bool {
     !word.is_empty() && !word.chars().any(|ch| matches!(ch, '\'' | '"' | '\\'))
+}
+
+fn alias_has_trailing_blank(alias: &str) -> bool {
+    matches!(alias.chars().last(), Some(' ' | '\t'))
 }
 
 fn is_name(name: &str) -> bool {
@@ -1401,6 +1440,39 @@ mod tests {
     }
 
     #[test]
+    fn alias_helper_paths_cover_pending_and_depth_guard() {
+        let mut parser = Parser::new(
+            vec![Token { kind: TokenKind::Word("word".into()) }, Token { kind: TokenKind::Eof }],
+            VecDeque::new(),
+            HashMap::from([(String::from("word"), String::from("ok"))]),
+        );
+        parser.alias_expand_next_word_at = Some(0);
+        parser.expand_alias_after_blank_in_simple_command().expect("expand pending alias");
+        assert!(matches!(parser.peek_kind(), TokenKind::Word(text) if text == "ok"));
+
+        let mut parser = Parser::new(
+            vec![Token { kind: TokenKind::Word("loop".into()) }, Token { kind: TokenKind::Eof }],
+            VecDeque::new(),
+            HashMap::from([(String::from("loop"), String::from("loop "))]),
+        );
+        parser.alias_expansions_remaining = 0;
+        let error = parser.expand_alias_at_current_token().expect_err("depth guard");
+        assert_eq!(error.message, "alias expansion too deep");
+
+        let mut parser = Parser::new(
+            vec![Token { kind: TokenKind::Word("tail".into()) }, Token { kind: TokenKind::Eof }],
+            VecDeque::new(),
+            HashMap::new(),
+        );
+        parser.index = 1;
+        parser.alias_expand_next_word_at = Some(0);
+        parser
+            .expand_alias_after_blank_in_simple_command()
+            .expect("clear stale alias marker");
+        assert_eq!(parser.alias_expand_next_word_at, None);
+    }
+
+    #[test]
     fn aliases_and_standalone_bang_are_context_sensitive() {
         let mut aliases = HashMap::new();
         aliases.insert("say".to_string(), "printf hi".to_string());
@@ -1432,6 +1504,33 @@ mod tests {
 
         let program = parse("! true").expect("parse negation");
         assert!(program.items[0].and_or.first.negated);
+    }
+
+    #[test]
+    fn trailing_blank_aliases_expand_next_simple_command_word() {
+        let mut aliases = HashMap::new();
+        aliases.insert("say".to_string(), "printf %s ".to_string());
+        aliases.insert("word".to_string(), "ok".to_string());
+        let program = parse_with_aliases("say word", &aliases).expect("parse chained alias");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(simple)
+                if simple.words.iter().map(|word| word.raw.as_str()).collect::<Vec<_>>() == vec!["printf", "%s", "ok"]
+        ));
+    }
+
+    #[test]
+    fn self_referential_aliases_do_not_loop_indefinitely() {
+        let mut aliases = HashMap::new();
+        aliases.insert("loop".to_string(), "loop ".to_string());
+        let program = parse_with_aliases("loop ok", &aliases).expect("self alias");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(simple)
+                if simple.words.iter().map(|word| word.raw.as_str()).collect::<Vec<_>>() == vec!["loop", "ok"]
+        ));
+        assert!(alias_has_trailing_blank("value "));
+        assert!(!alias_has_trailing_blank("value"));
     }
 
     #[test]
