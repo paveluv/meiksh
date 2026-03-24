@@ -1,9 +1,13 @@
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
 use std::io;
-use std::os::raw::{c_char, c_int};
+use std::os::raw::{c_char, c_int, c_long, c_ushort, c_ulong};
 
 pub type Pid = c_int;
+pub type FileModeMask = c_ushort;
+type ClockTicks = c_ulong;
+
+const SC_CLK_TCK: c_int = 3;
 
 pub const STDIN_FILENO: c_int = 0;
 pub const STDOUT_FILENO: c_int = 1;
@@ -23,7 +27,19 @@ unsafe extern "C" {
     fn dup(fd: c_int) -> c_int;
     fn dup2(oldfd: c_int, newfd: c_int) -> c_int;
     fn close(fd: c_int) -> c_int;
+    fn umask(cmask: FileModeMask) -> FileModeMask;
+    fn times(buffer: *mut Tms) -> ClockTicks;
+    fn sysconf(name: c_int) -> c_long;
     fn execvp(file: *const c_char, argv: *const *const c_char) -> c_int;
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+struct Tms {
+    tms_utime: ClockTicks,
+    tms_stime: ClockTicks,
+    tms_cutime: ClockTicks,
+    tms_cstime: ClockTicks,
 }
 
 #[derive(Clone, Copy)]
@@ -39,6 +55,9 @@ struct Syscalls {
     dup: fn(c_int) -> c_int,
     dup2: fn(c_int, c_int) -> c_int,
     close: fn(c_int) -> c_int,
+    umask: fn(FileModeMask) -> FileModeMask,
+    times: fn(*mut Tms) -> ClockTicks,
+    sysconf: fn(c_int) -> c_long,
     execvp: fn(*const c_char, *const *const c_char) -> c_int,
 }
 
@@ -86,6 +105,18 @@ fn default_close(fd: c_int) -> c_int {
     unsafe { close(fd) }
 }
 
+fn default_umask(cmask: FileModeMask) -> FileModeMask {
+    unsafe { umask(cmask) }
+}
+
+fn default_times(buffer: *mut Tms) -> ClockTicks {
+    unsafe { times(buffer) }
+}
+
+fn default_sysconf(name: c_int) -> c_long {
+    unsafe { sysconf(name) }
+}
+
 fn default_syscalls() -> Syscalls {
     Syscalls {
         getpid: default_getpid,
@@ -99,6 +130,9 @@ fn default_syscalls() -> Syscalls {
         dup: default_dup,
         dup2: default_dup2,
         close: default_close,
+        umask: default_umask,
+        times: default_times,
+        sysconf: default_sysconf,
         execvp: |file, argv| unsafe { execvp(file, argv) },
     }
 }
@@ -142,6 +176,22 @@ pub(crate) fn with_fd_ops_for_test<T>(
         dup: dup_fn,
         dup2: dup2_fn,
         close: close_fn,
+        ..default_syscalls()
+    };
+    tests::with_test_syscalls(syscalls, f)
+}
+
+#[cfg(test)]
+pub(crate) fn with_times_error_for_test<T>(f: impl FnOnce() -> T) -> T {
+    fn fake_times(_buffer: *mut Tms) -> ClockTicks {
+        ClockTicks::MAX
+    }
+    fn fake_sysconf(_name: c_int) -> c_long {
+        60
+    }
+    let syscalls = Syscalls {
+        times: fake_times,
+        sysconf: fake_sysconf,
         ..default_syscalls()
     };
     tests::with_test_syscalls(syscalls, f)
@@ -242,6 +292,47 @@ pub fn close_fd(fd: c_int) -> io::Result<()> {
     let result = (syscalls().close)(fd);
     if result == 0 {
         Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProcessTimes {
+    pub user_ticks: u64,
+    pub system_ticks: u64,
+    pub child_user_ticks: u64,
+    pub child_system_ticks: u64,
+}
+
+pub fn current_umask() -> FileModeMask {
+    let mask = (syscalls().umask)(0);
+    (syscalls().umask)(mask);
+    mask & 0o777
+}
+
+pub fn set_umask(mask: FileModeMask) -> FileModeMask {
+    (syscalls().umask)(mask & 0o777) & 0o777
+}
+
+pub fn process_times() -> io::Result<ProcessTimes> {
+    let mut raw = Tms::default();
+    let result = (syscalls().times)(&mut raw);
+    if result == ClockTicks::MAX {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(ProcessTimes {
+        user_ticks: raw.tms_utime as u64,
+        system_ticks: raw.tms_stime as u64,
+        child_user_ticks: raw.tms_cutime as u64,
+        child_system_ticks: raw.tms_cstime as u64,
+    })
+}
+
+pub fn clock_ticks_per_second() -> io::Result<u64> {
+    let result = (syscalls().sysconf)(SC_CLK_TCK);
+    if result > 0 {
+        Ok(result as u64)
     } else {
         Err(io::Error::last_os_error())
     }
@@ -450,6 +541,21 @@ mod tests {
         fn fake_close(_fd: c_int) -> c_int {
             0
         }
+        fn fake_umask(mask: FileModeMask) -> FileModeMask {
+            mask
+        }
+        fn fake_times(buffer: *mut Tms) -> ClockTicks {
+            unsafe {
+                (*buffer).tms_utime = 10;
+                (*buffer).tms_stime = 20;
+                (*buffer).tms_cutime = 30;
+                (*buffer).tms_cstime = 40;
+            }
+            99
+        }
+        fn fake_sysconf(_name: c_int) -> c_long {
+            60
+        }
         fn fake_execvp(_file: *const c_char, _argv: *const *const c_char) -> c_int {
             0
         }
@@ -466,6 +572,9 @@ mod tests {
             dup: fake_dup,
             dup2: fake_dup2,
             close: fake_close,
+            umask: fake_umask,
+            times: fake_times,
+            sysconf: fake_sysconf,
             execvp: fake_execvp,
         };
 
@@ -484,6 +593,18 @@ mod tests {
             assert_eq!(duplicate_fd_to_new(4).expect("dup"), 104);
             assert!(duplicate_fd(4, 5).is_ok());
             assert!(close_fd(4).is_ok());
+            assert_eq!(current_umask(), 0);
+            assert_eq!(set_umask(0o027), 0o027);
+            assert_eq!(
+                process_times().expect("times"),
+                ProcessTimes {
+                    user_ticks: 10,
+                    system_ticks: 20,
+                    child_user_ticks: 30,
+                    child_system_ticks: 40,
+                }
+            );
+            assert_eq!(clock_ticks_per_second().expect("ticks"), 60);
             assert!(exec_replace("echo", &["hello".to_string(), "world".to_string()]).is_ok());
         });
     }
@@ -528,6 +649,15 @@ mod tests {
         fn fake_close(_fd: c_int) -> c_int {
             -1
         }
+        fn fake_umask(mask: FileModeMask) -> FileModeMask {
+            mask
+        }
+        fn fake_times(_buffer: *mut Tms) -> ClockTicks {
+            ClockTicks::MAX
+        }
+        fn fake_sysconf(_name: c_int) -> c_long {
+            -1
+        }
         fn fake_execvp(_file: *const c_char, _argv: *const *const c_char) -> c_int {
             -1
         }
@@ -544,6 +674,9 @@ mod tests {
             dup: fake_dup,
             dup2: fake_dup2,
             close: fake_close,
+            umask: fake_umask,
+            times: fake_times,
+            sysconf: fake_sysconf,
             execvp: fake_execvp,
         };
 
@@ -558,6 +691,8 @@ mod tests {
             assert!(duplicate_fd_to_new(1).is_err());
             assert!(duplicate_fd(1, 2).is_err());
             assert!(close_fd(1).is_err());
+            assert!(process_times().is_err());
+            assert!(clock_ticks_per_second().is_err());
             assert!(exec_replace("echo", &["hi".to_string()]).is_err());
             assert!(wait_pid(1, false).is_err());
         });

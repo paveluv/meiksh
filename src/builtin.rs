@@ -1,4 +1,5 @@
 use std::env;
+use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
 use crate::shell::{Shell, ShellError};
@@ -36,6 +37,7 @@ pub fn run(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellEr
         "fg" => fg(shell, argv)?,
         "bg" => bg(shell, argv)?,
         "wait" => wait(shell, argv)?,
+        "read" => read(shell, argv)?,
         "alias" => alias(shell, argv)?,
         "unalias" => unalias(shell, argv)?,
         "return" => return_builtin(shell, argv)?,
@@ -43,6 +45,7 @@ pub fn run(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellEr
         "continue" => continue_builtin(shell, argv)?,
         "times" => times(),
         "trap" => trap(shell, argv),
+        "umask" => umask(argv)?,
         "command" => command(shell, argv)?,
         _ => BuiltinOutcome::Status(127),
     };
@@ -69,6 +72,7 @@ pub fn is_builtin(name: &str) -> bool {
             | "fg"
             | "jobs"
             | "pwd"
+            | "read"
             | "readonly"
             | "return"
             | "set"
@@ -77,6 +81,7 @@ pub fn is_builtin(name: &str) -> bool {
             | "trap"
             | "true"
             | "unalias"
+            | "umask"
             | "unset"
             | "wait"
     )
@@ -337,6 +342,237 @@ fn wait(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
     Ok(BuiltinOutcome::Status(status))
 }
 
+#[derive(Clone, Copy)]
+struct ReadOptions {
+    raw: bool,
+    delimiter: u8,
+}
+
+fn read(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
+    let mut stdin = io::stdin().lock();
+    read_with_input(shell, argv, &mut stdin)
+}
+
+fn read_with_input<R: Read>(
+    shell: &mut Shell,
+    argv: &[String],
+    input: &mut R,
+) -> Result<BuiltinOutcome, ShellError> {
+    let Some((options, vars)) = parse_read_options(argv) else {
+        eprintln!("read: invalid usage");
+        return Ok(BuiltinOutcome::Status(2));
+    };
+    if vars.is_empty() {
+        eprintln!("read: variable name required");
+        return Ok(BuiltinOutcome::Status(2));
+    }
+
+    let (pieces, hit_delimiter) = match read_logical_line(shell, options, input) {
+        Ok(result) => result,
+        Err(error) => {
+            eprintln!("read: {error}");
+            return Ok(BuiltinOutcome::Status(2));
+        }
+    };
+    let values = split_read_assignments(&pieces, &vars, shell.get_var("IFS"));
+    for (name, value) in vars.iter().zip(values) {
+        if let Err(error) = shell.set_var(name, value) {
+            eprintln!("read: {}", error.message);
+            return Ok(BuiltinOutcome::Status(2));
+        }
+    }
+    Ok(BuiltinOutcome::Status(if hit_delimiter { 0 } else { 1 }))
+}
+
+fn parse_read_options(argv: &[String]) -> Option<(ReadOptions, Vec<String>)> {
+    let mut options = ReadOptions {
+        raw: false,
+        delimiter: b'\n',
+    };
+    let mut index = 1usize;
+    while let Some(arg) = argv.get(index) {
+        match arg.as_str() {
+            "--" => {
+                index += 1;
+                break;
+            }
+            "-r" => {
+                options.raw = true;
+                index += 1;
+            }
+            "-d" => {
+                let delim = argv.get(index + 1)?;
+                options.delimiter = if delim.is_empty() {
+                    0
+                } else if delim.len() == 1 {
+                    delim.as_bytes()[0]
+                } else {
+                    return None;
+                };
+                index += 2;
+            }
+            _ if arg.starts_with('-') && arg != "-" => return None,
+            _ => break,
+        }
+    }
+    Some((options, argv[index..].to_vec()))
+}
+
+fn read_logical_line<R: Read>(
+    shell: &Shell,
+    options: ReadOptions,
+    input: &mut R,
+) -> io::Result<(Vec<(String, bool)>, bool)> {
+    let mut pieces = Vec::new();
+    let mut current = String::new();
+    let mut current_quoted = false;
+
+    loop {
+        let mut byte = [0u8; 1];
+        let count = input.read(&mut byte)?;
+        if count == 0 {
+            push_read_piece(&mut pieces, &mut current, current_quoted);
+            return Ok((pieces, false));
+        }
+        let ch = byte[0];
+        if !options.raw && ch == b'\\' {
+            let count = input.read(&mut byte)?;
+            if count == 0 {
+                current.push('\\');
+                push_read_piece(&mut pieces, &mut current, current_quoted);
+                return Ok((pieces, false));
+            }
+            let escaped = byte[0];
+            if escaped == b'\n' || escaped == options.delimiter {
+                push_read_piece(&mut pieces, &mut current, current_quoted);
+                current_quoted = false;
+                if shell.options.force_interactive
+                    || (sys::is_interactive_fd(sys::STDIN_FILENO) && sys::is_interactive_fd(sys::STDERR_FILENO))
+                {
+                    let prompt = shell.get_var("PS2").unwrap_or_else(|| "> ".to_string());
+                    eprint!("{prompt}");
+                    let _ = io::stderr().flush();
+                }
+                continue;
+            }
+            push_read_piece(&mut pieces, &mut current, current_quoted);
+            current_quoted = true;
+            current.push(escaped as char);
+            continue;
+        }
+        if ch == options.delimiter {
+            push_read_piece(&mut pieces, &mut current, current_quoted);
+            return Ok((pieces, true));
+        }
+        if current_quoted {
+            push_read_piece(&mut pieces, &mut current, current_quoted);
+            current_quoted = false;
+        }
+        current.push(ch as char);
+    }
+}
+
+fn push_read_piece(pieces: &mut Vec<(String, bool)>, current: &mut String, quoted: bool) {
+    if current.is_empty() {
+        return;
+    }
+    if let Some((last, last_quoted)) = pieces.last_mut() {
+        if *last_quoted == quoted {
+            last.push_str(current);
+            current.clear();
+            return;
+        }
+    }
+    pieces.push((std::mem::take(current), quoted));
+}
+
+fn split_read_assignments(
+    pieces: &[(String, bool)],
+    vars: &[String],
+    ifs_value: Option<String>,
+) -> Vec<String> {
+    if vars.is_empty() {
+        return Vec::new();
+    }
+    let ifs = ifs_value.unwrap_or_else(|| " \t\n".to_string());
+    if ifs.is_empty() {
+        let mut values = vec![flatten_read_pieces(pieces)];
+        values.resize(vars.len(), String::new());
+        return values;
+    }
+
+    let ifs_ws: Vec<char> = ifs.chars().filter(|ch| matches!(ch, ' ' | '\t' | '\n')).collect();
+    let ifs_other: Vec<char> = ifs.chars().filter(|ch| !matches!(ch, ' ' | '\t' | '\n')).collect();
+    let chars = flatten_read_chars(pieces);
+    if vars.len() == 1 {
+        return vec![trim_read_ifs_whitespace(&chars, &ifs_ws)];
+    }
+
+    let mut values = Vec::new();
+    let mut index = 0usize;
+    skip_read_ifs_whitespace(&chars, &ifs_ws, &mut index);
+    while index < chars.len() && values.len() + 1 < vars.len() {
+        let mut current = String::new();
+        loop {
+            if index >= chars.len() {
+                values.push(current);
+                break;
+            }
+            let (ch, quoted) = chars[index];
+            if !quoted && ifs_other.contains(&ch) {
+                values.push(current);
+                index += 1;
+                skip_read_ifs_whitespace(&chars, &ifs_ws, &mut index);
+                break;
+            }
+            if !quoted && ifs_ws.contains(&ch) {
+                debug_assert!(!current.is_empty(), "leading IFS whitespace should already be skipped");
+                values.push(current);
+                skip_read_ifs_whitespace(&chars, &ifs_ws, &mut index);
+                break;
+            }
+            current.push(ch);
+            index += 1;
+        }
+    }
+
+    values.push(trim_read_ifs_whitespace(&chars[index..], &ifs_ws));
+    values.resize(vars.len(), String::new());
+    values
+}
+
+fn flatten_read_pieces(pieces: &[(String, bool)]) -> String {
+    pieces.iter().map(|(part, _)| part).cloned().collect()
+}
+
+fn flatten_read_chars(pieces: &[(String, bool)]) -> Vec<(char, bool)> {
+    let mut chars = Vec::new();
+    for (text, quoted) in pieces {
+        for ch in text.chars() {
+            chars.push((ch, *quoted));
+        }
+    }
+    chars
+}
+
+fn skip_read_ifs_whitespace(chars: &[(char, bool)], ifs_ws: &[char], index: &mut usize) {
+    while *index < chars.len() && !chars[*index].1 && ifs_ws.contains(&chars[*index].0) {
+        *index += 1;
+    }
+}
+
+fn trim_read_ifs_whitespace(chars: &[(char, bool)], ifs_ws: &[char]) -> String {
+    let mut start = 0usize;
+    let mut end = chars.len();
+    while start < end && !chars[start].1 && ifs_ws.contains(&chars[start].0) {
+        start += 1;
+    }
+    while end > start && !chars[end - 1].1 && ifs_ws.contains(&chars[end - 1].0) {
+        end -= 1;
+    }
+    chars[start..end].iter().map(|(ch, _)| *ch).collect()
+}
+
 fn alias(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     if argv.len() == 1 {
         let mut items: Vec<_> = shell.aliases.iter().collect();
@@ -385,9 +621,25 @@ fn unalias(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellEr
 }
 
 fn times() -> BuiltinOutcome {
-    println!("0m0.000s 0m0.000s");
-    println!("0m0.000s 0m0.000s");
-    BuiltinOutcome::Status(0)
+    match (sys::process_times(), sys::clock_ticks_per_second()) {
+        (Ok(times), Ok(ticks_per_second)) => {
+            println!(
+                "{} {}",
+                format_times_value(times.user_ticks, ticks_per_second),
+                format_times_value(times.system_ticks, ticks_per_second)
+            );
+            println!(
+                "{} {}",
+                format_times_value(times.child_user_ticks, ticks_per_second),
+                format_times_value(times.child_system_ticks, ticks_per_second)
+            );
+            BuiltinOutcome::Status(0)
+        }
+        (Err(error), _) | (_, Err(error)) => {
+            eprintln!("times: {error}");
+            BuiltinOutcome::Status(1)
+        }
+    }
 }
 
 fn trap(_shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
@@ -395,6 +647,192 @@ fn trap(_shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
         return BuiltinOutcome::Status(0);
     }
     BuiltinOutcome::Status(0)
+}
+
+fn format_times_value(ticks: u64, ticks_per_second: u64) -> String {
+    let total_seconds = ticks as f64 / ticks_per_second as f64;
+    let minutes = (total_seconds / 60.0).floor() as u64;
+    let seconds = total_seconds - (minutes * 60) as f64;
+    format!("{minutes}m{seconds:.2}s")
+}
+
+fn umask(argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
+    let mut symbolic_output = false;
+    let mut index = 1usize;
+    while let Some(arg) = argv.get(index) {
+        match arg.as_str() {
+            "-S" => {
+                symbolic_output = true;
+                index += 1;
+            }
+            "--" => {
+                index += 1;
+                break;
+            }
+            _ if arg.starts_with('-') && arg != "-" => {
+                eprintln!("umask: invalid option: {arg}");
+                return Ok(BuiltinOutcome::Status(1));
+            }
+            _ => break,
+        }
+    }
+
+    let current = sys::current_umask() as u16;
+    if index == argv.len() {
+        if symbolic_output {
+            println!("{}", format_umask_symbolic(current));
+        } else {
+            println!("{current:04o}");
+        }
+        return Ok(BuiltinOutcome::Status(0));
+    }
+    if index + 1 != argv.len() {
+        eprintln!("umask: too many arguments");
+        return Ok(BuiltinOutcome::Status(1));
+    }
+
+    let Some(mask) = parse_umask_mask(&argv[index], current) else {
+        eprintln!("umask: invalid mask: {}", argv[index]);
+        return Ok(BuiltinOutcome::Status(1));
+    };
+    sys::set_umask(mask as sys::FileModeMask);
+    Ok(BuiltinOutcome::Status(0))
+}
+
+fn parse_umask_mask(mask: &str, current_mask: u16) -> Option<u16> {
+    if !mask.is_empty() && mask.chars().all(|ch| matches!(ch, '0'..='7')) {
+        return u16::from_str_radix(mask, 8).ok().map(|value| value & 0o777);
+    }
+    parse_symbolic_umask(mask, current_mask)
+}
+
+fn parse_symbolic_umask(mask: &str, current_mask: u16) -> Option<u16> {
+    let mut allowed = (!current_mask) & 0o777;
+    for clause in mask.split(',') {
+        if clause.is_empty() {
+            return None;
+        }
+        let (targets, op, perms) = parse_symbolic_clause(clause)?;
+        let perm_bits = symbolic_permission_bits(perms, targets, allowed)?;
+        if op == '+' {
+            allowed |= perm_bits;
+        } else if op == '-' {
+            allowed &= !perm_bits;
+        } else {
+            allowed = (allowed & !targets) | (perm_bits & targets);
+        }
+    }
+    Some((!allowed) & 0o777)
+}
+
+fn parse_symbolic_clause(clause: &str) -> Option<(u16, char, &str)> {
+    let mut split_at = 0usize;
+    for ch in clause.chars() {
+        if matches!(ch, 'u' | 'g' | 'o' | 'a') {
+            split_at += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    let (who_text, rest) = clause.split_at(split_at);
+    let mut rest_chars = rest.chars();
+    let op = rest_chars.next()?;
+    if !matches!(op, '+' | '-' | '=') {
+        return None;
+    }
+    let perms = rest_chars.as_str();
+    Some((parse_symbolic_targets(who_text), op, perms))
+}
+
+fn parse_symbolic_targets(who_text: &str) -> u16 {
+    if who_text.is_empty() {
+        return 0o777;
+    }
+    let mut targets = 0u16;
+    for ch in who_text.chars() {
+        match ch {
+            'u' => targets |= 0o700,
+            'g' => targets |= 0o070,
+            'o' => targets |= 0o007,
+            'a' => targets |= 0o777,
+            _ => {}
+        }
+    }
+    targets
+}
+
+fn symbolic_permission_bits(perms: &str, targets: u16, allowed: u16) -> Option<u16> {
+    let mut bits = 0u16;
+    for ch in perms.chars() {
+        bits |= match ch {
+            'r' => permission_bits_for_targets(targets, 0o444),
+            'w' => permission_bits_for_targets(targets, 0o222),
+            'x' => permission_bits_for_targets(targets, 0o111),
+            'u' => copy_permission_bits(allowed, targets, 0o700),
+            'g' => copy_permission_bits(allowed, targets, 0o070),
+            'o' => copy_permission_bits(allowed, targets, 0o007),
+            _ => return None,
+        };
+    }
+    Some(bits)
+}
+
+fn permission_bits_for_targets(targets: u16, mask: u16) -> u16 {
+    let mut bits = 0u16;
+    if targets & 0o700 != 0 {
+        bits |= mask & 0o700;
+    }
+    if targets & 0o070 != 0 {
+        bits |= mask & 0o070;
+    }
+    if targets & 0o007 != 0 {
+        bits |= mask & 0o007;
+    }
+    bits
+}
+
+fn copy_permission_bits(allowed: u16, targets: u16, source_class: u16) -> u16 {
+    let source = match source_class {
+        0o700 => (allowed & 0o700) >> 6,
+        0o070 => (allowed & 0o070) >> 3,
+        0o007 => allowed & 0o007,
+        _ => 0,
+    };
+    let mut bits = 0u16;
+    if targets & 0o700 != 0 {
+        bits |= source << 6;
+    }
+    if targets & 0o070 != 0 {
+        bits |= source << 3;
+    }
+    if targets & 0o007 != 0 {
+        bits |= source;
+    }
+    bits
+}
+
+fn format_umask_symbolic(mask: u16) -> String {
+    format!(
+        "u={},g={},o={}",
+        symbolic_permissions_for_class(mask, 0o700, 6),
+        symbolic_permissions_for_class(mask, 0o070, 3),
+        symbolic_permissions_for_class(mask, 0o007, 0)
+    )
+}
+
+fn symbolic_permissions_for_class(mask: u16, class_mask: u16, shift: u16) -> String {
+    let allowed = ((!mask) & class_mask) >> shift;
+    let mut result = String::new();
+    if allowed & 0b100 != 0 {
+        result.push('r');
+    }
+    if allowed & 0b010 != 0 {
+        result.push('w');
+    }
+    if allowed & 0b001 != 0 {
+        result.push('x');
+    }
+    result
 }
 
 fn command(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
@@ -436,6 +874,7 @@ mod tests {
     use crate::shell::ShellOptions;
     use std::collections::{BTreeSet, HashMap};
     use std::fs;
+    use std::io::{self, Cursor};
     use std::sync::{Mutex, OnceLock};
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -471,6 +910,8 @@ mod tests {
     fn builtin_registry_knows_core_commands() {
         assert!(is_builtin("cd"));
         assert!(is_builtin("export"));
+        assert!(is_builtin("read"));
+        assert!(is_builtin("umask"));
         assert!(!is_builtin("printf"));
     }
 
@@ -524,6 +965,236 @@ mod tests {
         assert_eq!(format_alias_definition("ll", "ls -l"), "ll='ls -l'");
         assert_eq!(format_alias_definition("sq", "a'b"), "sq='a'\\''b'");
         assert_eq!(format_alias_definition("empty", ""), "empty=''");
+    }
+
+    #[test]
+    fn read_and_umask_helpers_cover_core_parsing_paths() {
+        let (options, vars) = parse_read_options(&[
+            "read".into(),
+            "-r".into(),
+            "-d".into(),
+            ",".into(),
+            "A".into(),
+            "B".into(),
+        ])
+        .expect("read options");
+        assert!(options.raw);
+        assert_eq!(options.delimiter, b',');
+        assert_eq!(vars, vec!["A".to_string(), "B".to_string()]);
+        assert_eq!(
+            parse_read_options(&["read".into(), "-d".into(), "".into(), "NUL".into()])
+                .expect("read nul delim")
+                .0
+                .delimiter,
+            0
+        );
+        assert_eq!(
+            parse_read_options(&["read".into(), "--".into(), "NAME".into()])
+                .expect("read dash dash")
+                .1,
+            vec!["NAME".to_string()]
+        );
+
+        assert_eq!(
+            split_read_assignments(
+                &[("alpha beta gamma".to_string(), false)],
+                &["FIRST".into(), "SECOND".into()],
+                None,
+            ),
+            vec!["alpha".to_string(), "beta gamma".to_string()]
+        );
+        assert_eq!(
+            split_read_assignments(
+                &[("  alpha beta  ".to_string(), false)],
+                &["ONLY".into()],
+                None,
+            ),
+            vec!["alpha beta".to_string()]
+        );
+        assert_eq!(split_read_assignments(&[], &[], None), Vec::<String>::new());
+        assert_eq!(
+            split_read_assignments(
+                &[("alpha beta".to_string(), false)],
+                &["ONE".into(), "TWO".into()],
+                Some(String::new()),
+            ),
+            vec!["alpha beta".to_string(), String::new()]
+        );
+        assert_eq!(
+            split_read_assignments(
+                &[(" \t ".to_string(), false)],
+                &["ONE".into(), "TWO".into()],
+                None,
+            ),
+            vec![String::new(), String::new()]
+        );
+        assert_eq!(
+            split_read_assignments(
+                &[("left,right".to_string(), false)],
+                &["ONE".into(), "TWO".into()],
+                Some(",".into()),
+            ),
+            vec!["left".to_string(), "right".to_string()]
+        );
+        assert_eq!(
+            split_read_assignments(
+                &[("alpha".to_string(), false)],
+                &["ONE".into(), "TWO".into(), "THREE".into()],
+                None,
+            ),
+            vec!["alpha".to_string(), String::new(), String::new()]
+        );
+        assert_eq!(
+            split_read_assignments(
+                &[("alpha,   ".to_string(), false)],
+                &["ONE".into(), "TWO".into(), "THREE".into()],
+                Some(", ".into()),
+            ),
+            vec!["alpha".to_string(), String::new(), String::new()]
+        );
+
+        let mut pieces = Vec::new();
+        let mut empty = String::new();
+        push_read_piece(&mut pieces, &mut empty, false);
+        assert!(pieces.is_empty());
+
+        assert_eq!(parse_umask_mask("077", 0o022), Some(0o077));
+        assert_eq!(parse_umask_mask("g-w", 0o002), Some(0o022));
+        assert_eq!(parse_umask_mask("u=rw,go=r", 0o022), Some(0o133));
+        assert_eq!(parse_umask_mask("a+x", 0o777), Some(0o666));
+        assert_eq!(parse_umask_mask("u=g", 0o022), Some(0o222));
+        assert_eq!(parse_umask_mask("u=o", 0o022), Some(0o222));
+        assert_eq!(format_umask_symbolic(0o022), "u=rwx,g=rx,o=rx");
+        assert_eq!(parse_symbolic_targets("z"), 0);
+        assert_eq!(permission_bits_for_targets(0o070, 0o111), 0o010);
+        assert_eq!(permission_bits_for_targets(0o007, 0o444), 0o004);
+        assert_eq!(copy_permission_bits(0o754, 0o070, 0o070), 0o050);
+        assert_eq!(copy_permission_bits(0o754, 0o007, 0o007), 0o004);
+        assert_eq!(copy_permission_bits(0o754, 0o700, 0), 0);
+        assert_eq!(format_times_value(125, 100), "0m1.25s");
+    }
+
+    #[test]
+    fn read_and_times_error_paths_are_covered() {
+        struct FailingReader;
+        impl Read for FailingReader {
+            fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+                Err(io::Error::other("boom"))
+            }
+        }
+
+        let mut shell = test_shell();
+        assert!(matches!(
+            read_with_input(&mut shell, &["read".into()], &mut Cursor::new(Vec::<u8>::new())).expect("read no vars"),
+            BuiltinOutcome::Status(2)
+        ));
+        assert!(matches!(
+            read_with_input(
+                &mut shell,
+                &["read".into(), "-d".into(), "xx".into(), "NAME".into()],
+                &mut Cursor::new(Vec::<u8>::new()),
+            )
+            .expect("read bad delim"),
+            BuiltinOutcome::Status(2)
+        ));
+        assert!(matches!(
+            read_with_input(
+                &mut shell,
+                &["read".into(), "NAME".into()],
+                &mut FailingReader,
+            )
+            .expect("read io error"),
+            BuiltinOutcome::Status(2)
+        ));
+
+        shell.mark_readonly("LOCKED");
+        assert!(matches!(
+            read_with_input(
+                &mut shell,
+                &["read".into(), "LOCKED".into()],
+                &mut Cursor::new(b"value\n".to_vec()),
+            )
+            .expect("readonly read"),
+            BuiltinOutcome::Status(2)
+        ));
+
+        shell.options.force_interactive = true;
+        shell.env.insert("PS2".into(), "cont> ".into());
+        assert!(matches!(
+            read_with_input(
+                &mut shell,
+                &["read".into(), "JOINED".into()],
+                &mut Cursor::new(b"line\\\ncontinued\n".to_vec()),
+            )
+            .expect("continued read"),
+            BuiltinOutcome::Status(0)
+        ));
+        assert_eq!(shell.get_var("JOINED").as_deref(), Some("linecontinued"));
+
+        shell.options.force_interactive = false;
+        let (pieces, hit_delimiter) = read_logical_line(
+            &shell,
+            ReadOptions { raw: false, delimiter: b'\n' },
+            &mut Cursor::new(b"soft\\\nwrap\n".to_vec()),
+        )
+        .expect("direct read");
+        assert!(hit_delimiter);
+        assert_eq!(flatten_read_pieces(&pieces), "softwrap");
+
+        assert!(matches!(
+            read_with_input(
+                &mut shell,
+                &["read".into(), "ESCAPED".into()],
+                &mut Cursor::new(b"left\\ right\n".to_vec()),
+            )
+            .expect("escaped read"),
+            BuiltinOutcome::Status(0)
+        ));
+        assert_eq!(shell.get_var("ESCAPED").as_deref(), Some("left right"));
+
+        assert!(matches!(
+            read_with_input(
+                &mut shell,
+                &["read".into(), "TAIL".into()],
+                &mut Cursor::new(b"tail\\".to_vec()),
+            )
+            .expect("tail read"),
+            BuiltinOutcome::Status(1)
+        ));
+        assert_eq!(shell.get_var("TAIL").as_deref(), Some("tail\\"));
+
+        sys::with_times_error_for_test(|| {
+            assert!(matches!(times(), BuiltinOutcome::Status(1)));
+        });
+    }
+
+    #[test]
+    fn umask_error_paths_and_symbolic_modes_are_covered() {
+        let mut shell = test_shell();
+        assert!(matches!(
+            run(&mut shell, &["umask".into(), "-Z".into()]).expect("bad option"),
+            BuiltinOutcome::Status(1)
+        ));
+        let saved = sys::current_umask();
+        assert!(matches!(
+            run(&mut shell, &["umask".into(), "--".into(), "077".into()]).expect("double dash"),
+            BuiltinOutcome::Status(0)
+        ));
+        sys::set_umask(saved);
+        assert!(matches!(
+            run(&mut shell, &["umask".into(), "077".into(), "022".into()]).expect("too many"),
+            BuiltinOutcome::Status(1)
+        ));
+        assert!(matches!(
+            run(&mut shell, &["umask".into(), "u+s".into()]).expect("bad symbolic"),
+            BuiltinOutcome::Status(1)
+        ));
+
+        assert_eq!(parse_umask_mask("-w", 0o022), Some(0o222));
+        assert_eq!(parse_umask_mask("a+r", 0o777), Some(0o333));
+        assert_eq!(parse_umask_mask("g=u", 0o022), Some(0o002));
+        assert_eq!(parse_umask_mask("u!r", 0o022), None);
+        assert_eq!(parse_umask_mask(",,", 0o022), None);
     }
 
     #[test]
