@@ -22,6 +22,9 @@ pub trait Context {
     fn special_param(&self, name: char) -> Option<String>;
     fn positional_param(&self, index: usize) -> Option<String>;
     fn set_var(&mut self, name: &str, value: String) -> Result<(), ExpandError>;
+    fn pathname_expansion_enabled(&self) -> bool {
+        true
+    }
     fn shell_name(&self) -> &str;
     fn command_substitute(&mut self, command: &str) -> Result<String, ExpandError>;
 }
@@ -47,7 +50,7 @@ pub fn expand_word<C: Context>(ctx: &mut C, word: &Word) -> Result<Vec<String>, 
 
     let mut result = Vec::new();
     for field in fields {
-        if field.has_unquoted_glob {
+        if field.has_unquoted_glob && ctx.pathname_expansion_enabled() {
             let matches = expand_pathname(&field.text);
             if matches.is_empty() {
                 result.push(field.text);
@@ -275,12 +278,8 @@ fn expand_dollar<C: Context>(
             } else {
                 ctx.special_param(ch).unwrap_or_default()
             };
-            let text = if quoted && (ch == '@' || ch == '*') {
-                value
-            } else {
-                value
-            };
-            Ok((text, 2))
+            let _ = quoted;
+            Ok((value, 2))
         }
         next if next.is_ascii_digit() => {
             Ok((ctx.positional_param(next.to_digit(10).unwrap_or_default() as usize).unwrap_or_default(), 2))
@@ -436,10 +435,11 @@ fn parse_parameter_expression(expr: &str) -> Result<(String, Option<String>, Opt
             return Ok((name, Some(op.to_string()), Some(word.to_string())));
         }
     }
-
-    Err(ExpandError {
-        message: "unsupported parameter expansion".to_string(),
-    })
+    Ok((
+        name,
+        Some(rest.chars().next().unwrap_or_default().to_string()),
+        Some(rest.chars().skip(1).collect()),
+    ))
 }
 
 fn lookup_param<C: Context>(ctx: &C, name: &str) -> Option<String> {
@@ -464,7 +464,7 @@ struct ExpandedWord {
     only_quoted: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct Field {
     text: String,
     has_unquoted_glob: bool,
@@ -833,6 +833,7 @@ mod tests {
     struct FakeContext {
         env: HashMap<String, String>,
         positional: Vec<String>,
+        pathname_expansion_enabled: bool,
     }
 
     impl FakeContext {
@@ -848,6 +849,7 @@ mod tests {
             Self {
                 env,
                 positional: vec!["alpha".into(), "beta".into()],
+                pathname_expansion_enabled: true,
             }
         }
     }
@@ -877,6 +879,10 @@ mod tests {
         fn set_var(&mut self, name: &str, value: String) -> Result<(), ExpandError> {
             self.env.insert(name.to_string(), value);
             Ok(())
+        }
+
+        fn pathname_expansion_enabled(&self) -> bool {
+            self.pathname_expansion_enabled
         }
 
         fn shell_name(&self) -> &str {
@@ -939,6 +945,10 @@ mod tests {
         assert_eq!(
             expand_word(&mut ctx, &Word { raw: "'literal text'".to_string() }).expect("expand"),
             vec!["literal text".to_string()]
+        );
+        assert_eq!(
+            expand_word(&mut ctx, &Word { raw: "\"cost:\\$USER\"".to_string() }).expect("expand"),
+            vec!["cost:$USER".to_string()]
         );
     }
 
@@ -1060,11 +1070,35 @@ mod tests {
     }
 
     #[test]
+    fn can_disable_pathname_expansion_via_context() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("meiksh-noglob-{unique}"));
+        fs::create_dir(&dir).expect("mkdir");
+        fs::write(dir.join("a.txt"), "").expect("write a");
+
+        let mut ctx = FakeContext::new();
+        ctx.pathname_expansion_enabled = false;
+        let pattern = format!("{}/*.txt", dir.display());
+        assert_eq!(
+            expand_word(&mut ctx, &Word { raw: pattern.clone() }).expect("noglob"),
+            vec![pattern]
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn helper_paths_cover_remaining_branches() {
         let ctx = FakeContext::new();
         assert_eq!(lookup_param(&ctx, "?"), Some("0".to_string()));
+        assert_eq!(lookup_param(&ctx, "0"), Some("meiksh".to_string()));
         assert_eq!(lookup_param(&ctx, "X"), Some("fallback".to_string()));
         assert_eq!(lookup_param(&ctx, "99"), None);
+        assert_eq!(ctx.special_param('*'), Some("alpha beta".to_string()));
+        assert_eq!(ctx.positional_param(0), Some("meiksh".to_string()));
 
         let mut segments = Vec::new();
         push_piece(&mut segments, "a".into(), false);
@@ -1082,6 +1116,198 @@ mod tests {
         let mut parser = ArithmeticParser::new("9");
         parser.index = 99;
         assert!(parser.is_eof());
+    }
+
+    struct DefaultPathContext {
+        env: HashMap<String, String>,
+    }
+
+    impl DefaultPathContext {
+        fn new() -> Self {
+            let mut env = HashMap::new();
+            env.insert("HOME".into(), "/tmp/home".into());
+            Self { env }
+        }
+    }
+
+    impl Context for DefaultPathContext {
+        fn env_var(&self, name: &str) -> Option<String> {
+            self.env.get(name).cloned()
+        }
+
+        fn special_param(&self, _name: char) -> Option<String> {
+            None
+        }
+
+        fn positional_param(&self, index: usize) -> Option<String> {
+            if index == 0 {
+                Some("meiksh".to_string())
+            } else {
+                None
+            }
+        }
+
+        fn set_var(&mut self, name: &str, value: String) -> Result<(), ExpandError> {
+            self.env.insert(name.to_string(), value);
+            Ok(())
+        }
+
+        fn shell_name(&self) -> &str {
+            "meiksh"
+        }
+
+        fn command_substitute(&mut self, command: &str) -> Result<String, ExpandError> {
+            Ok(format!("{command}\n"))
+        }
+    }
+
+    #[test]
+    fn direct_expand_dollar_covers_fallbacks_and_nesting() {
+        let mut ctx = FakeContext::new();
+        assert_eq!(expand_dollar(&mut ctx, &['$'], false).expect("single"), ("$".to_string(), 1));
+        assert_eq!(expand_dollar(&mut ctx, &['$', '-'], false).expect("fallback"), ("$".to_string(), 1));
+        assert_eq!(expand_dollar(&mut ctx, &['$', '$'], false).expect("pid default"), ("".to_string(), 2));
+        assert_eq!(
+            expand_dollar(&mut ctx, &['$', '@'], true).expect("quoted at"),
+            ("alpha beta".to_string(), 2)
+        );
+
+        let arithmetic_chars: Vec<char> = "$((1 + (2 * 3)))".chars().collect();
+        assert_eq!(
+            expand_dollar(&mut ctx, &arithmetic_chars, false).expect("nested arithmetic"),
+            ("7".to_string(), arithmetic_chars.len())
+        );
+
+        let command_chars: Vec<char> = "$(printf (hi))".chars().collect();
+        assert_eq!(
+            expand_dollar(&mut ctx, &command_chars, false).expect("nested command"),
+            ("printf (hi)".to_string(), command_chars.len())
+        );
+    }
+
+    #[test]
+    fn parameter_helpers_cover_more_edge_cases() {
+        let mut ctx = FakeContext::new();
+
+        assert_eq!(
+            expand_braced_parameter(&mut ctx, "USER:-word", false).expect("default set"),
+            "meiksh"
+        );
+        assert_eq!(
+            expand_braced_parameter(&mut ctx, "USER:=word", false).expect("assign set"),
+            "meiksh"
+        );
+        assert_eq!(
+            expand_braced_parameter(&mut ctx, "MISSING=value", false).expect("assign unset"),
+            "value"
+        );
+        assert_eq!(ctx.env.get("MISSING").map(String::as_str), Some("value"));
+        assert_eq!(
+            expand_braced_parameter(&mut ctx, "USER=value", false).expect("assign set"),
+            "meiksh"
+        );
+        assert_eq!(
+            expand_braced_parameter(&mut ctx, "USER?boom", false).expect("question set"),
+            "meiksh"
+        );
+        let error = expand_braced_parameter(&mut ctx, "UNSET?boom", false).expect_err("question unset");
+        assert_eq!(error.message, "boom");
+        assert_eq!(
+            expand_braced_parameter(&mut ctx, "USER:?boom", false).expect("colon question set"),
+            "meiksh"
+        );
+
+        let error = assign_parameter(&mut ctx, "1", "value", false).expect_err("invalid assign");
+        assert_eq!(error.message, "1: cannot assign in parameter expansion");
+
+        let parsed = parse_parameter_expression("@").expect("special name");
+        assert_eq!(parsed, ("@".to_string(), None, None));
+
+        let error = parse_parameter_expression("").expect_err("empty expr");
+        assert_eq!(error.message, "empty parameter expansion");
+
+        let error = parse_parameter_expression("%oops").expect_err("invalid expr");
+        assert_eq!(error.message, "invalid parameter expansion");
+
+        let error = expand_braced_parameter(&mut ctx, "USER%tail", false).expect_err("unsupported expr");
+        assert_eq!(error.message, "unsupported parameter expansion");
+    }
+
+    #[test]
+    fn field_and_pattern_helpers_cover_corner_cases() {
+        let pieces = vec![("*.txt".to_string(), false)];
+        assert_eq!(
+            split_fields_from_pieces(&pieces, ""),
+            vec![Field {
+                text: "*.txt".to_string(),
+                has_unquoted_glob: true,
+            }]
+        );
+
+        assert_eq!(
+            split_fields_from_pieces(&[("alpha,  beta".to_string(), false)], " ,"),
+            vec![
+                Field {
+                    text: "alpha".to_string(),
+                    has_unquoted_glob: false,
+                },
+                Field {
+                    text: "beta".to_string(),
+                    has_unquoted_glob: false,
+                },
+            ]
+        );
+
+        assert_eq!(expand_pathname("plain.txt"), vec!["plain.txt".to_string()]);
+
+        let mut matches = Vec::new();
+        expand_path_segments(Path::new("/definitely/not/a/real/dir"), &["*.txt"], 0, false, &mut matches);
+        assert!(matches.is_empty());
+
+        assert!(pattern_matches("x", "?"));
+        assert!(pattern_matches("[", "["));
+        assert!(pattern_matches("]", r"\]"));
+        assert!(pattern_matches("b", "[a-c]"));
+        assert!(pattern_matches("d", "[!a-c]"));
+        assert_eq!(match_bracket(None, &['[', 'a', ']'], 0), None);
+        assert_eq!(match_bracket(Some('a'), &['['], 0), None);
+        assert_eq!(match_bracket(Some(']'), &['[', '\\', ']', ']'], 0), Some((true, 4)));
+    }
+
+    #[test]
+    fn arithmetic_parser_covers_more_operators() {
+        assert_eq!(eval_arithmetic("9 - 2 - 1").expect("subtract"), 6);
+        assert_eq!(eval_arithmetic("8 / 2").expect("divide"), 4);
+        assert_eq!(eval_arithmetic("9 % 4").expect("modulo"), 1);
+        assert_eq!(eval_arithmetic("(1 + 2)").expect("parens"), 3);
+        assert_eq!(eval_arithmetic("-5").expect("negation"), -5);
+
+        let error = eval_arithmetic("5 % 0").expect_err("mod zero");
+        assert_eq!(error.message, "division by zero");
+
+        let error = eval_arithmetic("999999999999999999999999999999999999999").expect_err("overflow");
+        assert_eq!(error.message, "invalid arithmetic operand");
+    }
+
+    #[test]
+    fn default_pathname_context_and_unmatched_glob_are_covered() {
+        let mut ctx = DefaultPathContext::new();
+        assert_eq!(ctx.special_param('?'), None);
+        assert_eq!(ctx.positional_param(0), Some("meiksh".to_string()));
+        assert_eq!(ctx.positional_param(1), None);
+        ctx.set_var("NAME", "value".to_string()).expect("set var");
+        assert_eq!(ctx.env_var("NAME"), Some("value".to_string()));
+        assert_eq!(ctx.shell_name(), "meiksh");
+        assert_eq!(ctx.command_substitute("printf ok").expect("substitute"), "printf ok\n");
+        assert_eq!(
+            expand_word(&mut ctx, &Word { raw: "*.definitely-no-match".to_string() }).expect("unmatched glob"),
+            vec!["*.definitely-no-match".to_string()]
+        );
+    }
+
+    #[test]
+    fn bracket_helpers_cover_missing_closer() {
+        assert_eq!(match_bracket(Some('a'), &['[', 'a'], 0), None);
     }
 
     #[test]

@@ -1162,6 +1162,15 @@ mod tests {
     }
 
     #[test]
+    fn parses_case_arm_without_trailing_dsemi_before_esac() {
+        let program = parse("case x in x) esac").expect("parse");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Case(case_cmd) if case_cmd.arms.len() == 1
+        ));
+    }
+
+    #[test]
     fn parses_heredoc_operator_shape() {
         let program = parse("cat <<EOF\nhello $USER\nEOF\n").expect("parse");
         assert!(matches!(

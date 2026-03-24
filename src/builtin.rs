@@ -36,7 +36,7 @@ pub fn run(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellEr
         "fg" => fg(shell, argv)?,
         "bg" => bg(shell, argv)?,
         "wait" => wait(shell, argv)?,
-        "alias" => alias(shell, argv),
+        "alias" => alias(shell, argv)?,
         "unalias" => unalias(shell, argv)?,
         "return" => return_builtin(shell, argv)?,
         "break" => break_builtin(shell, argv)?,
@@ -161,17 +161,23 @@ fn set(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
         let mut index = 1usize;
         while let Some(arg) = argv.get(index) {
             match arg.as_str() {
-                "-C" => {
-                    shell.options.noclobber = true;
-                    index += 1;
-                }
-                "+C" => {
-                    shell.options.noclobber = false;
-                    index += 1;
-                }
                 "--" => {
                     shell.set_positional(argv[index + 1..].to_vec());
                     return BuiltinOutcome::Status(0);
+                }
+                _ if (arg.starts_with('-') || arg.starts_with('+')) && arg != "-" && arg != "+" => {
+                    let enabled = arg.starts_with('-');
+                    for ch in arg[1..].chars() {
+                        match ch {
+                            'C' => shell.options.noclobber = enabled,
+                            'f' => shell.options.noglob = enabled,
+                            _ => {
+                                shell.set_positional(argv[index..].to_vec());
+                                return BuiltinOutcome::Status(0);
+                            }
+                        }
+                    }
+                    index += 1;
                 }
                 _ => {
                     shell.set_positional(argv[index..].to_vec());
@@ -331,21 +337,39 @@ fn wait(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
     Ok(BuiltinOutcome::Status(status))
 }
 
-fn alias(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
+fn alias(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     if argv.len() == 1 {
         let mut items: Vec<_> = shell.aliases.iter().collect();
         items.sort_by(|a, b| a.0.cmp(b.0));
         for (name, value) in items {
-            println!("alias {}='{}'", name, value);
+            println!("{}", format_alias_definition(name, value));
         }
-        return BuiltinOutcome::Status(0);
+        return Ok(BuiltinOutcome::Status(0));
     }
+    let mut status = 0;
     for item in &argv[1..] {
         if let Some((name, value)) = item.split_once('=') {
             shell.aliases.insert(name.to_string(), value.to_string());
+        } else if let Some(value) = shell.aliases.get(item) {
+            println!("{}", format_alias_definition(item, value));
+        } else {
+            eprintln!("alias: {item}: not found");
+            status = 1;
         }
     }
-    BuiltinOutcome::Status(0)
+    Ok(BuiltinOutcome::Status(status))
+}
+
+fn format_alias_definition(name: &str, value: &str) -> String {
+    format!("{name}={}", shell_quote(value))
+}
+
+fn shell_quote(value: &str) -> String {
+    if value.is_empty() {
+        return "''".to_string();
+    }
+    let escaped = value.replace('\'', r#"'\''"#);
+    format!("'{escaped}'")
 }
 
 fn unalias(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
@@ -480,11 +504,24 @@ mod tests {
         run(&mut shell, &["alias".into(), "ll=ls -l".into()]).expect("alias");
         assert_eq!(shell.aliases.get("ll").map(String::as_str), Some("ls -l"));
 
+        let outcome = run(&mut shell, &["alias".into(), "ll".into()]).expect("alias query");
+        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+
+        let outcome = run(&mut shell, &["alias".into(), "missing".into()]).expect("missing alias");
+        assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+
         run(&mut shell, &["unalias".into(), "ll".into()]).expect("unalias");
         assert!(!shell.aliases.contains_key("ll"));
 
         let error = run(&mut shell, &["unalias".into()]).expect_err("missing alias");
         assert_eq!(error.message, "unalias: name required");
+    }
+
+    #[test]
+    fn alias_output_is_shell_quoted_for_reinput() {
+        assert_eq!(format_alias_definition("ll", "ls -l"), "ll='ls -l'");
+        assert_eq!(format_alias_definition("sq", "a'b"), "sq='a'\\''b'");
+        assert_eq!(format_alias_definition("empty", ""), "empty=''");
     }
 
     #[test]
@@ -586,11 +623,28 @@ mod tests {
         assert!(matches!(outcome, BuiltinOutcome::Status(0)));
         assert!(!shell.options.noclobber);
 
+        let outcome = run(&mut shell, &["set".into(), "-f".into()]).expect("set -f");
+        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        assert!(shell.options.noglob);
+
+        let outcome = run(&mut shell, &["set".into(), "+f".into()]).expect("set +f");
+        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        assert!(!shell.options.noglob);
+
+        let outcome = run(&mut shell, &["set".into(), "-Cf".into()]).expect("set -Cf");
+        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        assert!(shell.options.noclobber);
+        assert!(shell.options.noglob);
+
         let outcome = run(&mut shell, &["set".into(), "-C".into(), "--".into(), "epsilon".into()])
             .expect("set -C --");
         assert!(matches!(outcome, BuiltinOutcome::Status(0)));
         assert!(shell.options.noclobber);
         assert_eq!(shell.positional, vec!["epsilon".to_string()]);
+
+        let outcome = run(&mut shell, &["set".into(), "+x".into(), "zeta".into()]).expect("set +x");
+        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        assert_eq!(shell.positional, vec!["+x".to_string(), "zeta".to_string()]);
 
         shell.last_status = 0;
         let outcome = run(&mut shell, &["eval".into(), "VALUE=42".into()]).expect("eval");
@@ -739,5 +793,42 @@ mod tests {
         let outcome = run(&mut shell, &["shift".into()]).expect("shift");
         assert!(matches!(outcome, BuiltinOutcome::Status(0)));
         assert_eq!(shell.positional, vec!["b".to_string()]);
+    }
+
+    #[test]
+    fn cd_home_export_name_eval_error_and_dot_missing_are_covered() {
+        let _guard = cwd_lock().lock().expect("cwd lock");
+        let mut shell = test_shell();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("meiksh-home-{unique}"));
+        fs::create_dir_all(&dir).expect("mkdir");
+
+        let cwd = std::env::current_dir().expect("cwd");
+        shell.env.insert("HOME".into(), dir.display().to_string());
+        run(&mut shell, &["cd".into()]).expect("cd home");
+        let canonical_dir = std::fs::canonicalize(&dir).expect("canonical dir");
+        assert_eq!(
+            std::fs::canonicalize(std::env::current_dir().expect("cwd")).expect("canonical cwd"),
+            canonical_dir
+        );
+        assert_eq!(shell.get_var("PWD").as_deref(), Some(canonical_dir.display().to_string().as_str()));
+        std::env::set_current_dir(&cwd).expect("restore cwd");
+        let _ = fs::remove_dir_all(&dir);
+
+        run(&mut shell, &["export".into(), "ONLY_NAME".into()]).expect("export bare name");
+        assert!(shell.exported.contains("ONLY_NAME"));
+
+        let error = run(&mut shell, &["eval".into(), "echo".into(), "'unterminated".into()]).expect_err("bad eval");
+        assert!(!error.message.is_empty());
+
+        let error = run(
+            &mut shell,
+            &[".".into(), "/definitely/missing-meiksh-dot-file".into()],
+        )
+        .expect_err("missing dot file");
+        assert!(!error.message.is_empty());
     }
 }
