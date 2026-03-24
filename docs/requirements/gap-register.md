@@ -13,7 +13,7 @@ This register turns broad partial-conformance areas into named backlog items tha
 | Gap ID | Linked requirement area | Current gap |
 | --- | --- | --- |
 | `GAP-SH-001` | `REQ-SH-OPTIONS-*` | `sh` and `set` still implement only part of the full Issue 8 option surface. |
-| `GAP-SH-002` | `REQ-SH-STARTUP-*`, `REQ-SH-OPERANDS-*`, `REQ-SH-EXIT-*` | Non-interactive stdin still buffers all input up front, so the shell does not yet satisfy the utility-page no-read-ahead behavior and still needs broader startup/exit-status polish. |
+| `GAP-SH-002` | `REQ-SH-STARTUP-*`, `REQ-SH-OPERANDS-*`, `REQ-SH-EXIT-*` | The non-interactive stdin no-read-ahead rule is now implemented; the remaining startup gap is narrower utility-page polish around the rest of the option surface, non-blocking-stdin handling, and broader exit-status/error-consequence distinctions. |
 | `GAP-SH-003` | `REQ-SH-INTERACTIVE-*`, `REQ-JOBS-HISTORY-*` | Command history list semantics are still simplified, and command-line / vi-mode editing remain unimplemented. |
 | `GAP-EXPAND-001` | `REQ-EXPAND-FIELDS-*` | Field splitting still needs exact mixed-quoting, `"$@"`, and remaining IFS edge coverage. |
 | `GAP-EXPAND-002` | `REQ-EXPAND-TILDE-*`, `REQ-EXPAND-QUOTE-*`, `REQ-EXPAND-ARITH-*` | Tilde expansion, double-quote backslash rules, and arithmetic expansion are still only partially aligned with the mirrored Issue 8 text. |

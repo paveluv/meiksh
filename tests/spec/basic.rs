@@ -446,6 +446,27 @@ fn sh_lone_dash_is_ignored_and_reads_stdin() {
 }
 
 #[test]
+fn sh_stdin_does_not_read_ahead_past_the_current_command() {
+    let output = Command::new(meiksh())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            child.stdin
+                .as_mut()
+                .unwrap()
+                .write_all(b"cat\necho after\n")?;
+            child.wait_with_output()
+        })
+        .expect("run meiksh");
+
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "echo after\n");
+    assert!(String::from_utf8_lossy(&output.stderr).is_empty());
+}
+
+#[test]
 fn sh_command_file_sets_special_parameter_zero_and_searches_path() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

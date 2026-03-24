@@ -102,6 +102,13 @@ fn matches_system_sh_on_lone_dash_case() {
 }
 
 #[test]
+fn matches_system_sh_on_noninteractive_stdin_no_read_ahead_case() {
+    let meiksh_stream = run_with_args_and_stdin(meiksh(), &[], b"cat\necho after\n");
+    let sh_stream = run_with_args_and_stdin("sh", &[], b"cat\necho after\n");
+    assert_eq!(meiksh_stream, sh_stream, "non-interactive stdin no-read-ahead mismatch");
+}
+
+#[test]
 fn matches_system_sh_on_cd_dash_case() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
