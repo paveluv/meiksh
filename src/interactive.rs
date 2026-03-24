@@ -81,13 +81,7 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn meiksh_bin_path() -> std::path::PathBuf {
-        let exe = std::env::current_exe().expect("current exe");
-        exe.parent()
-            .and_then(|p| p.parent())
-            .map(|p| p.join("meiksh"))
-            .expect("meiksh path")
-    }
+    use crate::test_utils::meiksh_bin_path;
 
     fn test_shell() -> Shell {
         Shell {

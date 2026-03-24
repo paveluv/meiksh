@@ -1,6 +1,6 @@
-# Meik Shell (pronounced /maik/)
+# Meik Shell
 
-`meiksh` is a new Unix shell written in Rust with no dependencies beyond `std`.
+`meiksh` (pronounced /maiksh/) is a new Unix shell written in Rust with no dependencies beyond `std`.
 
 All operating-system integration is implemented with handwritten POSIX FFI bindings. `meiksh` does not depend on any third-party Rust crates.
 
