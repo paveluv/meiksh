@@ -460,6 +460,19 @@ fn expands_parameters_and_pathnames_more_like_posix() {
         "<word><word><><>|<><word><alt><>"
     );
 
+    let trimming = Command::new(meiksh())
+        .args([
+            "-c",
+            "PATHNAME='src/bin/main.rs'; DOTTED='alpha.beta.gamma'; printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s' \"${PATHNAME#*/}\" \"${PATHNAME##*/}\" \"${PATHNAME%/*}\" \"${PATHNAME%%/*}\" \"${DOTTED#*.}\" \"${DOTTED##*.}\" \"${DOTTED%.*}\" \"${DOTTED%%.*}\" \"${DOTTED#\"*.\"}\" \"${PATHNAME#\"src/\"}\"",
+        ])
+        .output()
+        .expect("run meiksh");
+    assert!(trimming.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&trimming.stdout),
+        "bin/main.rs|main.rs|src/bin|src|beta.gamma|gamma|alpha.beta|alpha|alpha.beta.gamma|bin/main.rs"
+    );
+
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("time")

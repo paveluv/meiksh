@@ -54,7 +54,7 @@ This document maps the POSIX shell requirements mirrored under `docs/posix/` to 
 | --- | --- | --- | --- | --- |
 | `docs/posix/issue8/shell-command-language.html#tag_19_05` | Parameters and variables | `src/shell.rs`, `src/expand.rs` | `src/shell.rs`, `src/expand.rs`, `tests/spec/basic.rs` | Positional and special parameters are exposed through shell state and expansion hooks. |
 | `docs/posix/issue8/shell-command-language.html#tag_19_06_01` | Tilde expansion | `src/expand.rs` | `src/expand.rs` | Implemented for leading `~` word forms currently supported by the expander. |
-| `docs/posix/issue8/shell-command-language.html#tag_19_06_02` | Parameter expansion | `src/expand.rs` | `src/expand.rs`, `tests/spec/basic.rs` | Plain substitutions, length, default/assign/error/alternate operators, and multi-digit positionals are implemented. Pattern-trimming forms are still missing. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_06_02` | Parameter expansion | `src/expand.rs` | `src/expand.rs`, `tests/spec/basic.rs` | Plain substitutions, length, default/assign/error/alternate operators, multi-digit positionals, and the `%`, `%%`, `#`, and `##` pattern-removal forms are implemented. Quoted pattern characters inside `${...}` are preserved literally for these substring-removal operators. |
 | `docs/posix/issue8/shell-command-language.html#tag_19_06_03` | Command substitution | `src/expand.rs`, `src/shell.rs` | `src/expand.rs`, `tests/spec/basic.rs` | Implemented by recursively invoking the current `meiksh` binary with `-c`. |
 | `docs/posix/issue8/shell-command-language.html#tag_19_06_04` | Arithmetic expansion | `src/expand.rs` | `src/expand.rs` | Integer arithmetic currently covers literals and `+`, `-`, `*`, `/`, and `%`. |
 | `docs/posix/issue8/shell-command-language.html#tag_19_06_05` | Field splitting | `src/expand.rs` | `src/expand.rs`, `tests/spec/basic.rs` | IFS whitespace versus non-whitespace splitting is modeled. Further mixed-quoting and IFS corner cases remain open. |
@@ -163,7 +163,6 @@ This document maps the POSIX shell requirements mirrored under `docs/posix/` to 
 ## Highest-Priority Remaining Gaps
 
 - Reserved-word recognition is still not exhaustively covered across all grammar positions in `2.4`, `2.9`, and `2.10`, but the `for` and `case` linebreak-sensitive grammar cases are now covered directly from the Issue 8 grammar.
-- Parameter expansion still lacks the pattern-trimming operators from `2.6.2`.
 - Field splitting still needs more exact coverage for mixed quoting and IFS edge cases in `2.6.5`.
 - `trap` remains a placeholder relative to `docs/posix/utilities/trap.html` and `2.12`.
 - `set` only implements a small subset of the `sh` and `set` option surface.
