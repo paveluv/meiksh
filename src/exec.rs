@@ -1298,7 +1298,7 @@ mod tests {
             &shell,
             &ExpandedSimpleCommand {
                 assignments: vec![("ASSIGN_VAR".to_string(), "works".to_string())],
-                argv: vec!["sh".to_string(), "-c".to_string(), "printf \"$ASSIGN_VAR\"".to_string()],
+                argv: vec![shell.current_exe.display().to_string(), "-c".to_string(), "printf \"$ASSIGN_VAR\"".to_string()],
                 redirections: Vec::new(),
             },
         )
@@ -1339,7 +1339,7 @@ mod tests {
         permissions.set_mode(0o755);
         fs::set_permissions(&script, permissions).expect("chmod script");
 
-        let producer = ProcessCommand::new("sh")
+        let producer = ProcessCommand::new(meiksh_bin_path())
             .arg("-c")
             .arg("printf piped")
             .stdout(Stdio::piped())
@@ -2339,8 +2339,8 @@ mod tests {
         assert!(child.wait_with_output().expect("wait output").status.success());
 
         let prepared = PreparedProcess {
-            exec_path: "/bin/sh".into(),
-            argv: vec!["sh".into(), "-c".into(), "exit 0".into()],
+            exec_path: meiksh_bin_path().display().to_string(),
+            argv: vec![meiksh_bin_path().display().to_string(), "-c".into(), "exit 0".into()],
             child_env: Vec::new(),
             redirections: vec![ExpandedRedirection {
                 fd: 1,

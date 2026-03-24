@@ -358,6 +358,14 @@ mod tests {
         assert_eq!((syscalls.execvp)(program.as_ptr(), argv.as_ptr()), -1);
     }
 
+    fn meiksh_bin_path() -> std::path::PathBuf {
+        let exe = std::env::current_exe().expect("current exe");
+        exe.parent()
+            .and_then(|p| p.parent())
+            .map(|p| p.join("meiksh"))
+            .expect("meiksh path")
+    }
+
     #[test]
     fn invalid_fd_operations_fail_cleanly() {
         assert!(!is_interactive_fd(-1));
@@ -370,7 +378,7 @@ mod tests {
 
     #[test]
     fn wait_pid_and_exec_replace_error_paths_work() {
-        let mut child = Command::new("sh")
+        let mut child = Command::new(meiksh_bin_path())
             .args(["-c", "exit 5"])
             .spawn()
             .expect("spawn");
@@ -388,7 +396,7 @@ mod tests {
     fn misc_sys_helpers_cover_successish_paths() {
         assert!(current_pid() > 0);
         send_signal(current_pid(), 0).expect("signal 0");
-        let child = Command::new("sh")
+        let child = Command::new(meiksh_bin_path())
             .args(["-c", "sleep 0.05"])
             .spawn()
             .expect("spawn");

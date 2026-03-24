@@ -444,6 +444,14 @@ mod tests {
         LOCK.get_or_init(|| Mutex::new(()))
     }
 
+    fn meiksh_bin_path() -> std::path::PathBuf {
+        let exe = std::env::current_exe().expect("current exe");
+        exe.parent()
+            .and_then(|p| p.parent())
+            .map(|p| p.join("meiksh"))
+            .expect("meiksh path")
+    }
+
     fn test_shell() -> Shell {
         Shell {
             options: ShellOptions::default(),
@@ -458,7 +466,7 @@ mod tests {
             last_background: None,
             running: true,
             jobs: Vec::new(),
-            current_exe: std::env::current_exe().expect("current exe"),
+            current_exe: meiksh_bin_path(),
             loop_depth: 0,
             function_depth: 0,
             pending_control: None,
@@ -692,7 +700,7 @@ mod tests {
         let path = which("sh", &shell).expect("lookup sh");
         assert!(path.ends_with("sh"));
 
-        let outcome = run(&mut shell, &["command".into(), "sh".into()]).expect("command sh");
+        let outcome = run(&mut shell, &["command".into(), "sh".into(), "-c".into(), "exit 0".into()]).expect("command sh");
         assert!(matches!(outcome, BuiltinOutcome::Status(0)));
     }
 
@@ -719,7 +727,7 @@ mod tests {
     #[test]
     fn wait_fg_bg_success_paths_are_exercised() {
         let mut shell = test_shell();
-        let child = std::process::Command::new("sh")
+        let child = std::process::Command::new(&shell.current_exe)
             .args(["-c", "sleep 0.05"])
             .spawn()
             .expect("spawn");
@@ -731,7 +739,7 @@ mod tests {
         let outcome = run(&mut shell, &["wait".into(), format!("%{id}")]).expect("wait");
         assert!(matches!(outcome, BuiltinOutcome::Status(_)));
 
-        let child = std::process::Command::new("sh")
+        let child = std::process::Command::new(&shell.current_exe)
             .args(["-c", "sleep 0.05"])
             .spawn()
             .expect("spawn");
@@ -743,11 +751,11 @@ mod tests {
     #[test]
     fn wait_without_explicit_job_uses_all_jobs() {
         let mut shell = test_shell();
-        let child_a = std::process::Command::new("sh")
+        let child_a = std::process::Command::new(&shell.current_exe)
             .args(["-c", "exit 0"])
             .spawn()
             .expect("spawn");
-        let child_b = std::process::Command::new("sh")
+        let child_b = std::process::Command::new(&shell.current_exe)
             .args(["-c", "exit 3"])
             .spawn()
             .expect("spawn");

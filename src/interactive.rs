@@ -81,6 +81,14 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    fn meiksh_bin_path() -> std::path::PathBuf {
+        let exe = std::env::current_exe().expect("current exe");
+        exe.parent()
+            .and_then(|p| p.parent())
+            .map(|p| p.join("meiksh"))
+            .expect("meiksh path")
+    }
+
     fn test_shell() -> Shell {
         Shell {
             options: ShellOptions::default(),
@@ -95,7 +103,7 @@ mod tests {
             last_background: None,
             running: true,
             jobs: Vec::new(),
-            current_exe: std::env::current_exe().expect("current exe"),
+            current_exe: meiksh_bin_path(),
             loop_depth: 0,
             function_depth: 0,
             pending_control: None,
@@ -236,7 +244,7 @@ mod tests {
         shell.env.insert("HISTFILE".into(), history.display().to_string());
         shell.env.insert("PS1".into(), "test$ ".into());
 
-        let child = std::process::Command::new("sh")
+        let child = std::process::Command::new(&shell.current_exe)
             .args(["-c", "exit 0"])
             .spawn()
             .expect("spawn");
@@ -247,7 +255,7 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        let child = std::process::Command::new("sh")
+        let child = std::process::Command::new(&shell.current_exe)
             .args(["-c", "exit 0"])
             .spawn()
             .expect("spawn");
