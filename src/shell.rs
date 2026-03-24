@@ -302,6 +302,7 @@ impl Shell {
     }
 
     fn run_standard_input(&mut self) -> Result<i32, ShellError> {
+        sys::ensure_blocking_read_fd(sys::STDIN_FILENO)?;
         let mut status = 0;
         let mut source = String::new();
         let mut line_bytes = Vec::new();

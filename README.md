@@ -17,7 +17,7 @@ The current semantic target is POSIX Issue 8, with Issue 7 behavior still tracke
 
 `meiksh` is already a working shell with substantial parser, expansion, execution, and builtin coverage, including:
 
-- `-a`, `-c`, `-C`, `-f`, `-n`, and `-s` startup handling for the implemented subset, including POSIX-style `command_name` / `$0`, named `-o` / `+o` forms for the same subset, lone `-` stdin handling, and `$-` reporting for active flags
+- `-a`, `-c`, `-C`, `-f`, `-n`, and `-s` startup handling for the implemented subset, including POSIX-style `command_name` / `$0`, named `-o` / `+o` forms for the same subset, lone `-` stdin handling, `$-` reporting for active flags, and blocking-read correction for inherited non-blocking stdin
 - simple commands, pipelines, `&&` / `||`, background execution, subshells, groups, functions, `if`, `case`, `for`, `while`, and `until`
 - parser-time alias expansion, including blank-terminated alias chaining and same-source visibility across top-level and nested bodies
 - context-sensitive `!` pipeline negation and POSIX grammar-sensitive reserved-word handling for `for`, `case`, brace groups, and linebreaks after `|`, `&&`, and `||`
@@ -29,7 +29,7 @@ The current semantic target is POSIX Issue 8, with Issue 7 behavior still tracke
 
 The project does **not** yet claim full POSIX conformance. Remaining gaps are tracked in `docs/spec-matrix.md` and `docs/requirements/gap-register.md`. The largest open areas are currently:
 
-- the remaining `sh` utility startup details, especially broader option coverage, non-blocking-stdin handling, and utility-page exit-status/error-consequence polish
+- the remaining `sh` utility startup details, especially broader option coverage and utility-page exit-status/error-consequence polish
 - field-splitting, tilde, double-quote, and arithmetic-expansion edge cases
 - subshell / command-substitution execution-environment fidelity
 - broader builtin completion, including the still-open `set`, `read`, `trap`, `umask`, and missing mirrored utility pages such as `hash`, `getopts`, `ulimit`, and `fc`
