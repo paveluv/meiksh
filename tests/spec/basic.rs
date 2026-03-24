@@ -268,6 +268,47 @@ fn handles_background_wait() {
 }
 
 #[test]
+fn trap_wait_and_job_control_paths_cover_milestone_five() {
+    let exit_trap = Command::new(meiksh())
+        .args(["-c", "trap 'printf exit:$?' EXIT; false"])
+        .output()
+        .expect("run meiksh");
+    assert_eq!(exit_trap.status.code(), Some(1));
+    assert_eq!(String::from_utf8_lossy(&exit_trap.stdout), "exit:1");
+
+    let signal_trap = Command::new(meiksh())
+        .args(["-c", "trap 'printf INT:$?' INT; kill -INT $$; printf done"])
+        .output()
+        .expect("run meiksh");
+    assert!(signal_trap.status.success());
+    assert_eq!(String::from_utf8_lossy(&signal_trap.stdout), "INT:0done");
+
+    let wait_pid = Command::new(meiksh())
+        .args(["-c", "sleep 0.05 & pid=$!; wait \"$pid\"; printf :$?"])
+        .output()
+        .expect("run meiksh");
+    assert!(wait_pid.status.success());
+    assert!(String::from_utf8_lossy(&wait_pid.stdout).ends_with(":0"));
+
+    let wait_unknown = Command::new(meiksh())
+        .args(["-c", "wait 999999; printf %s $?"])
+        .output()
+        .expect("run meiksh");
+    assert!(wait_unknown.status.success());
+    assert_eq!(String::from_utf8_lossy(&wait_unknown.stdout), "127");
+
+    let jobs_output = Command::new(meiksh())
+        .args(["-c", "sleep 0.1 & jobs"])
+        .output()
+        .expect("run meiksh");
+    assert!(jobs_output.status.success());
+    let stdout = String::from_utf8_lossy(&jobs_output.stdout);
+    assert!(stdout.contains("[1]"));
+    assert!(stdout.contains("Running sleep 0.1"));
+
+}
+
+#[test]
 fn executes_shell_function() {
     let output = Command::new(meiksh())
         .args(["-c", "greet() { printf hello; }; greet"])

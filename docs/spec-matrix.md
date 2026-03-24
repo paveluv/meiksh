@@ -87,19 +87,19 @@ This document maps the POSIX shell requirements mirrored under `docs/posix/` to 
 | `docs/posix/issue8/shell-command-language.html#tag_19_09_01_04` | Command search and execution | `src/exec.rs`, `src/builtin.rs`, `src/shell.rs` | `src/exec.rs`, `src/builtin.rs`, `tests/spec/basic.rs` | Builtins, shell functions, and external command lookup are implemented. |
 | `docs/posix/issue8/shell-command-language.html#tag_19_09_01_06` | Non-built-in utility execution | `src/exec.rs`, `src/sys.rs` | `src/exec.rs`, `tests/spec/basic.rs` | External execution exists, including `ENOEXEC` fallback via `sh` for text executables. |
 | `docs/posix/issue8/shell-command-language.html#tag_19_09_02_01` | Pipeline exit status | `src/exec.rs` | `src/exec.rs`, `tests/spec/basic.rs` | Regular pipeline status and `!` negation paths are implemented. `pipefail` support is not implemented. |
-| `docs/posix/issue8/shell-command-language.html#tag_19_09_03_02` | Asynchronous AND-OR lists | `src/exec.rs`, `src/shell.rs` | `src/exec.rs`, `src/shell.rs`, `tests/spec/basic.rs` | Background job launch and tracking exist. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_09_03_02` | Asynchronous AND-OR lists | `src/exec.rs`, `src/shell.rs` | `src/exec.rs`, `src/shell.rs`, `tests/spec/basic.rs` | Background jobs now record process-group ids, retain known child statuses for `wait`, and continue to expose shell-assigned job numbers. The job-control-disabled stdin and signal-inheritance edge cases from `2.9.3.1`/`2.12` still need tighter review. |
 | `docs/posix/issue8/shell-command-language.html#tag_19_09_03_04` | Sequential lists | `src/syntax.rs`, `src/exec.rs` | `src/syntax.rs`, `tests/spec/basic.rs` | Implemented. |
 | `docs/posix/issue8/shell-command-language.html#tag_19_09_03_06` | AND lists | `src/syntax.rs`, `src/exec.rs` | `src/exec.rs`, `tests/spec/basic.rs` | Implemented. |
 | `docs/posix/issue8/shell-command-language.html#tag_19_09_03_08` | OR lists | `src/syntax.rs`, `src/exec.rs` | `src/exec.rs`, `tests/spec/basic.rs` | Implemented. |
 | `docs/posix/issue8/shell-command-language.html#tag_19_09_04_01` | Grouping commands | `src/syntax.rs`, `src/exec.rs` | `src/syntax.rs`, `src/exec.rs`, `tests/spec/basic.rs` | Groups and subshells are implemented. Tighter subshell fidelity is still tracked as an open area. |
-| `docs/posix/issue8/shell-command-language.html#tag_19_13` | Shell execution environment | `src/shell.rs`, `src/exec.rs`, `src/builtin.rs` | `src/shell.rs`, `src/exec.rs`, `tests/spec/basic.rs` | Current-shell state mutation versus pipeline/background execution is explicitly modeled for builtins and control flow. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_13` | Shell execution environment | `src/shell.rs`, `src/exec.rs`, `src/builtin.rs` | `src/shell.rs`, `src/exec.rs`, `tests/spec/basic.rs` | Current-shell state mutation versus pipeline/background execution is explicitly modeled for builtins and control flow. Trap registrations, known child process ids, and retained background-job statuses are now tracked in shell state; subshell trap reset behavior remains only partially aligned because subshell command execution still forks through a fresh `meiksh -c` process. |
 
 ## Special Builtins And Related Utilities
 
 | Utility page | Implementation | Status | Notes |
 | --- | --- | --- | --- |
 | `docs/posix/utilities/alias.html` | `src/builtin.rs`, `src/syntax.rs`, `src/shell.rs`, `src/exec.rs` | implemented with remaining edge review | Builtin exists and alias substitution is integrated into parsing across top-level and nested reparsing, including blank-terminated chaining into grammar-sensitive positions such as `if`, `for`, `case`, and brace groups. |
-| `docs/posix/utilities/bg.html` | `src/builtin.rs`, `src/shell.rs` | partial | Basic resume-by-job-id path exists. tty/job-control fidelity is incomplete. |
+| `docs/posix/utilities/bg.html` | `src/builtin.rs`, `src/shell.rs` | partial | `bg` now accepts the current or `%n` job, sends `SIGCONT` to the job process group when known, and prints the POSIX-required `[%d] %s` line shape. Full job-id grammar, suspended-state fidelity, and broader job-control policy remain open. |
 | `docs/posix/utilities/break.html` | `src/builtin.rs`, `src/exec.rs`, `src/shell.rs` | implemented with remaining edge review | Loop-depth validation and propagation exist. |
 | `docs/posix/utilities/cd.html` | `src/builtin.rs` | partial | Core directory-change behavior exists. Broader utility-page option and environment semantics still need review. |
 | `docs/posix/utilities/command.html` | `src/builtin.rs` | partial | Builtin now executes utilities while bypassing shell functions, supports `-p`, `-v`, and `-V`, and reports aliases/reserved words/builtins/path lookups. Detailed special-builtin parity and some execution edge cases still need review. |
@@ -107,10 +107,10 @@ This document maps the POSIX shell requirements mirrored under `docs/posix/` to 
 | `docs/posix/utilities/dot.html` | `src/builtin.rs`, `src/shell.rs` | partial | Sourcing by pathname exists. Search semantics and related edge cases remain to be reviewed. |
 | `docs/posix/utilities/eval.html` | `src/builtin.rs`, `src/shell.rs` | partial | Re-executes joined arguments through the parser/executor. |
 | `docs/posix/utilities/exec.html` | `src/builtin.rs`, `src/sys.rs` | partial | No-argument no-op and replacement execution exist. |
-| `docs/posix/utilities/exit.html` | `src/builtin.rs`, `src/shell.rs` | implemented with remaining edge review | Basic status parsing and shell termination exist. |
+| `docs/posix/utilities/exit.html` | `src/builtin.rs`, `src/shell.rs` | implemented with remaining edge review | Basic status parsing and shell termination exist, and EXIT traps now run before shell termination with the pre-trap `$?` preserved for `exit` with no explicit operand. Re-trapping EXIT during EXIT handling and broader abnormal-termination corners remain unspecified/open. |
 | `docs/posix/utilities/export.html` | `src/builtin.rs`, `src/shell.rs` | partial | Variable export exists and `-p` now emits shell-reinput-safe quoting for exported names, including unset exported names. Remaining review is around unspecified no-operand behavior and finer special-builtin diagnostics. |
-| `docs/posix/utilities/fg.html` | `src/builtin.rs`, `src/shell.rs` | partial | Basic foreground wait path exists. tty foreground handoff and output details remain open. |
-| `docs/posix/utilities/jobs.html` | `src/builtin.rs`, `src/shell.rs` | partial | Job table printing exists, but POSIX output detail and state fidelity remain incomplete. |
+| `docs/posix/utilities/fg.html` | `src/builtin.rs`, `src/shell.rs` | partial | `fg` now prints the selected command line to stdout, resumes the job with `SIGCONT`, and waits for its completion. Best-effort tty foreground handoff is wired through the tracked process group when interactive file descriptors are available, but `set -m` gating, full job-id grammar, and stopped-job fidelity remain open. |
+| `docs/posix/utilities/jobs.html` | `src/builtin.rs`, `src/shell.rs` | partial | Job table printing now goes to stdout and reports running versus completed jobs from the retained job table. POSIX `jobs` markers/options (`-l`, `-p`, `+`, `-`) and richer suspended-state reporting remain incomplete. |
 | `docs/posix/utilities/pwd.html` | `src/builtin.rs` | partial | Builtin now parses `-L`/`-P` and prefers a valid logical `PWD` for the default logical mode. `cd` still does not preserve symlink-logical `PWD` state with full POSIX fidelity. |
 | `docs/posix/utilities/read.html` | `src/builtin.rs`, `src/shell.rs` | partial | Intrinsic builtin now reads from standard input into current-shell variables, supports `-r` and `-d`, distinguishes EOF from error, and applies `IFS`-driven assignment splitting. Multi-byte and some interactive prompt edge semantics still need tightening against the utility page. |
 | `docs/posix/utilities/readonly.html` | `src/builtin.rs`, `src/shell.rs` | partial | Marking variables readonly exists and `-p` now emits shell-reinput-safe quoting for readonly names, including unset readonly names. Remaining work is finer special-builtin error handling review. |
@@ -118,11 +118,11 @@ This document maps the POSIX shell requirements mirrored under `docs/posix/` to 
 | `docs/posix/utilities/set.html` | `src/builtin.rs`, `src/shell.rs`, `src/expand.rs`, `src/exec.rs` | partial | Positional-parameter handling and `-C`/`+C`, `-f`/`+f` exist. Most option surface is still missing. |
 | `docs/posix/utilities/shift.html` | `src/builtin.rs`, `src/shell.rs` | implemented with remaining edge review | Implemented. |
 | `docs/posix/utilities/times.html` | `src/builtin.rs`, `src/sys.rs` | partial | Builtin now reports shell and child process times via handwritten `times()` and `sysconf(_SC_CLK_TCK)` bindings. Formatting and basic error paths are covered; broader locale/detail review is still open. |
-| `docs/posix/utilities/trap.html` | `src/builtin.rs` | placeholder | Stub only; no real trap registration, output formatting, or eval semantics yet. |
+| `docs/posix/utilities/trap.html` | `src/builtin.rs`, `src/shell.rs`, `src/sys.rs` | partial | `trap` now supports default/ignore/command forms, `trap -p`, and no-operand listing for EXIT plus the currently supported signal subset (`HUP`, `INT`, `QUIT`, `ABRT`, `ALRM`, `TERM`). Trap actions run through the shell parser/executor with pre-trap `$?` preservation, EXIT traps run before shell termination, and pending signal traps are drained between commands. Ignored-on-entry signals, full signal-name coverage, subshell trap reset nuances, and the command-substitution-only `trap` exception remain open. |
 | `docs/posix/utilities/umask.html` | `src/builtin.rs`, `src/sys.rs` | partial | Builtin now reads and updates the current shell umask, supports octal masks, `-S` symbolic output, and a useful subset of symbolic mask operands. Full chmod-style symbolic surface still needs review. |
 | `docs/posix/utilities/unalias.html` | `src/builtin.rs` | partial | Builtin exists; option surface is not implemented. |
 | `docs/posix/utilities/unset.html` | `src/builtin.rs`, `src/shell.rs` | partial | Variable unsetting now supports `-v`, function removal supports `-f`, and readonly-variable failures return a non-zero status without treating missing names as errors. Special-parameter handling and unspecified no-option function interactions still need review. |
-| `docs/posix/utilities/wait.html` | `src/builtin.rs`, `src/shell.rs`, `src/sys.rs` | partial | Waiting by internal job id and wait-all exist. Full POSIX `wait` semantics still need deeper `waitpid` integration. |
+| `docs/posix/utilities/wait.html` | `src/builtin.rs`, `src/shell.rs`, `src/sys.rs` | partial | `wait` now uses `waitpid()`-backed waiting for known child process ids, accepts both numeric pid operands and `%n` job operands, returns zero for the no-operand case, and treats unknown operands as status `127`. The shell also retains completed background-job statuses long enough for later `wait` consumption. Full `{CHILD_MAX}` retention policy, broader job-id grammar, and all signal-interruption edge cases remain open. |
 
 ## Interactive Behavior, Job Control, And Signals
 
@@ -131,8 +131,8 @@ This document maps the POSIX shell requirements mirrored under `docs/posix/` to 
 | `docs/posix/issue8/sh-utility.html#tag_20_110_13_01` | Command history list | `src/interactive.rs` | `src/interactive.rs` | Only plain line append to `HISTFILE` or default history path exists. |
 | `docs/posix/issue8/sh-utility.html#tag_20_110_13_02` | Command line editing | none | none | Not implemented. |
 | `docs/posix/issue8/sh-utility.html#tag_20_110_13_03` | vi-mode editing | none | none | Not implemented. |
-| `docs/posix/issue8/shell-command-language.html#tag_19_11` | Job control | `src/shell.rs`, `src/builtin.rs`, `src/sys.rs` | `src/shell.rs`, `src/builtin.rs`, `tests/spec/basic.rs` | Background jobs, `jobs`, `fg`, `bg`, and `wait` exist in a partial form. Full process-group and tty handoff semantics are still open. |
-| `docs/posix/issue8/shell-command-language.html#tag_19_12` | Signals and error handling | `src/sys.rs`, `src/builtin.rs`, `src/shell.rs` | `src/sys.rs` | Signal-related low-level bindings exist, but real trap handling and full signal policy are not implemented. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_11` | Job control | `src/shell.rs`, `src/builtin.rs`, `src/sys.rs`, `src/exec.rs` | `src/shell.rs`, `src/builtin.rs`, `src/exec.rs`, `tests/spec/basic.rs` | External commands and pipelines now enter tracked process groups, background jobs retain pgids, and `fg`/`bg` resume jobs through `SIGCONT` to the process group. Best-effort `tcsetpgrp()` handoff is present for interactive file-descriptor scenarios, but `set -m`, stopped-job accounting, terminal mode save/restore, and full job-id semantics remain incomplete. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_12` | Signals and error handling | `src/sys.rs`, `src/builtin.rs`, `src/shell.rs` | `src/sys.rs`, `src/builtin.rs`, `src/shell.rs`, `tests/spec/basic.rs` | Supported signal traps are now registered through handwritten signal-disposition bindings and delivered after foreground command completion by draining pending trap actions between commands. `wait` also returns `>128` when interrupted by a trapped signal in the implemented path. Remaining gaps include ignored-on-entry signal rules, full async-list inheritance policy when job control is disabled, and broader signal coverage. |
 
 ## Low-Level System Interface Coverage
 
@@ -143,15 +143,15 @@ This document maps the POSIX shell requirements mirrored under `docs/posix/` to 
 | `docs/posix/functions/exec.html` | `src/sys.rs`, `src/builtin.rs`, `src/exec.rs` | Used for process replacement and external command execution paths. |
 | `docs/posix/functions/fork.html` | indirect via process spawning model and job handling | Rust process creation is used today; deeper direct process-group control is still pending. |
 | `docs/posix/functions/isatty.html` | `src/sys.rs` | Binding exists. |
-| `docs/posix/functions/kill.html` | `src/sys.rs`, `src/shell.rs` | Binding exists and is used for job continuation paths. |
+| `docs/posix/functions/kill.html` | `src/sys.rs`, `src/shell.rs` | Binding exists and is used for job continuation paths and signal delivery to tracked process groups. |
 | `docs/posix/functions/open.html` | `src/sys.rs`, `src/exec.rs` | Used for redirection targets. |
 | `docs/posix/functions/pipe.html` | `src/sys.rs`, `src/exec.rs` | Used for pipelines and here-doc transport. |
-| `docs/posix/functions/setpgid.html` | `src/sys.rs` | Binding exists; broader job-control integration is still pending. |
-| `docs/posix/functions/sigaction.html` | `src/sys.rs` | Binding presence is tracked, but real trap/signal disposition management is still pending. |
-| `docs/posix/functions/tcgetpgrp.html` and `docs/posix/functions/tcsetpgrp.html` | `src/sys.rs` | Bindings exist; tty foreground handoff is not yet wired through shell job control. |
+| `docs/posix/functions/setpgid.html` | `src/sys.rs`, `src/exec.rs`, `src/shell.rs` | Used to place spawned external commands and pipelines into tracked process groups for background and foreground job-control paths. |
+| `docs/posix/functions/signal.html` | `src/sys.rs`, `src/shell.rs`, `src/builtin.rs` | Handwritten signal-disposition bindings now back the implemented trap subset and pending-signal bookkeeping. |
+| `docs/posix/functions/tcgetpgrp.html` and `docs/posix/functions/tcsetpgrp.html` | `src/sys.rs`, `src/exec.rs`, `src/shell.rs` | Best-effort tty foreground handoff is now wired into foreground external-command and `fg` waits when interactive file descriptors are available. |
 | `docs/posix/functions/times.html` | `src/sys.rs`, `src/builtin.rs` | Handwritten bindings now expose process and child CPU accounting for the `times` builtin. |
 | `docs/posix/functions/umask.html` | `src/sys.rs`, `src/builtin.rs` | Handwritten binding now exposes current-shell umask reads and updates for the `umask` builtin. |
-| `docs/posix/functions/waitpid.html` | `src/sys.rs`, `src/shell.rs`, `src/builtin.rs` | Used for job reaping and waiting; full POSIX `wait` semantics remain open. |
+| `docs/posix/functions/waitpid.html` | `src/sys.rs`, `src/shell.rs`, `src/builtin.rs`, `src/exec.rs` | Used for blocking waits on external foreground commands plus retained job/pid waits in the `wait` builtin; stop-status accounting and some interruption corners remain open. |
 
 ## Validation Lanes
 
@@ -164,8 +164,8 @@ This document maps the POSIX shell requirements mirrored under `docs/posix/` to 
 
 - Field splitting still needs more exact coverage for mixed quoting and IFS edge cases in `2.6.5`.
 - Issue 8 dollar-single-quotes from `2.2.4` remain unimplemented.
-- `trap` remains a placeholder relative to `docs/posix/utilities/trap.html` and `2.12`.
+- Trap handling still needs ignored-on-entry semantics, broader signal-name coverage, and the subshell/command-substitution exceptions from `2.12` and `trap`.
 - `set` only implements a small subset of the `sh` and `set` option surface.
 - `read` still needs tighter multi-byte, continuation-prompt, and corner-case review relative to `docs/posix/utilities/read.html`.
 - `umask` still lacks the full chmod-style symbolic operand surface from `docs/posix/utilities/umask.html`.
-- Job control remains partial relative to `2.11`, `fg`, `bg`, `jobs`, `wait`, `setpgid()`, `tcgetpgrp()`, and `tcsetpgrp()`.
+- Job control remains partial relative to `2.11`, especially around `set -m`, stopped-job state tracking, terminal mode save/restore, and full job-id grammar for `fg`, `bg`, `jobs`, and `wait`.

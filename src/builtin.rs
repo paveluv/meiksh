@@ -3,7 +3,7 @@ use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
-use crate::shell::{Shell, ShellError};
+use crate::shell::{Shell, ShellError, TrapAction, TrapCondition};
 use crate::sys;
 
 #[derive(Debug)]
@@ -337,43 +337,47 @@ fn jobs(shell: &mut Shell) -> BuiltinOutcome {
 }
 
 fn fg(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
-    let id = argv
-        .get(1)
-        .and_then(|value| value.trim_start_matches('%').parse::<usize>().ok())
+    let id = parse_job_id_operand(argv.get(1).map(String::as_str))
         .or_else(|| shell.jobs.last().map(|job| job.id))
         .ok_or_else(|| ShellError {
             message: "fg: no current job".to_string(),
         })?;
+    if let Some(job) = shell.jobs.iter().find(|job| job.id == id) {
+        println!("{}", job.command);
+    }
     shell.continue_job(id)?;
     let status = shell.wait_for_job(id)?;
     Ok(BuiltinOutcome::Status(status))
 }
 
 fn bg(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
-    let id = argv
-        .get(1)
-        .and_then(|value| value.trim_start_matches('%').parse::<usize>().ok())
+    let id = parse_job_id_operand(argv.get(1).map(String::as_str))
         .or_else(|| shell.jobs.last().map(|job| job.id))
         .ok_or_else(|| ShellError {
             message: "bg: no current job".to_string(),
         })?;
     shell.continue_job(id)?;
+    if let Some(job) = shell.jobs.iter().find(|job| job.id == id) {
+        println!("[{id}] {}", job.command);
+    }
     Ok(BuiltinOutcome::Status(0))
 }
 
 fn wait(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     if argv.len() == 1 {
-        let ids: Vec<usize> = shell.jobs.iter().map(|job| job.id).collect();
-        let mut last = 0;
-        for id in ids {
-            last = shell.wait_for_job(id)?;
-        }
-        return Ok(BuiltinOutcome::Status(last));
+        return Ok(BuiltinOutcome::Status(shell.wait_for_all_jobs()?));
     }
-    let id = argv[1].trim_start_matches('%').parse::<usize>().map_err(|_| ShellError {
-        message: "wait: invalid job id".to_string(),
-    })?;
-    let status = shell.wait_for_job(id)?;
+    let mut status = 0;
+    for operand in &argv[1..] {
+        status = match parse_wait_operand(operand) {
+            Ok(WaitOperand::Job(id)) => shell.wait_for_job_operand(id)?,
+            Ok(WaitOperand::Pid(pid)) => shell.wait_for_pid_operand(pid)?,
+            Err(message) => {
+                eprintln!("{message}");
+                1
+            }
+        };
+    }
     Ok(BuiltinOutcome::Status(status))
 }
 
@@ -677,11 +681,165 @@ fn times() -> BuiltinOutcome {
     }
 }
 
-fn trap(_shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
-    if argv.len() == 1 {
-        return BuiltinOutcome::Status(0);
+fn trap(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
+    match trap_impl(shell, argv) {
+        Ok(status) => BuiltinOutcome::Status(status),
+        Err(error) => {
+            eprintln!("trap: {}", error.message);
+            BuiltinOutcome::Status(1)
+        }
     }
-    BuiltinOutcome::Status(0)
+}
+
+#[derive(Clone, Copy)]
+enum WaitOperand {
+    Job(usize),
+    Pid(u32),
+}
+
+fn parse_job_id_operand(operand: Option<&str>) -> Option<usize> {
+    operand?.trim_start_matches('%').parse::<usize>().ok()
+}
+
+fn parse_wait_operand(operand: &str) -> Result<WaitOperand, String> {
+    if let Some(rest) = operand.strip_prefix('%') {
+        return rest
+            .parse::<usize>()
+            .map(WaitOperand::Job)
+            .map_err(|_| format!("wait: invalid job id: {operand}"));
+    }
+    operand
+        .parse::<u32>()
+        .map(WaitOperand::Pid)
+        .map_err(|_| format!("wait: invalid process id: {operand}"))
+}
+
+fn trap_impl(shell: &mut Shell, argv: &[String]) -> Result<i32, ShellError> {
+    if argv.len() == 1 {
+        print_traps(shell, false, &[])?;
+        return Ok(0);
+    }
+    if argv[1] == "-p" {
+        print_traps(shell, true, &argv[2..])?;
+        return Ok(0);
+    }
+    if is_unsigned_decimal(&argv[1]) {
+        for condition in &argv[1..] {
+            if let Some(condition) = parse_trap_condition(condition) {
+                shell.set_trap(condition, None)?;
+            } else {
+                eprintln!("trap: invalid condition: {condition}");
+                return Ok(1);
+            }
+        }
+        return Ok(0);
+    }
+    let action = &argv[1];
+    if argv.len() == 2 {
+        return Err(ShellError {
+            message: "condition argument required".to_string(),
+        });
+    }
+    let trap_action = parse_trap_action(action);
+    let mut status = 0;
+    for condition in &argv[2..] {
+        let Some(condition) = parse_trap_condition(condition) else {
+            eprintln!("trap: invalid condition: {condition}");
+            status = 1;
+            continue;
+        };
+        shell.set_trap(condition, trap_action.clone())?;
+    }
+    Ok(status)
+}
+
+fn print_traps(shell: &Shell, include_defaults: bool, operands: &[String]) -> Result<(), ShellError> {
+    let conditions = if operands.is_empty() {
+        if include_defaults {
+            supported_trap_conditions()
+        } else {
+            shell.trap_actions.keys().copied().collect()
+        }
+    } else {
+        let mut parsed = Vec::new();
+        for operand in operands {
+            let Some(condition) = parse_trap_condition(operand) else {
+                return Err(ShellError {
+                    message: format!("invalid condition: {operand}"),
+                });
+            };
+            parsed.push(condition);
+        }
+        parsed
+    };
+    for condition in conditions {
+        if let Some(action) = trap_output_action(shell, condition, include_defaults, !operands.is_empty()) {
+            println!("trap -- {action} {}", format_trap_condition(condition));
+        }
+    }
+    Ok(())
+}
+
+fn supported_trap_conditions() -> Vec<TrapCondition> {
+    let mut conditions = vec![TrapCondition::Exit];
+    conditions.extend(
+        sys::supported_trap_signals()
+            .into_iter()
+            .map(TrapCondition::Signal),
+    );
+    conditions
+}
+
+fn parse_trap_action(action: &str) -> Option<TrapAction> {
+    match action {
+        "-" => None,
+        _ if action.is_empty() => Some(TrapAction::Ignore),
+        _ => Some(TrapAction::Command(action.to_string())),
+    }
+}
+
+fn parse_trap_condition(text: &str) -> Option<TrapCondition> {
+    match text {
+        "0" | "EXIT" => Some(TrapCondition::Exit),
+        "HUP" | "1" => Some(TrapCondition::Signal(sys::SIGHUP)),
+        "INT" | "2" => Some(TrapCondition::Signal(sys::SIGINT)),
+        "QUIT" | "3" => Some(TrapCondition::Signal(sys::SIGQUIT)),
+        "ABRT" | "6" => Some(TrapCondition::Signal(sys::SIGABRT)),
+        "ALRM" | "14" => Some(TrapCondition::Signal(sys::SIGALRM)),
+        "TERM" | "15" => Some(TrapCondition::Signal(sys::SIGTERM)),
+        _ => None,
+    }
+}
+
+fn format_trap_condition(condition: TrapCondition) -> String {
+    match condition {
+        TrapCondition::Exit => "EXIT".to_string(),
+        TrapCondition::Signal(sys::SIGHUP) => "HUP".to_string(),
+        TrapCondition::Signal(sys::SIGINT) => "INT".to_string(),
+        TrapCondition::Signal(sys::SIGQUIT) => "QUIT".to_string(),
+        TrapCondition::Signal(sys::SIGABRT) => "ABRT".to_string(),
+        TrapCondition::Signal(sys::SIGALRM) => "ALRM".to_string(),
+        TrapCondition::Signal(sys::SIGTERM) => "TERM".to_string(),
+        TrapCondition::Signal(signal) => signal.to_string(),
+    }
+}
+
+fn trap_output_action(
+    shell: &Shell,
+    condition: TrapCondition,
+    include_defaults: bool,
+    explicit_operand: bool,
+) -> Option<String> {
+    match shell.trap_action(condition) {
+        Some(TrapAction::Ignore) => Some("''".to_string()),
+        Some(TrapAction::Command(command)) => Some(shell_quote(command)),
+        None if include_defaults || explicit_operand => Some("-".to_string()),
+        None => None,
+    }
+}
+
+fn is_unsigned_decimal(text: &str) -> bool {
+    !text.is_empty() && text.chars().all(|ch| ch.is_ascii_digit())
 }
 
 fn format_times_value(ticks: u64, ticks_per_second: u64) -> String {
@@ -1207,7 +1365,7 @@ mod tests {
     use super::*;
     use crate::shell::ShellOptions;
     use crate::syntax::Word;
-    use std::collections::{BTreeSet, HashMap};
+    use std::collections::{BTreeMap, BTreeSet, HashMap};
     use std::fs;
     use std::io::{self, Cursor};
     use std::os::unix::fs::PermissionsExt;
@@ -1235,6 +1393,9 @@ mod tests {
             last_background: None,
             running: true,
             jobs: Vec::new(),
+            known_pid_statuses: HashMap::new(),
+            known_job_statuses: HashMap::new(),
+            trap_actions: BTreeMap::new(),
             current_exe: meiksh_bin_path(),
             loop_depth: 0,
             function_depth: 0,
@@ -1589,8 +1750,8 @@ mod tests {
     #[test]
     fn wait_and_job_control_fail_cleanly_without_jobs() {
         let mut shell = test_shell();
-        let wait_error = run(&mut shell, &["wait".into(), "%bad".into()]).expect_err("bad wait");
-        assert_eq!(wait_error.message, "wait: invalid job id");
+        let wait_outcome = run(&mut shell, &["wait".into(), "%bad".into()]).expect("bad wait");
+        assert!(matches!(wait_outcome, BuiltinOutcome::Status(1)));
 
         let fg_error = run(&mut shell, &["fg".into()]).expect_err("fg");
         assert_eq!(fg_error.message, "fg: no current job");
@@ -1909,13 +2070,63 @@ mod tests {
     }
 
     #[test]
+    fn trap_helpers_cover_listing_reset_and_invalid_paths() {
+        let mut shell = test_shell();
+
+        assert_eq!(trap_impl(&mut shell, &["trap".into(), "-p".into()]).expect("trap -p"), 0);
+        assert_eq!(
+            trap_impl(
+                &mut shell,
+                &[
+                    "trap".into(),
+                    "printf hi".into(),
+                    "QUIT".into(),
+                    "ABRT".into(),
+                    "ALRM".into(),
+                    "TERM".into(),
+                ],
+            )
+            .expect("trap set many"),
+            0
+        );
+        assert_eq!(trap_impl(&mut shell, &["trap".into(), "".into(), "TERM".into()]).expect("trap ignore"), 0);
+        assert_eq!(trap_impl(&mut shell, &["trap".into(), "-".into(), "TERM".into()]).expect("trap default"), 0);
+        assert_eq!(trap_impl(&mut shell, &["trap".into(), "1".into(), "1".into()]).expect("numeric reset"), 0);
+        assert_eq!(
+            trap_impl(&mut shell, &["trap".into(), "-p".into(), "EXIT".into(), "INT".into()]).expect("trap -p operands"),
+            0
+        );
+        shell
+            .set_trap(TrapCondition::Signal(sys::SIGTERM), Some(TrapAction::Ignore))
+            .expect("set ignore");
+        shell
+            .set_trap(TrapCondition::Signal(sys::SIGINT), Some(TrapAction::Command("printf hi".into())))
+            .expect("set command");
+        print_traps(&shell, false, &[]).expect("print non-default traps");
+        print_traps(&shell, false, &["EXIT".into()]).expect("skip default trap");
+        assert!(print_traps(&shell, false, &["BAD".into()]).is_err());
+        assert_eq!(trap_impl(&mut shell, &["trap".into(), "printf hi".into(), "BAD".into()]).expect("invalid set"), 1);
+        assert_eq!(trap_impl(&mut shell, &["trap".into(), "999".into()]).expect("invalid reset"), 1);
+        assert!(trap_impl(&mut shell, &["trap".into(), "printf hi".into()]).is_err());
+        assert!(matches!(
+            trap(&mut shell, &["trap".into(), "printf hi".into()]),
+            BuiltinOutcome::Status(1)
+        ));
+        assert_eq!(trap_output_action(&shell, TrapCondition::Exit, false, false), None);
+        assert!(matches!(parse_wait_operand("bad"), Err(message) if message.contains("invalid process id")));
+        assert_eq!(format_trap_condition(TrapCondition::Signal(99)), "99");
+        assert_eq!(supported_trap_conditions().len(), 7);
+        assert_eq!(parse_trap_condition("BAD"), None);
+    }
+
+    #[test]
     fn wait_fg_bg_success_paths_are_exercised() {
         let mut shell = test_shell();
         let child = std::process::Command::new(&shell.current_exe)
             .args(["-c", "sleep 0.05"])
             .spawn()
             .expect("spawn");
-        let id = shell.launch_background_job("sleep".into(), vec![child]);
+        let id = shell.launch_background_job("sleep".into(), None, vec![child]);
 
         let outcome = run(&mut shell, &["bg".into(), format!("%{id}")]).expect("bg");
         assert!(matches!(outcome, BuiltinOutcome::Status(0)));
@@ -1927,7 +2138,7 @@ mod tests {
             .args(["-c", "sleep 0.05"])
             .spawn()
             .expect("spawn");
-        let id = shell.launch_background_job("sleep".into(), vec![child]);
+        let id = shell.launch_background_job("sleep".into(), None, vec![child]);
         let outcome = run(&mut shell, &["fg".into(), format!("%{id}")]).expect("fg");
         assert!(matches!(outcome, BuiltinOutcome::Status(_)));
     }
@@ -1943,11 +2154,11 @@ mod tests {
             .args(["-c", "exit 3"])
             .spawn()
             .expect("spawn");
-        shell.launch_background_job("first".into(), vec![child_a]);
-        shell.launch_background_job("second".into(), vec![child_b]);
+        shell.launch_background_job("first".into(), None, vec![child_a]);
+        shell.launch_background_job("second".into(), None, vec![child_b]);
 
         let outcome = run(&mut shell, &["wait".into()]).expect("wait all");
-        assert!(matches!(outcome, BuiltinOutcome::Status(3)));
+        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
         assert!(shell.jobs.is_empty());
     }
 

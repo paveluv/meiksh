@@ -15,6 +15,20 @@ use crate::syntax::{
     HereDoc, LoopCommand, LoopKind, Pipeline, Program, RedirectionKind, SimpleCommand,
 };
 
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug)]
+enum ProcessGroupPlan {
+    None,
+    NewGroup,
+    Join(sys::Pid),
+}
+
+#[derive(Debug)]
+struct SpawnedProcesses {
+    children: Vec<Child>,
+    pgid: Option<sys::Pid>,
+}
+
 pub fn execute_program(shell: &mut Shell, program: &Program) -> Result<i32, ShellError> {
     let mut status = 0;
     for item in &program.items {
@@ -28,9 +42,9 @@ pub fn execute_program(shell: &mut Shell, program: &Program) -> Result<i32, Shel
 
 fn execute_list_item(shell: &mut Shell, item: &ListItem) -> Result<i32, ShellError> {
     if item.asynchronous {
-        let children = spawn_and_or(shell, &item.and_or)?;
+        let spawned = spawn_and_or(shell, &item.and_or)?;
         let description = render_and_or(&item.and_or);
-        let id = shell.launch_background_job(description, children);
+        let id = shell.launch_background_job(description, spawned.pgid, spawned.children);
         println!("[{id}]");
         Ok(0)
     } else {
@@ -50,7 +64,7 @@ fn execute_and_or(shell: &mut Shell, node: &AndOr) -> Result<i32, ShellError> {
     Ok(status)
 }
 
-fn spawn_and_or(shell: &mut Shell, node: &AndOr) -> Result<Vec<Child>, ShellError> {
+fn spawn_and_or(shell: &mut Shell, node: &AndOr) -> Result<SpawnedProcesses, ShellError> {
     if !node.rest.is_empty() {
         return Err(ShellError {
             message: "background execution currently supports single pipelines".to_string(),
@@ -71,15 +85,12 @@ fn execute_pipeline(shell: &mut Shell, pipeline: &Pipeline, asynchronous: bool) 
         }
     }
 
-    let mut children = spawn_pipeline(shell, pipeline)?;
+    let spawned = spawn_pipeline(shell, pipeline)?;
     if asynchronous {
         return Ok(0);
     }
 
-    let mut status = 0;
-    for child in &mut children {
-        status = child.wait()?.code().unwrap_or(128);
-    }
+    let status = wait_for_children(shell, spawned)?;
 
     if pipeline.negated {
         Ok(if status == 0 { 1 } else { 0 })
@@ -88,9 +99,10 @@ fn execute_pipeline(shell: &mut Shell, pipeline: &Pipeline, asynchronous: bool) 
     }
 }
 
-fn spawn_pipeline(shell: &mut Shell, pipeline: &Pipeline) -> Result<Vec<Child>, ShellError> {
+fn spawn_pipeline(shell: &mut Shell, pipeline: &Pipeline) -> Result<SpawnedProcesses, ShellError> {
     let mut previous_stdout: Option<PipelineInput> = None;
     let mut children = Vec::new();
+    let mut pgid = None;
 
     for (index, command) in pipeline.commands.iter().enumerate() {
         let is_last = index + 1 == pipeline.commands.len();
@@ -119,12 +131,44 @@ fn spawn_pipeline(shell: &mut Shell, pipeline: &Pipeline) -> Result<Vec<Child>, 
             }
         };
 
-        let mut child = spawn_prepared(&prepared, previous_stdout.take(), !is_last)?;
+        let plan = match pgid {
+            Some(pgid) => ProcessGroupPlan::Join(pgid),
+            None => ProcessGroupPlan::NewGroup,
+        };
+        let mut child = spawn_prepared(&prepared, previous_stdout.take(), !is_last, plan)?;
+        if pgid.is_none() {
+            let child_pgid = child.id() as sys::Pid;
+            let _ = sys::set_process_group(child_pgid, child_pgid);
+            pgid = Some(child_pgid);
+        } else if let Some(job_pgid) = pgid {
+            let _ = sys::set_process_group(child.id() as sys::Pid, job_pgid);
+        }
         previous_stdout = child.stdout.take().map(PipelineInput::new).transpose()?;
         children.push(child);
     }
 
-    Ok(children)
+    Ok(SpawnedProcesses { children, pgid })
+}
+
+fn wait_for_children(shell: &mut Shell, mut spawned: SpawnedProcesses) -> Result<i32, ShellError> {
+    let saved_foreground = handoff_foreground(spawned.pgid);
+    let mut status = 0;
+    for child in &mut spawned.children {
+        status = shell.wait_for_child_pid(child.id(), false)?;
+    }
+    restore_foreground(saved_foreground);
+    Ok(status)
+}
+
+fn wait_for_external_child(
+    shell: &mut Shell,
+    child: &mut Child,
+    pgid: Option<sys::Pid>,
+) -> Result<i32, ShellError> {
+    let saved_foreground = handoff_foreground(pgid);
+    let status = shell.wait_for_child_pid(child.id(), false)?;
+    restore_foreground(saved_foreground);
+    Ok(status)
 }
 
 fn execute_command(shell: &mut Shell, command: &Command) -> Result<i32, ShellError> {
@@ -351,8 +395,10 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
         })
     } else {
         let prepared = build_process_from_expanded(shell, &expanded)?;
-        let mut child = spawn_prepared(&prepared, None, false)?;
-        let status = child.wait()?.code().unwrap_or(128);
+        let mut child = spawn_prepared(&prepared, None, false, ProcessGroupPlan::NewGroup)?;
+        let pgid = child.id() as sys::Pid;
+        let _ = sys::set_process_group(pgid, pgid);
+        let status = wait_for_external_child(shell, &mut child, Some(pgid))?;
         Ok(status)
     }
 }
@@ -531,13 +577,14 @@ fn spawn_prepared(
     prepared: &PreparedProcess,
     input: Option<PipelineInput>,
     pipe_stdout: bool,
+    process_group: ProcessGroupPlan,
 ) -> Result<Child, ShellError> {
     let retry_input = if let Some(input) = input.as_ref() {
         Some(Stdio::from(input.retry.as_fd().try_clone_to_owned()?))
     } else {
         None
     };
-    let (mut process, prepared_redirections) = prepared.build_command(false)?;
+    let (mut process, prepared_redirections) = prepared.build_command(false, process_group)?;
     if !prepared_redirections.stdin_redirected {
         if let Some(input) = input {
             process.stdin(Stdio::from(input.primary.0));
@@ -547,19 +594,16 @@ fn spawn_prepared(
         process.stdout(Stdio::piped());
     }
 
-    match process.spawn() {
-        Ok(child) => Ok(child),
-        Err(error) if error.raw_os_error() == Some(8) => spawn_with_fallback(prepared, retry_input, pipe_stdout),
-        Err(error) => Err(error.into()),
-    }
+    finalize_spawn(process, prepared, retry_input, pipe_stdout, process_group)
 }
 
 fn spawn_with_fallback(
     prepared: &PreparedProcess,
     retry_input: Option<Stdio>,
     pipe_stdout: bool,
+    process_group: ProcessGroupPlan,
 ) -> Result<Child, ShellError> {
-    let (mut fallback, prepared_redirections) = prepared.build_command(true)?;
+    let (mut fallback, prepared_redirections) = prepared.build_command(true, process_group)?;
     if !prepared_redirections.stdin_redirected && let Some(stdin) = retry_input {
         fallback.stdin(stdin);
     }
@@ -567,6 +611,33 @@ fn spawn_with_fallback(
         fallback.stdout(Stdio::piped());
     }
     Ok(fallback.spawn()?)
+}
+
+fn finalize_spawn(
+    mut process: ProcessCommand,
+    prepared: &PreparedProcess,
+    retry_input: Option<Stdio>,
+    pipe_stdout: bool,
+    process_group: ProcessGroupPlan,
+) -> Result<Child, ShellError> {
+    match process.spawn() {
+        Ok(child) => Ok(child),
+        Err(error) => maybe_spawn_with_fallback(error, prepared, retry_input, pipe_stdout, process_group),
+    }
+}
+
+fn maybe_spawn_with_fallback(
+    error: std::io::Error,
+    prepared: &PreparedProcess,
+    retry_input: Option<Stdio>,
+    pipe_stdout: bool,
+    process_group: ProcessGroupPlan,
+) -> Result<Child, ShellError> {
+    if error.raw_os_error() == Some(8) {
+        spawn_with_fallback(prepared, retry_input, pipe_stdout, process_group)
+    } else {
+        Err(error.into())
+    }
 }
 
 fn prepare_redirections(
@@ -678,6 +749,7 @@ impl PreparedProcess {
     fn build_command(
         &self,
         fallback_to_sh: bool,
+        process_group: ProcessGroupPlan,
     ) -> Result<(ProcessCommand, PreparedRedirections), ShellError> {
         let mut process = if fallback_to_sh {
             let mut process = ProcessCommand::new("sh");
@@ -700,10 +772,10 @@ impl PreparedProcess {
         process.env_clear();
         process.envs(self.child_env.iter().cloned());
         let prepared_redirections = prepare_redirections(&self.redirections, self.noclobber)?;
-        if !prepared_redirections.actions.is_empty() {
+        if !prepared_redirections.actions.is_empty() || !matches!(process_group, ProcessGroupPlan::None) {
             let actions = prepared_redirections.actions;
             unsafe {
-                process.pre_exec(move || apply_child_fd_actions(&actions));
+                process.pre_exec(move || apply_child_setup(&actions, process_group));
             }
         }
         Ok((
@@ -745,6 +817,36 @@ fn apply_child_fd_actions(actions: &[ChildFdAction]) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+fn apply_child_setup(actions: &[ChildFdAction], process_group: ProcessGroupPlan) -> std::io::Result<()> {
+    apply_child_fd_actions(actions)?;
+    match process_group {
+        ProcessGroupPlan::None => {}
+        ProcessGroupPlan::NewGroup => sys::set_process_group(0, 0)?,
+        ProcessGroupPlan::Join(pgid) => sys::set_process_group(0, pgid)?,
+    }
+    Ok(())
+}
+
+fn handoff_foreground(pgid: Option<sys::Pid>) -> Option<sys::Pid> {
+    let Some(pgid) = pgid else {
+        return None;
+    };
+    if !(sys::is_interactive_fd(sys::STDIN_FILENO) && sys::is_interactive_fd(sys::STDERR_FILENO)) {
+        return None;
+    }
+    let Ok(saved) = sys::current_foreground_pgrp(sys::STDIN_FILENO) else {
+        return None;
+    };
+    let _ = sys::set_foreground_pgrp(sys::STDIN_FILENO, pgid);
+    Some(saved)
+}
+
+fn restore_foreground(saved_foreground: Option<sys::Pid>) {
+    if let Some(pgid) = saved_foreground {
+        let _ = sys::set_foreground_pgrp(sys::STDIN_FILENO, pgid);
+    }
 }
 
 impl Drop for ShellRedirectionGuard {
@@ -1172,11 +1274,10 @@ mod tests {
     use super::*;
     use crate::shell::ShellOptions;
     use crate::syntax::{Assignment, HereDoc, Redirection, Word};
-    use std::collections::{BTreeSet, HashMap};
+    use std::collections::{BTreeMap, BTreeSet, HashMap};
     use std::fs;
     use std::os::raw::c_int;
     use std::os::unix::fs::PermissionsExt;
-    use std::path::PathBuf;
     use std::sync::{Mutex, OnceLock};
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1211,6 +1312,9 @@ mod tests {
             last_background: None,
             running: true,
             jobs: Vec::new(),
+            known_pid_statuses: HashMap::new(),
+            known_job_statuses: HashMap::new(),
+            trap_actions: BTreeMap::new(),
             current_exe: meiksh_bin_path(),
             loop_depth: 0,
             function_depth: 0,
@@ -1297,7 +1401,7 @@ mod tests {
             },
         )
         .expect("process");
-        let child = spawn_prepared(&prepared, None, true).expect("spawn");
+        let child = spawn_prepared(&prepared, None, true, ProcessGroupPlan::None).expect("spawn");
         let output = child.wait_with_output().expect("output");
         assert_eq!(String::from_utf8_lossy(&output.stdout), "works");
     }
@@ -1324,7 +1428,7 @@ mod tests {
             redirections: Vec::new(),
             noclobber: false,
         };
-        let child = spawn_with_fallback(&prepared, None, true).expect("fallback spawn");
+        let child = spawn_with_fallback(&prepared, None, true, ProcessGroupPlan::None).expect("fallback spawn");
         let output = child.wait_with_output().expect("output");
         assert_eq!(String::from_utf8_lossy(&output.stdout), "unit:ok");
 
@@ -1347,7 +1451,13 @@ mod tests {
             redirections: Vec::new(),
             noclobber: false,
         };
-        let child = spawn_with_fallback(&prepared, Some(Stdio::from(input.retry)), true).expect("fallback pipeline");
+        let child = spawn_with_fallback(
+            &prepared,
+            Some(Stdio::from(input.retry)),
+            true,
+            ProcessGroupPlan::None,
+        )
+        .expect("fallback pipeline");
         let output = child.wait_with_output().expect("output");
         assert_eq!(String::from_utf8_lossy(&output.stdout), "piped");
 
@@ -1358,7 +1468,7 @@ mod tests {
             redirections: Vec::new(),
             noclobber: false,
         };
-        assert!(spawn_prepared(&missing, None, false).is_err());
+        assert!(spawn_prepared(&missing, None, false, ProcessGroupPlan::None).is_err());
 
         let _ = fs::remove_file(script);
         let _ = fs::remove_dir(dir);
@@ -1597,7 +1707,7 @@ mod tests {
             ],
         })
         .expect("spawn");
-        for mut child in spawned {
+        for mut child in spawned.children {
             let _ = child.wait().expect("wait");
         }
     }
@@ -1832,7 +1942,7 @@ mod tests {
             ],
         };
         let children = spawn_pipeline(&mut shell, &pipeline).expect("spawn");
-        for mut child in children {
+        for mut child in children.children {
             let _ = child.wait().expect("wait");
         }
     }
@@ -2329,7 +2439,19 @@ mod tests {
             redirections: Vec::new(),
             noclobber: false,
         };
-        let child = spawn_with_fallback(&prepared, Some(Stdio::null()), false).expect("fallback spawn");
+        let child = spawn_prepared(&prepared, None, false, ProcessGroupPlan::NewGroup).expect("spawn fallback");
+        assert!(child.wait_with_output().expect("wait output").status.success());
+        let child = spawn_with_fallback(&prepared, Some(Stdio::null()), false, ProcessGroupPlan::None)
+            .expect("fallback spawn");
+        assert!(child.wait_with_output().expect("wait output").status.success());
+        let child = maybe_spawn_with_fallback(
+            std::io::Error::from_raw_os_error(8),
+            &prepared,
+            Some(Stdio::null()),
+            false,
+            ProcessGroupPlan::None,
+        )
+        .expect("enoexec fallback helper");
         assert!(child.wait_with_output().expect("wait output").status.success());
 
         let prepared = PreparedProcess {
@@ -2344,10 +2466,78 @@ mod tests {
             }],
             noclobber: false,
         };
-        let (mut command, prepared_redirections) = prepared.build_command(false).expect("build command");
+        let (mut command, prepared_redirections) = prepared
+            .build_command(false, ProcessGroupPlan::None)
+            .expect("build command");
         assert!(prepared_redirections.stdout_redirected);
         assert!(prepared_redirections.actions.is_empty());
         assert!(command.spawn().expect("spawn pre-exec").wait().expect("wait").success());
+
+        let prepared = PreparedProcess {
+            exec_path: meiksh_bin_path().display().to_string(),
+            argv: vec![meiksh_bin_path().display().to_string(), "-c".into(), "exit 0".into()],
+            child_env: Vec::new(),
+            redirections: Vec::new(),
+            noclobber: false,
+        };
+        let (mut command, _) = prepared
+            .build_command(false, ProcessGroupPlan::NewGroup)
+            .expect("build command pgid");
+        assert!(command.spawn().expect("spawn newgroup").wait().expect("wait").success());
+        let (mut command, _) = prepared
+            .build_command(false, ProcessGroupPlan::Join(0))
+            .expect("build command join");
+        assert!(command.spawn().expect("spawn join").wait().expect("wait").success());
+
+        fn fake_isatty(_fd: i32) -> i32 {
+            1
+        }
+        fn fake_tcgetpgrp(_fd: i32) -> sys::Pid {
+            55
+        }
+        fn fake_tcsetpgrp(_fd: i32, _pgid: sys::Pid) -> i32 {
+            0
+        }
+        fn fake_setpgid(_pid: sys::Pid, _pgid: sys::Pid) -> i32 {
+            0
+        }
+        fn fake_kill(_pid: sys::Pid, _sig: i32) -> i32 {
+            0
+        }
+        assert_eq!(fake_kill(1, 0), 0);
+        sys::with_job_control_syscalls_for_test(
+            fake_isatty,
+            fake_tcgetpgrp,
+            fake_tcsetpgrp,
+            fake_setpgid,
+            fake_kill,
+            || {
+                assert_eq!(handoff_foreground(Some(77)), Some(55));
+                assert_eq!(handoff_foreground(Some(77)), Some(55));
+                restore_foreground(Some(55));
+                assert_eq!(handoff_foreground(None), None);
+            },
+        );
+        sys::with_job_control_syscalls_for_test(
+            fake_isatty,
+            |_fd| -1,
+            fake_tcsetpgrp,
+            fake_setpgid,
+            fake_kill,
+            || assert_eq!(handoff_foreground(Some(77)), None),
+        );
+        sys::with_job_control_syscalls_for_test(
+            fake_isatty,
+            fake_tcgetpgrp,
+            fake_tcsetpgrp,
+            fake_setpgid,
+            fake_kill,
+            || {
+                apply_child_setup(&[], ProcessGroupPlan::None).expect("setup none");
+                apply_child_setup(&[], ProcessGroupPlan::NewGroup).expect("setup newgroup");
+                apply_child_setup(&[], ProcessGroupPlan::Join(0)).expect("setup join");
+            },
+        );
 
         let _ = fs::remove_file(script);
     }
