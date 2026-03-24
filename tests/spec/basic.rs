@@ -276,6 +276,13 @@ fn aliases_defined_earlier_in_same_source_affect_later_commands() {
         .expect("run meiksh");
     assert!(conditional.status.success());
     assert_eq!(String::from_utf8_lossy(&conditional.stdout), "branch");
+
+    let heredoc_nested = Command::new(meiksh())
+        .args(["-c", "f() { alias say='cat'; say <<EOF\nhello\nEOF\n}; f"])
+        .output()
+        .expect("run meiksh");
+    assert!(heredoc_nested.status.success());
+    assert_eq!(String::from_utf8_lossy(&heredoc_nested.stdout), "hello\n");
 }
 
 #[test]
