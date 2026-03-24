@@ -112,14 +112,14 @@ This document maps the POSIX shell requirements mirrored under `docs/posix/` to 
 | `docs/posix/utilities/fg.html` | `src/builtin.rs`, `src/shell.rs` | partial | Basic foreground wait path exists. tty foreground handoff and output details remain open. |
 | `docs/posix/utilities/jobs.html` | `src/builtin.rs`, `src/shell.rs` | partial | Job table printing exists, but POSIX output detail and state fidelity remain incomplete. |
 | `docs/posix/utilities/pwd.html` | `src/builtin.rs` | partial | Builtin exists. Physical/logical mode distinctions are not yet documented as complete. |
-| `docs/posix/utilities/read.html` | none | not implemented | Still absent from `src/builtin.rs`. |
+| `docs/posix/utilities/read.html` | `src/builtin.rs`, `src/shell.rs` | partial | Intrinsic builtin now reads from standard input into current-shell variables, supports `-r` and `-d`, distinguishes EOF from error, and applies `IFS`-driven assignment splitting. Multi-byte and some interactive prompt edge semantics still need tightening against the utility page. |
 | `docs/posix/utilities/readonly.html` | `src/builtin.rs`, `src/shell.rs` | partial | Marking variables readonly exists. Full utility output behavior remains to be tightened. |
 | `docs/posix/utilities/return.html` | `src/builtin.rs`, `src/exec.rs`, `src/shell.rs` | implemented with remaining edge review | Current-shell function return semantics exist. |
 | `docs/posix/utilities/set.html` | `src/builtin.rs`, `src/shell.rs`, `src/expand.rs`, `src/exec.rs` | partial | Positional-parameter handling and `-C`/`+C`, `-f`/`+f` exist. Most option surface is still missing. |
 | `docs/posix/utilities/shift.html` | `src/builtin.rs`, `src/shell.rs` | implemented with remaining edge review | Implemented. |
-| `docs/posix/utilities/times.html` | `src/builtin.rs` | placeholder | Builtin exists but currently prints placeholder timing values. |
+| `docs/posix/utilities/times.html` | `src/builtin.rs`, `src/sys.rs` | partial | Builtin now reports shell and child process times via handwritten `times()` and `sysconf(_SC_CLK_TCK)` bindings. Formatting and basic error paths are covered; broader locale/detail review is still open. |
 | `docs/posix/utilities/trap.html` | `src/builtin.rs` | placeholder | Stub only; no real trap registration, output formatting, or eval semantics yet. |
-| `docs/posix/utilities/umask.html` | none | not implemented | Still absent from `src/builtin.rs`. |
+| `docs/posix/utilities/umask.html` | `src/builtin.rs`, `src/sys.rs` | partial | Builtin now reads and updates the current shell umask, supports octal masks, `-S` symbolic output, and a useful subset of symbolic mask operands. Full chmod-style symbolic surface still needs review. |
 | `docs/posix/utilities/unalias.html` | `src/builtin.rs` | partial | Builtin exists; option surface is not implemented. |
 | `docs/posix/utilities/unset.html` | `src/builtin.rs`, `src/shell.rs` | partial | Variable and alias removal exists. Full option distinctions are not implemented. |
 | `docs/posix/utilities/wait.html` | `src/builtin.rs`, `src/shell.rs`, `src/sys.rs` | partial | Waiting by internal job id and wait-all exist. Full POSIX `wait` semantics still need deeper `waitpid` integration. |
@@ -149,6 +149,8 @@ This document maps the POSIX shell requirements mirrored under `docs/posix/` to 
 | `docs/posix/functions/setpgid.html` | `src/sys.rs` | Binding exists; broader job-control integration is still pending. |
 | `docs/posix/functions/sigaction.html` | `src/sys.rs` | Binding presence is tracked, but real trap/signal disposition management is still pending. |
 | `docs/posix/functions/tcgetpgrp.html` and `docs/posix/functions/tcsetpgrp.html` | `src/sys.rs` | Bindings exist; tty foreground handoff is not yet wired through shell job control. |
+| `docs/posix/functions/times.html` | `src/sys.rs`, `src/builtin.rs` | Handwritten bindings now expose process and child CPU accounting for the `times` builtin. |
+| `docs/posix/functions/umask.html` | `src/sys.rs`, `src/builtin.rs` | Handwritten binding now exposes current-shell umask reads and updates for the `umask` builtin. |
 | `docs/posix/functions/waitpid.html` | `src/sys.rs`, `src/shell.rs`, `src/builtin.rs` | Used for job reaping and waiting; full POSIX `wait` semantics remain open. |
 
 ## Validation Lanes
@@ -165,4 +167,6 @@ This document maps the POSIX shell requirements mirrored under `docs/posix/` to 
 - Field splitting still needs more exact coverage for mixed quoting and IFS edge cases in `2.6.5`.
 - `trap` remains a placeholder relative to `docs/posix/utilities/trap.html` and `2.12`.
 - `set` only implements a small subset of the `sh` and `set` option surface.
+- `read` still needs tighter multi-byte, continuation-prompt, and corner-case review relative to `docs/posix/utilities/read.html`.
+- `umask` still lacks the full chmod-style symbolic operand surface from `docs/posix/utilities/umask.html`.
 - Job control remains partial relative to `2.11`, `fg`, `bg`, `jobs`, `wait`, `setpgid()`, `tcgetpgrp()`, and `tcsetpgrp()`.

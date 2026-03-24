@@ -1,9 +1,22 @@
-use std::process::Command;
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
+use std::process::{Command, Stdio};
 use std::{fs, time::{SystemTime, UNIX_EPOCH}};
 
 fn meiksh() -> &'static str {
     env!("CARGO_BIN_EXE_meiksh")
+}
+
+fn run_meiksh_with_stdin(script: &str, stdin: &[u8]) -> std::process::Output {
+    let mut child = Command::new(meiksh())
+        .args(["-c", script])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn meiksh");
+    child.stdin.take().expect("stdin").write_all(stdin).expect("write stdin");
+    child.wait_with_output().expect("wait for meiksh")
 }
 
 #[test]
@@ -64,6 +77,64 @@ fn export_visible_to_child() {
         .expect("run meiksh");
     assert!(output.status.success());
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "bar");
+}
+
+#[test]
+fn read_builtin_assigns_variables_in_current_shell() {
+    let output = run_meiksh_with_stdin(
+        "read first second; STATUS=$?; printf %s \"$STATUS|$first|$second\"",
+        b"alpha beta gamma\n",
+    );
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "0|alpha|beta gamma");
+
+    let eof = run_meiksh_with_stdin(
+        "read only; STATUS=$?; printf %s \"$STATUS|$only\"",
+        b"tail-without-newline",
+    );
+    assert!(eof.status.success());
+    assert_eq!(String::from_utf8_lossy(&eof.stdout), "1|tail-without-newline");
+
+    let raw = run_meiksh_with_stdin(
+        "read -r value; printf %s \"$value\"",
+        b"one\\\\two\n",
+    );
+    assert!(raw.status.success());
+    assert_eq!(String::from_utf8_lossy(&raw.stdout), "one\\\\two");
+}
+
+#[test]
+fn umask_and_times_builtins_follow_current_shell_state() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("meiksh-umask-{unique}.txt"));
+    let script = format!("umask 077; : > {}; umask; umask -S", path.display());
+    let umask_output = Command::new(meiksh())
+        .args(["-c", &script])
+        .output()
+        .expect("run meiksh");
+    assert!(umask_output.status.success());
+    let umask_stdout = String::from_utf8_lossy(&umask_output.stdout);
+    let lines: Vec<_> = umask_stdout.lines().collect();
+    assert_eq!(lines, vec!["0077", "u=rwx,g=,o="]);
+    assert_eq!(fs::metadata(&path).expect("metadata").permissions().mode() & 0o777, 0o600);
+    let _ = fs::remove_file(path);
+
+    let times_output = Command::new(meiksh())
+        .args(["-c", "times"])
+        .output()
+        .expect("run meiksh");
+    assert!(times_output.status.success());
+    let times_stdout = String::from_utf8_lossy(&times_output.stdout);
+    let time_lines: Vec<_> = times_stdout.lines().collect();
+    assert_eq!(time_lines.len(), 2);
+    for line in time_lines {
+        let fields: Vec<_> = line.split_whitespace().collect();
+        assert_eq!(fields.len(), 2);
+        assert!(fields.iter().all(|field| field.contains('m') && field.ends_with('s')));
+    }
 }
 
 #[test]
