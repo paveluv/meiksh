@@ -12,7 +12,7 @@ use crate::shell::{FlowSignal, PendingControl, Shell, ShellError};
 use crate::sys;
 use crate::syntax::{
     AndOr, CaseCommand, Command, ForCommand, FunctionDef, IfCommand, ListItem, LogicalOp,
-    LoopCommand, LoopKind, Pipeline, Program, RedirectionKind, SimpleCommand,
+    HereDoc, LoopCommand, LoopKind, Pipeline, Program, RedirectionKind, SimpleCommand,
 };
 
 pub fn execute_program(shell: &mut Shell, program: &Program) -> Result<i32, ShellError> {
@@ -115,7 +115,7 @@ fn spawn_pipeline(shell: &mut Shell, pipeline: &Pipeline) -> Result<Vec<Child>, 
                 prepared_shell_process(shell, render_case(case_command))
             }
             Command::Redirected(command, redirections) => {
-                prepared_shell_process(shell, format!("{} {}", render_command(command), render_redirections(redirections)))
+                prepared_shell_process(shell, render_redirected_command(command, redirections))
             }
         };
 
@@ -958,11 +958,7 @@ fn render_program(program: &Program) -> String {
     let mut text = String::new();
     for (index, item) in program.items.iter().enumerate() {
         if index > 0 {
-            if program.items[index - 1].asynchronous {
-                text.push(' ');
-            } else {
-                text.push_str("; ");
-            }
+            text.push('\n');
         }
         text.push_str(&render_list_item(item));
     }
@@ -990,68 +986,7 @@ fn render_and_or(and_or: &AndOr) -> String {
 }
 
 fn execute_nested_program(shell: &mut Shell, program: &Program) -> Result<i32, ShellError> {
-    if program_contains_heredoc(program) {
-        execute_program(shell, program)
-    } else {
-        shell.execute_string(&render_program(program))
-    }
-}
-
-fn program_contains_heredoc(program: &Program) -> bool {
-    program.items.iter().any(list_item_contains_heredoc)
-}
-
-fn list_item_contains_heredoc(item: &ListItem) -> bool {
-    pipeline_contains_heredoc(&item.and_or.first)
-        || item
-            .and_or
-            .rest
-            .iter()
-            .any(|(_, pipeline)| pipeline_contains_heredoc(pipeline))
-}
-
-fn pipeline_contains_heredoc(pipeline: &Pipeline) -> bool {
-    pipeline.commands.iter().any(command_contains_heredoc)
-}
-
-fn command_contains_heredoc(command: &Command) -> bool {
-    match command {
-        Command::Simple(simple) => simple.redirections.iter().any(redirection_contains_heredoc),
-        Command::Subshell(program) | Command::Group(program) => program_contains_heredoc(program),
-        Command::FunctionDef(function) => command_contains_heredoc(&function.body),
-        Command::If(if_command) => {
-            program_contains_heredoc(&if_command.condition)
-                || program_contains_heredoc(&if_command.then_branch)
-                || if_command
-                    .elif_branches
-                    .iter()
-                    .any(|branch| {
-                        program_contains_heredoc(&branch.condition)
-                            || program_contains_heredoc(&branch.body)
-                    })
-                || if_command
-                    .else_branch
-                    .as_ref()
-                    .is_some_and(program_contains_heredoc)
-        }
-        Command::Loop(loop_command) => {
-            program_contains_heredoc(&loop_command.condition)
-                || program_contains_heredoc(&loop_command.body)
-        }
-        Command::For(for_command) => program_contains_heredoc(&for_command.body),
-        Command::Case(case_command) => case_command
-            .arms
-            .iter()
-            .any(|arm| program_contains_heredoc(&arm.body)),
-        Command::Redirected(command, redirections) => {
-            command_contains_heredoc(command)
-                || redirections.iter().any(redirection_contains_heredoc)
-        }
-    }
-}
-
-fn redirection_contains_heredoc(redirection: &crate::syntax::Redirection) -> bool {
-    redirection.kind == RedirectionKind::HereDoc
+    shell.execute_string(&render_program(program))
 }
 
 fn render_command(command: &Command) -> String {
@@ -1064,9 +999,7 @@ fn render_command(command: &Command) -> String {
         Command::Loop(loop_command) => render_loop(loop_command),
         Command::For(for_command) => render_for(for_command),
         Command::Case(case_command) => render_case(case_command),
-        Command::Redirected(command, redirections) => {
-            format!("{} {}", render_command(command), render_redirections(redirections))
-        }
+        Command::Redirected(command, redirections) => render_redirected_command(command, redirections),
     }
 }
 
@@ -1092,21 +1025,21 @@ fn render_function(function: &FunctionDef) -> String {
 
 fn render_if(if_command: &IfCommand) -> String {
     let mut text = format!(
-        "if {}; then {}",
+        "if {}\nthen\n{}",
         render_program(&if_command.condition),
         render_program(&if_command.then_branch)
     );
     for branch in &if_command.elif_branches {
         text.push_str(&format!(
-            "; elif {}; then {}",
+            "\nelif {}\nthen\n{}",
             render_program(&branch.condition),
             render_program(&branch.body)
         ));
     }
     if let Some(else_branch) = &if_command.else_branch {
-        text.push_str(&format!("; else {}", render_program(else_branch)));
+        text.push_str(&format!("\nelse\n{}", render_program(else_branch)));
     }
-    text.push_str("; fi");
+    text.push_str("\nfi");
     text
 }
 
@@ -1116,7 +1049,7 @@ fn render_loop(loop_command: &LoopCommand) -> String {
         LoopKind::Until => "until",
     };
     format!(
-        "{keyword} {}; do {}; done",
+        "{keyword} {}\ndo\n{}\ndone",
         render_program(&loop_command.condition),
         render_program(&loop_command.body)
     )
@@ -1131,14 +1064,14 @@ fn render_for(for_command: &ForCommand) -> String {
             text.push_str(&item.raw);
         }
     }
-    text.push_str(&format!("; do {}; done", render_program(&for_command.body)));
+    text.push_str(&format!("\ndo\n{}\ndone", render_program(&for_command.body)));
     text
 }
 
 fn render_case(case_command: &CaseCommand) -> String {
     let mut text = format!("case {} in", case_command.word.raw);
     for arm in &case_command.arms {
-        text.push(' ');
+        text.push('\n');
         let patterns = arm
             .patterns
             .iter()
@@ -1146,47 +1079,92 @@ fn render_case(case_command: &CaseCommand) -> String {
             .collect::<Vec<_>>()
             .join(" | ");
         text.push_str(&patterns);
-        text.push_str(") ");
+        text.push_str(")\n");
         text.push_str(&render_program(&arm.body));
-        text.push_str(" ;;");
+        text.push_str("\n;;");
     }
-    text.push_str(" esac");
+    text.push_str("\nesac");
     text
 }
 
 fn render_simple(simple: &SimpleCommand) -> String {
-    let mut parts = Vec::new();
-    for assignment in &simple.assignments {
-        parts.push(format!("{}={}", assignment.name, assignment.value.raw));
-    }
-    for word in &simple.words {
-        parts.push(word.raw.clone());
-    }
-    parts.extend(render_redirection_parts(&simple.redirections));
-    parts.join(" ")
+    render_command_line_with_redirections(
+        {
+            let mut parts = Vec::new();
+            for assignment in &simple.assignments {
+                parts.push(format!("{}={}", assignment.name, assignment.value.raw));
+            }
+            for word in &simple.words {
+                parts.push(word.raw.clone());
+            }
+            parts.join(" ")
+        },
+        &simple.redirections,
+    )
 }
 
-fn render_redirections(redirections: &[crate::syntax::Redirection]) -> String {
-    render_redirection_parts(redirections).join(" ")
-}
-
-fn render_redirection_parts(redirections: &[crate::syntax::Redirection]) -> Vec<String> {
+fn render_redirections_with_bodies(redirections: &[crate::syntax::Redirection]) -> (String, Vec<String>) {
     let mut parts = Vec::new();
+    let mut heredocs = Vec::new();
     for redirection in redirections {
-        let op = match redirection.kind {
-            RedirectionKind::Read => "<",
-            RedirectionKind::Write => ">",
-            RedirectionKind::ClobberWrite => ">|",
-            RedirectionKind::Append => ">>",
-            RedirectionKind::HereDoc => "<<",
-            RedirectionKind::ReadWrite => "<>",
-            RedirectionKind::DupInput => "<&",
-            RedirectionKind::DupOutput => ">&",
-        };
-        let fd = redirection.fd.map(|fd| fd.to_string()).unwrap_or_default();
-        parts.push(format!("{fd}{op}{}", redirection.target.raw));
+        parts.push(render_redirection_operator(redirection));
+        if let Some(here_doc) = &redirection.here_doc {
+            heredocs.push(render_here_doc_body(here_doc));
+        }
     }
-    parts
+    (parts.join(" "), heredocs)
+}
+
+fn render_redirection_operator(redirection: &crate::syntax::Redirection) -> String {
+    let op = match redirection.kind {
+        RedirectionKind::Read => "<",
+        RedirectionKind::Write => ">",
+        RedirectionKind::ClobberWrite => ">|",
+        RedirectionKind::Append => ">>",
+        RedirectionKind::HereDoc => {
+            if redirection.here_doc.as_ref().is_some_and(|here_doc| here_doc.strip_tabs) {
+                "<<-"
+            } else {
+                "<<"
+            }
+        }
+        RedirectionKind::ReadWrite => "<>",
+        RedirectionKind::DupInput => "<&",
+        RedirectionKind::DupOutput => ">&",
+    };
+    let fd = redirection.fd.map(|fd| fd.to_string()).unwrap_or_default();
+    format!("{fd}{op}{}", redirection.target.raw)
+}
+
+fn render_here_doc_body(here_doc: &HereDoc) -> String {
+    if here_doc.body.ends_with('\n') {
+        format!("{}{}", here_doc.body, here_doc.delimiter)
+    } else {
+        format!("{}\n{}", here_doc.body, here_doc.delimiter)
+    }
+}
+
+fn render_command_line_with_redirections(base: String, redirections: &[crate::syntax::Redirection]) -> String {
+    let (redir_text, heredocs) = render_redirections_with_bodies(redirections);
+    let mut line = base;
+    if !redir_text.is_empty() {
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(&redir_text);
+    }
+    if heredocs.is_empty() {
+        line
+    } else {
+        format!("{line}\n{}", heredocs.join("\n"))
+    }
+}
+
+fn render_redirected_command(
+    command: &Command,
+    redirections: &[crate::syntax::Redirection],
+) -> String {
+    render_command_line_with_redirections(render_command(command), redirections)
 }
 
 #[cfg(test)]
@@ -1663,107 +1641,13 @@ mod tests {
             ],
         };
         assert_eq!(render_list_item(&async_program.items[0]), "true &");
-        assert_eq!(render_program(&async_program), "true & false");
+        assert_eq!(render_program(&async_program), "true &\nfalse");
 
         let heredoc_program = crate::syntax::parse(": <<EOF\nhello\nEOF\n").expect("parse heredoc");
+        assert_eq!(render_program(&heredoc_program), ": <<EOF\nhello\nEOF");
         let mut shell = test_shell();
         let status = execute_nested_program(&mut shell, &heredoc_program).expect("execute heredoc nested");
         assert_eq!(status, 0);
-        assert!(program_contains_heredoc(&heredoc_program));
-        assert!(list_item_contains_heredoc(&heredoc_program.items[0]));
-        assert!(pipeline_contains_heredoc(&heredoc_program.items[0].and_or.first));
-
-        let heredoc_command = heredoc_program.items[0].and_or.first.commands[0].clone();
-        assert!(command_contains_heredoc(&Command::Subshell(heredoc_program.clone())));
-        assert!(command_contains_heredoc(&Command::Group(heredoc_program.clone())));
-        assert!(command_contains_heredoc(&Command::FunctionDef(FunctionDef {
-            name: "f".into(),
-            body: Box::new(heredoc_command.clone()),
-        })));
-        assert!(command_contains_heredoc(&Command::If(IfCommand {
-            condition: heredoc_program.clone(),
-            then_branch: Program::default(),
-            elif_branches: Vec::new(),
-            else_branch: None,
-        })));
-        assert!(command_contains_heredoc(&Command::If(IfCommand {
-            condition: Program::default(),
-            then_branch: heredoc_program.clone(),
-            elif_branches: Vec::new(),
-            else_branch: None,
-        })));
-        assert!(command_contains_heredoc(&Command::If(IfCommand {
-            condition: Program::default(),
-            then_branch: Program::default(),
-            elif_branches: vec![crate::syntax::ElifBranch {
-                condition: heredoc_program.clone(),
-                body: Program::default(),
-            }],
-            else_branch: None,
-        })));
-        assert!(command_contains_heredoc(&Command::If(IfCommand {
-            condition: Program::default(),
-            then_branch: Program::default(),
-            elif_branches: vec![crate::syntax::ElifBranch {
-                condition: Program::default(),
-                body: heredoc_program.clone(),
-            }],
-            else_branch: None,
-        })));
-        assert!(command_contains_heredoc(&Command::If(IfCommand {
-            condition: Program::default(),
-            then_branch: Program::default(),
-            elif_branches: Vec::new(),
-            else_branch: Some(heredoc_program.clone()),
-        })));
-        assert!(command_contains_heredoc(&Command::Loop(LoopCommand {
-            kind: LoopKind::While,
-            condition: heredoc_program.clone(),
-            body: Program::default(),
-        })));
-        assert!(command_contains_heredoc(&Command::Loop(LoopCommand {
-            kind: LoopKind::Until,
-            condition: Program::default(),
-            body: heredoc_program.clone(),
-        })));
-        assert!(command_contains_heredoc(&Command::For(ForCommand {
-            name: "item".into(),
-            items: None,
-            body: heredoc_program.clone(),
-        })));
-        assert!(command_contains_heredoc(&Command::Case(CaseCommand {
-            word: Word { raw: "x".into() },
-            arms: vec![crate::syntax::CaseArm {
-                patterns: vec![Word { raw: "x".into() }],
-                body: heredoc_program.clone(),
-            }],
-        })));
-        assert!(command_contains_heredoc(&Command::Redirected(
-            Box::new(Command::Group(heredoc_program.clone())),
-            Vec::new(),
-        )));
-        let heredoc_redirection = Redirection {
-            fd: None,
-            kind: RedirectionKind::HereDoc,
-            target: Word { raw: "EOF".into() },
-            here_doc: Some(HereDoc {
-                delimiter: "EOF".into(),
-                body: "hello\n".into(),
-                expand: false,
-                strip_tabs: false,
-            }),
-        };
-        assert!(command_contains_heredoc(&Command::Redirected(
-            Box::new(Command::Simple(SimpleCommand::default())),
-            vec![heredoc_redirection.clone()],
-        )));
-        assert!(redirection_contains_heredoc(&heredoc_redirection));
-        assert!(!redirection_contains_heredoc(&Redirection {
-            fd: None,
-            kind: RedirectionKind::Write,
-            target: Word { raw: "out".into() },
-            here_doc: None,
-        }));
     }
 
     #[test]
@@ -1967,7 +1851,7 @@ mod tests {
             body: Program::default(),
         };
         assert!(render_for(&for_command).contains("in a b"));
-        assert!(render_for(&ForCommand { name: "item".into(), items: None, body: Program::default() }).starts_with("for item;"));
+        assert!(render_for(&ForCommand { name: "item".into(), items: None, body: Program::default() }).starts_with("for item\n"));
 
         let simple = SimpleCommand {
             words: vec![Word { raw: "echo".into() }],
@@ -1992,6 +1876,26 @@ mod tests {
         assert!(rendered.contains("<in"));
         assert!(rendered.contains(">>out"));
         assert!(rendered.contains("<<EOF"));
+        assert!(rendered.contains("body\nEOF"));
+
+        let strip_tabs = SimpleCommand {
+            words: vec![Word { raw: "cat".into() }],
+            redirections: vec![Redirection {
+                fd: None,
+                kind: RedirectionKind::HereDoc,
+                target: Word { raw: "EOF".into() },
+                here_doc: Some(crate::syntax::HereDoc {
+                    delimiter: "EOF".into(),
+                    body: "body".into(),
+                    expand: false,
+                    strip_tabs: true,
+                }),
+            }],
+            ..SimpleCommand::default()
+        };
+        let rendered = render_simple(&strip_tabs);
+        assert!(rendered.contains("<<-EOF"));
+        assert!(rendered.contains("body\nEOF"));
 
         let case_command = CaseCommand {
             word: Word { raw: "$item".into() },

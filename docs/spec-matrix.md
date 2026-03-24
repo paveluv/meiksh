@@ -65,7 +65,7 @@ This document maps the core POSIX shell requirements that `meiksh` is targeting 
   - `cargo test` unit tests in `src/syntax/mod.rs`
   - shell/runtime coverage in `src/shell.rs` and `tests/spec/basic.rs`
 - Gaps to close:
-  - parser-time alias substitution now works for aliases already present in shell state; top-level and most nested program bodies are reparsed with updated aliases, including blank-terminated alias chaining within simple commands. Remaining alias-timing gaps are concentrated in cases where bodies must keep exact original syntax fidelity, especially here-document-heavy paths
+  - parser-time alias substitution now works for aliases already present in shell state; top-level and nested program bodies are reparsed with updated aliases, including blank-terminated alias chaining within simple commands and here-document-bearing compound bodies
   - reserved-word coverage is still incomplete in some grammar positions
   - standalone `!` is now only treated as pipeline negation at pipeline start; broader reserved-word edge coverage still needs tightening
 
