@@ -1,6 +1,7 @@
 use std::env;
 use std::io::{self, Read, Write};
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
+use std::process::Command as ProcessCommand;
 
 use crate::shell::{Shell, ShellError};
 use crate::sys;
@@ -23,7 +24,7 @@ pub fn run(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellEr
         ":" | "true" => BuiltinOutcome::Status(0),
         "false" => BuiltinOutcome::Status(1),
         "cd" => cd(shell, argv)?,
-        "pwd" => pwd()?,
+        "pwd" => pwd(shell, argv)?,
         "exit" => exit(shell, argv)?,
         "export" => export(shell, argv)?,
         "readonly" => readonly(shell, argv)?,
@@ -87,6 +88,8 @@ pub fn is_builtin(name: &str) -> bool {
     )
 }
 
+const DEFAULT_COMMAND_PATH: &str = "/usr/bin:/bin";
+
 fn cd(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     let target = argv
         .get(1)
@@ -98,8 +101,24 @@ fn cd(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> 
     Ok(BuiltinOutcome::Status(0))
 }
 
-fn pwd() -> Result<BuiltinOutcome, ShellError> {
-    println!("{}", env::current_dir()?.display());
+fn pwd(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
+    let mut logical = true;
+    for arg in &argv[1..] {
+        match arg.as_str() {
+            "-L" => logical = true,
+            "-P" => logical = false,
+            _ if arg.starts_with('-') => {
+                eprintln!("pwd: invalid option: {arg}");
+                return Ok(BuiltinOutcome::Status(1));
+            }
+            _ => {
+                eprintln!("pwd: too many arguments");
+                return Ok(BuiltinOutcome::Status(1));
+            }
+        }
+    }
+
+    println!("{}", pwd_output(shell, logical)?);
     Ok(BuiltinOutcome::Status(0))
 }
 
@@ -116,15 +135,14 @@ fn exit(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
 }
 
 fn export(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
-    if argv.len() == 1 {
-        for name in &shell.exported {
-            if let Some(value) = shell.get_var(name) {
-                println!("export {}={}", name, value);
-            }
+    let (print, index) = parse_declaration_listing_flag("export", argv)?;
+    if print || index == argv.len() {
+        for line in exported_lines(shell) {
+            println!("{line}");
         }
         return Ok(BuiltinOutcome::Status(0));
     }
-    for item in &argv[1..] {
+    for item in &argv[index..] {
         if let Some((name, value)) = item.split_once('=') {
             shell.export_var(name, Some(value.to_string()))?;
         } else {
@@ -135,7 +153,14 @@ fn export(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellErr
 }
 
 fn readonly(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
-    for item in &argv[1..] {
+    let (print, index) = parse_declaration_listing_flag("readonly", argv)?;
+    if print || index == argv.len() {
+        for line in readonly_lines(shell) {
+            println!("{line}");
+        }
+        return Ok(BuiltinOutcome::Status(0));
+    }
+    for item in &argv[index..] {
         if let Some((name, value)) = item.split_once('=') {
             shell.set_var(name, value.to_string())?;
             shell.mark_readonly(name);
@@ -147,12 +172,22 @@ fn readonly(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellE
 }
 
 fn unset(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
-    for item in &argv[1..] {
-        if shell.aliases.remove(item).is_none() {
-            shell.unset_var(item)?;
+    let (target, index) = parse_unset_target(argv)?;
+    let mut status = 0;
+    for item in &argv[index..] {
+        match target {
+            UnsetTarget::Variable => {
+                if let Err(error) = shell.unset_var(item) {
+                    eprintln!("unset: {}", error.message);
+                    status = 1;
+                }
+            }
+            UnsetTarget::Function => {
+                shell.functions.remove(item);
+            }
         }
     }
-    Ok(BuiltinOutcome::Status(0))
+    Ok(BuiltinOutcome::Status(status))
 }
 
 fn set(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
@@ -836,45 +871,346 @@ fn symbolic_permissions_for_class(mask: u16, class_mask: u16, shift: u16) -> Str
 }
 
 fn command(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
-    let name = argv.get(1).ok_or_else(|| ShellError {
-        message: "command: utility name required".to_string(),
-    })?;
-    if is_builtin(name) {
-        println!("{name}");
-        return Ok(BuiltinOutcome::Status(0));
+    let (use_default_path, mode, index) = parse_command_options(argv);
+    let Some(name) = argv.get(index) else {
+        eprintln!("command: utility name required");
+        return Ok(BuiltinOutcome::Status(command_usage_status(mode)));
+    };
+
+    if mode != CommandMode::Execute && index + 1 != argv.len() {
+        eprintln!("command: too many arguments");
+        return Ok(BuiltinOutcome::Status(1));
     }
-    let path = which(name, shell).ok_or_else(|| ShellError {
-        message: format!("command: {name}: not found"),
-    })?;
-    println!("{}", path.display());
-    Ok(BuiltinOutcome::Status(0))
+
+    match mode {
+        CommandMode::QueryShort => {
+            let Some(line) = command_short_description(shell, name, use_default_path) else {
+                return Ok(BuiltinOutcome::Status(1));
+            };
+            println!("{line}");
+            Ok(BuiltinOutcome::Status(0))
+        }
+        CommandMode::QueryVerbose => {
+            let Some(line) = command_verbose_description(shell, name, use_default_path) else {
+                return Ok(BuiltinOutcome::Status(1));
+            };
+            println!("{line}");
+            Ok(BuiltinOutcome::Status(0))
+        }
+        CommandMode::Execute => execute_command_utility(shell, &argv[index..], use_default_path),
+    }
 }
 
+#[cfg(test)]
 fn which(name: &str, shell: &Shell) -> Option<PathBuf> {
+    which_in_path(name, shell, false)
+}
+
+fn parse_declaration_listing_flag(name: &str, argv: &[String]) -> Result<(bool, usize), ShellError> {
+    if argv.len() >= 2 && argv[1] == "-p" {
+        if argv.len() > 2 {
+            return Err(ShellError {
+                message: format!("{name}: -p does not accept operands"),
+            });
+        }
+        return Ok((true, 2));
+    }
+    if let Some(arg) = argv.get(1)
+        && arg.starts_with('-')
+        && arg != "-"
+        && arg != "--"
+    {
+        return Err(ShellError {
+            message: format!("{name}: invalid option: {arg}"),
+        });
+    }
+    Ok((false, 1))
+}
+
+fn exported_lines(shell: &Shell) -> Vec<String> {
+    shell.exported
+        .iter()
+        .map(|name| declaration_line("export", name, shell.get_var(name)))
+        .collect()
+}
+
+fn readonly_lines(shell: &Shell) -> Vec<String> {
+    shell.readonly
+        .iter()
+        .map(|name| declaration_line("readonly", name, shell.get_var(name)))
+        .collect()
+}
+
+fn declaration_line(prefix: &str, name: &str, value: Option<String>) -> String {
+    match value {
+        Some(value) => format!("{prefix} {name}={}", shell_quote(&value)),
+        None => format!("{prefix} {name}"),
+    }
+}
+
+fn pwd_output(shell: &Shell, logical: bool) -> Result<String, ShellError> {
+    if logical
+        && let Some(pwd) = shell.get_var("PWD")
+        && logical_pwd_is_valid(&pwd)
+    {
+        return Ok(pwd);
+    }
+    Ok(env::current_dir()?.display().to_string())
+}
+
+fn logical_pwd_is_valid(path: &str) -> bool {
+    Path::new(path).is_absolute()
+        && !Path::new(path)
+            .components()
+            .any(|component| matches!(component, Component::CurDir | Component::ParentDir))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UnsetTarget {
+    Variable,
+    Function,
+}
+
+fn parse_unset_target(argv: &[String]) -> Result<(UnsetTarget, usize), ShellError> {
+    let mut target = UnsetTarget::Variable;
+    let mut index = 1usize;
+    while let Some(arg) = argv.get(index) {
+        if !arg.starts_with('-') || arg == "-" {
+            break;
+        }
+        if arg == "--" {
+            index += 1;
+            break;
+        }
+        for ch in arg[1..].chars() {
+            match ch {
+                'v' => target = UnsetTarget::Variable,
+                'f' => target = UnsetTarget::Function,
+                _ => {
+                    return Err(ShellError {
+                        message: format!("unset: invalid option: -{ch}"),
+                    });
+                }
+            }
+        }
+        index += 1;
+    }
+    Ok((target, index))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CommandMode {
+    Execute,
+    QueryShort,
+    QueryVerbose,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum CommandDescription {
+    Alias(String),
+    Function,
+    SpecialBuiltin,
+    RegularBuiltin,
+    ReservedWord,
+    External(PathBuf),
+}
+
+fn parse_command_options(argv: &[String]) -> (bool, CommandMode, usize) {
+    let mut use_default_path = false;
+    let mut mode = CommandMode::Execute;
+    let mut index = 1usize;
+    while let Some(arg) = argv.get(index) {
+        match arg.as_str() {
+            "-p" => {
+                use_default_path = true;
+                index += 1;
+            }
+            "-v" => {
+                mode = CommandMode::QueryShort;
+                index += 1;
+            }
+            "-V" => {
+                mode = CommandMode::QueryVerbose;
+                index += 1;
+            }
+            "--" => {
+                index += 1;
+                break;
+            }
+            _ if arg.starts_with('-') && arg != "-" => break,
+            _ => break,
+        }
+    }
+    (use_default_path, mode, index)
+}
+
+fn command_usage_status(mode: CommandMode) -> i32 {
+    match mode {
+        CommandMode::Execute => 127,
+        CommandMode::QueryShort | CommandMode::QueryVerbose => 1,
+    }
+}
+
+fn command_short_description(shell: &Shell, name: &str, use_default_path: bool) -> Option<String> {
+    match describe_command(shell, name, use_default_path)? {
+        CommandDescription::Alias(value) => Some(format_alias_definition(name, &value)),
+        CommandDescription::Function
+        | CommandDescription::SpecialBuiltin
+        | CommandDescription::RegularBuiltin
+        | CommandDescription::ReservedWord => Some(name.to_string()),
+        CommandDescription::External(path) => Some(path.display().to_string()),
+    }
+}
+
+fn command_verbose_description(shell: &Shell, name: &str, use_default_path: bool) -> Option<String> {
+    match describe_command(shell, name, use_default_path)? {
+        CommandDescription::Alias(value) => {
+            Some(format!("{name} is an alias for {}", shell_quote(&value)))
+        }
+        CommandDescription::Function => Some(format!("{name} is a function")),
+        CommandDescription::SpecialBuiltin => Some(format!("{name} is a special built-in utility")),
+        CommandDescription::RegularBuiltin => Some(format!("{name} is a regular built-in utility")),
+        CommandDescription::ReservedWord => Some(format!("{name} is a reserved word")),
+        CommandDescription::External(path) => Some(format!("{name} is {}", path.display())),
+    }
+}
+
+fn describe_command(shell: &Shell, name: &str, use_default_path: bool) -> Option<CommandDescription> {
+    if let Some(value) = shell.aliases.get(name) {
+        return Some(CommandDescription::Alias(value.clone()));
+    }
+    if shell.functions.contains_key(name) {
+        return Some(CommandDescription::Function);
+    }
+    if is_special_builtin(name) {
+        return Some(CommandDescription::SpecialBuiltin);
+    }
+    if is_builtin(name) {
+        return Some(CommandDescription::RegularBuiltin);
+    }
+    if is_reserved_word_name(name) {
+        return Some(CommandDescription::ReservedWord);
+    }
+    which_in_path(name, shell, use_default_path).map(CommandDescription::External)
+}
+
+fn execute_command_utility(
+    shell: &mut Shell,
+    argv: &[String],
+    use_default_path: bool,
+) -> Result<BuiltinOutcome, ShellError> {
+    let name = &argv[0];
+    if is_builtin(name) {
+        return match run(shell, argv) {
+            Ok(outcome) => Ok(outcome),
+            Err(error) => {
+                eprintln!("{}", error.message);
+                Ok(BuiltinOutcome::Status(1))
+            }
+        };
+    }
+
+    let Some(path) = which_in_path(name, shell, use_default_path) else {
+        eprintln!("command: {name}: not found");
+        return Ok(BuiltinOutcome::Status(127));
+    };
+
+    let mut process = ProcessCommand::new(&path);
+    process.args(&argv[1..]);
+    process.env_clear();
+    let mut child_env = shell.env_for_child();
+    if use_default_path {
+        child_env.insert("PATH".to_string(), DEFAULT_COMMAND_PATH.to_string());
+    }
+    process.envs(child_env);
+
+    match process.status() {
+        Ok(status) => Ok(BuiltinOutcome::Status(status.code().unwrap_or(128))),
+        Err(error) if error.raw_os_error() == Some(2) => {
+            eprintln!("command: {name}: not found");
+            Ok(BuiltinOutcome::Status(127))
+        }
+        Err(error) => {
+            eprintln!("command: {name}: {error}");
+            Ok(BuiltinOutcome::Status(126))
+        }
+    }
+}
+
+fn which_in_path(name: &str, shell: &Shell, use_default_path: bool) -> Option<PathBuf> {
     if name.contains('/') {
         let path = PathBuf::from(name);
-        return path.exists().then_some(path);
-    }
-    let path_env = shell
-        .get_var("PATH")
-        .or_else(|| env::var("PATH").ok())
-        .unwrap_or_default();
-    for dir in path_env.split(':') {
-        let path = PathBuf::from(dir).join(name);
         if path.exists() {
-            return Some(path);
+            return absolute_path(&path);
+        }
+        return None;
+    }
+
+    let path_env = if use_default_path {
+        DEFAULT_COMMAND_PATH.to_string()
+    } else {
+        shell
+            .get_var("PATH")
+            .or_else(|| env::var("PATH").ok())
+            .unwrap_or_default()
+    };
+
+    for dir in path_env.split(':') {
+        let base = if dir.is_empty() { PathBuf::from(".") } else { PathBuf::from(dir) };
+        let path = base.join(name);
+        if path.exists() {
+            return absolute_path(&path);
         }
     }
     None
+}
+
+fn absolute_path(path: &Path) -> Option<PathBuf> {
+    if path.is_absolute() {
+        return Some(path.to_path_buf());
+    }
+    env::current_dir().ok().map(|cwd| cwd.join(path))
+}
+
+fn is_special_builtin(name: &str) -> bool {
+    matches!(
+        name,
+        "." | ":" | "break" | "continue" | "eval" | "exec" | "exit" | "export" | "readonly"
+            | "return" | "set" | "shift" | "times" | "trap" | "unset"
+    )
+}
+
+fn is_reserved_word_name(word: &str) -> bool {
+    matches!(
+        word,
+        "!"
+            | "{"
+            | "}"
+            | "case"
+            | "do"
+            | "done"
+            | "elif"
+            | "else"
+            | "esac"
+            | "fi"
+            | "for"
+            | "if"
+            | "in"
+            | "then"
+            | "until"
+            | "while"
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::shell::ShellOptions;
+    use crate::syntax::Word;
     use std::collections::{BTreeSet, HashMap};
     use std::fs;
     use std::io::{self, Cursor};
+    use std::os::unix::fs::PermissionsExt;
     use std::sync::{Mutex, OnceLock};
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -904,6 +1240,10 @@ mod tests {
             function_depth: 0,
             pending_control: None,
         }
+    }
+
+    fn literal(raw: &str) -> Word {
+        Word { raw: raw.to_string() }
     }
 
     #[test]
@@ -1209,8 +1549,8 @@ mod tests {
         let outcome = run(&mut shell, &["command".into(), "export".into()]).expect("command");
         assert!(matches!(outcome, BuiltinOutcome::Status(0)));
 
-        let error = run(&mut shell, &["command".into()]).expect_err("missing utility");
-        assert_eq!(error.message, "command: utility name required");
+        let outcome = run(&mut shell, &["command".into()]).expect("missing utility");
+        assert!(matches!(outcome, BuiltinOutcome::Status(127)));
     }
 
     #[test]
@@ -1346,15 +1686,193 @@ mod tests {
     }
 
     #[test]
-    fn which_resolves_paths_and_command_reports_missing_binary() {
+    fn lookup_helpers_cover_reporting_paths() {
         let mut shell = test_shell();
         shell.env.insert("PATH".into(), "/definitely/missing".into());
+        shell.aliases.insert("ll".into(), "ls -l".into());
+        shell.functions.insert(
+            "greet".into(),
+            crate::syntax::Command::Simple(crate::syntax::SimpleCommand {
+                assignments: Vec::new(),
+                words: vec![literal("printf"), literal("hello")],
+                redirections: Vec::new(),
+            }),
+        );
+        shell.exported.insert("NAME".into());
+        shell.env.insert("NAME".into(), "value with spaces".into());
+        shell.readonly.insert("LOCK".into());
+        shell.env.insert("LOCK".into(), "x y".into());
 
         let path = which("/bin/sh", &shell).expect("path lookup");
         assert_eq!(path, PathBuf::from("/bin/sh"));
 
-        let error = run(&mut shell, &["command".into(), "meiksh-not-real".into()]).expect_err("missing command");
-        assert_eq!(error.message, "command: meiksh-not-real: not found");
+        assert_eq!(
+            exported_lines(&shell),
+            vec!["export NAME='value with spaces'".to_string()]
+        );
+        assert_eq!(
+            readonly_lines(&shell),
+            vec!["readonly LOCK='x y'".to_string()]
+        );
+        assert_eq!(
+            command_short_description(&shell, "ll", false),
+            Some("ll='ls -l'".to_string())
+        );
+        assert_eq!(
+            command_verbose_description(&shell, "greet", false),
+            Some("greet is a function".to_string())
+        );
+        assert_eq!(
+            command_verbose_description(&shell, "if", false),
+            Some("if is a reserved word".to_string())
+        );
+        assert!(command_short_description(&shell, "meiksh-not-real", false).is_none());
+    }
+
+    #[test]
+    fn command_and_listing_error_paths_are_covered() {
+        let _guard = cwd_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut shell = test_shell();
+        shell.env.insert("PATH".into(), "/usr/bin:/bin".into());
+
+        assert!(matches!(
+            run(&mut shell, &["pwd".into(), "-Z".into()]).expect("pwd invalid"),
+            BuiltinOutcome::Status(1)
+        ));
+        assert!(matches!(
+            run(&mut shell, &["pwd".into(), "extra".into()]).expect("pwd extra"),
+            BuiltinOutcome::Status(1)
+        ));
+
+        shell.env.insert("RO".into(), "1".into());
+        shell.readonly.insert("RO".into());
+        assert!(matches!(
+            run(&mut shell, &["unset".into(), "RO".into()]).expect("unset readonly"),
+            BuiltinOutcome::Status(1)
+        ));
+
+        let export_error = parse_declaration_listing_flag(
+            "export",
+            &["export".into(), "-p".into(), "NAME".into()],
+        )
+        .expect_err("export -p operands");
+        assert_eq!(export_error.message, "export: -p does not accept operands");
+
+        let readonly_error =
+            parse_declaration_listing_flag("readonly", &["readonly".into(), "-x".into()])
+                .expect_err("readonly invalid");
+        assert_eq!(readonly_error.message, "readonly: invalid option: -x");
+
+        assert_eq!(
+            parse_unset_target(&["unset".into(), "--".into(), "NAME".into()]).expect("unset --"),
+            (UnsetTarget::Variable, 2)
+        );
+        let unset_error =
+            parse_unset_target(&["unset".into(), "-z".into()]).expect_err("unset invalid");
+        assert_eq!(unset_error.message, "unset: invalid option: -z");
+
+        assert_eq!(
+            parse_command_options(&["command".into(), "--".into(), "echo".into()]),
+            (false, CommandMode::Execute, 2)
+        );
+        assert_eq!(
+            parse_command_options(&["command".into(), "-p".into(), "sh".into()]),
+            (true, CommandMode::Execute, 2)
+        );
+        assert_eq!(command_usage_status(CommandMode::QueryShort), 1);
+
+        assert!(matches!(
+            run(
+                &mut shell,
+                &["command".into(), "-v".into(), "one".into(), "two".into()]
+            )
+            .expect("command too many args"),
+            BuiltinOutcome::Status(1)
+        ));
+        assert!(matches!(
+            run(&mut shell, &["command".into(), "-v".into()]).expect("command query missing"),
+            BuiltinOutcome::Status(1)
+        ));
+        assert!(matches!(
+            run(
+                &mut shell,
+                &["command".into(), "-v".into(), "meiksh-not-real".into()]
+            )
+            .expect("command query missing name"),
+            BuiltinOutcome::Status(1)
+        ));
+        assert!(matches!(
+            run(&mut shell, &["command".into(), "meiksh-not-real".into()]).expect("command missing"),
+            BuiltinOutcome::Status(127)
+        ));
+        assert!(matches!(
+            run(&mut shell, &["command".into(), "return".into()]).expect("command builtin error"),
+            BuiltinOutcome::Status(1)
+        ));
+        assert!(matches!(
+            run(
+                &mut shell,
+                &["command".into(), "-p".into(), "sh".into(), "-c".into(), "exit 0".into()]
+            )
+            .expect("command -p"),
+            BuiltinOutcome::Status(0)
+        ));
+
+        shell.aliases.insert("ll".into(), "echo hi".into());
+        assert_eq!(
+            command_verbose_description(&shell, "ll", false),
+            Some("ll is an alias for 'echo hi'".to_string())
+        );
+        assert_eq!(
+            command_verbose_description(&shell, "command", false),
+            Some("command is a regular built-in utility".to_string())
+        );
+
+        let sh_path = command_short_description(&shell, "sh", false).expect("command -v sh");
+        assert!(Path::new(&sh_path).is_absolute());
+        let sh_verbose = command_verbose_description(&shell, "sh", false).expect("command -V sh");
+        assert!(sh_verbose.starts_with("sh is /"));
+        assert_eq!(
+            describe_command(&shell, "command", false),
+            Some(CommandDescription::RegularBuiltin)
+        );
+        assert!(which_in_path("sh", &shell, true).expect("default path sh").is_absolute());
+        assert!(which_in_path("./definitely-missing", &shell, false).is_none());
+        assert!(absolute_path(Path::new("relative")).expect("absolute path").is_absolute());
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("meiksh-command-errors-{unique}"));
+        fs::create_dir_all(&dir).expect("mkdir");
+
+        let noexec = dir.join("plain-file");
+        fs::write(&noexec, "echo plain\n").expect("write noexec");
+        fs::set_permissions(&noexec, fs::Permissions::from_mode(0o644)).expect("chmod noexec");
+        assert!(matches!(
+            run(
+                &mut shell,
+                &["command".into(), noexec.display().to_string()]
+            )
+            .expect("command plain file"),
+            BuiltinOutcome::Status(126)
+        ));
+
+        let missing_interp = dir.join("missing-interpreter");
+        fs::write(&missing_interp, "#!/definitely/missing-interpreter\n").expect("write script");
+        fs::set_permissions(&missing_interp, fs::Permissions::from_mode(0o755))
+            .expect("chmod script");
+        assert!(matches!(
+            run(
+                &mut shell,
+                &["command".into(), missing_interp.display().to_string()]
+            )
+            .expect("command missing interpreter"),
+            BuiltinOutcome::Status(127)
+        ));
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1363,6 +1881,7 @@ mod tests {
         shell.env.insert("PATH".into(), "/usr/bin:/bin".into());
 
         let path = which("sh", &shell).expect("lookup sh");
+        assert!(path.is_absolute());
         assert!(path.ends_with("sh"));
 
         let outcome = run(&mut shell, &["command".into(), "sh".into(), "-c".into(), "exit 0".into()]).expect("command sh");
@@ -1433,11 +1952,18 @@ mod tests {
     }
 
     #[test]
-    fn unset_alias_branch_and_exec_error_path_are_covered() {
+    fn unset_function_branch_and_exec_error_path_are_covered() {
         let mut shell = test_shell();
-        shell.aliases.insert("ll".into(), "ls -l".into());
-        run(&mut shell, &["unset".into(), "ll".into()]).expect("unset alias");
-        assert!(!shell.aliases.contains_key("ll"));
+        shell.functions.insert(
+            "ll".into(),
+            crate::syntax::Command::Simple(crate::syntax::SimpleCommand {
+                assignments: Vec::new(),
+                words: vec![literal("printf"), literal("ok")],
+                redirections: Vec::new(),
+            }),
+        );
+        run(&mut shell, &["unset".into(), "-f".into(), "ll".into()]).expect("unset function");
+        assert!(!shell.functions.contains_key("ll"));
 
         let error = run(&mut shell, &["exec".into(), "bad\0program".into()]).expect_err("exec error");
         assert!(!error.message.is_empty());
