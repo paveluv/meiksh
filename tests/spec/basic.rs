@@ -255,6 +255,27 @@ fn aliases_defined_earlier_in_same_source_affect_later_commands() {
         .expect("run meiksh");
     assert!(reserved.status.success());
     assert_eq!(String::from_utf8_lossy(&reserved.stdout), "yes");
+
+    let group = Command::new(meiksh())
+        .args(["-c", "{ alias say='printf group'; say; }"])
+        .output()
+        .expect("run meiksh");
+    assert!(group.status.success());
+    assert_eq!(String::from_utf8_lossy(&group.stdout), "group");
+
+    let function = Command::new(meiksh())
+        .args(["-c", "f() { alias say='printf fn'; say; }; f"])
+        .output()
+        .expect("run meiksh");
+    assert!(function.status.success());
+    assert_eq!(String::from_utf8_lossy(&function.stdout), "fn");
+
+    let conditional = Command::new(meiksh())
+        .args(["-c", "if true; then alias say='printf branch'; say; fi"])
+        .output()
+        .expect("run meiksh");
+    assert!(conditional.status.success());
+    assert_eq!(String::from_utf8_lossy(&conditional.stdout), "branch");
 }
 
 #[test]

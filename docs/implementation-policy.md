@@ -14,7 +14,7 @@ This document records `meiksh` behavior where POSIX leaves room for implementati
 ## Parser
 
 - `meiksh` preserves raw quoting inside parsed words and defers most semantic interpretation to expansion time.
-- Alias expansion now runs at parser time for aliases already present in shell state before a parse begins. Top-level source execution reparses later list items after earlier ones execute, so aliases defined earlier in the same top-level source can affect later top-level commands. Aliases ending in blank can expose the next simple-command word to alias substitution. Nested same-source alias visibility inside already-parsed compound bodies is still incomplete.
+- Alias expansion now runs at parser time for aliases already present in shell state before a parse begins. Top-level source execution reparses later list items after earlier ones execute, so aliases defined earlier in the same top-level source can affect later top-level commands. Most nested program bodies are also reparsed with the updated alias table when they execute. Aliases ending in blank can expose the next simple-command word to alias substitution. Remaining timing gaps are concentrated in nested paths that still need exact original-syntax fidelity, especially around here-documents.
 - Here-document bodies are attached during parsing; `<<-` strips leading tab characters while reading, and expansions run only when the delimiter is unquoted.
 - `if`, `while`, `until`, `for`, and `case` are parsed as compound commands, but reserved-word coverage is still incomplete for the full POSIX grammar.
 - A standalone `!` is treated as pipeline negation only at pipeline start. In other positions, `!` remains an ordinary word.

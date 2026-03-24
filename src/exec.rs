@@ -141,7 +141,7 @@ fn execute_command(shell: &mut Shell, command: &Command) -> Result<i32, ShellErr
                 .unwrap_or(128);
             Ok(status)
         }
-        Command::Group(program) => execute_program(shell, program),
+        Command::Group(program) => execute_nested_program(shell, program),
         Command::FunctionDef(function) => {
             shell.functions
                 .insert(function.name.clone(), (*function.body).clone());
@@ -165,18 +165,18 @@ fn execute_redirected(
 }
 
 fn execute_if(shell: &mut Shell, if_command: &IfCommand) -> Result<i32, ShellError> {
-    if execute_program(shell, &if_command.condition)? == 0 {
-        return execute_program(shell, &if_command.then_branch);
+    if execute_nested_program(shell, &if_command.condition)? == 0 {
+        return execute_nested_program(shell, &if_command.then_branch);
     }
 
     for branch in &if_command.elif_branches {
-        if execute_program(shell, &branch.condition)? == 0 {
-            return execute_program(shell, &branch.body);
+        if execute_nested_program(shell, &branch.condition)? == 0 {
+            return execute_nested_program(shell, &branch.body);
         }
     }
 
     if let Some(else_branch) = &if_command.else_branch {
-        execute_program(shell, else_branch)
+        execute_nested_program(shell, else_branch)
     } else {
         Ok(0)
     }
@@ -187,7 +187,7 @@ fn execute_loop(shell: &mut Shell, loop_command: &LoopCommand) -> Result<i32, Sh
     let result = (|| {
         let mut last_status = 0;
         loop {
-            let condition_status = execute_program(shell, &loop_command.condition)?;
+            let condition_status = execute_nested_program(shell, &loop_command.condition)?;
             match shell.pending_control {
                 Some(PendingControl::Return(_)) => break,
                 Some(PendingControl::Break(levels)) => {
@@ -215,7 +215,7 @@ fn execute_loop(shell: &mut Shell, loop_command: &LoopCommand) -> Result<i32, Sh
             if !should_run {
                 break;
             }
-            last_status = execute_program(shell, &loop_command.body)?;
+            last_status = execute_nested_program(shell, &loop_command.body)?;
             if !shell.running {
                 break;
             }
@@ -262,7 +262,7 @@ fn execute_for(shell: &mut Shell, for_command: &ForCommand) -> Result<i32, Shell
         let mut last_status = 0;
         for value in values {
             shell.set_var(&for_command.name, value)?;
-            last_status = execute_program(shell, &for_command.body)?;
+            last_status = execute_nested_program(shell, &for_command.body)?;
             if !shell.running {
                 break;
             }
@@ -299,7 +299,7 @@ fn execute_case(shell: &mut Shell, case_command: &CaseCommand) -> Result<i32, Sh
         for pattern in &arm.patterns {
             let pattern = expand::expand_word_text(shell, pattern)?;
             if case_pattern_matches(&word, &pattern) {
-                return execute_program(shell, &arm.body);
+                return execute_nested_program(shell, &arm.body);
             }
         }
     }
@@ -955,12 +955,26 @@ fn match_bracket(current: Option<char>, pattern: &[char], start: usize) -> Optio
 }
 
 fn render_program(program: &Program) -> String {
-    program
-        .items
-        .iter()
-        .map(|item| render_and_or(&item.and_or))
-        .collect::<Vec<_>>()
-        .join("; ")
+    let mut text = String::new();
+    for (index, item) in program.items.iter().enumerate() {
+        if index > 0 {
+            if program.items[index - 1].asynchronous {
+                text.push(' ');
+            } else {
+                text.push_str("; ");
+            }
+        }
+        text.push_str(&render_list_item(item));
+    }
+    text
+}
+
+fn render_list_item(item: &ListItem) -> String {
+    let mut text = render_and_or(&item.and_or);
+    if item.asynchronous {
+        text.push_str(" &");
+    }
+    text
 }
 
 fn render_and_or(and_or: &AndOr) -> String {
@@ -973,6 +987,71 @@ fn render_and_or(and_or: &AndOr) -> String {
         text.push_str(&render_pipeline(pipeline));
     }
     text
+}
+
+fn execute_nested_program(shell: &mut Shell, program: &Program) -> Result<i32, ShellError> {
+    if program_contains_heredoc(program) {
+        execute_program(shell, program)
+    } else {
+        shell.execute_string(&render_program(program))
+    }
+}
+
+fn program_contains_heredoc(program: &Program) -> bool {
+    program.items.iter().any(list_item_contains_heredoc)
+}
+
+fn list_item_contains_heredoc(item: &ListItem) -> bool {
+    pipeline_contains_heredoc(&item.and_or.first)
+        || item
+            .and_or
+            .rest
+            .iter()
+            .any(|(_, pipeline)| pipeline_contains_heredoc(pipeline))
+}
+
+fn pipeline_contains_heredoc(pipeline: &Pipeline) -> bool {
+    pipeline.commands.iter().any(command_contains_heredoc)
+}
+
+fn command_contains_heredoc(command: &Command) -> bool {
+    match command {
+        Command::Simple(simple) => simple.redirections.iter().any(redirection_contains_heredoc),
+        Command::Subshell(program) | Command::Group(program) => program_contains_heredoc(program),
+        Command::FunctionDef(function) => command_contains_heredoc(&function.body),
+        Command::If(if_command) => {
+            program_contains_heredoc(&if_command.condition)
+                || program_contains_heredoc(&if_command.then_branch)
+                || if_command
+                    .elif_branches
+                    .iter()
+                    .any(|branch| {
+                        program_contains_heredoc(&branch.condition)
+                            || program_contains_heredoc(&branch.body)
+                    })
+                || if_command
+                    .else_branch
+                    .as_ref()
+                    .is_some_and(program_contains_heredoc)
+        }
+        Command::Loop(loop_command) => {
+            program_contains_heredoc(&loop_command.condition)
+                || program_contains_heredoc(&loop_command.body)
+        }
+        Command::For(for_command) => program_contains_heredoc(&for_command.body),
+        Command::Case(case_command) => case_command
+            .arms
+            .iter()
+            .any(|arm| program_contains_heredoc(&arm.body)),
+        Command::Redirected(command, redirections) => {
+            command_contains_heredoc(command)
+                || redirections.iter().any(redirection_contains_heredoc)
+        }
+    }
+}
+
+fn redirection_contains_heredoc(redirection: &crate::syntax::Redirection) -> bool {
+    redirection.kind == RedirectionKind::HereDoc
 }
 
 fn render_command(command: &Command) -> String {
@@ -1549,6 +1628,142 @@ mod tests {
         for mut child in spawned {
             let _ = child.wait().expect("wait");
         }
+    }
+
+    #[test]
+    fn nested_program_helpers_cover_rendering_and_heredoc_detection() {
+        let async_program = Program {
+            items: vec![
+                ListItem {
+                    and_or: AndOr {
+                        first: Pipeline {
+                            negated: false,
+                            commands: vec![Command::Simple(SimpleCommand {
+                                words: vec![Word { raw: "true".into() }],
+                                ..SimpleCommand::default()
+                            })],
+                        },
+                        rest: Vec::new(),
+                    },
+                    asynchronous: true,
+                },
+                ListItem {
+                    and_or: AndOr {
+                        first: Pipeline {
+                            negated: false,
+                            commands: vec![Command::Simple(SimpleCommand {
+                                words: vec![Word { raw: "false".into() }],
+                                ..SimpleCommand::default()
+                            })],
+                        },
+                        rest: Vec::new(),
+                    },
+                    asynchronous: false,
+                },
+            ],
+        };
+        assert_eq!(render_list_item(&async_program.items[0]), "true &");
+        assert_eq!(render_program(&async_program), "true & false");
+
+        let heredoc_program = crate::syntax::parse(": <<EOF\nhello\nEOF\n").expect("parse heredoc");
+        let mut shell = test_shell();
+        let status = execute_nested_program(&mut shell, &heredoc_program).expect("execute heredoc nested");
+        assert_eq!(status, 0);
+        assert!(program_contains_heredoc(&heredoc_program));
+        assert!(list_item_contains_heredoc(&heredoc_program.items[0]));
+        assert!(pipeline_contains_heredoc(&heredoc_program.items[0].and_or.first));
+
+        let heredoc_command = heredoc_program.items[0].and_or.first.commands[0].clone();
+        assert!(command_contains_heredoc(&Command::Subshell(heredoc_program.clone())));
+        assert!(command_contains_heredoc(&Command::Group(heredoc_program.clone())));
+        assert!(command_contains_heredoc(&Command::FunctionDef(FunctionDef {
+            name: "f".into(),
+            body: Box::new(heredoc_command.clone()),
+        })));
+        assert!(command_contains_heredoc(&Command::If(IfCommand {
+            condition: heredoc_program.clone(),
+            then_branch: Program::default(),
+            elif_branches: Vec::new(),
+            else_branch: None,
+        })));
+        assert!(command_contains_heredoc(&Command::If(IfCommand {
+            condition: Program::default(),
+            then_branch: heredoc_program.clone(),
+            elif_branches: Vec::new(),
+            else_branch: None,
+        })));
+        assert!(command_contains_heredoc(&Command::If(IfCommand {
+            condition: Program::default(),
+            then_branch: Program::default(),
+            elif_branches: vec![crate::syntax::ElifBranch {
+                condition: heredoc_program.clone(),
+                body: Program::default(),
+            }],
+            else_branch: None,
+        })));
+        assert!(command_contains_heredoc(&Command::If(IfCommand {
+            condition: Program::default(),
+            then_branch: Program::default(),
+            elif_branches: vec![crate::syntax::ElifBranch {
+                condition: Program::default(),
+                body: heredoc_program.clone(),
+            }],
+            else_branch: None,
+        })));
+        assert!(command_contains_heredoc(&Command::If(IfCommand {
+            condition: Program::default(),
+            then_branch: Program::default(),
+            elif_branches: Vec::new(),
+            else_branch: Some(heredoc_program.clone()),
+        })));
+        assert!(command_contains_heredoc(&Command::Loop(LoopCommand {
+            kind: LoopKind::While,
+            condition: heredoc_program.clone(),
+            body: Program::default(),
+        })));
+        assert!(command_contains_heredoc(&Command::Loop(LoopCommand {
+            kind: LoopKind::Until,
+            condition: Program::default(),
+            body: heredoc_program.clone(),
+        })));
+        assert!(command_contains_heredoc(&Command::For(ForCommand {
+            name: "item".into(),
+            items: None,
+            body: heredoc_program.clone(),
+        })));
+        assert!(command_contains_heredoc(&Command::Case(CaseCommand {
+            word: Word { raw: "x".into() },
+            arms: vec![crate::syntax::CaseArm {
+                patterns: vec![Word { raw: "x".into() }],
+                body: heredoc_program.clone(),
+            }],
+        })));
+        assert!(command_contains_heredoc(&Command::Redirected(
+            Box::new(Command::Group(heredoc_program.clone())),
+            Vec::new(),
+        )));
+        let heredoc_redirection = Redirection {
+            fd: None,
+            kind: RedirectionKind::HereDoc,
+            target: Word { raw: "EOF".into() },
+            here_doc: Some(HereDoc {
+                delimiter: "EOF".into(),
+                body: "hello\n".into(),
+                expand: false,
+                strip_tabs: false,
+            }),
+        };
+        assert!(command_contains_heredoc(&Command::Redirected(
+            Box::new(Command::Simple(SimpleCommand::default())),
+            vec![heredoc_redirection.clone()],
+        )));
+        assert!(redirection_contains_heredoc(&heredoc_redirection));
+        assert!(!redirection_contains_heredoc(&Redirection {
+            fd: None,
+            kind: RedirectionKind::Write,
+            target: Word { raw: "out".into() },
+            here_doc: None,
+        }));
     }
 
     #[test]

@@ -65,7 +65,7 @@ This document maps the core POSIX shell requirements that `meiksh` is targeting 
   - `cargo test` unit tests in `src/syntax/mod.rs`
   - shell/runtime coverage in `src/shell.rs` and `tests/spec/basic.rs`
 - Gaps to close:
-  - parser-time alias substitution now works for aliases already present in shell state, and top-level source execution now reparses later list items with updated aliases, including blank-terminated alias chaining within simple commands; nested same-source alias visibility inside already-parsed compound bodies is still incomplete
+  - parser-time alias substitution now works for aliases already present in shell state; top-level and most nested program bodies are reparsed with updated aliases, including blank-terminated alias chaining within simple commands. Remaining alias-timing gaps are concentrated in cases where bodies must keep exact original syntax fidelity, especially here-document-heavy paths
   - reserved-word coverage is still incomplete in some grammar positions
   - standalone `!` is now only treated as pipeline negation at pipeline start; broader reserved-word edge coverage still needs tightening
 
@@ -97,7 +97,7 @@ This document maps the core POSIX shell requirements that `meiksh` is targeting 
 - Builtin dispatch and current implementations: `src/builtin/mod.rs`
 - Required shell state mutations: `src/shell.rs`
 - Gaps to close:
-  - alias definitions now affect later top-level parses in the same source, and blank-terminated aliases can expose the next simple-command word to alias substitution, but nested same-source alias visibility is not yet fully POSIX-conformant
+  - alias definitions now affect later top-level parses in the same source, and blank-terminated aliases can expose the next simple-command word to alias substitution; remaining non-conformant timing cases are tied to exact-syntax-preserving nested bodies
   - `trap` is still only a placeholder and lacks `eval` semantics, persistence, and required output formatting
   - `set` still lacks more POSIX options beyond the currently implemented `-C`/`+C` and `-f`/`+f`
   - remaining special-builtin edge cases
