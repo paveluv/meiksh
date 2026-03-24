@@ -63,10 +63,11 @@ This document maps the core POSIX shell requirements that `meiksh` is targeting 
 - Program/list/pipeline/simple command AST: `src/syntax/mod.rs`
 - Current tests:
   - `cargo test` unit tests in `src/syntax/mod.rs`
+  - shell/runtime coverage in `src/shell.rs` and `tests/spec/basic.rs`
 - Gaps to close:
-  - alias substitution is still disabled at parser/tokenization time
+  - parser-time alias substitution now works for aliases already present in shell state, but aliases defined earlier in the same parsed source are still unavailable until incremental parse/execute is introduced
   - reserved-word coverage is still incomplete in some grammar positions
-  - `!` is still handled as pipeline negation rather than full context-sensitive reserved-word grammar
+  - standalone `!` is now only treated as pipeline negation at pipeline start; broader reserved-word edge coverage still needs tightening
 
 ## Expansion
 
@@ -96,7 +97,7 @@ This document maps the core POSIX shell requirements that `meiksh` is targeting 
 - Builtin dispatch and current implementations: `src/builtin/mod.rs`
 - Required shell state mutations: `src/shell.rs`
 - Gaps to close:
-  - parser-level `alias` substitution timing is not yet POSIX-conformant
+  - alias definitions now feed parser-time expansion for later parses, but same-source alias visibility is not yet POSIX-conformant
   - `trap` is still only a placeholder and lacks `eval` semantics, persistence, and required output formatting
   - `set` still lacks more POSIX options beyond the currently implemented `-C`/`+C` and `-f`/`+f`
   - remaining special-builtin edge cases

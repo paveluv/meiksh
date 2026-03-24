@@ -14,10 +14,10 @@ This document records `meiksh` behavior where POSIX leaves room for implementati
 ## Parser
 
 - `meiksh` preserves raw quoting inside parsed words and defers most semantic interpretation to expansion time.
-- Alias expansion is not implemented yet; current behavior is equivalent to aliases being disabled.
+- Alias expansion now runs at parser time for aliases already present in shell state before a parse begins. Aliases defined earlier in the same parsed source are still not visible until a later parse.
 - Here-document bodies are attached during parsing; `<<-` strips leading tab characters while reading, and expansions run only when the delimiter is unquoted.
 - `if`, `while`, `until`, `for`, and `case` are parsed as compound commands, but reserved-word coverage is still incomplete for the full POSIX grammar.
-- A standalone `!` token is currently treated as pipeline negation only; using `!` as an ordinary simple-command argument is not yet fully distinguished from that grammar role.
+- A standalone `!` is treated as pipeline negation only at pipeline start. In other positions, `!` remains an ordinary word.
 
 ## Expansion
 
@@ -53,6 +53,7 @@ This document records `meiksh` behavior where POSIX leaves room for implementati
 
 - Optimize shell-owned overhead first: startup, parsing, expansion, builtin dispatch, command lookup, and pipeline construction.
 - Prefer clearer, auditable low-level bindings over opaque abstractions when the syscall path materially affects shell semantics or latency.
+- Production-code line coverage must remain at 100.00% as measured by `./scripts/coverage.sh`, using the repository's production-only metric that excludes inline `#[cfg(test)]` modules from the final percentage.
 
 ## Pending Policy Items
 

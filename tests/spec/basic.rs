@@ -225,6 +225,19 @@ fn negated_pipeline_flips_status() {
         .status()
         .expect("run meiksh");
     assert_eq!(status.code(), Some(1));
+
+    let literal = Command::new(meiksh())
+        .args(["-c", "echo !"])
+        .output()
+        .expect("run meiksh");
+    assert!(literal.status.success());
+    assert_eq!(String::from_utf8_lossy(&literal.stdout), "!\n");
+
+    let not_reserved = Command::new(meiksh())
+        .args(["-c", "!true"])
+        .output()
+        .expect("run meiksh");
+    assert!(!not_reserved.status.success());
 }
 
 #[test]
