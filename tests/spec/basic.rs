@@ -791,4 +791,21 @@ fn executes_case_commands() {
         .expect("run meiksh");
     assert!(star.status.success());
     assert_eq!(String::from_utf8_lossy(&star.stdout), "yes");
+
+    let linebreak_before_in = Command::new(meiksh())
+        .args([
+            "-c",
+            "name=beta; case $name\nin\nalpha) printf no ;;\nbeta) printf yes ;;\nesac",
+        ])
+        .output()
+        .expect("run meiksh");
+    assert!(linebreak_before_in.status.success());
+    assert_eq!(String::from_utf8_lossy(&linebreak_before_in.stdout), "yes");
+
+    let empty_case = Command::new(meiksh())
+        .args(["-c", "case value\nin\nesac; printf ok"])
+        .output()
+        .expect("run meiksh");
+    assert!(empty_case.status.success());
+    assert_eq!(String::from_utf8_lossy(&empty_case.stdout), "ok");
 }

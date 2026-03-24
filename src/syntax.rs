@@ -877,8 +877,15 @@ impl Parser {
                 });
             }
         };
-        self.expect_reserved_word("in")?;
-        self.skip_separators();
+        self.skip_linebreaks();
+        if self.peek_reserved_word("in") {
+            self.index += 1;
+        } else {
+            return Err(ParseError {
+                message: "expected 'in'".to_string(),
+            });
+        }
+        self.skip_linebreaks();
 
         let mut arms = Vec::new();
         while !self.peek_reserved_word("esac") && !self.is_eof() {
@@ -1475,6 +1482,20 @@ mod tests {
             &with_optional_paren.items[0].and_or.first.commands[0],
             Command::Case(case_command) if case_command.arms.len() == 1
         ));
+
+        let with_linebreak_before_in =
+            parse("case x\nin\nx) echo ok ;;\nesac").expect("parse case linebreak");
+        assert!(matches!(
+            &with_linebreak_before_in.items[0].and_or.first.commands[0],
+            Command::Case(case_command) if case_command.arms.len() == 1
+        ));
+
+        let empty_after_linebreak =
+            parse("case x\nin\nesac").expect("parse empty case after linebreak");
+        assert!(matches!(
+            &empty_after_linebreak.items[0].and_or.first.commands[0],
+            Command::Case(case_command) if case_command.arms.is_empty()
+        ));
     }
 
     #[test]
@@ -1485,6 +1506,7 @@ mod tests {
         assert!(parse("for 1 in a; do echo hi; done").is_err());
         assert!(parse("for item in ; do echo hi; done").is_ok());
         assert!(parse("for item in ) ; do echo hi; done").is_err());
+        assert!(parse("case x in ; esac").is_err());
         assert!(parse("case name in foo echo hi esac").is_err());
         assert!(parse("cat <<EOF").is_err());
         assert!(parse("echo 2>&").is_err());
@@ -1672,6 +1694,28 @@ mod tests {
         assert_eq!(
             parser.parse_case_command().expect_err("missing word").message,
             "expected case word"
+        );
+
+        let mut parser = Parser::new(vec![
+            Token {
+                kind: TokenKind::Word("case".into()),
+            },
+            Token {
+                kind: TokenKind::Word("name".into()),
+            },
+            Token {
+                kind: TokenKind::Newline,
+            },
+            Token {
+                kind: TokenKind::Word("esac".into()),
+            },
+            Token {
+                kind: TokenKind::Eof,
+            },
+        ], VecDeque::new(), HashMap::new());
+        assert_eq!(
+            parser.parse_case_command().expect_err("missing in").message,
+            "expected 'in'"
         );
 
         let mut parser = Parser::new(vec![
