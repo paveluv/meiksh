@@ -558,7 +558,7 @@ struct ReadOptions {
 }
 
 fn read(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
-    let mut stdin = io::stdin().lock();
+    let mut stdin = sys::FdReader::new(sys::STDIN_FILENO);
     read_with_input(shell, argv, &mut stdin)
 }
 
@@ -2435,6 +2435,29 @@ mod tests {
         assert_eq!(resolved, PathBuf::from("plain"));
         assert_eq!(pwd_target, "plain");
         assert!(!should_print);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolve_cd_target_uses_plain_pwd_for_empty_cdpath_prefix() {
+        let _guard = cwd_lock().lock().expect("cwd lock");
+        let mut shell = test_shell();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("meiksh-cdpath-empty-prefix-{unique}"));
+        let original = std::env::current_dir().expect("cwd");
+        fs::create_dir_all(root.join("plain")).expect("mkdir plain");
+        std::env::set_current_dir(&root).expect("set cwd");
+        shell.env.insert("CDPATH".into(), ":".into());
+
+        let (resolved, pwd_target, should_print) = resolve_cd_target(&shell, "plain", false);
+        assert_eq!(resolved, PathBuf::from("./plain"));
+        assert_eq!(pwd_target, "plain");
+        assert!(!should_print);
+
+        std::env::set_current_dir(&original).expect("restore cwd");
         let _ = fs::remove_dir_all(root);
     }
 

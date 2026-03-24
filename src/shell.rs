@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::OsString;
 use std::fs;
-use std::io::{self, Read};
+use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command as ProcessCommand, ExitStatus};
@@ -231,9 +231,7 @@ impl Shell {
             if interactive {
                 interactive::run(self)?
             } else {
-                let mut buffer = String::new();
-                io::stdin().read_to_string(&mut buffer)?;
-                self.run_source("<stdin>", &buffer)?
+                self.run_standard_input()?
             }
         };
         self.run_exit_trap(status)
@@ -257,6 +255,38 @@ impl Shell {
         self.execute_source_incrementally(source)
     }
 
+    fn run_standard_input(&mut self) -> Result<i32, ShellError> {
+        let mut status = 0;
+        let mut source = String::new();
+        let mut line_bytes = Vec::new();
+        let mut byte = [0u8; 1];
+
+        loop {
+            let count = sys::read_fd(sys::STDIN_FILENO, &mut byte)?;
+            if count == 0 {
+                if !line_bytes.is_empty() {
+                    source.push_str(&decode_stdin_chunk(std::mem::take(&mut line_bytes))?);
+                }
+                break;
+            }
+            line_bytes.push(byte[0]);
+            if byte[0] == b'\n' {
+                source.push_str(&decode_stdin_chunk(std::mem::take(&mut line_bytes))?);
+                if let Some(executed_status) = self.maybe_run_stdin_source(&mut source, false)? {
+                    status = executed_status;
+                    if !self.running || self.has_pending_control() {
+                        return Ok(status);
+                    }
+                }
+            }
+        }
+
+        if let Some(executed_status) = self.maybe_run_stdin_source(&mut source, true)? {
+            status = executed_status;
+        }
+        Ok(status)
+    }
+
     fn execute_source_incrementally(&mut self, source: &str) -> Result<i32, ShellError> {
         let mut session = syntax::ParseSession::new(source)?;
         let mut status = 0;
@@ -269,6 +299,20 @@ impl Shell {
             }
         }
         Ok(status)
+    }
+
+    fn maybe_run_stdin_source(&mut self, source: &mut String, eof: bool) -> Result<Option<i32>, ShellError> {
+        if source.is_empty() {
+            return Ok(None);
+        }
+        match syntax::parse_with_aliases(source, &self.aliases) {
+            Ok(_) => {
+                let buffered = std::mem::take(source);
+                self.run_source("<stdin>", &buffered).map(Some)
+            }
+            Err(error) if !eof && stdin_parse_error_requires_more_input(&error) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
     }
 
     pub fn capture_output(&mut self, source: &str) -> Result<String, ShellError> {
@@ -875,6 +919,36 @@ fn executable_regular_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+fn decode_stdin_chunk(bytes: Vec<u8>) -> io::Result<String> {
+    String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+fn stdin_parse_error_requires_more_input(error: &syntax::ParseError) -> bool {
+    matches!(
+        error.message.as_str(),
+        "unterminated single quote"
+            | "unterminated double quote"
+            | "unterminated here-document"
+            | "expected command"
+            | "expected for loop variable name"
+            | "expected for loop word list"
+            | "expected case word"
+            | "expected 'in'"
+            | "expected case pattern"
+            | "expected ';;' or 'esac'"
+            | "expected redirection target"
+            | "missing here-document body"
+            | "unexpected end of tokens"
+            | "expected 'then'"
+            | "expected 'fi'"
+            | "expected 'do'"
+            | "expected 'done'"
+            | "expected 'esac'"
+            | "expected ')' to close subshell"
+            | "expected '}'"
+    )
+}
+
 fn classify_script_read_error(path: &Path, error: io::Error) -> ShellError {
     match error.kind() {
         io::ErrorKind::NotFound => ShellError::with_status(127, format!("{}: not found", path.display())),
@@ -1227,6 +1301,24 @@ mod tests {
         assert_eq!(error.exit_status(), 127);
         assert_eq!(error.display_message(), "missing script");
         assert_eq!(format!("{error}"), "missing script");
+    }
+
+    #[test]
+    fn stdin_parse_error_requires_more_input_for_open_constructs() {
+        for source in [
+            "if true\n",
+            "for item in a b\n",
+            "cat <<EOF\nhello\n",
+            "echo \"unterminated",
+            "printf ok |\n",
+        ] {
+            let error = syntax::parse(source).expect_err("incomplete parse");
+            assert!(stdin_parse_error_requires_more_input(&error), "{source}");
+        }
+
+        let error = syntax::parse("999999999999999999999999999999999999999999999999999999999999<in")
+            .expect_err("syntax error");
+        assert!(!stdin_parse_error_requires_more_input(&error));
     }
 
     #[test]

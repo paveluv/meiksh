@@ -29,7 +29,7 @@ The current semantic target is POSIX Issue 8, with Issue 7 behavior still tracke
 
 The project does **not** yet claim full POSIX conformance. Remaining gaps are tracked in `docs/spec-matrix.md` and `docs/requirements/gap-register.md`. The largest open areas are currently:
 
-- the remaining `sh` utility startup details, especially no-read-ahead stdin behavior and broader option coverage
+- the remaining `sh` utility startup details, especially broader option coverage, non-blocking-stdin handling, and utility-page exit-status/error-consequence polish
 - field-splitting, tilde, double-quote, and arithmetic-expansion edge cases
 - subshell / command-substitution execution-environment fidelity
 - broader builtin completion, including the still-open `set`, `read`, `trap`, `umask`, and missing mirrored utility pages such as `hash`, `getopts`, `ulimit`, and `fc`

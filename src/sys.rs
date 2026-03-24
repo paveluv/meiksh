@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
-use std::io;
+use std::io::{self, Read};
 use std::os::raw::{c_char, c_int, c_long, c_uint, c_ushort, c_ulong};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -43,6 +43,7 @@ unsafe extern "C" {
     fn dup(fd: c_int) -> c_int;
     fn dup2(oldfd: c_int, newfd: c_int) -> c_int;
     fn close(fd: c_int) -> c_int;
+    fn read(fd: c_int, buf: *mut u8, count: usize) -> isize;
     fn umask(cmask: FileModeMask) -> FileModeMask;
     fn times(buffer: *mut Tms) -> ClockTicks;
     fn sysconf(name: c_int) -> c_long;
@@ -72,6 +73,7 @@ struct Syscalls {
     dup: fn(c_int) -> c_int,
     dup2: fn(c_int, c_int) -> c_int,
     close: fn(c_int) -> c_int,
+    read: fn(c_int, *mut u8, usize) -> isize,
     umask: fn(FileModeMask) -> FileModeMask,
     times: fn(*mut Tms) -> ClockTicks,
     sysconf: fn(c_int) -> c_long,
@@ -126,6 +128,10 @@ fn default_close(fd: c_int) -> c_int {
     unsafe { close(fd) }
 }
 
+fn default_read(fd: c_int, buf: *mut u8, count: usize) -> isize {
+    unsafe { read(fd, buf, count) }
+}
+
 fn default_umask(cmask: FileModeMask) -> FileModeMask {
     unsafe { umask(cmask) }
 }
@@ -152,6 +158,7 @@ fn default_syscalls() -> Syscalls {
         dup: default_dup,
         dup2: default_dup2,
         close: default_close,
+        read: default_read,
         umask: default_umask,
         times: default_times,
         sysconf: default_sysconf,
@@ -449,6 +456,31 @@ pub fn close_fd(fd: c_int) -> io::Result<()> {
     }
 }
 
+pub fn read_fd(fd: c_int, buf: &mut [u8]) -> io::Result<usize> {
+    let result = (syscalls().read)(fd, buf.as_mut_ptr(), buf.len());
+    if result >= 0 {
+        Ok(result as usize)
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+pub struct FdReader {
+    fd: c_int,
+}
+
+impl FdReader {
+    pub fn new(fd: c_int) -> Self {
+        Self { fd }
+    }
+}
+
+impl Read for FdReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        read_fd(self.fd, buf)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProcessTimes {
     pub user_ticks: u64,
@@ -716,6 +748,15 @@ mod tests {
         fn fake_close(_fd: c_int) -> c_int {
             0
         }
+        fn fake_read(_fd: c_int, buf: *mut u8, count: usize) -> isize {
+            if count == 0 {
+                return 0;
+            }
+            unsafe {
+                *buf = b'X';
+            }
+            1
+        }
         fn fake_umask(mask: FileModeMask) -> FileModeMask {
             mask
         }
@@ -748,6 +789,7 @@ mod tests {
             dup: fake_dup,
             dup2: fake_dup2,
             close: fake_close,
+            read: fake_read,
             umask: fake_umask,
             times: fake_times,
             sysconf: fake_sysconf,
@@ -769,6 +811,12 @@ mod tests {
             assert_eq!(duplicate_fd_to_new(4).expect("dup"), 104);
             assert!(duplicate_fd(4, 5).is_ok());
             assert!(close_fd(4).is_ok());
+            let mut buffer = [0u8; 1];
+            assert_eq!(read_fd(0, &mut buffer).expect("read"), 1);
+            assert_eq!(buffer, [b'X']);
+            let mut reader = FdReader::new(0);
+            assert_eq!(reader.read(&mut buffer).expect("reader read"), 1);
+            assert_eq!(buffer, [b'X']);
             assert_eq!(current_umask(), 0);
             assert_eq!(set_umask(0o027), 0o027);
             assert_eq!(
@@ -860,6 +908,9 @@ mod tests {
         fn fake_close(_fd: c_int) -> c_int {
             -1
         }
+        fn fake_read(_fd: c_int, _buf: *mut u8, _count: usize) -> isize {
+            -1
+        }
         fn fake_umask(mask: FileModeMask) -> FileModeMask {
             mask
         }
@@ -886,6 +937,7 @@ mod tests {
             dup: fake_dup,
             dup2: fake_dup2,
             close: fake_close,
+            read: fake_read,
             umask: fake_umask,
             times: fake_times,
             sysconf: fake_sysconf,
@@ -903,6 +955,7 @@ mod tests {
             assert!(duplicate_fd_to_new(1).is_err());
             assert!(duplicate_fd(1, 2).is_err());
             assert!(close_fd(1).is_err());
+            assert!(read_fd(0, &mut [0u8; 1]).is_err());
             assert!(process_times().is_err());
             assert!(clock_ticks_per_second().is_err());
             assert!(exec_replace("echo", &["hi".to_string()]).is_err());
