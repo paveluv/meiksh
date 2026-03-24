@@ -13,11 +13,11 @@ This register turns broad partial-conformance areas into named backlog items tha
 | Gap ID | Linked requirement area | Current gap |
 | --- | --- | --- |
 | `GAP-SH-001` | `REQ-SH-OPTIONS-*` | `sh` and `set` now cover `-a`, `-C`, `-f`, `-n`, and named `-o`/`+o` forms for the implemented subset, but the rest of the full Issue 8 option surface still remains open. |
-| `GAP-SH-002` | `REQ-SH-STARTUP-*`, `REQ-SH-OPERANDS-*`, `REQ-SH-EXIT-*` | The non-interactive stdin no-read-ahead rule and blocking-stdin correction for inherited non-blocking FIFO/terminal descriptors are now implemented; the remaining startup gap is narrower utility-page polish around the rest of the option surface and broader exit-status/error-consequence distinctions. |
+| `GAP-SH-002` | `REQ-SH-STARTUP-*`, `REQ-SH-OPERANDS-*`, `REQ-SH-EXIT-*` | The non-interactive stdin no-read-ahead rule, blocking-stdin correction for inherited non-blocking FIFO/terminal descriptors, and the direct-ordinary-builtin versus direct-special-builtin error split are now implemented; the remaining startup gap is narrower utility-page polish around the rest of the option surface and top-level exit-status/error classification. |
 | `GAP-SH-003` | `REQ-SH-INTERACTIVE-*`, `REQ-JOBS-HISTORY-*` | Command history list semantics are still simplified, and command-line / vi-mode editing remain unimplemented. |
 | `GAP-EXPAND-001` | `REQ-EXPAND-FIELDS-*` | Field splitting still needs exact mixed-quoting, `"$@"`, and remaining IFS edge coverage. |
 | `GAP-EXPAND-002` | `REQ-EXPAND-TILDE-*`, `REQ-EXPAND-QUOTE-*`, `REQ-EXPAND-ARITH-*` | Tilde expansion, double-quote backslash rules, and arithmetic expansion are still only partially aligned with the mirrored Issue 8 text. |
-| `GAP-EXEC-001` | `REQ-EXEC-ERRORS-*` | Some POSIX shell-error consequence distinctions remain open. |
+| `GAP-EXEC-001` | `REQ-EXEC-ERRORS-*` | Some POSIX shell-error consequence distinctions remain open, especially syntax / expansion / assignment / function-execution cases beyond the now-fixed ordinary-builtin versus special-builtin split. |
 | `GAP-EXEC-002` | `REQ-EXEC-ENV-*`, `REQ-EXPAND-CMDSUB-*`, `REQ-EXEC-GROUP-*` | Subshell and command-substitution fidelity are still affected by the current recursive `meiksh -c` shortcut, which does not preserve the full shell execution environment. |
 | `GAP-EXEC-003` | `REQ-EXEC-SEARCH-*` | Command search still needs stricter executable-file semantics and broader utility-page parity for external lookup and failure cases. |
 | `GAP-BUILTIN-001` | `REQ-BUILTIN-CD-*` | `cd` still lacks `-L`/`-P`/`-e` and full logical-path fidelity after the new `CDPATH` coverage. |

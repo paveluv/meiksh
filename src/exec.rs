@@ -363,7 +363,8 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
     }
 
     if builtin::is_builtin(&expanded.argv[0]) {
-        with_shell_redirections(&expanded.redirections, shell.options.noclobber, || {
+        let is_special_builtin = builtin::is_special_builtin(&expanded.argv[0]);
+        let result = with_shell_redirections(&expanded.redirections, shell.options.noclobber, || {
             match shell.run_builtin(&expanded.argv, &expanded.assignments)? {
                 FlowSignal::Continue(status) => Ok(status),
                 FlowSignal::Exit(status) => {
@@ -371,7 +372,15 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
                     Ok(status)
                 }
             }
-        })
+        });
+        match result {
+            Ok(status) => Ok(status),
+            Err(error) if !is_special_builtin => {
+                eprintln!("{}", error.display_message());
+                Ok(error.exit_status())
+            }
+            Err(error) => Err(error),
+        }
     } else if let Some(function) = shell.functions.get(&expanded.argv[0]).cloned() {
         with_shell_redirections(&expanded.redirections, shell.options.noclobber, || {
             for (name, value) in expanded.assignments {

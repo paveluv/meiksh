@@ -89,6 +89,7 @@ pub fn is_builtin(name: &str) -> bool {
     )
 }
 
+
 const DEFAULT_COMMAND_PATH: &str = "/usr/bin:/bin";
 
 fn cd(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
@@ -1565,7 +1566,7 @@ fn absolute_path(path: &Path) -> Option<PathBuf> {
     env::current_dir().ok().map(|cwd| cwd.join(path))
 }
 
-fn is_special_builtin(name: &str) -> bool {
+pub fn is_special_builtin(name: &str) -> bool {
     matches!(
         name,
         "." | ":" | "break" | "continue" | "eval" | "exec" | "exit" | "export" | "readonly"
