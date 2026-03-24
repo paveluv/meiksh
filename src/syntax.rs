@@ -166,8 +166,6 @@ enum TokenKind {
     OrIf,
     LParen,
     RParen,
-    LBrace,
-    RBrace,
     Less,
     Greater,
     DGreat,
@@ -408,30 +406,6 @@ fn tokenize(source: &str) -> Result<Tokenized, ParseError> {
                 );
                 tokens.push(Token {
                     kind: TokenKind::RParen,
-                });
-                index += 1;
-            }
-            '{' => {
-                flush_word(
-                    &mut current,
-                    &mut tokens,
-                    &mut expect_here_doc_target,
-                    &mut pending_here_docs,
-                );
-                tokens.push(Token {
-                    kind: TokenKind::LBrace,
-                });
-                index += 1;
-            }
-            '}' => {
-                flush_word(
-                    &mut current,
-                    &mut tokens,
-                    &mut expect_here_doc_target,
-                    &mut pending_here_docs,
-                );
-                tokens.push(Token {
-                    kind: TokenKind::RBrace,
                 });
                 index += 1;
             }
@@ -697,6 +671,7 @@ impl Parser {
                 _ => break,
             };
             self.index += 1;
+            self.skip_linebreaks();
             let rhs = self.parse_pipeline()?;
             rest.push((op, rhs));
         }
@@ -710,6 +685,7 @@ impl Parser {
         let mut commands = vec![self.parse_command()?];
         while matches!(self.peek_kind(), TokenKind::Pipe) {
             self.index += 1;
+            self.skip_linebreaks();
             commands.push(self.parse_command()?);
         }
         Ok(Pipeline { negated, commands })
@@ -747,10 +723,10 @@ impl Parser {
                     self.expect(TokenKind::RParen, "expected ')' to close subshell")?;
                     Command::Subshell(body)
                 }
-                TokenKind::LBrace => {
+                TokenKind::Word(text) if text == "{" => {
                     self.index += 1;
                     let body = self.parse_program_until(true, &[], false)?;
-                    self.expect(TokenKind::RBrace, "expected '}' to close group")?;
+                    self.expect_reserved_word("}")?;
                     Command::Group(body)
                 }
                 _ => Command::Simple(self.parse_simple_command()?),
@@ -1202,7 +1178,7 @@ impl Parser {
     }
 
     fn at_closer(&self) -> bool {
-        matches!(self.peek_kind(), TokenKind::RParen | TokenKind::RBrace)
+        matches!(self.peek_kind(), TokenKind::RParen) || self.peek_reserved_word("}")
     }
 }
 
@@ -1281,6 +1257,9 @@ mod tests {
             and_or.first.commands.first(),
             Some(Command::Subshell(_))
         ));
+
+        let linebreak_and_or = parse("true &&\n echo done ||\n echo fail").expect("parse linebreak and-or");
+        assert_eq!(linebreak_and_or.items[0].and_or.rest.len(), 2);
     }
 
     #[test]
@@ -1363,6 +1342,19 @@ mod tests {
                     && redirections[0].kind == RedirectionKind::Write
                     && redirections[0].target.raw == "out"
         ));
+
+        let not_a_group = parse("{echo hi; }").expect("parse brace word");
+        assert!(matches!(
+            &not_a_group.items[0].and_or.first.commands[0],
+            Command::Simple(simple) if simple.words[0].raw == "{echo"
+        ));
+
+        let closer_literal = parse("echo }").expect("parse literal closer");
+        assert!(matches!(
+            &closer_literal.items[0].and_or.first.commands[0],
+            Command::Simple(simple)
+                if simple.words.iter().map(|word| word.raw.as_str()).collect::<Vec<_>>() == vec!["echo", "}"]
+        ));
     }
 
     #[test]
@@ -1382,6 +1374,9 @@ mod tests {
         assert!(item.asynchronous);
         assert!(item.and_or.first.negated);
         assert_eq!(item.and_or.first.commands.len(), 2);
+
+        let linebreak_pipeline = parse("printf ok |\n wc -c").expect("parse linebreak pipeline");
+        assert_eq!(linebreak_pipeline.items[0].and_or.first.commands.len(), 2);
     }
 
     #[test]
@@ -1515,6 +1510,9 @@ mod tests {
         assert!(parse("# comment only\n").is_ok());
         assert!(parse("echo foo\\ bar").is_ok());
         assert!(parse("echo \"a\\\"b\"").is_ok());
+        assert!(parse("printf ok |\n wc -c").is_ok());
+        assert!(parse("true &&\n echo ok").is_ok());
+        assert!(parse("false ||\n echo ok").is_ok());
     }
 
     #[test]
@@ -1548,7 +1546,9 @@ mod tests {
         let parser = Parser::new(func_tokens.tokens, VecDeque::new(), HashMap::new());
         assert_eq!(parser.try_peek_function_name(), None);
 
-        let closer_tokens = vec![Token { kind: TokenKind::RBrace }];
+        let closer_tokens = vec![Token {
+            kind: TokenKind::Word("}".into()),
+        }];
         let parser = Parser::new(closer_tokens, VecDeque::new(), HashMap::new());
         assert!(parser.at_closer());
 
