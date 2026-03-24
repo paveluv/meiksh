@@ -69,6 +69,25 @@ pub fn expand_word_text<C: Context>(ctx: &mut C, word: &Word) -> Result<String, 
     Ok(flatten_pieces(&expanded.pieces))
 }
 
+pub fn expand_parameter_text<C: Context>(ctx: &mut C, raw: &str) -> Result<String, ExpandError> {
+    let chars: Vec<char> = raw.chars().collect();
+    let mut result = String::new();
+    let mut index = 0usize;
+
+    while index < chars.len() {
+        if chars[index] == '$' {
+            let (value, consumed) = expand_parameter_dollar(ctx, &chars[index..])?;
+            result.push_str(&value);
+            index += consumed;
+        } else {
+            result.push(chars[index]);
+            index += 1;
+        }
+    }
+
+    Ok(result)
+}
+
 fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, ExpandError> {
     let chars: Vec<char> = raw.chars().collect();
     let mut index = 0usize;
@@ -297,6 +316,53 @@ fn expand_dollar<C: Context>(
     }
 }
 
+fn expand_parameter_dollar<C: Context>(ctx: &mut C, chars: &[char]) -> Result<(String, usize), ExpandError> {
+    if chars.len() < 2 {
+        return Ok(("$".to_string(), 1));
+    }
+
+    match chars[1] {
+        '{' => {
+            let mut index = 2usize;
+            while index < chars.len() && chars[index] != '}' {
+                index += 1;
+            }
+            if index >= chars.len() {
+                return Err(ExpandError {
+                    message: "unterminated parameter expansion".to_string(),
+                });
+            }
+            let expr: String = chars[2..index].iter().collect();
+            let value = expand_braced_parameter_text(ctx, &expr)?;
+            Ok((value, index + 1))
+        }
+        '?' | '$' | '!' | '#' | '*' | '@' | '0' => {
+            let ch = chars[1];
+            let value = if ch == '0' {
+                ctx.shell_name().to_string()
+            } else {
+                ctx.special_param(ch).unwrap_or_default()
+            };
+            Ok((value, 2))
+        }
+        next if next.is_ascii_digit() => Ok((
+            ctx.positional_param(next.to_digit(10).unwrap_or_default() as usize)
+                .unwrap_or_default(),
+            2,
+        )),
+        next if next == '_' || next.is_ascii_alphabetic() => {
+            let mut index = 1usize;
+            let mut name = String::new();
+            while index < chars.len() && (chars[index] == '_' || chars[index].is_ascii_alphanumeric()) {
+                name.push(chars[index]);
+                index += 1;
+            }
+            Ok((lookup_param(ctx, &name).unwrap_or_default(), index))
+        }
+        _ => Ok(("$".to_string(), 1)),
+    }
+}
+
 fn expand_braced_parameter<C: Context>(ctx: &mut C, expr: &str, quoted: bool) -> Result<String, ExpandError> {
     if expr == "#" {
         return Ok(lookup_param(ctx, "#").unwrap_or_default());
@@ -397,6 +463,107 @@ fn expand_braced_parameter<C: Context>(ctx: &mut C, expr: &str, quoted: bool) ->
     }
 }
 
+fn expand_braced_parameter_text<C: Context>(ctx: &mut C, expr: &str) -> Result<String, ExpandError> {
+    if expr == "#" {
+        return Ok(lookup_param(ctx, "#").unwrap_or_default());
+    }
+    if let Some(name) = expr.strip_prefix('#') {
+        let value = lookup_param(ctx, name).unwrap_or_default();
+        return Ok(value.chars().count().to_string());
+    }
+
+    let (name, op, word) = parse_parameter_expression(expr)?;
+    let value = lookup_param(ctx, &name);
+    let is_set = value.is_some();
+    let is_null = value.as_deref().map(|s| s.is_empty()).unwrap_or(true);
+
+    match op.as_deref() {
+        None => Ok(value.unwrap_or_default()),
+        Some(":-") => {
+            if !is_set || is_null {
+                expand_parameter_text(ctx, &word.unwrap_or_default())
+            } else {
+                Ok(value.unwrap_or_default())
+            }
+        }
+        Some("-") => {
+            if !is_set {
+                expand_parameter_text(ctx, &word.unwrap_or_default())
+            } else {
+                Ok(value.unwrap_or_default())
+            }
+        }
+        Some(":=") => {
+            if !is_set || is_null {
+                assign_parameter_text(ctx, &name, &word.unwrap_or_default())
+            } else {
+                Ok(value.unwrap_or_default())
+            }
+        }
+        Some("=") => {
+            if !is_set {
+                assign_parameter_text(ctx, &name, &word.unwrap_or_default())
+            } else {
+                Ok(value.unwrap_or_default())
+            }
+        }
+        Some(":?") => {
+            if !is_set || is_null {
+                let message = expand_parameter_error_text(ctx, name.as_str(), word, "parameter null or not set")?;
+                Err(ExpandError { message })
+            } else {
+                Ok(value.unwrap_or_default())
+            }
+        }
+        Some("?") => {
+            if !is_set {
+                let message =
+                    expand_parameter_error_text(ctx, name.as_str(), word, "parameter not set")?;
+                Err(ExpandError { message })
+            } else {
+                Ok(value.unwrap_or_default())
+            }
+        }
+        Some(":+") => {
+            if is_set && !is_null {
+                expand_parameter_text(ctx, &word.unwrap_or_default())
+            } else {
+                Ok(String::new())
+            }
+        }
+        Some("+") => {
+            if is_set {
+                expand_parameter_text(ctx, &word.unwrap_or_default())
+            } else {
+                Ok(String::new())
+            }
+        }
+        Some("%") => remove_parameter_pattern(
+            value.unwrap_or_default(),
+            &expand_parameter_text(ctx, &word.unwrap_or_default())?,
+            PatternRemoval::SmallestSuffix,
+        ),
+        Some("%%") => remove_parameter_pattern(
+            value.unwrap_or_default(),
+            &expand_parameter_text(ctx, &word.unwrap_or_default())?,
+            PatternRemoval::LargestSuffix,
+        ),
+        Some("#") => remove_parameter_pattern(
+            value.unwrap_or_default(),
+            &expand_parameter_text(ctx, &word.unwrap_or_default())?,
+            PatternRemoval::SmallestPrefix,
+        ),
+        Some("##") => remove_parameter_pattern(
+            value.unwrap_or_default(),
+            &expand_parameter_text(ctx, &word.unwrap_or_default())?,
+            PatternRemoval::LargestPrefix,
+        ),
+        Some(_) => Err(ExpandError {
+            message: "unsupported parameter expansion".to_string(),
+        }),
+    }
+}
+
 fn assign_parameter<C: Context>(
     ctx: &mut C,
     name: &str,
@@ -411,6 +578,27 @@ fn assign_parameter<C: Context>(
     let value = expand_parameter_word(ctx, raw_word, quoted)?;
     ctx.set_var(name, value.clone())?;
     Ok(value)
+}
+
+fn assign_parameter_text<C: Context>(ctx: &mut C, name: &str, raw_word: &str) -> Result<String, ExpandError> {
+    if !is_name(name) {
+        return Err(ExpandError {
+            message: format!("{name}: cannot assign in parameter expansion"),
+        });
+    }
+    let value = expand_parameter_text(ctx, raw_word)?;
+    ctx.set_var(name, value.clone())?;
+    Ok(value)
+}
+
+fn expand_parameter_error_text<C: Context>(
+    ctx: &mut C,
+    name: &str,
+    word: Option<String>,
+    default_message: &str,
+) -> Result<String, ExpandError> {
+    let raw = word.unwrap_or_else(|| format!("{name}: {default_message}"));
+    expand_parameter_text(ctx, &raw)
 }
 
 fn expand_parameter_word<C: Context>(ctx: &mut C, raw: &str, _quoted: bool) -> Result<String, ExpandError> {
@@ -1262,6 +1450,90 @@ mod tests {
             expand_dollar(&mut ctx, &command_chars, false).expect("nested command"),
             ("printf (hi)".to_string(), command_chars.len())
         );
+    }
+
+    #[test]
+    fn parameter_text_expansion_avoids_command_substitution() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert("HOME".into(), "/tmp/home".into());
+        ctx.env.insert("EMPTY".into(), String::new());
+
+        assert_eq!(
+            expand_parameter_text(&mut ctx, "${HOME:-/fallback}/.shrc").expect("parameter text"),
+            "/tmp/home/.shrc"
+        );
+        assert_eq!(
+            expand_parameter_text(&mut ctx, "${EMPTY:-$HOME}/nested").expect("nested default"),
+            "/tmp/home/nested"
+        );
+        assert_eq!(
+            expand_parameter_text(&mut ctx, "$(printf nope)${HOME}").expect("literal command"),
+            "$(printf nope)/tmp/home"
+        );
+    }
+
+    #[test]
+    fn parameter_text_dollar_helpers_are_split_out() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert("HOME".into(), "/tmp/home".into());
+        assert_eq!(expand_parameter_dollar(&mut ctx, &['$'],).expect("single"), ("$".to_string(), 1));
+        let unterminated: Vec<char> = "${HOME".chars().collect();
+        assert!(expand_parameter_dollar(&mut ctx, &unterminated).is_err());
+        assert_eq!(expand_parameter_dollar(&mut ctx, &['$', '0']).expect("zero"), ("meiksh".to_string(), 2));
+        assert_eq!(expand_parameter_dollar(&mut ctx, &['$', '?']).expect("special"), ("0".to_string(), 2));
+        assert_eq!(expand_parameter_dollar(&mut ctx, &['$', '1']).expect("positional"), ("alpha".to_string(), 2));
+        assert_eq!(expand_parameter_dollar(&mut ctx, &['$', 'H', 'O', 'M', 'E']).expect("name"), ("/tmp/home".to_string(), 5));
+        assert_eq!(expand_parameter_dollar(&mut ctx, &['$', '-']).expect("fallback"), ("$".to_string(), 1));
+    }
+
+    #[test]
+    fn parameter_text_assignment_paths_are_split_out() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert("HOME".into(), "/tmp/home".into());
+        assert_eq!(expand_braced_parameter_text(&mut ctx, "#").expect("hash"), "2");
+        assert_eq!(expand_braced_parameter_text(&mut ctx, "#HOME").expect("length"), "9");
+        assert_eq!(expand_braced_parameter_text(&mut ctx, "HOME-word").expect("dash set"), "/tmp/home");
+        assert_eq!(expand_braced_parameter_text(&mut ctx, "UNSET-word").expect("dash unset"), "word");
+        assert_eq!(expand_braced_parameter_text(&mut ctx, "HOME:=value").expect("colon assign set"), "/tmp/home");
+        assert_eq!(expand_braced_parameter_text(&mut ctx, "UNSET:=value").expect("assign unset"), "value");
+        assert_eq!(ctx.env.get("UNSET").map(String::as_str), Some("value"));
+        assert_eq!(expand_braced_parameter_text(&mut ctx, "MISSING3=value").expect("assign equals unset"), "value");
+        assert_eq!(ctx.env.get("MISSING3").map(String::as_str), Some("value"));
+        assert_eq!(expand_braced_parameter_text(&mut ctx, "HOME=value").expect("assign set"), "/tmp/home");
+        assert!(assign_parameter_text(&mut ctx, "1", "value").is_err());
+    }
+
+    #[test]
+    fn parameter_text_question_operator_paths_are_split_out() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert("HOME".into(), "/tmp/home".into());
+        ctx.env.insert("EMPTY".into(), String::new());
+        assert_eq!(expand_braced_parameter_text(&mut ctx, "HOME:?boom").expect("colon question set"), "/tmp/home");
+        assert_eq!(expand_braced_parameter_text(&mut ctx, "HOME?boom").expect("question set"), "/tmp/home");
+        let colon_question = expand_braced_parameter_text(&mut ctx, "EMPTY:?boom").expect_err("colon question unset");
+        assert_eq!(colon_question.message, "boom");
+        let question = expand_braced_parameter_text(&mut ctx, "MISSING?boom").expect_err("question unset");
+        assert_eq!(question.message, "boom");
+        let colon_default = expand_braced_parameter_text(&mut ctx, "EMPTY:?").expect_err("colon default");
+        assert_eq!(colon_default.message, "");
+        let question_default = expand_braced_parameter_text(&mut ctx, "MISSING?").expect_err("question default");
+        assert_eq!(question_default.message, "");
+    }
+
+    #[test]
+    fn parameter_text_plus_and_pattern_paths_are_split_out() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert("HOME".into(), "/tmp/home".into());
+        ctx.env.insert("DOTTED".into(), "alpha.beta".into());
+        assert_eq!(expand_braced_parameter_text(&mut ctx, "HOME:+alt").expect("colon plus"), "alt");
+        assert_eq!(expand_braced_parameter_text(&mut ctx, "MISSING2:+alt").expect("colon plus unset"), "");
+        assert_eq!(expand_braced_parameter_text(&mut ctx, "HOME+alt").expect("plus set"), "alt");
+        assert_eq!(expand_braced_parameter_text(&mut ctx, "MISSING2+alt").expect("plus unset"), "");
+        assert_eq!(expand_braced_parameter_text(&mut ctx, "DOTTED%.*").expect("suffix"), "alpha");
+        assert_eq!(expand_braced_parameter_text(&mut ctx, "DOTTED%%.*").expect("largest suffix"), "alpha");
+        assert_eq!(expand_braced_parameter_text(&mut ctx, "DOTTED#*.").expect("prefix"), "beta");
+        assert_eq!(expand_braced_parameter_text(&mut ctx, "DOTTED##*.").expect("largest prefix"), "beta");
+        assert!(expand_braced_parameter_text(&mut ctx, "HOME::word").is_err());
     }
 
     #[test]
