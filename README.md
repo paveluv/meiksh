@@ -4,43 +4,54 @@
 
 All operating-system integration is implemented with handwritten POSIX FFI bindings. `meiksh` does not depend on any third-party Rust crates.
 
-## Dependency Policy
+## Project Goals
 
-- Rust standard library only
-- no external crates
-- handwritten POSIX FFI for Unix interfaces
+- implement a POSIX-conformant `sh`-style shell
+- keep the implementation `std`-only
+- use explicit, auditable Unix bindings instead of external abstraction crates
+- maintain `100.00%` production-code line coverage as reported by `./scripts/coverage.sh`
 
-## Repository Layout
-
-- `src/syntax/`: parser and shell grammar representation
-- `src/expand/`: shell word expansion
-- `src/exec/`: command execution and pipelines
-- `src/builtin/`: shell builtins
-- `src/interactive/`: REPL, prompts, and interactive helpers
-- `src/sys/`: low-level POSIX bindings
-- `docs/`: standards references, policy notes, and benchmark plans
-- `tests/`: spec, differential, and performance harnesses
-- `scripts/`: repository automation such as coverage reporting
+The current semantic target is POSIX Issue 8, with Issue 7 behavior still tracked where existing validation suites are likely to care.
 
 ## Current State
 
-The repository already boots as a working shell binary with:
+`meiksh` is already a working shell with substantial parser, expansion, execution, and builtin coverage, including:
 
-- `-c` command execution
-- `-n` syntax checking
-- simple pipelines and `&&` / `||`
-- variable assignment and basic expansion
-- a first batch of shell builtins
-- a basic interactive prompt and background job tracking
+- `-c` command execution and `-n` syntax checking
+- simple commands, pipelines, `&&` / `||`, background execution, subshells, groups, functions, `if`, `case`, `for`, `while`, and `until`
+- parser-time alias expansion, including blank-terminated alias chaining and same-source visibility across top-level and nested bodies
+- context-sensitive `!` pipeline negation
+- parameter expansion, command substitution, arithmetic expansion, field splitting, pathname expansion, and here-documents
+- current-shell redirections for builtins and compound commands, including numeric fd forms
+- a growing set of POSIX builtins such as `alias`, `bg`, `break`, `cd`, `command`, `continue`, `.`, `eval`, `exec`, `exit`, `export`, `fg`, `jobs`, `readonly`, `return`, `set`, `shift`, `unalias`, `unset`, and `wait`
+- interactive startup via `ENV`, prompt handling, simple history, and basic job tracking
 
-The implementation is still early and does not yet claim complete POSIX conformance.
+The project does **not** yet claim full POSIX conformance. Remaining gaps are tracked in `docs/spec-matrix.md`, with the largest open areas currently around remaining reserved-word grammar edge cases, unfinished expansion corners, `trap`, broader `set` option coverage, and full job-control/tty semantics.
+
+## Repository Layout
+
+- `src/main.rs`: CLI entry point
+- `src/shell.rs`: shell state, option parsing, top-level execution flow, and job table
+- `src/syntax.rs`: tokenizer, parser, AST, alias handling, and here-doc collection
+- `src/expand.rs`: parameter, command, arithmetic, field-splitting, and pathname expansion
+- `src/exec.rs`: command execution, pipelines, redirections, and compound-command runtime
+- `src/builtin.rs`: builtin dispatch and builtin implementations
+- `src/interactive.rs`: prompt loop, `ENV` sourcing, and history helpers
+- `src/sys.rs`: handwritten Unix FFI and wait/fd helpers
+- `docs/`: policy, traceability, and local POSIX reference instructions
+- `tests/`: spec-oriented and differential test suites
+- `scripts/`: repository automation such as coverage reporting
+
+## POSIX References
+
+The implementation is driven by local POSIX reference material under `docs/posix/`, which is intentionally not committed for copyright reasons. See `docs/README.md` for the fetch commands and expected local layout.
 
 ## Coverage
 
-Run exact source-based coverage with:
+Run production-only coverage with:
 
 ```sh
 ./scripts/coverage.sh
 ```
 
-This produces a summary on stdout plus detailed outputs under `target/coverage/`.
+This prints the production-code coverage summary on stdout and writes detailed artifacts under `target/coverage/`.

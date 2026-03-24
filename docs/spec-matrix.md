@@ -1,128 +1,168 @@
 # Meiksh POSIX Traceability Matrix
 
-This document maps the core POSIX shell requirements that `meiksh` is targeting to code and test locations in this repository.
+This document maps the POSIX shell requirements mirrored under `docs/posix/` to the current `meiksh` implementation. The POSIX pages in `docs/posix/` are the only requirements source of truth for this matrix.
 
 ## Standards Baseline
 
 - Primary semantic target: POSIX Issue 8 / IEEE Std 1003.1-2024
-- Compatibility watchlist: POSIX Issue 7 / POSIX.1-2017 behavior still exercised by current certification-era suites
-- System interface baseline: process, fd, signal, process-group, and terminal APIs needed by `sh`
+- Compatibility watchlist: Issue 7 shell behavior that may still matter for older validation suites
+- Utility contract baseline: `docs/posix/issue8/sh-utility.html`
+- Shell language baseline: `docs/posix/issue8/shell-command-language.html`
+- Explanatory reference: `docs/posix/issue8/shell-rationale.html`
 
-## Normative References In Repo
+## Local Normative Mirror
 
-- `docs/posix/issue8/shell-command-language.html`
-- `docs/posix/issue8/sh-utility.html`
-- `docs/posix/issue8/shell-rationale.html`
-- `docs/posix/issue7/shell-command-language.html`
-- `docs/posix/issue7/sh-utility.html`
-- `docs/posix/validation/posix-test-suites.html`
-- Shell builtin utility pages:
-  - `docs/posix/utilities/alias.html`
-  - `docs/posix/utilities/bg.html`
-  - `docs/posix/utilities/break.html`
-  - `docs/posix/utilities/cd.html`
-  - `docs/posix/utilities/command.html`
-  - `docs/posix/utilities/continue.html`
-  - `docs/posix/utilities/dot.html`
-  - `docs/posix/utilities/eval.html`
-  - `docs/posix/utilities/exec.html`
-  - `docs/posix/utilities/exit.html`
-  - `docs/posix/utilities/export.html`
-  - `docs/posix/utilities/fg.html`
-  - `docs/posix/utilities/jobs.html`
-  - `docs/posix/utilities/pwd.html`
-  - `docs/posix/utilities/read.html`
-  - `docs/posix/utilities/readonly.html`
-  - `docs/posix/utilities/return.html`
-  - `docs/posix/utilities/set.html`
-  - `docs/posix/utilities/shift.html`
-  - `docs/posix/utilities/times.html`
-  - `docs/posix/utilities/trap.html`
-  - `docs/posix/utilities/umask.html`
-  - `docs/posix/utilities/unalias.html`
-  - `docs/posix/utilities/unset.html`
-  - `docs/posix/utilities/wait.html`
-- Shell runtime/system interface pages:
-  - `docs/posix/functions/close.html`
-  - `docs/posix/functions/dup2.html`
-  - `docs/posix/functions/exec.html`
-  - `docs/posix/functions/fork.html`
-  - `docs/posix/functions/isatty.html`
-  - `docs/posix/functions/kill.html`
-  - `docs/posix/functions/open.html`
-  - `docs/posix/functions/pipe.html`
-  - `docs/posix/functions/setpgid.html`
-  - `docs/posix/functions/sigaction.html`
-  - `docs/posix/functions/tcgetpgrp.html`
-  - `docs/posix/functions/tcsetpgrp.html`
-  - `docs/posix/functions/waitpid.html`
+- Issue 8 shell language: `docs/posix/issue8/shell-command-language.html`
+- Issue 8 `sh` utility: `docs/posix/issue8/sh-utility.html`
+- Issue 8 shell rationale: `docs/posix/issue8/shell-rationale.html`
+- Issue 7 shell language: `docs/posix/issue7/shell-command-language.html`
+- Issue 7 `sh` utility: `docs/posix/issue7/sh-utility.html`
+- Validation reference index: `docs/posix/validation/posix-test-suites.html`
+- Builtin utility pages: `docs/posix/utilities/*.html`
+- Shell runtime/system interface pages: `docs/posix/functions/*.html`
 
-## Parser And Grammar
+## Utility Entry And Startup
 
-- Token recognition, quoting preservation, operators: `src/syntax/mod.rs`
-- Program/list/pipeline/simple command AST: `src/syntax/mod.rs`
-- Current tests:
-  - `cargo test` unit tests in `src/syntax/mod.rs`
-  - shell/runtime coverage in `src/shell.rs` and `tests/spec/basic.rs`
-- Gaps to close:
-  - parser-time alias substitution now works for aliases already present in shell state; top-level and nested program bodies are reparsed with updated aliases, including blank-terminated alias chaining within simple commands and here-document-bearing compound bodies
-  - reserved-word coverage is still incomplete in some grammar positions, but exact reserved words are no longer accepted as function names
-  - standalone `!` is now only treated as pipeline negation at pipeline start, and a bare `!` in later command-start positions is rejected as syntax; broader reserved-word edge coverage still needs tightening
+| POSIX reference | Requirement area | Implementation | Validation | Current status |
+| --- | --- | --- | --- | --- |
+| `docs/posix/issue8/sh-utility.html#tag_20_110_03` | Utility description and command-processing model | `src/main.rs`, `src/shell.rs` | `tests/spec/basic.rs` | `meiksh` runs shell command strings and script sources through `Shell` state and parser/executor layers. |
+| `docs/posix/issue8/sh-utility.html#tag_20_110_04` | Options | `src/shell.rs` | `src/shell.rs` unit tests, `tests/spec/basic.rs` | `-c`, `-n`, `-f`, and `-C` handling exists. Broader `sh` option coverage is incomplete. |
+| `docs/posix/issue8/sh-utility.html#tag_20_110_05` | Operands | `src/shell.rs` | `src/shell.rs` unit tests | Command-string and script-path paths exist. Full operand edge coverage remains narrower than the utility page. |
+| `docs/posix/issue8/sh-utility.html#tag_20_110_08` | Environment variables including `ENV`, `PS1`, `HISTFILE` | `src/interactive.rs`, `src/shell.rs` | `src/interactive.rs`, `tests/spec/basic.rs` | `ENV` is sourced only when absolute and present; `PS1` and `HISTFILE` are honored in the current simplified interactive layer. |
+| `docs/posix/issue8/sh-utility.html#tag_20_110_13` | Extended interactive description | `src/interactive.rs` | `src/interactive.rs` | Prompt loop and plain history append exist; command history list semantics and command-line editing modes are not implemented. |
+| `docs/posix/issue8/sh-utility.html#tag_20_110_14` | Exit status | `src/main.rs`, `src/shell.rs` | `tests/spec/basic.rs` | Basic command and syntax-check exit paths exist. Full utility-page exit-status coverage is still incomplete. |
+| `docs/posix/issue8/sh-utility.html#tag_20_110_15` | Consequences of errors | `src/shell.rs`, `src/builtin.rs` | `src/builtin.rs`, `tests/spec/basic.rs` | Non-interactive shell errors currently fail explicitly; some POSIX consequence distinctions still need tightening. |
 
-## Expansion
+## Tokenization, Grammar, And Parsing
 
-- Parameter, command, arithmetic, quote removal, field splitting, pathname expansion: `src/expand.rs`
-- Shell context bridge for expansions: `src/shell.rs`
-- Current tests:
-  - `cargo test` unit tests in `src/expand.rs`
-  - integration tests in `tests/spec/basic.rs`
-  - differential tests in `tests/differential/portable.rs`
-- Gaps to close:
-  - `set -f` / shell `-f` now disable pathname expansion; remaining expansion work stays focused on parameter and field-splitting edge cases
-  - remaining `${...}` operators such as pattern trimming forms
-  - finer POSIX field-splitting corner cases around mixed quoting and IFS interactions
-  - issue-8 `$'...'` semantics
+| POSIX reference | Requirement area | Implementation | Validation | Current status |
+| --- | --- | --- | --- | --- |
+| `docs/posix/issue8/shell-command-language.html#tag_19_02` | Quoting | `src/syntax.rs` | `src/syntax.rs`, `src/expand.rs` | Tokenization preserves raw quoting so later expansion stages can apply POSIX quote-sensitive behavior. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_03` | Token recognition | `src/syntax.rs` | `src/syntax.rs` | Operators, words, comments, separators, and here-doc token collection are implemented. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_03_01` | Alias substitution | `src/syntax.rs`, `src/shell.rs`, `src/exec.rs` | `src/syntax.rs`, `src/shell.rs`, `tests/spec/basic.rs` | Parser-time alias substitution exists, including blank-terminated alias chaining and same-source visibility across top-level and nested bodies. Alias recursion is bounded. Reserved-word interaction is still not exhaustively covered. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_04` | Reserved words | `src/syntax.rs` | `src/syntax.rs`, `tests/spec/basic.rs` | Core reserved words are recognized in many required positions. Exact reserved words are no longer accepted as function names. Some grammar positions still need more precise reserved-word recognition coverage. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_09_02` | Pipelines and leading `!` | `src/syntax.rs`, `src/exec.rs` | `src/syntax.rs`, `src/exec.rs`, `tests/spec/basic.rs` | `!` is parsed as pipeline negation only at pipeline start, and bare `!` in later command-start positions is rejected as syntax. Broader grammar-edge coverage is still incomplete. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_09_03` | Lists and AND-OR lists | `src/syntax.rs`, `src/exec.rs` | `src/syntax.rs`, `src/exec.rs`, `tests/spec/basic.rs` | Sequential lists, `&&`, `||`, and asynchronous lists are implemented. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_09_04` | Compound commands | `src/syntax.rs`, `src/exec.rs` | `src/syntax.rs`, `src/exec.rs`, `tests/spec/basic.rs` | Groups, subshells, `for`, `case`, `if`, `while`, and `until` are parsed and executed. Additional edge-case fidelity remains to be tightened. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_09_05` | Function definition command | `src/syntax.rs`, `src/exec.rs` | `src/syntax.rs`, `tests/spec/basic.rs` | Shell functions are parsed and executed; function names now reject exact reserved words. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_10_01` | Grammar lexical conventions | `src/syntax.rs` | `src/syntax.rs` | Context-dependent treatment of `WORD`, `NAME`, reserved words, redirections, and function syntax is partly modeled. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_10_02` | Grammar rules | `src/syntax.rs` | `src/syntax.rs`, `tests/spec/basic.rs` | Main grammar productions are implemented. The matrix still tracks remaining reserved-word-position work rather than claiming full grammar closure. |
 
-## Execution
+## Expansion And Pattern Semantics
 
-- Program/list/pipeline execution: `src/exec/mod.rs`
-- External process and environment handoff: `src/exec/mod.rs`, `src/shell.rs`
-- Current tests:
-  - integration tests in `tests/spec/` and `tests/differential/`
-- Gaps to close:
-  - tighter subshell fidelity and more shell-language edge cases
+| POSIX reference | Requirement area | Implementation | Validation | Current status |
+| --- | --- | --- | --- | --- |
+| `docs/posix/issue8/shell-command-language.html#tag_19_05` | Parameters and variables | `src/shell.rs`, `src/expand.rs` | `src/shell.rs`, `src/expand.rs`, `tests/spec/basic.rs` | Positional and special parameters are exposed through shell state and expansion hooks. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_06_01` | Tilde expansion | `src/expand.rs` | `src/expand.rs` | Implemented for leading `~` word forms currently supported by the expander. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_06_02` | Parameter expansion | `src/expand.rs` | `src/expand.rs`, `tests/spec/basic.rs` | Plain substitutions, length, default/assign/error/alternate operators, and multi-digit positionals are implemented. Pattern-trimming forms are still missing. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_06_03` | Command substitution | `src/expand.rs`, `src/shell.rs` | `src/expand.rs`, `tests/spec/basic.rs` | Implemented by recursively invoking the current `meiksh` binary with `-c`. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_06_04` | Arithmetic expansion | `src/expand.rs` | `src/expand.rs` | Integer arithmetic currently covers literals and `+`, `-`, `*`, `/`, and `%`. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_06_05` | Field splitting | `src/expand.rs` | `src/expand.rs`, `tests/spec/basic.rs` | IFS whitespace versus non-whitespace splitting is modeled. Further mixed-quoting and IFS corner cases remain open. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_06_06` | Pathname expansion | `src/expand.rs` | `src/expand.rs`, `tests/spec/basic.rs`, `tests/differential/portable.rs` | Implemented with dotfile suppression unless the pattern segment starts with `.`. `set -f` disables it. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_06_07` | Quote removal | `src/expand.rs` | `src/expand.rs` | Implemented as part of the word-expansion pipeline. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_02_04` | Dollar-single-quotes | `src/syntax.rs`, `src/expand.rs` | `src/syntax.rs`, `src/expand.rs` | Issue 8 `$'...'` semantics are still a tracked gap. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_14` | Pattern matching notation | `src/expand.rs`, `src/exec.rs` | `src/expand.rs`, `src/exec.rs` | Pattern matching is used for pathname expansion and `case` matching. Coverage exists for wildcard and bracket-class behavior already implemented. |
 
-## Builtins
+## Redirection
 
-- Builtin dispatch and current implementations: `src/builtin/mod.rs`
-- Required shell state mutations: `src/shell.rs`
-- Gaps to close:
-  - alias definitions now affect later top-level parses in the same source, and blank-terminated aliases can expose the next simple-command word to alias substitution; remaining non-conformant timing cases are tied to exact-syntax-preserving nested bodies
-  - `trap` is still only a placeholder and lacks `eval` semantics, persistence, and required output formatting
-  - `set` still lacks more POSIX options beyond the currently implemented `-C`/`+C` and `-f`/`+f`
-  - remaining special-builtin edge cases
+| POSIX reference | Requirement area | Implementation | Validation | Current status |
+| --- | --- | --- | --- | --- |
+| `docs/posix/issue8/shell-command-language.html#tag_19_07` | General redirection model | `src/syntax.rs`, `src/exec.rs`, `src/sys.rs` | `src/syntax.rs`, `src/exec.rs`, `tests/spec/basic.rs` | Redirections are parsed in the grammar and applied for simple, builtin, function, and compound-command execution. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_07_01` | Redirecting input | `src/syntax.rs`, `src/exec.rs` | `src/syntax.rs`, `src/exec.rs`, `tests/spec/basic.rs` | Implemented, including numeric fd prefixes. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_07_02` | Redirecting output | `src/syntax.rs`, `src/exec.rs` | `src/syntax.rs`, `src/exec.rs`, `tests/spec/basic.rs` | Implemented, including noclobber handling through `set -C`. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_07_03` | Appending output | `src/syntax.rs`, `src/exec.rs` | `src/syntax.rs`, `src/exec.rs`, `tests/spec/basic.rs` | Implemented. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_07_04` | Here-document | `src/syntax.rs`, `src/expand.rs`, `src/exec.rs` | `src/syntax.rs`, `src/expand.rs`, `src/exec.rs`, `tests/spec/basic.rs` | `<<` and `<<-` are implemented. Parsing attaches bodies, tab stripping is honored for `<<-`, and expansion runs only for unquoted delimiters. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_07_05` | Duplicating input fd | `src/syntax.rs`, `src/exec.rs`, `src/sys.rs` | `src/syntax.rs`, `src/exec.rs` | Implemented. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_07_06` | Duplicating output fd | `src/syntax.rs`, `src/exec.rs`, `src/sys.rs` | `src/syntax.rs`, `src/exec.rs` | Implemented. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_07_07` | Read/write open fd | `src/syntax.rs`, `src/exec.rs`, `src/sys.rs` | `src/syntax.rs`, `src/exec.rs` | Implemented. |
 
-## Interactive Behavior
+## Command Execution Model
 
-- Prompt loop, `ENV`, simple history: `src/interactive/mod.rs`
-- Job table and background coordination: `src/shell.rs`
-- Gaps to close:
-  - line editing modes
-  - POSIX history semantics
-  - tty foreground process-group handoff
-  - `fg` output and job-selection behavior still diverge from POSIX
+| POSIX reference | Requirement area | Implementation | Validation | Current status |
+| --- | --- | --- | --- | --- |
+| `docs/posix/issue8/shell-command-language.html#tag_19_08_01` | Consequences of shell errors | `src/shell.rs`, `src/builtin.rs`, `src/exec.rs` | `src/builtin.rs`, `tests/spec/basic.rs` | Shell errors currently favor explicit failure paths. Some POSIX consequence distinctions remain open. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_08_02` | Exit status for commands | `src/exec.rs`, `src/shell.rs` | `src/exec.rs`, `tests/spec/basic.rs` | Basic exit-status propagation exists for simple commands, pipelines, lists, and compound commands. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_09_01` | Simple commands | `src/syntax.rs`, `src/expand.rs`, `src/exec.rs` | `src/exec.rs`, `tests/spec/basic.rs` | Assignment handling, command name resolution, and redirection sequencing are implemented for the current supported feature set. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_09_01_03` | Commands with no command name | `src/exec.rs`, `src/shell.rs` | `src/exec.rs` | Assignment-only commands execute in the current shell state. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_09_01_04` | Command search and execution | `src/exec.rs`, `src/builtin.rs`, `src/shell.rs` | `src/exec.rs`, `src/builtin.rs`, `tests/spec/basic.rs` | Builtins, shell functions, and external command lookup are implemented. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_09_01_06` | Non-built-in utility execution | `src/exec.rs`, `src/sys.rs` | `src/exec.rs`, `tests/spec/basic.rs` | External execution exists, including `ENOEXEC` fallback via `sh` for text executables. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_09_02_01` | Pipeline exit status | `src/exec.rs` | `src/exec.rs`, `tests/spec/basic.rs` | Regular pipeline status and `!` negation paths are implemented. `pipefail` support is not implemented. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_09_03_02` | Asynchronous AND-OR lists | `src/exec.rs`, `src/shell.rs` | `src/exec.rs`, `src/shell.rs`, `tests/spec/basic.rs` | Background job launch and tracking exist. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_09_03_04` | Sequential lists | `src/syntax.rs`, `src/exec.rs` | `src/syntax.rs`, `tests/spec/basic.rs` | Implemented. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_09_03_06` | AND lists | `src/syntax.rs`, `src/exec.rs` | `src/exec.rs`, `tests/spec/basic.rs` | Implemented. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_09_03_08` | OR lists | `src/syntax.rs`, `src/exec.rs` | `src/exec.rs`, `tests/spec/basic.rs` | Implemented. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_09_04_01` | Grouping commands | `src/syntax.rs`, `src/exec.rs` | `src/syntax.rs`, `src/exec.rs`, `tests/spec/basic.rs` | Groups and subshells are implemented. Tighter subshell fidelity is still tracked as an open area. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_13` | Shell execution environment | `src/shell.rs`, `src/exec.rs`, `src/builtin.rs` | `src/shell.rs`, `src/exec.rs`, `tests/spec/basic.rs` | Current-shell state mutation versus pipeline/background execution is explicitly modeled for builtins and control flow. |
 
-## System Interface Layer
+## Special Builtins And Related Utilities
 
-- Manual Unix bindings and wait-status decoding: `src/sys/mod.rs`
-- Gaps to close:
-  - stronger `waitpid` integration with the runtime and POSIX `wait` semantics
-  - signal disposition wrappers for real trap handling
-  - pgid and tty control in job-control paths
+| Utility page | Implementation | Status | Notes |
+| --- | --- | --- | --- |
+| `docs/posix/utilities/alias.html` | `src/builtin.rs`, `src/syntax.rs`, `src/shell.rs`, `src/exec.rs` | partial | Builtin exists and alias substitution is integrated into parsing. Remaining work is in full reserved-word interaction coverage. |
+| `docs/posix/utilities/bg.html` | `src/builtin.rs`, `src/shell.rs` | partial | Basic resume-by-job-id path exists. tty/job-control fidelity is incomplete. |
+| `docs/posix/utilities/break.html` | `src/builtin.rs`, `src/exec.rs`, `src/shell.rs` | implemented with remaining edge review | Loop-depth validation and propagation exist. |
+| `docs/posix/utilities/cd.html` | `src/builtin.rs` | partial | Core directory-change behavior exists. Broader utility-page option and environment semantics still need review. |
+| `docs/posix/utilities/command.html` | `src/builtin.rs` | partial | Builtin exists for command lookup and execution. Full POSIX option surface is not covered. |
+| `docs/posix/utilities/continue.html` | `src/builtin.rs`, `src/exec.rs`, `src/shell.rs` | implemented with remaining edge review | Loop-depth validation and propagation exist. |
+| `docs/posix/utilities/dot.html` | `src/builtin.rs`, `src/shell.rs` | partial | Sourcing by pathname exists. Search semantics and related edge cases remain to be reviewed. |
+| `docs/posix/utilities/eval.html` | `src/builtin.rs`, `src/shell.rs` | partial | Re-executes joined arguments through the parser/executor. |
+| `docs/posix/utilities/exec.html` | `src/builtin.rs`, `src/sys.rs` | partial | No-argument no-op and replacement execution exist. |
+| `docs/posix/utilities/exit.html` | `src/builtin.rs`, `src/shell.rs` | implemented with remaining edge review | Basic status parsing and shell termination exist. |
+| `docs/posix/utilities/export.html` | `src/builtin.rs`, `src/shell.rs` | partial | Variable export exists. Full formatting and option behavior remains to be tightened. |
+| `docs/posix/utilities/fg.html` | `src/builtin.rs`, `src/shell.rs` | partial | Basic foreground wait path exists. tty foreground handoff and output details remain open. |
+| `docs/posix/utilities/jobs.html` | `src/builtin.rs`, `src/shell.rs` | partial | Job table printing exists, but POSIX output detail and state fidelity remain incomplete. |
+| `docs/posix/utilities/pwd.html` | `src/builtin.rs` | partial | Builtin exists. Physical/logical mode distinctions are not yet documented as complete. |
+| `docs/posix/utilities/read.html` | none | not implemented | Still absent from `src/builtin.rs`. |
+| `docs/posix/utilities/readonly.html` | `src/builtin.rs`, `src/shell.rs` | partial | Marking variables readonly exists. Full utility output behavior remains to be tightened. |
+| `docs/posix/utilities/return.html` | `src/builtin.rs`, `src/exec.rs`, `src/shell.rs` | implemented with remaining edge review | Current-shell function return semantics exist. |
+| `docs/posix/utilities/set.html` | `src/builtin.rs`, `src/shell.rs`, `src/expand.rs`, `src/exec.rs` | partial | Positional-parameter handling and `-C`/`+C`, `-f`/`+f` exist. Most option surface is still missing. |
+| `docs/posix/utilities/shift.html` | `src/builtin.rs`, `src/shell.rs` | implemented with remaining edge review | Implemented. |
+| `docs/posix/utilities/times.html` | `src/builtin.rs` | placeholder | Builtin exists but currently prints placeholder timing values. |
+| `docs/posix/utilities/trap.html` | `src/builtin.rs` | placeholder | Stub only; no real trap registration, output formatting, or eval semantics yet. |
+| `docs/posix/utilities/umask.html` | none | not implemented | Still absent from `src/builtin.rs`. |
+| `docs/posix/utilities/unalias.html` | `src/builtin.rs` | partial | Builtin exists; option surface is not implemented. |
+| `docs/posix/utilities/unset.html` | `src/builtin.rs`, `src/shell.rs` | partial | Variable and alias removal exists. Full option distinctions are not implemented. |
+| `docs/posix/utilities/wait.html` | `src/builtin.rs`, `src/shell.rs`, `src/sys.rs` | partial | Waiting by internal job id and wait-all exist. Full POSIX `wait` semantics still need deeper `waitpid` integration. |
+
+## Interactive Behavior, Job Control, And Signals
+
+| POSIX reference | Requirement area | Implementation | Validation | Current status |
+| --- | --- | --- | --- | --- |
+| `docs/posix/issue8/sh-utility.html#tag_20_110_13_01` | Command history list | `src/interactive.rs` | `src/interactive.rs` | Only plain line append to `HISTFILE` or default history path exists. |
+| `docs/posix/issue8/sh-utility.html#tag_20_110_13_02` | Command line editing | none | none | Not implemented. |
+| `docs/posix/issue8/sh-utility.html#tag_20_110_13_03` | vi-mode editing | none | none | Not implemented. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_11` | Job control | `src/shell.rs`, `src/builtin.rs`, `src/sys.rs` | `src/shell.rs`, `src/builtin.rs`, `tests/spec/basic.rs` | Background jobs, `jobs`, `fg`, `bg`, and `wait` exist in a partial form. Full process-group and tty handoff semantics are still open. |
+| `docs/posix/issue8/shell-command-language.html#tag_19_12` | Signals and error handling | `src/sys.rs`, `src/builtin.rs`, `src/shell.rs` | `src/sys.rs` | Signal-related low-level bindings exist, but real trap handling and full signal policy are not implemented. |
+
+## Low-Level System Interface Coverage
+
+| POSIX function page | Implementation | Current status |
+| --- | --- | --- |
+| `docs/posix/functions/close.html` | `src/sys.rs`, `src/exec.rs` | Used for descriptor cleanup and shell redirection guards. |
+| `docs/posix/functions/dup.html` and `docs/posix/functions/dup2.html` | `src/sys.rs`, `src/exec.rs` | Used for current-shell and child-process redirection setup. |
+| `docs/posix/functions/exec.html` | `src/sys.rs`, `src/builtin.rs`, `src/exec.rs` | Used for process replacement and external command execution paths. |
+| `docs/posix/functions/fork.html` | indirect via process spawning model and job handling | Rust process creation is used today; deeper direct process-group control is still pending. |
+| `docs/posix/functions/isatty.html` | `src/sys.rs` | Binding exists. |
+| `docs/posix/functions/kill.html` | `src/sys.rs`, `src/shell.rs` | Binding exists and is used for job continuation paths. |
+| `docs/posix/functions/open.html` | `src/sys.rs`, `src/exec.rs` | Used for redirection targets. |
+| `docs/posix/functions/pipe.html` | `src/sys.rs`, `src/exec.rs` | Used for pipelines and here-doc transport. |
+| `docs/posix/functions/setpgid.html` | `src/sys.rs` | Binding exists; broader job-control integration is still pending. |
+| `docs/posix/functions/sigaction.html` | `src/sys.rs` | Binding presence is tracked, but real trap/signal disposition management is still pending. |
+| `docs/posix/functions/tcgetpgrp.html` and `docs/posix/functions/tcsetpgrp.html` | `src/sys.rs` | Bindings exist; tty foreground handoff is not yet wired through shell job control. |
+| `docs/posix/functions/waitpid.html` | `src/sys.rs`, `src/shell.rs`, `src/builtin.rs` | Used for job reaping and waiting; full POSIX `wait` semantics remain open. |
 
 ## Validation Lanes
 
-- Unit tests: `cargo test`
-- Spec-oriented shell tests: `tests/spec/`
-- Differential behavior checks: `tests/differential/`
-- Performance harnesses: `tests/perf/`
+- Unit tests in `src/syntax.rs`, `src/expand.rs`, `src/exec.rs`, `src/builtin.rs`, `src/interactive.rs`, `src/shell.rs`, and `src/sys.rs`
+- Spec-oriented integration tests in `tests/spec/basic.rs`
+- Differential compatibility checks in `tests/differential/portable.rs`
+- Production-only line coverage in `scripts/coverage.sh`
+
+## Highest-Priority Remaining Gaps
+
+- Reserved-word recognition is still not exhaustively covered across all grammar positions in `2.4`, `2.9`, and `2.10`.
+- Parameter expansion still lacks the pattern-trimming operators from `2.6.2`.
+- Field splitting still needs more exact coverage for mixed quoting and IFS edge cases in `2.6.5`.
+- `trap` remains a placeholder relative to `docs/posix/utilities/trap.html` and `2.12`.
+- `set` only implements a small subset of the `sh` and `set` option surface.
+- Job control remains partial relative to `2.11`, `fg`, `bg`, `jobs`, `wait`, `setpgid()`, `tcgetpgrp()`, and `tcsetpgrp()`.
