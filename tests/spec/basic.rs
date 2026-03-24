@@ -342,6 +342,19 @@ fn executes_subshell_and_group_commands() {
         .expect("run meiksh");
     assert!(group.status.success());
     assert_eq!(String::from_utf8_lossy(&group.stdout), "42");
+
+    let literal_closer = Command::new(meiksh())
+        .args(["-c", "echo }"])
+        .output()
+        .expect("run meiksh");
+    assert!(literal_closer.status.success());
+    assert_eq!(String::from_utf8_lossy(&literal_closer.stdout), "}\n");
+
+    let not_a_group = Command::new(meiksh())
+        .args(["-c", "{printf bad; }"])
+        .output()
+        .expect("run meiksh");
+    assert!(!not_a_group.status.success());
 }
 
 #[test]
@@ -364,6 +377,20 @@ fn negated_pipeline_flips_status() {
         .output()
         .expect("run meiksh");
     assert!(!not_reserved.status.success());
+
+    let linebreak_pipeline = Command::new(meiksh())
+        .args(["-c", "printf hi |\n wc -c"])
+        .output()
+        .expect("run meiksh");
+    assert!(linebreak_pipeline.status.success());
+    assert_eq!(String::from_utf8_lossy(&linebreak_pipeline.stdout).trim(), "2");
+
+    let linebreak_and_or = Command::new(meiksh())
+        .args(["-c", "false ||\n printf pass; true &&\n printf done"])
+        .output()
+        .expect("run meiksh");
+    assert!(linebreak_and_or.status.success());
+    assert_eq!(String::from_utf8_lossy(&linebreak_and_or.stdout), "passdone");
 }
 
 #[test]
