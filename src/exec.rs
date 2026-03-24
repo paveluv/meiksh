@@ -1185,13 +1185,7 @@ mod tests {
         LOCK.get_or_init(|| Mutex::new(()))
     }
 
-    fn meiksh_bin_path() -> PathBuf {
-        let exe = std::env::current_exe().expect("current exe");
-        exe.parent()
-            .and_then(|p| p.parent())
-            .map(|p| p.join("meiksh"))
-            .expect("meiksh path")
-    }
+    use crate::test_utils::meiksh_bin_path;
 
     unsafe extern "C" {
         fn __error() -> *mut c_int;

@@ -358,13 +358,7 @@ mod tests {
         assert_eq!((syscalls.execvp)(program.as_ptr(), argv.as_ptr()), -1);
     }
 
-    fn meiksh_bin_path() -> std::path::PathBuf {
-        let exe = std::env::current_exe().expect("current exe");
-        exe.parent()
-            .and_then(|p| p.parent())
-            .map(|p| p.join("meiksh"))
-            .expect("meiksh path")
-    }
+    use crate::test_utils::meiksh_bin_path;
 
     #[test]
     fn invalid_fd_operations_fail_cleanly() {
