@@ -560,10 +560,8 @@ fn spawn_with_fallback(
     pipe_stdout: bool,
 ) -> Result<Child, ShellError> {
     let (mut fallback, prepared_redirections) = prepared.build_command(true)?;
-    if !prepared_redirections.stdin_redirected {
-        if let Some(stdin) = retry_input {
-            fallback.stdin(stdin);
-        }
+    if !prepared_redirections.stdin_redirected && let Some(stdin) = retry_input {
+        fallback.stdin(stdin);
     }
     if pipe_stdout && !prepared_redirections.stdout_redirected {
         fallback.stdout(Stdio::piped());
@@ -621,13 +619,7 @@ fn prepare_redirections(
                 let read_fd = unsafe { OwnedFd::from_raw_fd(read_fd) };
                 let write_fd = unsafe { OwnedFd::from_raw_fd(write_fd) };
                 let mut writer = File::from(write_fd);
-                writer.write_all(
-                    redirection
-                        .here_doc_body
-                        .clone()
-                        .unwrap_or_default()
-                        .as_bytes(),
-                )?;
+                writer.write_all(redirection.here_doc_body.clone().unwrap_or_default().as_bytes())?;
                 drop(writer);
                 prepared.actions.push(ChildFdAction::DupOwnedFd {
                     fd: read_fd,
@@ -711,9 +703,7 @@ impl PreparedProcess {
         if !prepared_redirections.actions.is_empty() {
             let actions = prepared_redirections.actions;
             unsafe {
-                process.pre_exec(move || {
-                    apply_child_fd_actions(&actions)
-                });
+                process.pre_exec(move || apply_child_fd_actions(&actions));
             }
         }
         Ok((
@@ -1124,9 +1114,10 @@ fn render_redirection_parts(redirections: &[crate::syntax::Redirection]) -> Vec<
 mod tests {
     use super::*;
     use crate::shell::ShellOptions;
-    use crate::syntax::{Assignment, Redirection, Word};
+    use crate::syntax::{Assignment, HereDoc, Redirection, Word};
     use std::collections::{BTreeSet, HashMap};
     use std::fs;
+    use std::os::raw::c_int;
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
     use std::sync::{Mutex, OnceLock};
@@ -1143,6 +1134,16 @@ mod tests {
             .and_then(|p| p.parent())
             .map(|p| p.join("meiksh"))
             .expect("meiksh path")
+    }
+
+    unsafe extern "C" {
+        fn __error() -> *mut c_int;
+    }
+
+    fn set_errno(value: c_int) {
+        unsafe {
+            *__error() = value;
+        }
     }
 
     fn test_shell() -> Shell {
@@ -1401,6 +1402,66 @@ mod tests {
         }], false)
         .expect_err("bad dup target");
         assert_eq!(error.message, "redirection target must be a file descriptor or '-'");
+
+        let prepared = prepare_redirections(&[ExpandedRedirection {
+            fd: 0,
+            kind: RedirectionKind::HereDoc,
+            target: "EOF".into(),
+            here_doc_body: Some("body\n".into()),
+        }], false)
+        .expect("prepare heredoc");
+        assert!(prepared.stdin_redirected);
+        assert_eq!(prepared.actions.len(), 1);
+
+        let mut shell = test_shell();
+        let expanded = expand_redirections(
+            &mut shell,
+            &[Redirection {
+                fd: None,
+                kind: RedirectionKind::HereDoc,
+                target: Word { raw: "EOF".into() },
+                here_doc: Some(HereDoc {
+                    delimiter: "EOF".into(),
+                    body: "hello $USER".into(),
+                    expand: true,
+                    strip_tabs: false,
+                }),
+            }],
+        )
+        .expect("expand heredoc redirection");
+        assert_eq!(expanded[0].target, "EOF");
+        assert_eq!(expanded[0].here_doc_body.as_deref(), Some("hello "));
+
+        let mut shell = test_shell();
+        let literal = expand_redirections(
+            &mut shell,
+            &[Redirection {
+                fd: None,
+                kind: RedirectionKind::HereDoc,
+                target: Word { raw: "EOF".into() },
+                here_doc: Some(HereDoc {
+                    delimiter: "EOF".into(),
+                    body: "hello $USER".into(),
+                    expand: false,
+                    strip_tabs: false,
+                }),
+            }],
+        )
+        .expect("literal heredoc redirection");
+        assert_eq!(literal[0].here_doc_body.as_deref(), Some("hello $USER"));
+
+        let mut shell = test_shell();
+        let error = expand_redirections(
+            &mut shell,
+            &[Redirection {
+                fd: None,
+                kind: RedirectionKind::HereDoc,
+                target: Word { raw: "EOF".into() },
+                here_doc: None,
+            }],
+        )
+        .expect_err("missing expanded heredoc body");
+        assert_eq!(error.message, "missing here-document body");
     }
 
     #[test]
@@ -1909,6 +1970,28 @@ mod tests {
         let status = execute_program(&mut shell, &program).expect("exec");
         assert_eq!(status, 0);
         assert_eq!(shell.get_var("DONE"), None);
+
+        let mut shell = test_shell();
+        shell.loop_depth = 1;
+        let loop_command = LoopCommand {
+            kind: LoopKind::While,
+            condition: crate::syntax::parse("true").expect("parse"),
+            body: crate::syntax::parse("break 2").expect("parse"),
+        };
+        let status = execute_loop(&mut shell, &loop_command).expect("exec");
+        assert_eq!(status, 0);
+        assert_eq!(shell.pending_control, Some(PendingControl::Break(1)));
+
+        let mut shell = test_shell();
+        shell.loop_depth = 1;
+        let loop_command = LoopCommand {
+            kind: LoopKind::While,
+            condition: crate::syntax::parse("true").expect("parse"),
+            body: crate::syntax::parse("continue 2").expect("parse"),
+        };
+        let status = execute_loop(&mut shell, &loop_command).expect("exec");
+        assert_eq!(status, 0);
+        assert_eq!(shell.pending_control, Some(PendingControl::Continue(1)));
     }
 
     #[test]
@@ -1921,6 +2004,14 @@ mod tests {
         }
         fn fake_close(_fd: i32) -> i32 {
             0
+        }
+        fn fake_dup_error(_fd: i32) -> i32 {
+            set_errno(22);
+            -1
+        }
+        fn fake_close_error(_fd: i32) -> i32 {
+            set_errno(22);
+            -1
         }
 
         let unique = SystemTime::now()
@@ -2059,9 +2150,93 @@ mod tests {
             });
         });
 
+        let guard = apply_shell_redirections(
+            &[ExpandedRedirection {
+                fd: 123_456,
+                kind: RedirectionKind::DupOutput,
+                target: "-".into(),
+                here_doc_body: None,
+            }],
+            false,
+        )
+        .expect("invalid fd is treated as absent");
+        drop(guard);
+
+        sys::with_fd_ops_for_test(fake_dup_error, fake_dup2, fake_close, || {
+            let error = apply_shell_redirections(
+                &[ExpandedRedirection {
+                    fd: 42,
+                    kind: RedirectionKind::DupOutput,
+                    target: "-".into(),
+                    here_doc_body: None,
+                }],
+                false,
+            )
+            .expect_err("dup failure");
+            assert!(!error.message.is_empty());
+        });
+
+        let error = apply_child_fd_actions(&[ChildFdAction::DupFd {
+            source_fd: -1,
+            target_fd: 56,
+        }])
+        .expect_err("child dup failure");
+        assert!(!error.to_string().is_empty());
+
+        sys::with_fd_ops_for_test(fake_dup, fake_dup2, fake_close_error, || {
+            let error = apply_child_fd_actions(&[ChildFdAction::CloseFd { target_fd: 56 }])
+                .expect_err("child close failure");
+            assert!(!error.to_string().is_empty());
+
+            let error = close_shell_fd(57).expect_err("close failure");
+            assert!(!error.message.is_empty());
+        });
+
         let _ = fs::remove_file(input);
         let _ = fs::remove_file(noclobber);
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn prepared_process_helpers_cover_fallback_and_pre_exec_paths() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let script = std::env::temp_dir().join(format!("meiksh-fallback-{unique}.sh"));
+        fs::write(&script, "exit 0\n").expect("write fallback script");
+        let mut perms = fs::metadata(&script).expect("meta").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script, perms).expect("chmod");
+
+        let prepared = PreparedProcess {
+            exec_path: script.display().to_string(),
+            argv: vec![script.display().to_string()],
+            child_env: Vec::new(),
+            redirections: Vec::new(),
+            noclobber: false,
+        };
+        let child = spawn_with_fallback(&prepared, Some(Stdio::null()), false).expect("fallback spawn");
+        assert!(child.wait_with_output().expect("wait output").status.success());
+
+        let prepared = PreparedProcess {
+            exec_path: "/bin/sh".into(),
+            argv: vec!["sh".into(), "-c".into(), "exit 0".into()],
+            child_env: Vec::new(),
+            redirections: vec![ExpandedRedirection {
+                fd: 1,
+                kind: RedirectionKind::DupOutput,
+                target: "-".into(),
+                here_doc_body: None,
+            }],
+            noclobber: false,
+        };
+        let (mut command, prepared_redirections) = prepared.build_command(false).expect("build command");
+        assert!(prepared_redirections.stdout_redirected);
+        assert!(prepared_redirections.actions.is_empty());
+        assert!(command.spawn().expect("spawn pre-exec").wait().expect("wait").success());
+
+        let _ = fs::remove_file(script);
     }
 
 }

@@ -26,6 +26,7 @@ This document records `meiksh` behavior where POSIX leaves room for implementati
 - Arithmetic expansion currently supports integer literals and `+`, `-`, `*`, `/`, and `%`.
 - Parameter expansion supports plain substitutions, `${#parameter}` length, the default/assign/error/alternate forms (`:-`, `-`, `:=`, `=`, `:?`, `?`, `:+`, `+`), and multi-digit positional references such as `${10}`.
 - Unquoted field splitting now distinguishes IFS whitespace from non-whitespace delimiters, and pathname expansion applies after field splitting with dotfile suppression unless the pattern segment starts with `.`.
+- `set -f` and shell startup `-f` disable pathname expansion while preserving the rest of word expansion.
 
 ## Execution
 
@@ -40,6 +41,7 @@ This document records `meiksh` behavior where POSIX leaves room for implementati
 - `ENV` is only sourced when it expands to an absolute path that exists.
 - Prompting defaults to `meiksh$ ` unless `PS1` is set.
 - History currently appends plain input lines to `HISTFILE` or `.meiksh_history`.
+- Job control is still partial: `wait`, `fg`, and `bg` operate on the shell's current job table, but tty foreground handoff and some POSIX-required output/details are not implemented yet.
 
 ## Error Handling
 

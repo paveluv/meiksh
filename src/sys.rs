@@ -351,6 +351,11 @@ mod tests {
         assert_eq!(shell_name_from_args(&[]), "meiksh");
         assert_eq!(cstr_lossy(b"abc\0rest"), "abc".to_string());
         assert_eq!(cstr_lossy(b"plain-bytes"), "plain-bytes".to_string());
+
+        let syscalls = default_syscalls();
+        let program = CString::new("meiksh-command-that-does-not-exist").expect("cstring");
+        let argv = [program.as_ptr(), std::ptr::null()];
+        assert_eq!((syscalls.execvp)(program.as_ptr(), argv.as_ptr()), -1);
     }
 
     #[test]

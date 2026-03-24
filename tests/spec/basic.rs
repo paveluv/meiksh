@@ -294,6 +294,22 @@ fn expands_parameters_and_pathnames_more_like_posix() {
     assert!(glob.status.success());
     assert_eq!(String::from_utf8_lossy(&glob.stdout), "a.txt|b.txt|*.txt|.hidden.txt|");
 
+    let noglob = Command::new(meiksh())
+        .current_dir(&dir)
+        .args(["-c", "set -f; printf '%s|' *.txt; set +f; printf '%s|' *.txt"])
+        .output()
+        .expect("run meiksh");
+    assert!(noglob.status.success());
+    assert_eq!(String::from_utf8_lossy(&noglob.stdout), "*.txt|a.txt|b.txt|");
+
+    let shell_option = Command::new(meiksh())
+        .current_dir(&dir)
+        .args(["-f", "-c", "printf '%s|' *.txt"])
+        .output()
+        .expect("run meiksh");
+    assert!(shell_option.status.success());
+    assert_eq!(String::from_utf8_lossy(&shell_option.stdout), "*.txt|");
+
     let _ = fs::remove_dir_all(dir);
 }
 

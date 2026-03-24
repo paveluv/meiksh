@@ -3,7 +3,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command as ProcessCommand};
+use std::process::{Child, Command as ProcessCommand, ExitStatus};
 
 use crate::builtin::{self, BuiltinOutcome};
 use crate::exec;
@@ -28,6 +28,7 @@ pub struct ShellOptions {
     pub syntax_check_only: bool,
     pub force_interactive: bool,
     pub noclobber: bool,
+    pub noglob: bool,
     pub script_path: Option<PathBuf>,
     pub positional: Vec<String>,
 }
@@ -97,6 +98,35 @@ pub struct Job {
 pub enum FlowSignal {
     Continue(i32),
     Exit(i32),
+}
+
+fn try_wait_child(child: &mut Child) -> io::Result<Option<ExitStatus>> {
+    #[cfg(test)]
+    {
+        if let Some(override_fn) = TEST_TRY_WAIT.with(|cell| *cell.borrow()) {
+            return override_fn(child);
+        }
+    }
+    child.try_wait()
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_TRY_WAIT: std::cell::RefCell<Option<fn(&mut Child) -> io::Result<Option<ExitStatus>>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn with_try_wait_for_test<T>(
+    override_fn: fn(&mut Child) -> io::Result<Option<ExitStatus>>,
+    f: impl FnOnce() -> T,
+) -> T {
+    TEST_TRY_WAIT.with(|cell| {
+        let previous = cell.replace(Some(override_fn));
+        let result = f();
+        cell.replace(previous);
+        result
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -257,7 +287,7 @@ impl Shell {
             let mut all_done = true;
             let mut final_status = 0;
             for child in &mut job.children {
-                match child.try_wait() {
+                match try_wait_child(child) {
                     Ok(Some(status)) => {
                         final_status = status.code().unwrap_or(128);
                     }
@@ -388,6 +418,10 @@ impl expand::Context for Shell {
         })
     }
 
+    fn pathname_expansion_enabled(&self) -> bool {
+        !self.options.noglob
+    }
+
     fn shell_name(&self) -> &str {
         &self.shell_name
     }
@@ -426,7 +460,17 @@ fn parse_options(args: &[String]) -> Result<ShellOptions, ShellError> {
             index += 1;
             break;
         }
-        if arg.starts_with('-') && arg != "-" {
+        if (arg.starts_with('-') || arg.starts_with('+')) && arg != "-" && arg != "+" {
+            let enabled = arg.starts_with('-');
+            for ch in arg[1..].chars() {
+                match ch {
+                    'C' => options.noclobber = enabled,
+                    'f' => options.noglob = enabled,
+                    'i' => options.force_interactive = enabled,
+                    'n' => options.syntax_check_only = enabled,
+                    _ => {}
+                }
+            }
             index += 1;
             continue;
         }
@@ -484,10 +528,12 @@ mod tests {
         assert_eq!(options.command_string.as_deref(), Some("echo ok"));
         assert_eq!(options.positional, vec!["arg".to_string()]);
 
-        let options = parse_options(&["meiksh".into(), "-n".into(), "-i".into(), "script.sh".into(), "a".into()])
+        let options =
+            parse_options(&["meiksh".into(), "-n".into(), "-i".into(), "-f".into(), "script.sh".into(), "a".into()])
             .expect("parse");
         assert!(options.syntax_check_only);
         assert!(options.force_interactive);
+        assert!(options.noglob);
         assert_eq!(options.script_path, Some(PathBuf::from("script.sh")));
         assert_eq!(options.positional, vec!["a".to_string()]);
 
@@ -621,6 +667,24 @@ mod tests {
     }
 
     #[test]
+    fn reap_jobs_handles_try_wait_errors() {
+        fn fake_try_wait(_child: &mut Child) -> io::Result<Option<ExitStatus>> {
+            Err(io::Error::other("boom"))
+        }
+
+        let mut shell = test_shell();
+        let child = ProcessCommand::new("sh")
+            .args(["-c", "exit 0"])
+            .spawn()
+            .expect("spawn");
+        let id = shell.launch_background_job("exit 0".into(), vec![child]);
+
+        let finished = with_try_wait_for_test(fake_try_wait, || shell.reap_jobs());
+        assert_eq!(finished, vec![(id, 1)]);
+        assert!(shell.jobs.is_empty());
+    }
+
+    #[test]
     fn continue_job_and_source_path_error_when_missing() {
         let mut shell = test_shell();
         let error = shell.continue_job(99).expect_err("missing job");
@@ -649,6 +713,12 @@ mod tests {
         let output = shell.capture_output("printf hi").expect("capture");
         assert_eq!(output, "hi");
         assert_eq!(expand::Context::shell_name(&shell), "meiksh");
+        assert_eq!(expand::Context::positional_param(&shell, 0).as_deref(), Some("meiksh"));
+        expand::Context::set_var(&mut shell, "CTX_SET", "7".into()).expect("ctx set");
+        assert_eq!(shell.get_var("CTX_SET").as_deref(), Some("7"));
+        shell.mark_readonly("CTX_SET");
+        let error = expand::Context::set_var(&mut shell, "CTX_SET", "8".into()).expect_err("readonly ctx set");
+        assert_eq!(error.message, "CTX_SET: readonly variable");
         let substituted = expand::Context::command_substitute(&mut shell, "printf ok").expect("subst");
         assert_eq!(substituted, "ok");
 
@@ -664,6 +734,18 @@ mod tests {
 
         let options = parse_options(&["meiksh".into(), "-z".into(), "script.sh".into()])
             .expect("parse");
+        assert_eq!(options.script_path, Some(PathBuf::from("script.sh")));
+
+        let options = parse_options(&["meiksh".into(), "-fC".into(), "+f".into(), "script.sh".into()])
+            .expect("parse");
+        assert!(!options.noglob);
+        assert!(options.noclobber);
+        assert_eq!(options.script_path, Some(PathBuf::from("script.sh")));
+
+        let options = parse_options(&["meiksh".into(), "-in".into(), "+n".into(), "script.sh".into()])
+            .expect("parse");
+        assert!(options.force_interactive);
+        assert!(!options.syntax_check_only);
         assert_eq!(options.script_path, Some(PathBuf::from("script.sh")));
     }
 
@@ -685,6 +767,19 @@ mod tests {
         let error = shell.capture_output("missing-command").expect_err("capture error");
         assert!(!error.message.is_empty());
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn shell_run_command_string_and_capture_spawn_error_paths_work() {
+        let mut shell = test_shell();
+        shell.options.command_string = Some("VALUE=13".into());
+        let status = shell.run().expect("run command string");
+        assert_eq!(status, 0);
+        assert_eq!(shell.get_var("VALUE").as_deref(), Some("13"));
+
+        shell.current_exe = PathBuf::from("/definitely/missing-meiksh-binary");
+        let error = shell.capture_output("printf hi").expect_err("spawn error");
+        assert!(!error.message.is_empty());
     }
 
     #[test]

@@ -64,8 +64,9 @@ This document maps the core POSIX shell requirements that `meiksh` is targeting 
 - Current tests:
   - `cargo test` unit tests in `src/syntax/mod.rs`
 - Gaps to close:
-  - full reserved-word handling
-  - alias substitution timing
+  - alias substitution is still disabled at parser/tokenization time
+  - reserved-word coverage is still incomplete in some grammar positions
+  - `!` is still handled as pipeline negation rather than full context-sensitive reserved-word grammar
 
 ## Expansion
 
@@ -76,6 +77,7 @@ This document maps the core POSIX shell requirements that `meiksh` is targeting 
   - integration tests in `tests/spec/basic.rs`
   - differential tests in `tests/differential/portable.rs`
 - Gaps to close:
+  - `set -f` / shell `-f` now disable pathname expansion; remaining expansion work stays focused on parameter and field-splitting edge cases
   - remaining `${...}` operators such as pattern trimming forms
   - finer POSIX field-splitting corner cases around mixed quoting and IFS interactions
   - issue-8 `$'...'` semantics
@@ -94,8 +96,10 @@ This document maps the core POSIX shell requirements that `meiksh` is targeting 
 - Builtin dispatch and current implementations: `src/builtin/mod.rs`
 - Required shell state mutations: `src/shell.rs`
 - Gaps to close:
-  - full POSIX special builtin semantics
-  - trap persistence and signal integration
+  - parser-level `alias` substitution timing is not yet POSIX-conformant
+  - `trap` is still only a placeholder and lacks `eval` semantics, persistence, and required output formatting
+  - `set` still lacks more POSIX options beyond the currently implemented `-C`/`+C` and `-f`/`+f`
+  - remaining special-builtin edge cases
 
 ## Interactive Behavior
 
@@ -105,13 +109,14 @@ This document maps the core POSIX shell requirements that `meiksh` is targeting 
   - line editing modes
   - POSIX history semantics
   - tty foreground process-group handoff
+  - `fg` output and job-selection behavior still diverge from POSIX
 
 ## System Interface Layer
 
 - Manual Unix bindings and wait-status decoding: `src/sys/mod.rs`
 - Gaps to close:
-  - `waitpid` integration with the runtime
-  - signal disposition wrappers
+  - stronger `waitpid` integration with the runtime and POSIX `wait` semantics
+  - signal disposition wrappers for real trap handling
   - pgid and tty control in job-control paths
 
 ## Validation Lanes
