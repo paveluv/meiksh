@@ -168,6 +168,25 @@ fn matches_system_sh_on_nonblocking_standard_input_case() {
 }
 
 #[test]
+fn matches_system_sh_on_builtin_error_consequences_case() {
+    let regular_script = "pwd </definitely/missing-input; printf after";
+    let meiksh_regular = run(meiksh(), regular_script);
+    let sh_regular = run("sh", regular_script);
+    assert_eq!(meiksh_regular.0, sh_regular.0, "regular builtin consequence exit-status mismatch");
+    assert_eq!(meiksh_regular.1, sh_regular.1, "regular builtin consequence stdout mismatch");
+    assert!(!meiksh_regular.2.is_empty(), "regular builtin consequence should diagnose");
+    assert!(!sh_regular.2.is_empty(), "system sh regular builtin consequence should diagnose");
+
+    let special_script = "export </definitely/missing-input; printf after";
+    let meiksh_special = run(meiksh(), special_script);
+    let sh_special = run("sh", special_script);
+    assert_eq!(meiksh_special.0, sh_special.0, "special builtin consequence exit-status mismatch");
+    assert_eq!(meiksh_special.1, sh_special.1, "special builtin consequence stdout mismatch");
+    assert!(!meiksh_special.2.is_empty(), "special builtin consequence should diagnose");
+    assert!(!sh_special.2.is_empty(), "system sh special builtin consequence should diagnose");
+}
+
+#[test]
 fn matches_system_sh_on_allexport_startup_case() {
     let meiksh_export = run(meiksh(), "set -a; AUTO=works; printenv AUTO");
     let sh_export = run("sh", "set -a; AUTO=works; printenv AUTO");

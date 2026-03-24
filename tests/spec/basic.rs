@@ -738,6 +738,36 @@ fn invalid_control_flow_builtins_fail_non_interactive_shells() {
 }
 
 #[test]
+fn ordinary_builtin_errors_do_not_exit_non_interactive_shells() {
+    let fg_output = Command::new(meiksh())
+        .args(["-c", "fg; printf after"])
+        .output()
+        .expect("run meiksh");
+    assert!(fg_output.status.success());
+    assert_eq!(String::from_utf8_lossy(&fg_output.stdout), "after");
+    assert!(String::from_utf8_lossy(&fg_output.stderr).contains("fg: no current job"));
+
+    let pwd_output = Command::new(meiksh())
+        .args(["-c", "pwd </definitely/missing-input; printf after"])
+        .output()
+        .expect("run meiksh");
+    assert!(pwd_output.status.success());
+    assert_eq!(String::from_utf8_lossy(&pwd_output.stdout), "after");
+    assert!(String::from_utf8_lossy(&pwd_output.stderr).contains("No such file"));
+}
+
+#[test]
+fn special_builtin_redirection_errors_still_exit_non_interactive_shells() {
+    let output = Command::new(meiksh())
+        .args(["-c", "export </definitely/missing-input; printf after"])
+        .output()
+        .expect("run meiksh");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("No such file"));
+}
+
+#[test]
 fn exec_builtin_replaces_process_in_subshell() {
     let output = Command::new(meiksh())
         .args(["-c", "exec /bin/echo hello"])
