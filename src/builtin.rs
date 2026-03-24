@@ -93,9 +93,10 @@ const DEFAULT_COMMAND_PATH: &str = "/usr/bin:/bin";
 
 fn cd(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     let (target, print_new_pwd) = parse_cd_target(shell, argv)?;
-    let old_pwd = pwd_output(shell, true)?;
-    env::set_current_dir(&target)?;
-    let new_pwd = cd_pwd_value(&target)?;
+    let (resolved_target, pwd_target, print_new_pwd) = resolve_cd_target(shell, &target, print_new_pwd);
+    let old_pwd = current_logical_pwd(shell)?;
+    env::set_current_dir(&resolved_target)?;
+    let new_pwd = cd_pwd_value(&pwd_target)?;
     shell.set_var("OLDPWD", old_pwd)?;
     shell.set_var("PWD", new_pwd.clone())?;
     if print_new_pwd {
@@ -146,6 +147,32 @@ fn parse_cd_target(shell: &Shell, argv: &[String]) -> Result<(String, bool), She
         });
     }
     Ok((target.clone(), false))
+}
+
+fn resolve_cd_target(shell: &Shell, target: &str, print_new_pwd: bool) -> (PathBuf, String, bool) {
+    if print_new_pwd || target.starts_with('/') || target == "." || target == ".." {
+        return (PathBuf::from(target), target.to_string(), print_new_pwd);
+    }
+
+    let Some(cdpath) = shell.get_var("CDPATH") else {
+        return (PathBuf::from(target), target.to_string(), print_new_pwd);
+    };
+
+    for prefix in cdpath.split(':') {
+        let base = if prefix.is_empty() { PathBuf::from(".") } else { PathBuf::from(prefix) };
+        let candidate = base.join(target);
+        if candidate.is_dir() {
+            let should_print = print_new_pwd || !prefix.is_empty();
+            let pwd_target = if prefix.is_empty() {
+                target.to_string()
+            } else {
+                candidate.display().to_string()
+            };
+            return (candidate, pwd_target, should_print);
+        }
+    }
+
+    (PathBuf::from(target), target.to_string(), print_new_pwd)
 }
 
 fn pwd(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
@@ -1268,13 +1295,21 @@ fn declaration_line(prefix: &str, name: &str, value: Option<String>) -> String {
 }
 
 fn pwd_output(shell: &Shell, logical: bool) -> Result<String, ShellError> {
-    if logical
-        && let Some(pwd) = shell.get_var("PWD")
+    if logical {
+        return current_logical_pwd(shell);
+    }
+    Ok(env::current_dir()?.display().to_string())
+}
+
+fn current_logical_pwd(shell: &Shell) -> Result<String, ShellError> {
+    let cwd = env::current_dir()?;
+    if let Some(pwd) = shell.get_var("PWD")
         && logical_pwd_is_valid(&pwd)
+        && paths_match_logically(Path::new(&pwd), &cwd)
     {
         return Ok(pwd);
     }
-    Ok(env::current_dir()?.display().to_string())
+    Ok(cwd.display().to_string())
 }
 
 fn logical_pwd_is_valid(path: &str) -> bool {
@@ -1282,6 +1317,10 @@ fn logical_pwd_is_valid(path: &str) -> bool {
         && !Path::new(path)
             .components()
             .any(|component| matches!(component, Component::CurDir | Component::ParentDir))
+}
+
+fn paths_match_logically(lhs: &Path, rhs: &Path) -> bool {
+    lhs.canonicalize().ok() == rhs.canonicalize().ok()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2357,6 +2396,46 @@ mod tests {
         assert_eq!(error.message, "cd: empty directory");
         assert!(parse_cd_target(&shell, &["cd".into(), "--".into(), "-".into()]).is_ok());
         assert!(parse_cd_target(&shell, &["cd".into(), "-P".into()]).is_err());
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("meiksh-cdpath-builtins-{unique}"));
+        let cdpath = root.join("cdpath");
+        let target = cdpath.join("target");
+        fs::create_dir_all(&target).expect("mkdir target");
+        shell.env.insert("CDPATH".into(), cdpath.display().to_string());
+        let (resolved, pwd_target, should_print) = resolve_cd_target(&shell, "target", false);
+        assert_eq!(resolved, target);
+        assert_eq!(pwd_target, target.display().to_string());
+        assert!(should_print);
+
+        let (resolved, pwd_target, should_print) = resolve_cd_target(&shell, "missing", false);
+        assert_eq!(resolved, PathBuf::from("missing"));
+        assert_eq!(pwd_target, "missing");
+        assert!(!should_print);
+
+        shell.env.remove("CDPATH");
+        let (resolved, pwd_target, should_print) = resolve_cd_target(&shell, "plain", false);
+        assert_eq!(resolved, PathBuf::from("plain"));
+        assert_eq!(pwd_target, "plain");
+        assert!(!should_print);
+
+        shell.env.insert("CDPATH".into(), format!(":{}", cdpath.display()));
+        let plain = PathBuf::from("plain");
+        fs::create_dir_all(&plain).expect("mkdir plain");
+        let (resolved, pwd_target, should_print) = resolve_cd_target(&shell, "plain", false);
+        assert!(resolved.ends_with("plain"));
+        assert_eq!(pwd_target, "plain");
+        assert!(!should_print);
+        let _ = fs::remove_dir_all(&plain);
+
+        let (resolved, pwd_target, should_print) = resolve_cd_target(&shell, "plain", false);
+        assert_eq!(resolved, PathBuf::from("plain"));
+        assert_eq!(pwd_target, "plain");
+        assert!(!should_print);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

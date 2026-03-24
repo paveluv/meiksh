@@ -370,6 +370,38 @@ fn cd_dash_and_jobs_p_follow_milestone_six_paths() {
 }
 
 #[test]
+fn cd_uses_cdpath_and_reports_resolved_directory() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("meiksh-cdpath-spec-{unique}"));
+    let cdpath = root.join("cdpath");
+    let target = cdpath.join("target");
+    let elsewhere = root.join("elsewhere");
+    fs::create_dir_all(&target).expect("mkdir target");
+    fs::create_dir_all(&elsewhere).expect("mkdir elsewhere");
+
+    let output = Command::new(meiksh())
+        .current_dir(&elsewhere)
+        .args([
+            "-c",
+            "CDPATH='../cdpath'; cd target; printf '|pwd:%s|old:%s' \"$PWD\" \"$OLDPWD\"",
+        ])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let canonical_target = target.canonicalize().expect("canonical target");
+    let canonical_elsewhere = elsewhere.canonicalize().expect("canonical elsewhere");
+    assert!(stdout.starts_with(&format!("{}\n", canonical_target.display())));
+    assert!(stdout.contains(&format!("|pwd:{}|", canonical_target.display())));
+    assert!(stdout.contains(&format!("|old:{}", canonical_elsewhere.display())));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn sh_s_option_sets_positionals_from_operands() {
     let output = Command::new(meiksh())
         .args(["-s", "alpha", "beta"])
@@ -384,6 +416,100 @@ fn sh_s_option_sets_positionals_from_operands() {
         .expect("run meiksh -s");
     assert!(output.status.success());
     assert_eq!(String::from_utf8_lossy(&output.stdout), "alpha|beta");
+}
+
+#[test]
+fn sh_c_command_name_sets_special_parameter_zero() {
+    let output = Command::new(meiksh())
+        .args(["-c", "printf %s \"$0\"", "cmd-name", "ignored-positional"])
+        .output()
+        .expect("run meiksh -c");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "cmd-name");
+}
+
+#[test]
+fn sh_lone_dash_is_ignored_and_reads_stdin() {
+    let output = Command::new(meiksh())
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            child.stdin.as_mut().unwrap().write_all(b"printf ok\n")?;
+            child.wait_with_output()
+        })
+        .expect("run meiksh -");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "ok");
+}
+
+#[test]
+fn sh_command_file_sets_special_parameter_zero_and_searches_path() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("meiksh-sh-path-{unique}"));
+    let elsewhere = std::env::temp_dir().join(format!("meiksh-sh-cwd-{unique}"));
+    fs::create_dir_all(&dir).expect("mkdir path dir");
+    fs::create_dir_all(&elsewhere).expect("mkdir cwd dir");
+
+    let script = dir.join("path-script");
+    fs::write(&script, "printf %s \"$0\"").expect("write script");
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("chmod script");
+    let path = format!("{}:{}", dir.display(), std::env::var("PATH").unwrap_or_default());
+
+    let output = Command::new(meiksh())
+        .current_dir(&elsewhere)
+        .env("PATH", path)
+        .arg("path-script")
+        .output()
+        .expect("run meiksh command_file");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "path-script");
+
+    let _ = fs::remove_file(script);
+    let _ = fs::remove_dir_all(dir);
+    let _ = fs::remove_dir_all(elsewhere);
+}
+
+#[test]
+fn sh_command_file_missing_and_read_errors_have_distinct_exit_statuses() {
+    let missing = Command::new(meiksh())
+        .arg("/definitely/missing-meiksh-script")
+        .output()
+        .expect("run missing script");
+    assert_eq!(missing.status.code(), Some(127));
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("meiksh-sh-readerr-{unique}"));
+    fs::create_dir_all(&dir).expect("mkdir dir");
+    let read_error = Command::new(meiksh())
+        .arg(dir.display().to_string())
+        .output()
+        .expect("run directory script path");
+    assert_eq!(read_error.status.code(), Some(128));
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn sh_invalid_invocation_uses_usage_exit_status() {
+    let invalid_option = Command::new(meiksh())
+        .arg("-z")
+        .output()
+        .expect("run invalid option");
+    assert_eq!(invalid_option.status.code(), Some(2));
+
+    let missing_c_argument = Command::new(meiksh())
+        .arg("-c")
+        .output()
+        .expect("run missing -c arg");
+    assert_eq!(missing_c_argument.status.code(), Some(2));
 }
 
 #[test]
@@ -728,6 +854,32 @@ fn expands_parameters_and_pathnames_more_like_posix() {
     assert_eq!(String::from_utf8_lossy(&shell_option.stdout), "*.txt|");
 
     let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn dollar_single_quotes_follow_issue_eight_rules() {
+    let output = Command::new(meiksh())
+        .args([
+            "-c",
+            "printf '%s|%s|%s' $'a b' $'line\\nnext' \"$'literal'\"",
+        ])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "a b|line\nnext|$'literal'");
+}
+
+#[test]
+fn field_splitting_respects_ifs_defaults_and_star_joining() {
+    let output = Command::new(meiksh())
+        .args([
+            "-c",
+            "VALUE='a b'; unset IFS; printf '<%s>' $VALUE; IFS=; printf '|<%s>' $VALUE; set -- a b c; IFS=:; printf '|<%s><%s>' $* \"$*\"",
+        ])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "<a><b>|<a b>|<a><b>|<c><a:b:c>");
 }
 
 #[test]
