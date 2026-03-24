@@ -66,8 +66,8 @@ This document maps the core POSIX shell requirements that `meiksh` is targeting 
   - shell/runtime coverage in `src/shell.rs` and `tests/spec/basic.rs`
 - Gaps to close:
   - parser-time alias substitution now works for aliases already present in shell state; top-level and nested program bodies are reparsed with updated aliases, including blank-terminated alias chaining within simple commands and here-document-bearing compound bodies
-  - reserved-word coverage is still incomplete in some grammar positions
-  - standalone `!` is now only treated as pipeline negation at pipeline start; broader reserved-word edge coverage still needs tightening
+  - reserved-word coverage is still incomplete in some grammar positions, but exact reserved words are no longer accepted as function names
+  - standalone `!` is now only treated as pipeline negation at pipeline start, and a bare `!` in later command-start positions is rejected as syntax; broader reserved-word edge coverage still needs tightening
 
 ## Expansion
 
