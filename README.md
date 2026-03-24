@@ -11,7 +11,7 @@ All operating-system integration is implemented with handwritten POSIX FFI bindi
 - use explicit, auditable Unix bindings instead of external abstraction crates
 - maintain `100.00%` production-code line coverage as reported by `./scripts/coverage.sh`
 
-The current semantic target is POSIX Issue 8, with Issue 7 behavior still tracked where existing validation suites are likely to care.
+The current semantic target is POSIX Issue 8, with Issue 7 behavior still tracked where existing validation suites are likely to care. The local `docs/posix/` mirror defined by `docs/posix-manifest.txt` is the only requirements source of truth used for conformance work.
 
 ## Current State
 
@@ -27,7 +27,13 @@ The current semantic target is POSIX Issue 8, with Issue 7 behavior still tracke
 - utility-specific progress on recent builtin fidelity work and shell-language closure, including parser-aware alias behavior, grammar-faithful `for`/`case` reserved-word handling, brace-group reserved-word parsing, linebreak-sensitive pipelines and AND-OR lists, `${parameter%word}` / `${parameter##word}`-style pattern trimming, `command -p/-v/-V`, `cd -` / `OLDPWD` / `CDPATH`, `.` `PATH` search for readable slashless files, `jobs -p`, `pwd -L/-P`, `export -p`, `readonly -p`, `unalias -a`, `unset -f/-v`, intrinsic `read`, syscall-backed `times` and `umask`, `trap -p` plus EXIT and selected signal traps, and `wait` support for both `%job` and numeric pid operands
 - interactive startup via parameter-expanded `ENV`, prompt handling, simple history in `HISTFILE` or `$HOME/.sh_history`, interactive command-error reporting without exiting the prompt loop, tracked background jobs, process-group-aware `fg`/`bg`, and best-effort tty foreground handoff for interactive descriptors
 
-The project does **not** yet claim full POSIX conformance. Remaining gaps are tracked in `docs/spec-matrix.md`, with the largest open areas currently around the remaining field-splitting and quoting edge cases, broader `set` option coverage, fuller trap signal/subshell semantics, and the remaining stopped-job and terminal-mode corners of POSIX job control.
+The project does **not** yet claim full POSIX conformance. Remaining gaps are tracked in `docs/spec-matrix.md` and `docs/requirements/gap-register.md`. The largest open areas are currently:
+
+- the remaining `sh` utility startup details, especially no-read-ahead stdin behavior and broader option coverage
+- field-splitting, tilde, double-quote, and arithmetic-expansion edge cases
+- subshell / command-substitution execution-environment fidelity
+- broader builtin completion, including the still-open `set`, `read`, `trap`, `umask`, and missing mirrored utility pages such as `hash`, `getopts`, `ulimit`, and `fc`
+- stopped-job accounting, `set -m`, and tty mode save/restore for job control
 
 ## Repository Layout
 
@@ -45,7 +51,7 @@ The project does **not** yet claim full POSIX conformance. Remaining gaps are tr
 
 ## POSIX References
 
-The implementation is driven by local POSIX reference material under `docs/posix/`, which is intentionally not committed for copyright reasons. See `docs/README.md` for the fetch commands and expected local layout.
+The implementation is driven by local POSIX reference material under `docs/posix/`, which is intentionally not committed for copyright reasons. The required local mirror is defined by `docs/posix-manifest.txt`; `docs/fetch-posix-docs.sh` populates it and `scripts/check-posix-docs.sh` validates completeness. See `docs/README.md` for the workflow and expected local layout.
 
 ## Coverage
 
