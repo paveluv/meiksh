@@ -505,7 +505,7 @@ fn sh_forces_blocking_reads_on_nonblocking_standard_input() {
 }
 
 #[test]
-fn sh_startup_option_subset_supports_allexport_nounset_named_o_and_dollar_dash() {
+fn sh_startup_option_subset_supports_allexport_nounset_verbose_named_o_and_dollar_dash() {
     let export_output = Command::new(meiksh())
         .args(["-a", "-c", "AUTO=works; printenv AUTO"])
         .output()
@@ -514,18 +514,32 @@ fn sh_startup_option_subset_supports_allexport_nounset_named_o_and_dollar_dash()
     assert_eq!(String::from_utf8_lossy(&export_output.stdout), "works\n");
 
     let dash_output = Command::new(meiksh())
-        .args(["-a", "-C", "-u", "-c", "printf '%s' \"$-\""])
+        .args(["-a", "-C", "-u", "-v", "-c", "printf '%s' \"$-\""])
         .output()
         .expect("run meiksh dollar dash");
     assert!(dash_output.status.success());
-    assert_eq!(String::from_utf8_lossy(&dash_output.stdout), "aCuc");
+    assert_eq!(String::from_utf8_lossy(&dash_output.stdout), "aCuvc");
+    assert_eq!(String::from_utf8_lossy(&dash_output.stderr), "printf '%s' \"$-\"");
 
     let named_output = Command::new(meiksh())
-        .args(["-o", "noglob", "-o", "nounset", "-c", "printf '%s|%s' *.definitely_missing \"$-\""])
+        .args([
+            "-o",
+            "noglob",
+            "-o",
+            "nounset",
+            "-o",
+            "verbose",
+            "-c",
+            "printf '%s|%s' *.definitely_missing \"$-\"",
+        ])
         .output()
-        .expect("run meiksh -o noglob -o nounset");
+        .expect("run meiksh -o noglob -o nounset -o verbose");
     assert!(named_output.status.success());
-    assert_eq!(String::from_utf8_lossy(&named_output.stdout), "*.definitely_missing|fuc");
+    assert_eq!(String::from_utf8_lossy(&named_output.stdout), "*.definitely_missing|fuvc");
+    assert_eq!(
+        String::from_utf8_lossy(&named_output.stderr),
+        "printf '%s|%s' *.definitely_missing \"$-\""
+    );
 }
 
 #[test]
@@ -546,11 +560,12 @@ fn sh_nounset_fails_plain_unset_expansions_but_allows_defaulting_forms() {
     assert_eq!(String::from_utf8_lossy(&default_output.stdout), "default");
 
     let set_builtin_output = Command::new(meiksh())
-        .args(["-c", "set -u; printf '%s|%s' \"$-\" \"${MISSING-fallback}\""])
+        .args(["-c", "set -u; set -v; printf '%s|%s' \"$-\" \"${MISSING-fallback}\""])
         .output()
         .expect("run set -u");
     assert!(set_builtin_output.status.success());
-    assert_eq!(String::from_utf8_lossy(&set_builtin_output.stdout), "uc|fallback");
+    assert_eq!(String::from_utf8_lossy(&set_builtin_output.stdout), "uvc|fallback");
+    assert!(String::from_utf8_lossy(&set_builtin_output.stderr).is_empty());
 }
 
 #[test]

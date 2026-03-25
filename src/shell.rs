@@ -32,17 +32,19 @@ pub struct ShellOptions {
     pub noclobber: bool,
     pub noglob: bool,
     pub nounset: bool,
+    pub verbose: bool,
     pub script_path: Option<PathBuf>,
     pub shell_name_override: Option<String>,
     pub positional: Vec<String>,
 }
 
-const REPORTABLE_OPTION_NAMES: [(&str, char); 5] = [
+const REPORTABLE_OPTION_NAMES: [(&str, char); 6] = [
     ("allexport", 'a'),
     ("noclobber", 'C'),
     ("noglob", 'f'),
     ("noexec", 'n'),
     ("nounset", 'u'),
+    ("verbose", 'v'),
 ];
 
 impl ShellOptions {
@@ -54,6 +56,7 @@ impl ShellOptions {
             'i' => self.force_interactive = enabled,
             'n' => self.syntax_check_only = enabled,
             'u' => self.nounset = enabled,
+            'v' => self.verbose = enabled,
             _ => return Err(ShellError::with_status(2, format!("invalid option: {ch}"))),
         }
         Ok(())
@@ -69,13 +72,14 @@ impl ShellOptions {
         self.set_short_option(*letter, enabled)
     }
 
-    pub fn reportable_options(&self) -> [(&'static str, bool); 5] {
+    pub fn reportable_options(&self) -> [(&'static str, bool); 6] {
         [
             ("allexport", self.allexport),
             ("noclobber", self.noclobber),
             ("noglob", self.noglob),
             ("noexec", self.syntax_check_only),
             ("nounset", self.nounset),
+            ("verbose", self.verbose),
         ]
     }
 }
@@ -288,6 +292,11 @@ impl Shell {
     }
 
     pub fn run_source(&mut self, _name: &str, source: &str) -> Result<i32, ShellError> {
+        self.echo_verbose_input(source);
+        self.run_source_buffer(source)
+    }
+
+    fn run_source_buffer(&mut self, source: &str) -> Result<i32, ShellError> {
         if self.options.syntax_check_only {
             let _ = syntax::parse_with_aliases(source, &self.aliases)?;
             return Ok(0);
@@ -302,6 +311,7 @@ impl Shell {
     }
 
     pub fn execute_string(&mut self, source: &str) -> Result<i32, ShellError> {
+        self.echo_verbose_input(source);
         self.execute_source_incrementally(source)
     }
 
@@ -316,13 +326,17 @@ impl Shell {
             let count = sys::read_fd(sys::STDIN_FILENO, &mut byte)?;
             if count == 0 {
                 if !line_bytes.is_empty() {
-                    source.push_str(&decode_stdin_chunk(std::mem::take(&mut line_bytes))?);
+                    let chunk = decode_stdin_chunk(std::mem::take(&mut line_bytes))?;
+                    self.echo_verbose_input(&chunk);
+                    source.push_str(&chunk);
                 }
                 break;
             }
             line_bytes.push(byte[0]);
             if byte[0] == b'\n' {
-                source.push_str(&decode_stdin_chunk(std::mem::take(&mut line_bytes))?);
+                let chunk = decode_stdin_chunk(std::mem::take(&mut line_bytes))?;
+                self.echo_verbose_input(&chunk);
+                source.push_str(&chunk);
                 if let Some(executed_status) = self.maybe_run_stdin_source(&mut source, false)? {
                     status = executed_status;
                     if !self.running || self.has_pending_control() {
@@ -359,10 +373,16 @@ impl Shell {
         match syntax::parse_with_aliases(source, &self.aliases) {
             Ok(_) => {
                 let buffered = std::mem::take(source);
-                self.run_source("<stdin>", &buffered).map(Some)
+                self.run_source_buffer(&buffered).map(Some)
             }
             Err(error) if !eof && stdin_parse_error_requires_more_input(&error) => Ok(None),
             Err(error) => Err(error.into()),
+        }
+    }
+
+    fn echo_verbose_input(&self, source: &str) {
+        if self.options.verbose && !source.is_empty() {
+            eprint!("{source}");
         }
     }
 
@@ -968,6 +988,9 @@ impl Shell {
         if self.options.nounset {
             flags.push('u');
         }
+        if self.options.verbose {
+            flags.push('v');
+        }
         if self.options.command_string.is_some() {
             flags.push('c');
         } else if self.options.script_path.is_none() {
@@ -1149,12 +1172,21 @@ mod tests {
         assert_eq!(options.positional, vec!["arg".to_string()]);
 
         let options = parse_options(
-            &["meiksh".into(), "-a".into(), "-u".into(), "-o".into(), "noglob".into(), "script.sh".into()],
+            &[
+                "meiksh".into(),
+                "-a".into(),
+                "-u".into(),
+                "-o".into(),
+                "noglob".into(),
+                "-v".into(),
+                "script.sh".into(),
+            ],
         )
-        .expect("parse -a -u -o noglob");
+        .expect("parse -a -u -o noglob -v");
         assert!(options.allexport);
         assert!(options.nounset);
         assert!(options.noglob);
+        assert!(options.verbose);
         assert_eq!(options.script_path, Some(PathBuf::from("script.sh")));
 
         let error = parse_options(&["meiksh".into(), "-c".into()]).expect_err("missing arg");
@@ -1381,11 +1413,12 @@ mod tests {
         assert!(options.noclobber);
         assert_eq!(options.script_path, Some(PathBuf::from("script.sh")));
 
-        let options = parse_options(&["meiksh".into(), "-inu".into(), "+nu".into(), "script.sh".into()])
+        let options = parse_options(&["meiksh".into(), "-inuv".into(), "+nuv".into(), "script.sh".into()])
             .expect("parse");
         assert!(options.force_interactive);
         assert!(!options.syntax_check_only);
         assert!(!options.nounset);
+        assert!(!options.verbose);
         assert_eq!(options.script_path, Some(PathBuf::from("script.sh")));
 
         let options = parse_options(&["meiksh".into(), "-".into()])
