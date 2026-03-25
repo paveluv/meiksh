@@ -18,4 +18,4 @@ The goal is to keep POSIX conformance tracking auditable and stable as implement
 - Cite exact `docs/posix/...` paths and anchors whenever practical.
 - Treat `docs/spec-matrix.md` as the main ledger and these files as supporting structure.
 - Update the gap register when a previously broad partial area is broken into specific tasks or when a gap is fully closed.
-- Do not use host-shell behavior as a requirements source; only use it in differential tests where the project policy allows it.
+- Do not use host-shell behavior as a requirements source.

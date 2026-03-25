@@ -17,6 +17,18 @@ export LLVM_PROFILE_FILE="$profile_dir/meiksh-%p-%m.profraw"
 export RUSTFLAGS="${RUSTFLAGS-} -Cinstrument-coverage"
 
 cd "$repo_root"
+python3 - "$repo_root" <<'PY'
+import pathlib
+import sys
+
+repo_root = pathlib.Path(sys.argv[1])
+for pattern in ("target/debug/deps/meiksh-*", "target/debug/deps/spec_basic-*", "target/debug/meiksh"):
+    for path in repo_root.glob(pattern):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+PY
 cargo test
 
 "$llvm_profdata" merge -sparse "$profile_dir"/*.profraw -o "$profdata"
@@ -25,7 +37,6 @@ objects=""
 for path in \
     "$repo_root"/target/debug/deps/meiksh-* \
     "$repo_root"/target/debug/deps/spec_basic-* \
-    "$repo_root"/target/debug/deps/differential_portable-* \
     "$repo_root"/target/debug/meiksh
 do
     if [ -f "$path" ] && [ -x "$path" ]; then

@@ -7,9 +7,9 @@ It is not the primary conformance ledger. Requirement status belongs in `docs/sp
 ## Project Constraints
 
 - Language: Rust
-- Dependency policy: `std` only, plus handwritten `extern "C"` bindings for required POSIX interfaces
+- Dependency policy: keep dependencies minimal; low-level POSIX interface access lives in `src/sys.rs`
 - Source policy: no reuse of existing shell source code
-- Semantic target: Issue 8 first, with Issue 7 compatibility notes when needed for validation
+- Semantic target: Issue 8 first, with Issue 7 compatibility notes when needed for documentation review
 - Conformance policy: POSIX behavior decisions must be based on the local POSIX reference documents in `docs/posix/`, not on probing whatever `/bin/sh` happens to do on the host system
 
 ## Current Policy Decisions
@@ -55,8 +55,7 @@ It is not the primary conformance ledger. Requirement status belongs in `docs/sp
 
 ## Test Policy
 
-- Unit tests must not spawn `/bin/sh` or any other system shell as an oracle for expected behavior.
-- Shell-to-shell comparisons, when needed, belong only in dedicated differential tests and must not override the POSIX documents as the source of truth.
+- Unit tests and integration tests must not spawn `/bin/sh` or any other system shell as an oracle for expected behavior.
 
 ## Performance Policy
 

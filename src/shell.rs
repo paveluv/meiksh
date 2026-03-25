@@ -1576,7 +1576,7 @@ mod tests {
         }
 
         let mut shell = test_shell();
-        sys::with_signal_syscall_for_test(ok_signal, || {
+        sys::test_support::with_signal_syscall_for_test(ok_signal, || {
             shell
                 .set_trap(TrapCondition::Signal(sys::SIGTERM), Some(TrapAction::Ignore))
                 .expect("ignore");
@@ -1595,7 +1595,7 @@ mod tests {
         assert_eq!(shell.wait_for_job_operand(999).expect("unknown job"), 127);
         assert_eq!(shell.wait_for_pid_operand(999_999).expect("unknown pid"), 127);
 
-        sys::with_job_control_syscalls_for_test(
+        sys::test_support::with_job_control_syscalls_for_test(
             fake_isatty,
             fake_tcgetpgrp,
             fake_tcsetpgrp,
@@ -1606,7 +1606,7 @@ mod tests {
                 shell.restore_foreground(Some(77));
             },
         );
-        sys::with_job_control_syscalls_for_test(
+        sys::test_support::with_job_control_syscalls_for_test(
             fake_isatty,
             |_fd| -1,
             fake_tcsetpgrp,
@@ -1625,14 +1625,14 @@ mod tests {
         shell
             .set_trap(TrapCondition::Signal(sys::SIGINT), Some(TrapAction::Command("printf trap".into())))
             .expect("trap");
-        sys::set_pending_signals_for_test(&[sys::SIGINT]);
+        sys::test_support::set_pending_signals_for_test(&[sys::SIGINT]);
         shell.run_pending_traps().expect("run traps");
         assert_eq!(shell.last_status, 9);
 
         shell
             .set_trap(TrapCondition::Signal(sys::SIGINT), Some(TrapAction::Command("exit 7".into())))
             .expect("exit trap");
-        sys::set_pending_signals_for_test(&[sys::SIGINT]);
+        sys::test_support::set_pending_signals_for_test(&[sys::SIGINT]);
         shell.run_pending_traps().expect("run exit trap");
         assert!(!shell.running);
         shell.running = true;
@@ -1640,7 +1640,7 @@ mod tests {
         shell
             .set_trap(TrapCondition::Signal(sys::SIGTERM), Some(TrapAction::Ignore))
             .expect("ignore trap");
-        sys::set_pending_signals_for_test(&[sys::SIGTERM]);
+        sys::test_support::set_pending_signals_for_test(&[sys::SIGTERM]);
         shell.run_pending_traps().expect("ignored pending");
 
         let child = ProcessCommand::new(&shell.current_exe)
@@ -1648,7 +1648,7 @@ mod tests {
             .spawn()
             .expect("spawn");
         let id = shell.launch_background_job("sleep".into(), Some(11), vec![child]);
-        sys::with_job_control_syscalls_for_test(
+        sys::test_support::with_job_control_syscalls_for_test(
             fake_isatty,
             fake_tcgetpgrp,
             fake_tcsetpgrp,
@@ -1662,12 +1662,12 @@ mod tests {
     #[test]
     fn wait_interrupt_and_foreground_paths_are_covered() {
         use std::sync::atomic::{AtomicUsize, Ordering};
+        static CALLS: AtomicUsize = AtomicUsize::new(0);
 
         fn fake_signal(_sig: i32, _handler: usize) -> usize {
             0
         }
         fn fake_waitpid(_pid: sys::Pid, _status: *mut i32, options: i32) -> sys::Pid {
-            static CALLS: AtomicUsize = AtomicUsize::new(0);
             let call = CALLS.fetch_add(1, Ordering::SeqCst);
             if options == 0 && call == 0 {
                 unsafe {
@@ -1693,17 +1693,19 @@ mod tests {
             .spawn()
             .expect("spawn");
         shell.launch_background_job("sleep".into(), None, vec![child]);
-        sys::set_pending_signals_for_test(&[sys::SIGINT]);
-        sys::with_waitpid_for_test(fake_waitpid, || {
+        sys::test_support::set_pending_signals_for_test(&[sys::SIGINT]);
+        CALLS.store(0, Ordering::SeqCst);
+        sys::test_support::with_waitpid_for_test(fake_waitpid, || {
             assert_eq!(shell.wait_for_job_operand(1).expect("interrupted wait"), 130);
         });
         assert_eq!(shell.last_status, 130);
         shell.jobs.clear();
-        sys::with_waitpid_for_test(fake_waitpid, || {
+        CALLS.store(0, Ordering::SeqCst);
+        sys::test_support::with_waitpid_for_test(fake_waitpid, || {
             assert_eq!(shell.wait_for_child_pid(99, false).expect("retry after none"), 7);
         });
 
-        sys::with_signal_syscall_for_test(fake_signal, || {
+        sys::test_support::with_signal_syscall_for_test(fake_signal, || {
             let message = ShellError {
                 message: "wait interrupted:140".into(),
             };
@@ -1726,7 +1728,7 @@ mod tests {
             .spawn()
             .expect("spawn");
         shell.launch_background_job("sleep".into(), None, vec![child]);
-        sys::with_waitpid_for_test(echild_waitpid, || {
+        sys::test_support::with_waitpid_for_test(echild_waitpid, || {
             assert!(shell.wait_for_job_operand(1).is_err());
             assert!(shell.wait_for_child_pid(99, false).is_err());
         });
@@ -1737,8 +1739,8 @@ mod tests {
             .expect("spawn");
         let pid = child.id();
         shell.launch_background_job("sleep".into(), None, vec![child]);
-        sys::set_pending_signals_for_test(&[sys::SIGINT]);
-        sys::with_waitpid_for_test(fake_waitpid_all, || {
+        sys::test_support::set_pending_signals_for_test(&[sys::SIGINT]);
+        sys::test_support::with_waitpid_for_test(fake_waitpid_all, || {
             assert_eq!(shell.wait_for_pid_operand(pid).expect("pid interrupt"), 130);
         });
 
@@ -1748,7 +1750,7 @@ mod tests {
             .expect("spawn");
         let pid = child.id();
         shell.launch_background_job("sleep".into(), None, vec![child]);
-        sys::with_waitpid_for_test(echild_waitpid, || {
+        sys::test_support::with_waitpid_for_test(echild_waitpid, || {
             assert!(shell.wait_for_pid_operand(pid).is_err());
         });
 
@@ -1764,8 +1766,8 @@ mod tests {
             .spawn()
             .expect("spawn");
         shell.launch_background_job("sleep".into(), None, vec![child]);
-        sys::set_pending_signals_for_test(&[sys::SIGINT]);
-        sys::with_waitpid_for_test(fake_waitpid_all, || {
+        sys::test_support::set_pending_signals_for_test(&[sys::SIGINT]);
+        sys::test_support::with_waitpid_for_test(fake_waitpid_all, || {
             assert_eq!(shell.wait_for_all_jobs().expect("wait all status"), 130);
         });
 

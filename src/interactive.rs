@@ -254,7 +254,7 @@ mod tests {
         let mut shell = test_shell();
         shell.env.insert("HOME".into(), home.display().to_string());
         shell.env.insert("ENV".into(), "${HOME}/env.sh".into());
-        crate::sys::with_process_ids_for_test((1, 2, 3, 3), || {
+        crate::sys::test_support::with_process_ids_for_test((1, 2, 3, 3), || {
             load_env_file(&mut shell).expect("guarded env file");
         });
         assert_eq!(shell.get_var("FROM_EXPANDED_ENV"), None);

@@ -1,13 +1,13 @@
 # Meik Shell
 
-`meiksh` (pronounced /maiksh/) is a new Unix shell written in Rust with no dependencies beyond `std`.
+`meiksh` (pronounced /maiksh/) is a new Unix shell written in Rust with no dependencies beyond `std` and `libc`.
 
-All operating-system integration is implemented with handwritten POSIX FFI bindings. `meiksh` does not depend on any third-party Rust crates.
+Operating-system integration is concentrated in `src/sys.rs`, which uses low-level POSIX FFI bindings via `libc`.
 
 ## Project Goals
 
 - implement a POSIX-conformant `sh`-style shell
-- keep the implementation `std`-only
+- keep the implementation limited to `std` and `libc`
 - use explicit, auditable Unix bindings instead of external abstraction crates
 - maintain `100.00%` production-code line coverage as reported by `./scripts/coverage.sh`
 
@@ -46,7 +46,7 @@ The project does **not** yet claim full POSIX conformance. Remaining gaps are tr
 - `src/interactive.rs`: prompt loop, `ENV` sourcing, and history helpers
 - `src/sys.rs`: handwritten Unix FFI and wait/fd helpers
 - `docs/`: policy, traceability, and local POSIX reference instructions
-- `tests/`: spec-oriented and differential test suites
+- `tests/`: spec-oriented test suites
 - `scripts/`: repository automation such as coverage reporting
 
 ## POSIX References

@@ -1900,7 +1900,7 @@ mod tests {
         ));
         assert_eq!(shell.get_var("TAIL").as_deref(), Some("tail\\"));
 
-        sys::with_times_error_for_test(|| {
+        sys::test_support::with_times_error_for_test(|| {
             assert!(matches!(times(), BuiltinOutcome::Status(1)));
         });
     }
@@ -2697,7 +2697,7 @@ mod tests {
             0
         }
 
-        crate::sys::with_execvp_for_test(fake_execvp, || {
+        crate::sys::test_support::with_execvp_for_test(fake_execvp, || {
             let mut shell = test_shell();
             let outcome = run(&mut shell, &["exec".into(), "echo".into(), "hello".into()]).expect("exec");
             assert!(matches!(outcome, BuiltinOutcome::Status(0)));

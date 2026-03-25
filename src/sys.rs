@@ -1,86 +1,41 @@
-use std::cell::RefCell;
 use std::ffi::{CStr, CString};
 use std::fs;
 use std::io::{self, Read};
-use std::os::raw::{c_char, c_int, c_long, c_uint, c_ushort, c_ulong};
 use std::os::unix::fs::FileTypeExt;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use libc::{self, c_char, c_int, c_long};
 
-pub type Pid = c_int;
-pub type FileModeMask = c_ushort;
-type ClockTicks = c_ulong;
+pub type Pid = libc::pid_t;
+pub type FileModeMask = libc::mode_t;
+type ClockTicks = libc::clock_t;
 
-const SC_CLK_TCK: c_int = 3;
-const F_GETFL: c_int = 3;
-const F_SETFL: c_int = 4;
-#[cfg(any(
-    target_os = "macos",
-    target_os = "ios",
-    target_os = "freebsd",
-    target_os = "openbsd",
-    target_os = "netbsd",
-    target_os = "dragonfly"
-))]
-const O_NONBLOCK: c_int = 0x0004;
-#[cfg(any(target_os = "linux", target_os = "android"))]
-const O_NONBLOCK: c_int = 0o4000;
+const SC_CLK_TCK: c_int = libc::_SC_CLK_TCK;
+const F_GETFL: c_int = libc::F_GETFL;
+const F_SETFL: c_int = libc::F_SETFL;
+const O_NONBLOCK: c_int = libc::O_NONBLOCK;
 
-pub const STDIN_FILENO: c_int = 0;
-pub const STDOUT_FILENO: c_int = 1;
-pub const STDERR_FILENO: c_int = 2;
-pub const SIGHUP: c_int = 1;
-pub const SIGINT: c_int = 2;
-pub const SIGQUIT: c_int = 3;
-pub const SIGABRT: c_int = 6;
-pub const SIGALRM: c_int = 14;
-pub const SIGCONT: c_int = 18;
-pub const SIGTERM: c_int = 15;
-pub const WNOHANG: c_int = 0x0000_0001;
-const EINTR: i32 = 4;
-const SIG_DFL_HANDLER: usize = 0;
-const SIG_IGN_HANDLER: usize = 1;
-const SIG_ERR_HANDLER: usize = usize::MAX;
-
-unsafe extern "C" {
-    fn getpid() -> Pid;
-    fn getuid() -> c_uint;
-    fn geteuid() -> c_uint;
-    fn getgid() -> c_uint;
-    fn getegid() -> c_uint;
-    fn waitpid(pid: Pid, status: *mut c_int, options: c_int) -> Pid;
-    fn kill(pid: Pid, sig: c_int) -> c_int;
-    fn signal(sig: c_int, handler: usize) -> usize;
-    fn isatty(fd: c_int) -> c_int;
-    fn tcgetpgrp(fd: c_int) -> Pid;
-    fn tcsetpgrp(fd: c_int, pgrp: Pid) -> c_int;
-    fn setpgid(pid: Pid, pgid: Pid) -> c_int;
-    fn pipe(fds: *mut c_int) -> c_int;
-    fn dup(fd: c_int) -> c_int;
-    fn dup2(oldfd: c_int, newfd: c_int) -> c_int;
-    fn close(fd: c_int) -> c_int;
-    fn fcntl(fd: c_int, cmd: c_int, ...) -> c_int;
-    fn read(fd: c_int, buf: *mut u8, count: usize) -> isize;
-    fn umask(cmask: FileModeMask) -> FileModeMask;
-    fn times(buffer: *mut Tms) -> ClockTicks;
-    fn sysconf(name: c_int) -> c_long;
-    fn execvp(file: *const c_char, argv: *const *const c_char) -> c_int;
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default)]
-struct Tms {
-    tms_utime: ClockTicks,
-    tms_stime: ClockTicks,
-    tms_cutime: ClockTicks,
-    tms_cstime: ClockTicks,
-}
+pub const STDIN_FILENO: c_int = libc::STDIN_FILENO;
+pub const STDOUT_FILENO: c_int = libc::STDOUT_FILENO;
+pub const STDERR_FILENO: c_int = libc::STDERR_FILENO;
+pub const SIGHUP: c_int = libc::SIGHUP;
+pub const SIGINT: c_int = libc::SIGINT;
+pub const SIGQUIT: c_int = libc::SIGQUIT;
+pub const SIGABRT: c_int = libc::SIGABRT;
+pub const SIGALRM: c_int = libc::SIGALRM;
+pub const SIGCONT: c_int = libc::SIGCONT;
+pub const SIGTERM: c_int = libc::SIGTERM;
+pub const WNOHANG: c_int = libc::WNOHANG;
+const EINTR: i32 = libc::EINTR;
+const SIG_DFL_HANDLER: libc::sighandler_t = libc::SIG_DFL;
+const SIG_IGN_HANDLER: libc::sighandler_t = libc::SIG_IGN;
+const SIG_ERR_HANDLER: libc::sighandler_t = libc::SIG_ERR;
 
 #[derive(Clone, Copy)]
-struct Syscalls {
+pub(crate) struct Syscalls {
     getpid: fn() -> Pid,
     waitpid: fn(Pid, *mut c_int, c_int) -> Pid,
     kill: fn(Pid, c_int) -> c_int,
-    signal: fn(c_int, usize) -> usize,
+    signal: fn(c_int, libc::sighandler_t) -> libc::sighandler_t,
     isatty: fn(c_int) -> c_int,
     tcgetpgrp: fn(c_int) -> Pid,
     tcsetpgrp: fn(c_int, Pid) -> c_int,
@@ -92,105 +47,32 @@ struct Syscalls {
     fcntl: fn(c_int, c_int, c_int) -> c_int,
     read: fn(c_int, *mut u8, usize) -> isize,
     umask: fn(FileModeMask) -> FileModeMask,
-    times: fn(*mut Tms) -> ClockTicks,
+    times: fn(*mut libc::tms) -> ClockTicks,
     sysconf: fn(c_int) -> c_long,
     execvp: fn(*const c_char, *const *const c_char) -> c_int,
 }
 
-fn default_getpid() -> Pid {
-    unsafe { getpid() }
-}
-
-fn default_waitpid(pid: Pid, status: *mut c_int, options: c_int) -> Pid {
-    unsafe { waitpid(pid, status, options) }
-}
-
-fn default_kill(pid: Pid, sig: c_int) -> c_int {
-    unsafe { kill(pid, sig) }
-}
-
-fn default_signal(sig: c_int, handler: usize) -> usize {
-    unsafe { signal(sig, handler) }
-}
-
-fn default_isatty(fd: c_int) -> c_int {
-    unsafe { isatty(fd) }
-}
-
-fn default_tcgetpgrp(fd: c_int) -> Pid {
-    unsafe { tcgetpgrp(fd) }
-}
-
-fn default_tcsetpgrp(fd: c_int, pgrp: Pid) -> c_int {
-    unsafe { tcsetpgrp(fd, pgrp) }
-}
-
-fn default_setpgid(pid: Pid, pgid: Pid) -> c_int {
-    unsafe { setpgid(pid, pgid) }
-}
-
-fn default_pipe(fds: *mut c_int) -> c_int {
-    unsafe { pipe(fds) }
-}
-
-fn default_dup(fd: c_int) -> c_int {
-    unsafe { dup(fd) }
-}
-
-fn default_dup2(oldfd: c_int, newfd: c_int) -> c_int {
-    unsafe { dup2(oldfd, newfd) }
-}
-
-fn default_close(fd: c_int) -> c_int {
-    unsafe { close(fd) }
-}
-
-fn default_fcntl(fd: c_int, cmd: c_int, arg: c_int) -> c_int {
-    unsafe { fcntl(fd, cmd, arg) }
-}
-
-fn default_read(fd: c_int, buf: *mut u8, count: usize) -> isize {
-    unsafe { read(fd, buf, count) }
-}
-
-fn default_umask(cmask: FileModeMask) -> FileModeMask {
-    unsafe { umask(cmask) }
-}
-
-fn default_times(buffer: *mut Tms) -> ClockTicks {
-    unsafe { times(buffer) }
-}
-
-fn default_sysconf(name: c_int) -> c_long {
-    unsafe { sysconf(name) }
-}
-
 fn default_syscalls() -> Syscalls {
     Syscalls {
-        getpid: default_getpid,
-        waitpid: default_waitpid,
-        kill: default_kill,
-        signal: default_signal,
-        isatty: default_isatty,
-        tcgetpgrp: default_tcgetpgrp,
-        tcsetpgrp: default_tcsetpgrp,
-        setpgid: default_setpgid,
-        pipe: default_pipe,
-        dup: default_dup,
-        dup2: default_dup2,
-        close: default_close,
-        fcntl: default_fcntl,
-        read: default_read,
-        umask: default_umask,
-        times: default_times,
-        sysconf: default_sysconf,
-        execvp: |file, argv| unsafe { execvp(file, argv) },
+        getpid: || unsafe { libc::getpid() },
+        waitpid: |pid, status, options| unsafe { libc::waitpid(pid, status, options) },
+        kill: |pid, sig| unsafe { libc::kill(pid, sig) },
+        signal: |sig, handler| unsafe { libc::signal(sig, handler) },
+        isatty: |fd| unsafe { libc::isatty(fd) },
+        tcgetpgrp: |fd| unsafe { libc::tcgetpgrp(fd) },
+        tcsetpgrp: |fd, pgrp| unsafe { libc::tcsetpgrp(fd, pgrp) },
+        setpgid: |pid, pgid| unsafe { libc::setpgid(pid, pgid) },
+        pipe: |fds| unsafe { libc::pipe(fds) },
+        dup: |fd| unsafe { libc::dup(fd) },
+        dup2: |oldfd, newfd| unsafe { libc::dup2(oldfd, newfd) },
+        close: |fd| unsafe { libc::close(fd) },
+        fcntl: |fd, cmd, arg| unsafe { libc::fcntl(fd, cmd, arg) },
+        read: |fd, buf, count| unsafe { libc::read(fd, buf.cast(), count) },
+        umask: |cmask| unsafe { libc::umask(cmask) },
+        times: |buffer| unsafe { libc::times(buffer) },
+        sysconf: |name| unsafe { libc::sysconf(name) },
+        execvp: |file, argv| unsafe { libc::execvp(file, argv) },
     }
-}
-
-thread_local! {
-    static TEST_SYSCALLS: RefCell<Option<Syscalls>> = const { RefCell::new(None) };
-    static TEST_PROCESS_IDS: RefCell<Option<(c_uint, c_uint, c_uint, c_uint)>> = const { RefCell::new(None) };
 }
 
 static PENDING_SIGNALS: AtomicUsize = AtomicUsize::new(0);
@@ -204,7 +86,7 @@ extern "C" fn record_signal(sig: c_int) {
 fn syscalls() -> Syscalls {
     #[cfg(test)]
     {
-        return TEST_SYSCALLS.with(|cell| cell.borrow().unwrap_or_else(default_syscalls));
+        return test_support::current_syscalls().unwrap_or_else(default_syscalls);
     }
 
     #[cfg(not(test))]
@@ -214,111 +96,154 @@ fn syscalls() -> Syscalls {
 }
 
 #[cfg(test)]
-pub(crate) fn with_execvp_for_test<T>(
-    execvp_fn: fn(*const c_char, *const *const c_char) -> c_int,
-    f: impl FnOnce() -> T,
-) -> T {
-    let syscalls = Syscalls {
-        execvp: execvp_fn,
-        ..default_syscalls()
-    };
-    tests::with_test_syscalls(syscalls, f)
-}
+pub(crate) mod test_support {
+    use super::*;
+    use std::cell::RefCell;
+    use std::sync::Mutex;
 
-#[cfg(test)]
-pub(crate) fn with_signal_syscall_for_test<T>(signal_fn: fn(c_int, usize) -> usize, f: impl FnOnce() -> T) -> T {
-    let syscalls = Syscalls {
-        signal: signal_fn,
-        ..default_syscalls()
-    };
-    tests::with_test_syscalls(syscalls, f)
-}
-
-#[cfg(test)]
-pub(crate) fn with_waitpid_for_test<T>(
-    waitpid_fn: fn(Pid, *mut c_int, c_int) -> Pid,
-    f: impl FnOnce() -> T,
-) -> T {
-    let syscalls = Syscalls {
-        waitpid: waitpid_fn,
-        ..default_syscalls()
-    };
-    tests::with_test_syscalls(syscalls, f)
-}
-
-#[cfg(test)]
-pub(crate) fn set_pending_signals_for_test(signals: &[c_int]) {
-    let bits = signals
-        .iter()
-        .filter_map(|signal| signal_mask(*signal))
-        .fold(0usize, |acc, bit| acc | bit);
-    PENDING_SIGNALS.store(bits, Ordering::SeqCst);
-}
-
-#[cfg(test)]
-pub(crate) fn with_job_control_syscalls_for_test<T>(
-    isatty_fn: fn(c_int) -> c_int,
-    tcgetpgrp_fn: fn(c_int) -> Pid,
-    tcsetpgrp_fn: fn(c_int, Pid) -> c_int,
-    setpgid_fn: fn(Pid, Pid) -> c_int,
-    kill_fn: fn(Pid, c_int) -> c_int,
-    f: impl FnOnce() -> T,
-) -> T {
-    let syscalls = Syscalls {
-        isatty: isatty_fn,
-        tcgetpgrp: tcgetpgrp_fn,
-        tcsetpgrp: tcsetpgrp_fn,
-        setpgid: setpgid_fn,
-        kill: kill_fn,
-        ..default_syscalls()
-    };
-    tests::with_test_syscalls(syscalls, f)
-}
-
-#[cfg(test)]
-pub(crate) fn with_fd_ops_for_test<T>(
-    dup_fn: fn(c_int) -> c_int,
-    dup2_fn: fn(c_int, c_int) -> c_int,
-    close_fn: fn(c_int) -> c_int,
-    f: impl FnOnce() -> T,
-) -> T {
-    let syscalls = Syscalls {
-        dup: dup_fn,
-        dup2: dup2_fn,
-        close: close_fn,
-        ..default_syscalls()
-    };
-    tests::with_test_syscalls(syscalls, f)
-}
-
-#[cfg(test)]
-pub(crate) fn with_fcntl_and_isatty_for_test<T>(
-    fcntl_fn: fn(c_int, c_int, c_int) -> c_int,
-    isatty_fn: fn(c_int) -> c_int,
-    f: impl FnOnce() -> T,
-) -> T {
-    let syscalls = Syscalls {
-        fcntl: fcntl_fn,
-        isatty: isatty_fn,
-        ..default_syscalls()
-    };
-    tests::with_test_syscalls(syscalls, f)
-}
-
-#[cfg(test)]
-pub(crate) fn with_times_error_for_test<T>(f: impl FnOnce() -> T) -> T {
-    fn fake_times(_buffer: *mut Tms) -> ClockTicks {
-        ClockTicks::MAX
+    thread_local! {
+        static TEST_SYSCALLS: RefCell<Option<Syscalls>> = const { RefCell::new(None) };
+        static TEST_PROCESS_IDS: RefCell<Option<(libc::uid_t, libc::uid_t, libc::gid_t, libc::gid_t)>> =
+            const { RefCell::new(None) };
     }
-    fn fake_sysconf(_name: c_int) -> c_long {
-        60
+
+    fn syscall_lock() -> &'static Mutex<()> {
+        static LOCK: Mutex<()> = Mutex::new(());
+        &LOCK
     }
-    let syscalls = Syscalls {
-        times: fake_times,
-        sysconf: fake_sysconf,
-        ..default_syscalls()
-    };
-    tests::with_test_syscalls(syscalls, f)
+
+    pub(crate) fn current_syscalls() -> Option<Syscalls> {
+        TEST_SYSCALLS.with(|cell| *cell.borrow())
+    }
+
+    pub(crate) fn current_process_ids() -> Option<(libc::uid_t, libc::uid_t, libc::gid_t, libc::gid_t)> {
+        TEST_PROCESS_IDS.with(|cell| *cell.borrow())
+    }
+
+    pub(crate) fn with_test_syscalls<T>(syscalls: Syscalls, f: impl FnOnce() -> T) -> T {
+        let _guard = syscall_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        TEST_SYSCALLS.with(|cell| {
+            let previous = cell.replace(Some(syscalls));
+            let result = f();
+            cell.replace(previous);
+            result
+        })
+    }
+
+    pub(crate) fn with_execvp_for_test<T>(
+        execvp_fn: fn(*const c_char, *const *const c_char) -> c_int,
+        f: impl FnOnce() -> T,
+    ) -> T {
+        let syscalls = Syscalls {
+            execvp: execvp_fn,
+            ..default_syscalls()
+        };
+        with_test_syscalls(syscalls, f)
+    }
+
+    pub(crate) fn with_signal_syscall_for_test<T>(
+        signal_fn: fn(c_int, libc::sighandler_t) -> libc::sighandler_t,
+        f: impl FnOnce() -> T,
+    ) -> T {
+        let syscalls = Syscalls {
+            signal: signal_fn,
+            ..default_syscalls()
+        };
+        with_test_syscalls(syscalls, f)
+    }
+
+    pub(crate) fn with_waitpid_for_test<T>(
+        waitpid_fn: fn(Pid, *mut c_int, c_int) -> Pid,
+        f: impl FnOnce() -> T,
+    ) -> T {
+        let syscalls = Syscalls {
+            waitpid: waitpid_fn,
+            ..default_syscalls()
+        };
+        with_test_syscalls(syscalls, f)
+    }
+
+    pub(crate) fn set_pending_signals_for_test(signals: &[c_int]) {
+        let bits = signals
+            .iter()
+            .filter_map(|signal| signal_mask(*signal))
+            .fold(0usize, |acc, bit| acc | bit);
+        PENDING_SIGNALS.store(bits, Ordering::SeqCst);
+    }
+
+    pub(crate) fn with_job_control_syscalls_for_test<T>(
+        isatty_fn: fn(c_int) -> c_int,
+        tcgetpgrp_fn: fn(c_int) -> Pid,
+        tcsetpgrp_fn: fn(c_int, Pid) -> c_int,
+        setpgid_fn: fn(Pid, Pid) -> c_int,
+        kill_fn: fn(Pid, c_int) -> c_int,
+        f: impl FnOnce() -> T,
+    ) -> T {
+        let syscalls = Syscalls {
+            isatty: isatty_fn,
+            tcgetpgrp: tcgetpgrp_fn,
+            tcsetpgrp: tcsetpgrp_fn,
+            setpgid: setpgid_fn,
+            kill: kill_fn,
+            ..default_syscalls()
+        };
+        with_test_syscalls(syscalls, f)
+    }
+
+    pub(crate) fn with_fd_ops_for_test<T>(
+        dup_fn: fn(c_int) -> c_int,
+        dup2_fn: fn(c_int, c_int) -> c_int,
+        close_fn: fn(c_int) -> c_int,
+        f: impl FnOnce() -> T,
+    ) -> T {
+        let syscalls = Syscalls {
+            dup: dup_fn,
+            dup2: dup2_fn,
+            close: close_fn,
+            ..default_syscalls()
+        };
+        with_test_syscalls(syscalls, f)
+    }
+
+    pub(crate) fn with_fcntl_and_isatty_for_test<T>(
+        fcntl_fn: fn(c_int, c_int, c_int) -> c_int,
+        isatty_fn: fn(c_int) -> c_int,
+        f: impl FnOnce() -> T,
+    ) -> T {
+        let syscalls = Syscalls {
+            fcntl: fcntl_fn,
+            isatty: isatty_fn,
+            ..default_syscalls()
+        };
+        with_test_syscalls(syscalls, f)
+    }
+
+    pub(crate) fn with_times_error_for_test<T>(f: impl FnOnce() -> T) -> T {
+        fn fake_times(_buffer: *mut libc::tms) -> ClockTicks {
+            ClockTicks::MAX
+        }
+        fn fake_sysconf(_name: c_int) -> c_long {
+            60
+        }
+        let syscalls = Syscalls {
+            times: fake_times,
+            sysconf: fake_sysconf,
+            ..default_syscalls()
+        };
+        with_test_syscalls(syscalls, f)
+    }
+
+    pub(crate) fn with_process_ids_for_test<T>(
+        ids: (libc::uid_t, libc::uid_t, libc::gid_t, libc::gid_t),
+        f: impl FnOnce() -> T,
+    ) -> T {
+        TEST_PROCESS_IDS.with(|cell| {
+            let previous = cell.replace(Some(ids));
+            let result = f();
+            cell.replace(previous);
+            result
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -337,23 +262,10 @@ pub fn is_interactive_fd(fd: c_int) -> bool {
 
 pub fn has_same_real_and_effective_ids() -> bool {
     #[cfg(test)]
-    if let Some((uid, euid, gid, egid)) = TEST_PROCESS_IDS.with(|cell| *cell.borrow()) {
+    if let Some((uid, euid, gid, egid)) = test_support::current_process_ids() {
         return uid == euid && gid == egid;
     }
-    unsafe { getuid() == geteuid() && getgid() == getegid() }
-}
-
-#[cfg(test)]
-pub(crate) fn with_process_ids_for_test<T>(
-    ids: (c_uint, c_uint, c_uint, c_uint),
-    f: impl FnOnce() -> T,
-) -> T {
-    TEST_PROCESS_IDS.with(|cell| {
-        let previous = cell.replace(Some(ids));
-        let result = f();
-        cell.replace(previous);
-        result
-    })
+    unsafe { libc::getuid() == libc::geteuid() && libc::getgid() == libc::getegid() }
 }
 
 pub fn wait_pid(pid: Pid, nohang: bool) -> io::Result<Option<WaitStatus>> {
@@ -379,7 +291,7 @@ pub fn send_signal(pid: Pid, signal: c_int) -> io::Result<()> {
 }
 
 pub fn install_shell_signal_handler(signal: c_int) -> io::Result<()> {
-    let result = (syscalls().signal)(signal, record_signal as *const () as usize);
+    let result = (syscalls().signal)(signal, record_signal as *const () as libc::sighandler_t);
     if result == SIG_ERR_HANDLER {
         Err(io::Error::last_os_error())
     } else {
@@ -571,11 +483,12 @@ pub fn set_umask(mask: FileModeMask) -> FileModeMask {
 }
 
 pub fn process_times() -> io::Result<ProcessTimes> {
-    let mut raw = Tms::default();
-    let result = (syscalls().times)(&mut raw);
+    let mut raw = std::mem::MaybeUninit::<libc::tms>::zeroed();
+    let result = (syscalls().times)(raw.as_mut_ptr());
     if result == ClockTicks::MAX {
         return Err(io::Error::last_os_error());
     }
+    let raw = unsafe { raw.assume_init() };
     Ok(ProcessTimes {
         user_ticks: raw.tms_utime as u64,
         system_ticks: raw.tms_stime as u64,
@@ -672,22 +585,6 @@ pub fn cstr_lossy(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use std::process::Command;
-    use std::sync::Mutex;
-
-    fn syscall_lock() -> &'static Mutex<()> {
-        static LOCK: Mutex<()> = Mutex::new(());
-        &LOCK
-    }
-
-    pub(super) fn with_test_syscalls<T>(syscalls: Syscalls, f: impl FnOnce() -> T) -> T {
-        let _guard = syscall_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        TEST_SYSCALLS.with(|cell| {
-            let previous = cell.replace(Some(syscalls));
-            let result = f();
-            cell.replace(previous);
-            result
-        })
-    }
 
     #[test]
     fn pipe_roundtrip() {
@@ -770,8 +667,8 @@ mod tests {
 
     #[test]
     fn process_identity_helper_covers_mismatch_branch() {
-        assert!(!with_process_ids_for_test((1, 2, 3, 3), has_same_real_and_effective_ids));
-        assert!(!with_process_ids_for_test((1, 1, 3, 4), has_same_real_and_effective_ids));
+        assert!(!test_support::with_process_ids_for_test((1, 2, 3, 3), has_same_real_and_effective_ids));
+        assert!(!test_support::with_process_ids_for_test((1, 1, 3, 4), has_same_real_and_effective_ids));
     }
 
     #[test]
@@ -788,7 +685,7 @@ mod tests {
         fn fake_kill(_pid: Pid, _sig: c_int) -> c_int {
             0
         }
-        fn fake_signal(_sig: c_int, _handler: usize) -> usize {
+        fn fake_signal(_sig: c_int, _handler: libc::sighandler_t) -> libc::sighandler_t {
             0
         }
         fn fake_isatty(_fd: c_int) -> c_int {
@@ -838,7 +735,7 @@ mod tests {
         fn fake_umask(mask: FileModeMask) -> FileModeMask {
             mask
         }
-        fn fake_times(buffer: *mut Tms) -> ClockTicks {
+        fn fake_times(buffer: *mut libc::tms) -> ClockTicks {
             unsafe {
                 (*buffer).tms_utime = 10;
                 (*buffer).tms_stime = 20;
@@ -875,7 +772,7 @@ mod tests {
             execvp: fake_execvp,
         };
 
-        with_test_syscalls(fake, || {
+        test_support::with_test_syscalls(fake, || {
             assert_eq!(current_pid(), 4242);
             assert!(is_interactive_fd(0));
             assert_eq!(
@@ -919,29 +816,29 @@ mod tests {
 
     #[test]
     fn signal_helpers_cover_pending_ignore_default_and_error_paths() {
-        fn ok_signal(_sig: c_int, _handler: usize) -> usize {
+        fn ok_signal(_sig: c_int, _handler: libc::sighandler_t) -> libc::sighandler_t {
             0
         }
-        fn err_signal(_sig: c_int, _handler: usize) -> usize {
+        fn err_signal(_sig: c_int, _handler: libc::sighandler_t) -> libc::sighandler_t {
             SIG_ERR_HANDLER
         }
 
-        with_signal_syscall_for_test(ok_signal, || {
+        test_support::with_signal_syscall_for_test(ok_signal, || {
             install_shell_signal_handler(SIGINT).expect("install");
             ignore_signal(SIGTERM).expect("ignore");
             default_signal_action(SIGQUIT).expect("default");
         });
 
-        with_signal_syscall_for_test(err_signal, || {
+        test_support::with_signal_syscall_for_test(err_signal, || {
             assert!(install_shell_signal_handler(SIGINT).is_err());
             assert!(ignore_signal(SIGTERM).is_err());
             assert!(default_signal_action(SIGQUIT).is_err());
         });
 
-        set_pending_signals_for_test(&[SIGINT]);
+        test_support::set_pending_signals_for_test(&[SIGINT]);
         assert_eq!(has_pending_signal(), Some(SIGINT));
         assert_eq!(take_pending_signals(), vec![SIGINT]);
-        set_pending_signals_for_test(&[99]);
+        test_support::set_pending_signals_for_test(&[99]);
         assert_eq!(has_pending_signal(), None);
 
         let interrupted_error = io::Error::from_raw_os_error(EINTR);
@@ -960,7 +857,7 @@ mod tests {
         fn fake_kill(_pid: Pid, _sig: c_int) -> c_int {
             -1
         }
-        fn fake_signal(_sig: c_int, _handler: usize) -> usize {
+        fn fake_signal(_sig: c_int, _handler: libc::sighandler_t) -> libc::sighandler_t {
             SIG_ERR_HANDLER
         }
         fn fake_isatty(_fd: c_int) -> c_int {
@@ -996,7 +893,7 @@ mod tests {
         fn fake_umask(mask: FileModeMask) -> FileModeMask {
             mask
         }
-        fn fake_times(_buffer: *mut Tms) -> ClockTicks {
+        fn fake_times(_buffer: *mut libc::tms) -> ClockTicks {
             ClockTicks::MAX
         }
         fn fake_sysconf(_name: c_int) -> c_long {
@@ -1027,7 +924,7 @@ mod tests {
             execvp: fake_execvp,
         };
 
-        with_test_syscalls(fake, || {
+        test_support::with_test_syscalls(fake, || {
             assert_eq!(current_pid(), 1);
             assert!(!is_interactive_fd(0));
             assert!(send_signal(1, 0).is_err());
@@ -1066,7 +963,7 @@ mod tests {
             }
         }
 
-        with_fcntl_and_isatty_for_test(fake_fcntl, fake_isatty, || {
+        test_support::with_fcntl_and_isatty_for_test(fake_fcntl, fake_isatty, || {
             LAST_SET_FLAGS.store(usize::MAX, Ordering::SeqCst);
             ensure_blocking_read_fd(STDIN_FILENO).expect("tty blocking");
             assert_eq!(LAST_SET_FLAGS.load(Ordering::SeqCst), 0o2);
@@ -1077,7 +974,7 @@ mod tests {
         }
 
         let (read_end, write_end) = create_pipe().expect("pipe");
-        with_fcntl_and_isatty_for_test(fake_fcntl, not_tty, || {
+        test_support::with_fcntl_and_isatty_for_test(fake_fcntl, not_tty, || {
             LAST_SET_FLAGS.store(usize::MAX, Ordering::SeqCst);
             ensure_blocking_read_fd(read_end).expect("fifo blocking");
             assert_eq!(LAST_SET_FLAGS.load(Ordering::SeqCst), 0o2);
@@ -1110,14 +1007,14 @@ mod tests {
         ));
         std::fs::write(&path, b"x").expect("write temp");
         let file = std::fs::File::open(&path).expect("open temp");
-        with_fcntl_and_isatty_for_test(counting_fcntl, not_tty, || {
+        test_support::with_fcntl_and_isatty_for_test(counting_fcntl, not_tty, || {
             FCNTL_CALLS.store(0, Ordering::SeqCst);
             ensure_blocking_read_fd(std::os::fd::AsRawFd::as_raw_fd(&file)).expect("regular file");
             assert_eq!(FCNTL_CALLS.load(Ordering::SeqCst), 0);
         });
         std::fs::remove_file(&path).expect("remove temp");
 
-        with_fcntl_and_isatty_for_test(failing_fcntl, |_| 1, || {
+        test_support::with_fcntl_and_isatty_for_test(failing_fcntl, |_| 1, || {
             assert!(ensure_blocking_read_fd(STDIN_FILENO).is_err());
         });
     }
