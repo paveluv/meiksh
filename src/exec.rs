@@ -1,10 +1,5 @@
 use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
-use std::io::Write;
-use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command as ProcessCommand, Stdio};
 
 use crate::builtin;
 use crate::expand;
@@ -23,9 +18,8 @@ enum ProcessGroupPlan {
     Join(sys::Pid),
 }
 
-#[derive(Debug)]
 struct SpawnedProcesses {
-    children: Vec<Child>,
+    children: Vec<sys::ChildHandle>,
     pgid: Option<sys::Pid>,
 }
 
@@ -100,7 +94,7 @@ fn execute_pipeline(shell: &mut Shell, pipeline: &Pipeline, asynchronous: bool) 
 }
 
 fn spawn_pipeline(shell: &mut Shell, pipeline: &Pipeline) -> Result<SpawnedProcesses, ShellError> {
-    let mut previous_stdout: Option<PipelineInput> = None;
+    let mut previous_stdout_fd: Option<i32> = None;
     let mut children = Vec::new();
     let mut pgid = None;
 
@@ -135,26 +129,26 @@ fn spawn_pipeline(shell: &mut Shell, pipeline: &Pipeline) -> Result<SpawnedProce
             Some(pgid) => ProcessGroupPlan::Join(pgid),
             None => ProcessGroupPlan::NewGroup,
         };
-        let mut child = spawn_prepared(&prepared, previous_stdout.take(), !is_last, plan)?;
+        let handle = spawn_prepared(&prepared, previous_stdout_fd.take(), !is_last, plan)?;
         if pgid.is_none() {
-            let child_pgid = child.id() as sys::Pid;
+            let child_pgid = handle.pid;
             let _ = sys::set_process_group(child_pgid, child_pgid);
             pgid = Some(child_pgid);
         } else if let Some(job_pgid) = pgid {
-            let _ = sys::set_process_group(child.id() as sys::Pid, job_pgid);
+            let _ = sys::set_process_group(handle.pid, job_pgid);
         }
-        previous_stdout = child.stdout.take().map(PipelineInput::new).transpose()?;
-        children.push(child);
+        previous_stdout_fd = handle.stdout_fd;
+        children.push(sys::ChildHandle { pid: handle.pid, stdout_fd: None });
     }
 
     Ok(SpawnedProcesses { children, pgid })
 }
 
-fn wait_for_children(shell: &mut Shell, mut spawned: SpawnedProcesses) -> Result<i32, ShellError> {
+fn wait_for_children(shell: &mut Shell, spawned: SpawnedProcesses) -> Result<i32, ShellError> {
     let saved_foreground = handoff_foreground(spawned.pgid);
     let mut status = 0;
-    for child in &mut spawned.children {
-        status = shell.wait_for_child_pid(child.id(), false)?;
+    for handle in &spawned.children {
+        status = shell.wait_for_child_pid(handle.pid, false)?;
     }
     restore_foreground(saved_foreground);
     Ok(status)
@@ -162,11 +156,11 @@ fn wait_for_children(shell: &mut Shell, mut spawned: SpawnedProcesses) -> Result
 
 fn wait_for_external_child(
     shell: &mut Shell,
-    child: &mut Child,
+    handle: &sys::ChildHandle,
     pgid: Option<sys::Pid>,
 ) -> Result<i32, ShellError> {
     let saved_foreground = handoff_foreground(pgid);
-    let status = shell.wait_for_child_pid(child.id(), false)?;
+    let status = shell.wait_for_child_pid(handle.pid, false)?;
     restore_foreground(saved_foreground);
     Ok(status)
 }
@@ -175,14 +169,12 @@ fn execute_command(shell: &mut Shell, command: &Command) -> Result<i32, ShellErr
     match command {
         Command::Simple(simple) => execute_simple(shell, simple),
         Command::Subshell(program) => {
-            let status = ProcessCommand::new(&shell.current_exe)
-                .arg("-c")
-                .arg(render_program(program))
-                .env_clear()
-                .envs(shell.env_for_child())
-                .status()?
-                .code()
-                .unwrap_or(128);
+            let child_env = shell.env_for_child();
+            let env_pairs: Vec<(&str, &str)> = child_env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+            let script = render_program(program);
+            let exe = shell.current_exe.display().to_string();
+            let argv = [exe.as_str(), "-c", &script];
+            let status = sys::run_to_status(&exe, &argv, Some(&env_pairs))?;
             Ok(status)
         }
         Command::Group(program) => execute_nested_program(shell, program),
@@ -404,10 +396,10 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
         })
     } else {
         let prepared = build_process_from_expanded(shell, &expanded)?;
-        let mut child = spawn_prepared(&prepared, None, false, ProcessGroupPlan::NewGroup)?;
-        let pgid = child.id() as sys::Pid;
+        let handle = spawn_prepared(&prepared, None, false, ProcessGroupPlan::NewGroup)?;
+        let pgid = handle.pid;
         let _ = sys::set_process_group(pgid, pgid);
-        let status = wait_for_external_child(shell, &mut child, Some(pgid))?;
+        let status = wait_for_external_child(shell, &handle, Some(pgid))?;
         Ok(status)
     }
 }
@@ -437,17 +429,9 @@ struct PreparedProcess {
 }
 
 #[derive(Debug)]
-struct PipelineInput {
-    primary: ChildStdoutWrapper,
-    retry: OwnedFd,
-}
-
-#[derive(Debug)]
-struct ChildStdoutWrapper(std::process::ChildStdout);
-
-#[derive(Debug)]
+#[allow(dead_code)]
 enum ChildFdAction {
-    DupOwnedFd { fd: OwnedFd, target_fd: i32 },
+    DupRawFd { fd: i32, target_fd: i32, close_source: bool },
     DupFd { source_fd: i32, target_fd: i32 },
     CloseFd { target_fd: i32 },
 }
@@ -584,66 +568,116 @@ fn build_process_from_expanded(
 
 fn spawn_prepared(
     prepared: &PreparedProcess,
-    input: Option<PipelineInput>,
+    stdin_fd: Option<i32>,
     pipe_stdout: bool,
     process_group: ProcessGroupPlan,
-) -> Result<Child, ShellError> {
-    let retry_input = if let Some(input) = input.as_ref() {
-        Some(Stdio::from(input.retry.as_fd().try_clone_to_owned()?))
-    } else {
-        None
-    };
-    let (mut process, prepared_redirections) = prepared.build_command(false, process_group)?;
-    if !prepared_redirections.stdin_redirected {
-        if let Some(input) = input {
-            process.stdin(Stdio::from(input.primary.0));
+) -> Result<sys::ChildHandle, ShellError> {
+    spawn_prepared_inner(prepared, stdin_fd, pipe_stdout, process_group, false)
+}
+
+fn spawn_prepared_inner(
+    prepared: &PreparedProcess,
+    stdin_fd: Option<i32>,
+    pipe_stdout: bool,
+    process_group: ProcessGroupPlan,
+    fallback_to_sh: bool,
+) -> Result<sys::ChildHandle, ShellError> {
+    if !fallback_to_sh && !prepared.exec_path.is_empty() && prepared.exec_path.contains('/') {
+        if sys::access_path(&prepared.exec_path, sys::F_OK).is_err() {
+            return Err(std::io::Error::new(std::io::ErrorKind::NotFound,
+                format!("{}: not found", prepared.exec_path)).into());
         }
     }
-    if pipe_stdout && !prepared_redirections.stdout_redirected {
-        process.stdout(Stdio::piped());
+
+    let prepared_redirections = prepare_redirections(&prepared.redirections, prepared.noclobber)?;
+
+    let effective_stdin = if !prepared_redirections.stdin_redirected {
+        stdin_fd
+    } else {
+        if let Some(fd) = stdin_fd {
+            let _ = sys::close_fd(fd);
+        }
+        None
+    };
+
+    let effective_pipe_stdout = pipe_stdout && !prepared_redirections.stdout_redirected;
+
+    let mut fd_redirections: Vec<(i32, i32)> = Vec::new();
+    for action in &prepared_redirections.actions {
+        match action {
+            ChildFdAction::DupRawFd { fd, target_fd, .. } => {
+                fd_redirections.push((*fd, *target_fd));
+            }
+            ChildFdAction::DupFd { source_fd, target_fd } => {
+                fd_redirections.push((*source_fd, *target_fd));
+            }
+            ChildFdAction::CloseFd { .. } => {}
+        }
     }
 
-    finalize_spawn(process, prepared, retry_input, pipe_stdout, process_group)
+    let pgid = match process_group {
+        ProcessGroupPlan::NewGroup => Some(0),
+        ProcessGroupPlan::Join(pgid) => Some(pgid),
+        ProcessGroupPlan::None => None,
+    };
+
+    let (program, argv) = if fallback_to_sh {
+        let mut v = vec!["sh".to_string(), prepared.exec_path.clone()];
+        v.extend(prepared.argv.iter().skip(1).cloned());
+        ("sh".to_string(), v)
+    } else {
+        (prepared.exec_path.clone(), prepared.argv.clone())
+    };
+
+    let env_pairs: Vec<(&str, &str)> = prepared.child_env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let argv_strs: Vec<&str> = argv.iter().map(String::as_str).collect();
+
+    let result = sys::spawn_child(
+        &program,
+        &argv_strs,
+        Some(&env_pairs),
+        &fd_redirections,
+        effective_stdin,
+        effective_pipe_stdout,
+        pgid,
+    );
+
+    for action in &prepared_redirections.actions {
+        if let ChildFdAction::DupRawFd { fd, close_source: true, .. } = action {
+            let _ = sys::close_fd(*fd);
+        }
+    }
+
+    match result {
+        Ok(handle) => Ok(handle),
+        Err(error) if error.raw_os_error() == Some(8) && !fallback_to_sh => {
+            spawn_prepared_inner(prepared, None, pipe_stdout, process_group, true)
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 
+// These functions are used by tests directly
+#[allow(dead_code)]
 fn spawn_with_fallback(
     prepared: &PreparedProcess,
-    retry_input: Option<Stdio>,
+    stdin_fd: Option<i32>,
     pipe_stdout: bool,
     process_group: ProcessGroupPlan,
-) -> Result<Child, ShellError> {
-    let (mut fallback, prepared_redirections) = prepared.build_command(true, process_group)?;
-    if !prepared_redirections.stdin_redirected && let Some(stdin) = retry_input {
-        fallback.stdin(stdin);
-    }
-    if pipe_stdout && !prepared_redirections.stdout_redirected {
-        fallback.stdout(Stdio::piped());
-    }
-    Ok(fallback.spawn()?)
+) -> Result<sys::ChildHandle, ShellError> {
+    spawn_prepared_inner(prepared, stdin_fd, pipe_stdout, process_group, true)
 }
 
-fn finalize_spawn(
-    mut process: ProcessCommand,
-    prepared: &PreparedProcess,
-    retry_input: Option<Stdio>,
-    pipe_stdout: bool,
-    process_group: ProcessGroupPlan,
-) -> Result<Child, ShellError> {
-    match process.spawn() {
-        Ok(child) => Ok(child),
-        Err(error) => maybe_spawn_with_fallback(error, prepared, retry_input, pipe_stdout, process_group),
-    }
-}
-
+#[allow(dead_code)]
 fn maybe_spawn_with_fallback(
     error: std::io::Error,
     prepared: &PreparedProcess,
-    retry_input: Option<Stdio>,
+    stdin_fd: Option<i32>,
     pipe_stdout: bool,
     process_group: ProcessGroupPlan,
-) -> Result<Child, ShellError> {
+) -> Result<sys::ChildHandle, ShellError> {
     if error.raw_os_error() == Some(8) {
-        spawn_with_fallback(prepared, retry_input, pipe_stdout, process_group)
+        spawn_with_fallback(prepared, stdin_fd, pipe_stdout, process_group)
     } else {
         Err(error.into())
     }
@@ -663,59 +697,58 @@ fn prepare_redirections(
         }
         match redirection.kind {
             RedirectionKind::Read => {
-                let fd: OwnedFd = File::open(&redirection.target)?.into();
-                prepared.actions.push(ChildFdAction::DupOwnedFd {
+                let fd = sys::open_file(&redirection.target, sys::O_RDONLY | sys::O_CLOEXEC, 0)?;
+                prepared.actions.push(ChildFdAction::DupRawFd {
                     fd,
                     target_fd: redirection.fd,
+                    close_source: true,
                 });
             }
             RedirectionKind::Write | RedirectionKind::ClobberWrite => {
-                let mut options = OpenOptions::new();
-                options.write(true);
-                if noclobber && redirection.kind == RedirectionKind::Write {
-                    options.create_new(true);
+                let flags = if noclobber && redirection.kind == RedirectionKind::Write {
+                    sys::O_WRONLY | sys::O_CREAT | sys::O_EXCL | sys::O_CLOEXEC
                 } else {
-                    options.create(true).truncate(true);
-                }
-                let fd: OwnedFd = options.open(&redirection.target)?.into();
-                prepared.actions.push(ChildFdAction::DupOwnedFd {
+                    sys::O_WRONLY | sys::O_CREAT | sys::O_TRUNC | sys::O_CLOEXEC
+                };
+                let fd = sys::open_file(&redirection.target, flags, 0o666)?;
+                prepared.actions.push(ChildFdAction::DupRawFd {
                     fd,
                     target_fd: redirection.fd,
+                    close_source: true,
                 });
             }
             RedirectionKind::Append => {
-                let fd: OwnedFd = OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&redirection.target)?
-                    .into();
-                prepared.actions.push(ChildFdAction::DupOwnedFd {
+                let fd = sys::open_file(
+                    &redirection.target,
+                    sys::O_WRONLY | sys::O_CREAT | sys::O_APPEND | sys::O_CLOEXEC,
+                    0o666,
+                )?;
+                prepared.actions.push(ChildFdAction::DupRawFd {
                     fd,
                     target_fd: redirection.fd,
+                    close_source: true,
                 });
             }
             RedirectionKind::HereDoc => {
                 let (read_fd, write_fd) = sys::create_pipe()?;
-                let read_fd = unsafe { OwnedFd::from_raw_fd(read_fd) };
-                let write_fd = unsafe { OwnedFd::from_raw_fd(write_fd) };
-                let mut writer = File::from(write_fd);
-                writer.write_all(redirection.here_doc_body.clone().unwrap_or_default().as_bytes())?;
-                drop(writer);
-                prepared.actions.push(ChildFdAction::DupOwnedFd {
+                sys::write_all_fd(write_fd, redirection.here_doc_body.as_deref().unwrap_or("").as_bytes())?;
+                sys::close_fd(write_fd)?;
+                prepared.actions.push(ChildFdAction::DupRawFd {
                     fd: read_fd,
                     target_fd: redirection.fd,
+                    close_source: true,
                 });
             }
             RedirectionKind::ReadWrite => {
-                let fd: OwnedFd = OpenOptions::new()
-                    .create(true)
-                    .read(true)
-                    .write(true)
-                    .open(&redirection.target)?
-                    .into();
-                prepared.actions.push(ChildFdAction::DupOwnedFd {
+                let fd = sys::open_file(
+                    &redirection.target,
+                    sys::O_RDWR | sys::O_CREAT | sys::O_CLOEXEC,
+                    0o666,
+                )?;
+                prepared.actions.push(ChildFdAction::DupRawFd {
                     fd,
                     target_fd: redirection.fd,
+                    close_source: true,
                 });
             }
             RedirectionKind::DupInput | RedirectionKind::DupOutput => {
@@ -751,67 +784,18 @@ fn resolve_command_path(shell: &Shell, program: &str) -> Option<PathBuf> {
     path.split(':')
         .filter(|segment| !segment.is_empty())
         .map(|segment| Path::new(segment).join(program))
-        .find(|candidate| candidate.is_file())
+        .find(|candidate| sys::is_regular_file(&candidate.display().to_string()))
 }
 
-impl PreparedProcess {
-    fn build_command(
-        &self,
-        fallback_to_sh: bool,
-        process_group: ProcessGroupPlan,
-    ) -> Result<(ProcessCommand, PreparedRedirections), ShellError> {
-        let mut process = if fallback_to_sh {
-            let mut process = ProcessCommand::new("sh");
-            process.arg(&self.exec_path);
-            if self.argv.len() > 1 {
-                process.args(&self.argv[1..]);
-            }
-            process
-        } else {
-            let mut process = ProcessCommand::new(&self.exec_path);
-            if self.exec_path != self.argv[0] {
-                process.arg0(&self.argv[0]);
-            }
-            if self.argv.len() > 1 {
-                process.args(&self.argv[1..]);
-            }
-            process
-        };
+// PreparedProcess.build_command() is replaced by spawn_prepared_inner()
+// PipelineInput is replaced by raw fd from ChildHandle.stdout_fd
 
-        process.env_clear();
-        process.envs(self.child_env.iter().cloned());
-        let prepared_redirections = prepare_redirections(&self.redirections, self.noclobber)?;
-        if !prepared_redirections.actions.is_empty() || !matches!(process_group, ProcessGroupPlan::None) {
-            let actions = prepared_redirections.actions;
-            unsafe {
-                process.pre_exec(move || apply_child_setup(&actions, process_group));
-            }
-        }
-        Ok((
-            process,
-            PreparedRedirections {
-                stdin_redirected: prepared_redirections.stdin_redirected,
-                stdout_redirected: prepared_redirections.stdout_redirected,
-                actions: Vec::new(),
-            },
-        ))
-    }
-}
-
-impl PipelineInput {
-    fn new(stdout: std::process::ChildStdout) -> Result<Self, std::io::Error> {
-        Ok(Self {
-            retry: stdout.as_fd().try_clone_to_owned()?,
-            primary: ChildStdoutWrapper(stdout),
-        })
-    }
-}
-
+#[allow(dead_code)]
 fn apply_child_fd_actions(actions: &[ChildFdAction]) -> std::io::Result<()> {
     for action in actions {
         match action {
-            ChildFdAction::DupOwnedFd { fd, target_fd } => {
-                sys::duplicate_fd(fd.as_raw_fd(), *target_fd)?;
+            ChildFdAction::DupRawFd { fd, target_fd, .. } => {
+                sys::duplicate_fd(*fd, *target_fd)?;
             }
             ChildFdAction::DupFd { source_fd, target_fd } => {
                 sys::duplicate_fd(*source_fd, *target_fd)?;
@@ -828,6 +812,7 @@ fn apply_child_fd_actions(actions: &[ChildFdAction]) -> std::io::Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn apply_child_setup(actions: &[ChildFdAction], process_group: ProcessGroupPlan) -> std::io::Result<()> {
     apply_child_fd_actions(actions)?;
     match process_group {
@@ -909,45 +894,39 @@ fn apply_shell_redirections(
 fn apply_shell_redirection(redirection: &ExpandedRedirection, noclobber: bool) -> Result<(), ShellError> {
     match redirection.kind {
         RedirectionKind::Read => {
-            let file: OwnedFd = File::open(&redirection.target)?.into();
-            replace_shell_fd(file, redirection.fd)?;
+            let fd = sys::open_file(&redirection.target, sys::O_RDONLY | sys::O_CLOEXEC, 0)?;
+            replace_shell_fd(fd, redirection.fd)?;
         }
         RedirectionKind::Write | RedirectionKind::ClobberWrite => {
-            let mut options = OpenOptions::new();
-            options.write(true);
-            if noclobber && redirection.kind == RedirectionKind::Write {
-                options.create_new(true);
+            let flags = if noclobber && redirection.kind == RedirectionKind::Write {
+                sys::O_WRONLY | sys::O_CREAT | sys::O_EXCL | sys::O_CLOEXEC
             } else {
-                options.create(true).truncate(true);
-            }
-            let file: OwnedFd = options.open(&redirection.target)?.into();
-            replace_shell_fd(file, redirection.fd)?;
+                sys::O_WRONLY | sys::O_CREAT | sys::O_TRUNC | sys::O_CLOEXEC
+            };
+            let fd = sys::open_file(&redirection.target, flags, 0o666)?;
+            replace_shell_fd(fd, redirection.fd)?;
         }
         RedirectionKind::Append => {
-            let file: OwnedFd = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&redirection.target)?
-                .into();
-            replace_shell_fd(file, redirection.fd)?;
+            let fd = sys::open_file(
+                &redirection.target,
+                sys::O_WRONLY | sys::O_CREAT | sys::O_APPEND | sys::O_CLOEXEC,
+                0o666,
+            )?;
+            replace_shell_fd(fd, redirection.fd)?;
         }
         RedirectionKind::HereDoc => {
             let (read_fd, write_fd) = sys::create_pipe()?;
-            let read_fd = unsafe { OwnedFd::from_raw_fd(read_fd) };
-            let write_fd = unsafe { OwnedFd::from_raw_fd(write_fd) };
-            let mut writer = File::from(write_fd);
-            writer.write_all(redirection.here_doc_body.clone().unwrap_or_default().as_bytes())?;
-            drop(writer);
+            sys::write_all_fd(write_fd, redirection.here_doc_body.as_deref().unwrap_or("").as_bytes())?;
+            sys::close_fd(write_fd)?;
             replace_shell_fd(read_fd, redirection.fd)?;
         }
         RedirectionKind::ReadWrite => {
-            let file: OwnedFd = OpenOptions::new()
-                .create(true)
-                .read(true)
-                .write(true)
-                .open(&redirection.target)?
-                .into();
-            replace_shell_fd(file, redirection.fd)?;
+            let fd = sys::open_file(
+                &redirection.target,
+                sys::O_RDWR | sys::O_CREAT | sys::O_CLOEXEC,
+                0o666,
+            )?;
+            replace_shell_fd(fd, redirection.fd)?;
         }
         RedirectionKind::DupInput | RedirectionKind::DupOutput => {
             if redirection.target == "-" {
@@ -963,12 +942,12 @@ fn apply_shell_redirection(redirection: &ExpandedRedirection, noclobber: bool) -
     Ok(())
 }
 
-fn replace_shell_fd(fd: OwnedFd, target_fd: i32) -> Result<(), ShellError> {
-    if fd.as_raw_fd() == target_fd {
-        std::mem::forget(fd);
+fn replace_shell_fd(fd: i32, target_fd: i32) -> Result<(), ShellError> {
+    if fd == target_fd {
         return Ok(());
     }
-    sys::duplicate_fd(fd.as_raw_fd(), target_fd)?;
+    sys::duplicate_fd(fd, target_fd)?;
+    sys::close_fd(fd)?;
     Ok(())
 }
 
@@ -1285,6 +1264,8 @@ mod tests {
     use crate::syntax::{Assignment, HereDoc, Redirection, Word};
     use std::collections::{BTreeMap, BTreeSet, HashMap};
     use std::fs;
+    use std::fs::File;
+    use std::os::fd::{AsRawFd, OwnedFd};
     use std::os::raw::c_int;
     use std::os::unix::fs::PermissionsExt;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1440,13 +1421,12 @@ mod tests {
         permissions.set_mode(0o755);
         fs::set_permissions(&script, permissions).expect("chmod script");
 
-        let producer = ProcessCommand::new(meiksh_bin_path())
-            .arg("-c")
-            .arg("printf piped")
-            .stdout(Stdio::piped())
-            .spawn()
-            .expect("spawn producer");
-        let input = PipelineInput::new(producer.stdout.expect("stdout")).expect("pipeline input");
+        let producer = sys::spawn_child(
+            &meiksh_bin_path().display().to_string(),
+            &[&meiksh_bin_path().display().to_string(), "-c", "printf piped"],
+            None, &[], None, true, None,
+        ).expect("spawn producer");
+        let producer_stdout_fd = producer.stdout_fd.expect("stdout fd");
         let prepared = PreparedProcess {
             exec_path: script.display().to_string(),
             argv: vec!["fallback-script".into()],
@@ -1456,11 +1436,12 @@ mod tests {
         };
         let child = spawn_with_fallback(
             &prepared,
-            Some(Stdio::from(input.retry)),
+            Some(producer_stdout_fd),
             true,
             ProcessGroupPlan::None,
         )
         .expect("fallback pipeline");
+        let _ = sys::wait_pid(producer.pid, false);
         let output = child.wait_with_output().expect("output");
         assert_eq!(String::from_utf8_lossy(&output.stdout), "piped");
 
@@ -1487,10 +1468,13 @@ mod tests {
         fs::write(&temp, "fd").expect("write temp");
 
         let owned: OwnedFd = File::open(&temp).expect("open temp").into();
+        let raw_fd = owned.as_raw_fd();
+        std::mem::forget(owned);
         apply_child_fd_actions(&[
-            ChildFdAction::DupOwnedFd {
-                fd: owned,
+            ChildFdAction::DupRawFd {
+                fd: raw_fd,
                 target_fd: 90,
+                close_source: true,
             },
             ChildFdAction::DupFd {
                 source_fd: 90,
@@ -1517,26 +1501,28 @@ mod tests {
         assert!(rendered.contains("0<&5"));
         assert!(rendered.contains("1>&-"));
 
-        let rw_path = std::env::temp_dir().join(format!("meiksh-redirection-rw-{unique}"));
-        let prepared = prepare_redirections(&[
-            ExpandedRedirection {
-                fd: 1,
-                kind: RedirectionKind::DupOutput,
-                target: "-".into(),
-                here_doc_body: None,
-            },
-            ExpandedRedirection {
-                fd: 0,
-                kind: RedirectionKind::ReadWrite,
-                target: rw_path.display().to_string(),
-                here_doc_body: None,
-            },
-        ], false)
-        .expect("prepare");
-        assert!(prepared.stdin_redirected);
-        assert!(prepared.stdout_redirected);
-        assert_eq!(prepared.actions.len(), 2);
-        let _ = fs::remove_file(rw_path);
+        sys::test_support::VfsBuilder::new()
+            .dir("/tmp")
+            .run(|| {
+                let prepared = prepare_redirections(&[
+                    ExpandedRedirection {
+                        fd: 1,
+                        kind: RedirectionKind::DupOutput,
+                        target: "-".into(),
+                        here_doc_body: None,
+                    },
+                    ExpandedRedirection {
+                        fd: 0,
+                        kind: RedirectionKind::ReadWrite,
+                        target: "/tmp/rw.txt".into(),
+                        here_doc_body: None,
+                    },
+                ], false)
+                .expect("prepare");
+                assert!(prepared.stdin_redirected);
+                assert!(prepared.stdout_redirected);
+                assert_eq!(prepared.actions.len(), 2);
+            });
     }
 
     #[test]
@@ -1710,7 +1696,7 @@ mod tests {
             ],
         })
         .expect("spawn");
-        for mut child in spawned.children {
+        for child in spawned.children {
             let _ = child.wait().expect("wait");
         }
     }
@@ -1945,7 +1931,7 @@ mod tests {
             ],
         };
         let children = spawn_pipeline(&mut shell, &pipeline).expect("spawn");
-        for mut child in children.children {
+        for child in children.children {
             let _ = child.wait().expect("wait");
         }
     }
@@ -2240,118 +2226,111 @@ mod tests {
             -1
         }
 
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("meiksh-shell-redir-{unique}"));
-        fs::create_dir(&dir).expect("mkdir");
-        let input = dir.join("input.txt");
-        let noclobber = dir.join("noclobber.txt");
-        fs::write(&input, "input").expect("write input");
-        fs::write(&noclobber, "old").expect("write noclobber");
+        sys::test_support::VfsBuilder::new()
+            .dir("/redir")
+            .file("/redir/input.txt", b"input")
+            .file("/redir/noclobber.txt", b"old")
+            .run_with_fd_ops(fake_dup, fake_dup2, fake_close, || {
+                let target_fd = 42;
+                let guard = apply_shell_redirections(
+                    &[
+                        ExpandedRedirection {
+                            fd: target_fd,
+                            kind: RedirectionKind::Write,
+                            target: "/redir/write.txt".into(),
+                            here_doc_body: None,
+                        },
+                        ExpandedRedirection {
+                            fd: target_fd,
+                            kind: RedirectionKind::Append,
+                            target: "/redir/append.txt".into(),
+                            here_doc_body: None,
+                        },
+                    ],
+                    false,
+                )
+                .expect("redir guard");
+                drop(guard);
 
-        sys::test_support::with_fd_ops_for_test(fake_dup, fake_dup2, fake_close, || {
-            let target_fd = 42;
-            let guard = apply_shell_redirections(
-                &[
-                    ExpandedRedirection {
+                apply_shell_redirection(
+                    &ExpandedRedirection {
+                        fd: target_fd,
+                        kind: RedirectionKind::Read,
+                        target: "/redir/input.txt".into(),
+                        here_doc_body: None,
+                    },
+                    false,
+                )
+                .expect("read redirection");
+
+                apply_shell_redirection(
+                    &ExpandedRedirection {
+                        fd: target_fd,
+                        kind: RedirectionKind::ReadWrite,
+                        target: "/redir/rw.txt".into(),
+                        here_doc_body: None,
+                    },
+                    false,
+                )
+                .expect("readwrite redirection");
+
+                apply_shell_redirection(
+                    &ExpandedRedirection {
+                        fd: target_fd,
+                        kind: RedirectionKind::HereDoc,
+                        target: "EOF".into(),
+                        here_doc_body: Some("body\n".into()),
+                    },
+                    false,
+                )
+                .expect("heredoc redirection");
+
+                apply_shell_redirection(
+                    &ExpandedRedirection {
+                        fd: target_fd,
+                        kind: RedirectionKind::DupOutput,
+                        target: "1".into(),
+                        here_doc_body: None,
+                    },
+                    false,
+                )
+                .expect("dup output");
+
+                apply_shell_redirection(
+                    &ExpandedRedirection {
+                        fd: target_fd,
+                        kind: RedirectionKind::DupOutput,
+                        target: "-".into(),
+                        here_doc_body: None,
+                    },
+                    false,
+                )
+                .expect("close dup output");
+
+                let error = apply_shell_redirection(
+                    &ExpandedRedirection {
+                        fd: target_fd,
+                        kind: RedirectionKind::DupOutput,
+                        target: "bad".into(),
+                        here_doc_body: None,
+                    },
+                    false,
+                )
+                .expect_err("bad dup output");
+                assert_eq!(error.message, "redirection target must be a file descriptor or '-'");
+
+                let error = apply_shell_redirection(
+                    &ExpandedRedirection {
                         fd: target_fd,
                         kind: RedirectionKind::Write,
-                        target: dir.join("write.txt").display().to_string(),
+                        target: "/redir/noclobber.txt".into(),
                         here_doc_body: None,
                     },
-                    ExpandedRedirection {
-                        fd: target_fd,
-                        kind: RedirectionKind::Append,
-                        target: dir.join("append.txt").display().to_string(),
-                        here_doc_body: None,
-                    },
-                ],
-                false,
-            )
-            .expect("redir guard");
-            drop(guard);
-
-            apply_shell_redirection(
-                &ExpandedRedirection {
-                    fd: target_fd,
-                    kind: RedirectionKind::Read,
-                    target: input.display().to_string(),
-                    here_doc_body: None,
-                },
-                false,
-            )
-            .expect("read redirection");
-
-            apply_shell_redirection(
-                &ExpandedRedirection {
-                    fd: target_fd,
-                    kind: RedirectionKind::ReadWrite,
-                    target: dir.join("rw.txt").display().to_string(),
-                    here_doc_body: None,
-                },
-                false,
-            )
-            .expect("readwrite redirection");
-
-            apply_shell_redirection(
-                &ExpandedRedirection {
-                    fd: target_fd,
-                    kind: RedirectionKind::HereDoc,
-                    target: "EOF".into(),
-                    here_doc_body: Some("body\n".into()),
-                },
-                false,
-            )
-            .expect("heredoc redirection");
-
-            apply_shell_redirection(
-                &ExpandedRedirection {
-                    fd: target_fd,
-                    kind: RedirectionKind::DupOutput,
-                    target: "1".into(),
-                    here_doc_body: None,
-                },
-                false,
-            )
-            .expect("dup output");
-
-            apply_shell_redirection(
-                &ExpandedRedirection {
-                    fd: target_fd,
-                    kind: RedirectionKind::DupOutput,
-                    target: "-".into(),
-                    here_doc_body: None,
-                },
-                false,
-            )
-            .expect("close dup output");
-
-            let error = apply_shell_redirection(
-                &ExpandedRedirection {
-                    fd: target_fd,
-                    kind: RedirectionKind::DupOutput,
-                    target: "bad".into(),
-                    here_doc_body: None,
-                },
-                false,
-            )
-            .expect_err("bad dup output");
-            assert_eq!(error.message, "redirection target must be a file descriptor or '-'");
-
-            let error = apply_shell_redirection(
-                &ExpandedRedirection {
-                    fd: target_fd,
-                    kind: RedirectionKind::Write,
-                    target: noclobber.display().to_string(),
-                    here_doc_body: None,
-                },
-                true,
-            )
-            .expect_err("noclobber");
-            assert!(!error.message.is_empty());
-        });
+                    true,
+                )
+                .expect_err("noclobber");
+                assert!(!error.message.is_empty());
+            });
 
         let command = Command::Redirected(
             Box::new(Command::Group(Program::default())),
@@ -2366,9 +2345,7 @@ mod tests {
         assert!(rendered.contains("{"));
         assert!(rendered.contains(">out"));
 
-        let owned: OwnedFd = File::create(dir.join("same-fd.txt")).expect("same fd file").into();
-        let raw = owned.as_raw_fd();
-        replace_shell_fd(owned, raw).expect("same-fd replacement");
+        replace_shell_fd(42, 42).expect("same-fd replacement");
 
         sys::test_support::with_fd_ops_for_test(fake_dup, fake_dup2, fake_close, || {
             drop(ShellRedirectionGuard {
@@ -2418,9 +2395,6 @@ mod tests {
             assert!(!error.message.is_empty());
         });
 
-        let _ = fs::remove_file(input);
-        let _ = fs::remove_file(noclobber);
-        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -2444,13 +2418,15 @@ mod tests {
         };
         let child = spawn_prepared(&prepared, None, false, ProcessGroupPlan::NewGroup).expect("spawn fallback");
         assert!(child.wait_with_output().expect("wait output").status.success());
-        let child = spawn_with_fallback(&prepared, Some(Stdio::null()), false, ProcessGroupPlan::None)
+        let devnull_fd = sys::open_file("/dev/null", sys::O_RDONLY, 0).expect("open /dev/null");
+        let child = spawn_with_fallback(&prepared, Some(devnull_fd), false, ProcessGroupPlan::None)
             .expect("fallback spawn");
         assert!(child.wait_with_output().expect("wait output").status.success());
+        let devnull_fd2 = sys::open_file("/dev/null", sys::O_RDONLY, 0).expect("open /dev/null");
         let child = maybe_spawn_with_fallback(
             std::io::Error::from_raw_os_error(8),
             &prepared,
-            Some(Stdio::null()),
+            Some(devnull_fd2),
             false,
             ProcessGroupPlan::None,
         )
@@ -2469,12 +2445,9 @@ mod tests {
             }],
             noclobber: false,
         };
-        let (mut command, prepared_redirections) = prepared
-            .build_command(false, ProcessGroupPlan::None)
-            .expect("build command");
-        assert!(prepared_redirections.stdout_redirected);
-        assert!(prepared_redirections.actions.is_empty());
-        assert!(command.spawn().expect("spawn pre-exec").wait().expect("wait").success());
+        let child = spawn_prepared(&prepared, None, false, ProcessGroupPlan::None)
+            .expect("spawn with stdout redirect");
+        assert!(child.wait().expect("wait").success());
 
         let prepared = PreparedProcess {
             exec_path: meiksh_bin_path().display().to_string(),
@@ -2483,14 +2456,12 @@ mod tests {
             redirections: Vec::new(),
             noclobber: false,
         };
-        let (mut command, _) = prepared
-            .build_command(false, ProcessGroupPlan::NewGroup)
-            .expect("build command pgid");
-        assert!(command.spawn().expect("spawn newgroup").wait().expect("wait").success());
-        let (mut command, _) = prepared
-            .build_command(false, ProcessGroupPlan::Join(0))
-            .expect("build command join");
-        assert!(command.spawn().expect("spawn join").wait().expect("wait").success());
+        let child = spawn_prepared(&prepared, None, false, ProcessGroupPlan::NewGroup)
+            .expect("spawn newgroup");
+        assert!(child.wait().expect("wait").success());
+        let child = spawn_prepared(&prepared, None, false, ProcessGroupPlan::Join(0))
+            .expect("spawn join");
+        assert!(child.wait().expect("wait").success());
 
         fn fake_isatty(_fd: i32) -> i32 {
             1

@@ -1,3 +1,6 @@
+#![warn(clippy::disallowed_types)]
+#![warn(clippy::disallowed_methods)]
+
 pub mod builtin;
 pub mod exec;
 pub mod expand;
