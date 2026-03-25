@@ -1267,16 +1267,6 @@ mod tests {
 
     use crate::test_utils::meiksh_bin_path;
 
-    unsafe extern "C" {
-        fn __error() -> *mut c_int;
-    }
-
-    fn set_errno(value: c_int) {
-        unsafe {
-            *__error() = value;
-        }
-    }
-
     fn test_shell() -> Shell {
         Shell {
             options: ShellOptions::default(),
@@ -2199,11 +2189,19 @@ mod tests {
             0
         }
         fn fake_dup_error(_fd: i32) -> i32 {
-            set_errno(22);
+            sys::set_errno(22);
             -1
         }
         fn fake_close_error(_fd: i32) -> i32 {
-            set_errno(22);
+            sys::set_errno(22);
+            -1
+        }
+        fn fake_close_ebadf(_fd: i32) -> i32 {
+            sys::set_errno(libc::EBADF);
+            -1
+        }
+        fn fake_dup2_error(_oldfd: i32, _newfd: i32) -> i32 {
+            sys::set_errno(libc::EBADF);
             -1
         }
 
@@ -2334,17 +2332,19 @@ mod tests {
             });
         });
 
-        let guard = apply_shell_redirections(
-            &[ExpandedRedirection {
-                fd: 123_456,
-                kind: RedirectionKind::DupOutput,
-                target: "-".into(),
-                here_doc_body: None,
-            }],
-            false,
-        )
-        .expect("invalid fd is treated as absent");
-        drop(guard);
+        sys::test_support::with_fd_ops_for_test(fake_dup, fake_dup2, fake_close_ebadf, || {
+            let guard = apply_shell_redirections(
+                &[ExpandedRedirection {
+                    fd: 123_456,
+                    kind: RedirectionKind::DupOutput,
+                    target: "-".into(),
+                    here_doc_body: None,
+                }],
+                false,
+            )
+            .expect("invalid fd is treated as absent");
+            drop(guard);
+        });
 
         sys::test_support::with_fd_ops_for_test(fake_dup_error, fake_dup2, fake_close, || {
             let error = apply_shell_redirections(
@@ -2360,12 +2360,14 @@ mod tests {
             assert!(!error.message.is_empty());
         });
 
-        let error = apply_child_fd_actions(&[ChildFdAction::DupFd {
-            source_fd: -1,
-            target_fd: 56,
-        }])
-        .expect_err("child dup failure");
-        assert!(!error.to_string().is_empty());
+        sys::test_support::with_fd_ops_for_test(fake_dup, fake_dup2_error, fake_close, || {
+            let error = apply_child_fd_actions(&[ChildFdAction::DupFd {
+                source_fd: -1,
+                target_fd: 56,
+            }])
+            .expect_err("child dup failure");
+            assert!(!error.to_string().is_empty());
+        });
 
         sys::test_support::with_fd_ops_for_test(fake_dup, fake_dup2, fake_close_error, || {
             let error = apply_child_fd_actions(&[ChildFdAction::CloseFd { target_fd: 56 }])
