@@ -8,11 +8,22 @@ It is not the primary conformance ledger. Requirement status belongs in `docs/sp
 
 - Language: Rust
 - Dependency policy: keep dependencies minimal; low-level POSIX interface access lives in `src/sys.rs`
+- FFI boundary policy: `libc` is permitted only in `src/sys.rs`, with a narrow documented exception for `tests/spec/basic.rs`; all other modules must go through shell-owned helpers exposed from that layer instead of importing `libc` directly
+- Portability policy: do not introduce `#[cfg(target_os = ...)]` switches as a normal implementation technique; platform differences should be absorbed through POSIX-facing helpers in `src/sys.rs`, preferably by relying on `libc`-provided types and constants rather than open-coding per-OS values
 - Source policy: no reuse of existing shell source code
 - Semantic target: Issue 8 first, with Issue 7 compatibility notes when needed for documentation review
 - Conformance policy: POSIX behavior decisions must be based on the local POSIX reference documents in `docs/posix/`, not on probing whatever `/bin/sh` happens to do on the host system
 
 ## Current Policy Decisions
+
+## Low-Level Interface Boundary
+
+- `src/sys.rs` is the only production module that may depend on `libc` directly.
+- `tests/spec/basic.rs` may also depend on `libc` for test-only setup of inherited file-descriptor state where using `src/sys.rs` helpers is not practical inside `pre_exec`.
+- Code outside `src/sys.rs` should express OS needs in terms of shell-owned helper functions, data types, and constants from `src/sys.rs`.
+- If a required interface or constant is missing, extend `src/sys.rs` instead of importing `libc` elsewhere.
+- New platform-specific `target_os` branching is not an acceptable default approach for production code or tests.
+- Do not copy the old test-local `target_os` pattern into new code; use `libc`-provided constants instead.
 
 ## Parser
 

@@ -22,6 +22,7 @@ pub trait Context {
     fn special_param(&self, name: char) -> Option<String>;
     fn positional_param(&self, index: usize) -> Option<String>;
     fn set_var(&mut self, name: &str, value: String) -> Result<(), ExpandError>;
+    fn nounset_enabled(&self) -> bool;
     fn pathname_expansion_enabled(&self) -> bool {
         true
     }
@@ -297,15 +298,22 @@ fn expand_dollar<C: Context>(
         '?' | '$' | '!' | '#' | '*' | '@' | '-' | '0' => {
             let ch = chars[1];
             let value = if ch == '0' {
-                ctx.shell_name().to_string()
+                require_set_parameter(ctx, "0", Some(ctx.shell_name().to_string()))?
             } else {
-                ctx.special_param(ch).unwrap_or_default()
+                require_set_parameter(ctx, &ch.to_string(), ctx.special_param(ch))?
             };
             let _ = quoted;
             Ok((value, 2))
         }
         next if next.is_ascii_digit() => {
-            Ok((ctx.positional_param(next.to_digit(10).unwrap_or_default() as usize).unwrap_or_default(), 2))
+            Ok((
+                require_set_parameter(
+                    ctx,
+                    &next.to_string(),
+                    ctx.positional_param(next.to_digit(10).unwrap_or_default() as usize),
+                )?,
+                2,
+            ))
         }
         next if next == '_' || next.is_ascii_alphabetic() => {
             let mut index = 1usize;
@@ -314,7 +322,7 @@ fn expand_dollar<C: Context>(
                 name.push(chars[index]);
                 index += 1;
             }
-            Ok((lookup_param(ctx, &name).unwrap_or_default(), index))
+            Ok((require_set_parameter(ctx, &name, lookup_param(ctx, &name))?, index))
         }
         _ => Ok(("$".to_string(), 1)),
     }
@@ -344,17 +352,17 @@ fn expand_parameter_dollar<C: Context>(ctx: &mut C, chars: &[char]) -> Result<(S
         '?' | '$' | '!' | '#' | '*' | '@' | '-' | '0' => {
             let ch = chars[1];
             let value = if ch == '0' {
-                ctx.shell_name().to_string()
+                require_set_parameter(ctx, "0", Some(ctx.shell_name().to_string()))?
             } else {
-                ctx.special_param(ch).unwrap_or_default()
+                require_set_parameter(ctx, &ch.to_string(), ctx.special_param(ch))?
             };
             Ok((value, 2))
         }
-        next if next.is_ascii_digit() => Ok((
-            ctx.positional_param(next.to_digit(10).unwrap_or_default() as usize)
-                .unwrap_or_default(),
-            2,
-        )),
+        next if next.is_ascii_digit() => {
+            let name = next.to_string();
+            let value = ctx.positional_param(next.to_digit(10).unwrap_or_default() as usize);
+            Ok((require_set_parameter(ctx, &name, value)?, 2))
+        }
         next if next == '_' || next.is_ascii_alphabetic() => {
             let mut index = 1usize;
             let mut name = String::new();
@@ -362,7 +370,7 @@ fn expand_parameter_dollar<C: Context>(ctx: &mut C, chars: &[char]) -> Result<(S
                 name.push(chars[index]);
                 index += 1;
             }
-            Ok((lookup_param(ctx, &name).unwrap_or_default(), index))
+            Ok((require_set_parameter(ctx, &name, lookup_param(ctx, &name))?, index))
         }
         _ => Ok(("$".to_string(), 1)),
     }
@@ -473,7 +481,7 @@ fn expand_braced_parameter<C: Context>(ctx: &mut C, expr: &str, quoted: bool) ->
         return Ok(lookup_param(ctx, "#").unwrap_or_default());
     }
     if let Some(name) = expr.strip_prefix('#') {
-        let value = lookup_param(ctx, name).unwrap_or_default();
+        let value = require_set_parameter(ctx, name, lookup_param(ctx, name))?;
         return Ok(value.chars().count().to_string());
     }
 
@@ -483,7 +491,7 @@ fn expand_braced_parameter<C: Context>(ctx: &mut C, expr: &str, quoted: bool) ->
     let is_null = value.as_deref().map(|s| s.is_empty()).unwrap_or(true);
 
     match op.as_deref() {
-        None => Ok(value.unwrap_or_default()),
+        None => require_set_parameter(ctx, &name, value),
         Some(":-") => {
             if !is_set || is_null {
                 expand_parameter_word(ctx, &word.unwrap_or_default(), quoted)
@@ -543,22 +551,22 @@ fn expand_braced_parameter<C: Context>(ctx: &mut C, expr: &str, quoted: bool) ->
             }
         }
         Some("%") => remove_parameter_pattern(
-            value.unwrap_or_default(),
+            require_set_parameter(ctx, &name, value)?,
             &expand_parameter_pattern_word(ctx, &word.unwrap_or_default())?,
             PatternRemoval::SmallestSuffix,
         ),
         Some("%%") => remove_parameter_pattern(
-            value.unwrap_or_default(),
+            require_set_parameter(ctx, &name, value)?,
             &expand_parameter_pattern_word(ctx, &word.unwrap_or_default())?,
             PatternRemoval::LargestSuffix,
         ),
         Some("#") => remove_parameter_pattern(
-            value.unwrap_or_default(),
+            require_set_parameter(ctx, &name, value)?,
             &expand_parameter_pattern_word(ctx, &word.unwrap_or_default())?,
             PatternRemoval::SmallestPrefix,
         ),
         Some("##") => remove_parameter_pattern(
-            value.unwrap_or_default(),
+            require_set_parameter(ctx, &name, value)?,
             &expand_parameter_pattern_word(ctx, &word.unwrap_or_default())?,
             PatternRemoval::LargestPrefix,
         ),
@@ -573,7 +581,7 @@ fn expand_braced_parameter_text<C: Context>(ctx: &mut C, expr: &str) -> Result<S
         return Ok(lookup_param(ctx, "#").unwrap_or_default());
     }
     if let Some(name) = expr.strip_prefix('#') {
-        let value = lookup_param(ctx, name).unwrap_or_default();
+        let value = require_set_parameter(ctx, name, lookup_param(ctx, name))?;
         return Ok(value.chars().count().to_string());
     }
 
@@ -583,7 +591,7 @@ fn expand_braced_parameter_text<C: Context>(ctx: &mut C, expr: &str) -> Result<S
     let is_null = value.as_deref().map(|s| s.is_empty()).unwrap_or(true);
 
     match op.as_deref() {
-        None => Ok(value.unwrap_or_default()),
+        None => require_set_parameter(ctx, &name, value),
         Some(":-") => {
             if !is_set || is_null {
                 expand_parameter_text(ctx, &word.unwrap_or_default())
@@ -644,22 +652,22 @@ fn expand_braced_parameter_text<C: Context>(ctx: &mut C, expr: &str) -> Result<S
             }
         }
         Some("%") => remove_parameter_pattern(
-            value.unwrap_or_default(),
+            require_set_parameter(ctx, &name, value)?,
             &expand_parameter_text(ctx, &word.unwrap_or_default())?,
             PatternRemoval::SmallestSuffix,
         ),
         Some("%%") => remove_parameter_pattern(
-            value.unwrap_or_default(),
+            require_set_parameter(ctx, &name, value)?,
             &expand_parameter_text(ctx, &word.unwrap_or_default())?,
             PatternRemoval::LargestSuffix,
         ),
         Some("#") => remove_parameter_pattern(
-            value.unwrap_or_default(),
+            require_set_parameter(ctx, &name, value)?,
             &expand_parameter_text(ctx, &word.unwrap_or_default())?,
             PatternRemoval::SmallestPrefix,
         ),
         Some("##") => remove_parameter_pattern(
-            value.unwrap_or_default(),
+            require_set_parameter(ctx, &name, value)?,
             &expand_parameter_text(ctx, &word.unwrap_or_default())?,
             PatternRemoval::LargestPrefix,
         ),
@@ -774,6 +782,15 @@ fn lookup_param<C: Context>(ctx: &C, name: &str) -> Option<String> {
         }
     }
     ctx.env_var(name)
+}
+
+fn require_set_parameter<C: Context>(ctx: &C, name: &str, value: Option<String>) -> Result<String, ExpandError> {
+    if value.is_none() && ctx.nounset_enabled() && name != "@" && name != "*" {
+        return Err(ExpandError {
+            message: format!("{name}: parameter not set"),
+        });
+    }
+    Ok(value.unwrap_or_default())
 }
 
 #[derive(Debug)]
@@ -1206,6 +1223,7 @@ mod tests {
         env: HashMap<String, String>,
         positional: Vec<String>,
         pathname_expansion_enabled: bool,
+        nounset_enabled: bool,
     }
 
     impl FakeContext {
@@ -1222,6 +1240,7 @@ mod tests {
                 env,
                 positional: vec!["alpha".into(), "beta".into()],
                 pathname_expansion_enabled: true,
+                nounset_enabled: false,
             }
         }
     }
@@ -1269,6 +1288,10 @@ mod tests {
 
         fn pathname_expansion_enabled(&self) -> bool {
             self.pathname_expansion_enabled
+        }
+
+        fn nounset_enabled(&self) -> bool {
+            self.nounset_enabled
         }
 
         fn shell_name(&self) -> &str {
@@ -1562,15 +1585,43 @@ mod tests {
         assert!(parser.is_eof());
     }
 
+    #[test]
+    fn nounset_option_rejects_plain_unset_parameter_expansions() {
+        let mut ctx = FakeContext::new();
+        ctx.nounset_enabled = true;
+
+        let error = expand_word(&mut ctx, &Word { raw: "$UNSET".into() }).expect_err("nounset variable");
+        assert_eq!(error.message, "UNSET: parameter not set");
+
+        let error = expand_word(&mut ctx, &Word { raw: "${UNSET}".into() }).expect_err("nounset braced");
+        assert_eq!(error.message, "UNSET: parameter not set");
+
+        let error = expand_word(&mut ctx, &Word { raw: "$9".into() }).expect_err("nounset positional");
+        assert_eq!(error.message, "9: parameter not set");
+
+        assert_eq!(
+            expand_word(&mut ctx, &Word { raw: "${UNSET-word}".into() }).expect("default still works"),
+            vec!["word".to_string()]
+        );
+        assert_eq!(
+            expand_word(&mut ctx, &Word { raw: "\"$*\"".into() }).expect("star exempt"),
+            vec!["alpha beta".to_string()]
+        );
+    }
+
     struct DefaultPathContext {
         env: HashMap<String, String>,
+        nounset_enabled: bool,
     }
 
     impl DefaultPathContext {
         fn new() -> Self {
             let mut env = HashMap::new();
             env.insert("HOME".into(), "/tmp/home".into());
-            Self { env }
+            Self {
+                env,
+                nounset_enabled: false,
+            }
         }
     }
 
@@ -1594,6 +1645,10 @@ mod tests {
         fn set_var(&mut self, name: &str, value: String) -> Result<(), ExpandError> {
             self.env.insert(name.to_string(), value);
             Ok(())
+        }
+
+        fn nounset_enabled(&self) -> bool {
+            self.nounset_enabled
         }
 
         fn shell_name(&self) -> &str {
@@ -1628,6 +1683,7 @@ mod tests {
             ("printf (hi)".to_string(), command_chars.len())
         );
     }
+
 
     #[test]
     fn parameter_text_expansion_avoids_command_substitution() {
@@ -1678,6 +1734,18 @@ mod tests {
         assert_eq!(ctx.env.get("MISSING3").map(String::as_str), Some("value"));
         assert_eq!(expand_braced_parameter_text(&mut ctx, "HOME=value").expect("assign set"), "/tmp/home");
         assert!(assign_parameter_text(&mut ctx, "1", "value").is_err());
+    }
+
+    #[test]
+    fn nounset_option_rejects_length_and_pattern_expansions_of_unset_parameters() {
+        let mut ctx = DefaultPathContext::new();
+        ctx.nounset_enabled = true;
+
+        let error = expand_braced_parameter_text(&mut ctx, "#UNSET").expect_err("nounset length");
+        assert_eq!(error.message, "UNSET: parameter not set");
+
+        let error = expand_braced_parameter_text(&mut ctx, "UNSET%.*").expect_err("nounset pattern");
+        assert_eq!(error.message, "UNSET: parameter not set");
     }
 
     #[test]

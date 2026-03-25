@@ -112,6 +112,11 @@ pub(crate) mod test_support {
         &LOCK
     }
 
+    fn pending_signal_lock() -> &'static Mutex<()> {
+        static LOCK: Mutex<()> = Mutex::new(());
+        &LOCK
+    }
+
     pub(crate) fn current_syscalls() -> Option<Syscalls> {
         TEST_SYSCALLS.with(|cell| *cell.borrow())
     }
@@ -169,6 +174,15 @@ pub(crate) mod test_support {
             .filter_map(|signal| signal_mask(*signal))
             .fold(0usize, |acc, bit| acc | bit);
         PENDING_SIGNALS.store(bits, Ordering::SeqCst);
+    }
+
+    pub(crate) fn with_pending_signals_for_test<T>(signals: &[c_int], f: impl FnOnce() -> T) -> T {
+        let _guard = pending_signal_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous = PENDING_SIGNALS.load(Ordering::SeqCst);
+        set_pending_signals_for_test(signals);
+        let result = f();
+        PENDING_SIGNALS.store(previous, Ordering::SeqCst);
+        result
     }
 
     pub(crate) fn with_job_control_syscalls_for_test<T>(
@@ -835,11 +849,13 @@ mod tests {
             assert!(default_signal_action(SIGQUIT).is_err());
         });
 
-        test_support::set_pending_signals_for_test(&[SIGINT]);
-        assert_eq!(has_pending_signal(), Some(SIGINT));
-        assert_eq!(take_pending_signals(), vec![SIGINT]);
-        test_support::set_pending_signals_for_test(&[99]);
-        assert_eq!(has_pending_signal(), None);
+        test_support::with_pending_signals_for_test(&[SIGINT], || {
+            assert_eq!(has_pending_signal(), Some(SIGINT));
+            assert_eq!(take_pending_signals(), vec![SIGINT]);
+        });
+        test_support::with_pending_signals_for_test(&[99], || {
+            assert_eq!(has_pending_signal(), None);
+        });
 
         let interrupted_error = io::Error::from_raw_os_error(EINTR);
         assert!(interrupted(&interrupted_error));

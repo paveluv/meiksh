@@ -1,26 +1,9 @@
+use libc;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::{fs, time::{SystemTime, UNIX_EPOCH}};
-
-const F_GETFL: i32 = 3;
-const F_SETFL: i32 = 4;
-#[cfg(any(
-    target_os = "macos",
-    target_os = "ios",
-    target_os = "freebsd",
-    target_os = "openbsd",
-    target_os = "netbsd",
-    target_os = "dragonfly"
-))]
-const O_NONBLOCK: i32 = 0x0004;
-#[cfg(any(target_os = "linux", target_os = "android"))]
-const O_NONBLOCK: i32 = 0o4000;
-
-unsafe extern "C" {
-    fn fcntl(fd: i32, cmd: i32, ...) -> i32;
-}
 
 fn meiksh() -> &'static str {
     env!("CARGO_BIN_EXE_meiksh")
@@ -42,11 +25,11 @@ fn run_meiksh_with_nonblocking_stdin(stdin: &[u8]) -> std::process::Output {
     let mut command = Command::new(meiksh());
     unsafe {
         command.pre_exec(|| {
-            let flags = fcntl(0, F_GETFL, 0);
+            let flags = libc::fcntl(0, libc::F_GETFL, 0);
             if flags < 0 {
                 return Err(std::io::Error::last_os_error());
             }
-            if fcntl(0, F_SETFL, flags | O_NONBLOCK) < 0 {
+            if libc::fcntl(0, libc::F_SETFL, flags | libc::O_NONBLOCK) < 0 {
                 return Err(std::io::Error::last_os_error());
             }
             Ok(())
@@ -522,7 +505,7 @@ fn sh_forces_blocking_reads_on_nonblocking_standard_input() {
 }
 
 #[test]
-fn sh_startup_option_subset_supports_allexport_named_o_and_dollar_dash() {
+fn sh_startup_option_subset_supports_allexport_nounset_named_o_and_dollar_dash() {
     let export_output = Command::new(meiksh())
         .args(["-a", "-c", "AUTO=works; printenv AUTO"])
         .output()
@@ -531,18 +514,43 @@ fn sh_startup_option_subset_supports_allexport_named_o_and_dollar_dash() {
     assert_eq!(String::from_utf8_lossy(&export_output.stdout), "works\n");
 
     let dash_output = Command::new(meiksh())
-        .args(["-a", "-C", "-c", "printf '%s' \"$-\""])
+        .args(["-a", "-C", "-u", "-c", "printf '%s' \"$-\""])
         .output()
         .expect("run meiksh dollar dash");
     assert!(dash_output.status.success());
-    assert_eq!(String::from_utf8_lossy(&dash_output.stdout), "aCc");
+    assert_eq!(String::from_utf8_lossy(&dash_output.stdout), "aCuc");
 
     let named_output = Command::new(meiksh())
-        .args(["-o", "noglob", "-c", "printf '%s' *.definitely_missing"])
+        .args(["-o", "noglob", "-o", "nounset", "-c", "printf '%s|%s' *.definitely_missing \"$-\""])
         .output()
-        .expect("run meiksh -o noglob");
+        .expect("run meiksh -o noglob -o nounset");
     assert!(named_output.status.success());
-    assert_eq!(String::from_utf8_lossy(&named_output.stdout), "*.definitely_missing");
+    assert_eq!(String::from_utf8_lossy(&named_output.stdout), "*.definitely_missing|fuc");
+}
+
+#[test]
+fn sh_nounset_fails_plain_unset_expansions_but_allows_defaulting_forms() {
+    let unset_output = Command::new(meiksh())
+        .args(["-u", "-c", "printf '%s' \"$MISSING\"; printf bad"])
+        .output()
+        .expect("run meiksh -u");
+    assert_eq!(unset_output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&unset_output.stdout).is_empty());
+    assert!(String::from_utf8_lossy(&unset_output.stderr).contains("MISSING: parameter not set"));
+
+    let default_output = Command::new(meiksh())
+        .args(["-u", "-c", "printf '%s' \"${MISSING-default}\""])
+        .output()
+        .expect("run meiksh -u default");
+    assert!(default_output.status.success());
+    assert_eq!(String::from_utf8_lossy(&default_output.stdout), "default");
+
+    let set_builtin_output = Command::new(meiksh())
+        .args(["-c", "set -u; printf '%s|%s' \"$-\" \"${MISSING-fallback}\""])
+        .output()
+        .expect("run set -u");
+    assert!(set_builtin_output.status.success());
+    assert_eq!(String::from_utf8_lossy(&set_builtin_output.stdout), "uc|fallback");
 }
 
 #[test]

@@ -31,16 +31,18 @@ pub struct ShellOptions {
     pub force_interactive: bool,
     pub noclobber: bool,
     pub noglob: bool,
+    pub nounset: bool,
     pub script_path: Option<PathBuf>,
     pub shell_name_override: Option<String>,
     pub positional: Vec<String>,
 }
 
-const REPORTABLE_OPTION_NAMES: [(&str, char); 4] = [
+const REPORTABLE_OPTION_NAMES: [(&str, char); 5] = [
     ("allexport", 'a'),
     ("noclobber", 'C'),
     ("noglob", 'f'),
     ("noexec", 'n'),
+    ("nounset", 'u'),
 ];
 
 impl ShellOptions {
@@ -51,6 +53,7 @@ impl ShellOptions {
             'f' => self.noglob = enabled,
             'i' => self.force_interactive = enabled,
             'n' => self.syntax_check_only = enabled,
+            'u' => self.nounset = enabled,
             _ => return Err(ShellError::with_status(2, format!("invalid option: {ch}"))),
         }
         Ok(())
@@ -66,12 +69,13 @@ impl ShellOptions {
         self.set_short_option(*letter, enabled)
     }
 
-    pub fn reportable_options(&self) -> [(&'static str, bool); 4] {
+    pub fn reportable_options(&self) -> [(&'static str, bool); 5] {
         [
             ("allexport", self.allexport),
             ("noclobber", self.noclobber),
             ("noglob", self.noglob),
             ("noexec", self.syntax_check_only),
+            ("nounset", self.nounset),
         ]
     }
 }
@@ -854,6 +858,10 @@ impl expand::Context for Shell {
         !self.options.noglob
     }
 
+    fn nounset_enabled(&self) -> bool {
+        self.options.nounset
+    }
+
     fn shell_name(&self) -> &str {
         &self.shell_name
     }
@@ -956,6 +964,9 @@ impl Shell {
         }
         if self.options.syntax_check_only {
             flags.push('n');
+        }
+        if self.options.nounset {
+            flags.push('u');
         }
         if self.options.command_string.is_some() {
             flags.push('c');
@@ -1137,9 +1148,12 @@ mod tests {
         assert!(options.force_interactive);
         assert_eq!(options.positional, vec!["arg".to_string()]);
 
-        let options = parse_options(&["meiksh".into(), "-a".into(), "-o".into(), "noglob".into(), "script.sh".into()])
-            .expect("parse -a -o noglob");
+        let options = parse_options(
+            &["meiksh".into(), "-a".into(), "-u".into(), "-o".into(), "noglob".into(), "script.sh".into()],
+        )
+        .expect("parse -a -u -o noglob");
         assert!(options.allexport);
+        assert!(options.nounset);
         assert!(options.noglob);
         assert_eq!(options.script_path, Some(PathBuf::from("script.sh")));
 
@@ -1367,10 +1381,11 @@ mod tests {
         assert!(options.noclobber);
         assert_eq!(options.script_path, Some(PathBuf::from("script.sh")));
 
-        let options = parse_options(&["meiksh".into(), "-in".into(), "+n".into(), "script.sh".into()])
+        let options = parse_options(&["meiksh".into(), "-inu".into(), "+nu".into(), "script.sh".into()])
             .expect("parse");
         assert!(options.force_interactive);
         assert!(!options.syntax_check_only);
+        assert!(!options.nounset);
         assert_eq!(options.script_path, Some(PathBuf::from("script.sh")));
 
         let options = parse_options(&["meiksh".into(), "-".into()])
@@ -1625,23 +1640,26 @@ mod tests {
         shell
             .set_trap(TrapCondition::Signal(sys::SIGINT), Some(TrapAction::Command("printf trap".into())))
             .expect("trap");
-        sys::test_support::set_pending_signals_for_test(&[sys::SIGINT]);
-        shell.run_pending_traps().expect("run traps");
+        sys::test_support::with_pending_signals_for_test(&[sys::SIGINT], || {
+            shell.run_pending_traps().expect("run traps");
+        });
         assert_eq!(shell.last_status, 9);
 
         shell
             .set_trap(TrapCondition::Signal(sys::SIGINT), Some(TrapAction::Command("exit 7".into())))
             .expect("exit trap");
-        sys::test_support::set_pending_signals_for_test(&[sys::SIGINT]);
-        shell.run_pending_traps().expect("run exit trap");
+        sys::test_support::with_pending_signals_for_test(&[sys::SIGINT], || {
+            shell.run_pending_traps().expect("run exit trap");
+        });
         assert!(!shell.running);
         shell.running = true;
 
         shell
             .set_trap(TrapCondition::Signal(sys::SIGTERM), Some(TrapAction::Ignore))
             .expect("ignore trap");
-        sys::test_support::set_pending_signals_for_test(&[sys::SIGTERM]);
-        shell.run_pending_traps().expect("ignored pending");
+        sys::test_support::with_pending_signals_for_test(&[sys::SIGTERM], || {
+            shell.run_pending_traps().expect("ignored pending");
+        });
 
         let child = ProcessCommand::new(&shell.current_exe)
             .args(["-c", "sleep 0.05"])
@@ -1693,10 +1711,11 @@ mod tests {
             .spawn()
             .expect("spawn");
         shell.launch_background_job("sleep".into(), None, vec![child]);
-        sys::test_support::set_pending_signals_for_test(&[sys::SIGINT]);
         CALLS.store(0, Ordering::SeqCst);
-        sys::test_support::with_waitpid_for_test(fake_waitpid, || {
-            assert_eq!(shell.wait_for_job_operand(1).expect("interrupted wait"), 130);
+        sys::test_support::with_pending_signals_for_test(&[sys::SIGINT], || {
+            sys::test_support::with_waitpid_for_test(fake_waitpid, || {
+                assert_eq!(shell.wait_for_job_operand(1).expect("interrupted wait"), 130);
+            });
         });
         assert_eq!(shell.last_status, 130);
         shell.jobs.clear();
@@ -1739,9 +1758,10 @@ mod tests {
             .expect("spawn");
         let pid = child.id();
         shell.launch_background_job("sleep".into(), None, vec![child]);
-        sys::test_support::set_pending_signals_for_test(&[sys::SIGINT]);
-        sys::test_support::with_waitpid_for_test(fake_waitpid_all, || {
-            assert_eq!(shell.wait_for_pid_operand(pid).expect("pid interrupt"), 130);
+        sys::test_support::with_pending_signals_for_test(&[sys::SIGINT], || {
+            sys::test_support::with_waitpid_for_test(fake_waitpid_all, || {
+                assert_eq!(shell.wait_for_pid_operand(pid).expect("pid interrupt"), 130);
+            });
         });
 
         let child = ProcessCommand::new(&shell.current_exe)
@@ -1766,9 +1786,10 @@ mod tests {
             .spawn()
             .expect("spawn");
         shell.launch_background_job("sleep".into(), None, vec![child]);
-        sys::test_support::set_pending_signals_for_test(&[sys::SIGINT]);
-        sys::test_support::with_waitpid_for_test(fake_waitpid_all, || {
-            assert_eq!(shell.wait_for_all_jobs().expect("wait all status"), 130);
+        sys::test_support::with_pending_signals_for_test(&[sys::SIGINT], || {
+            sys::test_support::with_waitpid_for_test(fake_waitpid_all, || {
+                assert_eq!(shell.wait_for_all_jobs().expect("wait all status"), 130);
+            });
         });
 
         let child = ProcessCommand::new(&shell.current_exe)
