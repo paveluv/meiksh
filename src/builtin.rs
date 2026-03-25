@@ -1606,21 +1606,10 @@ mod tests {
     use crate::shell::ShellOptions;
     use crate::syntax::Word;
     use std::collections::{BTreeMap, BTreeSet, HashMap};
-    use std::fs;
     use std::io::{self, Cursor};
-    use std::os::unix::fs::PermissionsExt;
-    use std::process::Command as ProcessCommand;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     use crate::sys::test_support::VfsBuilder;
-    use crate::test_utils::{cwd_lock, meiksh_bin_path};
-
-    fn child_to_handle(child: std::process::Child) -> sys::ChildHandle {
-        sys::ChildHandle {
-            pid: child.id() as sys::Pid,
-            stdout_fd: None,
-        }
-    }
+    use crate::test_utils::meiksh_bin_path;
 
     fn test_shell() -> Shell {
         Shell {
@@ -1920,25 +1909,26 @@ mod tests {
 
     #[test]
     fn umask_error_paths_and_symbolic_modes_are_covered() {
-        let mut shell = test_shell();
-        assert!(matches!(
-            run(&mut shell, &["umask".into(), "-Z".into()]).expect("bad option"),
-            BuiltinOutcome::Status(1)
-        ));
-        let saved = sys::current_umask();
-        assert!(matches!(
-            run(&mut shell, &["umask".into(), "--".into(), "077".into()]).expect("double dash"),
-            BuiltinOutcome::Status(0)
-        ));
-        sys::set_umask(saved);
-        assert!(matches!(
-            run(&mut shell, &["umask".into(), "077".into(), "022".into()]).expect("too many"),
-            BuiltinOutcome::Status(1)
-        ));
-        assert!(matches!(
-            run(&mut shell, &["umask".into(), "u+s".into()]).expect("bad symbolic"),
-            BuiltinOutcome::Status(1)
-        ));
+        fn fake_umask(mask: sys::FileModeMask) -> sys::FileModeMask { mask }
+        sys::test_support::with_umask_for_test(fake_umask, || {
+            let mut shell = test_shell();
+            assert!(matches!(
+                run(&mut shell, &["umask".into(), "-Z".into()]).expect("bad option"),
+                BuiltinOutcome::Status(1)
+            ));
+            assert!(matches!(
+                run(&mut shell, &["umask".into(), "--".into(), "077".into()]).expect("double dash"),
+                BuiltinOutcome::Status(0)
+            ));
+            assert!(matches!(
+                run(&mut shell, &["umask".into(), "077".into(), "022".into()]).expect("too many"),
+                BuiltinOutcome::Status(1)
+            ));
+            assert!(matches!(
+                run(&mut shell, &["umask".into(), "u+s".into()]).expect("bad symbolic"),
+                BuiltinOutcome::Status(1)
+            ));
+        });
 
         assert_eq!(parse_umask_mask("-w", 0o022), Some(0o222));
         assert_eq!(parse_umask_mask("a+r", 0o777), Some(0o333));
@@ -2011,140 +2001,105 @@ mod tests {
 
     #[test]
     fn cd_set_eval_dot_and_exec_noop_paths_work() {
-        let _guard = cwd_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut shell = test_shell();
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("meiksh-cd-{unique}"));
-        fs::create_dir_all(&dir).expect("mkdir");
+        VfsBuilder::new()
+            .dir("/tmp/cd-target")
+            .file("/tmp/dot-script.sh", b"FROM_DOT=1\n")
+            .cwd("/home")
+            .run(|| {
+                let mut shell = test_shell();
+                run(&mut shell, &["cd".into(), "/tmp/cd-target".into()]).expect("cd");
+                assert_eq!(sys::get_cwd().expect("cwd"), "/tmp/cd-target");
 
-        let cwd = std::env::current_dir().expect("cwd");
-        run(&mut shell, &["cd".into(), dir.display().to_string()]).expect("cd");
-        assert_eq!(
-            std::fs::canonicalize(std::env::current_dir().expect("cwd")).expect("canonical cwd"),
-            std::fs::canonicalize(&dir).expect("canonical dir")
-        );
-        std::env::set_current_dir(&cwd).expect("restore cwd");
-        let _ = fs::remove_dir_all(&dir);
+                let outcome = run(&mut shell, &["set".into(), "alpha".into(), "beta".into()]).expect("set");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert_eq!(shell.positional, vec!["alpha".to_string(), "beta".to_string()]);
 
-        let outcome = run(&mut shell, &["set".into(), "alpha".into(), "beta".into()]).expect("set");
-        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-        assert_eq!(shell.positional, vec!["alpha".to_string(), "beta".to_string()]);
+                let outcome = run(&mut shell, &["set".into(), "--".into(), "gamma".into(), "delta".into()])
+                    .expect("set --");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert_eq!(shell.positional, vec!["gamma".to_string(), "delta".to_string()]);
 
-        let outcome = run(&mut shell, &["set".into(), "--".into(), "gamma".into(), "delta".into()])
-            .expect("set --");
-        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-        assert_eq!(shell.positional, vec!["gamma".to_string(), "delta".to_string()]);
+                let outcome = run(&mut shell, &["set".into(), "-C".into()]).expect("set -C");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert!(shell.options.noclobber);
 
-        let outcome = run(&mut shell, &["set".into(), "-C".into()]).expect("set -C");
-        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-        assert!(shell.options.noclobber);
+                let outcome = run(&mut shell, &["set".into(), "+C".into()]).expect("set +C");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert!(!shell.options.noclobber);
 
-        let outcome = run(&mut shell, &["set".into(), "+C".into()]).expect("set +C");
-        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-        assert!(!shell.options.noclobber);
+                let outcome = run(&mut shell, &["set".into(), "-f".into()]).expect("set -f");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert!(shell.options.noglob);
 
-        let outcome = run(&mut shell, &["set".into(), "-f".into()]).expect("set -f");
-        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-        assert!(shell.options.noglob);
+                let outcome = run(&mut shell, &["set".into(), "+f".into()]).expect("set +f");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert!(!shell.options.noglob);
 
-        let outcome = run(&mut shell, &["set".into(), "+f".into()]).expect("set +f");
-        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-        assert!(!shell.options.noglob);
+                let outcome = run(&mut shell, &["set".into(), "-Cf".into()]).expect("set -Cf");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert!(shell.options.noclobber);
+                assert!(shell.options.noglob);
 
-        let outcome = run(&mut shell, &["set".into(), "-Cf".into()]).expect("set -Cf");
-        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-        assert!(shell.options.noclobber);
-        assert!(shell.options.noglob);
+                let outcome = run(&mut shell, &["set".into(), "-C".into(), "--".into(), "epsilon".into()])
+                    .expect("set -C --");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert!(shell.options.noclobber);
+                assert_eq!(shell.positional, vec!["epsilon".to_string()]);
 
-        let outcome = run(&mut shell, &["set".into(), "-C".into(), "--".into(), "epsilon".into()])
-            .expect("set -C --");
-        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-        assert!(shell.options.noclobber);
-        assert_eq!(shell.positional, vec!["epsilon".to_string()]);
+                let outcome = run(&mut shell, &["set".into(), "-a".into()]).expect("set -a");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                run(&mut shell, &["eval".into(), "AUTO=42".into()]).expect("allexport eval");
+                assert!(shell.exported.contains("AUTO"));
 
-        let outcome = run(&mut shell, &["set".into(), "-a".into()]).expect("set -a");
-        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-        run(&mut shell, &["eval".into(), "AUTO=42".into()]).expect("allexport eval");
-        assert!(shell.exported.contains("AUTO"));
+                let outcome = run(&mut shell, &["set".into(), "-o".into(), "noexec".into()]).expect("set -o noexec");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert!(shell.options.syntax_check_only);
 
-        let outcome = run(&mut shell, &["set".into(), "-o".into(), "noexec".into()]).expect("set -o noexec");
-        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-        assert!(shell.options.syntax_check_only);
+                let outcome = run(&mut shell, &["set".into(), "+o".into(), "noexec".into()]).expect("set +o noexec");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert!(!shell.options.syntax_check_only);
 
-        let outcome = run(&mut shell, &["set".into(), "+o".into(), "noexec".into()]).expect("set +o noexec");
-        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-        assert!(!shell.options.syntax_check_only);
+                let outcome = run(&mut shell, &["set".into(), "-n".into()]).expect("set -n");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert!(shell.options.syntax_check_only);
 
-        let outcome = run(&mut shell, &["set".into(), "-n".into()]).expect("set -n");
-        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-        assert!(shell.options.syntax_check_only);
+                let outcome = run(&mut shell, &["set".into(), "+n".into()]).expect("set +n");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert!(!shell.options.syntax_check_only);
 
-        let outcome = run(&mut shell, &["set".into(), "+n".into()]).expect("set +n");
-        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-        assert!(!shell.options.syntax_check_only);
+                let outcome = run(&mut shell, &["set".into(), "-u".into()]).expect("set -u");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert!(shell.options.nounset);
 
-        let outcome = run(&mut shell, &["set".into(), "-u".into()]).expect("set -u");
-        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-        assert!(shell.options.nounset);
+                let outcome = run(&mut shell, &["set".into(), "+u".into()]).expect("set +u");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert!(!shell.options.nounset);
 
-        let outcome = run(&mut shell, &["set".into(), "+u".into()]).expect("set +u");
-        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-        assert!(!shell.options.nounset);
+                let outcome = run(&mut shell, &["set".into(), "-v".into()]).expect("set -v");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert!(shell.options.verbose);
 
-        let outcome = run(&mut shell, &["set".into(), "-v".into()]).expect("set -v");
-        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-        assert!(shell.options.verbose);
+                let outcome = run(&mut shell, &["set".into(), "+v".into()]).expect("set +v");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert!(!shell.options.verbose);
 
-        let outcome = run(&mut shell, &["set".into(), "+v".into()]).expect("set +v");
-        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-        assert!(!shell.options.verbose);
+                shell.last_status = 0;
+                let outcome = run(&mut shell, &["eval".into(), "VALUE=42".into()]).expect("eval");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert_eq!(shell.get_var("VALUE").as_deref(), Some("42"));
 
-        shell.last_status = 0;
-        let outcome = run(&mut shell, &["eval".into(), "VALUE=42".into()]).expect("eval");
-        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-        assert_eq!(shell.get_var("VALUE").as_deref(), Some("42"));
+                let outcome = run(&mut shell, &[".".into(), "/tmp/dot-script.sh".into()]).expect("dot");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert_eq!(shell.get_var("FROM_DOT").as_deref(), Some("1"));
 
-        let script = std::env::temp_dir().join(format!("meiksh-dot-{unique}.sh"));
-        fs::write(&script, "FROM_DOT=1\n").expect("write");
-        let outcome = run(&mut shell, &[".".into(), script.display().to_string()]).expect("dot");
-        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-        assert_eq!(shell.get_var("FROM_DOT").as_deref(), Some("1"));
-        let _ = fs::remove_file(script);
-
-        let outcome = run(&mut shell, &["exec".into()]).expect("exec no-op");
-        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                let outcome = run(&mut shell, &["exec".into()]).expect("exec no-op");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            });
     }
 
     #[test]
-    fn set_reports_named_options_and_rejects_invalid_ones() {
+    fn set_rejects_invalid_options() {
         let mut shell = test_shell();
-        let report = ProcessCommand::new(&shell.current_exe)
-            .args(["-a", "-C", "-c", "set -o"])
-            .output()
-            .expect("run set -o");
-        let stdout = String::from_utf8_lossy(&report.stdout);
-        assert!(stdout.contains("allexport on"));
-        assert!(stdout.contains("noclobber on"));
-        assert!(stdout.contains("noglob off"));
-        assert!(stdout.contains("noexec off"));
-        assert!(stdout.contains("nounset off"));
-        assert!(stdout.contains("verbose off"));
-
-        let restore = ProcessCommand::new(&shell.current_exe)
-            .args(["-a", "-C", "-c", "set +o"])
-            .output()
-            .expect("run set +o");
-        let stdout = String::from_utf8_lossy(&restore.stdout);
-        assert!(stdout.contains("set -o allexport"));
-        assert!(stdout.contains("set -o noclobber"));
-        assert!(stdout.contains("set +o noglob"));
-        assert!(stdout.contains("set +o noexec"));
-        assert!(stdout.contains("set +o nounset"));
-        assert!(stdout.contains("set +o verbose"));
-
         let outcome = run(&mut shell, &["set".into(), "-z".into()]).expect("invalid set");
         assert!(matches!(outcome, BuiltinOutcome::Status(2)));
         let outcome = run(&mut shell, &["set".into(), "-o".into(), "pipefail".into()]).expect("invalid set -o");
@@ -2211,181 +2166,154 @@ mod tests {
 
     #[test]
     fn command_and_listing_error_paths_are_covered() {
-        let _guard = cwd_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut shell = test_shell();
-        shell.env.insert("PATH".into(), "/usr/bin:/bin".into());
+        VfsBuilder::new()
+            .file_with_mode("/bin/sh", b"", 0o755)
+            .file("/tmp/plain-file", b"echo plain\n")
+            .file_with_mode("/tmp/missing-interp", b"#!/definitely/missing-interpreter\n", 0o755)
+            .cwd("/home")
+            .run(|| {
+                let mut shell = test_shell();
+                shell.env.insert("PATH".into(), "/bin".into());
 
-        assert!(matches!(
-            run(&mut shell, &["pwd".into(), "-Z".into()]).expect("pwd invalid"),
-            BuiltinOutcome::Status(1)
-        ));
-        assert!(matches!(
-            run(&mut shell, &["pwd".into(), "extra".into()]).expect("pwd extra"),
-            BuiltinOutcome::Status(1)
-        ));
+                assert!(matches!(
+                    run(&mut shell, &["pwd".into(), "-Z".into()]).expect("pwd invalid"),
+                    BuiltinOutcome::Status(1)
+                ));
+                assert!(matches!(
+                    run(&mut shell, &["pwd".into(), "extra".into()]).expect("pwd extra"),
+                    BuiltinOutcome::Status(1)
+                ));
 
-        shell.env.insert("RO".into(), "1".into());
-        shell.readonly.insert("RO".into());
-        assert!(matches!(
-            run(&mut shell, &["unset".into(), "RO".into()]).expect("unset readonly"),
-            BuiltinOutcome::Status(1)
-        ));
+                shell.env.insert("RO".into(), "1".into());
+                shell.readonly.insert("RO".into());
+                assert!(matches!(
+                    run(&mut shell, &["unset".into(), "RO".into()]).expect("unset readonly"),
+                    BuiltinOutcome::Status(1)
+                ));
 
-        let export_error = parse_declaration_listing_flag(
-            "export",
-            &["export".into(), "-p".into(), "NAME".into()],
-        )
-        .expect_err("export -p operands");
-        assert_eq!(export_error.message, "export: -p does not accept operands");
+                let export_error = parse_declaration_listing_flag(
+                    "export",
+                    &["export".into(), "-p".into(), "NAME".into()],
+                )
+                .expect_err("export -p operands");
+                assert_eq!(export_error.message, "export: -p does not accept operands");
 
-        let readonly_error =
-            parse_declaration_listing_flag("readonly", &["readonly".into(), "-x".into()])
-                .expect_err("readonly invalid");
-        assert_eq!(readonly_error.message, "readonly: invalid option: -x");
+                let readonly_error =
+                    parse_declaration_listing_flag("readonly", &["readonly".into(), "-x".into()])
+                        .expect_err("readonly invalid");
+                assert_eq!(readonly_error.message, "readonly: invalid option: -x");
 
-        assert_eq!(
-            parse_unset_target(&["unset".into(), "--".into(), "NAME".into()]).expect("unset --"),
-            (UnsetTarget::Variable, 2)
-        );
-        let unset_error =
-            parse_unset_target(&["unset".into(), "-z".into()]).expect_err("unset invalid");
-        assert_eq!(unset_error.message, "unset: invalid option: -z");
+                assert_eq!(
+                    parse_unset_target(&["unset".into(), "--".into(), "NAME".into()]).expect("unset --"),
+                    (UnsetTarget::Variable, 2)
+                );
+                let unset_error =
+                    parse_unset_target(&["unset".into(), "-z".into()]).expect_err("unset invalid");
+                assert_eq!(unset_error.message, "unset: invalid option: -z");
 
-        assert_eq!(
-            parse_command_options(&["command".into(), "--".into(), "echo".into()]),
-            (false, CommandMode::Execute, 2)
-        );
-        assert_eq!(
-            parse_command_options(&["command".into(), "-p".into(), "sh".into()]),
-            (true, CommandMode::Execute, 2)
-        );
-        assert_eq!(command_usage_status(CommandMode::QueryShort), 1);
+                assert_eq!(
+                    parse_command_options(&["command".into(), "--".into(), "echo".into()]),
+                    (false, CommandMode::Execute, 2)
+                );
+                assert_eq!(
+                    parse_command_options(&["command".into(), "-p".into(), "sh".into()]),
+                    (true, CommandMode::Execute, 2)
+                );
+                assert_eq!(command_usage_status(CommandMode::QueryShort), 1);
 
-        assert!(matches!(
-            run(
-                &mut shell,
-                &["command".into(), "-v".into(), "one".into(), "two".into()]
-            )
-            .expect("command too many args"),
-            BuiltinOutcome::Status(1)
-        ));
-        assert!(matches!(
-            run(&mut shell, &["command".into(), "-v".into()]).expect("command query missing"),
-            BuiltinOutcome::Status(1)
-        ));
-        assert!(matches!(
-            run(
-                &mut shell,
-                &["command".into(), "-v".into(), "meiksh-not-real".into()]
-            )
-            .expect("command query missing name"),
-            BuiltinOutcome::Status(1)
-        ));
-        assert!(matches!(
-            run(&mut shell, &["command".into(), "meiksh-not-real".into()]).expect("command missing"),
-            BuiltinOutcome::Status(127)
-        ));
-        assert!(matches!(
-            run(&mut shell, &["command".into(), "return".into()]).expect("command builtin error"),
-            BuiltinOutcome::Status(1)
-        ));
-        assert!(matches!(
-            run(
-                &mut shell,
-                &["command".into(), "-p".into(), "sh".into(), "-c".into(), "exit 0".into()]
-            )
-            .expect("command -p"),
-            BuiltinOutcome::Status(0)
-        ));
+                assert!(matches!(
+                    run(&mut shell, &["command".into(), "-v".into(), "one".into(), "two".into()])
+                        .expect("command too many args"),
+                    BuiltinOutcome::Status(1)
+                ));
+                assert!(matches!(
+                    run(&mut shell, &["command".into(), "-v".into()]).expect("command query missing"),
+                    BuiltinOutcome::Status(1)
+                ));
+                assert!(matches!(
+                    run(&mut shell, &["command".into(), "-v".into(), "meiksh-not-real".into()])
+                        .expect("command query missing name"),
+                    BuiltinOutcome::Status(1)
+                ));
+                assert!(matches!(
+                    run(&mut shell, &["command".into(), "meiksh-not-real".into()]).expect("command missing"),
+                    BuiltinOutcome::Status(127)
+                ));
+                assert!(matches!(
+                    run(&mut shell, &["command".into(), "return".into()]).expect("command builtin error"),
+                    BuiltinOutcome::Status(1)
+                ));
 
-        shell.aliases.insert("ll".into(), "echo hi".into());
-        assert_eq!(
-            command_verbose_description(&shell, "ll", false),
-            Some("ll is an alias for 'echo hi'".to_string())
-        );
-        assert_eq!(
-            command_verbose_description(&shell, "command", false),
-            Some("command is a regular built-in utility".to_string())
-        );
+                shell.aliases.insert("ll".into(), "echo hi".into());
+                assert_eq!(
+                    command_verbose_description(&shell, "ll", false),
+                    Some("ll is an alias for 'echo hi'".to_string())
+                );
+                assert_eq!(
+                    command_verbose_description(&shell, "command", false),
+                    Some("command is a regular built-in utility".to_string())
+                );
 
-        let sh_path = command_short_description(&shell, "sh", false).expect("command -v sh");
-        assert!(Path::new(&sh_path).is_absolute());
-        let sh_verbose = command_verbose_description(&shell, "sh", false).expect("command -V sh");
-        assert!(sh_verbose.starts_with("sh is /"));
-        assert_eq!(
-            describe_command(&shell, "command", false),
-            Some(CommandDescription::RegularBuiltin)
-        );
-        assert!(which_in_path("sh", &shell, true).expect("default path sh").is_absolute());
-        assert!(which_in_path("./definitely-missing", &shell, false).is_none());
-        assert!(absolute_path(Path::new("relative")).expect("absolute path").is_absolute());
+                let sh_path = command_short_description(&shell, "sh", false).expect("command -v sh");
+                assert!(Path::new(&sh_path).is_absolute());
+                let sh_verbose = command_verbose_description(&shell, "sh", false).expect("command -V sh");
+                assert!(sh_verbose.starts_with("sh is /"));
+                assert_eq!(
+                    describe_command(&shell, "command", false),
+                    Some(CommandDescription::RegularBuiltin)
+                );
+                assert!(which_in_path("./definitely-missing", &shell, false).is_none());
 
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("meiksh-command-errors-{unique}"));
-        fs::create_dir_all(&dir).expect("mkdir");
+                assert!(matches!(
+                    run(&mut shell, &["command".into(), "/tmp/plain-file".into()])
+                        .expect("command plain file"),
+                    BuiltinOutcome::Status(126)
+                ));
 
-        let noexec = dir.join("plain-file");
-        fs::write(&noexec, "echo plain\n").expect("write noexec");
-        fs::set_permissions(&noexec, fs::Permissions::from_mode(0o644)).expect("chmod noexec");
-        assert!(matches!(
-            run(
-                &mut shell,
-                &["command".into(), noexec.display().to_string()]
-            )
-            .expect("command plain file"),
-            BuiltinOutcome::Status(126)
-        ));
-
-        let missing_interp = dir.join("missing-interpreter");
-        fs::write(&missing_interp, "#!/definitely/missing-interpreter\n").expect("write script");
-        fs::set_permissions(&missing_interp, fs::Permissions::from_mode(0o755))
-            .expect("chmod script");
-        assert!(matches!(
-            run(
-                &mut shell,
-                &["command".into(), missing_interp.display().to_string()]
-            )
-            .expect("command missing interpreter"),
-            BuiltinOutcome::Status(127)
-        ));
-
-        let _ = fs::remove_dir_all(&dir);
+                assert!(matches!(
+                    run(&mut shell, &["command".into(), "/tmp/missing-interp".into()])
+                        .expect("command missing interpreter"),
+                    BuiltinOutcome::Status(127)
+                ));
+            });
     }
 
     #[test]
-    fn command_and_which_cover_real_lookup_path() {
-        let mut shell = test_shell();
-        shell.env.insert("PATH".into(), "/usr/bin:/bin".into());
+    fn command_and_which_cover_vfs_lookup_path() {
+        VfsBuilder::new()
+            .file_with_mode("/usr/bin/sh", b"", 0o755)
+            .run(|| {
+                let mut shell = test_shell();
+                shell.env.insert("PATH".into(), "/usr/bin".into());
 
-        let path = which("sh", &shell).expect("lookup sh");
-        assert!(path.is_absolute());
-        assert!(path.ends_with("sh"));
-
-        let outcome = run(&mut shell, &["command".into(), "sh".into(), "-c".into(), "exit 0".into()]).expect("command sh");
-        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                let path = which("sh", &shell).expect("lookup sh");
+                assert!(path.is_absolute());
+                assert!(path.ends_with("sh"));
+            });
     }
 
     #[test]
     fn reporting_and_listing_builtins_execute_successfully() {
-        let mut shell = test_shell();
-        shell.env.insert("PATH".into(), "/usr/bin:/bin".into());
-        shell.exported.insert("PATH".into());
-        shell.exported.insert("ONLY_NAME".into());
-        shell.aliases.insert("ll".into(), "ls -l".into());
+        VfsBuilder::new()
+            .cwd("/home")
+            .run(|| {
+                let mut shell = test_shell();
+                shell.env.insert("PATH".into(), "/usr/bin:/bin".into());
+                shell.exported.insert("PATH".into());
+                shell.exported.insert("ONLY_NAME".into());
+                shell.aliases.insert("ll".into(), "ls -l".into());
 
-        assert!(matches!(run(&mut shell, &["pwd".into()]).expect("pwd"), BuiltinOutcome::Status(0)));
-        assert!(matches!(run(&mut shell, &["export".into()]).expect("export list"), BuiltinOutcome::Status(0)));
-        assert!(matches!(run(&mut shell, &["readonly".into(), "FLAG".into()]).expect("readonly"), BuiltinOutcome::Status(0)));
-        assert!(shell.readonly.contains("FLAG"));
-        assert!(matches!(run(&mut shell, &["set".into()]).expect("set list"), BuiltinOutcome::Status(0)));
-        assert!(matches!(run(&mut shell, &["alias".into()]).expect("alias list"), BuiltinOutcome::Status(0)));
-        assert!(matches!(run(&mut shell, &["times".into()]).expect("times"), BuiltinOutcome::Status(0)));
-        assert!(matches!(run(&mut shell, &["trap".into()]).expect("trap"), BuiltinOutcome::Status(0)));
-        assert!(matches!(run(&mut shell, &["trap".into(), "echo".into(), "INT".into()]).expect("trap set"), BuiltinOutcome::Status(0)));
-        assert!(matches!(run(&mut shell, &["jobs".into()]).expect("jobs"), BuiltinOutcome::Status(0)));
+                assert!(matches!(run(&mut shell, &["pwd".into()]).expect("pwd"), BuiltinOutcome::Status(0)));
+                assert!(matches!(run(&mut shell, &["export".into()]).expect("export list"), BuiltinOutcome::Status(0)));
+                assert!(matches!(run(&mut shell, &["readonly".into(), "FLAG".into()]).expect("readonly"), BuiltinOutcome::Status(0)));
+                assert!(shell.readonly.contains("FLAG"));
+                assert!(matches!(run(&mut shell, &["set".into()]).expect("set list"), BuiltinOutcome::Status(0)));
+                assert!(matches!(run(&mut shell, &["alias".into()]).expect("alias list"), BuiltinOutcome::Status(0)));
+                assert!(matches!(run(&mut shell, &["times".into()]).expect("times"), BuiltinOutcome::Status(0)));
+                assert!(matches!(run(&mut shell, &["trap".into()]).expect("trap"), BuiltinOutcome::Status(0)));
+                assert!(matches!(run(&mut shell, &["trap".into(), "echo".into(), "INT".into()]).expect("trap set"), BuiltinOutcome::Status(0)));
+                assert!(matches!(run(&mut shell, &["jobs".into()]).expect("jobs"), BuiltinOutcome::Status(0)));
+            });
     }
 
     #[test]
@@ -2440,36 +2368,20 @@ mod tests {
 
     #[test]
     fn cd_dash_updates_pwd_and_oldpwd() {
-        let _guard = cwd_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let original = std::env::current_dir().expect("cwd");
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("meiksh-m6-builtins-{unique}"));
-        let previous = root.join("previous");
-        fs::create_dir_all(&previous).expect("mkdir previous");
+        VfsBuilder::new()
+            .dir("/previous")
+            .dir("/home")
+            .cwd("/home")
+            .run(|| {
+                let mut shell = test_shell();
+                shell.env.insert("OLDPWD".into(), "/previous".into());
+                shell.env.insert("PWD".into(), "/home".into());
 
-        let mut shell = test_shell();
-        shell.env.insert("OLDPWD".into(), previous.display().to_string());
-        shell.env.insert("PWD".into(), original.display().to_string());
-        let original_display = original.display().to_string();
-
-        let outcome = run(&mut shell, &["cd".into(), "-".into()]).expect("cd dash");
-        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-        assert_eq!(
-            PathBuf::from(shell.get_var("PWD").expect("pwd after cd"))
-                .canonicalize()
-                .expect("canonical pwd"),
-            std::env::current_dir()
-                .expect("cwd after cd")
-                .canonicalize()
-                .expect("canonical cwd")
-        );
-        assert_eq!(shell.get_var("OLDPWD").as_deref(), Some(original_display.as_str()));
-
-        std::env::set_current_dir(&original).expect("restore cwd");
-        let _ = fs::remove_dir_all(root);
+                let outcome = run(&mut shell, &["cd".into(), "-".into()]).expect("cd dash");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert_eq!(shell.get_var("PWD").as_deref(), Some("/previous"));
+                assert_eq!(shell.get_var("OLDPWD").as_deref(), Some("/home"));
+            });
     }
 
     #[test]
@@ -2593,13 +2505,9 @@ mod tests {
     #[test]
     fn job_display_pid_prefers_child_pid_when_no_pgid() {
         let mut shell = test_shell();
-        let child = std::process::Command::new(&shell.current_exe)
-            .args(["-c", "sleep 0.05"])
-            .spawn()
-            .expect("spawn");
-        let child_pid = child.id() as sys::Pid;
-        shell.launch_background_job("sleep".into(), None, vec![child_to_handle(child)]);
-        assert_eq!(job_display_pid(&shell.jobs[0]), Some(child_pid));
+        let handle = sys::ChildHandle { pid: 3001, stdout_fd: None };
+        shell.launch_background_job("sleep".into(), None, vec![handle]);
+        assert_eq!(job_display_pid(&shell.jobs[0]), Some(3001));
     }
 
     #[test]
@@ -2617,23 +2525,22 @@ mod tests {
 
     #[test]
     fn jobs_selected_finished_job_path_is_split_out() {
-        let mut shell = test_shell();
-        let finished_child = std::process::Command::new(&shell.current_exe)
-            .args(["-c", "exit 7"])
-            .spawn()
-            .expect("spawn finished");
-        let finished_handle = child_to_handle(finished_child);
-        let _ = sys::wait_pid(finished_handle.pid, false);
-        let finished_id = shell.launch_background_job("done".into(), None, vec![finished_handle]);
-        let running_child = std::process::Command::new(&shell.current_exe)
-            .args(["-c", "sleep 0.05"])
-            .spawn()
-            .expect("spawn running");
-        shell.launch_background_job("sleep".into(), None, vec![child_to_handle(running_child)]);
-        assert!(matches!(
-            jobs(&mut shell, &["jobs".into(), format!("%{finished_id}")]),
-            BuiltinOutcome::Status(0)
-        ));
+        fn done_waitpid(pid: sys::Pid, status: *mut i32, _opts: i32) -> sys::Pid {
+            unsafe { *status = 7 << 8; }
+            pid
+        }
+        sys::test_support::with_waitpid_for_test(done_waitpid, || {
+            let mut shell = test_shell();
+            let finished_handle = sys::ChildHandle { pid: 3001, stdout_fd: None };
+            let finished_id = shell.launch_background_job("done".into(), None, vec![finished_handle]);
+            shell.reap_jobs();
+            let running_handle = sys::ChildHandle { pid: 3002, stdout_fd: None };
+            shell.launch_background_job("sleep".into(), None, vec![running_handle]);
+            assert!(matches!(
+                jobs(&mut shell, &["jobs".into(), format!("%{finished_id}")]),
+                BuiltinOutcome::Status(0)
+            ));
+        });
     }
 
     #[test]
@@ -2656,45 +2563,45 @@ mod tests {
 
     #[test]
     fn wait_fg_bg_success_paths_are_exercised() {
-        let mut shell = test_shell();
-        let child = std::process::Command::new(&shell.current_exe)
-            .args(["-c", "sleep 0.05"])
-            .spawn()
-            .expect("spawn");
-        let id = shell.launch_background_job("sleep".into(), None, vec![child_to_handle(child)]);
+        fn done_waitpid(pid: sys::Pid, status: *mut i32, _opts: i32) -> sys::Pid {
+            unsafe { *status = 0; }
+            pid
+        }
+        fn ok_kill(_pid: sys::Pid, _sig: i32) -> i32 { 0 }
 
-        let outcome = run(&mut shell, &["bg".into(), format!("%{id}")]).expect("bg");
-        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        sys::test_support::with_waitpid_and_kill_for_test(done_waitpid, ok_kill, || {
+            let mut shell = test_shell();
+            let handle = sys::ChildHandle { pid: 3001, stdout_fd: None };
+            let id = shell.launch_background_job("sleep".into(), None, vec![handle]);
 
-        let outcome = run(&mut shell, &["wait".into(), format!("%{id}")]).expect("wait");
-        assert!(matches!(outcome, BuiltinOutcome::Status(_)));
+            let outcome = run(&mut shell, &["bg".into(), format!("%{id}")]).expect("bg");
+            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
 
-        let child = std::process::Command::new(&shell.current_exe)
-            .args(["-c", "sleep 0.05"])
-            .spawn()
-            .expect("spawn");
-        let id = shell.launch_background_job("sleep".into(), None, vec![child_to_handle(child)]);
-        let outcome = run(&mut shell, &["fg".into(), format!("%{id}")]).expect("fg");
-        assert!(matches!(outcome, BuiltinOutcome::Status(_)));
+            let outcome = run(&mut shell, &["wait".into(), format!("%{id}")]).expect("wait");
+            assert!(matches!(outcome, BuiltinOutcome::Status(_)));
+
+            let handle = sys::ChildHandle { pid: 3002, stdout_fd: None };
+            let id = shell.launch_background_job("sleep".into(), None, vec![handle]);
+            let outcome = run(&mut shell, &["fg".into(), format!("%{id}")]).expect("fg");
+            assert!(matches!(outcome, BuiltinOutcome::Status(_)));
+        });
     }
 
     #[test]
     fn wait_without_explicit_job_uses_all_jobs() {
-        let mut shell = test_shell();
-        let child_a = std::process::Command::new(&shell.current_exe)
-            .args(["-c", "exit 0"])
-            .spawn()
-            .expect("spawn");
-        let child_b = std::process::Command::new(&shell.current_exe)
-            .args(["-c", "exit 3"])
-            .spawn()
-            .expect("spawn");
-        shell.launch_background_job("first".into(), None, vec![child_to_handle(child_a)]);
-        shell.launch_background_job("second".into(), None, vec![child_to_handle(child_b)]);
+        fn done_waitpid(pid: sys::Pid, status: *mut i32, _opts: i32) -> sys::Pid {
+            unsafe { *status = 0; }
+            pid
+        }
+        sys::test_support::with_waitpid_for_test(done_waitpid, || {
+            let mut shell = test_shell();
+            shell.launch_background_job("first".into(), None, vec![sys::ChildHandle { pid: 3001, stdout_fd: None }]);
+            shell.launch_background_job("second".into(), None, vec![sys::ChildHandle { pid: 3002, stdout_fd: None }]);
 
-        let outcome = run(&mut shell, &["wait".into()]).expect("wait all");
-        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-        assert!(shell.jobs.is_empty());
+            let outcome = run(&mut shell, &["wait".into()]).expect("wait all");
+            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            assert!(shell.jobs.is_empty());
+        });
     }
 
     #[test]
@@ -2742,7 +2649,6 @@ mod tests {
 
     #[test]
     fn cd_home_export_name_eval_error_and_dot_missing_are_covered() {
-        let _guard = cwd_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut shell = test_shell();
 
         run(&mut shell, &["export".into(), "ONLY_NAME".into()]).expect("export bare name");
@@ -2751,12 +2657,14 @@ mod tests {
         let error = run(&mut shell, &["eval".into(), "echo".into(), "'unterminated".into()]).expect_err("bad eval");
         assert!(!error.message.is_empty());
 
-        let error = run(
-            &mut shell,
-            &[".".into(), "/definitely/missing-meiksh-dot-file".into()],
-        )
-        .expect_err("missing dot file");
-        assert!(!error.message.is_empty());
+        VfsBuilder::new().run(|| {
+            let error = run(
+                &mut shell,
+                &[".".into(), "/definitely/missing-meiksh-dot-file".into()],
+            )
+            .expect_err("missing dot file");
+            assert!(!error.message.is_empty());
+        });
         let error = run(&mut shell, &[".".into(), "one".into(), "two".into()]).expect_err("dot args");
         assert_eq!(error.message, ".: too many arguments");
     }

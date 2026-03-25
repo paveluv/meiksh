@@ -103,8 +103,6 @@ mod tests {
     use crate::shell::ShellOptions;
     use std::collections::{BTreeMap, BTreeSet, HashMap};
     use std::io::{self, Cursor, Read};
-    use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     use crate::test_utils::meiksh_bin_path;
 
@@ -201,10 +199,12 @@ mod tests {
         shell.env.insert("ENV".into(), "relative.sh".into());
         load_env_file(&mut shell).expect("relative ignored");
 
-        let missing = std::env::temp_dir().join("meiksh-missing-env.sh");
-        let mut shell = test_shell();
-        shell.env.insert("ENV".into(), missing.display().to_string());
-        load_env_file(&mut shell).expect("missing ignored");
+        use crate::sys::test_support::VfsBuilder;
+        VfsBuilder::new().run(|| {
+            let mut shell = test_shell();
+            shell.env.insert("ENV".into(), "/tmp/meiksh-missing-env.sh".into());
+            load_env_file(&mut shell).expect("missing ignored");
+        });
     }
 
     #[test]
@@ -285,47 +285,39 @@ mod tests {
 
     #[test]
     fn run_loop_covers_reaped_jobs_blank_lines_and_exit() {
-        let mut shell = test_shell();
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        let history = std::env::temp_dir().join(format!("meiksh-interactive-history-{unique}.txt"));
-        shell.env.insert("HISTFILE".into(), history.display().to_string());
-        shell.env.insert("PS1".into(), "test$ ".into());
+        use crate::sys::test_support::VfsBuilder;
 
-        let child = std::process::Command::new(&shell.current_exe)
-            .args(["-c", "exit 0"])
-            .spawn()
-            .expect("spawn");
-        let handle = sys::ChildHandle { pid: child.id() as sys::Pid, stdout_fd: None };
-        shell.launch_background_job("done".into(), None, vec![handle]);
-        for _ in 0..20 {
-            if !shell.reap_jobs().is_empty() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
+        fn done_waitpid(pid: sys::Pid, status: *mut i32, _opts: i32) -> sys::Pid {
+            unsafe { *status = 0; }
+            pid
         }
-        let child = std::process::Command::new(&shell.current_exe)
-            .args(["-c", "exit 0"])
-            .spawn()
-            .expect("spawn");
-        let handle = sys::ChildHandle { pid: child.id() as sys::Pid, stdout_fd: None };
-        shell.launch_background_job("done".into(), None, vec![handle]);
-        std::thread::sleep(std::time::Duration::from_millis(20));
 
-        let mut reader = Cursor::new(b"\nexit 5\n".to_vec());
-        let mut stdout = Vec::new();
-        let mut stderr = Vec::new();
-        let status = run_loop(&mut shell, &mut reader, &mut stdout, &mut stderr).expect("run loop");
+        VfsBuilder::new()
+            .dir("/tmp")
+            .run_with_waitpid(done_waitpid, || {
+                let mut shell = test_shell();
+                shell.env.insert("HISTFILE".into(), "/tmp/history.txt".into());
+                shell.env.insert("PS1".into(), "test$ ".into());
 
-        assert_eq!(status, 5);
-        assert_eq!(shell.last_status, 5);
-        assert!(!shell.running);
-        assert!(String::from_utf8(stdout).expect("stdout").contains("test$ "));
-        assert!(String::from_utf8(stderr).expect("stderr").contains("Done 0"));
-        assert_eq!(fs::read_to_string(&history).expect("history"), "exit 5\n");
-        let _ = fs::remove_file(history);
+                let handle = sys::ChildHandle { pid: 4001, stdout_fd: None };
+                shell.launch_background_job("done".into(), None, vec![handle]);
+                shell.reap_jobs();
+
+                let handle = sys::ChildHandle { pid: 4002, stdout_fd: None };
+                shell.launch_background_job("done".into(), None, vec![handle]);
+
+                let mut reader = Cursor::new(b"\nexit 5\n".to_vec());
+                let mut stdout = Vec::new();
+                let mut stderr = Vec::new();
+                let status = run_loop(&mut shell, &mut reader, &mut stdout, &mut stderr).expect("run loop");
+
+                assert_eq!(status, 5);
+                assert_eq!(shell.last_status, 5);
+                assert!(!shell.running);
+                assert!(String::from_utf8(stdout).expect("stdout").contains("test$ "));
+                assert!(String::from_utf8(stderr).expect("stderr").contains("Done 0"));
+                assert_eq!(sys::read_file("/tmp/history.txt").expect("history"), "exit 5\n");
+            });
     }
 
     #[test]

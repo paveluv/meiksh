@@ -1067,7 +1067,6 @@ fn classify_script_read_error(path: &Path, error: io::Error) -> ShellError {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
-    use std::process::Command as ProcessCommand;
 
     unsafe extern "C" {
         fn __error() -> *mut i32;
@@ -1076,11 +1075,8 @@ mod tests {
     use crate::sys::test_support::{FakeSpawnBuilder, VfsBuilder};
     use crate::test_utils::meiksh_bin_path;
 
-    fn child_to_handle(child: std::process::Child) -> sys::ChildHandle {
-        sys::ChildHandle {
-            pid: child.id() as sys::Pid,
-            stdout_fd: None,
-        }
+    fn fake_handle(pid: sys::Pid) -> sys::ChildHandle {
+        sys::ChildHandle { pid, stdout_fd: None }
     }
 
     fn test_shell() -> Shell {
@@ -1214,16 +1210,18 @@ mod tests {
 
     #[test]
     fn launch_and_wait_for_background_job_updates_state() {
-        let mut shell = test_shell();
-        let child = ProcessCommand::new(&shell.current_exe)
-            .args(["-c", "exit 7"])
-            .spawn()
-            .expect("spawn");
-        let id = shell.launch_background_job("exit 7".into(), None, vec![child_to_handle(child)]);
-        let status = shell.wait_for_job(id).expect("wait");
-        assert_eq!(status, 7);
-        assert_eq!(shell.last_status, 7);
-        assert!(shell.jobs.is_empty());
+        fn fake_waitpid(_pid: sys::Pid, status: *mut i32, _opts: i32) -> sys::Pid {
+            unsafe { *status = 7 << 8; }
+            _pid
+        }
+        sys::test_support::with_waitpid_for_test(fake_waitpid, || {
+            let mut shell = test_shell();
+            let id = shell.launch_background_job("exit 7".into(), None, vec![fake_handle(1001)]);
+            let status = shell.wait_for_job(id).expect("wait");
+            assert_eq!(status, 7);
+            assert_eq!(shell.last_status, 7);
+            assert!(shell.jobs.is_empty());
+        });
     }
 
     #[test]
@@ -1253,21 +1251,15 @@ mod tests {
 
     #[test]
     fn reap_jobs_and_run_builtin_cover_flow_variants() {
-        let mut shell = test_shell();
-        let child = ProcessCommand::new(&shell.current_exe)
-            .args(["-c", "exit 0"])
-            .spawn()
-            .expect("spawn");
-        let id = shell.launch_background_job("exit 0".into(), None, vec![child_to_handle(child)]);
-        let mut finished = Vec::new();
-        for _ in 0..20 {
-            finished = shell.reap_jobs();
-            if !finished.is_empty() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
+        fn done_waitpid(pid: sys::Pid, status: *mut i32, _opts: i32) -> sys::Pid {
+            unsafe { *status = 0; }
+            pid
         }
-        assert_eq!(finished, vec![(id, 0)]);
+
+        let mut shell = test_shell();
+        shell.launch_background_job("exit 0".into(), None, vec![fake_handle(1001)]);
+        let finished = sys::test_support::with_waitpid_for_test(done_waitpid, || shell.reap_jobs());
+        assert_eq!(finished, vec![(1, 0)]);
         assert!(shell.jobs.is_empty());
 
         let flow = shell
@@ -1302,11 +1294,7 @@ mod tests {
         }
 
         let mut shell = test_shell();
-        let child = ProcessCommand::new(&shell.current_exe)
-            .args(["-c", "exit 0"])
-            .spawn()
-            .expect("spawn");
-        let id = shell.launch_background_job("exit 0".into(), None, vec![child_to_handle(child)]);
+        let id = shell.launch_background_job("exit 0".into(), None, vec![fake_handle(1001)]);
 
         let finished = sys::test_support::with_waitpid_for_test(error_waitpid, || shell.reap_jobs());
         assert_eq!(finished, vec![(id, 1)]);
@@ -1336,23 +1324,27 @@ mod tests {
         assert_eq!(expand_err.message, "expand");
         assert_eq!(format!("{}", shell_err), shell_err.message);
 
-        let mut shell = test_shell();
-        shell.env.insert("PATH".into(), "/usr/bin:/bin".into());
-        shell.exported.insert("PATH".into());
-        let output = shell.capture_output("printf hi").expect("capture");
-        assert_eq!(output, "hi");
-        assert_eq!(expand::Context::shell_name(&shell), "meiksh");
-        assert_eq!(expand::Context::positional_param(&shell, 0).as_deref(), Some("meiksh"));
-        expand::Context::set_var(&mut shell, "CTX_SET", "7".into()).expect("ctx set");
-        assert_eq!(shell.get_var("CTX_SET").as_deref(), Some("7"));
-        shell.mark_readonly("CTX_SET");
-        let error = expand::Context::set_var(&mut shell, "CTX_SET", "8".into()).expect_err("readonly ctx set");
-        assert_eq!(error.message, "CTX_SET: readonly variable");
-        let substituted = expand::Context::command_substitute(&mut shell, "printf ok").expect("subst");
-        assert_eq!(substituted, "ok");
+        FakeSpawnBuilder::new()
+            .child(0, b"hi")
+            .child(0, b"ok")
+            .child(127, b"")
+            .run(|| {
+                let mut shell = test_shell();
+                let output = shell.capture_output("printf hi").expect("capture");
+                assert_eq!(output, "hi");
+                assert_eq!(expand::Context::shell_name(&shell), "meiksh");
+                assert_eq!(expand::Context::positional_param(&shell, 0).as_deref(), Some("meiksh"));
+                expand::Context::set_var(&mut shell, "CTX_SET", "7".into()).expect("ctx set");
+                assert_eq!(shell.get_var("CTX_SET").as_deref(), Some("7"));
+                shell.mark_readonly("CTX_SET");
+                let error = expand::Context::set_var(&mut shell, "CTX_SET", "8".into()).expect_err("readonly ctx set");
+                assert_eq!(error.message, "CTX_SET: readonly variable");
+                let substituted = expand::Context::command_substitute(&mut shell, "printf ok").expect("subst");
+                assert_eq!(substituted, "ok");
 
-        let error = expand::Context::command_substitute(&mut shell, "missing-command").expect_err("subst error");
-        assert!(!error.message.is_empty());
+                let error = expand::Context::command_substitute(&mut shell, "missing-command").expect_err("subst error");
+                assert!(!error.message.is_empty());
+            });
     }
 
     #[test]
@@ -1490,30 +1482,33 @@ mod tests {
 
     #[test]
     fn print_jobs_covers_running_and_finished_paths() {
-        let mut shell = test_shell();
-        let finished_child = ProcessCommand::new(&shell.current_exe)
-            .args(["-c", "exit 0"])
-            .spawn()
-            .expect("spawn");
-        shell.launch_background_job("done".into(), None, vec![child_to_handle(finished_child)]);
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static CALL: AtomicUsize = AtomicUsize::new(0);
 
-        for _ in 0..20 {
-            if !shell.reap_jobs().is_empty() {
-                break;
+        fn fake_waitpid(pid: sys::Pid, status: *mut i32, opts: i32) -> sys::Pid {
+            let n = CALL.fetch_add(1, Ordering::SeqCst);
+            if pid == 1001 {
+                unsafe { *status = 0; }
+                return pid;
             }
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            if opts != 0 && n < 3 {
+                return 0;
+            }
+            unsafe { *status = 0; }
+            pid
         }
 
-        let running_child = ProcessCommand::new(&shell.current_exe)
-            .args(["-c", "sleep 0.05"])
-            .spawn()
-            .expect("spawn");
-        shell.launch_background_job("sleep".into(), None, vec![child_to_handle(running_child)]);
-        shell.print_jobs();
-
-        if let Some(id) = shell.jobs.first().map(|job| job.id) {
-            let _ = shell.wait_for_job(id);
-        }
+        CALL.store(0, Ordering::SeqCst);
+        sys::test_support::with_waitpid_for_test(fake_waitpid, || {
+            let mut shell = test_shell();
+            shell.launch_background_job("done".into(), None, vec![fake_handle(1001)]);
+            shell.reap_jobs();
+            shell.launch_background_job("sleep".into(), None, vec![fake_handle(1002)]);
+            shell.print_jobs();
+            if let Some(id) = shell.jobs.first().map(|job| job.id) {
+                let _ = shell.wait_for_job(id);
+            }
+        });
     }
 
     #[test]
@@ -1552,15 +1547,16 @@ mod tests {
 
     #[test]
     fn print_jobs_emits_finished_branch_when_job_is_done() {
-        let mut shell = test_shell();
-        let child = ProcessCommand::new(&shell.current_exe)
-            .args(["-c", "exit 0"])
-            .spawn()
-            .expect("spawn");
-        shell.launch_background_job("done".into(), None, vec![child_to_handle(child)]);
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        shell.print_jobs();
-        assert!(shell.jobs.is_empty());
+        fn done_waitpid(pid: sys::Pid, status: *mut i32, _opts: i32) -> sys::Pid {
+            unsafe { *status = 0; }
+            pid
+        }
+        sys::test_support::with_waitpid_for_test(done_waitpid, || {
+            let mut shell = test_shell();
+            shell.launch_background_job("done".into(), None, vec![fake_handle(1001)]);
+            shell.print_jobs();
+            assert!(shell.jobs.is_empty());
+        });
     }
 
     #[test]
@@ -1655,11 +1651,7 @@ mod tests {
             shell.run_pending_traps().expect("ignored pending");
         });
 
-        let child = ProcessCommand::new(&shell.current_exe)
-            .args(["-c", "sleep 0.05"])
-            .spawn()
-            .expect("spawn");
-        let id = shell.launch_background_job("sleep".into(), Some(11), vec![child_to_handle(child)]);
+        let id = shell.launch_background_job("sleep".into(), Some(11), vec![fake_handle(1001)]);
         sys::test_support::with_job_control_syscalls_for_test(
             fake_isatty,
             fake_tcgetpgrp,
@@ -1679,118 +1671,79 @@ mod tests {
         fn fake_signal(_sig: i32, _handler: usize) -> usize {
             0
         }
-        fn fake_waitpid(_pid: sys::Pid, _status: *mut i32, options: i32) -> sys::Pid {
+        fn intr_then_none_then_exit7(_pid: sys::Pid, _status: *mut i32, options: i32) -> sys::Pid {
             let call = CALLS.fetch_add(1, Ordering::SeqCst);
             if options == 0 && call == 0 {
-                unsafe {
-                    *__error() = 4;
-                }
+                sys::test_support::set_pending_signals_for_test(&[sys::SIGINT]);
+                unsafe { *__error() = 4; }
                 -1
             } else if options == 0 && call == 1 {
                 0
             } else {
-                unsafe {
-                    *_status = 7 << 8;
-                }
+                unsafe { *_status = 7 << 8; }
                 99
             }
         }
 
+        fn intr_always(_pid: sys::Pid, _status: *mut i32, _options: i32) -> sys::Pid {
+            sys::test_support::set_pending_signals_for_test(&[sys::SIGINT]);
+            unsafe { *__error() = 4; }
+            -1
+        }
+
+        fn echild_waitpid(_pid: sys::Pid, _status: *mut i32, _options: i32) -> sys::Pid {
+            unsafe { *__error() = 10; }
+            -1
+        }
+
         let mut shell = test_shell();
-        shell
-            .set_trap(TrapCondition::Signal(sys::SIGINT), Some(TrapAction::Command(":".into())))
-            .expect("trap");
-        let child = ProcessCommand::new(&shell.current_exe)
-            .args(["-c", "sleep 0.05"])
-            .spawn()
-            .expect("spawn");
-        shell.launch_background_job("sleep".into(), None, vec![child_to_handle(child)]);
+        sys::test_support::with_signal_syscall_for_test(fake_signal, || {
+            shell.set_trap(TrapCondition::Signal(sys::SIGINT), Some(TrapAction::Command(":".into())))
+                .expect("trap");
+        });
+
+        shell.launch_background_job("sleep".into(), None, vec![fake_handle(2001)]);
         CALLS.store(0, Ordering::SeqCst);
-        sys::test_support::with_pending_signals_for_test(&[sys::SIGINT], || {
-            sys::test_support::with_waitpid_for_test(fake_waitpid, || {
-                assert_eq!(shell.wait_for_job_operand(1).expect("interrupted wait"), 130);
-            });
+        sys::test_support::with_waitpid_for_test(intr_then_none_then_exit7, || {
+            assert_eq!(shell.wait_for_job_operand(1).expect("interrupted wait"), 130);
         });
         assert_eq!(shell.last_status, 130);
         shell.jobs.clear();
+
         CALLS.store(0, Ordering::SeqCst);
-        sys::test_support::with_waitpid_for_test(fake_waitpid, || {
+        sys::test_support::with_waitpid_for_test(intr_then_none_then_exit7, || {
             assert_eq!(shell.wait_for_child_pid(99, false).expect("retry after none"), 7);
         });
 
         sys::test_support::with_signal_syscall_for_test(fake_signal, || {
-            let message = ShellError {
-                message: "wait interrupted:140".into(),
-            };
+            let message = ShellError { message: "wait interrupted:140".into() };
             assert_eq!(shell.consume_wait_interrupt(&message).expect("consume"), Some(140));
-            let message = ShellError {
-                message: "different".into(),
-            };
+            let message = ShellError { message: "different".into() };
             assert_eq!(shell.consume_wait_interrupt(&message).expect("non interrupt"), None);
         });
 
-        fn echild_waitpid(_pid: sys::Pid, _status: *mut i32, _options: i32) -> sys::Pid {
-            unsafe {
-                *__error() = 10;
-            }
-            -1
-        }
-
-        let child = ProcessCommand::new(&shell.current_exe)
-            .args(["-c", "sleep 0.05"])
-            .spawn()
-            .expect("spawn");
-        shell.launch_background_job("sleep".into(), None, vec![child_to_handle(child)]);
+        shell.launch_background_job("sleep".into(), None, vec![fake_handle(2002)]);
         sys::test_support::with_waitpid_for_test(echild_waitpid, || {
             assert!(shell.wait_for_job_operand(1).is_err());
             assert!(shell.wait_for_child_pid(99, false).is_err());
         });
 
-        let child = ProcessCommand::new(&shell.current_exe)
-            .args(["-c", "sleep 0.05"])
-            .spawn()
-            .expect("spawn");
-        let pid = child.id() as sys::Pid;
-        shell.launch_background_job("sleep".into(), None, vec![child_to_handle(child)]);
-        sys::test_support::with_pending_signals_for_test(&[sys::SIGINT], || {
-            sys::test_support::with_waitpid_for_test(fake_waitpid_all, || {
-                assert_eq!(shell.wait_for_pid_operand(pid).expect("pid interrupt"), 130);
-            });
+        shell.launch_background_job("sleep".into(), None, vec![fake_handle(2003)]);
+        sys::test_support::with_waitpid_for_test(intr_always, || {
+            assert_eq!(shell.wait_for_pid_operand(2003).expect("pid interrupt"), 130);
         });
 
-        let child = ProcessCommand::new(&shell.current_exe)
-            .args(["-c", "sleep 0.05"])
-            .spawn()
-            .expect("spawn");
-        let pid = child.id() as sys::Pid;
-        shell.launch_background_job("sleep".into(), None, vec![child_to_handle(child)]);
+        shell.launch_background_job("sleep".into(), None, vec![fake_handle(2004)]);
         sys::test_support::with_waitpid_for_test(echild_waitpid, || {
-            assert!(shell.wait_for_pid_operand(pid).is_err());
+            assert!(shell.wait_for_pid_operand(2004).is_err());
         });
 
-        fn fake_waitpid_all(_pid: sys::Pid, _status: *mut i32, _options: i32) -> sys::Pid {
-            unsafe {
-                *__error() = 4;
-            }
-            -1
-        }
-
-        let child = ProcessCommand::new(&shell.current_exe)
-            .args(["-c", "sleep 0.05"])
-            .spawn()
-            .expect("spawn");
-        shell.launch_background_job("sleep".into(), None, vec![child_to_handle(child)]);
-        sys::test_support::with_pending_signals_for_test(&[sys::SIGINT], || {
-            sys::test_support::with_waitpid_for_test(fake_waitpid_all, || {
-                assert_eq!(shell.wait_for_all_jobs().expect("wait all status"), 130);
-            });
+        shell.launch_background_job("sleep".into(), None, vec![fake_handle(2005)]);
+        sys::test_support::with_waitpid_for_test(intr_always, || {
+            assert_eq!(shell.wait_for_all_jobs().expect("wait all status"), 130);
         });
 
-        let child = ProcessCommand::new(&shell.current_exe)
-            .args(["-c", "sleep 0.05"])
-            .spawn()
-            .expect("spawn");
-        let id = shell.launch_background_job("sleep".into(), None, vec![child_to_handle(child)]);
+        let id = shell.launch_background_job("sleep".into(), None, vec![fake_handle(2006)]);
         if let Some(job) = shell.jobs.iter().find(|job| job.id == id) {
             if let Some(pid) = job.last_pid {
                 shell.known_pid_statuses.insert(pid, 1);
