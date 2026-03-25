@@ -1068,10 +1068,6 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
-    unsafe extern "C" {
-        fn __error() -> *mut i32;
-    }
-
     use crate::sys::test_support::{FakeSpawnBuilder, VfsBuilder};
     use crate::test_utils::meiksh_bin_path;
 
@@ -1289,7 +1285,7 @@ mod tests {
     #[test]
     fn reap_jobs_handles_try_wait_errors() {
         fn error_waitpid(_pid: sys::Pid, _status: *mut i32, _options: i32) -> sys::Pid {
-            unsafe { *__error() = libc::ECHILD; }
+            sys::set_errno(libc::ECHILD);
             -1
         }
 
@@ -1675,7 +1671,7 @@ mod tests {
             let call = CALLS.fetch_add(1, Ordering::SeqCst);
             if options == 0 && call == 0 {
                 sys::test_support::set_pending_signals_for_test(&[sys::SIGINT]);
-                unsafe { *__error() = 4; }
+                sys::set_errno(4);
                 -1
             } else if options == 0 && call == 1 {
                 0
@@ -1687,12 +1683,12 @@ mod tests {
 
         fn intr_always(_pid: sys::Pid, _status: *mut i32, _options: i32) -> sys::Pid {
             sys::test_support::set_pending_signals_for_test(&[sys::SIGINT]);
-            unsafe { *__error() = 4; }
+            sys::set_errno(4);
             -1
         }
 
         fn echild_waitpid(_pid: sys::Pid, _status: *mut i32, _options: i32) -> sys::Pid {
-            unsafe { *__error() = 10; }
+            sys::set_errno(10);
             -1
         }
 

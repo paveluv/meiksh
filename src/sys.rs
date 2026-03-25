@@ -147,6 +147,29 @@ fn syscalls() -> Syscalls {
     }
 }
 
+pub(crate) fn set_errno(errno: c_int) {
+    #[cfg(test)]
+    {
+        test_support::set_test_errno(errno);
+        return;
+    }
+
+    #[cfg(not(test))]
+    unsafe {
+        *libc::__error() = errno;
+    }
+}
+
+fn last_error() -> io::Error {
+    #[cfg(test)]
+    {
+        return test_support::take_test_error();
+    }
+
+    #[cfg(not(test))]
+    io::Error::from_raw_os_error(unsafe { *libc::__error() })
+}
+
 #[cfg(test)]
 pub(crate) mod test_support {
     use super::*;
@@ -155,6 +178,7 @@ pub(crate) mod test_support {
 
     thread_local! {
         static TEST_SYSCALLS: RefCell<Option<Syscalls>> = const { RefCell::new(None) };
+        static TEST_ERRNO: RefCell<c_int> = const { RefCell::new(0) };
         static TEST_PROCESS_IDS: RefCell<Option<(libc::uid_t, libc::uid_t, libc::gid_t, libc::gid_t)>> =
             const { RefCell::new(None) };
     }
@@ -175,6 +199,15 @@ pub(crate) mod test_support {
 
     pub(crate) fn current_process_ids() -> Option<(libc::uid_t, libc::uid_t, libc::gid_t, libc::gid_t)> {
         TEST_PROCESS_IDS.with(|cell| *cell.borrow())
+    }
+
+    pub(super) fn set_test_errno(errno: c_int) {
+        TEST_ERRNO.with(|cell| *cell.borrow_mut() = errno);
+    }
+
+    pub(super) fn take_test_error() -> io::Error {
+        let errno = TEST_ERRNO.with(|cell| cell.replace(0));
+        io::Error::from_raw_os_error(errno)
     }
 
     pub(crate) fn with_test_syscalls<T>(syscalls: Syscalls, f: impl FnOnce() -> T) -> T {
@@ -538,10 +571,6 @@ pub(crate) mod test_support {
         }
     }
 
-    pub(crate) fn set_errno_val(errno: c_int) {
-        unsafe { *libc::__error() = errno; }
-    }
-
     fn vfs_open(path: *const c_char, flags: c_int, mode: mode_t) -> c_int {
         let resolved = vfs_resolve(path);
         with_vfs(|state| {
@@ -551,12 +580,12 @@ pub(crate) mod test_support {
             let appending = flags & super::O_APPEND != 0;
 
             if state.dirs.contains(&resolved) {
-                set_errno_val(libc::EISDIR);
+                super::set_errno(libc::EISDIR);
                 return -1;
             }
 
             if exclusive && creating && state.files.contains_key(&resolved) {
-                set_errno_val(libc::EEXIST);
+                super::set_errno(libc::EEXIST);
                 return -1;
             }
 
@@ -564,7 +593,7 @@ pub(crate) mod test_support {
                 if !state.files.contains_key(&resolved) {
                     let parent = resolved.parent().unwrap_or(std::path::Path::new("/"));
                     if !state.dirs.contains(parent) {
-                        set_errno_val(libc::ENOENT);
+                        super::set_errno(libc::ENOENT);
                         return -1;
                     }
                     state.files.insert(
@@ -575,7 +604,7 @@ pub(crate) mod test_support {
             }
 
             if !state.files.contains_key(&resolved) {
-                set_errno_val(libc::ENOENT);
+                super::set_errno(libc::ENOENT);
                 return -1;
             }
 
@@ -628,7 +657,7 @@ pub(crate) mod test_support {
                 vfd.offset = offset + data.len();
                 count as isize
             } else {
-                set_errno_val(libc::EBADF);
+                super::set_errno(libc::EBADF);
                 -1
             }
         })
@@ -692,7 +721,7 @@ pub(crate) mod test_support {
                 vfs_fill_stat(buf, super::S_IFDIR | 0o755, 0);
                 0
             } else {
-                set_errno_val(libc::ENOENT);
+                super::set_errno(libc::ENOENT);
                 -1
             }
         })
@@ -701,7 +730,7 @@ pub(crate) mod test_support {
     fn vfs_fstat(fd: c_int, buf: *mut libc::stat) -> c_int {
         with_vfs(|state| {
             let Some(vfd) = state.fd_table.get(&fd) else {
-                set_errno_val(libc::EBADF);
+                super::set_errno(libc::EBADF);
                 return -1;
             };
             let path = vfd.path.clone();
@@ -712,7 +741,7 @@ pub(crate) mod test_support {
                 vfs_fill_stat(buf, super::S_IFDIR | 0o755, 0);
                 0
             } else {
-                set_errno_val(libc::EBADF);
+                super::set_errno(libc::EBADF);
                 -1
             }
         })
@@ -725,7 +754,7 @@ pub(crate) mod test_support {
                 if mode == super::X_OK {
                     if let Some(file) = state.files.get(&resolved) {
                         if file.mode & 0o111 == 0 {
-                            set_errno_val(libc::EACCES);
+                            super::set_errno(libc::EACCES);
                             return -1;
                         }
                     }
@@ -733,14 +762,14 @@ pub(crate) mod test_support {
                 if mode == super::R_OK {
                     if let Some(file) = state.files.get(&resolved) {
                         if file.mode & 0o444 == 0 {
-                            set_errno_val(libc::EACCES);
+                            super::set_errno(libc::EACCES);
                             return -1;
                         }
                     }
                 }
                 0
             } else {
-                set_errno_val(libc::ENOENT);
+                super::set_errno(libc::ENOENT);
                 -1
             }
         })
@@ -753,7 +782,7 @@ pub(crate) mod test_support {
                 state.cwd = resolved;
                 0
             } else {
-                set_errno_val(libc::ENOENT);
+                super::set_errno(libc::ENOENT);
                 -1
             }
         })
@@ -764,7 +793,7 @@ pub(crate) mod test_support {
             let cwd_str = state.cwd.display().to_string();
             let needed = cwd_str.len() + 1;
             if needed > size {
-                set_errno_val(libc::ERANGE);
+                super::set_errno(libc::ERANGE);
                 return std::ptr::null_mut();
             }
             unsafe {
@@ -806,7 +835,7 @@ pub(crate) mod test_support {
             let resolved_check = vfs_resolve(path);
             let is_dir = with_vfs(|state| state.dirs.contains(&resolved_check));
             if !is_dir {
-                set_errno_val(libc::ENOENT);
+                super::set_errno(libc::ENOENT);
                 return std::ptr::null_mut();
             }
         }
@@ -856,7 +885,7 @@ pub(crate) mod test_support {
             state.files.contains_key(&p) || state.dirs.contains(&p)
         });
         if !exists {
-            set_errno_val(libc::ENOENT);
+            super::set_errno(libc::ENOENT);
             return std::ptr::null_mut();
         }
         let s = p.display().to_string();
@@ -874,7 +903,7 @@ pub(crate) mod test_support {
     }
 
     fn vfs_readlink(_path: *const c_char, _buf: *mut c_char, _bufsiz: usize) -> isize {
-        set_errno_val(libc::EINVAL);
+        super::set_errno(libc::EINVAL);
         -1
     }
 
@@ -884,7 +913,7 @@ pub(crate) mod test_support {
             if state.files.remove(&resolved).is_some() {
                 0
             } else {
-                set_errno_val(libc::ENOENT);
+                super::set_errno(libc::ENOENT);
                 -1
             }
         })
@@ -1046,7 +1075,7 @@ pub(crate) mod test_support {
                 state.spawn_index += 1;
                 pid
             } else {
-                set_errno_val(libc::EAGAIN);
+                super::set_errno(libc::EAGAIN);
                 -1
             }
         })
@@ -1072,11 +1101,11 @@ pub(crate) mod test_support {
                     }
                     pid
                 } else {
-                    set_errno_val(libc::ECHILD);
+                    super::set_errno(libc::ECHILD);
                     -1
                 }
             } else {
-                set_errno_val(libc::ECHILD);
+                super::set_errno(libc::ECHILD);
                 -1
             }
         })
@@ -1142,7 +1171,7 @@ pub(crate) mod test_support {
             if vfs_result {
                 vfs_read(fd, buf, count)
             } else {
-                set_errno_val(libc::EBADF);
+                super::set_errno(libc::EBADF);
                 -1
             }
         }
@@ -1208,7 +1237,7 @@ pub fn wait_pid(pid: Pid, nohang: bool) -> io::Result<Option<WaitStatus>> {
     } else if result == 0 {
         Ok(None)
     } else {
-        Err(io::Error::last_os_error())
+        Err(last_error())
     }
 }
 
@@ -1217,14 +1246,14 @@ pub fn send_signal(pid: Pid, signal: c_int) -> io::Result<()> {
     if result == 0 {
         Ok(())
     } else {
-        Err(io::Error::last_os_error())
+        Err(last_error())
     }
 }
 
 pub fn install_shell_signal_handler(signal: c_int) -> io::Result<()> {
     let result = (syscalls().signal)(signal, record_signal as *const () as libc::sighandler_t);
     if result == SIG_ERR_HANDLER {
-        Err(io::Error::last_os_error())
+        Err(last_error())
     } else {
         Ok(())
     }
@@ -1233,7 +1262,7 @@ pub fn install_shell_signal_handler(signal: c_int) -> io::Result<()> {
 pub fn ignore_signal(signal: c_int) -> io::Result<()> {
     let result = (syscalls().signal)(signal, SIG_IGN_HANDLER);
     if result == SIG_ERR_HANDLER {
-        Err(io::Error::last_os_error())
+        Err(last_error())
     } else {
         Ok(())
     }
@@ -1242,7 +1271,7 @@ pub fn ignore_signal(signal: c_int) -> io::Result<()> {
 pub fn default_signal_action(signal: c_int) -> io::Result<()> {
     let result = (syscalls().signal)(signal, SIG_DFL_HANDLER);
     if result == SIG_ERR_HANDLER {
-        Err(io::Error::last_os_error())
+        Err(last_error())
     } else {
         Ok(())
     }
@@ -1276,7 +1305,7 @@ pub fn current_foreground_pgrp(fd: c_int) -> io::Result<Pid> {
     if result >= 0 {
         Ok(result)
     } else {
-        Err(io::Error::last_os_error())
+        Err(last_error())
     }
 }
 
@@ -1285,7 +1314,7 @@ pub fn set_foreground_pgrp(fd: c_int, pgrp: Pid) -> io::Result<()> {
     if result == 0 {
         Ok(())
     } else {
-        Err(io::Error::last_os_error())
+        Err(last_error())
     }
 }
 
@@ -1294,7 +1323,7 @@ pub fn set_process_group(pid: Pid, pgid: Pid) -> io::Result<()> {
     if result == 0 {
         Ok(())
     } else {
-        Err(io::Error::last_os_error())
+        Err(last_error())
     }
 }
 
@@ -1304,7 +1333,7 @@ pub fn create_pipe() -> io::Result<(c_int, c_int)> {
     if result == 0 {
         Ok((fds[0], fds[1]))
     } else {
-        Err(io::Error::last_os_error())
+        Err(last_error())
     }
 }
 
@@ -1313,7 +1342,7 @@ pub fn duplicate_fd(oldfd: c_int, newfd: c_int) -> io::Result<()> {
     if result >= 0 {
         Ok(())
     } else {
-        Err(io::Error::last_os_error())
+        Err(last_error())
     }
 }
 
@@ -1322,7 +1351,7 @@ pub fn duplicate_fd_to_new(fd: c_int) -> io::Result<c_int> {
     if result >= 0 {
         Ok(result)
     } else {
-        Err(io::Error::last_os_error())
+        Err(last_error())
     }
 }
 
@@ -1331,7 +1360,7 @@ pub fn close_fd(fd: c_int) -> io::Result<()> {
     if result == 0 {
         Ok(())
     } else {
-        Err(io::Error::last_os_error())
+        Err(last_error())
     }
 }
 
@@ -1340,7 +1369,7 @@ fn fd_status_flags(fd: c_int) -> io::Result<c_int> {
     if result >= 0 {
         Ok(result)
     } else {
-        Err(io::Error::last_os_error())
+        Err(last_error())
     }
 }
 
@@ -1349,7 +1378,7 @@ fn set_fd_status_flags(fd: c_int, flags: c_int) -> io::Result<()> {
     if result >= 0 {
         Ok(())
     } else {
-        Err(io::Error::last_os_error())
+        Err(last_error())
     }
 }
 
@@ -1379,7 +1408,7 @@ pub fn read_fd(fd: c_int, buf: &mut [u8]) -> io::Result<usize> {
     if result >= 0 {
         Ok(result as usize)
     } else {
-        Err(io::Error::last_os_error())
+        Err(last_error())
     }
 }
 
@@ -1432,7 +1461,7 @@ fn stat_raw(path: &str) -> io::Result<libc::stat> {
     if result == 0 {
         Ok(unsafe { buf.assume_init() })
     } else {
-        Err(io::Error::last_os_error())
+        Err(last_error())
     }
 }
 
@@ -1443,7 +1472,7 @@ fn lstat_raw(path: &str) -> io::Result<libc::stat> {
     if result == 0 {
         Ok(unsafe { buf.assume_init() })
     } else {
-        Err(io::Error::last_os_error())
+        Err(last_error())
     }
 }
 
@@ -1453,7 +1482,7 @@ pub fn open_file(path: &str, flags: c_int, mode: mode_t) -> io::Result<c_int> {
     if result >= 0 {
         Ok(result)
     } else {
-        Err(io::Error::last_os_error())
+        Err(last_error())
     }
 }
 
@@ -1462,7 +1491,7 @@ pub fn write_fd(fd: c_int, data: &[u8]) -> io::Result<usize> {
     if result >= 0 {
         Ok(result as usize)
     } else {
-        Err(io::Error::last_os_error())
+        Err(last_error())
     }
 }
 
@@ -1499,7 +1528,7 @@ pub fn access_path(path: &str, mode: c_int) -> io::Result<()> {
     if result == 0 {
         Ok(())
     } else {
-        Err(io::Error::last_os_error())
+        Err(last_error())
     }
 }
 
@@ -1521,7 +1550,7 @@ pub fn change_dir(path: &str) -> io::Result<()> {
     if result == 0 {
         Ok(())
     } else {
-        Err(io::Error::last_os_error())
+        Err(last_error())
     }
 }
 
@@ -1529,7 +1558,7 @@ pub fn get_cwd() -> io::Result<String> {
     let mut buf = vec![0u8; 4096];
     let result = (syscalls().getcwd)(buf.as_mut_ptr().cast(), buf.len());
     if result.is_null() {
-        Err(io::Error::last_os_error())
+        Err(last_error())
     } else {
         let cstr = unsafe { CStr::from_ptr(result) };
         Ok(cstr.to_string_lossy().into_owned())
@@ -1540,16 +1569,15 @@ pub fn read_dir_entries(path: &str) -> io::Result<Vec<String>> {
     let c_path = to_cstring(path)?;
     let dirp = (syscalls().opendir)(c_path.as_ptr());
     if dirp.is_null() {
-        return Err(io::Error::last_os_error());
+        return Err(last_error());
     }
 
     let mut entries = Vec::new();
     loop {
-        // Clear errno before readdir; null return with errno=0 means end of directory
-        unsafe { *libc::__error() = 0 };
+        set_errno(0);
         let ent = (syscalls().readdir)(dirp);
         if ent.is_null() {
-            let errno = io::Error::last_os_error();
+            let errno = last_error();
             (syscalls().closedir)(dirp);
             if errno.raw_os_error() == Some(0) {
                 break;
@@ -1569,7 +1597,7 @@ pub fn canonicalize(path: &str) -> io::Result<String> {
     let c_path = to_cstring(path)?;
     let result = (syscalls().realpath)(c_path.as_ptr(), std::ptr::null_mut());
     if result.is_null() {
-        Err(io::Error::last_os_error())
+        Err(last_error())
     } else {
         let s = unsafe { CStr::from_ptr(result) }.to_string_lossy().into_owned();
         unsafe { libc::free(result.cast()) };
@@ -1582,7 +1610,7 @@ pub fn read_link(path: &str) -> io::Result<String> {
     let mut buf = vec![0u8; 4096];
     let result = (syscalls().readlink)(c_path.as_ptr(), buf.as_mut_ptr().cast(), buf.len());
     if result < 0 {
-        Err(io::Error::last_os_error())
+        Err(last_error())
     } else {
         buf.truncate(result as usize);
         Ok(String::from_utf8_lossy(&buf).into_owned())
@@ -1595,7 +1623,7 @@ pub fn unlink_file(path: &str) -> io::Result<()> {
     if result == 0 {
         Ok(())
     } else {
-        Err(io::Error::last_os_error())
+        Err(last_error())
     }
 }
 
@@ -1683,7 +1711,7 @@ impl ChildHandle {
 pub fn fork_process() -> io::Result<Pid> {
     let pid = (syscalls().fork)();
     if pid < 0 {
-        Err(io::Error::last_os_error())
+        Err(last_error())
     } else {
         Ok(pid)
     }
@@ -1809,7 +1837,7 @@ pub fn process_times() -> io::Result<ProcessTimes> {
     let mut raw = std::mem::MaybeUninit::<libc::tms>::zeroed();
     let result = (syscalls().times)(raw.as_mut_ptr());
     if result == ClockTicks::MAX {
-        return Err(io::Error::last_os_error());
+        return Err(last_error());
     }
     let raw = unsafe { raw.assume_init() };
     Ok(ProcessTimes {
@@ -1825,7 +1853,7 @@ pub fn clock_ticks_per_second() -> io::Result<u64> {
     if result > 0 {
         Ok(result as u64)
     } else {
-        Err(io::Error::last_os_error())
+        Err(last_error())
     }
 }
 
@@ -1844,7 +1872,7 @@ pub fn exec_replace(program: &str, argv: &[String]) -> io::Result<()> {
 
     let result = (syscalls().execvp)(owned[0].as_ptr(), pointers.as_ptr());
     if result == -1 {
-        Err(io::Error::last_os_error())
+        Err(last_error())
     } else {
         Ok(())
     }

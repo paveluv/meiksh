@@ -25,4 +25,5 @@ disallowed-methods = [
     { path = "std::path::Path::is_dir", reason = "Use sys::is_directory instead" },
     { path = "std::path::Path::metadata", reason = "Use sys::stat_path instead" },
     { path = "std::path::Path::canonicalize", reason = "Use sys::canonicalize instead" },
+    { path = "std::io::Error::last_os_error", reason = "Use sys::last_error() instead for mockability" },
 ]
