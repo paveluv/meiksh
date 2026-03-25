@@ -308,6 +308,7 @@ fn set(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
                             'C' => shell.options.noclobber = enabled,
                             'f' => shell.options.noglob = enabled,
                             'n' => shell.options.syntax_check_only = enabled,
+                            'u' => shell.options.nounset = enabled,
                             _ => {
                                 eprintln!("set: invalid option: {ch}");
                                 return BuiltinOutcome::Status(2);
@@ -2073,6 +2074,14 @@ mod tests {
         assert!(matches!(outcome, BuiltinOutcome::Status(0)));
         assert!(!shell.options.syntax_check_only);
 
+        let outcome = run(&mut shell, &["set".into(), "-u".into()]).expect("set -u");
+        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        assert!(shell.options.nounset);
+
+        let outcome = run(&mut shell, &["set".into(), "+u".into()]).expect("set +u");
+        assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        assert!(!shell.options.nounset);
+
         shell.last_status = 0;
         let outcome = run(&mut shell, &["eval".into(), "VALUE=42".into()]).expect("eval");
         assert!(matches!(outcome, BuiltinOutcome::Status(0)));
@@ -2101,6 +2110,7 @@ mod tests {
         assert!(stdout.contains("noclobber on"));
         assert!(stdout.contains("noglob off"));
         assert!(stdout.contains("noexec off"));
+        assert!(stdout.contains("nounset off"));
 
         let restore = ProcessCommand::new(&shell.current_exe)
             .args(["-a", "-C", "-c", "set +o"])
@@ -2111,6 +2121,7 @@ mod tests {
         assert!(stdout.contains("set -o noclobber"));
         assert!(stdout.contains("set +o noglob"));
         assert!(stdout.contains("set +o noexec"));
+        assert!(stdout.contains("set +o nounset"));
 
         let outcome = run(&mut shell, &["set".into(), "-z".into()]).expect("invalid set");
         assert!(matches!(outcome, BuiltinOutcome::Status(2)));
