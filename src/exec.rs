@@ -2251,7 +2251,7 @@ mod tests {
         fs::write(&input, "input").expect("write input");
         fs::write(&noclobber, "old").expect("write noclobber");
 
-        sys::with_fd_ops_for_test(fake_dup, fake_dup2, fake_close, || {
+        sys::test_support::with_fd_ops_for_test(fake_dup, fake_dup2, fake_close, || {
             let target_fd = 42;
             let guard = apply_shell_redirections(
                 &[
@@ -2370,7 +2370,7 @@ mod tests {
         let raw = owned.as_raw_fd();
         replace_shell_fd(owned, raw).expect("same-fd replacement");
 
-        sys::with_fd_ops_for_test(fake_dup, fake_dup2, fake_close, || {
+        sys::test_support::with_fd_ops_for_test(fake_dup, fake_dup2, fake_close, || {
             drop(ShellRedirectionGuard {
                 saved: vec![(99, None)],
             });
@@ -2388,7 +2388,7 @@ mod tests {
         .expect("invalid fd is treated as absent");
         drop(guard);
 
-        sys::with_fd_ops_for_test(fake_dup_error, fake_dup2, fake_close, || {
+        sys::test_support::with_fd_ops_for_test(fake_dup_error, fake_dup2, fake_close, || {
             let error = apply_shell_redirections(
                 &[ExpandedRedirection {
                     fd: 42,
@@ -2409,7 +2409,7 @@ mod tests {
         .expect_err("child dup failure");
         assert!(!error.to_string().is_empty());
 
-        sys::with_fd_ops_for_test(fake_dup, fake_dup2, fake_close_error, || {
+        sys::test_support::with_fd_ops_for_test(fake_dup, fake_dup2, fake_close_error, || {
             let error = apply_child_fd_actions(&[ChildFdAction::CloseFd { target_fd: 56 }])
                 .expect_err("child close failure");
             assert!(!error.to_string().is_empty());
@@ -2508,7 +2508,7 @@ mod tests {
             0
         }
         assert_eq!(fake_kill(1, 0), 0);
-        sys::with_job_control_syscalls_for_test(
+        sys::test_support::with_job_control_syscalls_for_test(
             fake_isatty,
             fake_tcgetpgrp,
             fake_tcsetpgrp,
@@ -2521,7 +2521,7 @@ mod tests {
                 assert_eq!(handoff_foreground(None), None);
             },
         );
-        sys::with_job_control_syscalls_for_test(
+        sys::test_support::with_job_control_syscalls_for_test(
             fake_isatty,
             |_fd| -1,
             fake_tcsetpgrp,
@@ -2529,7 +2529,7 @@ mod tests {
             fake_kill,
             || assert_eq!(handoff_foreground(Some(77)), None),
         );
-        sys::with_job_control_syscalls_for_test(
+        sys::test_support::with_job_control_syscalls_for_test(
             fake_isatty,
             fake_tcgetpgrp,
             fake_tcsetpgrp,
