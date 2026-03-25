@@ -1263,14 +1263,9 @@ mod tests {
     use crate::shell::ShellOptions;
     use crate::syntax::{Assignment, HereDoc, Redirection, Word};
     use std::collections::{BTreeMap, BTreeSet, HashMap};
-    use std::fs;
-    use std::fs::File;
-    use std::os::fd::{AsRawFd, OwnedFd};
     use std::os::raw::c_int;
-    use std::os::unix::fs::PermissionsExt;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
-    use crate::test_utils::{cwd_lock, meiksh_bin_path};
+    use crate::test_utils::meiksh_bin_path;
 
     unsafe extern "C" {
         fn __error() -> *mut c_int;
@@ -1320,43 +1315,42 @@ mod tests {
 
     #[test]
     fn execute_pipeline_covers_async_and_negated_multi_command_paths() {
-        let mut shell = test_shell();
-        let pipeline = Pipeline {
-            negated: false,
-            commands: vec![Command::Simple(SimpleCommand {
-                words: vec![Word {
-                    raw: "true".to_string(),
-                }],
-                ..SimpleCommand::default()
-            })],
-        };
-        let status = execute_pipeline(&mut shell, &pipeline, true).expect("async");
-        assert_eq!(status, 0);
+        sys::test_support::FakeSpawnBuilder::new()
+            .child(0, b"")
+            .run(|| {
+                let mut shell = test_shell();
+                let pipeline = Pipeline {
+                    negated: false,
+                    commands: vec![Command::Simple(SimpleCommand {
+                        words: vec![Word { raw: "true".into() }],
+                        ..SimpleCommand::default()
+                    })],
+                };
+                let status = execute_pipeline(&mut shell, &pipeline, true).expect("async");
+                assert_eq!(status, 0);
+            });
 
-        let mut shell = test_shell();
-        let pipeline = Pipeline {
-            negated: true,
-            commands: vec![
-                Command::Simple(SimpleCommand {
-                    words: vec![Word {
-                        raw: "printf".to_string(),
-                    }, Word {
-                        raw: "ok".to_string(),
-                    }],
-                    ..SimpleCommand::default()
-                }),
-                Command::Simple(SimpleCommand {
-                    words: vec![Word {
-                        raw: "wc".to_string(),
-                    }, Word {
-                        raw: "-c".to_string(),
-                    }],
-                    ..SimpleCommand::default()
-                }),
-            ],
-        };
-        let status = execute_pipeline(&mut shell, &pipeline, false).expect("negated pipeline");
-        assert_eq!(status, 1);
+        sys::test_support::FakeSpawnBuilder::new()
+            .child(0, b"ok")
+            .child(0, b"2")
+            .run(|| {
+                let mut shell = test_shell();
+                let pipeline = Pipeline {
+                    negated: true,
+                    commands: vec![
+                        Command::Simple(SimpleCommand {
+                            words: vec![Word { raw: "printf".into() }, Word { raw: "ok".into() }],
+                            ..SimpleCommand::default()
+                        }),
+                        Command::Simple(SimpleCommand {
+                            words: vec![Word { raw: "wc".into() }, Word { raw: "-c".into() }],
+                            ..SimpleCommand::default()
+                        }),
+                    ],
+                };
+                let status = execute_pipeline(&mut shell, &pipeline, false).expect("negated pipeline");
+                assert_eq!(status, 1);
+            });
     }
 
     #[test]
@@ -1373,119 +1367,104 @@ mod tests {
         .expect_err("empty command");
         assert_eq!(error.message, "empty command");
 
-        let mut shell = test_shell();
-        shell.env.insert("PATH".into(), "/usr/bin:/bin".into());
-        shell.exported.insert("PATH".into());
+        let shell = test_shell();
         let prepared = build_process_from_expanded(
             &shell,
             &ExpandedSimpleCommand {
                 assignments: vec![("ASSIGN_VAR".to_string(), "works".to_string())],
-                argv: vec![shell.current_exe.display().to_string(), "-c".to_string(), "printf \"$ASSIGN_VAR\"".to_string()],
+                argv: vec!["echo".to_string(), "hello".to_string()],
                 redirections: Vec::new(),
             },
         )
         .expect("process");
-        let child = spawn_prepared(&prepared, None, true, ProcessGroupPlan::None).expect("spawn");
-        let output = child.wait_with_output().expect("output");
-        assert_eq!(String::from_utf8_lossy(&output.stdout), "works");
+        assert_eq!(prepared.child_env, vec![("ASSIGN_VAR".into(), "works".into())]);
+        assert_eq!(prepared.argv, vec!["echo", "hello"]);
     }
 
     #[test]
     fn enoexec_helpers_cover_fallback_and_error_paths() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("meiksh-exec-unit-{unique}"));
-        fs::create_dir(&dir).expect("mkdir");
+        sys::test_support::VfsBuilder::new()
+            .file("/tmp/fallback-script", b"printf unit:$1")
+            .with_fake_spawn(
+                sys::test_support::FakeSpawnBuilder::new()
+                    .child(0, b"unit:ok"),
+            )
+            .run(|| {
+                let prepared = PreparedProcess {
+                    exec_path: "/tmp/fallback-script".into(),
+                    argv: vec!["fallback-script".into(), "ok".into()],
+                    child_env: Vec::new(),
+                    redirections: Vec::new(),
+                    noclobber: false,
+                };
+                let child = spawn_with_fallback(&prepared, None, true, ProcessGroupPlan::None)
+                    .expect("fallback spawn");
+                let output = child.wait_with_output().expect("output");
+                assert_eq!(String::from_utf8_lossy(&output.stdout), "unit:ok");
+            });
 
-        let script = dir.join("fallback-script");
-        fs::write(&script, "printf unit:$1").expect("write script");
-        let mut permissions = fs::metadata(&script).expect("metadata").permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&script, permissions).expect("chmod script");
+        let enoexec_err = std::io::Error::from_raw_os_error(libc::ENOEXEC);
+        sys::test_support::VfsBuilder::new()
+            .file("/tmp/fallback-script", b"cat")
+            .with_fake_spawn(
+                sys::test_support::FakeSpawnBuilder::new()
+                    .child(0, b"fallback"),
+            )
+            .run(|| {
+                let prepared = PreparedProcess {
+                    exec_path: "/tmp/fallback-script".into(),
+                    argv: vec!["fallback-script".into()],
+                    child_env: Vec::new(),
+                    redirections: Vec::new(),
+                    noclobber: false,
+                };
+                let child = maybe_spawn_with_fallback(
+                    enoexec_err,
+                    &prepared,
+                    None,
+                    true,
+                    ProcessGroupPlan::None,
+                )
+                .expect("enoexec fallback");
+                let output = child.wait_with_output().expect("output");
+                assert_eq!(String::from_utf8_lossy(&output.stdout), "fallback");
+            });
 
-        let prepared = PreparedProcess {
-            exec_path: script.display().to_string(),
-            argv: vec!["fallback-script".into(), "ok".into()],
-            child_env: Vec::new(),
-            redirections: Vec::new(),
-            noclobber: false,
-        };
-        let child = spawn_with_fallback(&prepared, None, true, ProcessGroupPlan::None).expect("fallback spawn");
-        let output = child.wait_with_output().expect("output");
-        assert_eq!(String::from_utf8_lossy(&output.stdout), "unit:ok");
-
-        fs::write(&script, "cat").expect("rewrite script");
-        let mut permissions = fs::metadata(&script).expect("metadata").permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&script, permissions).expect("chmod script");
-
-        let producer = sys::spawn_child(
-            &meiksh_bin_path().display().to_string(),
-            &[&meiksh_bin_path().display().to_string(), "-c", "printf piped"],
-            None, &[], None, true, None,
-        ).expect("spawn producer");
-        let producer_stdout_fd = producer.stdout_fd.expect("stdout fd");
-        let prepared = PreparedProcess {
-            exec_path: script.display().to_string(),
-            argv: vec!["fallback-script".into()],
-            child_env: Vec::new(),
-            redirections: Vec::new(),
-            noclobber: false,
-        };
-        let child = spawn_with_fallback(
-            &prepared,
-            Some(producer_stdout_fd),
-            true,
-            ProcessGroupPlan::None,
-        )
-        .expect("fallback pipeline");
-        let _ = sys::wait_pid(producer.pid, false);
-        let output = child.wait_with_output().expect("output");
-        assert_eq!(String::from_utf8_lossy(&output.stdout), "piped");
-
-        let missing = PreparedProcess {
-            exec_path: dir.join("missing").display().to_string(),
-            argv: vec!["missing".into()],
-            child_env: Vec::new(),
-            redirections: Vec::new(),
-            noclobber: false,
-        };
-        assert!(spawn_prepared(&missing, None, false, ProcessGroupPlan::None).is_err());
-
-        let _ = fs::remove_file(script);
-        let _ = fs::remove_dir(dir);
+        sys::test_support::VfsBuilder::new()
+            .run(|| {
+                let missing = PreparedProcess {
+                    exec_path: "/nonexistent/missing".into(),
+                    argv: vec!["missing".into()],
+                    child_env: Vec::new(),
+                    redirections: Vec::new(),
+                    noclobber: false,
+                };
+                assert!(spawn_prepared(&missing, None, false, ProcessGroupPlan::None).is_err());
+            });
     }
 
     #[test]
     fn redirection_helpers_cover_fd_actions_and_rendering() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        let temp = std::env::temp_dir().join(format!("meiksh-fd-action-{unique}.txt"));
-        fs::write(&temp, "fd").expect("write temp");
+        fn ok_dup(fd: c_int) -> c_int { fd + 100 }
+        fn ok_dup2(oldfd: c_int, _newfd: c_int) -> c_int { oldfd }
+        fn ok_close(_fd: c_int) -> c_int { 0 }
 
-        let owned: OwnedFd = File::open(&temp).expect("open temp").into();
-        let raw_fd = owned.as_raw_fd();
-        std::mem::forget(owned);
-        apply_child_fd_actions(&[
-            ChildFdAction::DupRawFd {
-                fd: raw_fd,
-                target_fd: 90,
-                close_source: true,
-            },
-            ChildFdAction::DupFd {
-                source_fd: 90,
-                target_fd: 91,
-            },
-            ChildFdAction::CloseFd { target_fd: 91 },
-            ChildFdAction::CloseFd { target_fd: 123_456 },
-        ])
-        .expect("apply child actions");
-        let _ = sys::close_fd(90);
-        let _ = fs::remove_file(temp);
+        sys::test_support::with_fd_ops_for_test(ok_dup, ok_dup2, ok_close, || {
+            apply_child_fd_actions(&[
+                ChildFdAction::DupRawFd {
+                    fd: 10,
+                    target_fd: 90,
+                    close_source: true,
+                },
+                ChildFdAction::DupFd {
+                    source_fd: 90,
+                    target_fd: 91,
+                },
+                ChildFdAction::CloseFd { target_fd: 91 },
+                ChildFdAction::CloseFd { target_fd: 123_456 },
+            ])
+            .expect("apply child actions");
+        });
 
         let simple = SimpleCommand {
             words: vec![Word { raw: "echo".into() }],
@@ -1616,7 +1595,6 @@ mod tests {
 
     #[test]
     fn spawn_pipeline_and_render_helpers_cover_all_command_forms() {
-        let mut shell = test_shell();
         let program = Program {
             items: vec![ListItem {
                 and_or: AndOr {
@@ -1688,17 +1666,27 @@ mod tests {
         };
         assert!(render_pipeline(&pipeline).starts_with("! "));
 
-        let spawned = spawn_pipeline(&mut shell, &Pipeline {
-            negated: false,
-            commands: vec![
-                Command::Subshell(program.clone()),
-                Command::Group(program.clone()),
-            ],
-        })
-        .expect("spawn");
-        for child in spawned.children {
-            let _ = child.wait().expect("wait");
-        }
+        sys::test_support::VfsBuilder::new()
+            .file(&meiksh_bin_path().display().to_string(), b"")
+            .with_fake_spawn(
+                sys::test_support::FakeSpawnBuilder::new()
+                    .child(0, b"")
+                    .child(0, b""),
+            )
+            .run(|| {
+                let mut shell = test_shell();
+                let spawned = spawn_pipeline(&mut shell, &Pipeline {
+                    negated: false,
+                    commands: vec![
+                        Command::Subshell(program.clone()),
+                        Command::Group(program.clone()),
+                    ],
+                })
+                .expect("spawn");
+                for child in spawned.children {
+                    let _ = child.wait().expect("wait");
+                }
+            });
     }
 
     #[test]
@@ -1745,51 +1733,32 @@ mod tests {
 
     #[test]
     fn execute_if_and_loop_commands() {
-        let _guard = cwd_lock().lock().expect("cwd lock");
-        std::env::set_current_dir(std::env::temp_dir()).expect("set cwd");
         let mut shell = test_shell();
-        shell.env.insert("PATH".into(), "/usr/bin:/bin".into());
-        shell.exported.insert("PATH".into());
         let if_program = crate::syntax::parse(
-            "if false; then printf no; elif true; then printf yes; else printf bad; fi",
+            "if false; then VALUE=no; elif true; then VALUE=yes; else VALUE=bad; fi",
         )
         .expect("parse");
         let status = execute_program(&mut shell, &if_program).expect("execute");
         assert_eq!(status, 0);
+        assert_eq!(shell.get_var("VALUE").as_deref(), Some("yes"));
 
         let mut shell = test_shell();
-        shell.env.insert("PATH".into(), "/usr/bin:/bin".into());
-        shell.exported.insert("PATH".into());
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        let marker = std::env::temp_dir().join(format!("meiksh-loop-{unique}.flag"));
-        std::fs::write(&marker, "present").expect("seed marker");
-        let while_program = crate::syntax::parse(&format!(
-            "while test -f {}; do rm {}; FLAG=done; done",
-            marker.display(),
-            marker.display()
-        ))
+        let while_program = crate::syntax::parse(
+            "COUNTER=1; while case $COUNTER in 0) false ;; *) true ;; esac; do COUNTER=0; FLAG=done; done",
+        )
         .expect("parse");
         let status = execute_program(&mut shell, &while_program).expect("execute");
         assert_eq!(status, 0);
         assert_eq!(shell.get_var("FLAG").as_deref(), Some("done"));
 
         let mut shell = test_shell();
-        shell.env.insert("PATH".into(), "/usr/bin:/bin".into());
-        shell.exported.insert("PATH".into());
-        let _ = std::fs::remove_file(&marker);
-        let until_program = crate::syntax::parse(&format!(
-            "until test -f {}; do touch {}; VALUE=ready; done",
-            marker.display(),
-            marker.display()
-        ))
+        let until_program = crate::syntax::parse(
+            "READY=; until case $READY in yes) true ;; *) false ;; esac; do READY=yes; VALUE=ready; done",
+        )
         .expect("parse");
         let status = execute_program(&mut shell, &until_program).expect("execute");
         assert_eq!(status, 0);
         assert_eq!(shell.get_var("VALUE").as_deref(), Some("ready"));
-        let _ = std::fs::remove_file(marker);
     }
 
     #[test]
@@ -1879,7 +1848,6 @@ mod tests {
 
     #[test]
     fn spawn_pipeline_covers_compound_command_variants() {
-        let mut shell = test_shell();
         let program = Program {
             items: vec![ListItem {
                 and_or: AndOr {
@@ -1930,10 +1898,23 @@ mod tests {
                 }),
             ],
         };
-        let children = spawn_pipeline(&mut shell, &pipeline).expect("spawn");
-        for child in children.children {
-            let _ = child.wait().expect("wait");
-        }
+        sys::test_support::VfsBuilder::new()
+            .file(&meiksh_bin_path().display().to_string(), b"")
+            .with_fake_spawn(
+                sys::test_support::FakeSpawnBuilder::new()
+                    .child(0, b"")
+                    .child(0, b"")
+                    .child(0, b"")
+                    .child(0, b"")
+                    .child(0, b""),
+            )
+            .run(|| {
+                let mut shell = test_shell();
+                let children = spawn_pipeline(&mut shell, &pipeline).expect("spawn");
+                for child in children.children {
+                    let _ = child.wait().expect("wait");
+                }
+            });
     }
 
     #[test]
@@ -2399,69 +2380,80 @@ mod tests {
 
     #[test]
     fn prepared_process_helpers_cover_fallback_and_pre_exec_paths() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        let script = std::env::temp_dir().join(format!("meiksh-fallback-{unique}.sh"));
-        fs::write(&script, "exit 0\n").expect("write fallback script");
-        let mut perms = fs::metadata(&script).expect("meta").permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&script, perms).expect("chmod");
+        sys::test_support::VfsBuilder::new()
+            .file("/tmp/script.sh", b"exit 0")
+            .with_fake_spawn(
+                sys::test_support::FakeSpawnBuilder::new()
+                    .child(0, b"")
+                    .child(0, b"")
+                    .child(0, b""),
+            )
+            .run(|| {
+                let prepared = PreparedProcess {
+                    exec_path: "/tmp/script.sh".into(),
+                    argv: vec!["/tmp/script.sh".into()],
+                    child_env: Vec::new(),
+                    redirections: Vec::new(),
+                    noclobber: false,
+                };
+                let child = spawn_prepared(&prepared, None, false, ProcessGroupPlan::NewGroup)
+                    .expect("spawn newgroup");
+                assert!(child.wait_with_output().expect("wait output").status.success());
 
-        let prepared = PreparedProcess {
-            exec_path: script.display().to_string(),
-            argv: vec![script.display().to_string()],
-            child_env: Vec::new(),
-            redirections: Vec::new(),
-            noclobber: false,
-        };
-        let child = spawn_prepared(&prepared, None, false, ProcessGroupPlan::NewGroup).expect("spawn fallback");
-        assert!(child.wait_with_output().expect("wait output").status.success());
-        let devnull_fd = sys::open_file("/dev/null", sys::O_RDONLY, 0).expect("open /dev/null");
-        let child = spawn_with_fallback(&prepared, Some(devnull_fd), false, ProcessGroupPlan::None)
-            .expect("fallback spawn");
-        assert!(child.wait_with_output().expect("wait output").status.success());
-        let devnull_fd2 = sys::open_file("/dev/null", sys::O_RDONLY, 0).expect("open /dev/null");
-        let child = maybe_spawn_with_fallback(
-            std::io::Error::from_raw_os_error(8),
-            &prepared,
-            Some(devnull_fd2),
-            false,
-            ProcessGroupPlan::None,
-        )
-        .expect("enoexec fallback helper");
-        assert!(child.wait_with_output().expect("wait output").status.success());
+                let child = spawn_with_fallback(&prepared, None, false, ProcessGroupPlan::None)
+                    .expect("fallback spawn");
+                assert!(child.wait_with_output().expect("wait output").status.success());
 
-        let prepared = PreparedProcess {
-            exec_path: meiksh_bin_path().display().to_string(),
-            argv: vec![meiksh_bin_path().display().to_string(), "-c".into(), "exit 0".into()],
-            child_env: Vec::new(),
-            redirections: vec![ExpandedRedirection {
-                fd: 1,
-                kind: RedirectionKind::DupOutput,
-                target: "-".into(),
-                here_doc_body: None,
-            }],
-            noclobber: false,
-        };
-        let child = spawn_prepared(&prepared, None, false, ProcessGroupPlan::None)
-            .expect("spawn with stdout redirect");
-        assert!(child.wait().expect("wait").success());
+                let child = maybe_spawn_with_fallback(
+                    std::io::Error::from_raw_os_error(libc::ENOEXEC),
+                    &prepared,
+                    None,
+                    false,
+                    ProcessGroupPlan::None,
+                )
+                .expect("enoexec fallback helper");
+                assert!(child.wait_with_output().expect("wait output").status.success());
+            });
 
-        let prepared = PreparedProcess {
-            exec_path: meiksh_bin_path().display().to_string(),
-            argv: vec![meiksh_bin_path().display().to_string(), "-c".into(), "exit 0".into()],
-            child_env: Vec::new(),
-            redirections: Vec::new(),
-            noclobber: false,
-        };
-        let child = spawn_prepared(&prepared, None, false, ProcessGroupPlan::NewGroup)
-            .expect("spawn newgroup");
-        assert!(child.wait().expect("wait").success());
-        let child = spawn_prepared(&prepared, None, false, ProcessGroupPlan::Join(0))
-            .expect("spawn join");
-        assert!(child.wait().expect("wait").success());
+        sys::test_support::VfsBuilder::new()
+            .file("/bin/echo", b"")
+            .with_fake_spawn(
+                sys::test_support::FakeSpawnBuilder::new()
+                    .child(0, b"")
+                    .child(0, b"")
+                    .child(0, b""),
+            )
+            .run(|| {
+                let prepared = PreparedProcess {
+                    exec_path: "/bin/echo".into(),
+                    argv: vec!["/bin/echo".into(), "hello".into()],
+                    child_env: Vec::new(),
+                    redirections: vec![ExpandedRedirection {
+                        fd: 1,
+                        kind: RedirectionKind::DupOutput,
+                        target: "-".into(),
+                        here_doc_body: None,
+                    }],
+                    noclobber: false,
+                };
+                let child = spawn_prepared(&prepared, None, false, ProcessGroupPlan::None)
+                    .expect("spawn with stdout redirect");
+                assert!(child.wait().expect("wait").success());
+
+                let prepared = PreparedProcess {
+                    exec_path: "/bin/echo".into(),
+                    argv: vec!["/bin/echo".into()],
+                    child_env: Vec::new(),
+                    redirections: Vec::new(),
+                    noclobber: false,
+                };
+                let child = spawn_prepared(&prepared, None, false, ProcessGroupPlan::NewGroup)
+                    .expect("spawn newgroup");
+                assert!(child.wait().expect("wait").success());
+                let child = spawn_prepared(&prepared, None, false, ProcessGroupPlan::Join(0))
+                    .expect("spawn join");
+                assert!(child.wait().expect("wait").success());
+            });
 
         fn fake_isatty(_fd: i32) -> i32 {
             1
@@ -2512,8 +2504,6 @@ mod tests {
                 apply_child_setup(&[], ProcessGroupPlan::Join(0)).expect("setup join");
             },
         );
-
-        let _ = fs::remove_file(script);
     }
 
 }

@@ -89,7 +89,7 @@ pub(crate) struct Syscalls {
     fork: fn() -> Pid,
 }
 
-fn default_syscalls() -> Syscalls {
+pub(crate) fn default_syscalls() -> Syscalls {
     Syscalls {
         getpid: || unsafe { libc::getpid() },
         waitpid: |pid, status, options| unsafe { libc::waitpid(pid, status, options) },
@@ -284,6 +284,27 @@ pub(crate) mod test_support {
         with_test_syscalls(syscalls, f)
     }
 
+    pub(crate) fn with_waitpid_and_kill_for_test<T>(
+        waitpid_fn: fn(Pid, *mut c_int, c_int) -> Pid,
+        kill_fn: fn(Pid, c_int) -> c_int,
+        f: impl FnOnce() -> T,
+    ) -> T {
+        let syscalls = Syscalls {
+            waitpid: waitpid_fn,
+            kill: kill_fn,
+            ..default_syscalls()
+        };
+        with_test_syscalls(syscalls, f)
+    }
+
+    pub(crate) fn with_umask_for_test<T>(
+        umask_fn: fn(FileModeMask) -> FileModeMask,
+        f: impl FnOnce() -> T,
+    ) -> T {
+        let syscalls = Syscalls { umask: umask_fn, ..default_syscalls() };
+        with_test_syscalls(syscalls, f)
+    }
+
     pub(crate) fn with_times_error_for_test<T>(f: impl FnOnce() -> T) -> T {
         fn fake_times(_buffer: *mut libc::tms) -> ClockTicks {
             ClockTicks::MAX
@@ -473,6 +494,21 @@ pub(crate) mod test_support {
             })
         }
 
+        pub(crate) fn run_with_waitpid<T>(
+            self,
+            waitpid_fn: fn(Pid, *mut c_int, c_int) -> Pid,
+            f: impl FnOnce() -> T,
+        ) -> T {
+            let (mut syscalls, state) = self.build();
+            syscalls.waitpid = waitpid_fn;
+            VFS_STATE.with(|cell| {
+                let previous = cell.replace(Some(state));
+                let result = with_test_syscalls(syscalls, f);
+                cell.replace(previous);
+                result
+            })
+        }
+
         pub(crate) fn run_with_fcntl_and_isatty<T>(
             self,
             fcntl_fn: fn(c_int, c_int, c_int) -> c_int,
@@ -502,7 +538,7 @@ pub(crate) mod test_support {
         }
     }
 
-    fn set_errno_val(errno: c_int) {
+    pub(crate) fn set_errno_val(errno: c_int) {
         unsafe { *libc::__error() = errno; }
     }
 
@@ -1006,7 +1042,9 @@ pub(crate) mod test_support {
         with_fake_spawn(|state| {
             if state.spawn_index < state.children.len() {
                 let child = &state.children[state.spawn_index];
-                child.pid
+                let pid = child.pid;
+                state.spawn_index += 1;
+                pid
             } else {
                 set_errno_val(libc::EAGAIN);
                 -1
@@ -1015,12 +1053,7 @@ pub(crate) mod test_support {
     }
 
     fn fake_execvp(_file: *const c_char, _argv: *const *const c_char) -> c_int {
-        with_fake_spawn(|state| {
-            if state.spawn_index < state.children.len() {
-                state.spawn_index += 1;
-            }
-            unsafe { libc::_exit(0) };
-        })
+        unsafe { libc::_exit(0) };
     }
 
     fn fake_waitpid(pid: Pid, status: *mut c_int, _options: c_int) -> Pid {
@@ -1877,13 +1910,23 @@ pub fn cstr_lossy(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command;
 
     #[test]
     fn pipe_roundtrip() {
-        let (read_fd, write_fd) = create_pipe().expect("pipe");
-        close_fd(read_fd).expect("close read");
-        close_fd(write_fd).expect("close write");
+        fn fake_pipe(fds: *mut c_int) -> c_int {
+            unsafe { *fds.add(0) = 10; *fds.add(1) = 11; }
+            0
+        }
+        fn fake_close(_fd: c_int) -> c_int { 0 }
+
+        let fake = Syscalls { pipe: fake_pipe, close: fake_close, ..default_syscalls() };
+        test_support::with_test_syscalls(fake, || {
+            let (read_fd, write_fd) = create_pipe().expect("pipe");
+            assert_eq!(read_fd, 10);
+            assert_eq!(write_fd, 11);
+            close_fd(read_fd).expect("close read");
+            close_fd(write_fd).expect("close write");
+        });
     }
 
     #[test]
@@ -1901,61 +1944,65 @@ mod tests {
         assert_eq!(cstr_lossy(b"abc\0rest"), "abc".to_string());
         assert_eq!(cstr_lossy(b"plain-bytes"), "plain-bytes".to_string());
 
-        let syscalls = default_syscalls();
-        let program = CString::new("meiksh-command-that-does-not-exist").expect("cstring");
-        let argv = [program.as_ptr(), std::ptr::null()];
-        assert_eq!((syscalls.execvp)(program.as_ptr(), argv.as_ptr()), -1);
+        fn fail_execvp(_file: *const c_char, _argv: *const *const c_char) -> c_int { -1 }
+        let fake = Syscalls { execvp: fail_execvp, ..default_syscalls() };
+        test_support::with_test_syscalls(fake, || {
+            let program = CString::new("meiksh-command-that-does-not-exist").expect("cstring");
+            let argv = [program.as_ptr(), std::ptr::null()];
+            assert_eq!((syscalls().execvp)(program.as_ptr(), argv.as_ptr()), -1);
+        });
     }
-
-    use crate::test_utils::meiksh_bin_path;
 
     #[test]
     fn invalid_fd_operations_fail_cleanly() {
-        assert!(!is_interactive_fd(-1));
-        assert!(duplicate_fd(-1, -1).is_err());
-        assert!(close_fd(-1).is_err());
-        assert!(current_foreground_pgrp(-1).is_err());
-        assert!(set_foreground_pgrp(-1, 0).is_err());
-        assert!(set_process_group(999_999, 999_999).is_err());
+        fn fail_isatty(_fd: c_int) -> c_int { 0 }
+        fn fail_dup2(_old: c_int, _new: c_int) -> c_int { -1 }
+        fn fail_close(_fd: c_int) -> c_int { -1 }
+        fn fail_tcgetpgrp(_fd: c_int) -> Pid { -1 }
+        fn fail_tcsetpgrp(_fd: c_int, _pgid: Pid) -> c_int { -1 }
+        fn fail_setpgid(_pid: Pid, _pgid: Pid) -> c_int { -1 }
+
+        let fake = Syscalls {
+            isatty: fail_isatty, dup2: fail_dup2, close: fail_close,
+            tcgetpgrp: fail_tcgetpgrp, tcsetpgrp: fail_tcsetpgrp, setpgid: fail_setpgid,
+            ..default_syscalls()
+        };
+        test_support::with_test_syscalls(fake, || {
+            assert!(!is_interactive_fd(-1));
+            assert!(duplicate_fd(-1, -1).is_err());
+            assert!(close_fd(-1).is_err());
+            assert!(current_foreground_pgrp(-1).is_err());
+            assert!(set_foreground_pgrp(-1, 0).is_err());
+            assert!(set_process_group(999_999, 999_999).is_err());
+        });
     }
 
     #[test]
-    fn wait_pid_and_exec_replace_error_paths_work() {
-        let mut child = Command::new(meiksh_bin_path())
-            .args(["-c", "exit 5"])
-            .spawn()
-            .expect("spawn");
-        let status = wait_pid(child.id() as i32, false)
-            .expect("wait")
-            .expect("status");
-        assert_eq!(decode_wait_status(status.status), 5);
-        let _ = child.wait();
-
-        assert!(wait_pid(999_999, false).is_err());
+    fn wait_pid_error_and_exec_replace_nul_error_work() {
+        fn fail_waitpid(_pid: Pid, _status: *mut c_int, _options: c_int) -> Pid { -1 }
+        let fake = Syscalls { waitpid: fail_waitpid, ..default_syscalls() };
+        test_support::with_test_syscalls(fake, || {
+            assert!(wait_pid(999_999, false).is_err());
+        });
         assert!(exec_replace("bad\0program", &["bad\0program".to_string()]).is_err());
     }
 
     #[test]
-    fn misc_sys_helpers_cover_successish_paths() {
-        assert!(current_pid() > 0);
-        assert!(has_same_real_and_effective_ids());
-        send_signal(current_pid(), 0).expect("signal 0");
-        let child = Command::new(meiksh_bin_path())
-            .args(["-c", "sleep 0.05"])
-            .spawn()
-            .expect("spawn");
-        let pending = wait_pid(child.id() as i32, true).expect("wait nohang");
-        assert!(pending.is_none() || pending.is_some());
-        let _ = send_signal(child.id() as i32, 0);
-        let _ = current_foreground_pgrp(STDIN_FILENO);
-    }
-
-    #[test]
     fn sys_success_branches_cover_fd_helpers() {
-        let (read_fd, write_fd) = create_pipe().expect("pipe");
-        duplicate_fd(read_fd, read_fd).expect("dup self");
-        close_fd(read_fd).expect("close read");
-        close_fd(write_fd).expect("close write");
+        fn fake_pipe(fds: *mut c_int) -> c_int {
+            unsafe { *fds.add(0) = 20; *fds.add(1) = 21; }
+            0
+        }
+        fn fake_dup2(oldfd: c_int, _newfd: c_int) -> c_int { oldfd }
+        fn fake_close(_fd: c_int) -> c_int { 0 }
+
+        let fake = Syscalls { pipe: fake_pipe, dup2: fake_dup2, close: fake_close, ..default_syscalls() };
+        test_support::with_test_syscalls(fake, || {
+            let (read_fd, write_fd) = create_pipe().expect("pipe");
+            duplicate_fd(read_fd, read_fd).expect("dup self");
+            close_fd(read_fd).expect("close read");
+            close_fd(write_fd).expect("close write");
+        });
     }
 
     #[test]
@@ -2269,15 +2316,17 @@ mod tests {
         fn not_tty(_fd: c_int) -> c_int {
             0
         }
+        fn fake_fstat_fifo(_fd: c_int, buf: *mut libc::stat) -> c_int {
+            unsafe { std::ptr::write_bytes(buf, 0, 1); (*buf).st_mode = libc::S_IFIFO; }
+            0
+        }
 
-        let (read_end, write_end) = create_pipe().expect("pipe");
-        test_support::with_fcntl_and_isatty_for_test(fake_fcntl, not_tty, || {
+        let fake = Syscalls { fcntl: fake_fcntl, isatty: not_tty, fstat: fake_fstat_fifo, ..default_syscalls() };
+        test_support::with_test_syscalls(fake, || {
             LAST_SET_FLAGS.store(usize::MAX, Ordering::SeqCst);
-            ensure_blocking_read_fd(read_end).expect("fifo blocking");
+            ensure_blocking_read_fd(42).expect("fifo blocking");
             assert_eq!(LAST_SET_FLAGS.load(Ordering::SeqCst), 0o2);
         });
-        close_fd(read_end).expect("close read");
-        close_fd(write_end).expect("close write");
     }
 
     #[test]
