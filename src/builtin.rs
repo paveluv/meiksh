@@ -1,8 +1,5 @@
-use std::env;
-use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::process::Command as ProcessCommand;
 
 use crate::shell::{Shell, ShellError, TrapAction, TrapCondition};
 use crate::sys;
@@ -96,7 +93,7 @@ fn cd(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> 
     let (target, print_new_pwd) = parse_cd_target(shell, argv)?;
     let (resolved_target, pwd_target, print_new_pwd) = resolve_cd_target(shell, &target, print_new_pwd);
     let old_pwd = current_logical_pwd(shell)?;
-    env::set_current_dir(&resolved_target)?;
+    sys::change_dir(&resolved_target.display().to_string())?;
     let new_pwd = cd_pwd_value(&pwd_target)?;
     shell.set_var("OLDPWD", old_pwd)?;
     shell.set_var("PWD", new_pwd.clone())?;
@@ -110,7 +107,7 @@ fn cd_pwd_value(target: &str) -> Result<String, ShellError> {
     if logical_pwd_is_valid(target) {
         return Ok(target.to_string());
     }
-    Ok(env::current_dir()?.display().to_string())
+    Ok(sys::get_cwd()?)
 }
 
 fn parse_cd_target(shell: &Shell, argv: &[String]) -> Result<(String, bool), ShellError> {
@@ -162,7 +159,7 @@ fn resolve_cd_target(shell: &Shell, target: &str, print_new_pwd: bool) -> (PathB
     for prefix in cdpath.split(':') {
         let base = if prefix.is_empty() { PathBuf::from(".") } else { PathBuf::from(prefix) };
         let candidate = base.join(target);
-        if candidate.is_dir() {
+        if sys::is_directory(&candidate.display().to_string()) {
             let should_print = print_new_pwd || !prefix.is_empty();
             let pwd_target = if prefix.is_empty() {
                 target.to_string()
@@ -527,8 +524,8 @@ fn parse_jobs_operands(operands: &[String]) -> Result<Option<Vec<usize>>, String
 
 fn job_display_pid(job: &crate::shell::Job) -> Option<sys::Pid> {
     job.pgid
-        .or_else(|| job.children.first().map(|child| child.id() as sys::Pid))
-        .or_else(|| job.last_pid.map(|pid| pid as sys::Pid))
+        .or_else(|| job.children.first().map(|child| child.pid))
+        .or_else(|| job.last_pid)
 }
 
 fn fg(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
@@ -908,7 +905,7 @@ fn trap(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
 #[derive(Clone, Copy)]
 enum WaitOperand {
     Job(usize),
-    Pid(u32),
+    Pid(sys::Pid),
 }
 
 fn parse_job_id_operand(operand: Option<&str>) -> Option<usize> {
@@ -923,7 +920,7 @@ fn parse_wait_operand(operand: &str) -> Result<WaitOperand, String> {
             .map_err(|_| format!("wait: invalid job id: {operand}"));
     }
     operand
-        .parse::<u32>()
+        .parse::<sys::Pid>()
         .map(WaitOperand::Pid)
         .map_err(|_| format!("wait: invalid process id: {operand}"))
 }
@@ -1324,18 +1321,18 @@ fn pwd_output(shell: &Shell, logical: bool) -> Result<String, ShellError> {
     if logical {
         return current_logical_pwd(shell);
     }
-    Ok(env::current_dir()?.display().to_string())
+    Ok(sys::get_cwd()?)
 }
 
 fn current_logical_pwd(shell: &Shell) -> Result<String, ShellError> {
-    let cwd = env::current_dir()?;
+    let cwd = sys::get_cwd()?;
     if let Some(pwd) = shell.get_var("PWD")
         && logical_pwd_is_valid(&pwd)
-        && paths_match_logically(Path::new(&pwd), &cwd)
+        && paths_match_logically(&pwd, &cwd)
     {
         return Ok(pwd);
     }
-    Ok(cwd.display().to_string())
+    Ok(cwd)
 }
 
 fn logical_pwd_is_valid(path: &str) -> bool {
@@ -1345,8 +1342,8 @@ fn logical_pwd_is_valid(path: &str) -> bool {
             .any(|component| matches!(component, Component::CurDir | Component::ParentDir))
 }
 
-fn paths_match_logically(lhs: &Path, rhs: &Path) -> bool {
-    lhs.canonicalize().ok() == rhs.canonicalize().ok()
+fn paths_match_logically(lhs: &str, rhs: &str) -> bool {
+    sys::canonicalize(lhs).ok() == sys::canonicalize(rhs).ok()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1499,17 +1496,21 @@ fn execute_command_utility(
         return Ok(BuiltinOutcome::Status(127));
     };
 
-    let mut process = ProcessCommand::new(&path);
-    process.args(&argv[1..]);
-    process.env_clear();
+    let path_str = path.display().to_string();
+    if sys::access_path(&path_str, sys::X_OK).is_err() {
+        eprintln!("command: {name}: Permission denied");
+        return Ok(BuiltinOutcome::Status(126));
+    }
+
     let mut child_env = shell.env_for_child();
     if use_default_path {
         child_env.insert("PATH".to_string(), DEFAULT_COMMAND_PATH.to_string());
     }
-    process.envs(child_env);
+    let env_pairs: Vec<(&str, &str)> = child_env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let argv_strs: Vec<&str> = argv.iter().map(String::as_str).collect();
 
-    match process.status() {
-        Ok(status) => Ok(BuiltinOutcome::Status(status.code().unwrap_or(128))),
+    match sys::run_to_status(&path_str, &argv_strs, Some(&env_pairs)) {
+        Ok(status) => Ok(BuiltinOutcome::Status(status)),
         Err(error) if error.raw_os_error() == Some(2) => {
             eprintln!("command: {name}: not found");
             Ok(BuiltinOutcome::Status(127))
@@ -1539,7 +1540,7 @@ fn search_path(name: &str, shell: &Shell, use_default_path: bool, predicate: fn(
     } else {
         shell
             .get_var("PATH")
-            .or_else(|| env::var("PATH").ok())
+            .or_else(|| std::env::var("PATH").ok())
             .unwrap_or_default()
     };
 
@@ -1554,18 +1555,19 @@ fn search_path(name: &str, shell: &Shell, use_default_path: bool, predicate: fn(
 }
 
 fn path_exists(path: &Path) -> bool {
-    path.exists()
+    sys::file_exists(&path.display().to_string())
 }
 
 fn readable_regular_file(path: &Path) -> bool {
-    fs::metadata(path).map(|metadata| metadata.is_file()).unwrap_or(false) && fs::File::open(path).is_ok()
+    let p = path.display().to_string();
+    sys::is_regular_file(&p) && sys::access_path(&p, sys::R_OK).is_ok()
 }
 
 fn absolute_path(path: &Path) -> Option<PathBuf> {
     if path.is_absolute() {
         return Some(path.to_path_buf());
     }
-    env::current_dir().ok().map(|cwd| cwd.join(path))
+    sys::get_cwd().ok().map(|cwd| PathBuf::from(cwd).join(path))
 }
 
 pub fn is_special_builtin(name: &str) -> bool {
@@ -1607,9 +1609,18 @@ mod tests {
     use std::fs;
     use std::io::{self, Cursor};
     use std::os::unix::fs::PermissionsExt;
+    use std::process::Command as ProcessCommand;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use crate::sys::test_support::VfsBuilder;
     use crate::test_utils::{cwd_lock, meiksh_bin_path};
+
+    fn child_to_handle(child: std::process::Child) -> sys::ChildHandle {
+        sys::ChildHandle {
+            pid: child.id() as sys::Pid,
+            stdout_fd: None,
+        }
+    }
 
     fn test_shell() -> Shell {
         Shell {
@@ -2152,46 +2163,50 @@ mod tests {
 
     #[test]
     fn lookup_helpers_cover_reporting_paths() {
-        let mut shell = test_shell();
-        shell.env.insert("PATH".into(), "/definitely/missing".into());
-        shell.aliases.insert("ll".into(), "ls -l".into());
-        shell.functions.insert(
-            "greet".into(),
-            crate::syntax::Command::Simple(crate::syntax::SimpleCommand {
-                assignments: Vec::new(),
-                words: vec![literal("printf"), literal("hello")],
-                redirections: Vec::new(),
-            }),
-        );
-        shell.exported.insert("NAME".into());
-        shell.env.insert("NAME".into(), "value with spaces".into());
-        shell.readonly.insert("LOCK".into());
-        shell.env.insert("LOCK".into(), "x y".into());
+        VfsBuilder::new()
+            .file_with_mode("/bin/sh", b"", 0o755)
+            .run(|| {
+                let mut shell = test_shell();
+                shell.env.insert("PATH".into(), "/definitely/missing".into());
+                shell.aliases.insert("ll".into(), "ls -l".into());
+                shell.functions.insert(
+                    "greet".into(),
+                    crate::syntax::Command::Simple(crate::syntax::SimpleCommand {
+                        assignments: Vec::new(),
+                        words: vec![literal("printf"), literal("hello")],
+                        redirections: Vec::new(),
+                    }),
+                );
+                shell.exported.insert("NAME".into());
+                shell.env.insert("NAME".into(), "value with spaces".into());
+                shell.readonly.insert("LOCK".into());
+                shell.env.insert("LOCK".into(), "x y".into());
 
-        let path = which("/bin/sh", &shell).expect("path lookup");
-        assert_eq!(path, PathBuf::from("/bin/sh"));
+                let path = which("/bin/sh", &shell).expect("path lookup");
+                assert_eq!(path, PathBuf::from("/bin/sh"));
 
-        assert_eq!(
-            exported_lines(&shell),
-            vec!["export NAME='value with spaces'".to_string()]
-        );
-        assert_eq!(
-            readonly_lines(&shell),
-            vec!["readonly LOCK='x y'".to_string()]
-        );
-        assert_eq!(
-            command_short_description(&shell, "ll", false),
-            Some("ll='ls -l'".to_string())
-        );
-        assert_eq!(
-            command_verbose_description(&shell, "greet", false),
-            Some("greet is a function".to_string())
-        );
-        assert_eq!(
-            command_verbose_description(&shell, "if", false),
-            Some("if is a reserved word".to_string())
-        );
-        assert!(command_short_description(&shell, "meiksh-not-real", false).is_none());
+                assert_eq!(
+                    exported_lines(&shell),
+                    vec!["export NAME='value with spaces'".to_string()]
+                );
+                assert_eq!(
+                    readonly_lines(&shell),
+                    vec!["readonly LOCK='x y'".to_string()]
+                );
+                assert_eq!(
+                    command_short_description(&shell, "ll", false),
+                    Some("ll='ls -l'".to_string())
+                );
+                assert_eq!(
+                    command_verbose_description(&shell, "greet", false),
+                    Some("greet is a function".to_string())
+                );
+                assert_eq!(
+                    command_verbose_description(&shell, "if", false),
+                    Some("if is a reserved word".to_string())
+                );
+                assert!(command_short_description(&shell, "meiksh-not-real", false).is_none());
+            });
     }
 
     #[test]
@@ -2426,7 +2441,7 @@ mod tests {
     #[test]
     fn cd_dash_updates_pwd_and_oldpwd() {
         let _guard = cwd_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let original = env::current_dir().expect("cwd");
+        let original = std::env::current_dir().expect("cwd");
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("time")
@@ -2446,14 +2461,14 @@ mod tests {
             PathBuf::from(shell.get_var("PWD").expect("pwd after cd"))
                 .canonicalize()
                 .expect("canonical pwd"),
-            env::current_dir()
+            std::env::current_dir()
                 .expect("cwd after cd")
                 .canonicalize()
                 .expect("canonical cwd")
         );
         assert_eq!(shell.get_var("OLDPWD").as_deref(), Some(original_display.as_str()));
 
-        env::set_current_dir(&original).expect("restore cwd");
+        std::env::set_current_dir(&original).expect("restore cwd");
         let _ = fs::remove_dir_all(root);
     }
 
@@ -2483,91 +2498,78 @@ mod tests {
         assert!(parse_cd_target(&shell, &["cd".into(), "--".into(), "-".into()]).is_ok());
         assert!(parse_cd_target(&shell, &["cd".into(), "-P".into()]).is_err());
 
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("meiksh-cdpath-builtins-{unique}"));
-        let cdpath = root.join("cdpath");
-        let target = cdpath.join("target");
-        fs::create_dir_all(&target).expect("mkdir target");
-        shell.env.insert("CDPATH".into(), cdpath.display().to_string());
-        let (resolved, pwd_target, should_print) = resolve_cd_target(&shell, "target", false);
-        assert_eq!(resolved, target);
-        assert_eq!(pwd_target, target.display().to_string());
-        assert!(should_print);
+        VfsBuilder::new()
+            .dir("/cdpath/target")
+            .dir("/work/plain")
+            .cwd("/work")
+            .run(|| {
+                let mut shell = test_shell();
 
-        let (resolved, pwd_target, should_print) = resolve_cd_target(&shell, "missing", false);
-        assert_eq!(resolved, PathBuf::from("missing"));
-        assert_eq!(pwd_target, "missing");
-        assert!(!should_print);
+                shell.env.insert("CDPATH".into(), "/cdpath".into());
+                let (resolved, pwd_target, should_print) = resolve_cd_target(&shell, "target", false);
+                assert_eq!(resolved, PathBuf::from("/cdpath/target"));
+                assert_eq!(pwd_target, "/cdpath/target");
+                assert!(should_print);
 
-        shell.env.remove("CDPATH");
-        let (resolved, pwd_target, should_print) = resolve_cd_target(&shell, "plain", false);
-        assert_eq!(resolved, PathBuf::from("plain"));
-        assert_eq!(pwd_target, "plain");
-        assert!(!should_print);
+                let (resolved, pwd_target, should_print) = resolve_cd_target(&shell, "missing", false);
+                assert_eq!(resolved, PathBuf::from("missing"));
+                assert_eq!(pwd_target, "missing");
+                assert!(!should_print);
 
-        shell.env.insert("CDPATH".into(), format!(":{}", cdpath.display()));
-        let plain = PathBuf::from("plain");
-        fs::create_dir_all(&plain).expect("mkdir plain");
-        let (resolved, pwd_target, should_print) = resolve_cd_target(&shell, "plain", false);
-        assert!(resolved.ends_with("plain"));
-        assert_eq!(pwd_target, "plain");
-        assert!(!should_print);
-        let _ = fs::remove_dir_all(&plain);
+                shell.env.remove("CDPATH");
+                let (resolved, pwd_target, should_print) = resolve_cd_target(&shell, "plain", false);
+                assert_eq!(resolved, PathBuf::from("plain"));
+                assert_eq!(pwd_target, "plain");
+                assert!(!should_print);
 
-        let (resolved, pwd_target, should_print) = resolve_cd_target(&shell, "plain", false);
-        assert_eq!(resolved, PathBuf::from("plain"));
-        assert_eq!(pwd_target, "plain");
-        assert!(!should_print);
-        let _ = fs::remove_dir_all(root);
+                shell.env.insert("CDPATH".into(), ":/cdpath".into());
+                let (resolved, pwd_target, should_print) = resolve_cd_target(&shell, "plain", false);
+                assert!(resolved.ends_with("plain"));
+                assert_eq!(pwd_target, "plain");
+                assert!(!should_print);
+            });
+
+        VfsBuilder::new()
+            .dir("/cdpath/target")
+            .cwd("/work")
+            .run(|| {
+                let mut shell = test_shell();
+                shell.env.insert("CDPATH".into(), ":/cdpath".into());
+                let (resolved, pwd_target, should_print) = resolve_cd_target(&shell, "plain", false);
+                assert_eq!(resolved, PathBuf::from("plain"));
+                assert_eq!(pwd_target, "plain");
+                assert!(!should_print);
+            });
     }
 
     #[test]
     fn resolve_cd_target_uses_plain_pwd_for_empty_cdpath_prefix() {
-        let _guard = cwd_lock().lock().expect("cwd lock");
-        let mut shell = test_shell();
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("meiksh-cdpath-empty-prefix-{unique}"));
-        let original = std::env::current_dir().expect("cwd");
-        fs::create_dir_all(root.join("plain")).expect("mkdir plain");
-        std::env::set_current_dir(&root).expect("set cwd");
-        shell.env.insert("CDPATH".into(), ":".into());
+        VfsBuilder::new()
+            .dir("/work/plain")
+            .cwd("/work")
+            .run(|| {
+                let mut shell = test_shell();
+                shell.env.insert("CDPATH".into(), ":".into());
 
-        let (resolved, pwd_target, should_print) = resolve_cd_target(&shell, "plain", false);
-        assert_eq!(resolved, PathBuf::from("./plain"));
-        assert_eq!(pwd_target, "plain");
-        assert!(!should_print);
-
-        std::env::set_current_dir(&original).expect("restore cwd");
-        let _ = fs::remove_dir_all(root);
+                let (resolved, pwd_target, should_print) = resolve_cd_target(&shell, "plain", false);
+                assert_eq!(resolved, PathBuf::from("./plain"));
+                assert_eq!(pwd_target, "plain");
+                assert!(!should_print);
+            });
     }
 
     #[test]
     fn dot_path_search_sources_readable_file() {
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("meiksh-m6-dot-{unique}"));
-        fs::create_dir_all(&root).expect("mkdir root");
-        let dot_file = root.join("dot-script.sh");
-        fs::write(&dot_file, "M6_DOT=loaded\n").expect("write dot file");
-        fs::set_permissions(&dot_file, fs::Permissions::from_mode(0o644)).expect("chmod dot");
-
-        let mut shell = test_shell();
-        shell.env.insert("PATH".into(), root.display().to_string());
-        let status = run(&mut shell, &[".".into(), "dot-script.sh".into()]).expect("dot path");
-        assert!(matches!(status, BuiltinOutcome::Status(0)));
-        assert_eq!(shell.get_var("M6_DOT").as_deref(), Some("loaded"));
-        assert!(resolve_dot_path(&shell, "missing-dot.sh").is_err());
-
-        let _ = fs::remove_file(dot_file);
-        let _ = fs::remove_dir_all(root);
+        VfsBuilder::new()
+            .file("/scripts/dot-script.sh", b"M6_DOT=loaded\n")
+            .run(|| {
+                let mut shell = test_shell();
+                shell.env.insert("PATH".into(), "/scripts".into());
+                let status = run(&mut shell, &[".".into(), "dot-script.sh".into()]).expect("dot path");
+                assert!(matches!(status, BuiltinOutcome::Status(0)));
+                assert_eq!(shell.get_var("M6_DOT").as_deref(), Some("loaded"));
+                assert!(resolve_dot_path(&shell, "missing-dot.sh").is_err());
+            });
     }
 
     #[test]
@@ -2596,7 +2598,7 @@ mod tests {
             .spawn()
             .expect("spawn");
         let child_pid = child.id() as sys::Pid;
-        shell.launch_background_job("sleep".into(), None, vec![child]);
+        shell.launch_background_job("sleep".into(), None, vec![child_to_handle(child)]);
         assert_eq!(job_display_pid(&shell.jobs[0]), Some(child_pid));
     }
 
@@ -2620,14 +2622,14 @@ mod tests {
             .args(["-c", "exit 7"])
             .spawn()
             .expect("spawn finished");
-        let mut finished_child = finished_child;
-        let _ = finished_child.wait();
-        let finished_id = shell.launch_background_job("done".into(), None, vec![finished_child]);
+        let finished_handle = child_to_handle(finished_child);
+        let _ = sys::wait_pid(finished_handle.pid, false);
+        let finished_id = shell.launch_background_job("done".into(), None, vec![finished_handle]);
         let running_child = std::process::Command::new(&shell.current_exe)
             .args(["-c", "sleep 0.05"])
             .spawn()
             .expect("spawn running");
-        shell.launch_background_job("sleep".into(), None, vec![running_child]);
+        shell.launch_background_job("sleep".into(), None, vec![child_to_handle(running_child)]);
         assert!(matches!(
             jobs(&mut shell, &["jobs".into(), format!("%{finished_id}")]),
             BuiltinOutcome::Status(0)
@@ -2659,7 +2661,7 @@ mod tests {
             .args(["-c", "sleep 0.05"])
             .spawn()
             .expect("spawn");
-        let id = shell.launch_background_job("sleep".into(), None, vec![child]);
+        let id = shell.launch_background_job("sleep".into(), None, vec![child_to_handle(child)]);
 
         let outcome = run(&mut shell, &["bg".into(), format!("%{id}")]).expect("bg");
         assert!(matches!(outcome, BuiltinOutcome::Status(0)));
@@ -2671,7 +2673,7 @@ mod tests {
             .args(["-c", "sleep 0.05"])
             .spawn()
             .expect("spawn");
-        let id = shell.launch_background_job("sleep".into(), None, vec![child]);
+        let id = shell.launch_background_job("sleep".into(), None, vec![child_to_handle(child)]);
         let outcome = run(&mut shell, &["fg".into(), format!("%{id}")]).expect("fg");
         assert!(matches!(outcome, BuiltinOutcome::Status(_)));
     }
@@ -2687,8 +2689,8 @@ mod tests {
             .args(["-c", "exit 3"])
             .spawn()
             .expect("spawn");
-        shell.launch_background_job("first".into(), None, vec![child_a]);
-        shell.launch_background_job("second".into(), None, vec![child_b]);
+        shell.launch_background_job("first".into(), None, vec![child_to_handle(child_a)]);
+        shell.launch_background_job("second".into(), None, vec![child_to_handle(child_b)]);
 
         let outcome = run(&mut shell, &["wait".into()]).expect("wait all");
         assert!(matches!(outcome, BuiltinOutcome::Status(0)));

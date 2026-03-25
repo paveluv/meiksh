@@ -2,11 +2,42 @@ use libc;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::{fs, time::{SystemTime, UNIX_EPOCH}};
 
 fn meiksh() -> &'static str {
     env!("CARGO_BIN_EXE_meiksh")
+}
+
+struct TempDir {
+    path: PathBuf,
+}
+
+impl TempDir {
+    fn new(prefix: &str) -> Self {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("{prefix}-{unique}"));
+        fs::create_dir_all(&path).expect("create temp dir");
+        Self { path }
+    }
+
+    fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
+    fn join(&self, name: &str) -> PathBuf {
+        self.path.join(name)
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
 }
 
 fn run_meiksh_with_stdin(script: &str, stdin: &[u8]) -> std::process::Output {
@@ -174,11 +205,8 @@ fn read_builtin_assigns_variables_in_current_shell() {
 
 #[test]
 fn umask_and_times_builtins_follow_current_shell_state() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!("meiksh-umask-{unique}.txt"));
+    let root = TempDir::new("meiksh-umask");
+    let path = root.join("test.txt");
     let script = format!("umask 077; : > {}; umask; umask -S", path.display());
     let umask_output = Command::new(meiksh())
         .args(["-c", &script])
@@ -189,7 +217,6 @@ fn umask_and_times_builtins_follow_current_shell_state() {
     let lines: Vec<_> = umask_stdout.lines().collect();
     assert_eq!(lines, vec!["0077", "u=rwx,g=,o="]);
     assert_eq!(fs::metadata(&path).expect("metadata").permissions().mode() & 0o777, 0o600);
-    let _ = fs::remove_file(path);
 
     let times_output = Command::new(meiksh())
         .args(["-c", "times"])
@@ -208,11 +235,8 @@ fn umask_and_times_builtins_follow_current_shell_state() {
 
 #[test]
 fn handles_redirections() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!("meiksh-redir-{unique}.txt"));
+    let root = TempDir::new("meiksh-redir");
+    let path = root.join("out.txt");
     let script = format!("printf hi > {}", path.display());
 
     let output = Command::new(meiksh())
@@ -221,17 +245,13 @@ fn handles_redirections() {
         .expect("run meiksh");
     assert!(output.status.success());
     assert_eq!(fs::read_to_string(&path).expect("read redirect target"), "hi");
-    let _ = fs::remove_file(path);
 }
 
 #[test]
 fn redirects_current_shell_builtins_and_compound_commands() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_nanos();
-    let builtin_path = std::env::temp_dir().join(format!("meiksh-builtin-redir-{unique}.txt"));
-    let group_path = std::env::temp_dir().join(format!("meiksh-group-redir-{unique}.txt"));
+    let root = TempDir::new("meiksh-builtin-redir");
+    let builtin_path = root.join("builtin.txt");
+    let group_path = root.join("group.txt");
 
     let builtin = Command::new(meiksh())
         .args(["-c", &format!("pwd > {}; printf ok", builtin_path.display())])
@@ -259,19 +279,13 @@ fn redirects_current_shell_builtins_and_compound_commands() {
     assert!(pipeline.status.success());
     assert_eq!(String::from_utf8_lossy(&pipeline.stdout).trim(), "0");
     assert_eq!(fs::read_to_string(&group_path).expect("read group output again"), "inside");
-
-    let _ = fs::remove_file(builtin_path);
-    let _ = fs::remove_file(group_path);
 }
 
 #[test]
 fn handles_append_and_input_redirections() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_nanos();
-    let input = std::env::temp_dir().join(format!("meiksh-in-{unique}.txt"));
-    let output = std::env::temp_dir().join(format!("meiksh-out-{unique}.txt"));
+    let root = TempDir::new("meiksh-append-input");
+    let input = root.join("input.txt");
+    let output = root.join("output.txt");
     fs::write(&input, "abc").expect("write input");
 
     let script = format!(
@@ -283,8 +297,6 @@ fn handles_append_and_input_redirections() {
     let status = Command::new(meiksh()).args(["-c", &script]).status().expect("run meiksh");
     assert!(status.success());
     assert_eq!(fs::read_to_string(&output).expect("read output"), "abcdef");
-    let _ = fs::remove_file(input);
-    let _ = fs::remove_file(output);
 }
 
 #[test]
@@ -339,11 +351,7 @@ fn trap_wait_and_job_control_paths_cover_milestone_five() {
 
 #[test]
 fn unalias_and_dot_follow_milestone_six_paths() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!("meiksh-m6-spec-{unique}"));
+    let root = TempDir::new("meiksh-m6-spec");
     let path_dir = root.join("path");
     fs::create_dir_all(&path_dir).expect("mkdir path");
 
@@ -364,18 +372,11 @@ fn unalias_and_dot_follow_milestone_six_paths() {
     let lines: Vec<_> = stdout.lines().filter(|line| !line.is_empty()).collect();
     assert!(lines.contains(&"unalias:1"));
     assert!(lines.contains(&"dot:loaded"));
-
-    let _ = fs::remove_file(dot_script);
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn cd_dash_and_jobs_p_follow_milestone_six_paths() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!("meiksh-m6-spec-{unique}"));
+    let root = TempDir::new("meiksh-m6-spec");
     let target = root.join("target");
     fs::create_dir_all(&target).expect("mkdir target");
 
@@ -394,17 +395,11 @@ fn cd_dash_and_jobs_p_follow_milestone_six_paths() {
     assert!(lines.contains(&format!("pwd:{}", original.display()).as_str()));
     assert!(lines.contains(&format!("old:{}", target.display()).as_str()));
     assert!(lines.last().is_some_and(|line| line.chars().all(|ch| ch.is_ascii_digit())));
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn cd_uses_cdpath_and_reports_resolved_directory() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!("meiksh-cdpath-spec-{unique}"));
+    let root = TempDir::new("meiksh-cdpath-spec");
     let cdpath = root.join("cdpath");
     let target = cdpath.join("target");
     let elsewhere = root.join("elsewhere");
@@ -426,8 +421,6 @@ fn cd_uses_cdpath_and_reports_resolved_directory() {
     assert!(stdout.starts_with(&format!("{}\n", canonical_target.display())));
     assert!(stdout.contains(&format!("|pwd:{}|", canonical_target.display())));
     assert!(stdout.contains(&format!("|old:{}", canonical_elsewhere.display())));
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -570,12 +563,9 @@ fn sh_nounset_fails_plain_unset_expansions_but_allows_defaulting_forms() {
 
 #[test]
 fn sh_command_file_sets_special_parameter_zero_and_searches_path() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!("meiksh-sh-path-{unique}"));
-    let elsewhere = std::env::temp_dir().join(format!("meiksh-sh-cwd-{unique}"));
+    let root = TempDir::new("meiksh-sh-path");
+    let dir = root.join("path");
+    let elsewhere = root.join("cwd");
     fs::create_dir_all(&dir).expect("mkdir path dir");
     fs::create_dir_all(&elsewhere).expect("mkdir cwd dir");
 
@@ -592,10 +582,6 @@ fn sh_command_file_sets_special_parameter_zero_and_searches_path() {
         .expect("run meiksh command_file");
     assert!(output.status.success());
     assert_eq!(String::from_utf8_lossy(&output.stdout), "path-script");
-
-    let _ = fs::remove_file(script);
-    let _ = fs::remove_dir_all(dir);
-    let _ = fs::remove_dir_all(elsewhere);
 }
 
 #[test]
@@ -606,18 +592,12 @@ fn sh_command_file_missing_and_read_errors_have_distinct_exit_statuses() {
         .expect("run missing script");
     assert_eq!(missing.status.code(), Some(127));
 
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!("meiksh-sh-readerr-{unique}"));
-    fs::create_dir_all(&dir).expect("mkdir dir");
+    let root = TempDir::new("meiksh-sh-readerr");
     let read_error = Command::new(meiksh())
-        .arg(dir.display().to_string())
+        .arg(root.path().display().to_string())
         .output()
         .expect("run directory script path");
     assert_eq!(read_error.status.code(), Some(128));
-    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -637,19 +617,13 @@ fn sh_invalid_invocation_uses_usage_exit_status() {
 
 #[test]
 fn interactive_shell_expands_env_and_continues_after_error() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_nanos();
-    let home = std::env::temp_dir().join(format!("meiksh-m6-home-{unique}"));
-    fs::create_dir_all(&home).expect("mkdir home");
+    let home = TempDir::new("meiksh-m6-home");
     let env_file = home.join("env.sh");
-    let history = home.join(".sh_history");
     fs::write(&env_file, "export TEST_ENV_LOADED=1\n").expect("write env file");
 
     let output = Command::new(meiksh())
         .arg("-i")
-        .env("HOME", &home)
+        .env("HOME", home.path())
         .env("ENV", "${HOME}/env.sh")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -668,25 +642,16 @@ fn interactive_shell_expands_env_and_continues_after_error() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("1"));
     assert!(String::from_utf8_lossy(&output.stderr).contains("unterminated"));
-
-    let _ = fs::remove_file(env_file);
-    let _ = fs::remove_file(history);
-    let _ = fs::remove_dir_all(home);
 }
 
 #[test]
 fn interactive_shell_uses_home_history_default() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_nanos();
-    let home = std::env::temp_dir().join(format!("meiksh-m6-home-{unique}"));
-    fs::create_dir_all(&home).expect("mkdir home");
+    let home = TempDir::new("meiksh-m6-home");
     let history = home.join(".sh_history");
 
     let output = Command::new(meiksh())
         .arg("-i")
-        .env("HOME", &home)
+        .env("HOME", home.path())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -704,9 +669,6 @@ fn interactive_shell_uses_home_history_default() {
     assert!(output.status.success());
     let history_contents = fs::read_to_string(&history).expect("history contents");
     assert!(history_contents.contains("printf ok"));
-
-    let _ = fs::remove_file(history);
-    let _ = fs::remove_dir_all(home);
 }
 
 #[test]
@@ -972,18 +934,13 @@ fn expands_parameters_and_pathnames_more_like_posix() {
         "bin/main.rs|main.rs|src/bin|src|beta.gamma|gamma|alpha.beta|alpha|alpha.beta.gamma|bin/main.rs"
     );
 
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!("meiksh-expand-spec-{unique}"));
-    fs::create_dir(&dir).expect("create dir");
+    let dir = TempDir::new("meiksh-expand-spec");
     fs::write(dir.join("a.txt"), "").expect("write a");
     fs::write(dir.join("b.txt"), "").expect("write b");
     fs::write(dir.join(".hidden.txt"), "").expect("write hidden");
 
     let glob = Command::new(meiksh())
-        .current_dir(&dir)
+        .current_dir(dir.path())
         .args(["-c", "printf '%s|' *.txt \\*.txt .*\\.txt"])
         .output()
         .expect("run meiksh");
@@ -991,7 +948,7 @@ fn expands_parameters_and_pathnames_more_like_posix() {
     assert_eq!(String::from_utf8_lossy(&glob.stdout), "a.txt|b.txt|*.txt|.hidden.txt|");
 
     let noglob = Command::new(meiksh())
-        .current_dir(&dir)
+        .current_dir(dir.path())
         .args(["-c", "set -f; printf '%s|' *.txt; set +f; printf '%s|' *.txt"])
         .output()
         .expect("run meiksh");
@@ -999,14 +956,12 @@ fn expands_parameters_and_pathnames_more_like_posix() {
     assert_eq!(String::from_utf8_lossy(&noglob.stdout), "*.txt|a.txt|b.txt|");
 
     let shell_option = Command::new(meiksh())
-        .current_dir(&dir)
+        .current_dir(dir.path())
         .args(["-f", "-c", "printf '%s|' *.txt"])
         .output()
         .expect("run meiksh");
     assert!(shell_option.status.success());
     assert_eq!(String::from_utf8_lossy(&shell_option.stdout), "*.txt|");
-
-    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1037,12 +992,7 @@ fn field_splitting_respects_ifs_defaults_and_star_joining() {
 
 #[test]
 fn falls_back_on_enoexec_scripts() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!("meiksh-enoexec-{unique}"));
-    fs::create_dir(&dir).expect("create dir");
+    let dir = TempDir::new("meiksh-enoexec");
 
     let slash_script = dir.join("slash-script");
     fs::write(&slash_script, "printf slash:$1").expect("write slash script");
@@ -1066,7 +1016,7 @@ fn falls_back_on_enoexec_scripts() {
     permissions.set_mode(0o755);
     fs::set_permissions(&path_script, permissions).expect("chmod path script");
 
-    let path_value = format!("{}:{}", dir.display(), std::env::var("PATH").unwrap_or_default());
+    let path_value = format!("{}:{}", dir.path().display(), std::env::var("PATH").unwrap_or_default());
     let path_output = Command::new(meiksh())
         .env("PATH", path_value)
         .args(["-c", "printf piped | path-script"])
@@ -1074,20 +1024,11 @@ fn falls_back_on_enoexec_scripts() {
         .expect("run meiksh");
     assert!(path_output.status.success());
     assert_eq!(String::from_utf8_lossy(&path_output.stdout), "piped");
-
-    let _ = fs::remove_file(slash_script);
-    let _ = fs::remove_file(path_script);
-    let _ = fs::remove_dir(dir);
 }
 
 #[test]
 fn handles_extended_redirection_matrix() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!("meiksh-redir-matrix-{unique}"));
-    fs::create_dir(&dir).expect("create dir");
+    let dir = TempDir::new("meiksh-redir-matrix");
 
     let input = dir.join("input.txt");
     let output = dir.join("output.txt");
@@ -1136,21 +1077,12 @@ fn handles_extended_redirection_matrix() {
     assert!(precedence_output.status.success());
     assert_eq!(String::from_utf8_lossy(&precedence_output.stdout).trim(), "0");
     assert_eq!(fs::read_to_string(&output).expect("read redirected output"), "hidden");
-
-    let _ = fs::remove_file(input);
-    let _ = fs::remove_file(output);
-    let _ = fs::remove_file(append);
-    let _ = fs::remove_file(rw);
-    let _ = fs::remove_dir(dir);
 }
 
 #[test]
 fn honors_noclobber_and_force_clobber() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!("meiksh-noclobber-{unique}.txt"));
+    let root = TempDir::new("meiksh-noclobber");
+    let path = root.join("test.txt");
     fs::write(&path, "old").expect("write initial");
 
     let blocked = Command::new(meiksh())
@@ -1166,8 +1098,6 @@ fn honors_noclobber_and_force_clobber() {
         .expect("run meiksh");
     assert!(forced.status.success());
     assert_eq!(fs::read_to_string(&path).expect("read forced"), "new");
-
-    let _ = fs::remove_file(path);
 }
 
 #[test]
@@ -1185,12 +1115,9 @@ fn background_and_or_returns_current_error() {
 
 #[test]
 fn interactive_shell_sources_env_file() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!("meiksh-env-{unique}.sh"));
-    let history = std::env::temp_dir().join(format!("meiksh-history-{unique}.txt"));
+    let root = TempDir::new("meiksh-env");
+    let path = root.join("env.sh");
+    let history = root.join("history.txt");
     fs::write(&path, "export TEST_ENV_LOADED=1\n").expect("write env file");
 
     let output = Command::new(meiksh())
@@ -1208,8 +1135,6 @@ fn interactive_shell_sources_env_file() {
         .expect("run meiksh");
 
     assert!(output.status.success());
-    let _ = fs::remove_file(path);
-    let _ = fs::remove_file(history);
 }
 
 #[test]
@@ -1227,11 +1152,8 @@ fn executes_if_elif_else() {
 
 #[test]
 fn executes_while_and_until_loops() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_nanos();
-    let marker = std::env::temp_dir().join(format!("meiksh-loop-{unique}.flag"));
+    let root = TempDir::new("meiksh-loop");
+    let marker = root.join("marker.flag");
     fs::write(&marker, "present").expect("seed marker");
 
     let while_script = format!(
@@ -1258,7 +1180,6 @@ fn executes_while_and_until_loops() {
         .expect("run meiksh");
     assert!(until_output.status.success());
     assert_eq!(String::from_utf8_lossy(&until_output.stdout), "ready");
-    let _ = fs::remove_file(marker);
 }
 
 #[test]

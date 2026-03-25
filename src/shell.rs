@@ -1,10 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::OsString;
-use std::fs;
 use std::io;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command as ProcessCommand, ExitStatus};
 
 use crate::builtin::{self, BuiltinOutcome};
 use crate::exec;
@@ -157,10 +154,10 @@ pub struct Shell {
     pub functions: HashMap<String, crate::syntax::Command>,
     pub positional: Vec<String>,
     pub last_status: i32,
-    pub last_background: Option<u32>,
+    pub last_background: Option<sys::Pid>,
     pub running: bool,
     pub jobs: Vec<Job>,
-    pub known_pid_statuses: HashMap<u32, i32>,
+    pub known_pid_statuses: HashMap<sys::Pid, i32>,
     pub known_job_statuses: HashMap<usize, i32>,
     pub trap_actions: BTreeMap<TrapCondition, TrapAction>,
     pub current_exe: PathBuf,
@@ -173,9 +170,9 @@ pub struct Job {
     pub id: usize,
     pub command: String,
     pub pgid: Option<sys::Pid>,
-    pub last_pid: Option<u32>,
+    pub last_pid: Option<sys::Pid>,
     pub last_status: Option<i32>,
-    pub children: Vec<Child>,
+    pub children: Vec<sys::ChildHandle>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -195,34 +192,14 @@ pub enum FlowSignal {
     Exit(i32),
 }
 
-fn try_wait_child(child: &mut Child) -> io::Result<Option<ExitStatus>> {
-    #[cfg(test)]
-    {
-        if let Some(override_fn) = TEST_TRY_WAIT.with(|cell| *cell.borrow()) {
-            return override_fn(child);
-        }
+fn try_wait_child(pid: sys::Pid) -> io::Result<Option<i32>> {
+    match sys::wait_pid(pid, true) {
+        Ok(Some(waited)) => Ok(Some(sys::decode_wait_status(waited.status))),
+        Ok(None) => Ok(None),
+        Err(error) => Err(error),
     }
-    child.try_wait()
 }
 
-#[cfg(test)]
-thread_local! {
-    static TEST_TRY_WAIT: std::cell::RefCell<Option<fn(&mut Child) -> io::Result<Option<ExitStatus>>>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-#[cfg(test)]
-fn with_try_wait_for_test<T>(
-    override_fn: fn(&mut Child) -> io::Result<Option<ExitStatus>>,
-    f: impl FnOnce() -> T,
-) -> T {
-    TEST_TRY_WAIT.with(|cell| {
-        let previous = cell.replace(Some(override_fn));
-        let result = f();
-        cell.replace(previous);
-        result
-    })
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PendingControl {
@@ -261,7 +238,7 @@ impl Shell {
             known_pid_statuses: HashMap::new(),
             known_job_statuses: HashMap::new(),
             trap_actions: BTreeMap::new(),
-            current_exe: std::env::current_exe()?,
+            current_exe: current_exe_path()?,
             loop_depth: 0,
             function_depth: 0,
             pending_control: None,
@@ -387,16 +364,21 @@ impl Shell {
     }
 
     pub fn capture_output(&mut self, source: &str) -> Result<String, ShellError> {
-        let mut command = ProcessCommand::new(&self.current_exe);
-        command.arg("-c").arg(source);
-        command.env_clear();
-        command.envs(self.env_for_child());
-        let output = command.output()?;
-        if output.status.success() {
-            Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        let child_env = self.env_for_child();
+        let env_pairs: Vec<(&str, &str)> = child_env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let exe = self.current_exe.display().to_string();
+        let argv = [exe.as_str(), "-c", source];
+        let (status, output) = sys::capture_child_output(&exe, &argv, Some(&env_pairs))?;
+        if status == 0 {
+            Ok(String::from_utf8_lossy(&output).into_owned())
         } else {
+            let msg = String::from_utf8_lossy(&output).trim().to_string();
             Err(ShellError {
-                message: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+                message: if msg.is_empty() {
+                    format!("{exe}: command failed with status {status}")
+                } else {
+                    msg
+                },
             })
         }
     }
@@ -456,17 +438,17 @@ impl Shell {
         &mut self,
         command: String,
         pgid: Option<sys::Pid>,
-        children: Vec<Child>,
+        children: Vec<sys::ChildHandle>,
     ) -> usize {
         let id = self.jobs.last().map(|job| job.id + 1).unwrap_or(1);
         if let Some(last) = children.last() {
-            self.last_background = Some(last.id());
+            self.last_background = Some(last.pid);
         }
         self.jobs.push(Job {
             id,
             command,
             pgid,
-            last_pid: children.last().map(Child::id),
+            last_pid: children.last().map(|c| c.pid),
             last_status: None,
             children,
         });
@@ -479,21 +461,18 @@ impl Shell {
 
         for mut job in self.jobs.drain(..) {
             let mut running = Vec::new();
-            for mut child in job.children.drain(..) {
-                match try_wait_child(&mut child) {
-                    Ok(Some(status)) => {
-                        let pid = child.id();
-                        let code = status.code().unwrap_or(128);
-                        self.known_pid_statuses.insert(pid, code);
-                        if job.last_pid == Some(pid) {
+            for child in job.children.drain(..) {
+                match try_wait_child(child.pid) {
+                    Ok(Some(code)) => {
+                        self.known_pid_statuses.insert(child.pid, code);
+                        if job.last_pid == Some(child.pid) {
                             job.last_status = Some(code);
                         }
                     }
                     Ok(None) => running.push(child),
                     Err(_) => {
-                        let pid = child.id();
-                        self.known_pid_statuses.insert(pid, 1);
-                        if job.last_pid == Some(pid) {
+                        self.known_pid_statuses.insert(child.pid, 1);
+                        if job.last_pid == Some(child.pid) {
                             job.last_status = Some(1);
                         }
                     }
@@ -529,11 +508,11 @@ impl Shell {
         let saved_foreground = self.foreground_handoff(pgid);
         let mut job = self.jobs.remove(index);
         let mut status = job.last_status.unwrap_or(0);
-        for child in &mut job.children {
-            let waited = self.wait_for_child_pid(child.id(), false)?;
+        for child in &job.children {
+            let waited = self.wait_for_child_pid(child.pid, false)?;
             status = waited;
-            self.known_pid_statuses.insert(child.id(), waited);
-            if job.last_pid == Some(child.id()) {
+            self.known_pid_statuses.insert(child.pid, waited);
+            if job.last_pid == Some(child.pid) {
                 job.last_status = Some(waited);
             }
         }
@@ -550,14 +529,14 @@ impl Shell {
             sys::send_signal(-pgid, sys::SIGCONT)?;
         } else {
             for child in &job.children {
-                sys::send_signal(child.id() as i32, sys::SIGCONT)?;
+                sys::send_signal(child.pid, sys::SIGCONT)?;
             }
         }
         Ok(())
     }
 
     pub fn source_path(&mut self, path: &Path) -> Result<i32, ShellError> {
-        let contents = fs::read_to_string(path)?;
+        let contents = sys::read_file(&path.display().to_string())?;
         self.execute_string(&contents)
     }
 
@@ -565,7 +544,8 @@ impl Shell {
         let resolved = resolve_script_path(self, script).ok_or_else(|| {
             ShellError::with_status(127, format!("{}: not found", script.display()))
         })?;
-        let contents = fs::read_to_string(&resolved).map_err(|error| classify_script_read_error(&resolved, error))?;
+        let contents = sys::read_file(&resolved.display().to_string())
+            .map_err(|error| classify_script_read_error(&resolved, error))?;
         Ok((resolved, contents))
     }
 
@@ -644,7 +624,7 @@ impl Shell {
         self.wait_on_job_index(index, true)
     }
 
-    pub fn wait_for_pid_operand(&mut self, pid: u32) -> Result<i32, ShellError> {
+    pub fn wait_for_pid_operand(&mut self, pid: sys::Pid) -> Result<i32, ShellError> {
         if let Some(status) = self.known_pid_statuses.remove(&pid) {
             return Ok(status);
         }
@@ -724,7 +704,7 @@ impl Shell {
         let saved_foreground = self.foreground_handoff(pgid);
         let mut status = self.jobs[index].last_status.unwrap_or(0);
         while !self.jobs[index].children.is_empty() {
-            let pid = self.jobs[index].children[0].id();
+            let pid = self.jobs[index].children[0].pid;
             let child_index = 0;
             match self.wait_for_child_pid(pid, interruptible) {
                 Ok(code) => {
@@ -765,9 +745,9 @@ impl Shell {
         Ok(Some(status))
     }
 
-    pub fn wait_for_child_pid(&mut self, pid: u32, interruptible: bool) -> Result<i32, ShellError> {
+    pub fn wait_for_child_pid(&mut self, pid: sys::Pid, interruptible: bool) -> Result<i32, ShellError> {
         loop {
-            match sys::wait_pid(pid as sys::Pid, false) {
+            match sys::wait_pid(pid, false) {
                 Ok(Some(waited)) => return Ok(sys::decode_wait_status(waited.status)),
                 Ok(None) => continue,
                 Err(error) if interruptible && sys::interrupted(&error) && sys::has_pending_signal().is_some() => {
@@ -782,16 +762,16 @@ impl Shell {
         }
     }
 
-    fn find_job_child(&self, pid: u32) -> Option<(usize, usize)> {
+    fn find_job_child(&self, pid: sys::Pid) -> Option<(usize, usize)> {
         self.jobs.iter().enumerate().find_map(|(job_index, job)| {
             job.children
                 .iter()
-                .position(|child| child.id() == pid)
+                .position(|child| child.pid == pid)
                 .map(|child_index| (job_index, child_index))
         })
     }
 
-    fn record_completed_child(&mut self, job_index: usize, child_index: usize, pid: u32, status: i32) {
+    fn record_completed_child(&mut self, job_index: usize, child_index: usize, pid: sys::Pid, status: i32) {
         self.known_pid_statuses.insert(pid, status);
         if self.jobs[job_index].last_pid == Some(pid) {
             self.jobs[job_index].last_status = Some(status);
@@ -804,7 +784,7 @@ impl Shell {
             return;
         };
         for child in &job.children {
-            self.known_pid_statuses.remove(&child.id());
+            self.known_pid_statuses.remove(&child.pid);
         }
     }
 
@@ -1000,13 +980,25 @@ impl Shell {
     }
 }
 
+fn current_exe_path() -> io::Result<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        #[allow(clippy::disallowed_methods)]
+        std::env::current_exe()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        sys::read_link("/proc/self/exe").map(PathBuf::from)
+    }
+}
+
 fn resolve_script_path(shell: &Shell, script: &Path) -> Option<PathBuf> {
     if script.is_absolute() || script.to_string_lossy().contains('/') {
         return Some(script.to_path_buf());
     }
 
     let cwd_path = PathBuf::from(script);
-    if cwd_path.exists() {
+    if sys::file_exists(&cwd_path.display().to_string()) {
         return Some(cwd_path);
     }
 
@@ -1029,8 +1021,8 @@ fn search_script_path(shell: &Shell, name: &str) -> Option<PathBuf> {
 }
 
 fn executable_regular_file(path: &Path) -> bool {
-    fs::metadata(path)
-        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+    sys::stat_path(&path.display().to_string())
+        .map(|stat| stat.is_regular_file() && stat.is_executable())
         .unwrap_or(false)
 }
 
@@ -1074,51 +1066,20 @@ fn classify_script_read_error(path: &Path, error: io::Error) -> ShellError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command as ProcessCommand;
     use std::collections::BTreeMap;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::process::Command as ProcessCommand;
 
     unsafe extern "C" {
         fn __error() -> *mut i32;
     }
 
-    use crate::test_utils::{cwd_lock, meiksh_bin_path};
+    use crate::sys::test_support::{FakeSpawnBuilder, VfsBuilder};
+    use crate::test_utils::meiksh_bin_path;
 
-    static SCRIPT_LOOKUP_ENV_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-    struct ScriptLookupTestEnv {
-        cwd_dir: PathBuf,
-        path_dir: PathBuf,
-        original_cwd: PathBuf,
-    }
-
-    impl ScriptLookupTestEnv {
-        fn new() -> Self {
-            let unique = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("time")
-                .as_nanos();
-            let counter = SCRIPT_LOOKUP_ENV_COUNTER.fetch_add(1, Ordering::SeqCst);
-            let cwd_dir = std::env::temp_dir().join(format!("meiksh-shell-lookup-cwd-{unique}-{counter}"));
-            let path_dir = std::env::temp_dir().join(format!("meiksh-shell-lookup-path-{unique}-{counter}"));
-            fs::create_dir(&cwd_dir).expect("create cwd dir");
-            fs::create_dir(&path_dir).expect("create path dir");
-            let original_cwd = std::env::current_dir().expect("cwd");
-            std::env::set_current_dir(&cwd_dir).expect("cd temp");
-            Self {
-                cwd_dir,
-                path_dir,
-                original_cwd,
-            }
-        }
-    }
-
-    impl Drop for ScriptLookupTestEnv {
-        fn drop(&mut self) {
-            let _ = std::env::set_current_dir(&self.original_cwd);
-            let _ = fs::remove_dir_all(&self.cwd_dir);
-            let _ = fs::remove_dir_all(&self.path_dir);
+    fn child_to_handle(child: std::process::Child) -> sys::ChildHandle {
+        sys::ChildHandle {
+            pid: child.id() as sys::Pid,
+            stdout_fd: None,
         }
     }
 
@@ -1258,7 +1219,7 @@ mod tests {
             .args(["-c", "exit 7"])
             .spawn()
             .expect("spawn");
-        let id = shell.launch_background_job("exit 7".into(), None, vec![child]);
+        let id = shell.launch_background_job("exit 7".into(), None, vec![child_to_handle(child)]);
         let status = shell.wait_for_job(id).expect("wait");
         assert_eq!(status, 7);
         assert_eq!(shell.last_status, 7);
@@ -1267,17 +1228,14 @@ mod tests {
 
     #[test]
     fn source_path_runs_script() {
-        let mut shell = test_shell();
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("meiksh-source-{unique}.sh"));
-        fs::write(&path, "VALUE=42\n").expect("write");
-        let status = shell.source_path(&path).expect("source");
-        assert_eq!(status, 0);
-        assert_eq!(shell.get_var("VALUE").as_deref(), Some("42"));
-        let _ = fs::remove_file(path);
+        VfsBuilder::new()
+            .file("/tmp/source-test.sh", b"VALUE=42\n")
+            .run(|| {
+                let mut shell = test_shell();
+                let status = shell.source_path(Path::new("/tmp/source-test.sh")).expect("source");
+                assert_eq!(status, 0);
+                assert_eq!(shell.get_var("VALUE").as_deref(), Some("42"));
+            });
     }
 
     #[test]
@@ -1300,7 +1258,7 @@ mod tests {
             .args(["-c", "exit 0"])
             .spawn()
             .expect("spawn");
-        let id = shell.launch_background_job("exit 0".into(), None, vec![child]);
+        let id = shell.launch_background_job("exit 0".into(), None, vec![child_to_handle(child)]);
         let mut finished = Vec::new();
         for _ in 0..20 {
             finished = shell.reap_jobs();
@@ -1338,8 +1296,9 @@ mod tests {
 
     #[test]
     fn reap_jobs_handles_try_wait_errors() {
-        fn fake_try_wait(_child: &mut Child) -> io::Result<Option<ExitStatus>> {
-            Err(io::Error::other("boom"))
+        fn error_waitpid(_pid: sys::Pid, _status: *mut i32, _options: i32) -> sys::Pid {
+            unsafe { *__error() = libc::ECHILD; }
+            -1
         }
 
         let mut shell = test_shell();
@@ -1347,9 +1306,9 @@ mod tests {
             .args(["-c", "exit 0"])
             .spawn()
             .expect("spawn");
-        let id = shell.launch_background_job("exit 0".into(), None, vec![child]);
+        let id = shell.launch_background_job("exit 0".into(), None, vec![child_to_handle(child)]);
 
-        let finished = with_try_wait_for_test(fake_try_wait, || shell.reap_jobs());
+        let finished = sys::test_support::with_waitpid_for_test(error_waitpid, || shell.reap_jobs());
         assert_eq!(finished, vec![(id, 1)]);
         assert!(shell.jobs.is_empty());
     }
@@ -1429,22 +1388,23 @@ mod tests {
 
     #[test]
     fn shell_run_covers_script_path_and_capture_error() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("meiksh-run-{unique}.sh"));
-        fs::write(&path, "VALUE=77\n").expect("write");
+        VfsBuilder::new()
+            .file("/tmp/run-test.sh", b"VALUE=77\n")
+            .run(|| {
+                let mut shell = test_shell();
+                shell.options.script_path = Some(PathBuf::from("/tmp/run-test.sh"));
+                let status = shell.run().expect("run");
+                assert_eq!(status, 0);
+                assert_eq!(shell.get_var("VALUE").as_deref(), Some("77"));
+            });
 
-        let mut shell = test_shell();
-        shell.options.script_path = Some(path.clone());
-        let status = shell.run().expect("run");
-        assert_eq!(status, 0);
-        assert_eq!(shell.get_var("VALUE").as_deref(), Some("77"));
-
-        let error = shell.capture_output("missing-command").expect_err("capture error");
-        assert!(!error.message.is_empty());
-        let _ = fs::remove_file(path);
+        FakeSpawnBuilder::new()
+            .child(127, b"")
+            .run(|| {
+                let mut shell = test_shell();
+                let error = shell.capture_output("missing-command").expect_err("capture error");
+                assert!(!error.message.is_empty());
+            });
     }
 
     #[test]
@@ -1475,35 +1435,33 @@ mod tests {
 
     #[test]
     fn resolve_script_path_prefers_current_directory() {
-        let _guard = cwd_lock().lock().expect("cwd lock");
-        let env = ScriptLookupTestEnv::new();
-        let mut shell = test_shell();
-        shell.env.insert("PATH".into(), env.path_dir.display().to_string());
-
-        let cwd_script = env.cwd_dir.join("cwd-script");
-        fs::write(&cwd_script, "printf cwd").expect("write cwd script");
-        assert_eq!(
-            resolve_script_path(&shell, Path::new("cwd-script")),
-            Some(PathBuf::from("cwd-script"))
-        );
+        VfsBuilder::new()
+            .dir("/search-path")
+            .file("/work/cwd-script", b"printf cwd")
+            .cwd("/work")
+            .run(|| {
+                let mut shell = test_shell();
+                shell.env.insert("PATH".into(), "/search-path".into());
+                assert_eq!(
+                    resolve_script_path(&shell, Path::new("cwd-script")),
+                    Some(PathBuf::from("cwd-script"))
+                );
+            });
     }
 
     #[test]
     fn resolve_script_path_searches_executable_path_entries() {
-        let _guard = cwd_lock().lock().expect("cwd lock");
-        let env = ScriptLookupTestEnv::new();
-        let mut shell = test_shell();
-        shell.env.insert("PATH".into(), env.path_dir.display().to_string());
-
-        let path_script = env.path_dir.join("path-script");
-        fs::write(&path_script, "printf path").expect("write path script");
-        let mut permissions = fs::metadata(&path_script).expect("metadata").permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&path_script, permissions).expect("chmod");
-        assert_eq!(
-            resolve_script_path(&shell, Path::new("path-script")),
-            Some(env.path_dir.join("path-script"))
-        );
+        VfsBuilder::new()
+            .file_with_mode("/search-path/path-script", b"printf path", 0o755)
+            .cwd("/work")
+            .run(|| {
+                let mut shell = test_shell();
+                shell.env.insert("PATH".into(), "/search-path".into());
+                assert_eq!(
+                    resolve_script_path(&shell, Path::new("path-script")),
+                    Some(PathBuf::from("/search-path/path-script"))
+                );
+            });
     }
 
     #[test]
@@ -1522,9 +1480,12 @@ mod tests {
         assert_eq!(status, 0);
         assert_eq!(shell.get_var("VALUE").as_deref(), Some("13"));
 
-        shell.current_exe = PathBuf::from("/definitely/missing-meiksh-binary");
-        let error = shell.capture_output("printf hi").expect_err("spawn error");
-        assert!(!error.message.is_empty());
+        FakeSpawnBuilder::new()
+            .child(127, b"")
+            .run(|| {
+                let error = shell.capture_output("printf hi").expect_err("spawn error");
+                assert!(!error.message.is_empty());
+            });
     }
 
     #[test]
@@ -1534,7 +1495,7 @@ mod tests {
             .args(["-c", "exit 0"])
             .spawn()
             .expect("spawn");
-        shell.launch_background_job("done".into(), None, vec![finished_child]);
+        shell.launch_background_job("done".into(), None, vec![child_to_handle(finished_child)]);
 
         for _ in 0..20 {
             if !shell.reap_jobs().is_empty() {
@@ -1547,7 +1508,7 @@ mod tests {
             .args(["-c", "sleep 0.05"])
             .spawn()
             .expect("spawn");
-        shell.launch_background_job("sleep".into(), None, vec![running_child]);
+        shell.launch_background_job("sleep".into(), None, vec![child_to_handle(running_child)]);
         shell.print_jobs();
 
         if let Some(id) = shell.jobs.first().map(|job| job.id) {
@@ -1596,7 +1557,7 @@ mod tests {
             .args(["-c", "exit 0"])
             .spawn()
             .expect("spawn");
-        shell.launch_background_job("done".into(), None, vec![child]);
+        shell.launch_background_job("done".into(), None, vec![child_to_handle(child)]);
         std::thread::sleep(std::time::Duration::from_millis(200));
         shell.print_jobs();
         assert!(shell.jobs.is_empty());
@@ -1698,7 +1659,7 @@ mod tests {
             .args(["-c", "sleep 0.05"])
             .spawn()
             .expect("spawn");
-        let id = shell.launch_background_job("sleep".into(), Some(11), vec![child]);
+        let id = shell.launch_background_job("sleep".into(), Some(11), vec![child_to_handle(child)]);
         sys::test_support::with_job_control_syscalls_for_test(
             fake_isatty,
             fake_tcgetpgrp,
@@ -1743,7 +1704,7 @@ mod tests {
             .args(["-c", "sleep 0.05"])
             .spawn()
             .expect("spawn");
-        shell.launch_background_job("sleep".into(), None, vec![child]);
+        shell.launch_background_job("sleep".into(), None, vec![child_to_handle(child)]);
         CALLS.store(0, Ordering::SeqCst);
         sys::test_support::with_pending_signals_for_test(&[sys::SIGINT], || {
             sys::test_support::with_waitpid_for_test(fake_waitpid, || {
@@ -1779,7 +1740,7 @@ mod tests {
             .args(["-c", "sleep 0.05"])
             .spawn()
             .expect("spawn");
-        shell.launch_background_job("sleep".into(), None, vec![child]);
+        shell.launch_background_job("sleep".into(), None, vec![child_to_handle(child)]);
         sys::test_support::with_waitpid_for_test(echild_waitpid, || {
             assert!(shell.wait_for_job_operand(1).is_err());
             assert!(shell.wait_for_child_pid(99, false).is_err());
@@ -1789,8 +1750,8 @@ mod tests {
             .args(["-c", "sleep 0.05"])
             .spawn()
             .expect("spawn");
-        let pid = child.id();
-        shell.launch_background_job("sleep".into(), None, vec![child]);
+        let pid = child.id() as sys::Pid;
+        shell.launch_background_job("sleep".into(), None, vec![child_to_handle(child)]);
         sys::test_support::with_pending_signals_for_test(&[sys::SIGINT], || {
             sys::test_support::with_waitpid_for_test(fake_waitpid_all, || {
                 assert_eq!(shell.wait_for_pid_operand(pid).expect("pid interrupt"), 130);
@@ -1801,8 +1762,8 @@ mod tests {
             .args(["-c", "sleep 0.05"])
             .spawn()
             .expect("spawn");
-        let pid = child.id();
-        shell.launch_background_job("sleep".into(), None, vec![child]);
+        let pid = child.id() as sys::Pid;
+        shell.launch_background_job("sleep".into(), None, vec![child_to_handle(child)]);
         sys::test_support::with_waitpid_for_test(echild_waitpid, || {
             assert!(shell.wait_for_pid_operand(pid).is_err());
         });
@@ -1818,7 +1779,7 @@ mod tests {
             .args(["-c", "sleep 0.05"])
             .spawn()
             .expect("spawn");
-        shell.launch_background_job("sleep".into(), None, vec![child]);
+        shell.launch_background_job("sleep".into(), None, vec![child_to_handle(child)]);
         sys::test_support::with_pending_signals_for_test(&[sys::SIGINT], || {
             sys::test_support::with_waitpid_for_test(fake_waitpid_all, || {
                 assert_eq!(shell.wait_for_all_jobs().expect("wait all status"), 130);
@@ -1829,7 +1790,7 @@ mod tests {
             .args(["-c", "sleep 0.05"])
             .spawn()
             .expect("spawn");
-        let id = shell.launch_background_job("sleep".into(), None, vec![child]);
+        let id = shell.launch_background_job("sleep".into(), None, vec![child_to_handle(child)]);
         if let Some(job) = shell.jobs.iter().find(|job| job.id == id) {
             if let Some(pid) = job.last_pid {
                 shell.known_pid_statuses.insert(pid, 1);

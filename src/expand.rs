@@ -1,8 +1,8 @@
 use std::fmt;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::syntax::Word;
+use crate::sys;
 
 #[derive(Debug)]
 pub struct ExpandError {
@@ -984,19 +984,15 @@ fn expand_path_segments(
     let segment = segments[index];
     if !segment.chars().any(is_glob_char) {
         let next = base.join(segment);
-        if next.exists() {
+        if sys::file_exists(&next.display().to_string()) {
             expand_path_segments(&next, segments, index + 1, absolute, matches);
         }
         return;
     }
 
-    let Ok(entries) = fs::read_dir(base) else {
+    let Ok(mut names) = sys::read_dir_entries(&base.display().to_string()) else {
         return;
     };
-    let mut names = entries
-        .filter_map(|entry| entry.ok())
-        .filter_map(|entry| entry.file_name().into_string().ok())
-        .collect::<Vec<_>>();
     names.sort();
     for name in names {
         if name.starts_with('.') && !segment.starts_with('.') {
@@ -1216,8 +1212,7 @@ impl<'a> ArithmeticParser<'a> {
 mod tests {
     use super::*;
     use std::collections::HashMap;
-    use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use crate::sys::test_support::VfsBuilder;
 
     struct FakeContext {
         env: HashMap<String, String>,
@@ -1504,57 +1499,40 @@ mod tests {
 
     #[test]
     fn performs_pathname_expansion() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("meiksh-expand-{unique}"));
-        fs::create_dir(&dir).expect("mkdir");
-        fs::write(dir.join("a.txt"), "").expect("write a");
-        fs::write(dir.join("b.txt"), "").expect("write b");
-        fs::write(dir.join(".hidden.txt"), "").expect("write hidden");
-
-        let mut ctx = FakeContext::new();
-        let visible_pattern = format!("{}/*.txt", dir.display());
-        let hidden_pattern = format!("{}/.*.txt", dir.display());
-        assert_eq!(
-            expand_word(&mut ctx, &Word { raw: visible_pattern }).expect("glob"),
-            vec![
-                format!("{}/a.txt", dir.display()),
-                format!("{}/b.txt", dir.display()),
-            ]
-        );
-        assert_eq!(
-            expand_word(&mut ctx, &Word { raw: "\\*.txt".into() }).expect("escaped glob"),
-            vec!["*.txt".to_string()]
-        );
-        assert_eq!(
-            expand_word(&mut ctx, &Word { raw: hidden_pattern }).expect("hidden glob"),
-            vec![format!("{}/.hidden.txt", dir.display())]
-        );
-
-        let _ = fs::remove_dir_all(dir);
+        VfsBuilder::new()
+            .file("/testdir/a.txt", b"")
+            .file("/testdir/b.txt", b"")
+            .file("/testdir/.hidden.txt", b"")
+            .run(|| {
+                let mut ctx = FakeContext::new();
+                assert_eq!(
+                    expand_word(&mut ctx, &Word { raw: "/testdir/*.txt".into() }).expect("glob"),
+                    vec!["/testdir/a.txt".to_string(), "/testdir/b.txt".to_string()]
+                );
+                assert_eq!(
+                    expand_word(&mut ctx, &Word { raw: "\\*.txt".into() }).expect("escaped glob"),
+                    vec!["*.txt".to_string()]
+                );
+                assert_eq!(
+                    expand_word(&mut ctx, &Word { raw: "/testdir/.*.txt".into() }).expect("hidden glob"),
+                    vec!["/testdir/.hidden.txt".to_string()]
+                );
+            });
     }
 
     #[test]
     fn can_disable_pathname_expansion_via_context() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("meiksh-noglob-{unique}"));
-        fs::create_dir(&dir).expect("mkdir");
-        fs::write(dir.join("a.txt"), "").expect("write a");
-
-        let mut ctx = FakeContext::new();
-        ctx.pathname_expansion_enabled = false;
-        let pattern = format!("{}/*.txt", dir.display());
-        assert_eq!(
-            expand_word(&mut ctx, &Word { raw: pattern.clone() }).expect("noglob"),
-            vec![pattern]
-        );
-
-        let _ = fs::remove_dir_all(dir);
+        VfsBuilder::new()
+            .file("/testdir/a.txt", b"")
+            .run(|| {
+                let mut ctx = FakeContext::new();
+                ctx.pathname_expansion_enabled = false;
+                let pattern = "/testdir/*.txt".to_string();
+                assert_eq!(
+                    expand_word(&mut ctx, &Word { raw: pattern.clone() }).expect("noglob"),
+                    vec![pattern]
+                );
+            });
     }
 
     #[test]
