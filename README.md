@@ -17,7 +17,7 @@ The current semantic target is POSIX Issue 8, with Issue 7 behavior still tracke
 
 `meiksh` is already a working shell with substantial parser, expansion, execution, and builtin coverage, including:
 
-- `-a`, `-c`, `-C`, `-f`, `-n`, `-u`, and `-s` startup handling for the implemented subset, including POSIX-style `command_name` / `$0`, named `-o` / `+o` forms for the same subset, lone `-` stdin handling, `$-` reporting for active flags, plain `nounset` expansion failures, and blocking-read correction for inherited non-blocking stdin
+- `-a`, `-c`, `-C`, `-f`, `-n`, `-u`, `-v`, and `-s` startup handling for the implemented subset, including POSIX-style `command_name` / `$0`, named `-o` / `+o` forms for the same subset, lone `-` stdin handling, `$-` reporting for active flags, verbose input echoing, plain `nounset` expansion failures, and blocking-read correction for inherited non-blocking stdin
 - simple commands, pipelines, `&&` / `||`, background execution, subshells, groups, functions, `if`, `case`, `for`, `while`, and `until`
 - parser-time alias expansion, including blank-terminated alias chaining and same-source visibility across top-level and nested bodies
 - context-sensitive `!` pipeline negation and POSIX grammar-sensitive reserved-word handling for `for`, `case`, brace groups, and linebreaks after `|`, `&&`, and `||`

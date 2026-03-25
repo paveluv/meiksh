@@ -12,7 +12,7 @@ This register turns broad partial-conformance areas into named backlog items tha
 
 | Gap ID | Linked requirement area | Current gap |
 | --- | --- | --- |
-| `GAP-SH-001` | `REQ-SH-OPTIONS-*` | `sh` and `set` now cover `-a`, `-C`, `-f`, `-n`, `-u`, and named `-o`/`+o` forms for the implemented subset, but the rest of the full Issue 8 option surface still remains open. |
+| `GAP-SH-001` | `REQ-SH-OPTIONS-*` | `sh` and `set` now cover `-a`, `-C`, `-f`, `-n`, `-u`, `-v`, and named `-o`/`+o` forms for the implemented subset, but the rest of the full Issue 8 option surface still remains open. |
 | `GAP-SH-002` | `REQ-SH-STARTUP-*`, `REQ-SH-OPERANDS-*`, `REQ-SH-EXIT-*` | The non-interactive stdin no-read-ahead rule, blocking-stdin correction for inherited non-blocking FIFO/terminal descriptors, and the direct-ordinary-builtin versus direct-special-builtin error split are now implemented; the remaining startup gap is narrower utility-page polish around the rest of the option surface and top-level exit-status/error classification. |
 | `GAP-SH-003` | `REQ-SH-INTERACTIVE-*`, `REQ-JOBS-HISTORY-*` | Command history list semantics are still simplified, and command-line / vi-mode editing remain unimplemented. |
 | `GAP-EXPAND-001` | `REQ-EXPAND-FIELDS-*` | Field splitting still needs exact mixed-quoting, `"$@"`, and remaining IFS edge coverage. |
@@ -21,7 +21,7 @@ This register turns broad partial-conformance areas into named backlog items tha
 | `GAP-EXEC-002` | `REQ-EXEC-ENV-*`, `REQ-EXPAND-CMDSUB-*`, `REQ-EXEC-GROUP-*` | Subshell and command-substitution fidelity are still affected by the current recursive `meiksh -c` shortcut, which does not preserve the full shell execution environment. |
 | `GAP-EXEC-003` | `REQ-EXEC-SEARCH-*` | Command search still needs stricter executable-file semantics and broader utility-page parity for external lookup and failure cases. |
 | `GAP-BUILTIN-001` | `REQ-BUILTIN-CD-*` | `cd` still lacks `-L`/`-P`/`-e` and full logical-path fidelity after the new `CDPATH` coverage. |
-| `GAP-BUILTIN-002` | `REQ-BUILTIN-SET-*` | `set` now has a stronger core subset, including `-a`, `-u`, named `-o`/`+o`, option-state reporting, and plain `nounset` expansion failures, but most remaining Issue 8 options and their exact semantics are still missing. |
+| `GAP-BUILTIN-002` | `REQ-BUILTIN-SET-*` | `set` now has a stronger core subset, including `-a`, `-u`, `-v`, named `-o`/`+o`, option-state reporting, and plain `nounset` expansion failures, but most remaining Issue 8 options and their exact semantics are still missing. |
 | `GAP-BUILTIN-003` | `REQ-BUILTIN-READ-*` | `read` still needs tighter multibyte, prompt, and corner-case conformance. |
 | `GAP-BUILTIN-004` | `REQ-BUILTIN-TRAP-*` | Trap coverage still lacks ignored-on-entry semantics, broader signal names, and subshell/command-substitution exceptions. |
 | `GAP-BUILTIN-005` | `REQ-BUILTIN-UMASK-*` | Full chmod-style symbolic `umask` operands remain incomplete. |
