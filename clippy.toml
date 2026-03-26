@@ -15,7 +15,7 @@ disallowed-types = [
 disallowed-methods = [
     { path = "std::env::set_current_dir", reason = "Use sys::change_dir instead" },
     { path = "std::env::current_dir", reason = "Use sys::get_cwd instead" },
-    { path = "std::env::current_exe", reason = "Use sys::read_link instead" },
+    { path = "std::env::current_exe", reason = "Use sys:: wrappers instead" },
     { path = "std::env::var", reason = "Use sys::env_var instead" },
     { path = "std::env::vars", reason = "Use sys::env_vars instead" },
     { path = "std::env::args_os", reason = "Use sys::env_args_os instead" },
@@ -25,7 +25,7 @@ disallowed-methods = [
     { path = "std::fs::metadata", reason = "Use sys::stat_path instead" },
     { path = "std::fs::read_dir", reason = "Use sys::read_dir_entries instead" },
     { path = "std::fs::create_dir", reason = "Use sys::mkdir through sys:: instead" },
-    { path = "std::fs::remove_file", reason = "Use sys::unlink_file instead" },
+    { path = "std::fs::remove_file", reason = "Use sys:: wrappers instead" },
     { path = "std::path::Path::exists", reason = "Use sys::file_exists instead" },
     { path = "std::path::Path::is_file", reason = "Use sys::is_regular_file instead" },
     { path = "std::path::Path::is_dir", reason = "Use sys::is_directory instead" },

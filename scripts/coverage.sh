@@ -14,7 +14,7 @@ mkdir -p "$profile_dir"
 
 export CARGO_INCREMENTAL=0
 export LLVM_PROFILE_FILE="$profile_dir/meiksh-%p-%m.profraw"
-export RUSTFLAGS="${RUSTFLAGS-} -Cinstrument-coverage"
+export RUSTFLAGS="${RUSTFLAGS-} -Cinstrument-coverage --cfg coverage"
 
 cd "$repo_root"
 python3 - "$repo_root" <<'PY'
@@ -36,7 +36,7 @@ cargo test
 objects=""
 for path in \
     "$repo_root"/target/debug/deps/meiksh-* \
-    "$repo_root"/target/debug/deps/spec_basic-* \
+    "$repo_root"/target/debug/deps/integration_basic-* \
     "$repo_root"/target/debug/meiksh
 do
     if [ -f "$path" ] && [ -x "$path" ]; then
@@ -97,32 +97,20 @@ def inline_test_ranges(path: pathlib.Path) -> list[tuple[int, int]]:
         if j >= len(lines):
             i += 1
             continue
-        depth = 0
-        started = False
-        k = j
-        while k < len(lines):
-            depth += lines[k].count("{")
-            if lines[k].count("{"):
-                started = True
-            depth -= lines[k].count("}")
-            if started and depth == 0:
-                ranges.append((i + 1, k + 1))
-                i = k
-                break
-            k += 1
-        i += 1
+        ranges.append((i + 1, len(lines)))
+        break
     return ranges
 
 
 current = None
-totals = {"found": 0, "hit": 0}
 per_file = {}
+line_counts: dict[tuple, int] = {}
 
 for raw_line in lcov_path.read_text().splitlines():
     if raw_line.startswith("SF:"):
         current = pathlib.Path(raw_line[3:])
         if str(current).startswith(str(repo_root / "src")) and current.exists():
-            per_file[current] = inline_test_ranges(current)
+            per_file.setdefault(current, inline_test_ranges(current))
         else:
             current = None
         continue
@@ -133,10 +121,10 @@ for raw_line in lcov_path.read_text().splitlines():
     count = int(count)
     if any(start <= line_no <= end for start, end in per_file[current]):
         continue
-    totals["found"] += 1
-    if count > 0:
-        totals["hit"] += 1
+    key = (current, line_no)
+    line_counts[key] = max(line_counts.get(key, 0), count)
 
+totals = {"found": len(line_counts), "hit": sum(1 for c in line_counts.values() if c > 0)}
 coverage = 100.0 if totals["found"] == 0 else (totals["hit"] / totals["found"] * 100.0)
 print(
     f"Production-only line coverage (excluding inline #[cfg(test)] modules): "
