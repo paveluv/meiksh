@@ -240,16 +240,12 @@ pub(crate) mod test_support {
     thread_local! {
         static TEST_SYSCALLS: RefCell<Option<Syscalls>> = const { RefCell::new(None) };
         static TEST_ERRNO: RefCell<c_int> = const { RefCell::new(0) };
+        static TEST_PENDING_SIGNALS: RefCell<usize> = const { RefCell::new(0) };
         static TEST_PROCESS_IDS: RefCell<Option<(libc::uid_t, libc::uid_t, libc::gid_t, libc::gid_t)>> =
             const { RefCell::new(None) };
     }
 
     fn syscall_lock() -> &'static Mutex<()> {
-        static LOCK: Mutex<()> = Mutex::new(());
-        &LOCK
-    }
-
-    fn pending_signal_lock() -> &'static Mutex<()> {
         static LOCK: Mutex<()> = Mutex::new(());
         &LOCK
     }
@@ -271,6 +267,14 @@ pub(crate) mod test_support {
         SysError::Errno(errno)
     }
 
+    pub(super) fn test_pending_signal_bits() -> usize {
+        TEST_PENDING_SIGNALS.with(|cell| *cell.borrow())
+    }
+
+    pub(super) fn test_take_pending_signal_bits() -> usize {
+        TEST_PENDING_SIGNALS.with(|cell| cell.replace(0))
+    }
+
     pub(crate) fn with_test_syscalls<T>(syscalls: Syscalls, f: impl FnOnce() -> T) -> T {
         let _guard = syscall_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         TEST_SYSCALLS.with(|cell| {
@@ -286,15 +290,14 @@ pub(crate) mod test_support {
             .iter()
             .filter_map(|signal| signal_mask(*signal))
             .fold(0usize, |acc, bit| acc | bit);
-        PENDING_SIGNALS.store(bits, Ordering::SeqCst);
+        TEST_PENDING_SIGNALS.with(|cell| *cell.borrow_mut() = bits);
     }
 
     pub(crate) fn with_pending_signals_for_test<T>(signals: &[c_int], f: impl FnOnce() -> T) -> T {
-        let _guard = pending_signal_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let previous = PENDING_SIGNALS.load(Ordering::SeqCst);
+        let previous = TEST_PENDING_SIGNALS.with(|cell| *cell.borrow());
         set_pending_signals_for_test(signals);
         let result = f();
-        PENDING_SIGNALS.store(previous, Ordering::SeqCst);
+        TEST_PENDING_SIGNALS.with(|cell| *cell.borrow_mut() = previous);
         result
     }
 
@@ -1121,14 +1124,22 @@ pub fn default_signal_action(signal: c_int) -> SysResult<()> {
 }
 
 pub fn has_pending_signal() -> Option<c_int> {
+    #[cfg(test)]
+    let bits = test_support::test_pending_signal_bits();
+    #[cfg(not(test))]
     let bits = PENDING_SIGNALS.load(Ordering::SeqCst);
+
     supported_trap_signals()
         .into_iter()
         .find(|signal| signal_mask(*signal).map(|mask| bits & mask != 0).unwrap_or(false))
 }
 
 pub fn take_pending_signals() -> Vec<c_int> {
+    #[cfg(test)]
+    let bits = test_support::test_take_pending_signal_bits();
+    #[cfg(not(test))]
     let bits = PENDING_SIGNALS.swap(0, Ordering::SeqCst);
+
     supported_trap_signals()
         .into_iter()
         .filter(|signal| signal_mask(*signal).map(|mask| bits & mask != 0).unwrap_or(false))
