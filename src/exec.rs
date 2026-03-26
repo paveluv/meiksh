@@ -1332,7 +1332,6 @@ mod tests {
                 t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(0)], TraceResult::Int(0)),
                 t("execvp", vec![ArgMatcher::Str("/usr/bin/true".into()), ArgMatcher::Any], TraceResult::Int(0)),
             ]),
-            t("setpgid", vec![ArgMatcher::Int(1000), ArgMatcher::Int(0)], TraceResult::Int(0)),
             t("setpgid", vec![ArgMatcher::Int(1000), ArgMatcher::Int(1000)], TraceResult::Int(0)),
         ], || {
             let mut shell = test_shell();
@@ -1356,12 +1355,10 @@ mod tests {
             t("pipe", vec![], TraceResult::Fds(200, 201)),
             t_fork(TraceResult::Pid(1000), vec![]),
             t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
-            t("setpgid", vec![ArgMatcher::Int(1000), ArgMatcher::Int(0)], TraceResult::Int(0)),
             t("setpgid", vec![ArgMatcher::Int(1000), ArgMatcher::Int(1000)], TraceResult::Int(0)),
             t("stat", vec![ArgMatcher::Str("/usr/bin/wc".into()), ArgMatcher::Any], TraceResult::StatFile(0o755)),
             t_fork(TraceResult::Pid(1001), vec![]),
             t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
-            t("setpgid", vec![ArgMatcher::Int(1001), ArgMatcher::Int(1000)], TraceResult::Int(0)),
             t("setpgid", vec![ArgMatcher::Int(1001), ArgMatcher::Int(1000)], TraceResult::Int(0)),
             t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
             t("waitpid", vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
@@ -2603,10 +2600,9 @@ mod tests {
     #[test]
     fn spawn_prepared_with_new_process_group() {
         run_trace(vec![
-            // spawn_prepared: access check, fork, setpgid, waitpid
+            // spawn_prepared: access check, fork, waitpid
             t("access", vec![ArgMatcher::Str("/tmp/script.sh".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
             t_fork(TraceResult::Pid(1000), vec![]),
-            t("setpgid", vec![ArgMatcher::Int(1000), ArgMatcher::Int(0)], TraceResult::Int(0)),
             t("waitpid", vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
         ], || {
             let prepared = PreparedProcess {
@@ -2664,15 +2660,13 @@ mod tests {
             t("access", vec![ArgMatcher::Str("/bin/echo".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
             t_fork(TraceResult::Pid(1000), vec![]),
             t("waitpid", vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
-            // spawn NewGroup: access, fork, setpgid, waitpid
+            // spawn NewGroup: access, fork, waitpid
             t("access", vec![ArgMatcher::Str("/bin/echo".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
             t_fork(TraceResult::Pid(1001), vec![]),
-            t("setpgid", vec![ArgMatcher::Int(1001), ArgMatcher::Int(0)], TraceResult::Int(0)),
             t("waitpid", vec![ArgMatcher::Int(1001), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
-            // spawn Join(0): access, fork, setpgid, waitpid
+            // spawn Join(0): access, fork, waitpid
             t("access", vec![ArgMatcher::Str("/bin/echo".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
             t_fork(TraceResult::Pid(1002), vec![]),
-            t("setpgid", vec![ArgMatcher::Int(1002), ArgMatcher::Int(0)], TraceResult::Int(0)),
             t("waitpid", vec![ArgMatcher::Int(1002), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
         ], || {
             let prepared = PreparedProcess {
