@@ -109,7 +109,7 @@ mod tests {
     use crate::shell::ShellOptions;
     use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-    use crate::test_utils::meiksh_bin_path;
+    use crate::sys::test_support::{TraceResult, ArgMatcher, run_trace, t, assert_no_syscalls};
 
     fn test_shell() -> Shell {
         Shell {
@@ -128,7 +128,6 @@ mod tests {
             known_pid_statuses: HashMap::new(),
             known_job_statuses: HashMap::new(),
             trap_actions: BTreeMap::new(),
-            current_exe: meiksh_bin_path(),
             loop_depth: 0,
             function_depth: 0,
             pending_control: None,
@@ -137,36 +136,41 @@ mod tests {
 
     #[test]
     fn prompt_prefers_ps1() {
-        let mut shell = test_shell();
-        assert_eq!(prompt(&shell), "meiksh$ ");
-        shell.env.insert("PS1".into(), "custom> ".into());
-        assert_eq!(prompt(&shell), "custom> ");
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            assert_eq!(prompt(&shell), "meiksh$ ");
+            shell.env.insert("PS1".into(), "custom> ".into());
+            assert_eq!(prompt(&shell), "custom> ");
+        });
     }
 
     #[test]
     fn append_history_writes_to_histfile() {
-        use crate::sys::test_support::VfsBuilder;
-
-        VfsBuilder::new()
-            .dir("/tmp")
-            .run(|| {
-                let mut shell = test_shell();
-                shell.env.insert("HISTFILE".into(), "/tmp/history.txt".into());
-
-                append_history(&shell, "echo hi\n").expect("append history");
-                let contents = sys::read_file("/tmp/history.txt").expect("read history");
-                assert_eq!(contents, "echo hi\n");
-            });
+        run_trace(vec![
+            t("open", vec![ArgMatcher::Str("/tmp/history.txt".into()), ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::Fd(10)),
+            t("write", vec![ArgMatcher::Fd(10), ArgMatcher::Bytes(b"echo hi\n".to_vec())],
+                TraceResult::Int(8)),
+            t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
+        ], || {
+            let mut shell = test_shell();
+            shell.env.insert("HISTFILE".into(), "/tmp/history.txt".into());
+            append_history(&shell, "echo hi\n").expect("append history");
+        });
     }
 
     #[test]
     fn load_env_file_ignores_relative_and_missing_paths() {
-        let mut shell = test_shell();
-        shell.env.insert("ENV".into(), "relative.sh".into());
-        load_env_file(&mut shell).expect("relative ignored");
+        run_trace(vec![], || {
+            let mut shell = test_shell();
+            shell.env.insert("ENV".into(), "relative.sh".into());
+            load_env_file(&mut shell).expect("relative ignored");
+        });
 
-        use crate::sys::test_support::VfsBuilder;
-        VfsBuilder::new().run(|| {
+        run_trace(vec![
+            t("access", vec![ArgMatcher::Str("/tmp/meiksh-missing-env.sh".into()), ArgMatcher::Int(0)],
+                TraceResult::Err(libc::ENOENT)),
+        ], || {
             let mut shell = test_shell();
             shell.env.insert("ENV".into(), "/tmp/meiksh-missing-env.sh".into());
             load_env_file(&mut shell).expect("missing ignored");
@@ -175,178 +179,260 @@ mod tests {
 
     #[test]
     fn load_env_file_sources_existing_absolute_path() {
-        use crate::sys::test_support::VfsBuilder;
-
-        VfsBuilder::new()
-            .file("/tmp/env.sh", b"FROM_ENV_FILE=1\n")
-            .run(|| {
-                let mut shell = test_shell();
-                shell.env.insert("ENV".into(), "/tmp/env.sh".into());
-
-                load_env_file(&mut shell).expect("source env file");
-                assert_eq!(shell.get_var("FROM_ENV_FILE").as_deref(), Some("1"));
-            });
+        run_trace(vec![
+            t("access", vec![ArgMatcher::Str("/tmp/env.sh".into()), ArgMatcher::Int(0)],
+                TraceResult::Int(0)),
+            t("open", vec![ArgMatcher::Str("/tmp/env.sh".into()), ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::Fd(10)),
+            t("read", vec![ArgMatcher::Fd(10), ArgMatcher::Any],
+                TraceResult::Bytes(b"FROM_ENV_FILE=1\n".to_vec())),
+            t("read", vec![ArgMatcher::Fd(10), ArgMatcher::Any],
+                TraceResult::Int(0)),
+            t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
+        ], || {
+            let mut shell = test_shell();
+            shell.env.insert("ENV".into(), "/tmp/env.sh".into());
+            load_env_file(&mut shell).expect("source env file");
+            assert_eq!(shell.get_var("FROM_ENV_FILE").as_deref(), Some("1"));
+        });
     }
 
     #[test]
     fn load_env_file_expands_parameters() {
-        use crate::sys::test_support::VfsBuilder;
-
-        VfsBuilder::new()
-            .file("/home/user/env.sh", b"FROM_EXPANDED_ENV=1\n")
-            .run(|| {
-                let mut shell = test_shell();
-                shell.env.insert("HOME".into(), "/home/user".into());
-                shell.env.insert("ENV".into(), "${HOME}/env.sh".into());
-                load_env_file(&mut shell).expect("expanded env file");
-                assert_eq!(shell.get_var("FROM_EXPANDED_ENV").as_deref(), Some("1"));
-            });
+        run_trace(vec![
+            t("access", vec![ArgMatcher::Str("/home/user/env.sh".into()), ArgMatcher::Int(0)],
+                TraceResult::Int(0)),
+            t("open", vec![ArgMatcher::Str("/home/user/env.sh".into()), ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::Fd(10)),
+            t("read", vec![ArgMatcher::Fd(10), ArgMatcher::Any],
+                TraceResult::Bytes(b"FROM_EXPANDED_ENV=1\n".to_vec())),
+            t("read", vec![ArgMatcher::Fd(10), ArgMatcher::Any],
+                TraceResult::Int(0)),
+            t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
+        ], || {
+            let mut shell = test_shell();
+            shell.env.insert("HOME".into(), "/home/user".into());
+            shell.env.insert("ENV".into(), "${HOME}/env.sh".into());
+            load_env_file(&mut shell).expect("expanded env file");
+            assert_eq!(shell.get_var("FROM_EXPANDED_ENV").as_deref(), Some("1"));
+        });
     }
 
     #[test]
     fn load_env_file_respects_identity_guard() {
-        use crate::sys::test_support::VfsBuilder;
-
-        VfsBuilder::new()
-            .file("/home/user/env.sh", b"FROM_EXPANDED_ENV=1\n")
-            .run(|| {
-                let mut shell = test_shell();
-                shell.env.insert("HOME".into(), "/home/user".into());
-                shell.env.insert("ENV".into(), "${HOME}/env.sh".into());
-                sys::test_support::with_process_ids_for_test((1, 2, 3, 3), || {
-                    load_env_file(&mut shell).expect("guarded env file");
-                });
-                assert_eq!(shell.get_var("FROM_EXPANDED_ENV"), None);
+        run_trace(vec![], || {
+            let mut shell = test_shell();
+            shell.env.insert("HOME".into(), "/home/user".into());
+            shell.env.insert("ENV".into(), "${HOME}/env.sh".into());
+            sys::test_support::with_process_ids_for_test((1, 2, 3, 3), || {
+                load_env_file(&mut shell).expect("guarded env file");
             });
+            assert_eq!(shell.get_var("FROM_EXPANDED_ENV"), None);
+        });
     }
 
     #[test]
     fn load_env_file_propagates_source_errors() {
-        use crate::sys::test_support::VfsBuilder;
-
-        VfsBuilder::new()
-            .file("/tmp/bad.sh", b"echo 'unterminated\n")
-            .run(|| {
-                let mut shell = test_shell();
-                shell.env.insert("ENV".into(), "/tmp/bad.sh".into());
-
-                let error = load_env_file(&mut shell).expect_err("invalid env file");
-                assert!(!error.message.is_empty());
-            });
+        run_trace(vec![
+            t("access", vec![ArgMatcher::Str("/tmp/bad.sh".into()), ArgMatcher::Int(0)],
+                TraceResult::Int(0)),
+            t("open", vec![ArgMatcher::Str("/tmp/bad.sh".into()), ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::Fd(10)),
+            t("read", vec![ArgMatcher::Fd(10), ArgMatcher::Any],
+                TraceResult::Bytes(b"echo 'unterminated\n".to_vec())),
+            t("read", vec![ArgMatcher::Fd(10), ArgMatcher::Any],
+                TraceResult::Int(0)),
+            t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
+        ], || {
+            let mut shell = test_shell();
+            shell.env.insert("ENV".into(), "/tmp/bad.sh".into());
+            let error = load_env_file(&mut shell).expect_err("invalid env file");
+            assert!(!error.message.is_empty());
+        });
     }
 
     #[test]
     fn load_env_without_variable_and_run_loop_eof_are_covered() {
-        use crate::sys::test_support::VfsBuilder;
+        run_trace(vec![], || {
+            let mut shell = test_shell();
+            load_env_file(&mut shell).expect("no env");
+        });
 
-        let mut shell = test_shell();
-        load_env_file(&mut shell).expect("no env");
-
-        VfsBuilder::new()
-            .file("/dev/stdin", b"")
-            .stdin("/dev/stdin")
-            .file("/dev/stdout", b"")
-            .stdout("/dev/stdout")
-            .file("/dev/stderr", b"")
-            .stderr("/dev/stderr")
-            .run(|| {
-                let mut shell = test_shell();
-                let status = run_loop(&mut shell).expect("eof run loop");
-                assert_eq!(status, 0);
-            });
+        run_trace(vec![
+            t("write", vec![ArgMatcher::Fd(sys::STDOUT_FILENO), ArgMatcher::Bytes(b"meiksh$ ".to_vec())],
+                TraceResult::Int(8)),
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Int(0)),
+        ], || {
+            let mut shell = test_shell();
+            let status = run_loop(&mut shell).expect("eof run loop");
+            assert_eq!(status, 0);
+        });
     }
 
     #[test]
     fn run_loop_covers_reaped_jobs_blank_lines_and_exit() {
-        use crate::sys::test_support::VfsBuilder;
+        run_trace(vec![
+            // reap_jobs for 4001 (called explicitly before run_loop)
+            t("waitpid", vec![ArgMatcher::Int(4001), ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::Status(0)),
+            // reap_jobs for 4002 (called at top of run_loop)
+            t("waitpid", vec![ArgMatcher::Int(4002), ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::Status(0)),
+            // reap notification written to stderr
+            t("write", vec![ArgMatcher::Fd(sys::STDERR_FILENO), ArgMatcher::Any],
+                TraceResult::Int(0)),
+            // first prompt
+            t("write", vec![ArgMatcher::Fd(sys::STDOUT_FILENO), ArgMatcher::Bytes(b"test$ ".to_vec())],
+                TraceResult::Int(6)),
+            // read blank line
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(b"\n".to_vec())),
+            // second iteration: reap_jobs returns nothing
+            // second prompt (after blank line)
+            t("write", vec![ArgMatcher::Fd(sys::STDOUT_FILENO), ArgMatcher::Bytes(b"test$ ".to_vec())],
+                TraceResult::Int(6)),
+            // read "exit 5\n" byte by byte
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(b"e".to_vec())),
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(b"x".to_vec())),
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(b"i".to_vec())),
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(b"t".to_vec())),
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(b" ".to_vec())),
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(b"5".to_vec())),
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(b"\n".to_vec())),
+            // append to history
+            t("open", vec![ArgMatcher::Str("/tmp/history.txt".into()), ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::Fd(10)),
+            t("write", vec![ArgMatcher::Fd(10), ArgMatcher::Bytes(b"exit 5\n".to_vec())],
+                TraceResult::Int(7)),
+            t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
+        ], || {
+            let mut shell = test_shell();
+            shell.env.insert("HISTFILE".into(), "/tmp/history.txt".into());
+            shell.env.insert("PS1".into(), "test$ ".into());
 
-        fn done_waitpid(pid: sys::Pid, status: *mut i32, _opts: i32) -> sys::Pid {
-            unsafe { *status = 0; }
-            pid
-        }
+            let handle = sys::ChildHandle { pid: 4001, stdout_fd: None };
+            shell.launch_background_job("done".into(), None, vec![handle]);
+            shell.reap_jobs();
 
-        VfsBuilder::new()
-            .dir("/tmp")
-            .file("/dev/stdin", b"\nexit 5\n")
-            .stdin("/dev/stdin")
-            .file("/dev/stdout", b"")
-            .stdout("/dev/stdout")
-            .file("/dev/stderr", b"")
-            .stderr("/dev/stderr")
-            .run_with_waitpid(done_waitpid, || {
-                let mut shell = test_shell();
-                shell.env.insert("HISTFILE".into(), "/tmp/history.txt".into());
-                shell.env.insert("PS1".into(), "test$ ".into());
+            let handle = sys::ChildHandle { pid: 4002, stdout_fd: None };
+            shell.launch_background_job("done".into(), None, vec![handle]);
 
-                let handle = sys::ChildHandle { pid: 4001, stdout_fd: None };
-                shell.launch_background_job("done".into(), None, vec![handle]);
-                shell.reap_jobs();
+            let status = run_loop(&mut shell).expect("run loop");
 
-                let handle = sys::ChildHandle { pid: 4002, stdout_fd: None };
-                shell.launch_background_job("done".into(), None, vec![handle]);
-
-                let status = run_loop(&mut shell).expect("run loop");
-
-                assert_eq!(status, 5);
-                assert_eq!(shell.last_status, 5);
-                assert!(!shell.running);
-                assert_eq!(sys::read_file("/tmp/history.txt").expect("history"), "exit 5\n");
-            });
+            assert_eq!(status, 5);
+            assert_eq!(shell.last_status, 5);
+            assert!(!shell.running);
+        });
     }
 
     #[test]
     fn run_loop_propagates_write_flush_read_and_parse_errors() {
-        use crate::sys::test_support::VfsBuilder;
+        run_trace(vec![
+            t("write", vec![ArgMatcher::Fd(sys::STDOUT_FILENO), ArgMatcher::Bytes(b"meiksh$ ".to_vec())],
+                TraceResult::Int(8)),
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Int(0)),
+        ], || {
+            let mut shell = test_shell();
+            let status = run_loop(&mut shell).expect("eof run loop");
+            assert_eq!(status, 0);
+        });
 
-        VfsBuilder::new()
-            .file("/dev/stdin", b"")
-            .stdin("/dev/stdin")
-            .file("/dev/stdout", b"")
-            .stdout("/dev/stdout")
-            .file("/dev/stderr", b"")
-            .stderr("/dev/stderr")
-            .run(|| {
-                let mut shell = test_shell();
-                let status = run_loop(&mut shell).expect("eof run loop");
-                assert_eq!(status, 0);
-            });
-
-        VfsBuilder::new()
-            .dir("/tmp")
-            .file("/dev/stdin", b"echo 'unterminated\n")
-            .stdin("/dev/stdin")
-            .file("/dev/stdout", b"")
-            .stdout("/dev/stdout")
-            .file("/dev/stderr", b"")
-            .stderr("/dev/stderr")
-            .run(|| {
-                let mut shell = test_shell();
-                shell.env.insert("HISTFILE".into(), "/tmp/bad-history.txt".into());
-                let status = run_loop(&mut shell).expect("parse handled");
-                assert_eq!(status, 1);
-            });
+        run_trace(vec![
+            t("write", vec![ArgMatcher::Fd(sys::STDOUT_FILENO), ArgMatcher::Bytes(b"meiksh$ ".to_vec())],
+                TraceResult::Int(8)),
+            // read "echo 'unterminated\n" byte by byte
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(b"e".to_vec())),
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(b"c".to_vec())),
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(b"h".to_vec())),
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(b"o".to_vec())),
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(b" ".to_vec())),
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(b"'".to_vec())),
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(b"u".to_vec())),
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(b"n".to_vec())),
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(b"t".to_vec())),
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(b"e".to_vec())),
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(b"r".to_vec())),
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(b"m".to_vec())),
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(b"i".to_vec())),
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(b"n".to_vec())),
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(b"a".to_vec())),
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(b"t".to_vec())),
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(b"e".to_vec())),
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(b"d".to_vec())),
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(b"\n".to_vec())),
+            // open history file
+            t("open", vec![ArgMatcher::Str("/tmp/bad-history.txt".into()), ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::Fd(10)),
+            t("write", vec![ArgMatcher::Fd(10), ArgMatcher::Any],
+                TraceResult::Int(19)),
+            t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
+            // parse error written to stderr
+            t("write", vec![ArgMatcher::Fd(sys::STDERR_FILENO), ArgMatcher::Any],
+                TraceResult::Int(0)),
+            // prompt again
+            t("write", vec![ArgMatcher::Fd(sys::STDOUT_FILENO), ArgMatcher::Bytes(b"meiksh$ ".to_vec())],
+                TraceResult::Int(8)),
+            // EOF
+            t("read", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Int(0)),
+        ], || {
+            let mut shell = test_shell();
+            shell.env.insert("HISTFILE".into(), "/tmp/bad-history.txt".into());
+            let status = run_loop(&mut shell).expect("parse handled");
+            assert_eq!(status, 1);
+        });
     }
 
     #[test]
     fn append_history_uses_default_path_and_reports_open_errors() {
-        use crate::sys::test_support::VfsBuilder;
+        run_trace(vec![
+            t("open", vec![ArgMatcher::Str("/tmp/history-dir".into()), ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::Err(libc::EISDIR)),
+        ], || {
+            let mut shell = test_shell();
+            shell.env.insert("HISTFILE".into(), "/tmp/history-dir".into());
+            let error = append_history(&shell, "echo hi\n").expect_err("directory should not open as file");
+            assert!(!error.message.is_empty());
+        });
 
-        VfsBuilder::new()
-            .dir("/tmp/history-dir")
-            .dir("/home/user")
-            .run(|| {
-                let mut shell = test_shell();
-                shell.env.insert("HISTFILE".into(), "/tmp/history-dir".into());
-                let error = append_history(&shell, "echo hi\n").expect_err("directory should not open as file");
-                assert!(!error.message.is_empty());
-
-                let mut shell = test_shell();
-                shell.env.insert("HOME".into(), "/home/user".into());
-                append_history(&shell, "echo default\n").expect("default history");
-                assert_eq!(
-                    sys::read_file("/home/user/.sh_history").expect("read history"),
-                    "echo default\n"
-                );
-            });
+        run_trace(vec![
+            t("open", vec![ArgMatcher::Str("/home/user/.sh_history".into()), ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::Fd(10)),
+            t("write", vec![ArgMatcher::Fd(10), ArgMatcher::Bytes(b"echo default\n".to_vec())],
+                TraceResult::Int(13)),
+            t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
+        ], || {
+            let mut shell = test_shell();
+            shell.env.insert("HOME".into(), "/home/user".into());
+            append_history(&shell, "echo default\n").expect("default history");
+        });
     }
 }

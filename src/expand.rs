@@ -1212,7 +1212,7 @@ impl<'a> ArithmeticParser<'a> {
 mod tests {
     use super::*;
     use std::collections::HashMap;
-    use crate::sys::test_support::VfsBuilder;
+    use crate::sys::test_support::{run_trace, assert_no_syscalls, t, TraceResult, ArgMatcher};
 
     struct FakeContext {
         env: HashMap<String, String>,
@@ -1499,40 +1499,50 @@ mod tests {
 
     #[test]
     fn performs_pathname_expansion() {
-        VfsBuilder::new()
-            .file("/testdir/a.txt", b"")
-            .file("/testdir/b.txt", b"")
-            .file("/testdir/.hidden.txt", b"")
-            .run(|| {
-                let mut ctx = FakeContext::new();
-                assert_eq!(
-                    expand_word(&mut ctx, &Word { raw: "/testdir/*.txt".into() }).expect("glob"),
-                    vec!["/testdir/a.txt".to_string(), "/testdir/b.txt".to_string()]
-                );
-                assert_eq!(
-                    expand_word(&mut ctx, &Word { raw: "\\*.txt".into() }).expect("escaped glob"),
-                    vec!["*.txt".to_string()]
-                );
-                assert_eq!(
-                    expand_word(&mut ctx, &Word { raw: "/testdir/.*.txt".into() }).expect("hidden glob"),
-                    vec!["/testdir/.hidden.txt".to_string()]
-                );
-            });
+        let dir_entries = || vec![
+            t("readdir", vec![ArgMatcher::Any], TraceResult::DirEntry("a.txt".into())),
+            t("readdir", vec![ArgMatcher::Any], TraceResult::DirEntry("b.txt".into())),
+            t("readdir", vec![ArgMatcher::Any], TraceResult::DirEntry(".hidden.txt".into())),
+            t("readdir", vec![ArgMatcher::Any], TraceResult::Int(0)),
+        ];
+        let mut trace = vec![
+            t("access", vec![ArgMatcher::Str("/testdir".into()), ArgMatcher::Any], TraceResult::Int(0)),
+            t("opendir", vec![ArgMatcher::Str("/testdir".into())], TraceResult::Int(1)),
+        ];
+        trace.extend(dir_entries());
+        trace.push(t("closedir", vec![ArgMatcher::Any], TraceResult::Int(0)));
+        trace.push(t("access", vec![ArgMatcher::Str("/testdir".into()), ArgMatcher::Any], TraceResult::Int(0)));
+        trace.push(t("opendir", vec![ArgMatcher::Str("/testdir".into())], TraceResult::Int(1)));
+        trace.extend(dir_entries());
+        trace.push(t("closedir", vec![ArgMatcher::Any], TraceResult::Int(0)));
+        run_trace(trace, || {
+            let mut ctx = FakeContext::new();
+            assert_eq!(
+                expand_word(&mut ctx, &Word { raw: "/testdir/*.txt".into() }).expect("glob"),
+                vec!["/testdir/a.txt".to_string(), "/testdir/b.txt".to_string()]
+            );
+            assert_eq!(
+                expand_word(&mut ctx, &Word { raw: "\\*.txt".into() }).expect("escaped glob"),
+                vec!["*.txt".to_string()]
+            );
+            assert_eq!(
+                expand_word(&mut ctx, &Word { raw: "/testdir/.*.txt".into() }).expect("hidden glob"),
+                vec!["/testdir/.hidden.txt".to_string()]
+            );
+        });
     }
 
     #[test]
     fn can_disable_pathname_expansion_via_context() {
-        VfsBuilder::new()
-            .file("/testdir/a.txt", b"")
-            .run(|| {
-                let mut ctx = FakeContext::new();
-                ctx.pathname_expansion_enabled = false;
-                let pattern = "/testdir/*.txt".to_string();
-                assert_eq!(
-                    expand_word(&mut ctx, &Word { raw: pattern.clone() }).expect("noglob"),
-                    vec![pattern]
-                );
-            });
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.pathname_expansion_enabled = false;
+            let pattern = "/testdir/*.txt".to_string();
+            assert_eq!(
+                expand_word(&mut ctx, &Word { raw: pattern.clone() }).expect("noglob"),
+                vec![pattern]
+            );
+        });
     }
 
     #[test]
