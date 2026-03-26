@@ -1624,9 +1624,6 @@ pub fn spawn_child(
     } else {
         None
     };
-    if let Some(pgid) = process_group {
-        let _ = set_process_group(pid, pgid);
-    }
 
     Ok(ChildHandle { pid, stdout_fd: stdout_read })
 }
