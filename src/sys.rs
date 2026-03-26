@@ -1603,10 +1603,7 @@ pub fn spawn_child(
         }
         if let Some(vars) = env_vars {
             for &(key, value) in vars {
-                let kv = format!("{key}={value}");
-                if let Ok(c_kv) = CString::new(kv) {
-                    unsafe { libc::putenv(c_kv.into_raw()) };
-                }
+                env_set_var(key, value);
             }
         }
         let rest: Vec<String> = argv.get(1..).unwrap_or(&[]).iter().map(|s| s.to_string()).collect();
@@ -1761,6 +1758,10 @@ pub fn env_vars() -> std::collections::HashMap<String, String> {
 #[allow(clippy::disallowed_methods)]
 pub fn env_args_os() -> Vec<std::ffi::OsString> {
     std::env::args_os().collect()
+}
+
+pub fn env_set_var(key: &str, value: &str) {
+    unsafe { std::env::set_var(key, value) };
 }
 
 #[cfg(test)]

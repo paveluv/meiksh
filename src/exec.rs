@@ -10,7 +10,6 @@ use crate::syntax::{
     HereDoc, LoopCommand, LoopKind, Pipeline, Program, RedirectionKind, SimpleCommand,
 };
 
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 enum ProcessGroupPlan {
     None,
@@ -155,7 +154,7 @@ fn spawn_pipeline(shell: &mut Shell, pipeline: &Pipeline) -> Result<SpawnedProce
         let handle = match command {
             Command::Simple(simple) => {
                 let prepared = build_process(shell, simple)?;
-                spawn_prepared(&prepared, previous_stdout_fd.take(), !is_last, plan)?
+                spawn_prepared(shell, &prepared, previous_stdout_fd.take(), !is_last, plan)?
             }
             _ => {
                 fork_and_execute_command(shell, command, previous_stdout_fd.take(), !is_last, plan)?
@@ -429,7 +428,7 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
         })
     } else {
         let prepared = build_process_from_expanded(shell, &expanded)?;
-        let handle = spawn_prepared(&prepared, None, false, ProcessGroupPlan::NewGroup)?;
+        let handle = spawn_prepared(shell, &prepared, None, false, ProcessGroupPlan::NewGroup)?;
         let pgid = handle.pid;
         let _ = sys::set_process_group(pgid, pgid);
         let status = wait_for_external_child(shell, &handle, Some(pgid))?;
@@ -463,7 +462,6 @@ struct PreparedProcess {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
 enum ChildFdAction {
     DupRawFd { fd: i32, target_fd: i32, close_source: bool },
     DupFd { source_fd: i32, target_fd: i32 },
@@ -590,22 +588,13 @@ fn build_process_from_expanded(
 }
 
 fn spawn_prepared(
+    shell: &Shell,
     prepared: &PreparedProcess,
     stdin_fd: Option<i32>,
     pipe_stdout: bool,
     process_group: ProcessGroupPlan,
 ) -> Result<sys::ChildHandle, ShellError> {
-    spawn_prepared_inner(prepared, stdin_fd, pipe_stdout, process_group, false)
-}
-
-fn spawn_prepared_inner(
-    prepared: &PreparedProcess,
-    stdin_fd: Option<i32>,
-    pipe_stdout: bool,
-    process_group: ProcessGroupPlan,
-    fallback_to_sh: bool,
-) -> Result<sys::ChildHandle, ShellError> {
-    if !fallback_to_sh && !prepared.path_verified && !prepared.exec_path.is_empty() && prepared.exec_path.contains('/') {
+    if !prepared.path_verified && !prepared.exec_path.is_empty() && prepared.exec_path.contains('/') {
         if sys::access_path(&prepared.exec_path, sys::F_OK).is_err() {
             return Err(sys::SysError::Errno(sys::ENOENT).into());
         }
@@ -624,85 +613,66 @@ fn spawn_prepared_inner(
 
     let effective_pipe_stdout = pipe_stdout && !prepared_redirections.stdout_redirected;
 
-    let mut fd_redirections: Vec<(i32, i32)> = Vec::new();
-    for action in &prepared_redirections.actions {
-        match action {
-            ChildFdAction::DupRawFd { fd, target_fd, .. } => {
-                fd_redirections.push((*fd, *target_fd));
+    let stdout_pipe = if effective_pipe_stdout {
+        let (r, w) = sys::create_pipe()?;
+        Some((r, w))
+    } else {
+        None
+    };
+
+    let pid = sys::fork_process()?;
+    if pid == 0 {
+        // Child: set up process group, stdin, stdout, redirections
+        match process_group {
+            ProcessGroupPlan::NewGroup => { let _ = sys::set_process_group(0, 0); }
+            ProcessGroupPlan::Join(pgid) => { let _ = sys::set_process_group(0, pgid); }
+            ProcessGroupPlan::None => {}
+        }
+        if let Some(fd) = effective_stdin {
+            let _ = sys::duplicate_fd(fd, sys::STDIN_FILENO);
+            let _ = sys::close_fd(fd);
+        }
+        if let Some((r, w)) = stdout_pipe {
+            let _ = sys::close_fd(r);
+            let _ = sys::duplicate_fd(w, sys::STDOUT_FILENO);
+            let _ = sys::close_fd(w);
+        }
+        let _ = apply_child_fd_actions(&prepared_redirections.actions);
+
+        for (key, value) in &prepared.child_env {
+            sys::env_set_var(key, value);
+        }
+
+        // Try exec; on ENOEXEC, interpret as shell script
+        let rest: Vec<String> = prepared.argv.get(1..).unwrap_or(&[]).iter().cloned().collect();
+        match sys::exec_replace(&prepared.exec_path, &rest) {
+            Err(err) if err.is_enoexec() => {
+                let mut child_shell = shell.clone();
+                child_shell.positional = rest;
+                let status = child_shell
+                    .source_path(std::path::Path::new(&prepared.exec_path))
+                    .unwrap_or(126);
+                sys::exit_process(status as sys::RawFd);
             }
-            ChildFdAction::DupFd { source_fd, target_fd } => {
-                fd_redirections.push((*source_fd, *target_fd));
-            }
-            ChildFdAction::CloseFd { .. } => {}
+            _ => sys::exit_process(127),
         }
     }
 
-    let pgid = match process_group {
-        ProcessGroupPlan::NewGroup => Some(0),
-        ProcessGroupPlan::Join(pgid) => Some(pgid),
-        ProcessGroupPlan::None => None,
-    };
-
-    let (program, argv) = if fallback_to_sh {
-        let mut v = vec!["sh".to_string(), prepared.exec_path.clone()];
-        v.extend(prepared.argv.iter().skip(1).cloned());
-        ("sh".to_string(), v)
-    } else {
-        (prepared.exec_path.clone(), prepared.argv.clone())
-    };
-
-    let env_pairs: Vec<(&str, &str)> = prepared.child_env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-    let argv_strs: Vec<&str> = argv.iter().map(String::as_str).collect();
-
-    let result = sys::spawn_child(
-        &program,
-        &argv_strs,
-        Some(&env_pairs),
-        &fd_redirections,
-        effective_stdin,
-        effective_pipe_stdout,
-        pgid,
-    );
-
+    // Parent: clean up fds
+    if let Some(fd) = effective_stdin {
+        let _ = sys::close_fd(fd);
+    }
+    let stdout_read = stdout_pipe.map(|(r, w)| {
+        let _ = sys::close_fd(w);
+        r
+    });
     for action in &prepared_redirections.actions {
         if let ChildFdAction::DupRawFd { fd, close_source: true, .. } = action {
             let _ = sys::close_fd(*fd);
         }
     }
 
-    match result {
-        Ok(handle) => Ok(handle),
-        Err(error) if error.is_enoexec() && !fallback_to_sh => {
-            spawn_prepared_inner(prepared, None, pipe_stdout, process_group, true)
-        }
-        Err(error) => Err(error.into()),
-    }
-}
-
-// These functions are used by tests directly
-#[allow(dead_code)]
-fn spawn_with_fallback(
-    prepared: &PreparedProcess,
-    stdin_fd: Option<i32>,
-    pipe_stdout: bool,
-    process_group: ProcessGroupPlan,
-) -> Result<sys::ChildHandle, ShellError> {
-    spawn_prepared_inner(prepared, stdin_fd, pipe_stdout, process_group, true)
-}
-
-#[allow(dead_code)]
-fn maybe_spawn_with_fallback(
-    error: sys::SysError,
-    prepared: &PreparedProcess,
-    stdin_fd: Option<i32>,
-    pipe_stdout: bool,
-    process_group: ProcessGroupPlan,
-) -> Result<sys::ChildHandle, ShellError> {
-    if error.is_enoexec() {
-        spawn_with_fallback(prepared, stdin_fd, pipe_stdout, process_group)
-    } else {
-        Err(error.into())
-    }
+    Ok(sys::ChildHandle { pid, stdout_fd: stdout_read })
 }
 
 fn prepare_redirections(
@@ -812,7 +782,6 @@ fn resolve_command_path(shell: &Shell, program: &str) -> Option<PathBuf> {
 // PreparedProcess.build_command() is replaced by spawn_prepared_inner()
 // PipelineInput is replaced by raw fd from ChildHandle.stdout_fd
 
-#[allow(dead_code)]
 fn apply_child_fd_actions(actions: &[ChildFdAction]) -> sys::SysResult<()> {
     for action in actions {
         match action {
@@ -1416,61 +1385,30 @@ mod tests {
     }
 
     #[test]
-    fn spawn_with_fallback_reexecutes_enoexec_script() {
-        run_trace(vec![
-            t("pipe", vec![], TraceResult::Fds(200, 201)),
-            t_fork(TraceResult::Pid(1000), vec![]),
-            t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
-            t("read", vec![ArgMatcher::Fd(200), ArgMatcher::Any], TraceResult::Bytes(b"unit:ok".to_vec())),
-            t("read", vec![ArgMatcher::Fd(200), ArgMatcher::Any], TraceResult::Int(0)),
-            t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
+    fn spawn_prepared_enoexec_falls_back_to_source() {
+        run_forked_trace(vec![
+            t_fork(TraceResult::Pid(1000), vec![
+                t("execvp", vec![ArgMatcher::Str("/tmp/script.sh".into()), ArgMatcher::Any], TraceResult::Err(sys::ENOEXEC)),
+                t("open", vec![ArgMatcher::Str("/tmp/script.sh".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(10)),
+                t("read", vec![ArgMatcher::Fd(10), ArgMatcher::Any], TraceResult::Bytes(b"true\n".to_vec())),
+                t("read", vec![ArgMatcher::Fd(10), ArgMatcher::Any], TraceResult::Int(0)),
+                t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
+            ]),
             t("waitpid", vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
         ], || {
+            let shell = test_shell();
             let prepared = PreparedProcess {
-                exec_path: "/tmp/fallback-script".into(),
-                argv: vec!["fallback-script".into(), "ok".into()],
+                exec_path: "/tmp/script.sh".into(),
+                argv: vec!["/tmp/script.sh".into(), "arg1".into()],
                 child_env: Vec::new(),
                 redirections: Vec::new(),
                 noclobber: false,
-                path_verified: false,
+                path_verified: true,
             };
-            let child = spawn_with_fallback(&prepared, None, true, ProcessGroupPlan::None)
-                .expect("fallback spawn");
+            let child = spawn_prepared(&shell, &prepared, None, false, ProcessGroupPlan::None)
+                .expect("enoexec fallback spawn");
             let output = child.wait_with_output().expect("output");
-            assert_eq!(String::from_utf8_lossy(&output.stdout), "unit:ok");
-        });
-    }
-
-    #[test]
-    fn maybe_spawn_with_fallback_handles_enoexec_error() {
-        let enoexec_err = sys::SysError::Errno(sys::ENOEXEC);
-        run_trace(vec![
-            t("pipe", vec![], TraceResult::Fds(200, 201)),
-            t_fork(TraceResult::Pid(1000), vec![]),
-            t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
-            t("read", vec![ArgMatcher::Fd(200), ArgMatcher::Any], TraceResult::Bytes(b"fallback".to_vec())),
-            t("read", vec![ArgMatcher::Fd(200), ArgMatcher::Any], TraceResult::Int(0)),
-            t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
-            t("waitpid", vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
-        ], || {
-            let prepared = PreparedProcess {
-                exec_path: "/tmp/fallback-script".into(),
-                argv: vec!["fallback-script".into()],
-                child_env: Vec::new(),
-                redirections: Vec::new(),
-                noclobber: false,
-                path_verified: false,
-            };
-            let child = maybe_spawn_with_fallback(
-                enoexec_err,
-                &prepared,
-                None,
-                true,
-                ProcessGroupPlan::None,
-            )
-            .expect("enoexec fallback");
-            let output = child.wait_with_output().expect("output");
-            assert_eq!(String::from_utf8_lossy(&output.stdout), "fallback");
+            assert!(output.status.success());
         });
     }
 
@@ -1487,7 +1425,8 @@ mod tests {
                 noclobber: false,
                 path_verified: false,
             };
-            assert!(spawn_prepared(&missing, None, false, ProcessGroupPlan::None).is_err());
+            let shell = test_shell();
+            assert!(spawn_prepared(&shell, &missing, None, false, ProcessGroupPlan::None).is_err());
         });
     }
 
@@ -2599,12 +2538,15 @@ mod tests {
 
     #[test]
     fn spawn_prepared_with_new_process_group() {
-        run_trace(vec![
-            // spawn_prepared: access check, fork, waitpid
+        run_forked_trace(vec![
             t("access", vec![ArgMatcher::Str("/tmp/script.sh".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
-            t_fork(TraceResult::Pid(1000), vec![]),
+            t_fork(TraceResult::Pid(1000), vec![
+                t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(0)], TraceResult::Int(0)),
+                t("execvp", vec![ArgMatcher::Str("/tmp/script.sh".into()), ArgMatcher::Any], TraceResult::Int(0)),
+            ]),
             t("waitpid", vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
         ], || {
+            let shell = test_shell();
             let prepared = PreparedProcess {
                 exec_path: "/tmp/script.sh".into(),
                 argv: vec!["/tmp/script.sh".into()],
@@ -2613,62 +2555,23 @@ mod tests {
                 noclobber: false,
                 path_verified: false,
             };
-            let child = spawn_prepared(&prepared, None, false, ProcessGroupPlan::NewGroup)
+            let child = spawn_prepared(&shell, &prepared, None, false, ProcessGroupPlan::NewGroup)
                 .expect("spawn newgroup");
             assert!(child.wait_with_output().expect("wait output").status.success());
         });
     }
 
     #[test]
-    fn spawn_with_fallback_handles_enoexec() {
-        run_trace(vec![
-            // spawn_with_fallback: no access check (fallback), fork, waitpid
-            t_fork(TraceResult::Pid(1001), vec![]),
-            t("waitpid", vec![ArgMatcher::Int(1001), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
-            // maybe_spawn_with_fallback (ENOEXEC → fallback): fork, waitpid
-            t_fork(TraceResult::Pid(1002), vec![]),
-            t("waitpid", vec![ArgMatcher::Int(1002), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
-        ], || {
-            let prepared = PreparedProcess {
-                exec_path: "/tmp/script.sh".into(),
-                argv: vec!["/tmp/script.sh".into()],
-                child_env: Vec::new(),
-                redirections: Vec::new(),
-                noclobber: false,
-                path_verified: false,
-            };
-            let child = spawn_with_fallback(&prepared, None, false, ProcessGroupPlan::None)
-                .expect("fallback spawn");
-            assert!(child.wait_with_output().expect("wait output").status.success());
-
-            let child = maybe_spawn_with_fallback(
-                sys::SysError::Errno(sys::ENOEXEC),
-                &prepared,
-                None,
-                false,
-                ProcessGroupPlan::None,
-            )
-            .expect("enoexec fallback helper");
-            assert!(child.wait_with_output().expect("wait output").status.success());
-        });
-    }
-
-    #[test]
-    fn spawn_with_stdout_redirect_and_process_group_plans() {
-        run_trace(vec![
-            // spawn with DupOutput "-": access, fork, waitpid
+    fn spawn_prepared_with_stdout_redirect() {
+        run_forked_trace(vec![
             t("access", vec![ArgMatcher::Str("/bin/echo".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
-            t_fork(TraceResult::Pid(1000), vec![]),
+            t_fork(TraceResult::Pid(1000), vec![
+                t("close", vec![ArgMatcher::Fd(1)], TraceResult::Int(0)),
+                t("execvp", vec![ArgMatcher::Str("/bin/echo".into()), ArgMatcher::Any], TraceResult::Int(0)),
+            ]),
             t("waitpid", vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
-            // spawn NewGroup: access, fork, waitpid
-            t("access", vec![ArgMatcher::Str("/bin/echo".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
-            t_fork(TraceResult::Pid(1001), vec![]),
-            t("waitpid", vec![ArgMatcher::Int(1001), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
-            // spawn Join(0): access, fork, waitpid
-            t("access", vec![ArgMatcher::Str("/bin/echo".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
-            t_fork(TraceResult::Pid(1002), vec![]),
-            t("waitpid", vec![ArgMatcher::Int(1002), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
         ], || {
+            let shell = test_shell();
             let prepared = PreparedProcess {
                 exec_path: "/bin/echo".into(),
                 argv: vec!["/bin/echo".into(), "hello".into()],
@@ -2682,10 +2585,23 @@ mod tests {
                 noclobber: false,
                 path_verified: false,
             };
-            let child = spawn_prepared(&prepared, None, false, ProcessGroupPlan::None)
+            let child = spawn_prepared(&shell, &prepared, None, false, ProcessGroupPlan::None)
                 .expect("spawn with stdout redirect");
             assert!(child.wait().expect("wait").success());
+        });
+    }
 
+    #[test]
+    fn spawn_prepared_with_join_process_group() {
+        run_forked_trace(vec![
+            t("access", vec![ArgMatcher::Str("/bin/echo".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
+            t_fork(TraceResult::Pid(1000), vec![
+                t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(42)], TraceResult::Int(0)),
+                t("execvp", vec![ArgMatcher::Str("/bin/echo".into()), ArgMatcher::Any], TraceResult::Int(0)),
+            ]),
+            t("waitpid", vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
+        ], || {
+            let shell = test_shell();
             let prepared = PreparedProcess {
                 exec_path: "/bin/echo".into(),
                 argv: vec!["/bin/echo".into()],
@@ -2694,10 +2610,7 @@ mod tests {
                 noclobber: false,
                 path_verified: false,
             };
-            let child = spawn_prepared(&prepared, None, false, ProcessGroupPlan::NewGroup)
-                .expect("spawn newgroup");
-            assert!(child.wait().expect("wait").success());
-            let child = spawn_prepared(&prepared, None, false, ProcessGroupPlan::Join(0))
+            let child = spawn_prepared(&shell, &prepared, None, false, ProcessGroupPlan::Join(42))
                 .expect("spawn join");
             assert!(child.wait().expect("wait").success());
         });
