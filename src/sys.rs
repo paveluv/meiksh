@@ -133,7 +133,6 @@ pub(crate) struct Syscalls {
     open: fn(*const c_char, c_int, mode_t) -> c_int,
     write: fn(c_int, *const u8, usize) -> isize,
     stat: fn(*const c_char, *mut libc::stat) -> c_int,
-    lstat: fn(*const c_char, *mut libc::stat) -> c_int,
     fstat: fn(c_int, *mut libc::stat) -> c_int,
     access: fn(*const c_char, c_int) -> c_int,
     chdir: fn(*const c_char) -> c_int,
@@ -142,8 +141,6 @@ pub(crate) struct Syscalls {
     readdir: fn(*mut libc::DIR) -> *mut libc::dirent,
     closedir: fn(*mut libc::DIR) -> c_int,
     realpath: fn(*const c_char, *mut c_char) -> *mut c_char,
-    readlink: fn(*const c_char, *mut c_char, usize) -> isize,
-    unlink: fn(*const c_char) -> c_int,
     // Process syscalls
     fork: fn() -> Pid,
     exit_process: fn(c_int),
@@ -172,7 +169,6 @@ pub(crate) fn default_syscalls() -> Syscalls {
         open: |path, flags, mode| unsafe { libc::open(path, flags, mode as c_int) },
         write: |fd, buf, count| unsafe { libc::write(fd, buf.cast(), count) },
         stat: |path, buf| unsafe { libc::stat(path, buf) },
-        lstat: |path, buf| unsafe { libc::lstat(path, buf) },
         fstat: |fd, buf| unsafe { libc::fstat(fd, buf) },
         access: |path, mode| unsafe { libc::access(path, mode) },
         chdir: |path| unsafe { libc::chdir(path) },
@@ -181,10 +177,12 @@ pub(crate) fn default_syscalls() -> Syscalls {
         readdir: |dirp| unsafe { libc::readdir(dirp) },
         closedir: |dirp| unsafe { libc::closedir(dirp) },
         realpath: |path, resolved| unsafe { libc::realpath(path, resolved) },
-        readlink: |path, buf, bufsiz| unsafe { libc::readlink(path, buf, bufsiz) },
-        unlink: |path| unsafe { libc::unlink(path) },
         fork: || unsafe { libc::fork() },
-        exit_process: |status| unsafe { libc::_exit(status) },
+        exit_process: |status| {
+            #[cfg(coverage)]
+            flush_coverage();
+            unsafe { libc::_exit(status) }
+        },
     }
 }
 
@@ -337,7 +335,6 @@ pub(crate) mod test_support {
         Void,
         CwdStr(String),
         RealpathStr(String),
-        ReadlinkStr(String),
         StatDir,
         StatFile(mode_t),
         StatFifo,
@@ -594,26 +591,6 @@ pub(crate) mod test_support {
             other => panic!("trace result type mismatch for 'stat': expected StatDir/StatFile/Err, got {other:?}"),
         }
     }
-    fn trace_lstat(path: *const c_char, buf: *mut libc::stat) -> c_int {
-        let p = unsafe { CStr::from_ptr(path) }.to_string_lossy().to_string();
-        let entry = trace_dispatch("lstat", &[ArgMatcher::Str(p), ArgMatcher::Any]);
-        match &entry.result {
-            TraceResult::StatDir => {
-                unsafe { std::ptr::write_bytes(buf, 0, 1); (*buf).st_mode = libc::S_IFDIR | 0o755; }
-                0
-            }
-            TraceResult::StatFile(mode) => {
-                unsafe { std::ptr::write_bytes(buf, 0, 1); (*buf).st_mode = libc::S_IFREG | mode; }
-                0
-            }
-            TraceResult::Err(errno) => {
-                super::set_errno(*errno);
-                -1
-            }
-            TraceResult::Int(v) => *v as c_int,
-            other => panic!("trace result type mismatch for 'lstat': expected StatDir/StatFile/Err, got {other:?}"),
-        }
-    }
     fn trace_fstat(fd: c_int, buf: *mut libc::stat) -> c_int {
         let entry = trace_dispatch("fstat", &[ArgMatcher::Fd(fd), ArgMatcher::Any]);
         match &entry.result {
@@ -741,28 +718,6 @@ pub(crate) mod test_support {
             other => panic!("trace result type mismatch for 'realpath': expected RealpathStr/Err, got {other:?}"),
         }
     }
-    fn trace_readlink(path: *const c_char, buf: *mut c_char, bufsiz: usize) -> isize {
-        let p = unsafe { CStr::from_ptr(path) }.to_string_lossy().to_string();
-        let entry = trace_dispatch("readlink", &[ArgMatcher::Str(p), ArgMatcher::Any]);
-        match &entry.result {
-            TraceResult::ReadlinkStr(s) => {
-                let bytes = s.as_bytes();
-                let n = bytes.len().min(bufsiz);
-                unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf as *mut u8, n); }
-                n as isize
-            }
-            TraceResult::Err(errno) => {
-                super::set_errno(*errno);
-                -1
-            }
-            other => panic!("trace result type mismatch for 'readlink': expected ReadlinkStr/Err, got {other:?}"),
-        }
-    }
-    fn trace_unlink(path: *const c_char) -> c_int {
-        let p = unsafe { CStr::from_ptr(path) }.to_string_lossy().to_string();
-        let entry = trace_dispatch("unlink", &[ArgMatcher::Str(p)]);
-        apply_trace_result_int(&entry)
-    }
     fn trace_fork() -> Pid {
         let entry = trace_dispatch("fork", &[]);
         apply_trace_result_pid(&entry)
@@ -799,7 +754,6 @@ pub(crate) mod test_support {
             open: trace_open,
             write: trace_write,
             stat: trace_stat,
-            lstat: trace_lstat,
             fstat: trace_fstat,
             access: trace_access,
             chdir: trace_chdir,
@@ -808,8 +762,6 @@ pub(crate) mod test_support {
             readdir: trace_readdir,
             closedir: trace_closedir,
             realpath: trace_realpath,
-            readlink: trace_readlink,
-            unlink: trace_unlink,
             fork: trace_fork,
             exit_process: trace_exit_process,
         }
@@ -837,7 +789,6 @@ pub(crate) mod test_support {
         fn panic_open(_: *const c_char, _: c_int, _: mode_t) -> c_int { panic!("unexpected syscall 'open' in pure-logic test") }
         fn panic_write(_: c_int, _: *const u8, _: usize) -> isize { panic!("unexpected syscall 'write' in pure-logic test") }
         fn panic_stat(_: *const c_char, _: *mut libc::stat) -> c_int { panic!("unexpected syscall 'stat' in pure-logic test") }
-        fn panic_lstat(_: *const c_char, _: *mut libc::stat) -> c_int { panic!("unexpected syscall 'lstat' in pure-logic test") }
         fn panic_fstat(_: c_int, _: *mut libc::stat) -> c_int { panic!("unexpected syscall 'fstat' in pure-logic test") }
         fn panic_access(_: *const c_char, _: c_int) -> c_int { panic!("unexpected syscall 'access' in pure-logic test") }
         fn panic_chdir(_: *const c_char) -> c_int { panic!("unexpected syscall 'chdir' in pure-logic test") }
@@ -846,8 +797,6 @@ pub(crate) mod test_support {
         fn panic_readdir(_: *mut libc::DIR) -> *mut libc::dirent { panic!("unexpected syscall 'readdir' in pure-logic test") }
         fn panic_closedir(_: *mut libc::DIR) -> c_int { panic!("unexpected syscall 'closedir' in pure-logic test") }
         fn panic_realpath(_: *const c_char, _: *mut c_char) -> *mut c_char { panic!("unexpected syscall 'realpath' in pure-logic test") }
-        fn panic_readlink(_: *const c_char, _: *mut c_char, _: usize) -> isize { panic!("unexpected syscall 'readlink' in pure-logic test") }
-        fn panic_unlink(_: *const c_char) -> c_int { panic!("unexpected syscall 'unlink' in pure-logic test") }
         fn panic_fork() -> Pid { panic!("unexpected syscall 'fork' in pure-logic test") }
         fn panic_exit_process(_: c_int) { panic!("unexpected syscall 'exit_process' in pure-logic test") }
 
@@ -858,10 +807,10 @@ pub(crate) mod test_support {
             dup: panic_dup, dup2: panic_dup2, close: panic_close, fcntl: panic_fcntl,
             read: panic_read, umask: panic_umask, times: panic_times, sysconf: panic_sysconf,
             execvp: panic_execvp, open: panic_open, write: panic_write, stat: panic_stat,
-            lstat: panic_lstat, fstat: panic_fstat, access: panic_access, chdir: panic_chdir,
+            fstat: panic_fstat, access: panic_access, chdir: panic_chdir,
             getcwd: panic_getcwd, opendir: panic_opendir, readdir: panic_readdir,
-            closedir: panic_closedir, realpath: panic_realpath, readlink: panic_readlink,
-            unlink: panic_unlink, fork: panic_fork, exit_process: panic_exit_process,
+            closedir: panic_closedir, realpath: panic_realpath,
+            fork: panic_fork, exit_process: panic_exit_process,
         }
     }
 
@@ -1310,17 +1259,6 @@ fn stat_raw(path: &str) -> SysResult<libc::stat> {
     }
 }
 
-fn lstat_raw(path: &str) -> SysResult<libc::stat> {
-    let c_path = to_cstring(path)?;
-    let mut buf = std::mem::MaybeUninit::<libc::stat>::zeroed();
-    let result = (syscalls().lstat)(c_path.as_ptr(), buf.as_mut_ptr());
-    if result == 0 {
-        Ok(unsafe { buf.assume_init() })
-    } else {
-        Err(last_error())
-    }
-}
-
 pub fn open_file(path: &str, flags: c_int, mode: mode_t) -> SysResult<c_int> {
     let c_path = to_cstring(path)?;
     let result = (syscalls().open)(c_path.as_ptr(), flags, mode);
@@ -1353,14 +1291,6 @@ pub fn write_all_fd(fd: c_int, mut data: &[u8]) -> SysResult<()> {
 
 pub fn stat_path(path: &str) -> SysResult<FileStat> {
     let raw = stat_raw(path)?;
-    Ok(FileStat {
-        mode: raw.st_mode,
-        size: raw.st_size as u64,
-    })
-}
-
-pub fn lstat_path(path: &str) -> SysResult<FileStat> {
-    let raw = lstat_raw(path)?;
     Ok(FileStat {
         mode: raw.st_mode,
         size: raw.st_size as u64,
@@ -1447,28 +1377,6 @@ pub fn canonicalize(path: &str) -> SysResult<String> {
         let s = unsafe { CStr::from_ptr(result) }.to_string_lossy().into_owned();
         unsafe { libc::free(result.cast()) };
         Ok(s)
-    }
-}
-
-pub fn read_link(path: &str) -> SysResult<String> {
-    let c_path = to_cstring(path)?;
-    let mut buf = vec![0u8; 4096];
-    let result = (syscalls().readlink)(c_path.as_ptr(), buf.as_mut_ptr().cast(), buf.len());
-    if result < 0 {
-        Err(last_error())
-    } else {
-        buf.truncate(result as usize);
-        Ok(String::from_utf8_lossy(&buf).into_owned())
-    }
-}
-
-pub fn unlink_file(path: &str) -> SysResult<()> {
-    let c_path = to_cstring(path)?;
-    let result = (syscalls().unlink)(c_path.as_ptr());
-    if result == 0 {
-        Ok(())
-    } else {
-        Err(last_error())
     }
 }
 
@@ -1566,6 +1474,14 @@ pub fn fork_process() -> SysResult<Pid> {
 pub fn exit_process(status: c_int) -> ! {
     (syscalls().exit_process)(status);
     unreachable!()
+}
+
+#[cfg(coverage)]
+fn flush_coverage() {
+    unsafe {
+        unsafe extern "C" { fn __llvm_profile_write_file() -> c_int; }
+        __llvm_profile_write_file();
+    }
 }
 
 pub fn spawn_child(

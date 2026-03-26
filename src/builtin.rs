@@ -3117,4 +3117,62 @@ mod tests {
             assert_eq!(error.message, ".: too many arguments");
         });
     }
+
+    #[test]
+    fn set_no_args_lists_variables() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.env.insert("B_VAR".into(), "two".into());
+            shell.env.insert("A_VAR".into(), "one".into());
+            assert!(matches!(run(&mut shell, &["set".into()]).expect("set list"), BuiltinOutcome::Status(0)));
+        });
+    }
+
+    #[test]
+    fn set_minus_o_lists_options() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            assert!(matches!(run(&mut shell, &["set".into(), "-o".into()]).expect("set -o"), BuiltinOutcome::Status(0)));
+        });
+    }
+
+    #[test]
+    fn set_plus_o_lists_options_in_reinput_format() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            assert!(matches!(run(&mut shell, &["set".into(), "+o".into()]).expect("set +o"), BuiltinOutcome::Status(0)));
+        });
+    }
+
+    #[test]
+    fn jobs_shows_done_and_running_entries() {
+        run_trace(vec![
+            t("waitpid", vec![ArgMatcher::Int(3001), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Status(0)),
+        ], || {
+            let mut shell = test_shell();
+            shell.register_background_job("sleep 1".into(), None, vec![crate::sys::ChildHandle { pid: 3001, stdout_fd: None }]);
+            assert!(matches!(run(&mut shell, &["jobs".into()]).expect("jobs"), BuiltinOutcome::Status(0)));
+        });
+    }
+
+    #[test]
+    fn jobs_skips_unselected_running_job() {
+        run_trace(vec![
+            t("waitpid", vec![ArgMatcher::Int(4001), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Pid(0)),
+        ], || {
+            let mut shell = test_shell();
+            shell.jobs.push(crate::shell::Job {
+                id: 1,
+                command: "sleep 99".into(),
+                pgid: None,
+                last_pid: Some(4001),
+                last_status: None,
+                children: vec![crate::sys::ChildHandle { pid: 4001, stdout_fd: None }],
+            });
+            assert!(matches!(
+                run(&mut shell, &["jobs".into(), "%2".into()]).expect("jobs %2"),
+                BuiltinOutcome::Status(0)
+            ));
+        });
+    }
 }

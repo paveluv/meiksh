@@ -311,6 +311,15 @@ fn handles_background_wait() {
 }
 
 #[test]
+fn bg_sends_sigcont_to_background_job() {
+    let output = Command::new(meiksh())
+        .args(["-c", "sleep 0.01 & bg %1 2>/dev/null; wait"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+}
+
+#[test]
 fn trap_wait_and_job_control_paths_cover_milestone_five() {
     let exit_trap = Command::new(meiksh())
         .args(["-c", "trap 'printf exit:$?' EXIT; false"])
@@ -1269,4 +1278,33 @@ fn executes_case_commands() {
         .expect("run meiksh");
     assert!(empty_case.status.success());
     assert_eq!(String::from_utf8_lossy(&empty_case.stdout), "ok");
+}
+
+#[test]
+fn pipeline_with_pty_exercises_terminal_foreground_control() {
+    use std::os::unix::io::FromRawFd;
+    let mut primary: i32 = -1;
+    let mut secondary: i32 = -1;
+    let ret = unsafe { libc::openpty(&mut primary, &mut secondary, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut()) };
+    if ret != 0 { return; }
+
+    let secondary_fd = secondary;
+    let output = unsafe {
+        let mut cmd = Command::new(meiksh());
+        cmd.args(["-c", "printf a | cat; printf ok"])
+            .stdin(Stdio::from_raw_fd(secondary_fd))
+            .stdout(Stdio::piped());
+        cmd.pre_exec(move || {
+            libc::setsid();
+            libc::ioctl(secondary_fd, libc::TIOCSCTTY as _, 0);
+            libc::dup2(secondary_fd, 2);
+            Ok(())
+        });
+        cmd.output().expect("run meiksh")
+    };
+
+    unsafe { libc::close(primary); libc::close(secondary); }
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("ok"), "expected 'ok' in stdout, got: {stdout}");
 }
