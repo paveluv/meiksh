@@ -459,6 +459,7 @@ struct PreparedProcess {
     child_env: Vec<(String, String)>,
     redirections: Vec<ExpandedRedirection>,
     noclobber: bool,
+    path_verified: bool,
 }
 
 #[derive(Debug)]
@@ -568,7 +569,9 @@ fn build_process_from_expanded(
     let program = expanded.argv.first().ok_or_else(|| ShellError {
         message: "empty command".to_string(),
     })?;
-    let exec_path = resolve_command_path(shell, program)
+    let resolved = resolve_command_path(shell, program);
+    let path_verified = resolved.is_some();
+    let exec_path = resolved
         .unwrap_or_else(|| PathBuf::from(program))
         .display()
         .to_string();
@@ -582,6 +585,7 @@ fn build_process_from_expanded(
         child_env,
         redirections: expanded.redirections.clone(),
         noclobber: shell.options.noclobber,
+        path_verified,
     })
 }
 
@@ -601,7 +605,7 @@ fn spawn_prepared_inner(
     process_group: ProcessGroupPlan,
     fallback_to_sh: bool,
 ) -> Result<sys::ChildHandle, ShellError> {
-    if !fallback_to_sh && !prepared.exec_path.is_empty() && prepared.exec_path.contains('/') {
+    if !fallback_to_sh && !prepared.path_verified && !prepared.exec_path.is_empty() && prepared.exec_path.contains('/') {
         if sys::access_path(&prepared.exec_path, sys::F_OK).is_err() {
             return Err(sys::SysError::Errno(sys::ENOENT).into());
         }
@@ -1281,7 +1285,7 @@ mod tests {
     use crate::shell::ShellOptions;
     use crate::syntax::{Assignment, HereDoc, Redirection, Word};
     use std::collections::{BTreeMap, BTreeSet, HashMap};
-    use crate::sys::test_support::{TraceResult, ArgMatcher, run_trace, t, t_fork, assert_no_syscalls};
+    use crate::sys::test_support::{TraceResult, ArgMatcher, run_trace, run_forked_trace, t, t_fork, assert_no_syscalls};
 
     fn test_shell() -> Shell {
         Shell {
@@ -1322,10 +1326,12 @@ mod tests {
 
     #[test]
     fn execute_pipeline_async_single_command() {
-        run_trace(vec![
+        run_forked_trace(vec![
             t("stat", vec![ArgMatcher::Str("/usr/bin/true".into()), ArgMatcher::Any], TraceResult::StatFile(0o755)),
-            t("access", vec![ArgMatcher::Str("/usr/bin/true".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
-            t_fork(TraceResult::Pid(1000), vec![]),
+            t_fork(TraceResult::Pid(1000), vec![
+                t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(0)], TraceResult::Int(0)),
+                t("execvp", vec![ArgMatcher::Str("/usr/bin/true".into()), ArgMatcher::Any], TraceResult::Int(0)),
+            ]),
             t("setpgid", vec![ArgMatcher::Int(1000), ArgMatcher::Int(0)], TraceResult::Int(0)),
             t("setpgid", vec![ArgMatcher::Int(1000), ArgMatcher::Int(1000)], TraceResult::Int(0)),
         ], || {
@@ -1347,14 +1353,12 @@ mod tests {
     fn execute_pipeline_negated_multi_command() {
         run_trace(vec![
             t("stat", vec![ArgMatcher::Str("/usr/bin/printf".into()), ArgMatcher::Any], TraceResult::StatFile(0o755)),
-            t("access", vec![ArgMatcher::Str("/usr/bin/printf".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
             t("pipe", vec![], TraceResult::Fds(200, 201)),
             t_fork(TraceResult::Pid(1000), vec![]),
             t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
             t("setpgid", vec![ArgMatcher::Int(1000), ArgMatcher::Int(0)], TraceResult::Int(0)),
             t("setpgid", vec![ArgMatcher::Int(1000), ArgMatcher::Int(1000)], TraceResult::Int(0)),
             t("stat", vec![ArgMatcher::Str("/usr/bin/wc".into()), ArgMatcher::Any], TraceResult::StatFile(0o755)),
-            t("access", vec![ArgMatcher::Str("/usr/bin/wc".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
             t_fork(TraceResult::Pid(1001), vec![]),
             t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
             t("setpgid", vec![ArgMatcher::Int(1001), ArgMatcher::Int(1000)], TraceResult::Int(0)),
@@ -1431,6 +1435,7 @@ mod tests {
                 child_env: Vec::new(),
                 redirections: Vec::new(),
                 noclobber: false,
+                path_verified: false,
             };
             let child = spawn_with_fallback(&prepared, None, true, ProcessGroupPlan::None)
                 .expect("fallback spawn");
@@ -1457,6 +1462,7 @@ mod tests {
                 child_env: Vec::new(),
                 redirections: Vec::new(),
                 noclobber: false,
+                path_verified: false,
             };
             let child = maybe_spawn_with_fallback(
                 enoexec_err,
@@ -1482,6 +1488,7 @@ mod tests {
                 child_env: Vec::new(),
                 redirections: Vec::new(),
                 noclobber: false,
+                path_verified: false,
             };
             assert!(spawn_prepared(&missing, None, false, ProcessGroupPlan::None).is_err());
         });
@@ -2608,6 +2615,7 @@ mod tests {
                 child_env: Vec::new(),
                 redirections: Vec::new(),
                 noclobber: false,
+                path_verified: false,
             };
             let child = spawn_prepared(&prepared, None, false, ProcessGroupPlan::NewGroup)
                 .expect("spawn newgroup");
@@ -2631,6 +2639,7 @@ mod tests {
                 child_env: Vec::new(),
                 redirections: Vec::new(),
                 noclobber: false,
+                path_verified: false,
             };
             let child = spawn_with_fallback(&prepared, None, false, ProcessGroupPlan::None)
                 .expect("fallback spawn");
@@ -2677,6 +2686,7 @@ mod tests {
                     here_doc_body: None,
                 }],
                 noclobber: false,
+                path_verified: false,
             };
             let child = spawn_prepared(&prepared, None, false, ProcessGroupPlan::None)
                 .expect("spawn with stdout redirect");
@@ -2688,6 +2698,7 @@ mod tests {
                 child_env: Vec::new(),
                 redirections: Vec::new(),
                 noclobber: false,
+                path_verified: false,
             };
             let child = spawn_prepared(&prepared, None, false, ProcessGroupPlan::NewGroup)
                 .expect("spawn newgroup");
