@@ -2294,7 +2294,7 @@ mod tests {
     }
 
     #[test]
-    fn ensure_blocking_read_fd_clears_nonblocking_for_ttys_and_fifos() {
+    fn ensure_blocking_read_fd_clears_nonblocking_for_tty() {
         use test_support::{run_trace, t, TraceResult, ArgMatcher};
 
         // TTY path: isatty→1, fcntl F_GETFL→O_NONBLOCK|2, fcntl F_SETFL→0
@@ -2305,6 +2305,11 @@ mod tests {
         ], || {
             ensure_blocking_read_fd(STDIN_FILENO).expect("tty blocking");
         });
+    }
+
+    #[test]
+    fn ensure_blocking_read_fd_clears_nonblocking_for_fifo() {
+        use test_support::{run_trace, t, TraceResult, ArgMatcher};
 
         // FIFO path: isatty→0, fstat→S_IFIFO, fcntl F_GETFL→O_NONBLOCK|2, fcntl F_SETFL→0
         run_trace(vec![

@@ -2041,7 +2041,7 @@ mod tests {
     }
 
     #[test]
-    fn umask_error_paths_and_symbolic_modes_are_covered() {
+    fn umask_builtin_error_paths() {
         run_trace(vec![
             // umask -Z → write_stderr
             t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Any], TraceResult::Int("umask: invalid option: -Z\n".len() as i64)),
@@ -2076,7 +2076,10 @@ mod tests {
                 BuiltinOutcome::Status(1)
             ));
         });
+    }
 
+    #[test]
+    fn umask_symbolic_mode_parsing() {
         assert_no_syscalls(|| {
             assert_eq!(parse_umask_mask("-w", 0o022), Some(0o222));
             assert_eq!(parse_umask_mask("a+r", 0o777), Some(0o333));
@@ -2896,7 +2899,7 @@ mod tests {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
             let handle = sys::ChildHandle { pid: 3001, stdout_fd: None };
-            shell.launch_background_job("sleep".into(), None, vec![handle]);
+            shell.register_background_job("sleep".into(), None, vec![handle]);
             assert_eq!(job_display_pid(&shell.jobs[0]), Some(3001));
         });
     }
@@ -2929,10 +2932,10 @@ mod tests {
         ], || {
             let mut shell = test_shell();
             let finished_handle = sys::ChildHandle { pid: 3001, stdout_fd: None };
-            let finished_id = shell.launch_background_job("done".into(), None, vec![finished_handle]);
+            let finished_id = shell.register_background_job("done".into(), None, vec![finished_handle]);
             shell.reap_jobs();
             let running_handle = sys::ChildHandle { pid: 3002, stdout_fd: None };
-            shell.launch_background_job("sleep".into(), None, vec![running_handle]);
+            shell.register_background_job("sleep".into(), None, vec![running_handle]);
             assert!(matches!(
                 jobs(&mut shell, &["jobs".into(), format!("%{finished_id}")]),
                 BuiltinOutcome::Status(0)
@@ -2976,7 +2979,7 @@ mod tests {
         ], || {
             let mut shell = test_shell();
             let handle = sys::ChildHandle { pid: 3001, stdout_fd: None };
-            let id = shell.launch_background_job("sleep".into(), None, vec![handle]);
+            let id = shell.register_background_job("sleep".into(), None, vec![handle]);
 
             let outcome = run(&mut shell, &["bg".into(), format!("%{id}")]).expect("bg");
             assert!(matches!(outcome, BuiltinOutcome::Status(0)));
@@ -2985,7 +2988,7 @@ mod tests {
             assert!(matches!(outcome, BuiltinOutcome::Status(_)));
 
             let handle = sys::ChildHandle { pid: 3002, stdout_fd: None };
-            let id = shell.launch_background_job("sleep".into(), None, vec![handle]);
+            let id = shell.register_background_job("sleep".into(), None, vec![handle]);
             let outcome = run(&mut shell, &["fg".into(), format!("%{id}")]).expect("fg");
             assert!(matches!(outcome, BuiltinOutcome::Status(_)));
         });
@@ -3000,8 +3003,8 @@ mod tests {
             t("waitpid", vec![ArgMatcher::Int(3002), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Status(0)),
         ], || {
             let mut shell = test_shell();
-            shell.launch_background_job("first".into(), None, vec![sys::ChildHandle { pid: 3001, stdout_fd: None }]);
-            shell.launch_background_job("second".into(), None, vec![sys::ChildHandle { pid: 3002, stdout_fd: None }]);
+            shell.register_background_job("first".into(), None, vec![sys::ChildHandle { pid: 3001, stdout_fd: None }]);
+            shell.register_background_job("second".into(), None, vec![sys::ChildHandle { pid: 3002, stdout_fd: None }]);
 
             let outcome = run(&mut shell, &["wait".into()]).expect("wait all");
             assert!(matches!(outcome, BuiltinOutcome::Status(0)));

@@ -160,13 +160,16 @@ mod tests {
     }
 
     #[test]
-    fn load_env_file_ignores_relative_and_missing_paths() {
+    fn load_env_file_ignores_relative_path() {
         run_trace(vec![], || {
             let mut shell = test_shell();
             shell.env.insert("ENV".into(), "relative.sh".into());
             load_env_file(&mut shell).expect("relative ignored");
         });
+    }
 
+    #[test]
+    fn load_env_file_ignores_missing_absolute_path() {
         run_trace(vec![
             t("access", vec![ArgMatcher::Str("/tmp/meiksh-missing-env.sh".into()), ArgMatcher::Int(0)],
                 TraceResult::Err(libc::ENOENT)),
@@ -322,11 +325,11 @@ mod tests {
             shell.env.insert("PS1".into(), "test$ ".into());
 
             let handle = sys::ChildHandle { pid: 4001, stdout_fd: None };
-            shell.launch_background_job("done".into(), None, vec![handle]);
+            shell.register_background_job("done".into(), None, vec![handle]);
             shell.reap_jobs();
 
             let handle = sys::ChildHandle { pid: 4002, stdout_fd: None };
-            shell.launch_background_job("done".into(), None, vec![handle]);
+            shell.register_background_job("done".into(), None, vec![handle]);
 
             let status = run_loop(&mut shell).expect("run loop");
 
@@ -337,7 +340,7 @@ mod tests {
     }
 
     #[test]
-    fn run_loop_propagates_write_flush_read_and_parse_errors() {
+    fn run_loop_exits_cleanly_on_eof() {
         run_trace(vec![
             t("write", vec![ArgMatcher::Fd(sys::STDOUT_FILENO), ArgMatcher::Bytes(b"meiksh$ ".to_vec())],
                 TraceResult::Int(8)),
@@ -348,7 +351,10 @@ mod tests {
             let status = run_loop(&mut shell).expect("eof run loop");
             assert_eq!(status, 0);
         });
+    }
 
+    #[test]
+    fn run_loop_recovers_from_parse_error() {
         run_trace(vec![
             t("write", vec![ArgMatcher::Fd(sys::STDOUT_FILENO), ArgMatcher::Bytes(b"meiksh$ ".to_vec())],
                 TraceResult::Int(8)),
@@ -415,7 +421,7 @@ mod tests {
     }
 
     #[test]
-    fn append_history_uses_default_path_and_reports_open_errors() {
+    fn append_history_reports_open_error() {
         run_trace(vec![
             t("open", vec![ArgMatcher::Str("/tmp/history-dir".into()), ArgMatcher::Any, ArgMatcher::Any],
                 TraceResult::Err(libc::EISDIR)),
@@ -425,7 +431,10 @@ mod tests {
             let error = append_history(&shell, "echo hi\n").expect_err("directory should not open as file");
             assert!(!error.message.is_empty());
         });
+    }
 
+    #[test]
+    fn append_history_uses_default_path_when_histfile_unset() {
         run_trace(vec![
             t("open", vec![ArgMatcher::Str("/home/user/.sh_history".into()), ArgMatcher::Any, ArgMatcher::Any],
                 TraceResult::Fd(10)),

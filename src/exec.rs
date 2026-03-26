@@ -38,7 +38,7 @@ fn execute_list_item(shell: &mut Shell, item: &ListItem) -> Result<i32, ShellErr
     if item.asynchronous {
         let spawned = spawn_and_or(shell, &item.and_or)?;
         let description = render_and_or(&item.and_or);
-        let id = shell.launch_background_job(description, spawned.pgid, spawned.children);
+        let id = shell.register_background_job(description, spawned.pgid, spawned.children);
         println!("[{id}]");
         Ok(0)
     } else {
@@ -1321,7 +1321,7 @@ mod tests {
     }
 
     #[test]
-    fn execute_pipeline_covers_async_and_negated_multi_command_paths() {
+    fn execute_pipeline_async_single_command() {
         run_trace(vec![
             t("stat", vec![ArgMatcher::Str("/usr/bin/true".into()), ArgMatcher::Any], TraceResult::StatFile(0o755)),
             t("access", vec![ArgMatcher::Str("/usr/bin/true".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
@@ -1341,7 +1341,10 @@ mod tests {
             let status = execute_pipeline(&mut shell, &pipeline, true).expect("async");
             assert_eq!(status, 0);
         });
+    }
 
+    #[test]
+    fn execute_pipeline_negated_multi_command() {
         run_trace(vec![
             t("stat", vec![ArgMatcher::Str("/usr/bin/printf".into()), ArgMatcher::Any], TraceResult::StatFile(0o755)),
             t("access", vec![ArgMatcher::Str("/usr/bin/printf".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
@@ -1412,7 +1415,7 @@ mod tests {
     }
 
     #[test]
-    fn enoexec_helpers_cover_fallback_and_error_paths() {
+    fn spawn_with_fallback_reexecutes_enoexec_script() {
         run_trace(vec![
             t("pipe", vec![], TraceResult::Fds(200, 201)),
             t_fork(TraceResult::Pid(1000), vec![]),
@@ -1434,7 +1437,10 @@ mod tests {
             let output = child.wait_with_output().expect("output");
             assert_eq!(String::from_utf8_lossy(&output.stdout), "unit:ok");
         });
+    }
 
+    #[test]
+    fn maybe_spawn_with_fallback_handles_enoexec_error() {
         let enoexec_err = sys::SysError::Errno(libc::ENOEXEC);
         run_trace(vec![
             t("pipe", vec![], TraceResult::Fds(200, 201)),
@@ -1463,7 +1469,10 @@ mod tests {
             let output = child.wait_with_output().expect("output");
             assert_eq!(String::from_utf8_lossy(&output.stdout), "fallback");
         });
+    }
 
+    #[test]
+    fn spawn_prepared_errors_for_missing_executable() {
         run_trace(vec![
             t("access", vec![ArgMatcher::Str("/nonexistent/missing".into()), ArgMatcher::Int(0)], TraceResult::Err(libc::ENOENT)),
         ], || {
@@ -1549,7 +1558,7 @@ mod tests {
     }
 
     #[test]
-    fn heredoc_process_helpers_cover_error_paths() {
+    fn heredoc_expansion_error_paths() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
             let error = expand_simple(
@@ -1627,7 +1636,10 @@ mod tests {
             .expect_err("missing expanded heredoc body");
             assert_eq!(error.message, "missing here-document body");
         });
+    }
 
+    #[test]
+    fn prepare_redirections_creates_heredoc_pipe() {
         run_trace(vec![
             t("pipe", vec![], TraceResult::Fds(10, 11)),
             t("write", vec![ArgMatcher::Fd(11), ArgMatcher::Bytes(b"body\n".to_vec())], TraceResult::Int(5)),
@@ -2533,7 +2545,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_child_fd_actions_error_paths() {
+    fn apply_child_fd_actions_dup_error() {
         run_trace(vec![
             t("dup2", vec![ArgMatcher::Fd(-1), ArgMatcher::Fd(56)], TraceResult::Err(libc::EBADF)),
         ], || {
@@ -2544,7 +2556,10 @@ mod tests {
             .expect_err("child dup failure");
             assert!(!error.to_string().is_empty());
         });
+    }
 
+    #[test]
+    fn apply_child_fd_actions_close_error() {
         run_trace(vec![
             t("close", vec![ArgMatcher::Fd(56)], TraceResult::Err(libc::EINVAL)),
             t("close", vec![ArgMatcher::Fd(57)], TraceResult::Err(libc::EINVAL)),
@@ -2684,7 +2699,7 @@ mod tests {
     }
 
     #[test]
-    fn handoff_and_restore_foreground() {
+    fn handoff_foreground_switches_and_restores_pgrp() {
         run_trace(vec![
             // handoff_foreground(Some(77)): isatty(0), isatty(2), tcgetpgrp(0), tcsetpgrp(0, 77)
             t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(1)),
@@ -2705,7 +2720,10 @@ mod tests {
             restore_foreground(Some(55));
             assert_eq!(handoff_foreground(None), None);
         });
+    }
 
+    #[test]
+    fn handoff_foreground_returns_none_on_enotty() {
         run_trace(vec![
             t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(1)),
             t("isatty", vec![ArgMatcher::Fd(2)], TraceResult::Int(1)),
