@@ -7,5 +7,5 @@ edition = "2024"
 libc = "0.2.183"
 
 [[test]]
-name = "spec_basic"
-path = "tests/spec/basic.rs"
+name = "integration_basic"
+path = "tests/integration/basic.rs"
