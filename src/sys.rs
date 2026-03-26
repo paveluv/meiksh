@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use libc::{self, c_char, c_int, c_long, mode_t};
 
 pub type Pid = libc::pid_t;
+pub type RawFd = c_int;
 pub type FileModeMask = libc::mode_t;
 type ClockTicks = libc::clock_t;
 
@@ -22,7 +23,19 @@ pub const SIGALRM: c_int = libc::SIGALRM;
 pub const SIGCONT: c_int = libc::SIGCONT;
 pub const SIGTERM: c_int = libc::SIGTERM;
 pub const WNOHANG: c_int = libc::WNOHANG;
-const EINTR: i32 = libc::EINTR;
+pub const ENOENT: c_int = libc::ENOENT;
+pub const ENOEXEC: c_int = libc::ENOEXEC;
+pub const EBADF: c_int = libc::EBADF;
+pub const ECHILD: c_int = libc::ECHILD;
+pub const EACCES: c_int = libc::EACCES;
+pub const EEXIST: c_int = libc::EEXIST;
+pub const EINVAL: c_int = libc::EINVAL;
+pub const ENOTTY: c_int = libc::ENOTTY;
+pub const EILSEQ: c_int = libc::EILSEQ;
+pub const EIO: c_int = libc::EIO;
+pub const EISDIR: c_int = libc::EISDIR;
+pub const EINTR: c_int = libc::EINTR;
+
 const SIG_DFL_HANDLER: libc::sighandler_t = libc::SIG_DFL;
 const SIG_IGN_HANDLER: libc::sighandler_t = libc::SIG_IGN;
 const SIG_ERR_HANDLER: libc::sighandler_t = libc::SIG_ERR;
@@ -1736,6 +1749,21 @@ pub fn cstr_lossy(bytes: &[u8]) -> String {
     CStr::from_bytes_until_nul(bytes)
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|_| String::from_utf8_lossy(bytes).into_owned())
+}
+
+#[allow(clippy::disallowed_methods)]
+pub fn env_var(key: &str) -> Option<String> {
+    std::env::var(key).ok()
+}
+
+#[allow(clippy::disallowed_methods)]
+pub fn env_vars() -> std::collections::HashMap<String, String> {
+    std::env::vars().collect()
+}
+
+#[allow(clippy::disallowed_methods)]
+pub fn env_args_os() -> Vec<std::ffi::OsString> {
+    std::env::args_os().collect()
 }
 
 #[cfg(test)]

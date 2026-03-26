@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use crate::builtin::{self, BuiltinOutcome};
@@ -13,7 +12,8 @@ pub fn run_from_env() -> i32 {
     match Shell::from_env().and_then(|mut shell| shell.run()) {
         Ok(code) => code,
         Err(err) => {
-            eprintln!("meiksh: {}", err.display_message());
+            let msg = format!("meiksh: {}\n", err.display_message());
+            let _ = sys::write_all_fd(sys::STDERR_FILENO, msg.as_bytes());
             err.exit_status()
         }
     }
@@ -210,7 +210,7 @@ pub enum PendingControl {
 
 impl Shell {
     pub fn from_env() -> Result<Self, ShellError> {
-        let raw_args: Vec<OsString> = std::env::args_os().collect();
+        let raw_args = sys::env_args_os();
         let args: Vec<String> = raw_args
             .iter()
             .map(|arg| arg.to_string_lossy().into_owned())
@@ -220,7 +220,7 @@ impl Shell {
             .shell_name_override
             .clone()
             .unwrap_or_else(|| sys::shell_name_from_args(&args).to_string());
-        let env: HashMap<String, String> = std::env::vars().collect();
+        let env: HashMap<String, String> = sys::env_vars();
         let exported: BTreeSet<String> = env.keys().cloned().collect();
         Ok(Self {
             positional: options.positional.clone(),
@@ -402,7 +402,7 @@ impl Shell {
             let _ = sys::close_fd(write_fd);
             let mut child_shell = self.clone();
             let status = child_shell.execute_string(source).unwrap_or(1);
-            sys::exit_process(status as libc::c_int);
+            sys::exit_process(status as sys::RawFd);
         }
         sys::close_fd(write_fd)?;
         let mut output = Vec::new();
@@ -1045,7 +1045,7 @@ fn resolve_script_path(shell: &Shell, script: &Path) -> Option<PathBuf> {
 fn search_script_path(shell: &Shell, name: &str) -> Option<PathBuf> {
     let path_env = shell
         .get_var("PATH")
-        .or_else(|| std::env::var("PATH").ok())
+        .or_else(|| sys::env_var("PATH"))
         .unwrap_or_default();
     for dir in path_env.split(':') {
         let base = if dir.is_empty() { PathBuf::from(".") } else { PathBuf::from(dir) };
@@ -1064,7 +1064,7 @@ fn executable_regular_file(path: &Path) -> bool {
 }
 
 fn decode_stdin_chunk(bytes: Vec<u8>) -> sys::SysResult<String> {
-    String::from_utf8(bytes).map_err(|_| sys::SysError::Errno(libc::EILSEQ))
+    String::from_utf8(bytes).map_err(|_| sys::SysError::Errno(sys::EILSEQ))
 }
 
 fn stdin_parse_error_requires_more_input(error: &syntax::ParseError) -> bool {
@@ -1354,7 +1354,7 @@ mod tests {
     fn reap_jobs_handles_try_wait_errors() {
         run_trace(vec![
             t("waitpid", vec![ArgMatcher::Int(1001), ArgMatcher::Any, ArgMatcher::Any],
-                TraceResult::Err(libc::ECHILD)),
+                TraceResult::Err(sys::ECHILD)),
         ], || {
             let mut shell = test_shell();
             let id = shell.register_background_job("exit 0".into(), None, vec![fake_handle(1001)]);
@@ -1380,7 +1380,7 @@ mod tests {
     fn source_path_errors_when_file_missing() {
         run_trace(vec![
             t("open", vec![ArgMatcher::Str("/definitely/missing-meiksh-script".into()), ArgMatcher::Any, ArgMatcher::Any],
-                TraceResult::Err(libc::ENOENT)),
+                TraceResult::Err(sys::ENOENT)),
         ], || {
             let mut shell = test_shell();
             let error = shell.source_path(Path::new("/definitely/missing-meiksh-script")).expect_err("missing source");
@@ -1562,7 +1562,7 @@ mod tests {
     fn resolve_script_path_searches_executable_path_entries() {
         run_trace(vec![
             t("access", vec![ArgMatcher::Str("path-script".into()), ArgMatcher::Int(0)],
-                TraceResult::Err(libc::ENOENT)),
+                TraceResult::Err(sys::ENOENT)),
             t("stat", vec![ArgMatcher::Str("/search-path/path-script".into()), ArgMatcher::Any],
                 TraceResult::StatFile(0o755)),
         ], || {
@@ -1578,9 +1578,9 @@ mod tests {
     #[test]
     fn classify_script_read_error_maps_to_sh_exit_statuses() {
         assert_no_syscalls(|| {
-            let classified = classify_script_read_error(Path::new("missing"), sys::SysError::Errno(libc::ENOENT));
+            let classified = classify_script_read_error(Path::new("missing"), sys::SysError::Errno(sys::ENOENT));
             assert_eq!(classified.exit_status(), 127);
-            let classified = classify_script_read_error(Path::new("bad"), sys::SysError::Errno(libc::EIO));
+            let classified = classify_script_read_error(Path::new("bad"), sys::SysError::Errno(sys::EIO));
             assert_eq!(classified.exit_status(), 128);
         });
     }
@@ -1825,7 +1825,7 @@ mod tests {
         shell.register_background_job("sleep".into(), None, vec![fake_handle(2001)]);
         sys::test_support::set_pending_signals_for_test(&[sys::SIGINT]);
         run_trace(vec![
-            t("waitpid", vec![ArgMatcher::Int(2001), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Err(libc::EINTR)),
+            t("waitpid", vec![ArgMatcher::Int(2001), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Err(sys::EINTR)),
         ], || {
             assert_eq!(shell.wait_for_job_operand(1).expect("interrupted wait"), 130);
         });
@@ -1836,7 +1836,7 @@ mod tests {
     fn wait_for_child_pid_retries_on_eintr_and_pid_zero() {
         let mut shell = test_shell();
         run_trace(vec![
-            t("waitpid", vec![ArgMatcher::Int(99), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Err(libc::EINTR)),
+            t("waitpid", vec![ArgMatcher::Int(99), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Err(sys::EINTR)),
             t("waitpid", vec![ArgMatcher::Int(99), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Pid(0)),
             t("waitpid", vec![ArgMatcher::Int(99), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(7)),
         ], || {
@@ -1860,8 +1860,8 @@ mod tests {
         let mut shell = test_shell();
         shell.register_background_job("sleep".into(), None, vec![fake_handle(2002)]);
         run_trace(vec![
-            t("waitpid", vec![ArgMatcher::Int(2002), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Err(libc::ECHILD)),
-            t("waitpid", vec![ArgMatcher::Int(99), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Err(libc::ECHILD)),
+            t("waitpid", vec![ArgMatcher::Int(2002), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Err(sys::ECHILD)),
+            t("waitpid", vec![ArgMatcher::Int(99), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Err(sys::ECHILD)),
         ], || {
             assert!(shell.wait_for_job_operand(1).is_err());
             assert!(shell.wait_for_child_pid(99, false).is_err());
@@ -1881,14 +1881,14 @@ mod tests {
         shell.register_background_job("sleep".into(), None, vec![fake_handle(2003)]);
         sys::test_support::set_pending_signals_for_test(&[sys::SIGINT]);
         run_trace(vec![
-            t("waitpid", vec![ArgMatcher::Int(2003), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Err(libc::EINTR)),
+            t("waitpid", vec![ArgMatcher::Int(2003), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Err(sys::EINTR)),
         ], || {
             assert_eq!(shell.wait_for_pid_operand(2003).expect("pid interrupt"), 130);
         });
 
         shell.register_background_job("sleep".into(), None, vec![fake_handle(2004)]);
         run_trace(vec![
-            t("waitpid", vec![ArgMatcher::Int(2004), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Err(libc::ECHILD)),
+            t("waitpid", vec![ArgMatcher::Int(2004), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Err(sys::ECHILD)),
         ], || {
             assert!(shell.wait_for_pid_operand(2004).is_err());
         });
@@ -1908,7 +1908,7 @@ mod tests {
         shell.register_background_job("sleep".into(), None, vec![fake_handle(2005)]);
         sys::test_support::set_pending_signals_for_test(&[sys::SIGINT]);
         run_trace(vec![
-            t("waitpid", vec![ArgMatcher::Int(2002), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Err(libc::EINTR)),
+            t("waitpid", vec![ArgMatcher::Int(2002), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Err(sys::EINTR)),
         ], || {
             assert_eq!(shell.wait_for_all_jobs().expect("wait all status"), 130);
         });

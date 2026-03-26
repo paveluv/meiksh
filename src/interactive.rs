@@ -172,7 +172,7 @@ mod tests {
     fn load_env_file_ignores_missing_absolute_path() {
         run_trace(vec![
             t("access", vec![ArgMatcher::Str("/tmp/meiksh-missing-env.sh".into()), ArgMatcher::Int(0)],
-                TraceResult::Err(libc::ENOENT)),
+                TraceResult::Err(sys::ENOENT)),
         ], || {
             let mut shell = test_shell();
             shell.env.insert("ENV".into(), "/tmp/meiksh-missing-env.sh".into());
@@ -424,7 +424,7 @@ mod tests {
     fn append_history_reports_open_error() {
         run_trace(vec![
             t("open", vec![ArgMatcher::Str("/tmp/history-dir".into()), ArgMatcher::Any, ArgMatcher::Any],
-                TraceResult::Err(libc::EISDIR)),
+                TraceResult::Err(sys::EISDIR)),
         ], || {
             let mut shell = test_shell();
             shell.env.insert("HISTFILE".into(), "/tmp/history-dir".into());

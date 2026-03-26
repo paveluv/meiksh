@@ -1544,7 +1544,7 @@ fn search_path(name: &str, shell: &Shell, use_default_path: bool, predicate: fn(
     } else {
         shell
             .get_var("PATH")
-            .or_else(|| std::env::var("PATH").ok())
+            .or_else(|| sys::env_var("PATH"))
             .unwrap_or_default()
     };
 
@@ -1865,7 +1865,7 @@ mod tests {
             t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Any], TraceResult::Int(msg.len() as i64))
         }
 
-        let read_err_msg = format!("read: {}\n", sys::SysError::Errno(libc::EBADF));
+        let read_err_msg = format!("read: {}\n", sys::SysError::Errno(sys::EBADF));
         let readonly_err_msg = "read: LOCKED: readonly variable\n";
 
         let mut trace: Vec<crate::sys::test_support::TraceEntry> = Vec::new();
@@ -1881,7 +1881,7 @@ mod tests {
         trace.push(t("close", vec![ArgMatcher::Fd(101)], TraceResult::Int(0)));
 
         // Block 3: read_with_input(["read","NAME"], -1) → read error → write_stderr
-        trace.push(t("read", vec![ArgMatcher::Fd(-1), ArgMatcher::Any], TraceResult::Err(libc::EBADF)));
+        trace.push(t("read", vec![ArgMatcher::Fd(-1), ArgMatcher::Any], TraceResult::Err(sys::EBADF)));
         trace.push(t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Any], TraceResult::Int(read_err_msg.len() as i64)));
 
         // Block 4: open value_nl, read "value\n" byte-by-byte, readonly error → write_stderr, close
@@ -2354,7 +2354,7 @@ mod tests {
             // which("/bin/sh") → access("/bin/sh", F_OK)
             t("access", vec![ArgMatcher::Str("/bin/sh".into()), ArgMatcher::Any], TraceResult::Int(0)),
             // command_short_description("meiksh-not-real") → search_path → access("/definitely/missing/meiksh-not-real", F_OK)
-            t("access", vec![ArgMatcher::Str("/definitely/missing/meiksh-not-real".into()), ArgMatcher::Any], TraceResult::Err(libc::ENOENT)),
+            t("access", vec![ArgMatcher::Str("/definitely/missing/meiksh-not-real".into()), ArgMatcher::Any], TraceResult::Err(sys::ENOENT)),
         ], || {
             let mut shell = test_shell();
             shell.env.insert("PATH".into(), "/definitely/missing".into());
@@ -2480,13 +2480,13 @@ mod tests {
             // command -v (missing) → write_stderr
             t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Any], TraceResult::Int("command: utility name required\n".len() as i64)),
             // command -v meiksh-not-real → access in PATH
-            t("access", vec![ArgMatcher::Str("/bin/meiksh-not-real".into()), ArgMatcher::Any], TraceResult::Err(libc::ENOENT)),
+            t("access", vec![ArgMatcher::Str("/bin/meiksh-not-real".into()), ArgMatcher::Any], TraceResult::Err(sys::ENOENT)),
             // command_short_description("sh") → access /bin/sh
             t("access", vec![ArgMatcher::Str("/bin/sh".into()), ArgMatcher::Any], TraceResult::Int(0)),
             // command_verbose_description("sh") → access /bin/sh
             t("access", vec![ArgMatcher::Str("/bin/sh".into()), ArgMatcher::Any], TraceResult::Int(0)),
             // which_in_path("./definitely-missing") → access
-            t("access", vec![ArgMatcher::Str("./definitely-missing".into()), ArgMatcher::Any], TraceResult::Err(libc::ENOENT)),
+            t("access", vec![ArgMatcher::Str("./definitely-missing".into()), ArgMatcher::Any], TraceResult::Err(sys::ENOENT)),
         ], || {
             let mut shell = test_shell();
             shell.env.insert("PATH".into(), "/bin".into());
@@ -2532,13 +2532,13 @@ mod tests {
     fn command_execution_error_paths() {
         run_trace(vec![
             // command meiksh-not-real → access in PATH, write_stderr
-            t("access", vec![ArgMatcher::Str("/bin/meiksh-not-real".into()), ArgMatcher::Any], TraceResult::Err(libc::ENOENT)),
+            t("access", vec![ArgMatcher::Str("/bin/meiksh-not-real".into()), ArgMatcher::Any], TraceResult::Err(sys::ENOENT)),
             t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Any], TraceResult::Int("command: meiksh-not-real: not found\n".len() as i64)),
             // command return → write_stderr (return: not in a function)
             t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Any], TraceResult::Int("return: not in a function\n".len() as i64)),
             // command /tmp/plain-file → access(F_OK) ok, access(X_OK) fail, write_stderr
             t("access", vec![ArgMatcher::Str("/tmp/plain-file".into()), ArgMatcher::Any], TraceResult::Int(0)),
-            t("access", vec![ArgMatcher::Str("/tmp/plain-file".into()), ArgMatcher::Any], TraceResult::Err(libc::EACCES)),
+            t("access", vec![ArgMatcher::Str("/tmp/plain-file".into()), ArgMatcher::Any], TraceResult::Err(sys::EACCES)),
             t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Any], TraceResult::Int("command: /tmp/plain-file: Permission denied\n".len() as i64)),
             // command /tmp/missing-interp → access(F_OK) ok, access(X_OK) ok, fork+waitpid
             t("access", vec![ArgMatcher::Str("/tmp/missing-interp".into()), ArgMatcher::Any], TraceResult::Int(0)),
@@ -2767,13 +2767,13 @@ mod tests {
             // resolve_cd_target("target") CDPATH="/cdpath" → stat /cdpath/target → dir
             t("stat", vec![ArgMatcher::Str("/cdpath/target".into()), ArgMatcher::Any], TraceResult::StatDir),
             // resolve_cd_target("missing") CDPATH="/cdpath" → stat /cdpath/missing → ENOENT
-            t("stat", vec![ArgMatcher::Str("/cdpath/missing".into()), ArgMatcher::Any], TraceResult::Err(libc::ENOENT)),
+            t("stat", vec![ArgMatcher::Str("/cdpath/missing".into()), ArgMatcher::Any], TraceResult::Err(sys::ENOENT)),
             // resolve_cd_target("plain") no CDPATH → no stat calls
             // resolve_cd_target("plain") CDPATH=":/cdpath" → stat ./plain → dir found
             t("stat", vec![ArgMatcher::Str("./plain".into()), ArgMatcher::Any], TraceResult::StatDir),
             // second VFS block: resolve_cd_target("plain") CDPATH=":/cdpath" → stat ./plain → ENOENT, stat /cdpath/plain → ENOENT
-            t("stat", vec![ArgMatcher::Str("./plain".into()), ArgMatcher::Any], TraceResult::Err(libc::ENOENT)),
-            t("stat", vec![ArgMatcher::Str("/cdpath/plain".into()), ArgMatcher::Any], TraceResult::Err(libc::ENOENT)),
+            t("stat", vec![ArgMatcher::Str("./plain".into()), ArgMatcher::Any], TraceResult::Err(sys::ENOENT)),
+            t("stat", vec![ArgMatcher::Str("/cdpath/plain".into()), ArgMatcher::Any], TraceResult::Err(sys::ENOENT)),
         ], || {
             let mut shell = test_shell();
             assert!(cd_pwd_value("./relative").is_ok());
@@ -2863,7 +2863,7 @@ mod tests {
             t("read", vec![ArgMatcher::Fd(100), ArgMatcher::Any], TraceResult::Int(0)),
             t("close", vec![ArgMatcher::Fd(100)], TraceResult::Int(0)),
             // resolve_dot_path("missing-dot.sh") → stat fails
-            t("stat", vec![ArgMatcher::Str("/scripts/missing-dot.sh".into()), ArgMatcher::Any], TraceResult::Err(libc::ENOENT)),
+            t("stat", vec![ArgMatcher::Str("/scripts/missing-dot.sh".into()), ArgMatcher::Any], TraceResult::Err(sys::ENOENT)),
         ], || {
             let mut shell = test_shell();
             shell.env.insert("PATH".into(), "/scripts".into());
@@ -3091,7 +3091,7 @@ mod tests {
     #[test]
     fn dot_errors_on_missing_file() {
         run_trace(vec![
-            t("stat", vec![ArgMatcher::Str("/definitely/missing-meiksh-dot-file".into()), ArgMatcher::Any], TraceResult::Err(libc::ENOENT)),
+            t("stat", vec![ArgMatcher::Str("/definitely/missing-meiksh-dot-file".into()), ArgMatcher::Any], TraceResult::Err(sys::ENOENT)),
         ], || {
             let mut shell = test_shell();
             let error = run(
