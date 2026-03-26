@@ -1,5 +1,4 @@
 use std::ffi::{CStr, CString};
-use std::io::{self, Read};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use libc::{self, c_char, c_int, c_long, mode_t};
 
@@ -49,6 +48,53 @@ pub const S_IFIFO: mode_t = libc::S_IFIFO;
 pub const S_IXUSR: mode_t = libc::S_IXUSR;
 pub const S_IXGRP: mode_t = libc::S_IXGRP;
 pub const S_IXOTH: mode_t = libc::S_IXOTH;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SysError {
+    Errno(c_int),
+    NulInPath,
+}
+
+pub type SysResult<T> = Result<T, SysError>;
+
+impl std::fmt::Display for SysError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SysError::Errno(errno) => {
+                let msg = unsafe { CStr::from_ptr(libc::strerror(*errno)) };
+                write!(f, "{}", msg.to_string_lossy())
+            }
+            SysError::NulInPath => write!(f, "path contains null byte"),
+        }
+    }
+}
+
+impl std::error::Error for SysError {}
+
+impl SysError {
+    pub fn errno(&self) -> Option<c_int> {
+        match self {
+            SysError::Errno(e) => Some(*e),
+            _ => None,
+        }
+    }
+
+    pub fn is_enoent(&self) -> bool {
+        matches!(self, SysError::Errno(e) if *e == libc::ENOENT)
+    }
+
+    pub fn is_ebadf(&self) -> bool {
+        matches!(self, SysError::Errno(e) if *e == libc::EBADF)
+    }
+
+    pub fn is_enoexec(&self) -> bool {
+        matches!(self, SysError::Errno(e) if *e == libc::ENOEXEC)
+    }
+
+    pub fn is_eintr(&self) -> bool {
+        matches!(self, SysError::Errno(e) if *e == EINTR)
+    }
+}
 
 #[derive(Clone, Copy)]
 pub(crate) struct Syscalls {
@@ -160,14 +206,14 @@ pub(crate) fn set_errno(errno: c_int) {
     }
 }
 
-fn last_error() -> io::Error {
+fn last_error() -> SysError {
     #[cfg(test)]
     {
         return test_support::take_test_error();
     }
 
     #[cfg(not(test))]
-    io::Error::from_raw_os_error(unsafe { *libc::__error() })
+    SysError::Errno(unsafe { *libc::__error() })
 }
 
 #[cfg(test)]
@@ -205,9 +251,9 @@ pub(crate) mod test_support {
         TEST_ERRNO.with(|cell| *cell.borrow_mut() = errno);
     }
 
-    pub(super) fn take_test_error() -> io::Error {
+    pub(super) fn take_test_error() -> SysError {
         let errno = TEST_ERRNO.with(|cell| cell.replace(0));
-        io::Error::from_raw_os_error(errno)
+        SysError::Errno(errno)
     }
 
     pub(crate) fn with_test_syscalls<T>(syscalls: Syscalls, f: impl FnOnce() -> T) -> T {
@@ -462,6 +508,27 @@ pub(crate) mod test_support {
             self.ensure_dirs(&PathBuf::from(path));
             self.state.cwd = PathBuf::from(path);
             self
+        }
+
+        pub(crate) fn open_fd(mut self, fd: c_int, path: &str, flags: c_int) -> Self {
+            self.state.fd_table.insert(fd, VfsFd {
+                path: PathBuf::from(path),
+                offset: 0,
+                flags,
+            });
+            self
+        }
+
+        pub(crate) fn stdin(self, path: &str) -> Self {
+            self.open_fd(super::STDIN_FILENO, path, super::O_RDONLY)
+        }
+
+        pub(crate) fn stdout(self, path: &str) -> Self {
+            self.open_fd(super::STDOUT_FILENO, path, super::O_WRONLY)
+        }
+
+        pub(crate) fn stderr(self, path: &str) -> Self {
+            self.open_fd(super::STDERR_FILENO, path, super::O_WRONLY)
         }
 
         fn ensure_dirs(&mut self, path: &std::path::Path) {
@@ -1228,7 +1295,7 @@ pub fn has_same_real_and_effective_ids() -> bool {
     unsafe { libc::getuid() == libc::geteuid() && libc::getgid() == libc::getegid() }
 }
 
-pub fn wait_pid(pid: Pid, nohang: bool) -> io::Result<Option<WaitStatus>> {
+pub fn wait_pid(pid: Pid, nohang: bool) -> SysResult<Option<WaitStatus>> {
     let mut status = 0;
     let options = if nohang { WNOHANG } else { 0 };
     let result = (syscalls().waitpid)(pid, &mut status, options);
@@ -1241,7 +1308,7 @@ pub fn wait_pid(pid: Pid, nohang: bool) -> io::Result<Option<WaitStatus>> {
     }
 }
 
-pub fn send_signal(pid: Pid, signal: c_int) -> io::Result<()> {
+pub fn send_signal(pid: Pid, signal: c_int) -> SysResult<()> {
     let result = (syscalls().kill)(pid, signal);
     if result == 0 {
         Ok(())
@@ -1250,7 +1317,7 @@ pub fn send_signal(pid: Pid, signal: c_int) -> io::Result<()> {
     }
 }
 
-pub fn install_shell_signal_handler(signal: c_int) -> io::Result<()> {
+pub fn install_shell_signal_handler(signal: c_int) -> SysResult<()> {
     let result = (syscalls().signal)(signal, record_signal as *const () as libc::sighandler_t);
     if result == SIG_ERR_HANDLER {
         Err(last_error())
@@ -1259,7 +1326,7 @@ pub fn install_shell_signal_handler(signal: c_int) -> io::Result<()> {
     }
 }
 
-pub fn ignore_signal(signal: c_int) -> io::Result<()> {
+pub fn ignore_signal(signal: c_int) -> SysResult<()> {
     let result = (syscalls().signal)(signal, SIG_IGN_HANDLER);
     if result == SIG_ERR_HANDLER {
         Err(last_error())
@@ -1268,7 +1335,7 @@ pub fn ignore_signal(signal: c_int) -> io::Result<()> {
     }
 }
 
-pub fn default_signal_action(signal: c_int) -> io::Result<()> {
+pub fn default_signal_action(signal: c_int) -> SysResult<()> {
     let result = (syscalls().signal)(signal, SIG_DFL_HANDLER);
     if result == SIG_ERR_HANDLER {
         Err(last_error())
@@ -1296,11 +1363,11 @@ pub fn supported_trap_signals() -> Vec<c_int> {
     vec![SIGHUP, SIGINT, SIGQUIT, SIGABRT, SIGALRM, SIGTERM]
 }
 
-pub fn interrupted(error: &io::Error) -> bool {
-    error.raw_os_error() == Some(EINTR)
+pub fn interrupted(error: &SysError) -> bool {
+    error.is_eintr()
 }
 
-pub fn current_foreground_pgrp(fd: c_int) -> io::Result<Pid> {
+pub fn current_foreground_pgrp(fd: c_int) -> SysResult<Pid> {
     let result = (syscalls().tcgetpgrp)(fd);
     if result >= 0 {
         Ok(result)
@@ -1309,7 +1376,7 @@ pub fn current_foreground_pgrp(fd: c_int) -> io::Result<Pid> {
     }
 }
 
-pub fn set_foreground_pgrp(fd: c_int, pgrp: Pid) -> io::Result<()> {
+pub fn set_foreground_pgrp(fd: c_int, pgrp: Pid) -> SysResult<()> {
     let result = (syscalls().tcsetpgrp)(fd, pgrp);
     if result == 0 {
         Ok(())
@@ -1318,7 +1385,7 @@ pub fn set_foreground_pgrp(fd: c_int, pgrp: Pid) -> io::Result<()> {
     }
 }
 
-pub fn set_process_group(pid: Pid, pgid: Pid) -> io::Result<()> {
+pub fn set_process_group(pid: Pid, pgid: Pid) -> SysResult<()> {
     let result = (syscalls().setpgid)(pid, pgid);
     if result == 0 {
         Ok(())
@@ -1327,7 +1394,7 @@ pub fn set_process_group(pid: Pid, pgid: Pid) -> io::Result<()> {
     }
 }
 
-pub fn create_pipe() -> io::Result<(c_int, c_int)> {
+pub fn create_pipe() -> SysResult<(c_int, c_int)> {
     let mut fds = [0; 2];
     let result = (syscalls().pipe)(fds.as_mut_ptr());
     if result == 0 {
@@ -1337,7 +1404,7 @@ pub fn create_pipe() -> io::Result<(c_int, c_int)> {
     }
 }
 
-pub fn duplicate_fd(oldfd: c_int, newfd: c_int) -> io::Result<()> {
+pub fn duplicate_fd(oldfd: c_int, newfd: c_int) -> SysResult<()> {
     let result = (syscalls().dup2)(oldfd, newfd);
     if result >= 0 {
         Ok(())
@@ -1346,7 +1413,7 @@ pub fn duplicate_fd(oldfd: c_int, newfd: c_int) -> io::Result<()> {
     }
 }
 
-pub fn duplicate_fd_to_new(fd: c_int) -> io::Result<c_int> {
+pub fn duplicate_fd_to_new(fd: c_int) -> SysResult<c_int> {
     let result = (syscalls().dup)(fd);
     if result >= 0 {
         Ok(result)
@@ -1355,7 +1422,7 @@ pub fn duplicate_fd_to_new(fd: c_int) -> io::Result<c_int> {
     }
 }
 
-pub fn close_fd(fd: c_int) -> io::Result<()> {
+pub fn close_fd(fd: c_int) -> SysResult<()> {
     let result = (syscalls().close)(fd);
     if result == 0 {
         Ok(())
@@ -1364,7 +1431,7 @@ pub fn close_fd(fd: c_int) -> io::Result<()> {
     }
 }
 
-fn fd_status_flags(fd: c_int) -> io::Result<c_int> {
+fn fd_status_flags(fd: c_int) -> SysResult<c_int> {
     let result = (syscalls().fcntl)(fd, F_GETFL, 0);
     if result >= 0 {
         Ok(result)
@@ -1373,7 +1440,7 @@ fn fd_status_flags(fd: c_int) -> io::Result<c_int> {
     }
 }
 
-fn set_fd_status_flags(fd: c_int, flags: c_int) -> io::Result<()> {
+fn set_fd_status_flags(fd: c_int, flags: c_int) -> SysResult<()> {
     let result = (syscalls().fcntl)(fd, F_SETFL, flags);
     if result >= 0 {
         Ok(())
@@ -1392,7 +1459,7 @@ fn fifo_like_fd(fd: c_int) -> bool {
     (buf.st_mode & S_IFMT) == S_IFIFO
 }
 
-pub fn ensure_blocking_read_fd(fd: c_int) -> io::Result<()> {
+pub fn ensure_blocking_read_fd(fd: c_int) -> SysResult<()> {
     if !is_interactive_fd(fd) && !fifo_like_fd(fd) {
         return Ok(());
     }
@@ -1403,7 +1470,7 @@ pub fn ensure_blocking_read_fd(fd: c_int) -> io::Result<()> {
     Ok(())
 }
 
-pub fn read_fd(fd: c_int, buf: &mut [u8]) -> io::Result<usize> {
+pub fn read_fd(fd: c_int, buf: &mut [u8]) -> SysResult<usize> {
     let result = (syscalls().read)(fd, buf.as_mut_ptr(), buf.len());
     if result >= 0 {
         Ok(result as usize)
@@ -1420,10 +1487,8 @@ impl FdReader {
     pub fn new(fd: c_int) -> Self {
         Self { fd }
     }
-}
 
-impl Read for FdReader {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    pub fn read(&mut self, buf: &mut [u8]) -> SysResult<usize> {
         read_fd(self.fd, buf)
     }
 }
@@ -1450,11 +1515,11 @@ impl FileStat {
     }
 }
 
-fn to_cstring(path: &str) -> io::Result<CString> {
-    CString::new(path).map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path contains null byte"))
+fn to_cstring(path: &str) -> SysResult<CString> {
+    CString::new(path).map_err(|_| SysError::NulInPath)
 }
 
-fn stat_raw(path: &str) -> io::Result<libc::stat> {
+fn stat_raw(path: &str) -> SysResult<libc::stat> {
     let c_path = to_cstring(path)?;
     let mut buf = std::mem::MaybeUninit::<libc::stat>::zeroed();
     let result = (syscalls().stat)(c_path.as_ptr(), buf.as_mut_ptr());
@@ -1465,7 +1530,7 @@ fn stat_raw(path: &str) -> io::Result<libc::stat> {
     }
 }
 
-fn lstat_raw(path: &str) -> io::Result<libc::stat> {
+fn lstat_raw(path: &str) -> SysResult<libc::stat> {
     let c_path = to_cstring(path)?;
     let mut buf = std::mem::MaybeUninit::<libc::stat>::zeroed();
     let result = (syscalls().lstat)(c_path.as_ptr(), buf.as_mut_ptr());
@@ -1476,7 +1541,7 @@ fn lstat_raw(path: &str) -> io::Result<libc::stat> {
     }
 }
 
-pub fn open_file(path: &str, flags: c_int, mode: mode_t) -> io::Result<c_int> {
+pub fn open_file(path: &str, flags: c_int, mode: mode_t) -> SysResult<c_int> {
     let c_path = to_cstring(path)?;
     let result = (syscalls().open)(c_path.as_ptr(), flags, mode);
     if result >= 0 {
@@ -1486,7 +1551,7 @@ pub fn open_file(path: &str, flags: c_int, mode: mode_t) -> io::Result<c_int> {
     }
 }
 
-pub fn write_fd(fd: c_int, data: &[u8]) -> io::Result<usize> {
+pub fn write_fd(fd: c_int, data: &[u8]) -> SysResult<usize> {
     let result = (syscalls().write)(fd, data.as_ptr(), data.len());
     if result >= 0 {
         Ok(result as usize)
@@ -1495,18 +1560,18 @@ pub fn write_fd(fd: c_int, data: &[u8]) -> io::Result<usize> {
     }
 }
 
-pub fn write_all_fd(fd: c_int, mut data: &[u8]) -> io::Result<()> {
+pub fn write_all_fd(fd: c_int, mut data: &[u8]) -> SysResult<()> {
     while !data.is_empty() {
         let n = write_fd(fd, data)?;
         if n == 0 {
-            return Err(io::Error::new(io::ErrorKind::WriteZero, "write returned 0"));
+            return Err(SysError::Errno(libc::EIO));
         }
         data = &data[n..];
     }
     Ok(())
 }
 
-pub fn stat_path(path: &str) -> io::Result<FileStat> {
+pub fn stat_path(path: &str) -> SysResult<FileStat> {
     let raw = stat_raw(path)?;
     Ok(FileStat {
         mode: raw.st_mode,
@@ -1514,7 +1579,7 @@ pub fn stat_path(path: &str) -> io::Result<FileStat> {
     })
 }
 
-pub fn lstat_path(path: &str) -> io::Result<FileStat> {
+pub fn lstat_path(path: &str) -> SysResult<FileStat> {
     let raw = lstat_raw(path)?;
     Ok(FileStat {
         mode: raw.st_mode,
@@ -1522,7 +1587,7 @@ pub fn lstat_path(path: &str) -> io::Result<FileStat> {
     })
 }
 
-pub fn access_path(path: &str, mode: c_int) -> io::Result<()> {
+pub fn access_path(path: &str, mode: c_int) -> SysResult<()> {
     let c_path = to_cstring(path)?;
     let result = (syscalls().access)(c_path.as_ptr(), mode);
     if result == 0 {
@@ -1544,7 +1609,7 @@ pub fn is_regular_file(path: &str) -> bool {
     stat_path(path).map(|s| s.is_regular_file()).unwrap_or(false)
 }
 
-pub fn change_dir(path: &str) -> io::Result<()> {
+pub fn change_dir(path: &str) -> SysResult<()> {
     let c_path = to_cstring(path)?;
     let result = (syscalls().chdir)(c_path.as_ptr());
     if result == 0 {
@@ -1554,7 +1619,7 @@ pub fn change_dir(path: &str) -> io::Result<()> {
     }
 }
 
-pub fn get_cwd() -> io::Result<String> {
+pub fn get_cwd() -> SysResult<String> {
     let mut buf = vec![0u8; 4096];
     let result = (syscalls().getcwd)(buf.as_mut_ptr().cast(), buf.len());
     if result.is_null() {
@@ -1565,7 +1630,7 @@ pub fn get_cwd() -> io::Result<String> {
     }
 }
 
-pub fn read_dir_entries(path: &str) -> io::Result<Vec<String>> {
+pub fn read_dir_entries(path: &str) -> SysResult<Vec<String>> {
     let c_path = to_cstring(path)?;
     let dirp = (syscalls().opendir)(c_path.as_ptr());
     if dirp.is_null() {
@@ -1579,7 +1644,7 @@ pub fn read_dir_entries(path: &str) -> io::Result<Vec<String>> {
         if ent.is_null() {
             let errno = last_error();
             (syscalls().closedir)(dirp);
-            if errno.raw_os_error() == Some(0) {
+            if errno.errno() == Some(0) {
                 break;
             }
             return Err(errno);
@@ -1593,7 +1658,7 @@ pub fn read_dir_entries(path: &str) -> io::Result<Vec<String>> {
     Ok(entries)
 }
 
-pub fn canonicalize(path: &str) -> io::Result<String> {
+pub fn canonicalize(path: &str) -> SysResult<String> {
     let c_path = to_cstring(path)?;
     let result = (syscalls().realpath)(c_path.as_ptr(), std::ptr::null_mut());
     if result.is_null() {
@@ -1605,7 +1670,7 @@ pub fn canonicalize(path: &str) -> io::Result<String> {
     }
 }
 
-pub fn read_link(path: &str) -> io::Result<String> {
+pub fn read_link(path: &str) -> SysResult<String> {
     let c_path = to_cstring(path)?;
     let mut buf = vec![0u8; 4096];
     let result = (syscalls().readlink)(c_path.as_ptr(), buf.as_mut_ptr().cast(), buf.len());
@@ -1617,7 +1682,7 @@ pub fn read_link(path: &str) -> io::Result<String> {
     }
 }
 
-pub fn unlink_file(path: &str) -> io::Result<()> {
+pub fn unlink_file(path: &str) -> SysResult<()> {
     let c_path = to_cstring(path)?;
     let result = (syscalls().unlink)(c_path.as_ptr());
     if result == 0 {
@@ -1627,7 +1692,7 @@ pub fn unlink_file(path: &str) -> io::Result<()> {
     }
 }
 
-pub fn read_file(path: &str) -> io::Result<String> {
+pub fn read_file(path: &str) -> SysResult<String> {
     let fd = open_file(path, O_RDONLY | O_CLOEXEC, 0)?;
     let mut contents = Vec::new();
     let mut buf = [0u8; 8192];
@@ -1642,7 +1707,7 @@ pub fn read_file(path: &str) -> io::Result<String> {
     Ok(String::from_utf8_lossy(&contents).into_owned())
 }
 
-pub fn open_for_redirect(path: &str, flags: c_int, mode: mode_t, noclobber: bool) -> io::Result<c_int> {
+pub fn open_for_redirect(path: &str, flags: c_int, mode: mode_t, noclobber: bool) -> SysResult<c_int> {
     let actual_flags = if noclobber && (flags & O_TRUNC != 0) {
         (flags & !O_TRUNC) | O_EXCL | O_CREAT
     } else {
@@ -1679,7 +1744,7 @@ impl ChildExitStatus {
 }
 
 impl ChildHandle {
-    pub fn wait_with_output(self) -> io::Result<ChildOutput> {
+    pub fn wait_with_output(self) -> SysResult<ChildOutput> {
         let mut output = Vec::new();
         if let Some(fd) = self.stdout_fd {
             let mut buf = [0u8; 8192];
@@ -1699,7 +1764,7 @@ impl ChildHandle {
         })
     }
 
-    pub fn wait(self) -> io::Result<ChildExitStatus> {
+    pub fn wait(self) -> SysResult<ChildExitStatus> {
         if let Some(fd) = self.stdout_fd {
             close_fd(fd)?;
         }
@@ -1708,7 +1773,7 @@ impl ChildHandle {
     }
 }
 
-pub fn fork_process() -> io::Result<Pid> {
+pub fn fork_process() -> SysResult<Pid> {
     let pid = (syscalls().fork)();
     if pid < 0 {
         Err(last_error())
@@ -1725,7 +1790,7 @@ pub fn spawn_child(
     stdin_fd: Option<c_int>,
     pipe_stdout: bool,
     process_group: Option<Pid>,
-) -> io::Result<ChildHandle> {
+) -> SysResult<ChildHandle> {
     let stdout_pipe = if pipe_stdout {
         let (r, w) = create_pipe()?;
         Some((r, w))
@@ -1788,7 +1853,7 @@ pub fn capture_child_output(
     program: &str,
     argv: &[&str],
     env_vars: Option<&[(&str, &str)]>,
-) -> io::Result<(i32, Vec<u8>)> {
+) -> SysResult<(i32, Vec<u8>)> {
     let handle = spawn_child(program, argv, env_vars, &[], None, true, None)?;
     let stdout_fd = handle.stdout_fd.expect("piped stdout");
     let mut output = Vec::new();
@@ -1809,7 +1874,7 @@ pub fn run_to_status(
     program: &str,
     argv: &[&str],
     env_vars: Option<&[(&str, &str)]>,
-) -> io::Result<i32> {
+) -> SysResult<i32> {
     let handle = spawn_child(program, argv, env_vars, &[], None, false, None)?;
     let ws = wait_pid(handle.pid, false)?.expect("child status");
     Ok(decode_wait_status(ws.status))
@@ -1833,7 +1898,7 @@ pub fn set_umask(mask: FileModeMask) -> FileModeMask {
     (syscalls().umask)(mask & 0o777) & 0o777
 }
 
-pub fn process_times() -> io::Result<ProcessTimes> {
+pub fn process_times() -> SysResult<ProcessTimes> {
     let mut raw = std::mem::MaybeUninit::<libc::tms>::zeroed();
     let result = (syscalls().times)(raw.as_mut_ptr());
     if result == ClockTicks::MAX {
@@ -1848,7 +1913,7 @@ pub fn process_times() -> io::Result<ProcessTimes> {
     })
 }
 
-pub fn clock_ticks_per_second() -> io::Result<u64> {
+pub fn clock_ticks_per_second() -> SysResult<u64> {
     let result = (syscalls().sysconf)(SC_CLK_TCK);
     if result > 0 {
         Ok(result as u64)
@@ -1860,11 +1925,11 @@ pub fn clock_ticks_per_second() -> io::Result<u64> {
 /// Execute a program, replacing the current process image.
 /// `program` is the file to exec and becomes argv[0].
 /// `argv` contains the remaining arguments (argv[1..]).
-pub fn exec_replace(program: &str, argv: &[String]) -> io::Result<()> {
+pub fn exec_replace(program: &str, argv: &[String]) -> SysResult<()> {
     let mut owned = Vec::with_capacity(argv.len() + 1);
-    owned.push(CString::new(program)?);
+    owned.push(CString::new(program).map_err(|_| SysError::NulInPath)?);
     for arg in argv {
-        owned.push(CString::new(arg.as_str())?);
+        owned.push(CString::new(arg.as_str()).map_err(|_| SysError::NulInPath)?);
     }
 
     let mut pointers: Vec<*const c_char> = owned.iter().map(|arg| arg.as_ptr()).collect();
@@ -2012,7 +2077,29 @@ mod tests {
         test_support::with_test_syscalls(fake, || {
             assert!(wait_pid(999_999, false).is_err());
         });
-        assert!(exec_replace("bad\0program", &["bad\0program".to_string()]).is_err());
+        let err = exec_replace("bad\0program", &[]).unwrap_err();
+        assert_eq!(err, SysError::NulInPath);
+        assert!(err.errno().is_none());
+        assert!(!err.is_enoent());
+        assert!(format!("{err}").contains("null"));
+
+        let err = exec_replace("ok", &["bad\0arg".to_string()]).unwrap_err();
+        assert_eq!(err, SysError::NulInPath);
+
+        let errno_err = SysError::Errno(libc::ENOENT);
+        assert_eq!(errno_err.errno(), Some(libc::ENOENT));
+        assert!(errno_err.is_enoent());
+        assert!(!errno_err.is_ebadf());
+        assert!(!errno_err.is_enoexec());
+        assert!(!errno_err.is_eintr());
+        assert!(!format!("{errno_err}").is_empty());
+
+        let ebadf = SysError::Errno(libc::EBADF);
+        assert!(ebadf.is_ebadf());
+        let enoexec = SysError::Errno(libc::ENOEXEC);
+        assert!(enoexec.is_enoexec());
+        let eintr = SysError::Errno(EINTR);
+        assert!(eintr.is_eintr());
     }
 
     #[test]
@@ -2212,7 +2299,7 @@ mod tests {
             assert_eq!(has_pending_signal(), None);
         });
 
-        let interrupted_error = io::Error::from_raw_os_error(EINTR);
+        let interrupted_error = SysError::Errno(EINTR);
         assert!(interrupted(&interrupted_error));
         assert_eq!(supported_trap_signals(), vec![SIGHUP, SIGINT, SIGQUIT, SIGABRT, SIGALRM, SIGTERM]);
     }

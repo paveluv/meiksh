@@ -1,8 +1,11 @@
-use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 
 use crate::shell::{Shell, ShellError, TrapAction, TrapCondition};
 use crate::sys;
+
+fn write_stderr(msg: &str) {
+    let _ = sys::write_all_fd(sys::STDERR_FILENO, msg.as_bytes());
+}
 
 #[derive(Debug)]
 pub enum BuiltinOutcome {
@@ -180,11 +183,11 @@ fn pwd(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
             "-L" => logical = true,
             "-P" => logical = false,
             _ if arg.starts_with('-') => {
-                eprintln!("pwd: invalid option: {arg}");
+                write_stderr(&format!("pwd: invalid option: {arg}\n"));
                 return Ok(BuiltinOutcome::Status(1));
             }
             _ => {
-                eprintln!("pwd: too many arguments");
+                write_stderr("pwd: too many arguments\n");
                 return Ok(BuiltinOutcome::Status(1));
             }
         }
@@ -250,7 +253,7 @@ fn unset(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellErro
         match target {
             UnsetTarget::Variable => {
                 if let Err(error) = shell.unset_var(item) {
-                    eprintln!("unset: {}", error.message);
+                    write_stderr(&format!("unset: {}\n", error.message));
                     status = 1;
                 }
             }
@@ -277,7 +280,7 @@ fn set(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
                     let reinput = arg == "+o";
                     if let Some(name) = argv.get(index + 1) {
                         if let Err(error) = shell.options.set_named_option(name, !reinput) {
-                            eprintln!("set: {}", error.display_message());
+                            write_stderr(&format!("set: {}\n", error.display_message()));
                             return BuiltinOutcome::Status(error.exit_status());
                         }
                         index += 2;
@@ -308,7 +311,7 @@ fn set(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
                             'u' => shell.options.nounset = enabled,
                             'v' => shell.options.verbose = enabled,
                             _ => {
-                                eprintln!("set: invalid option: {ch}");
+                                write_stderr(&format!("set: invalid option: {ch}\n"));
                                 return BuiltinOutcome::Status(2);
                             }
                         }
@@ -452,14 +455,14 @@ fn jobs(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
     let (pid_only, index) = match parse_jobs_options(argv) {
         Ok(value) => value,
         Err(message) => {
-            eprintln!("{message}");
+            write_stderr(&format!("{message}\n"));
             return BuiltinOutcome::Status(1);
         }
     };
     let selected = match parse_jobs_operands(&argv[index..]) {
         Ok(value) => value,
         Err(message) => {
-            eprintln!("{message}");
+            write_stderr(&format!("{message}\n"));
             return BuiltinOutcome::Status(1);
         }
     };
@@ -565,7 +568,7 @@ fn wait(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
             Ok(WaitOperand::Job(id)) => shell.wait_for_job_operand(id)?,
             Ok(WaitOperand::Pid(pid)) => shell.wait_for_pid_operand(pid)?,
             Err(message) => {
-                eprintln!("{message}");
+                write_stderr(&format!("{message}\n"));
                 1
             }
         };
@@ -581,35 +584,34 @@ struct ReadOptions {
 
 fn read(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     sys::ensure_blocking_read_fd(sys::STDIN_FILENO)?;
-    let mut stdin = sys::FdReader::new(sys::STDIN_FILENO);
-    read_with_input(shell, argv, &mut stdin)
+    read_with_input(shell, argv, sys::STDIN_FILENO)
 }
 
-fn read_with_input<R: Read>(
+fn read_with_input(
     shell: &mut Shell,
     argv: &[String],
-    input: &mut R,
+    input_fd: i32,
 ) -> Result<BuiltinOutcome, ShellError> {
     let Some((options, vars)) = parse_read_options(argv) else {
-        eprintln!("read: invalid usage");
+        write_stderr("read: invalid usage\n");
         return Ok(BuiltinOutcome::Status(2));
     };
     if vars.is_empty() {
-        eprintln!("read: variable name required");
+        write_stderr("read: variable name required\n");
         return Ok(BuiltinOutcome::Status(2));
     }
 
-    let (pieces, hit_delimiter) = match read_logical_line(shell, options, input) {
+    let (pieces, hit_delimiter) = match read_logical_line(shell, options, input_fd) {
         Ok(result) => result,
         Err(error) => {
-            eprintln!("read: {error}");
+            write_stderr(&format!("read: {error}\n"));
             return Ok(BuiltinOutcome::Status(2));
         }
     };
     let values = split_read_assignments(&pieces, &vars, shell.get_var("IFS"));
     for (name, value) in vars.iter().zip(values) {
         if let Err(error) = shell.set_var(name, value) {
-            eprintln!("read: {}", error.message);
+            write_stderr(&format!("read: {}\n", error.message));
             return Ok(BuiltinOutcome::Status(2));
         }
     }
@@ -650,25 +652,25 @@ fn parse_read_options(argv: &[String]) -> Option<(ReadOptions, Vec<String>)> {
     Some((options, argv[index..].to_vec()))
 }
 
-fn read_logical_line<R: Read>(
+fn read_logical_line(
     shell: &Shell,
     options: ReadOptions,
-    input: &mut R,
-) -> io::Result<(Vec<(String, bool)>, bool)> {
+    input_fd: i32,
+) -> sys::SysResult<(Vec<(String, bool)>, bool)> {
     let mut pieces = Vec::new();
     let mut current = String::new();
     let mut current_quoted = false;
 
     loop {
         let mut byte = [0u8; 1];
-        let count = input.read(&mut byte)?;
+        let count = sys::read_fd(input_fd, &mut byte)?;
         if count == 0 {
             push_read_piece(&mut pieces, &mut current, current_quoted);
             return Ok((pieces, false));
         }
         let ch = byte[0];
         if !options.raw && ch == b'\\' {
-            let count = input.read(&mut byte)?;
+            let count = sys::read_fd(input_fd, &mut byte)?;
             if count == 0 {
                 current.push('\\');
                 push_read_piece(&mut pieces, &mut current, current_quoted);
@@ -682,8 +684,7 @@ fn read_logical_line<R: Read>(
                     || (sys::is_interactive_fd(sys::STDIN_FILENO) && sys::is_interactive_fd(sys::STDERR_FILENO))
                 {
                     let prompt = shell.get_var("PS2").unwrap_or_else(|| "> ".to_string());
-                    eprint!("{prompt}");
-                    let _ = io::stderr().flush();
+                    let _ = sys::write_all_fd(sys::STDERR_FILENO, prompt.as_bytes());
                 }
                 continue;
             }
@@ -821,7 +822,7 @@ fn alias(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellErro
         } else if let Some(value) = shell.aliases.get(item) {
             println!("{}", format_alias_definition(item, value));
         } else {
-            eprintln!("alias: {item}: not found");
+            write_stderr(&format!("alias: {item}: not found\n"));
             status = 1;
         }
     }
@@ -886,7 +887,7 @@ fn times() -> BuiltinOutcome {
             BuiltinOutcome::Status(0)
         }
         (Err(error), _) | (_, Err(error)) => {
-            eprintln!("times: {error}");
+            write_stderr(&format!("times: {error}\n"));
             BuiltinOutcome::Status(1)
         }
     }
@@ -896,7 +897,7 @@ fn trap(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
     match trap_impl(shell, argv) {
         Ok(status) => BuiltinOutcome::Status(status),
         Err(error) => {
-            eprintln!("trap: {}", error.message);
+            write_stderr(&format!("trap: {}\n", error.message));
             BuiltinOutcome::Status(1)
         }
     }
@@ -939,7 +940,7 @@ fn trap_impl(shell: &mut Shell, argv: &[String]) -> Result<i32, ShellError> {
             if let Some(condition) = parse_trap_condition(condition) {
                 shell.set_trap(condition, None)?;
             } else {
-                eprintln!("trap: invalid condition: {condition}");
+                write_stderr(&format!("trap: invalid condition: {condition}\n"));
                 return Ok(1);
             }
         }
@@ -955,7 +956,7 @@ fn trap_impl(shell: &mut Shell, argv: &[String]) -> Result<i32, ShellError> {
     let mut status = 0;
     for condition in &argv[2..] {
         let Some(condition) = parse_trap_condition(condition) else {
-            eprintln!("trap: invalid condition: {condition}");
+            write_stderr(&format!("trap: invalid condition: {condition}\n"));
             status = 1;
             continue;
         };
@@ -1074,7 +1075,7 @@ fn umask(argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
                 break;
             }
             _ if arg.starts_with('-') && arg != "-" => {
-                eprintln!("umask: invalid option: {arg}");
+                write_stderr(&format!("umask: invalid option: {arg}\n"));
                 return Ok(BuiltinOutcome::Status(1));
             }
             _ => break,
@@ -1091,12 +1092,12 @@ fn umask(argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
         return Ok(BuiltinOutcome::Status(0));
     }
     if index + 1 != argv.len() {
-        eprintln!("umask: too many arguments");
+        write_stderr("umask: too many arguments\n");
         return Ok(BuiltinOutcome::Status(1));
     }
 
     let Some(mask) = parse_umask_mask(&argv[index], current) else {
-        eprintln!("umask: invalid mask: {}", argv[index]);
+        write_stderr(&format!("umask: invalid mask: {}\n", argv[index]));
         return Ok(BuiltinOutcome::Status(1));
     };
     sys::set_umask(mask as sys::FileModeMask);
@@ -1242,12 +1243,12 @@ fn symbolic_permissions_for_class(mask: u16, class_mask: u16, shift: u16) -> Str
 fn command(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     let (use_default_path, mode, index) = parse_command_options(argv);
     let Some(name) = argv.get(index) else {
-        eprintln!("command: utility name required");
+        write_stderr("command: utility name required\n");
         return Ok(BuiltinOutcome::Status(command_usage_status(mode)));
     };
 
     if mode != CommandMode::Execute && index + 1 != argv.len() {
-        eprintln!("command: too many arguments");
+        write_stderr("command: too many arguments\n");
         return Ok(BuiltinOutcome::Status(1));
     }
 
@@ -1485,20 +1486,20 @@ fn execute_command_utility(
         return match run(shell, argv) {
             Ok(outcome) => Ok(outcome),
             Err(error) => {
-                eprintln!("{}", error.message);
+                write_stderr(&format!("{}\n", error.message));
                 Ok(BuiltinOutcome::Status(1))
             }
         };
     }
 
     let Some(path) = which_in_path(name, shell, use_default_path) else {
-        eprintln!("command: {name}: not found");
+        write_stderr(&format!("command: {name}: not found\n"));
         return Ok(BuiltinOutcome::Status(127));
     };
 
     let path_str = path.display().to_string();
     if sys::access_path(&path_str, sys::X_OK).is_err() {
-        eprintln!("command: {name}: Permission denied");
+        write_stderr(&format!("command: {name}: Permission denied\n"));
         return Ok(BuiltinOutcome::Status(126));
     }
 
@@ -1511,12 +1512,12 @@ fn execute_command_utility(
 
     match sys::run_to_status(&path_str, &argv_strs, Some(&env_pairs)) {
         Ok(status) => Ok(BuiltinOutcome::Status(status)),
-        Err(error) if error.raw_os_error() == Some(2) => {
-            eprintln!("command: {name}: not found");
+        Err(error) if error.is_enoent() => {
+            write_stderr(&format!("command: {name}: not found\n"));
             Ok(BuiltinOutcome::Status(127))
         }
         Err(error) => {
-            eprintln!("command: {name}: {error}");
+            write_stderr(&format!("command: {name}: {error}\n"));
             Ok(BuiltinOutcome::Status(126))
         }
     }
@@ -1606,7 +1607,6 @@ mod tests {
     use crate::shell::ShellOptions;
     use crate::syntax::Word;
     use std::collections::{BTreeMap, BTreeSet, HashMap};
-    use std::io::{self, Cursor};
 
     use crate::sys::test_support::VfsBuilder;
     use crate::test_utils::meiksh_bin_path;
@@ -1815,92 +1815,113 @@ mod tests {
 
     #[test]
     fn read_and_times_error_paths_are_covered() {
-        struct FailingReader;
-        impl Read for FailingReader {
-            fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
-                Err(io::Error::other("boom"))
-            }
-        }
+        VfsBuilder::new()
+            .file("/tmp/empty", b"")
+            .file("/tmp/value_nl", b"value\n")
+            .file("/tmp/continued", b"line\\\ncontinued\n")
+            .file("/tmp/softwrap", b"soft\\\nwrap\n")
+            .file("/tmp/escaped", b"left\\ right\n")
+            .file("/tmp/tail_bs", b"tail\\")
+            .file("/dev/stderr", b"")
+            .stderr("/dev/stderr")
+            .run(|| {
+                let mut shell = test_shell();
 
-        let mut shell = test_shell();
-        assert!(matches!(
-            read_with_input(&mut shell, &["read".into()], &mut Cursor::new(Vec::<u8>::new())).expect("read no vars"),
-            BuiltinOutcome::Status(2)
-        ));
-        assert!(matches!(
-            read_with_input(
-                &mut shell,
-                &["read".into(), "-d".into(), "xx".into(), "NAME".into()],
-                &mut Cursor::new(Vec::<u8>::new()),
-            )
-            .expect("read bad delim"),
-            BuiltinOutcome::Status(2)
-        ));
-        assert!(matches!(
-            read_with_input(
-                &mut shell,
-                &["read".into(), "NAME".into()],
-                &mut FailingReader,
-            )
-            .expect("read io error"),
-            BuiltinOutcome::Status(2)
-        ));
+                let empty_fd = sys::open_file("/tmp/empty", sys::O_RDONLY, 0).expect("open empty");
+                assert!(matches!(
+                    read_with_input(&mut shell, &["read".into()], empty_fd).expect("read no vars"),
+                    BuiltinOutcome::Status(2)
+                ));
+                sys::close_fd(empty_fd).ok();
 
-        shell.mark_readonly("LOCKED");
-        assert!(matches!(
-            read_with_input(
-                &mut shell,
-                &["read".into(), "LOCKED".into()],
-                &mut Cursor::new(b"value\n".to_vec()),
-            )
-            .expect("readonly read"),
-            BuiltinOutcome::Status(2)
-        ));
+                let empty_fd2 = sys::open_file("/tmp/empty", sys::O_RDONLY, 0).expect("open empty2");
+                assert!(matches!(
+                    read_with_input(
+                        &mut shell,
+                        &["read".into(), "-d".into(), "xx".into(), "NAME".into()],
+                        empty_fd2,
+                    )
+                    .expect("read bad delim"),
+                    BuiltinOutcome::Status(2)
+                ));
+                sys::close_fd(empty_fd2).ok();
 
-        shell.options.force_interactive = true;
-        shell.env.insert("PS2".into(), "cont> ".into());
-        assert!(matches!(
-            read_with_input(
-                &mut shell,
-                &["read".into(), "JOINED".into()],
-                &mut Cursor::new(b"line\\\ncontinued\n".to_vec()),
-            )
-            .expect("continued read"),
-            BuiltinOutcome::Status(0)
-        ));
-        assert_eq!(shell.get_var("JOINED").as_deref(), Some("linecontinued"));
+                assert!(matches!(
+                    read_with_input(
+                        &mut shell,
+                        &["read".into(), "NAME".into()],
+                        -1,
+                    )
+                    .expect("read io error"),
+                    BuiltinOutcome::Status(2)
+                ));
 
-        shell.options.force_interactive = false;
-        let (pieces, hit_delimiter) = read_logical_line(
-            &shell,
-            ReadOptions { raw: false, delimiter: b'\n' },
-            &mut Cursor::new(b"soft\\\nwrap\n".to_vec()),
-        )
-        .expect("direct read");
-        assert!(hit_delimiter);
-        assert_eq!(flatten_read_pieces(&pieces), "softwrap");
+                shell.mark_readonly("LOCKED");
+                let value_fd = sys::open_file("/tmp/value_nl", sys::O_RDONLY, 0).expect("open value");
+                assert!(matches!(
+                    read_with_input(
+                        &mut shell,
+                        &["read".into(), "LOCKED".into()],
+                        value_fd,
+                    )
+                    .expect("readonly read"),
+                    BuiltinOutcome::Status(2)
+                ));
+                sys::close_fd(value_fd).ok();
 
-        assert!(matches!(
-            read_with_input(
-                &mut shell,
-                &["read".into(), "ESCAPED".into()],
-                &mut Cursor::new(b"left\\ right\n".to_vec()),
-            )
-            .expect("escaped read"),
-            BuiltinOutcome::Status(0)
-        ));
-        assert_eq!(shell.get_var("ESCAPED").as_deref(), Some("left right"));
+                shell.options.force_interactive = true;
+                shell.env.insert("PS2".into(), "cont> ".into());
+                let cont_fd = sys::open_file("/tmp/continued", sys::O_RDONLY, 0).expect("open continued");
+                assert!(matches!(
+                    read_with_input(
+                        &mut shell,
+                        &["read".into(), "JOINED".into()],
+                        cont_fd,
+                    )
+                    .expect("continued read"),
+                    BuiltinOutcome::Status(0)
+                ));
+                assert_eq!(shell.get_var("JOINED").as_deref(), Some("linecontinued"));
+                sys::close_fd(cont_fd).ok();
 
-        assert!(matches!(
-            read_with_input(
-                &mut shell,
-                &["read".into(), "TAIL".into()],
-                &mut Cursor::new(b"tail\\".to_vec()),
-            )
-            .expect("tail read"),
-            BuiltinOutcome::Status(1)
-        ));
-        assert_eq!(shell.get_var("TAIL").as_deref(), Some("tail\\"));
+                shell.options.force_interactive = false;
+                let wrap_fd = sys::open_file("/tmp/softwrap", sys::O_RDONLY, 0).expect("open softwrap");
+                let (pieces, hit_delimiter) = read_logical_line(
+                    &shell,
+                    ReadOptions { raw: false, delimiter: b'\n' },
+                    wrap_fd,
+                )
+                .expect("direct read");
+                assert!(hit_delimiter);
+                assert_eq!(flatten_read_pieces(&pieces), "softwrap");
+                sys::close_fd(wrap_fd).ok();
+
+                let esc_fd = sys::open_file("/tmp/escaped", sys::O_RDONLY, 0).expect("open escaped");
+                assert!(matches!(
+                    read_with_input(
+                        &mut shell,
+                        &["read".into(), "ESCAPED".into()],
+                        esc_fd,
+                    )
+                    .expect("escaped read"),
+                    BuiltinOutcome::Status(0)
+                ));
+                assert_eq!(shell.get_var("ESCAPED").as_deref(), Some("left right"));
+                sys::close_fd(esc_fd).ok();
+
+                let tail_fd = sys::open_file("/tmp/tail_bs", sys::O_RDONLY, 0).expect("open tail");
+                assert!(matches!(
+                    read_with_input(
+                        &mut shell,
+                        &["read".into(), "TAIL".into()],
+                        tail_fd,
+                    )
+                    .expect("tail read"),
+                    BuiltinOutcome::Status(1)
+                ));
+                assert_eq!(shell.get_var("TAIL").as_deref(), Some("tail\\"));
+                sys::close_fd(tail_fd).ok();
+            });
 
         sys::test_support::with_times_error_for_test(|| {
             assert!(matches!(times(), BuiltinOutcome::Status(1)));

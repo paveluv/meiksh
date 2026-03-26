@@ -8,6 +8,8 @@ disallowed-types = [
     { path = "std::process::Child", reason = "Use sys::ChildHandle instead of std::process::Child" },
     { path = "std::process::Stdio", reason = "Use raw fd operations through sys:: instead" },
     { path = "std::process::ExitStatus", reason = "Use sys::ChildExitStatus instead" },
+    { path = "std::io::Error", reason = "Use sys::SysError instead" },
+    { path = "std::io::Result", reason = "Use sys::SysResult instead" },
 ]
 
 disallowed-methods = [
@@ -26,4 +28,7 @@ disallowed-methods = [
     { path = "std::path::Path::metadata", reason = "Use sys::stat_path instead" },
     { path = "std::path::Path::canonicalize", reason = "Use sys::canonicalize instead" },
     { path = "std::io::Error::last_os_error", reason = "Use sys::last_error() instead for mockability" },
+    { path = "std::io::stdin", reason = "Use sys::read_fd(STDIN_FILENO, ...) instead" },
+    { path = "std::io::stdout", reason = "Use sys::write_all_fd(STDOUT_FILENO, ...) instead" },
+    { path = "std::io::stderr", reason = "Use sys::write_all_fd(STDERR_FILENO, ...) instead" },
 ]

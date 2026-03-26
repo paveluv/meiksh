@@ -15,6 +15,7 @@ pub use shell::run_from_env;
 pub(crate) mod test_utils {
     use std::path::PathBuf;
 
+    #[allow(clippy::disallowed_methods)]
     pub(crate) fn meiksh_bin_path() -> PathBuf {
         let exe = std::env::current_exe().expect("current exe");
         exe.parent()
