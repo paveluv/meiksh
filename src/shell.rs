@@ -483,7 +483,7 @@ impl Shell {
         self.positional = values;
     }
 
-    pub fn launch_background_job(
+    pub fn register_background_job(
         &mut self,
         command: String,
         pgid: Option<sys::Pid>,
@@ -1259,7 +1259,7 @@ mod tests {
                 TraceResult::Status(7)),
         ], || {
             let mut shell = test_shell();
-            let id = shell.launch_background_job("exit 7".into(), None, vec![fake_handle(1001)]);
+            let id = shell.register_background_job("exit 7".into(), None, vec![fake_handle(1001)]);
             let status = shell.wait_for_job(id).expect("wait");
             assert_eq!(status, 7);
             assert_eq!(shell.last_status, 7);
@@ -1313,7 +1313,7 @@ mod tests {
                 TraceResult::Status(0)),
         ], || {
             let mut shell = test_shell();
-            shell.launch_background_job("exit 0".into(), None, vec![fake_handle(1001)]);
+            shell.register_background_job("exit 0".into(), None, vec![fake_handle(1001)]);
             let finished = shell.reap_jobs();
             assert_eq!(finished, vec![(1, 0)]);
             assert!(shell.jobs.is_empty());
@@ -1357,7 +1357,7 @@ mod tests {
                 TraceResult::Err(libc::ECHILD)),
         ], || {
             let mut shell = test_shell();
-            let id = shell.launch_background_job("exit 0".into(), None, vec![fake_handle(1001)]);
+            let id = shell.register_background_job("exit 0".into(), None, vec![fake_handle(1001)]);
             let finished = shell.reap_jobs();
             assert_eq!(finished, vec![(id, 1)]);
             assert!(shell.jobs.is_empty());
@@ -1614,7 +1614,7 @@ mod tests {
     }
 
     #[test]
-    fn print_jobs_covers_running_and_finished_paths() {
+    fn print_jobs_shows_done_for_finished_job() {
         run_trace(vec![
             // reap_jobs for 1001 (explicit call)
             t("waitpid", vec![ArgMatcher::Int(1001), ArgMatcher::Any, ArgMatcher::Any],
@@ -1625,14 +1625,17 @@ mod tests {
                 TraceResult::Status(0)),
         ], || {
             let mut shell = test_shell();
-            shell.launch_background_job("done".into(), None, vec![fake_handle(1001)]);
+            shell.register_background_job("done".into(), None, vec![fake_handle(1001)]);
             shell.reap_jobs();
-            shell.launch_background_job("sleep".into(), None, vec![fake_handle(1002)]);
+            shell.register_background_job("sleep".into(), None, vec![fake_handle(1002)]);
             // Covers "Done" branch in print_jobs (1002 finishes with WNOHANG)
             shell.print_jobs();
             assert!(shell.jobs.is_empty());
         });
+    }
 
+    #[test]
+    fn print_jobs_shows_running_for_active_job() {
         // Cover the "Running" branch
         run_trace(vec![
             t("waitpid", vec![ArgMatcher::Int(1003), ArgMatcher::Any, ArgMatcher::Any],
@@ -1642,7 +1645,7 @@ mod tests {
                 TraceResult::Status(0)),
         ], || {
             let mut shell = test_shell();
-            shell.launch_background_job("sleep".into(), None, vec![fake_handle(1003)]);
+            shell.register_background_job("sleep".into(), None, vec![fake_handle(1003)]);
             shell.print_jobs();
             if let Some(id) = shell.jobs.first().map(|job| job.id) {
                 let _ = shell.wait_for_job(id);
@@ -1693,7 +1696,7 @@ mod tests {
                 TraceResult::Status(0)),
         ], || {
             let mut shell = test_shell();
-            shell.launch_background_job("done".into(), None, vec![fake_handle(1001)]);
+            shell.register_background_job("done".into(), None, vec![fake_handle(1001)]);
             shell.print_jobs();
             assert!(shell.jobs.is_empty());
         });
@@ -1803,7 +1806,7 @@ mod tests {
             t("kill", vec![ArgMatcher::Int(-11), ArgMatcher::Int(sys::SIGCONT as i64)], TraceResult::Int(0)),
         ], || {
             let mut shell = test_shell();
-            let id = shell.launch_background_job("sleep".into(), Some(11), vec![fake_handle(1001)]);
+            let id = shell.register_background_job("sleep".into(), Some(11), vec![fake_handle(1001)]);
             shell.continue_job(id).expect("continue pgid job");
             shell.jobs.clear();
         });
@@ -1819,7 +1822,7 @@ mod tests {
                 .expect("trap");
         });
 
-        shell.launch_background_job("sleep".into(), None, vec![fake_handle(2001)]);
+        shell.register_background_job("sleep".into(), None, vec![fake_handle(2001)]);
         sys::test_support::set_pending_signals_for_test(&[sys::SIGINT]);
         run_trace(vec![
             t("waitpid", vec![ArgMatcher::Int(2001), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Err(libc::EINTR)),
@@ -1855,7 +1858,7 @@ mod tests {
     #[test]
     fn wait_operations_fail_on_echild() {
         let mut shell = test_shell();
-        shell.launch_background_job("sleep".into(), None, vec![fake_handle(2002)]);
+        shell.register_background_job("sleep".into(), None, vec![fake_handle(2002)]);
         run_trace(vec![
             t("waitpid", vec![ArgMatcher::Int(2002), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Err(libc::ECHILD)),
             t("waitpid", vec![ArgMatcher::Int(99), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Err(libc::ECHILD)),
@@ -1875,7 +1878,7 @@ mod tests {
                 .expect("trap");
         });
 
-        shell.launch_background_job("sleep".into(), None, vec![fake_handle(2003)]);
+        shell.register_background_job("sleep".into(), None, vec![fake_handle(2003)]);
         sys::test_support::set_pending_signals_for_test(&[sys::SIGINT]);
         run_trace(vec![
             t("waitpid", vec![ArgMatcher::Int(2003), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Err(libc::EINTR)),
@@ -1883,7 +1886,7 @@ mod tests {
             assert_eq!(shell.wait_for_pid_operand(2003).expect("pid interrupt"), 130);
         });
 
-        shell.launch_background_job("sleep".into(), None, vec![fake_handle(2004)]);
+        shell.register_background_job("sleep".into(), None, vec![fake_handle(2004)]);
         run_trace(vec![
             t("waitpid", vec![ArgMatcher::Int(2004), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Err(libc::ECHILD)),
         ], || {
@@ -1901,8 +1904,8 @@ mod tests {
                 .expect("trap");
         });
 
-        shell.launch_background_job("sleep".into(), None, vec![fake_handle(2002)]);
-        shell.launch_background_job("sleep".into(), None, vec![fake_handle(2005)]);
+        shell.register_background_job("sleep".into(), None, vec![fake_handle(2002)]);
+        shell.register_background_job("sleep".into(), None, vec![fake_handle(2005)]);
         sys::test_support::set_pending_signals_for_test(&[sys::SIGINT]);
         run_trace(vec![
             t("waitpid", vec![ArgMatcher::Int(2002), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Err(libc::EINTR)),
@@ -1914,7 +1917,7 @@ mod tests {
     #[test]
     fn known_job_status_fast_path_avoids_syscalls() {
         let mut shell = test_shell();
-        let id = shell.launch_background_job("sleep".into(), None, vec![fake_handle(2006)]);
+        let id = shell.register_background_job("sleep".into(), None, vec![fake_handle(2006)]);
         if let Some(job) = shell.jobs.iter().find(|job| job.id == id) {
             if let Some(pid) = job.last_pid {
                 shell.known_pid_statuses.insert(pid, 1);
