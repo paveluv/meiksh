@@ -1306,12 +1306,17 @@ mod tests {
     }
 
     #[test]
-    fn expands_arithmetic_and_command_substitution() {
+    fn expands_arithmetic_expressions() {
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(&mut ctx, &Word { raw: "$((1 + 2 * 3))".to_string() }).expect("expand"),
             vec!["7".to_string()]
         );
+    }
+
+    #[test]
+    fn expands_command_substitution() {
+        let mut ctx = FakeContext::new();
         assert_eq!(
             expand_words(
                 &mut ctx,
@@ -1939,7 +1944,7 @@ mod tests {
     }
 
     #[test]
-    fn default_pathname_context_and_unmatched_glob_are_covered() {
+    fn default_pathname_context_trait_impl() {
         let mut ctx = DefaultPathContext::new();
         assert_eq!(ctx.special_param('?'), None);
         assert_eq!(ctx.positional_param(0), Some("meiksh".to_string()));
@@ -1948,6 +1953,11 @@ mod tests {
         assert_eq!(ctx.env_var("NAME"), Some("value".to_string()));
         assert_eq!(ctx.shell_name(), "meiksh");
         assert_eq!(ctx.command_substitute("printf ok").expect("substitute"), "printf ok\n");
+    }
+
+    #[test]
+    fn unmatched_glob_returns_pattern_literally() {
+        let mut ctx = DefaultPathContext::new();
         assert_eq!(
             expand_word(&mut ctx, &Word { raw: "*.definitely-no-match".to_string() }).expect("unmatched glob"),
             vec!["*.definitely-no-match".to_string()]

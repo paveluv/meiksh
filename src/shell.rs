@@ -1286,13 +1286,19 @@ mod tests {
     }
 
     #[test]
-    fn export_without_value_and_run_source_syntax_only_work() {
+    fn export_without_value_marks_variable_exported() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
             shell.env.insert("NAME".into(), "value".into());
             shell.export_var("NAME", None).expect("export");
             assert!(shell.exported.contains("NAME"));
+        });
+    }
 
+    #[test]
+    fn run_source_syntax_only_parses_without_executing() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
             shell.options.syntax_check_only = true;
             let status = shell.run_source("<test>", "echo ok").expect("syntax only");
             assert_eq!(status, 0);
@@ -1301,7 +1307,7 @@ mod tests {
     }
 
     #[test]
-    fn reap_jobs_and_run_builtin_cover_flow_variants() {
+    fn reap_jobs_collects_finished_background_jobs() {
         run_trace(vec![
             t("waitpid", vec![ArgMatcher::Int(1001), ArgMatcher::Any, ArgMatcher::Any],
                 TraceResult::Status(0)),
@@ -1311,6 +1317,13 @@ mod tests {
             let finished = shell.reap_jobs();
             assert_eq!(finished, vec![(1, 0)]);
             assert!(shell.jobs.is_empty());
+        });
+    }
+
+    #[test]
+    fn run_builtin_returns_correct_flow_signals() {
+        run_trace(vec![], || {
+            let mut shell = test_shell();
 
             let flow = shell
                 .run_builtin(&["export".into(), "FLOW=1".into()], &[("ASSIGN".into(), "2".into())])
@@ -1352,7 +1365,7 @@ mod tests {
     }
 
     #[test]
-    fn continue_job_and_source_path_error_when_missing() {
+    fn continue_job_errors_when_job_missing() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
             let error = shell.continue_job(99).expect_err("missing job");
@@ -1361,7 +1374,10 @@ mod tests {
             let error = shell.wait_for_job(99).expect_err("missing job");
             assert_eq!(error.message, "job 99: not found");
         });
+    }
 
+    #[test]
+    fn source_path_errors_when_file_missing() {
         run_trace(vec![
             t("open", vec![ArgMatcher::Str("/definitely/missing-meiksh-script".into()), ArgMatcher::Any, ArgMatcher::Any],
                 TraceResult::Err(libc::ENOENT)),
@@ -1373,7 +1389,7 @@ mod tests {
     }
 
     #[test]
-    fn shell_helpers_cover_display_conversions_and_capture() {
+    fn shell_error_converts_from_parse_and_expand_errors() {
         assert_no_syscalls(|| {
             let parse_err = syntax::parse("echo 'unterminated").expect_err("parse");
             let shell_err: ShellError = parse_err.into();
@@ -1383,7 +1399,10 @@ mod tests {
             assert_eq!(expand_err.message, "expand");
             assert_eq!(format!("{}", shell_err), shell_err.message);
         });
+    }
 
+    #[test]
+    fn capture_output_and_context_trait_methods_work() {
         fn capture_trace(data: &[u8], exit_status: i32, pid: i32) -> Vec<test_support::TraceEntry> {
             let mut entries = vec![
                 t("pipe", vec![], TraceResult::Fds(200, 201)),
@@ -1459,7 +1478,7 @@ mod tests {
     }
 
     #[test]
-    fn shell_run_covers_script_path_and_capture_error() {
+    fn shell_run_executes_script_from_path() {
         run_trace(vec![
             t("open", vec![ArgMatcher::Str("/tmp/run-test.sh".into()), ArgMatcher::Any, ArgMatcher::Any],
                 TraceResult::Fd(10)),
@@ -1475,7 +1494,10 @@ mod tests {
             assert_eq!(status, 0);
             assert_eq!(shell.get_var("VALUE").as_deref(), Some("77"));
         });
+    }
 
+    #[test]
+    fn capture_output_returns_error_on_command_failure() {
         run_trace(vec![
             t("pipe", vec![], TraceResult::Fds(200, 201)),
             t("fork", vec![], TraceResult::Pid(1000)),
@@ -1564,7 +1586,7 @@ mod tests {
     }
 
     #[test]
-    fn shell_run_command_string_and_capture_spawn_error_paths_work() {
+    fn shell_run_executes_command_string() {
         run_trace(vec![], || {
             let mut shell = test_shell();
             shell.options.command_string = Some("VALUE=13".into());
@@ -1572,7 +1594,10 @@ mod tests {
             assert_eq!(status, 0);
             assert_eq!(shell.get_var("VALUE").as_deref(), Some("13"));
         });
+    }
 
+    #[test]
+    fn capture_output_returns_error_on_spawn_failure() {
         run_trace(vec![
             t("pipe", vec![], TraceResult::Fds(200, 201)),
             t("fork", vec![], TraceResult::Pid(1000)),
@@ -1675,8 +1700,7 @@ mod tests {
     }
 
     #[test]
-    fn trap_and_wait_helpers_cover_remaining_signal_and_status_paths() {
-        // set_trap requires signal syscall
+    fn set_trap_ignore_and_default_use_signal_syscall() {
         run_trace(vec![
             t("signal", vec![ArgMatcher::Int(sys::SIGTERM as i64), ArgMatcher::Any], TraceResult::Int(0)),
             t("signal", vec![ArgMatcher::Int(sys::SIGTERM as i64), ArgMatcher::Any], TraceResult::Int(0)),
@@ -1692,7 +1716,10 @@ mod tests {
             shell.set_trap(TrapCondition::Signal(sys::SIGTERM), None).expect("default");
             assert!(shell.trap_action(TrapCondition::Signal(sys::SIGTERM)).is_none());
         });
+    }
 
+    #[test]
+    fn wait_operands_return_known_statuses_or_127() {
         run_trace(vec![], || {
             let mut shell = test_shell();
             shell.known_job_statuses.insert(9, 44);
@@ -1702,22 +1729,25 @@ mod tests {
             assert_eq!(shell.wait_for_job_operand(999).expect("unknown job"), 127);
             assert_eq!(shell.wait_for_pid_operand(999_999).expect("unknown pid"), 127);
         });
+    }
 
-        // foreground_handoff: isatty(stdin)=1, isatty(stderr)=1, tcgetpgrp(stdin)=77, tcsetpgrp(stdin,88)=0
+    #[test]
+    fn foreground_handoff_switches_terminal_process_group() {
         run_trace(vec![
             t("isatty", vec![ArgMatcher::Fd(sys::STDIN_FILENO)], TraceResult::Int(1)),
             t("isatty", vec![ArgMatcher::Fd(sys::STDERR_FILENO)], TraceResult::Int(1)),
             t("tcgetpgrp", vec![ArgMatcher::Fd(sys::STDIN_FILENO)], TraceResult::Pid(77)),
             t("tcsetpgrp", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Int(88)], TraceResult::Int(0)),
-            // restore_foreground
             t("tcsetpgrp", vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Int(77)], TraceResult::Int(0)),
         ], || {
             let shell = test_shell();
             assert_eq!(shell.foreground_handoff(Some(88)), Some(77));
             shell.restore_foreground(Some(77));
         });
+    }
 
-        // foreground_handoff: tcgetpgrp returns -1 → None
+    #[test]
+    fn foreground_handoff_returns_none_when_tcgetpgrp_fails() {
         run_trace(vec![
             t("isatty", vec![ArgMatcher::Fd(sys::STDIN_FILENO)], TraceResult::Int(1)),
             t("isatty", vec![ArgMatcher::Fd(sys::STDERR_FILENO)], TraceResult::Int(1)),
@@ -1726,13 +1756,13 @@ mod tests {
             let shell = test_shell();
             assert_eq!(shell.foreground_handoff(Some(88)), None);
         });
+    }
 
+    #[test]
+    fn execute_trap_action_and_run_pending_traps_work() {
         run_trace(vec![
-            // set_trap(SIGINT, Command(":")) → install handler
             t("signal", vec![ArgMatcher::Int(sys::SIGINT as i64), ArgMatcher::Any], TraceResult::Int(0)),
-            // set_trap(SIGINT, Command("exit 7")) → install handler
             t("signal", vec![ArgMatcher::Int(sys::SIGINT as i64), ArgMatcher::Any], TraceResult::Int(0)),
-            // set_trap(SIGTERM, Ignore) → ignore signal
             t("signal", vec![ArgMatcher::Int(sys::SIGTERM as i64), ArgMatcher::Any], TraceResult::Int(0)),
         ], || {
             let mut shell = test_shell();
@@ -1741,7 +1771,6 @@ mod tests {
             assert_eq!(shell.last_status, 9);
             shell.running = true;
 
-            // run_pending_traps with Command trap (use ":" builtin for no external command)
             shell
                 .set_trap(TrapCondition::Signal(sys::SIGINT), Some(TrapAction::Command(":".into())))
                 .expect("trap");
@@ -1750,7 +1779,6 @@ mod tests {
             });
             assert_eq!(shell.last_status, 9);
 
-            // exit trap
             shell
                 .set_trap(TrapCondition::Signal(sys::SIGINT), Some(TrapAction::Command("exit 7".into())))
                 .expect("exit trap");
@@ -1760,7 +1788,6 @@ mod tests {
             assert!(!shell.running);
             shell.running = true;
 
-            // Ignore trap
             shell
                 .set_trap(TrapCondition::Signal(sys::SIGTERM), Some(TrapAction::Ignore))
                 .expect("ignore trap");
@@ -1768,8 +1795,10 @@ mod tests {
                 shell.run_pending_traps().expect("ignored pending");
             });
         });
+    }
 
-        // continue_job with pgid — just sends SIGCONT to the process group
+    #[test]
+    fn continue_job_sends_sigcont_to_process_group() {
         run_trace(vec![
             t("kill", vec![ArgMatcher::Int(-11), ArgMatcher::Int(sys::SIGCONT as i64)], TraceResult::Int(0)),
         ], || {
@@ -1781,10 +1810,8 @@ mod tests {
     }
 
     #[test]
-    fn wait_interrupt_and_foreground_paths_are_covered() {
+    fn wait_for_job_operand_returns_130_on_eintr_with_pending_signal() {
         let mut shell = test_shell();
-
-        // set_trap(Signal(SIGINT), Command(":")) calls install_shell_signal_handler → signal()
         run_trace(vec![
             t("signal", vec![ArgMatcher::Int(sys::SIGINT as i64), ArgMatcher::Any], TraceResult::Int(0)),
         ], || {
@@ -1792,7 +1819,6 @@ mod tests {
                 .expect("trap");
         });
 
-        // wait_for_job_operand: waitpid returns EINTR with SIGINT pending → interrupted
         shell.launch_background_job("sleep".into(), None, vec![fake_handle(2001)]);
         sys::test_support::set_pending_signals_for_test(&[sys::SIGINT]);
         run_trace(vec![
@@ -1801,9 +1827,11 @@ mod tests {
             assert_eq!(shell.wait_for_job_operand(1).expect("interrupted wait"), 130);
         });
         assert_eq!(shell.last_status, 130);
-        shell.jobs.clear();
+    }
 
-        // wait_for_child_pid(99, false): EINTR → continue, 0 → continue, Status(7) → done
+    #[test]
+    fn wait_for_child_pid_retries_on_eintr_and_pid_zero() {
+        let mut shell = test_shell();
         run_trace(vec![
             t("waitpid", vec![ArgMatcher::Int(99), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Err(libc::EINTR)),
             t("waitpid", vec![ArgMatcher::Int(99), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Pid(0)),
@@ -1811,16 +1839,22 @@ mod tests {
         ], || {
             assert_eq!(shell.wait_for_child_pid(99, false).expect("retry after none"), 7);
         });
+    }
 
-        // consume_wait_interrupt: pure logic, no syscalls (pending signals already consumed)
+    #[test]
+    fn consume_wait_interrupt_parses_interrupt_message() {
         assert_no_syscalls(|| {
+            let mut shell = test_shell();
             let message = ShellError { message: "wait interrupted:140".into() };
             assert_eq!(shell.consume_wait_interrupt(&message).expect("consume"), Some(140));
             let message = ShellError { message: "different".into() };
             assert_eq!(shell.consume_wait_interrupt(&message).expect("non interrupt"), None);
         });
+    }
 
-        // ECHILD errors from waitpid
+    #[test]
+    fn wait_operations_fail_on_echild() {
+        let mut shell = test_shell();
         shell.launch_background_job("sleep".into(), None, vec![fake_handle(2002)]);
         run_trace(vec![
             t("waitpid", vec![ArgMatcher::Int(2002), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Err(libc::ECHILD)),
@@ -1829,8 +1863,18 @@ mod tests {
             assert!(shell.wait_for_job_operand(1).is_err());
             assert!(shell.wait_for_child_pid(99, false).is_err());
         });
+    }
 
-        // wait_for_pid_operand: interrupt path
+    #[test]
+    fn wait_for_pid_operand_handles_interrupt_and_echild() {
+        let mut shell = test_shell();
+        run_trace(vec![
+            t("signal", vec![ArgMatcher::Int(sys::SIGINT as i64), ArgMatcher::Any], TraceResult::Int(0)),
+        ], || {
+            shell.set_trap(TrapCondition::Signal(sys::SIGINT), Some(TrapAction::Command(":".into())))
+                .expect("trap");
+        });
+
         shell.launch_background_job("sleep".into(), None, vec![fake_handle(2003)]);
         sys::test_support::set_pending_signals_for_test(&[sys::SIGINT]);
         run_trace(vec![
@@ -1839,15 +1883,25 @@ mod tests {
             assert_eq!(shell.wait_for_pid_operand(2003).expect("pid interrupt"), 130);
         });
 
-        // wait_for_pid_operand: ECHILD
         shell.launch_background_job("sleep".into(), None, vec![fake_handle(2004)]);
         run_trace(vec![
             t("waitpid", vec![ArgMatcher::Int(2004), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Err(libc::ECHILD)),
         ], || {
             assert!(shell.wait_for_pid_operand(2004).is_err());
         });
+    }
 
-        // wait_for_all_jobs: iterates all accumulated jobs, first is id=1 (pid=2002)
+    #[test]
+    fn wait_for_all_jobs_returns_130_on_interrupt() {
+        let mut shell = test_shell();
+        run_trace(vec![
+            t("signal", vec![ArgMatcher::Int(sys::SIGINT as i64), ArgMatcher::Any], TraceResult::Int(0)),
+        ], || {
+            shell.set_trap(TrapCondition::Signal(sys::SIGINT), Some(TrapAction::Command(":".into())))
+                .expect("trap");
+        });
+
+        shell.launch_background_job("sleep".into(), None, vec![fake_handle(2002)]);
         shell.launch_background_job("sleep".into(), None, vec![fake_handle(2005)]);
         sys::test_support::set_pending_signals_for_test(&[sys::SIGINT]);
         run_trace(vec![
@@ -1855,8 +1909,11 @@ mod tests {
         ], || {
             assert_eq!(shell.wait_for_all_jobs().expect("wait all status"), 130);
         });
+    }
 
-        // known_job_statuses fast path (no syscalls)
+    #[test]
+    fn known_job_status_fast_path_avoids_syscalls() {
+        let mut shell = test_shell();
         let id = shell.launch_background_job("sleep".into(), None, vec![fake_handle(2006)]);
         if let Some(job) = shell.jobs.iter().find(|job| job.id == id) {
             if let Some(pid) = job.last_pid {

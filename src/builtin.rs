@@ -1652,12 +1652,20 @@ mod tests {
     }
 
     #[test]
-    fn export_and_unset_update_shell_state() {
+    fn export_updates_shell_state() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
             run(&mut shell, &["export".into(), "NAME=value".into()]).expect("export");
             assert_eq!(shell.get_var("NAME").as_deref(), Some("value"));
             assert!(shell.exported.contains("NAME"));
+        });
+    }
+
+    #[test]
+    fn unset_removes_variable_and_export_flag() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            run(&mut shell, &["export".into(), "NAME=value".into()]).expect("export");
 
             run(&mut shell, &["unset".into(), "NAME".into()]).expect("unset");
             assert_eq!(shell.get_var("NAME"), None);
@@ -1666,11 +1674,18 @@ mod tests {
     }
 
     #[test]
-    fn readonly_and_shift_error_paths_are_covered() {
+    fn readonly_marks_variable_readonly() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
             run(&mut shell, &["readonly".into(), "LOCKED=value".into()]).expect("readonly");
             assert!(shell.readonly.contains("LOCKED"));
+        });
+    }
+
+    #[test]
+    fn shift_rejects_invalid_arguments() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
 
             shell.positional = vec!["a".into()];
             let outcome = run(&mut shell, &["shift".into(), "5".into()]).expect("shift");
@@ -1720,7 +1735,7 @@ mod tests {
     }
 
     #[test]
-    fn read_and_umask_helpers_cover_core_parsing_paths() {
+    fn read_options_and_assignments_parsing() {
         assert_no_syscalls(|| {
             let (options, vars) = parse_read_options(&[
                 "read".into(),
@@ -1810,7 +1825,12 @@ mod tests {
             let mut empty = String::new();
             push_read_piece(&mut pieces, &mut empty, false);
             assert!(pieces.is_empty());
+        });
+    }
 
+    #[test]
+    fn umask_parsing_helpers() {
+        assert_no_syscalls(|| {
             assert_eq!(parse_umask_mask("077", 0o022), Some(0o077));
             assert_eq!(parse_umask_mask("g-w", 0o002), Some(0o022));
             assert_eq!(parse_umask_mask("u=rw,go=r", 0o022), Some(0o133));
@@ -1824,12 +1844,18 @@ mod tests {
             assert_eq!(copy_permission_bits(0o754, 0o070, 0o070), 0o050);
             assert_eq!(copy_permission_bits(0o754, 0o007, 0o007), 0o004);
             assert_eq!(copy_permission_bits(0o754, 0o700, 0), 0);
+        });
+    }
+
+    #[test]
+    fn format_times_value_helper() {
+        assert_no_syscalls(|| {
             assert_eq!(format_times_value(125, 100), "0m1.25s");
         });
     }
 
     #[test]
-    fn read_and_times_error_paths_are_covered() {
+    fn read_builtin_error_paths() {
         fn byte_reads(fd: i32, data: &[u8]) -> Vec<crate::sys::test_support::TraceEntry> {
             data.iter()
                 .map(|&b| t("read", vec![ArgMatcher::Fd(fd), ArgMatcher::Any], TraceResult::Bytes(vec![b])))
@@ -2000,8 +2026,10 @@ mod tests {
             assert_eq!(shell.get_var("TAIL").as_deref(), Some("tail\\"));
             sys::close_fd(tail_fd).ok();
         });
+    }
 
-        // times error path: process_times() fails, clock_ticks_per_second() returns 60
+    #[test]
+    fn times_builtin_error_path() {
         let times_err_msg = format!("times: {}\n", sys::SysError::Errno(0));
         run_trace(vec![
             t("times", vec![ArgMatcher::Any], TraceResult::Err(0)),
@@ -2059,16 +2087,23 @@ mod tests {
     }
 
     #[test]
-    fn exit_and_command_report_expected_results() {
-        run_trace(vec![
-            t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Any], TraceResult::Int("command: utility name required\n".len() as i64)),
-        ], || {
+    fn exit_builtin_returns_status() {
+        assert_no_syscalls(|| {
             let mut shell = test_shell();
             let outcome = run(&mut shell, &["exit".into()]).expect("exit");
             assert!(matches!(outcome, BuiltinOutcome::Exit(3)));
 
             let error = run(&mut shell, &["exit".into(), "bad".into()]).expect_err("bad exit");
             assert_eq!(error.message, "exit: numeric argument required");
+        });
+    }
+
+    #[test]
+    fn command_builtin_runs_subcommands() {
+        run_trace(vec![
+            t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Any], TraceResult::Int("command: utility name required\n".len() as i64)),
+        ], || {
+            let mut shell = test_shell();
 
             let outcome = run(&mut shell, &["command".into(), "export".into()]).expect("command");
             assert!(matches!(outcome, BuiltinOutcome::Status(0)));
@@ -2114,41 +2149,53 @@ mod tests {
     }
 
     #[test]
-    fn wait_and_job_control_fail_cleanly_without_jobs() {
+    fn wait_rejects_invalid_job_id() {
         run_trace(vec![
             t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Any], TraceResult::Int("wait: invalid job id: %bad\n".len() as i64)),
         ], || {
             let mut shell = test_shell();
             let wait_outcome = run(&mut shell, &["wait".into(), "%bad".into()]).expect("bad wait");
             assert!(matches!(wait_outcome, BuiltinOutcome::Status(1)));
+        });
+    }
 
+    #[test]
+    fn fg_errors_without_current_job() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
             let fg_error = run(&mut shell, &["fg".into()]).expect_err("fg");
             assert_eq!(fg_error.message, "fg: no current job");
+        });
+    }
 
+    #[test]
+    fn bg_errors_without_current_job() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
             let bg_error = run(&mut shell, &["bg".into()]).expect_err("bg");
             assert_eq!(bg_error.message, "bg: no current job");
         });
     }
 
     #[test]
-    fn cd_set_eval_dot_and_exec_noop_paths_work() {
+    fn cd_changes_directory() {
         run_trace(vec![
             // cd /tmp/cd-target: current_logical_pwd → getcwd, then chdir
             t("getcwd", vec![], TraceResult::CwdStr("/home".into())),
             t("chdir", vec![ArgMatcher::Str("/tmp/cd-target".into())], TraceResult::Int(0)),
             // assert_eq!(sys::get_cwd(), "/tmp/cd-target")
             t("getcwd", vec![], TraceResult::CwdStr("/tmp/cd-target".into())),
-            // dot /tmp/dot-script.sh: stat → access → open → read(data) → read(EOF) → close
-            t("stat", vec![ArgMatcher::Str("/tmp/dot-script.sh".into()), ArgMatcher::Any], TraceResult::StatFile(0o644)),
-            t("access", vec![ArgMatcher::Str("/tmp/dot-script.sh".into()), ArgMatcher::Any], TraceResult::Int(0)),
-            t("open", vec![ArgMatcher::Str("/tmp/dot-script.sh".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(100)),
-            t("read", vec![ArgMatcher::Fd(100), ArgMatcher::Any], TraceResult::Bytes(b"FROM_DOT=1\n".to_vec())),
-            t("read", vec![ArgMatcher::Fd(100), ArgMatcher::Any], TraceResult::Int(0)),
-            t("close", vec![ArgMatcher::Fd(100)], TraceResult::Int(0)),
         ], || {
             let mut shell = test_shell();
             run(&mut shell, &["cd".into(), "/tmp/cd-target".into()]).expect("cd");
             assert_eq!(sys::get_cwd().expect("cwd"), "/tmp/cd-target");
+        });
+    }
+
+    #[test]
+    fn set_builtin_handles_options() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
 
             let outcome = run(&mut shell, &["set".into(), "alpha".into(), "beta".into()]).expect("set");
             assert!(matches!(outcome, BuiltinOutcome::Status(0)));
@@ -2188,8 +2235,6 @@ mod tests {
 
             let outcome = run(&mut shell, &["set".into(), "-a".into()]).expect("set -a");
             assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-            run(&mut shell, &["eval".into(), "AUTO=42".into()]).expect("allexport eval");
-            assert!(shell.exported.contains("AUTO"));
 
             let outcome = run(&mut shell, &["set".into(), "-o".into(), "noexec".into()]).expect("set -o noexec");
             assert!(matches!(outcome, BuiltinOutcome::Status(0)));
@@ -2222,16 +2267,47 @@ mod tests {
             let outcome = run(&mut shell, &["set".into(), "+v".into()]).expect("set +v");
             assert!(matches!(outcome, BuiltinOutcome::Status(0)));
             assert!(!shell.options.verbose);
+        });
+    }
 
+    #[test]
+    fn eval_builtin_executes_code() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
             shell.last_status = 0;
             let outcome = run(&mut shell, &["eval".into(), "VALUE=42".into()]).expect("eval");
             assert!(matches!(outcome, BuiltinOutcome::Status(0)));
             assert_eq!(shell.get_var("VALUE").as_deref(), Some("42"));
 
+            let outcome = run(&mut shell, &["set".into(), "-a".into()]).expect("set -a");
+            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            run(&mut shell, &["eval".into(), "AUTO=42".into()]).expect("allexport eval");
+            assert!(shell.exported.contains("AUTO"));
+        });
+    }
+
+    #[test]
+    fn dot_builtin_sources_file() {
+        run_trace(vec![
+            // dot /tmp/dot-script.sh: stat → access → open → read(data) → read(EOF) → close
+            t("stat", vec![ArgMatcher::Str("/tmp/dot-script.sh".into()), ArgMatcher::Any], TraceResult::StatFile(0o644)),
+            t("access", vec![ArgMatcher::Str("/tmp/dot-script.sh".into()), ArgMatcher::Any], TraceResult::Int(0)),
+            t("open", vec![ArgMatcher::Str("/tmp/dot-script.sh".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(100)),
+            t("read", vec![ArgMatcher::Fd(100), ArgMatcher::Any], TraceResult::Bytes(b"FROM_DOT=1\n".to_vec())),
+            t("read", vec![ArgMatcher::Fd(100), ArgMatcher::Any], TraceResult::Int(0)),
+            t("close", vec![ArgMatcher::Fd(100)], TraceResult::Int(0)),
+        ], || {
+            let mut shell = test_shell();
             let outcome = run(&mut shell, &[".".into(), "/tmp/dot-script.sh".into()]).expect("dot");
             assert!(matches!(outcome, BuiltinOutcome::Status(0)));
             assert_eq!(shell.get_var("FROM_DOT").as_deref(), Some("1"));
+        });
+    }
 
+    #[test]
+    fn exec_noop_with_no_arguments() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
             let outcome = run(&mut shell, &["exec".into()]).expect("exec no-op");
             assert!(matches!(outcome, BuiltinOutcome::Status(0)));
         });
@@ -2252,12 +2328,18 @@ mod tests {
     }
 
     #[test]
-    fn dot_requires_filename_and_unknown_builtin_returns_127() {
+    fn dot_requires_filename_argument() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
             let error = run(&mut shell, &[".".into()]).expect_err("dot missing arg");
             assert_eq!(error.message, ".: filename argument required");
+        });
+    }
 
+    #[test]
+    fn unknown_builtin_returns_127() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
             let outcome = run(&mut shell, &["not-a-builtin".into()]).expect("unknown");
             assert!(matches!(outcome, BuiltinOutcome::Status(127)));
         });
@@ -2315,44 +2397,12 @@ mod tests {
     }
 
     #[test]
-    fn command_and_listing_error_paths_are_covered() {
+    fn pwd_errors_on_invalid_option_and_extra_args() {
         run_trace(vec![
-            // pwd -Z → write_stderr
             t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Any], TraceResult::Int("pwd: invalid option: -Z\n".len() as i64)),
-            // pwd extra → write_stderr
             t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Any], TraceResult::Int("pwd: too many arguments\n".len() as i64)),
-            // unset RO (readonly) → write_stderr
-            t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Any], TraceResult::Int("unset: RO: readonly variable\n".len() as i64)),
-            // command -v one two → write_stderr
-            t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Any], TraceResult::Int("command: too many arguments\n".len() as i64)),
-            // command -v (missing) → write_stderr
-            t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Any], TraceResult::Int("command: utility name required\n".len() as i64)),
-            // command -v meiksh-not-real → access in PATH
-            t("access", vec![ArgMatcher::Str("/bin/meiksh-not-real".into()), ArgMatcher::Any], TraceResult::Err(libc::ENOENT)),
-            // command meiksh-not-real → access in PATH, write_stderr
-            t("access", vec![ArgMatcher::Str("/bin/meiksh-not-real".into()), ArgMatcher::Any], TraceResult::Err(libc::ENOENT)),
-            t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Any], TraceResult::Int("command: meiksh-not-real: not found\n".len() as i64)),
-            // command return → write_stderr (return: not in a function)
-            t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Any], TraceResult::Int("return: not in a function\n".len() as i64)),
-            // command_short_description("sh") → access /bin/sh
-            t("access", vec![ArgMatcher::Str("/bin/sh".into()), ArgMatcher::Any], TraceResult::Int(0)),
-            // command_verbose_description("sh") → access /bin/sh
-            t("access", vec![ArgMatcher::Str("/bin/sh".into()), ArgMatcher::Any], TraceResult::Int(0)),
-            // which_in_path("./definitely-missing") → access
-            t("access", vec![ArgMatcher::Str("./definitely-missing".into()), ArgMatcher::Any], TraceResult::Err(libc::ENOENT)),
-            // command /tmp/plain-file → access(F_OK) ok, access(X_OK) fail, write_stderr
-            t("access", vec![ArgMatcher::Str("/tmp/plain-file".into()), ArgMatcher::Any], TraceResult::Int(0)),
-            t("access", vec![ArgMatcher::Str("/tmp/plain-file".into()), ArgMatcher::Any], TraceResult::Err(libc::EACCES)),
-            t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Any], TraceResult::Int("command: /tmp/plain-file: Permission denied\n".len() as i64)),
-            // command /tmp/missing-interp → access(F_OK) ok, access(X_OK) ok, fork+waitpid
-            t("access", vec![ArgMatcher::Str("/tmp/missing-interp".into()), ArgMatcher::Any], TraceResult::Int(0)),
-            t("access", vec![ArgMatcher::Str("/tmp/missing-interp".into()), ArgMatcher::Any], TraceResult::Int(0)),
-            t("fork", vec![], TraceResult::Pid(5000)),
-            t("waitpid", vec![ArgMatcher::Int(5000), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Status(127)),
         ], || {
             let mut shell = test_shell();
-            shell.env.insert("PATH".into(), "/bin".into());
-
             assert!(matches!(
                 run(&mut shell, &["pwd".into(), "-Z".into()]).expect("pwd invalid"),
                 BuiltinOutcome::Status(1)
@@ -2361,14 +2411,27 @@ mod tests {
                 run(&mut shell, &["pwd".into(), "extra".into()]).expect("pwd extra"),
                 BuiltinOutcome::Status(1)
             ));
+        });
+    }
 
+    #[test]
+    fn unset_readonly_error() {
+        run_trace(vec![
+            t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Any], TraceResult::Int("unset: RO: readonly variable\n".len() as i64)),
+        ], || {
+            let mut shell = test_shell();
             shell.env.insert("RO".into(), "1".into());
             shell.readonly.insert("RO".into());
             assert!(matches!(
                 run(&mut shell, &["unset".into(), "RO".into()]).expect("unset readonly"),
                 BuiltinOutcome::Status(1)
             ));
+        });
+    }
 
+    #[test]
+    fn declaration_listing_flag_errors() {
+        assert_no_syscalls(|| {
             let export_error = parse_declaration_listing_flag(
                 "export",
                 &["export".into(), "-p".into(), "NAME".into()],
@@ -2380,7 +2443,12 @@ mod tests {
                 parse_declaration_listing_flag("readonly", &["readonly".into(), "-x".into()])
                     .expect_err("readonly invalid");
             assert_eq!(readonly_error.message, "readonly: invalid option: -x");
+        });
+    }
 
+    #[test]
+    fn parse_helpers_for_unset_and_command() {
+        assert_no_syscalls(|| {
             assert_eq!(
                 parse_unset_target(&["unset".into(), "--".into(), "NAME".into()]).expect("unset --"),
                 (UnsetTarget::Variable, 2)
@@ -2398,6 +2466,27 @@ mod tests {
                 (true, CommandMode::Execute, 2)
             );
             assert_eq!(command_usage_status(CommandMode::QueryShort), 1);
+        });
+    }
+
+    #[test]
+    fn command_v_and_capital_v_paths() {
+        run_trace(vec![
+            // command -v one two → write_stderr
+            t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Any], TraceResult::Int("command: too many arguments\n".len() as i64)),
+            // command -v (missing) → write_stderr
+            t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Any], TraceResult::Int("command: utility name required\n".len() as i64)),
+            // command -v meiksh-not-real → access in PATH
+            t("access", vec![ArgMatcher::Str("/bin/meiksh-not-real".into()), ArgMatcher::Any], TraceResult::Err(libc::ENOENT)),
+            // command_short_description("sh") → access /bin/sh
+            t("access", vec![ArgMatcher::Str("/bin/sh".into()), ArgMatcher::Any], TraceResult::Int(0)),
+            // command_verbose_description("sh") → access /bin/sh
+            t("access", vec![ArgMatcher::Str("/bin/sh".into()), ArgMatcher::Any], TraceResult::Int(0)),
+            // which_in_path("./definitely-missing") → access
+            t("access", vec![ArgMatcher::Str("./definitely-missing".into()), ArgMatcher::Any], TraceResult::Err(libc::ENOENT)),
+        ], || {
+            let mut shell = test_shell();
+            shell.env.insert("PATH".into(), "/bin".into());
 
             assert!(matches!(
                 run(&mut shell, &["command".into(), "-v".into(), "one".into(), "two".into()])
@@ -2411,14 +2500,6 @@ mod tests {
             assert!(matches!(
                 run(&mut shell, &["command".into(), "-v".into(), "meiksh-not-real".into()])
                     .expect("command query missing name"),
-                BuiltinOutcome::Status(1)
-            ));
-            assert!(matches!(
-                run(&mut shell, &["command".into(), "meiksh-not-real".into()]).expect("command missing"),
-                BuiltinOutcome::Status(127)
-            ));
-            assert!(matches!(
-                run(&mut shell, &["command".into(), "return".into()]).expect("command builtin error"),
                 BuiltinOutcome::Status(1)
             ));
 
@@ -2441,6 +2522,38 @@ mod tests {
                 Some(CommandDescription::RegularBuiltin)
             );
             assert!(which_in_path("./definitely-missing", &shell, false).is_none());
+        });
+    }
+
+    #[test]
+    fn command_execution_error_paths() {
+        run_trace(vec![
+            // command meiksh-not-real → access in PATH, write_stderr
+            t("access", vec![ArgMatcher::Str("/bin/meiksh-not-real".into()), ArgMatcher::Any], TraceResult::Err(libc::ENOENT)),
+            t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Any], TraceResult::Int("command: meiksh-not-real: not found\n".len() as i64)),
+            // command return → write_stderr (return: not in a function)
+            t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Any], TraceResult::Int("return: not in a function\n".len() as i64)),
+            // command /tmp/plain-file → access(F_OK) ok, access(X_OK) fail, write_stderr
+            t("access", vec![ArgMatcher::Str("/tmp/plain-file".into()), ArgMatcher::Any], TraceResult::Int(0)),
+            t("access", vec![ArgMatcher::Str("/tmp/plain-file".into()), ArgMatcher::Any], TraceResult::Err(libc::EACCES)),
+            t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Any], TraceResult::Int("command: /tmp/plain-file: Permission denied\n".len() as i64)),
+            // command /tmp/missing-interp → access(F_OK) ok, access(X_OK) ok, fork+waitpid
+            t("access", vec![ArgMatcher::Str("/tmp/missing-interp".into()), ArgMatcher::Any], TraceResult::Int(0)),
+            t("access", vec![ArgMatcher::Str("/tmp/missing-interp".into()), ArgMatcher::Any], TraceResult::Int(0)),
+            t("fork", vec![], TraceResult::Pid(5000)),
+            t("waitpid", vec![ArgMatcher::Int(5000), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Status(127)),
+        ], || {
+            let mut shell = test_shell();
+            shell.env.insert("PATH".into(), "/bin".into());
+
+            assert!(matches!(
+                run(&mut shell, &["command".into(), "meiksh-not-real".into()]).expect("command missing"),
+                BuiltinOutcome::Status(127)
+            ));
+            assert!(matches!(
+                run(&mut shell, &["command".into(), "return".into()]).expect("command builtin error"),
+                BuiltinOutcome::Status(1)
+            ));
 
             assert!(matches!(
                 run(&mut shell, &["command".into(), "/tmp/plain-file".into()])
@@ -2472,31 +2585,78 @@ mod tests {
     }
 
     #[test]
-    fn reporting_and_listing_builtins_execute_successfully() {
+    fn pwd_builtin_succeeds() {
         run_trace(vec![
-            // pwd → getcwd
             t("getcwd", vec![], TraceResult::CwdStr("/home".into())),
-            // times → process_times + clock_ticks_per_second
-            t("times", vec![ArgMatcher::Any], TraceResult::Int(0)),
-            t("sysconf", vec![ArgMatcher::Any], TraceResult::Int(100)),
-            // trap set echo INT → signal(SIGINT)
-            t("signal", vec![ArgMatcher::Any, ArgMatcher::Any], TraceResult::Int(0)),
         ], || {
+            let mut shell = test_shell();
+            assert!(matches!(run(&mut shell, &["pwd".into()]).expect("pwd"), BuiltinOutcome::Status(0)));
+        });
+    }
+
+    #[test]
+    fn export_listing_succeeds() {
+        assert_no_syscalls(|| {
             let mut shell = test_shell();
             shell.env.insert("PATH".into(), "/usr/bin:/bin".into());
             shell.exported.insert("PATH".into());
             shell.exported.insert("ONLY_NAME".into());
-            shell.aliases.insert("ll".into(), "ls -l".into());
-
-            assert!(matches!(run(&mut shell, &["pwd".into()]).expect("pwd"), BuiltinOutcome::Status(0)));
             assert!(matches!(run(&mut shell, &["export".into()]).expect("export list"), BuiltinOutcome::Status(0)));
+        });
+    }
+
+    #[test]
+    fn readonly_listing_succeeds() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
             assert!(matches!(run(&mut shell, &["readonly".into(), "FLAG".into()]).expect("readonly"), BuiltinOutcome::Status(0)));
             assert!(shell.readonly.contains("FLAG"));
+        });
+    }
+
+    #[test]
+    fn set_listing_succeeds() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
             assert!(matches!(run(&mut shell, &["set".into()]).expect("set list"), BuiltinOutcome::Status(0)));
+        });
+    }
+
+    #[test]
+    fn alias_listing_succeeds() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.aliases.insert("ll".into(), "ls -l".into());
             assert!(matches!(run(&mut shell, &["alias".into()]).expect("alias list"), BuiltinOutcome::Status(0)));
+        });
+    }
+
+    #[test]
+    fn times_builtin_succeeds() {
+        run_trace(vec![
+            t("times", vec![ArgMatcher::Any], TraceResult::Int(0)),
+            t("sysconf", vec![ArgMatcher::Any], TraceResult::Int(100)),
+        ], || {
+            let mut shell = test_shell();
             assert!(matches!(run(&mut shell, &["times".into()]).expect("times"), BuiltinOutcome::Status(0)));
+        });
+    }
+
+    #[test]
+    fn trap_listing_succeeds() {
+        run_trace(vec![
+            t("signal", vec![ArgMatcher::Any, ArgMatcher::Any], TraceResult::Int(0)),
+        ], || {
+            let mut shell = test_shell();
             assert!(matches!(run(&mut shell, &["trap".into()]).expect("trap"), BuiltinOutcome::Status(0)));
             assert!(matches!(run(&mut shell, &["trap".into(), "echo".into(), "INT".into()]).expect("trap set"), BuiltinOutcome::Status(0)));
+        });
+    }
+
+    #[test]
+    fn jobs_listing_succeeds() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
             assert!(matches!(run(&mut shell, &["jobs".into()]).expect("jobs"), BuiltinOutcome::Status(0)));
         });
     }
@@ -2850,7 +3010,7 @@ mod tests {
     }
 
     #[test]
-    fn unset_function_branch_and_exec_error_path_are_covered() {
+    fn unset_function_removes_function() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
             shell.functions.insert(
@@ -2863,7 +3023,13 @@ mod tests {
             );
             run(&mut shell, &["unset".into(), "-f".into(), "ll".into()]).expect("unset function");
             assert!(!shell.functions.contains_key("ll"));
+        });
+    }
 
+    #[test]
+    fn exec_errors_on_nul_in_program() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
             let error = run(&mut shell, &["exec".into(), "bad\0program".into()]).expect_err("exec error");
             assert!(!error.message.is_empty());
         });
@@ -2882,12 +3048,18 @@ mod tests {
     }
 
     #[test]
-    fn covers_empty_run_and_shift_success() {
+    fn run_with_empty_argv_returns_zero() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
             let outcome = run(&mut shell, &[]).expect("empty argv");
             assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        });
+    }
 
+    #[test]
+    fn shift_succeeds_with_positional_params() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
             shell.positional = vec!["a".into(), "b".into()];
             let outcome = run(&mut shell, &["shift".into()]).expect("shift");
             assert!(matches!(outcome, BuiltinOutcome::Status(0)));
@@ -2896,26 +3068,42 @@ mod tests {
     }
 
     #[test]
-    fn cd_home_export_name_eval_error_and_dot_missing_are_covered() {
+    fn export_bare_name_without_value() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            run(&mut shell, &["export".into(), "ONLY_NAME".into()]).expect("export bare name");
+            assert!(shell.exported.contains("ONLY_NAME"));
+        });
+    }
+
+    #[test]
+    fn eval_reports_syntax_error() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let error = run(&mut shell, &["eval".into(), "echo".into(), "'unterminated".into()]).expect_err("bad eval");
+            assert!(!error.message.is_empty());
+        });
+    }
+
+    #[test]
+    fn dot_errors_on_missing_file() {
         run_trace(vec![
-            // dot /definitely/missing-meiksh-dot-file → stat fails
             t("stat", vec![ArgMatcher::Str("/definitely/missing-meiksh-dot-file".into()), ArgMatcher::Any], TraceResult::Err(libc::ENOENT)),
         ], || {
             let mut shell = test_shell();
-
-            run(&mut shell, &["export".into(), "ONLY_NAME".into()]).expect("export bare name");
-            assert!(shell.exported.contains("ONLY_NAME"));
-
-            let error = run(&mut shell, &["eval".into(), "echo".into(), "'unterminated".into()]).expect_err("bad eval");
-            assert!(!error.message.is_empty());
-
             let error = run(
                 &mut shell,
                 &[".".into(), "/definitely/missing-meiksh-dot-file".into()],
             )
             .expect_err("missing dot file");
             assert!(!error.message.is_empty());
+        });
+    }
 
+    #[test]
+    fn dot_rejects_too_many_arguments() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
             let error = run(&mut shell, &[".".into(), "one".into(), "two".into()]).expect_err("dot args");
             assert_eq!(error.message, ".: too many arguments");
         });
