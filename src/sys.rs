@@ -869,97 +869,26 @@ pub(crate) mod test_support {
         with_test_syscalls(no_syscalls_table(), f)
     }
 
-    pub(crate) fn run_trace<T>(trace: Vec<TraceEntry>, f: impl FnOnce() -> T) -> T {
-        let syscalls = trace_syscalls();
-        TRACE_LOG.with(|cell| {
-            let previous_trace = cell.replace(Some(trace));
-            let previous_index = TRACE_INDEX.with(|idx| idx.replace(0));
-            let previous_children = CHILD_TRACES.with(|c| std::mem::take(&mut *c.borrow_mut()));
-
-            let result = with_test_syscalls(syscalls, f);
-
-            let consumed = TRACE_INDEX.with(|idx| *idx.borrow());
-            let total = cell.borrow().as_ref().map_or(0, |t| t.len());
-            if consumed < total {
-                panic!("trace not fully consumed: {consumed}/{total} entries used");
-            }
-
-            CHILD_TRACES.with(|c| *c.borrow_mut() = previous_children);
-            TRACE_INDEX.with(|idx| idx.replace(previous_index));
-            cell.replace(previous_trace);
-            result
-        })
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn take_child_traces() -> Vec<Vec<TraceEntry>> {
-        CHILD_TRACES.with(|c| std::mem::take(&mut *c.borrow_mut()))
-    }
-
-    #[allow(dead_code)]
-    impl TraceEntry {
-        fn without_child_trace(&self) -> TraceEntry {
-            TraceEntry {
-                syscall: self.syscall,
-                args: self.args.clone(),
-                result: self.result.clone(),
-                child_trace: None,
-            }
-        }
-
-        fn with_result(&self, result: TraceResult) -> TraceEntry {
-            TraceEntry {
-                syscall: self.syscall,
-                args: self.args.clone(),
-                result,
-                child_trace: self.child_trace.clone(),
-            }
-        }
-    }
-
-    #[allow(dead_code)]
-    fn exit_process_entry() -> TraceEntry {
-        TraceEntry {
-            syscall: "exit_process",
-            args: vec![ArgMatcher::Any],
-            result: TraceResult::Void,
-            child_trace: None,
-        }
-    }
-
-    #[allow(dead_code)]
-    fn enumerate_fork_paths(trace: &[TraceEntry]) -> Vec<Vec<TraceEntry>> {
-        let mut paths = vec![];
-
-        let parent: Vec<TraceEntry> = trace.iter().map(|e| e.without_child_trace()).collect();
-        paths.push(parent);
-
-        for (i, entry) in trace.iter().enumerate() {
-            if let Some(child_trace) = &entry.child_trace {
-                let prefix: Vec<TraceEntry> = trace[..i].iter().map(|e| e.without_child_trace()).collect();
-                let fork_as_child = entry.with_result(TraceResult::Pid(0)).without_child_trace();
-
-                let mut child_path = prefix.clone();
-                child_path.push(fork_as_child.clone());
-                child_path.extend(child_trace.iter().map(|e| e.without_child_trace()));
-                child_path.push(exit_process_entry());
-                paths.push(child_path);
-
-                let nested = enumerate_fork_paths(child_trace);
-                for nested_path in nested.into_iter().skip(1) {
-                    let mut full = prefix.clone();
-                    full.push(fork_as_child.clone());
-                    full.extend(nested_path);
-                    paths.push(full);
+    fn validate_fork_child_traces(trace: &[TraceEntry]) {
+        for entry in trace {
+            if entry.syscall == "fork" {
+                if let TraceResult::Pid(pid) = &entry.result {
+                    if *pid > 0 && entry.child_trace.is_none() {
+                        panic!(
+                            "fork trace entry returns Pid({pid}) (parent path) but has no child_trace — \
+                             use t_fork(TraceResult::Pid({pid}), vec![...]) to provide the child trace"
+                        );
+                    }
+                }
+                if let Some(child) = &entry.child_trace {
+                    validate_fork_child_traces(child);
                 }
             }
         }
-
-        paths
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn run_forked_trace(trace: Vec<TraceEntry>, f: impl Fn()) {
+    pub(crate) fn run_trace(trace: Vec<TraceEntry>, f: impl Fn()) {
+        validate_fork_child_traces(&trace);
         let paths = enumerate_fork_paths(&trace);
 
         for (run_index, path) in paths.iter().enumerate() {
@@ -1014,6 +943,70 @@ pub(crate) mod test_support {
                 }
             });
         }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn take_child_traces() -> Vec<Vec<TraceEntry>> {
+        CHILD_TRACES.with(|c| std::mem::take(&mut *c.borrow_mut()))
+    }
+
+    impl TraceEntry {
+        fn without_child_trace(&self) -> TraceEntry {
+            TraceEntry {
+                syscall: self.syscall,
+                args: self.args.clone(),
+                result: self.result.clone(),
+                child_trace: None,
+            }
+        }
+
+        fn with_result(&self, result: TraceResult) -> TraceEntry {
+            TraceEntry {
+                syscall: self.syscall,
+                args: self.args.clone(),
+                result,
+                child_trace: self.child_trace.clone(),
+            }
+        }
+    }
+
+    fn exit_process_entry() -> TraceEntry {
+        TraceEntry {
+            syscall: "exit_process",
+            args: vec![ArgMatcher::Any],
+            result: TraceResult::Void,
+            child_trace: None,
+        }
+    }
+
+    fn enumerate_fork_paths(trace: &[TraceEntry]) -> Vec<Vec<TraceEntry>> {
+        let mut paths = vec![];
+
+        let parent: Vec<TraceEntry> = trace.iter().map(|e| e.without_child_trace()).collect();
+        paths.push(parent);
+
+        for (i, entry) in trace.iter().enumerate() {
+            if let Some(child_trace) = &entry.child_trace {
+                let prefix: Vec<TraceEntry> = trace[..i].iter().map(|e| e.without_child_trace()).collect();
+                let fork_as_child = entry.with_result(TraceResult::Pid(0)).without_child_trace();
+
+                let mut child_path = prefix.clone();
+                child_path.push(fork_as_child.clone());
+                child_path.extend(child_trace.iter().map(|e| e.without_child_trace()));
+                child_path.push(exit_process_entry());
+                paths.push(child_path);
+
+                let nested = enumerate_fork_paths(child_trace);
+                for nested_path in nested.into_iter().skip(1) {
+                    let mut full = prefix.clone();
+                    full.push(fork_as_child.clone());
+                    full.extend(nested_path);
+                    paths.push(full);
+                }
+            }
+        }
+
+        paths
     }
 
     // Helper constructors for trace entries
