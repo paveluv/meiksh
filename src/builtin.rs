@@ -1611,7 +1611,7 @@ mod tests {
     use crate::syntax::Word;
     use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-    use crate::sys::test_support::{TraceResult, ArgMatcher, run_trace, t, assert_no_syscalls};
+    use crate::sys::test_support::{TraceResult, ArgMatcher, run_trace, run_forked_trace, t, t_fork, assert_no_syscalls};
 
     fn test_shell() -> Shell {
         Shell {
@@ -2531,20 +2531,12 @@ mod tests {
     #[test]
     fn command_execution_error_paths() {
         run_trace(vec![
-            // command meiksh-not-real → access in PATH, write_stderr
             t("access", vec![ArgMatcher::Str("/bin/meiksh-not-real".into()), ArgMatcher::Any], TraceResult::Err(sys::ENOENT)),
             t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Any], TraceResult::Int("command: meiksh-not-real: not found\n".len() as i64)),
-            // command return → write_stderr (return: not in a function)
             t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Any], TraceResult::Int("return: not in a function\n".len() as i64)),
-            // command /tmp/plain-file → access(F_OK) ok, access(X_OK) fail, write_stderr
             t("access", vec![ArgMatcher::Str("/tmp/plain-file".into()), ArgMatcher::Any], TraceResult::Int(0)),
             t("access", vec![ArgMatcher::Str("/tmp/plain-file".into()), ArgMatcher::Any], TraceResult::Err(sys::EACCES)),
             t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Any], TraceResult::Int("command: /tmp/plain-file: Permission denied\n".len() as i64)),
-            // command /tmp/missing-interp → access(F_OK) ok, access(X_OK) ok, fork+waitpid
-            t("access", vec![ArgMatcher::Str("/tmp/missing-interp".into()), ArgMatcher::Any], TraceResult::Int(0)),
-            t("access", vec![ArgMatcher::Str("/tmp/missing-interp".into()), ArgMatcher::Any], TraceResult::Int(0)),
-            t("fork", vec![], TraceResult::Pid(5000)),
-            t("waitpid", vec![ArgMatcher::Int(5000), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Status(127)),
         ], || {
             let mut shell = test_shell();
             shell.env.insert("PATH".into(), "/bin".into());
@@ -2557,12 +2549,26 @@ mod tests {
                 run(&mut shell, &["command".into(), "return".into()]).expect("command builtin error"),
                 BuiltinOutcome::Status(1)
             ));
-
             assert!(matches!(
                 run(&mut shell, &["command".into(), "/tmp/plain-file".into()])
                     .expect("command plain file"),
                 BuiltinOutcome::Status(126)
             ));
+        });
+    }
+
+    #[test]
+    fn command_spawns_external_utility() {
+        run_forked_trace(vec![
+            t("access", vec![ArgMatcher::Str("/tmp/missing-interp".into()), ArgMatcher::Any], TraceResult::Int(0)),
+            t("access", vec![ArgMatcher::Str("/tmp/missing-interp".into()), ArgMatcher::Any], TraceResult::Int(0)),
+            t_fork(TraceResult::Pid(5000), vec![
+                t("execvp", vec![ArgMatcher::Str("/tmp/missing-interp".into()), ArgMatcher::Any], TraceResult::Err(sys::ENOENT)),
+            ]),
+            t("waitpid", vec![ArgMatcher::Int(5000), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Status(127)),
+        ], || {
+            let mut shell = test_shell();
+            shell.env.insert("PATH".into(), "/bin".into());
 
             assert!(matches!(
                 run(&mut shell, &["command".into(), "/tmp/missing-interp".into()])
