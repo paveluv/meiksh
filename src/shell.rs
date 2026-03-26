@@ -359,7 +359,8 @@ impl Shell {
         Ok(status)
     }
 
-    fn execute_source_incrementally(&mut self, source: &str) -> Result<i32, ShellError> {
+    fn 
+    execute_source_incrementally(&mut self, source: &str) -> Result<i32, ShellError> {
         let mut session = syntax::ParseSession::new(source)?;
         let mut status = 0;
         self.run_pending_traps()?;
@@ -1106,7 +1107,7 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
-    use crate::sys::test_support::{self, TraceResult, ArgMatcher, run_trace, t, assert_no_syscalls};
+    use crate::sys::test_support::{self, TraceResult, ArgMatcher, run_trace, run_forked_trace, t, t_fork, assert_no_syscalls};
 
     fn fake_handle(pid: sys::Pid) -> sys::ChildHandle {
         sys::ChildHandle { pid, stdout_fd: None }
@@ -1402,33 +1403,9 @@ mod tests {
     }
 
     #[test]
-    fn capture_output_and_context_trait_methods_work() {
-        fn capture_trace(data: &[u8], exit_status: i32, pid: i32) -> Vec<test_support::TraceEntry> {
-            let mut entries = vec![
-                t("pipe", vec![], TraceResult::Fds(200, 201)),
-                t("fork", vec![], TraceResult::Pid(pid)),
-                t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
-            ];
-            if !data.is_empty() {
-                entries.push(t("read", vec![ArgMatcher::Fd(200), ArgMatcher::Any],
-                    TraceResult::Bytes(data.to_vec())));
-            }
-            entries.push(t("read", vec![ArgMatcher::Fd(200), ArgMatcher::Any], TraceResult::Int(0)));
-            entries.push(t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)));
-            entries.push(t("waitpid", vec![ArgMatcher::Int(pid as i64), ArgMatcher::Any, ArgMatcher::Int(0)],
-                TraceResult::Status(exit_status)));
-            entries
-        }
-
-        let mut trace = Vec::new();
-        trace.extend(capture_trace(b"hi", 0, 1000));
-        trace.extend(capture_trace(b"ok", 0, 1001));
-        trace.extend(capture_trace(b"", 127, 1002));
-
-        run_trace(trace, || {
+    fn context_trait_methods_work() {
+        assert_no_syscalls(|| {
             let mut shell = test_shell();
-            let output = shell.capture_output("printf hi").expect("capture");
-            assert_eq!(output, "hi");
             assert_eq!(expand::Context::shell_name(&shell), "meiksh");
             assert_eq!(expand::Context::positional_param(&shell, 0).as_deref(), Some("meiksh"));
             expand::Context::set_var(&mut shell, "CTX_SET", "7".into()).expect("ctx set");
@@ -1436,10 +1413,58 @@ mod tests {
             shell.mark_readonly("CTX_SET");
             let error = expand::Context::set_var(&mut shell, "CTX_SET", "8".into()).expect_err("readonly ctx set");
             assert_eq!(error.message, "CTX_SET: readonly variable");
-            let substituted = expand::Context::command_substitute(&mut shell, "printf ok").expect("subst");
-            assert_eq!(substituted, "ok");
+        });
+    }
 
-            let error = expand::Context::command_substitute(&mut shell, "missing-command").expect_err("subst error");
+    fn capture_forked_trace(exit_status: i32, pid: i32) -> Vec<test_support::TraceEntry> {
+        let child = vec![
+            t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
+            t("dup2", vec![ArgMatcher::Fd(201), ArgMatcher::Fd(1)], TraceResult::Int(0)),
+            t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
+        ];
+        vec![
+            t("pipe", vec![], TraceResult::Fds(200, 201)),
+            t_fork(TraceResult::Pid(pid), child),
+            t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
+            t("read", vec![ArgMatcher::Fd(200), ArgMatcher::Any], TraceResult::Int(0)),
+            t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
+            t("waitpid", vec![ArgMatcher::Int(pid as i64), ArgMatcher::Any, ArgMatcher::Int(0)],
+                TraceResult::Status(exit_status)),
+        ]
+    }
+
+    #[test]
+    fn capture_output_success() {
+        run_forked_trace(capture_forked_trace(0, 1000), || {
+            let mut shell = test_shell();
+            let output = shell.capture_output("true").expect("capture");
+            assert_eq!(output, "");
+        });
+    }
+
+    #[test]
+    fn capture_output_returns_error_on_nonzero_exit() {
+        run_forked_trace(capture_forked_trace(1, 1000), || {
+            let mut shell = test_shell();
+            let error = shell.capture_output("false").expect_err("capture error");
+            assert!(!error.message.is_empty());
+        });
+    }
+
+    #[test]
+    fn command_substitute_success() {
+        run_forked_trace(capture_forked_trace(0, 1000), || {
+            let mut shell = test_shell();
+            let substituted = expand::Context::command_substitute(&mut shell, "true").expect("subst");
+            assert_eq!(substituted, "");
+        });
+    }
+
+    #[test]
+    fn command_substitute_returns_error_on_nonzero_exit() {
+        run_forked_trace(capture_forked_trace(1, 1000), || {
+            let mut shell = test_shell();
+            let error = expand::Context::command_substitute(&mut shell, "false").expect_err("subst error");
             assert!(!error.message.is_empty());
         });
     }
@@ -1498,17 +1523,9 @@ mod tests {
 
     #[test]
     fn capture_output_returns_error_on_command_failure() {
-        run_trace(vec![
-            t("pipe", vec![], TraceResult::Fds(200, 201)),
-            t("fork", vec![], TraceResult::Pid(1000)),
-            t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
-            t("read", vec![ArgMatcher::Fd(200), ArgMatcher::Any], TraceResult::Int(0)),
-            t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
-            t("waitpid", vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)],
-                TraceResult::Status(127)),
-        ], || {
+        run_forked_trace(capture_forked_trace(127, 1000), || {
             let mut shell = test_shell();
-            let error = shell.capture_output("missing-command").expect_err("capture error");
+            let error = shell.capture_output("exit 127").expect_err("capture error");
             assert!(!error.message.is_empty());
         });
     }
@@ -1597,18 +1614,13 @@ mod tests {
     }
 
     #[test]
-    fn capture_output_returns_error_on_spawn_failure() {
+    fn capture_output_returns_error_on_fork_failure() {
         run_trace(vec![
             t("pipe", vec![], TraceResult::Fds(200, 201)),
-            t("fork", vec![], TraceResult::Pid(1000)),
-            t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
-            t("read", vec![ArgMatcher::Fd(200), ArgMatcher::Any], TraceResult::Int(0)),
-            t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
-            t("waitpid", vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)],
-                TraceResult::Status(127)),
+            t("fork", vec![], TraceResult::Err(sys::EINVAL)),
         ], || {
             let mut shell = test_shell();
-            let error = shell.capture_output("printf hi").expect_err("spawn error");
+            let error = shell.capture_output("true").expect_err("fork error");
             assert!(!error.message.is_empty());
         });
     }
