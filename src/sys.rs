@@ -133,6 +133,7 @@ pub(crate) struct Syscalls {
     unlink: fn(*const c_char) -> c_int,
     // Process syscalls
     fork: fn() -> Pid,
+    exit_process: fn(c_int),
 }
 
 pub(crate) fn default_syscalls() -> Syscalls {
@@ -170,6 +171,7 @@ pub(crate) fn default_syscalls() -> Syscalls {
         readlink: |path, buf, bufsiz| unsafe { libc::readlink(path, buf, bufsiz) },
         unlink: |path| unsafe { libc::unlink(path) },
         fork: || unsafe { libc::fork() },
+        exit_process: |status| unsafe { libc::_exit(status) },
     }
 }
 
@@ -266,39 +268,6 @@ pub(crate) mod test_support {
         })
     }
 
-    pub(crate) fn with_execvp_for_test<T>(
-        execvp_fn: fn(*const c_char, *const *const c_char) -> c_int,
-        f: impl FnOnce() -> T,
-    ) -> T {
-        let syscalls = Syscalls {
-            execvp: execvp_fn,
-            ..default_syscalls()
-        };
-        with_test_syscalls(syscalls, f)
-    }
-
-    pub(crate) fn with_signal_syscall_for_test<T>(
-        signal_fn: fn(c_int, libc::sighandler_t) -> libc::sighandler_t,
-        f: impl FnOnce() -> T,
-    ) -> T {
-        let syscalls = Syscalls {
-            signal: signal_fn,
-            ..default_syscalls()
-        };
-        with_test_syscalls(syscalls, f)
-    }
-
-    pub(crate) fn with_waitpid_for_test<T>(
-        waitpid_fn: fn(Pid, *mut c_int, c_int) -> Pid,
-        f: impl FnOnce() -> T,
-    ) -> T {
-        let syscalls = Syscalls {
-            waitpid: waitpid_fn,
-            ..default_syscalls()
-        };
-        with_test_syscalls(syscalls, f)
-    }
-
     pub(crate) fn set_pending_signals_for_test(signals: &[c_int]) {
         let bits = signals
             .iter()
@@ -316,89 +285,6 @@ pub(crate) mod test_support {
         result
     }
 
-    pub(crate) fn with_job_control_syscalls_for_test<T>(
-        isatty_fn: fn(c_int) -> c_int,
-        tcgetpgrp_fn: fn(c_int) -> Pid,
-        tcsetpgrp_fn: fn(c_int, Pid) -> c_int,
-        setpgid_fn: fn(Pid, Pid) -> c_int,
-        kill_fn: fn(Pid, c_int) -> c_int,
-        f: impl FnOnce() -> T,
-    ) -> T {
-        let syscalls = Syscalls {
-            isatty: isatty_fn,
-            tcgetpgrp: tcgetpgrp_fn,
-            tcsetpgrp: tcsetpgrp_fn,
-            setpgid: setpgid_fn,
-            kill: kill_fn,
-            ..default_syscalls()
-        };
-        with_test_syscalls(syscalls, f)
-    }
-
-    pub(crate) fn with_fd_ops_for_test<T>(
-        dup_fn: fn(c_int) -> c_int,
-        dup2_fn: fn(c_int, c_int) -> c_int,
-        close_fn: fn(c_int) -> c_int,
-        f: impl FnOnce() -> T,
-    ) -> T {
-        let syscalls = Syscalls {
-            dup: dup_fn,
-            dup2: dup2_fn,
-            close: close_fn,
-            ..default_syscalls()
-        };
-        with_test_syscalls(syscalls, f)
-    }
-
-    pub(crate) fn with_fcntl_and_isatty_for_test<T>(
-        fcntl_fn: fn(c_int, c_int, c_int) -> c_int,
-        isatty_fn: fn(c_int) -> c_int,
-        f: impl FnOnce() -> T,
-    ) -> T {
-        let syscalls = Syscalls {
-            fcntl: fcntl_fn,
-            isatty: isatty_fn,
-            ..default_syscalls()
-        };
-        with_test_syscalls(syscalls, f)
-    }
-
-    pub(crate) fn with_waitpid_and_kill_for_test<T>(
-        waitpid_fn: fn(Pid, *mut c_int, c_int) -> Pid,
-        kill_fn: fn(Pid, c_int) -> c_int,
-        f: impl FnOnce() -> T,
-    ) -> T {
-        let syscalls = Syscalls {
-            waitpid: waitpid_fn,
-            kill: kill_fn,
-            ..default_syscalls()
-        };
-        with_test_syscalls(syscalls, f)
-    }
-
-    pub(crate) fn with_umask_for_test<T>(
-        umask_fn: fn(FileModeMask) -> FileModeMask,
-        f: impl FnOnce() -> T,
-    ) -> T {
-        let syscalls = Syscalls { umask: umask_fn, ..default_syscalls() };
-        with_test_syscalls(syscalls, f)
-    }
-
-    pub(crate) fn with_times_error_for_test<T>(f: impl FnOnce() -> T) -> T {
-        fn fake_times(_buffer: *mut libc::tms) -> ClockTicks {
-            ClockTicks::MAX
-        }
-        fn fake_sysconf(_name: c_int) -> c_long {
-            60
-        }
-        let syscalls = Syscalls {
-            times: fake_times,
-            sysconf: fake_sysconf,
-            ..default_syscalls()
-        };
-        with_test_syscalls(syscalls, f)
-    }
-
     pub(crate) fn with_process_ids_for_test<T>(
         ids: (libc::uid_t, libc::uid_t, libc::gid_t, libc::gid_t),
         f: impl FnOnce() -> T,
@@ -411,866 +297,743 @@ pub(crate) mod test_support {
         })
     }
 
-    // --- In-Memory VFS for tests ---
-
-    use std::collections::HashMap;
-    use std::path::PathBuf;
+    // --- Syscall Trace Test Infrastructure ---
 
     #[derive(Clone, Debug)]
-    struct VfsFile {
-        contents: Vec<u8>,
-        mode: mode_t,
-    }
-
-    #[derive(Clone, Debug)]
-    pub(crate) struct VfsState {
-        files: HashMap<PathBuf, VfsFile>,
-        dirs: std::collections::HashSet<PathBuf>,
-        cwd: PathBuf,
-        fd_table: HashMap<c_int, VfsFd>,
-        next_fd: c_int,
-    }
-
-    #[derive(Clone, Debug)]
-    struct VfsFd {
-        path: PathBuf,
-        offset: usize,
-        #[allow(dead_code)]
-        flags: c_int,
-    }
-
-    thread_local! {
-        static VFS_STATE: RefCell<Option<VfsState>> = const { RefCell::new(None) };
-    }
-
-    fn with_vfs<R>(f: impl FnOnce(&mut VfsState) -> R) -> R {
-        VFS_STATE.with(|cell| {
-            let mut borrow = cell.borrow_mut();
-            f(borrow.as_mut().expect("VFS not initialized"))
-        })
-    }
-
-    pub(crate) struct VfsBuilder {
-        state: VfsState,
-    }
-
-    impl VfsBuilder {
-        pub(crate) fn new() -> Self {
-            let mut dirs = std::collections::HashSet::new();
-            dirs.insert(PathBuf::from("/"));
-            Self {
-                state: VfsState {
-                    files: HashMap::new(),
-                    dirs,
-                    cwd: PathBuf::from("/"),
-                    fd_table: HashMap::new(),
-                    next_fd: 100,
-                },
-            }
-        }
-
-        pub(crate) fn file(mut self, path: &str, contents: &[u8]) -> Self {
-            let p = PathBuf::from(path);
-            if let Some(parent) = p.parent() {
-                self.ensure_dirs(parent);
-            }
-            self.state.files.insert(
-                p,
-                VfsFile {
-                    contents: contents.to_vec(),
-                    mode: 0o644,
-                },
-            );
-            self
-        }
-
-        pub(crate) fn file_with_mode(mut self, path: &str, contents: &[u8], mode: mode_t) -> Self {
-            let p = PathBuf::from(path);
-            if let Some(parent) = p.parent() {
-                self.ensure_dirs(parent);
-            }
-            self.state.files.insert(
-                p,
-                VfsFile {
-                    contents: contents.to_vec(),
-                    mode,
-                },
-            );
-            self
-        }
-
-        pub(crate) fn dir(mut self, path: &str) -> Self {
-            self.ensure_dirs(&PathBuf::from(path));
-            self
-        }
-
-        pub(crate) fn cwd(mut self, path: &str) -> Self {
-            self.ensure_dirs(&PathBuf::from(path));
-            self.state.cwd = PathBuf::from(path);
-            self
-        }
-
-        pub(crate) fn open_fd(mut self, fd: c_int, path: &str, flags: c_int) -> Self {
-            self.state.fd_table.insert(fd, VfsFd {
-                path: PathBuf::from(path),
-                offset: 0,
-                flags,
-            });
-            self
-        }
-
-        pub(crate) fn stdin(self, path: &str) -> Self {
-            self.open_fd(super::STDIN_FILENO, path, super::O_RDONLY)
-        }
-
-        pub(crate) fn stdout(self, path: &str) -> Self {
-            self.open_fd(super::STDOUT_FILENO, path, super::O_WRONLY)
-        }
-
-        pub(crate) fn stderr(self, path: &str) -> Self {
-            self.open_fd(super::STDERR_FILENO, path, super::O_WRONLY)
-        }
-
-        fn ensure_dirs(&mut self, path: &std::path::Path) {
-            let mut current = PathBuf::new();
-            for component in path.components() {
-                current.push(component);
-                self.state.dirs.insert(current.clone());
-            }
-        }
-
-        fn vfs_syscalls() -> Syscalls {
-            Syscalls {
-                open: vfs_open,
-                write: vfs_write,
-                read: vfs_read,
-                close: vfs_close,
-                stat: vfs_stat,
-                lstat: vfs_stat,
-                fstat: vfs_fstat,
-                access: vfs_access,
-                chdir: vfs_chdir,
-                getcwd: vfs_getcwd,
-                opendir: vfs_opendir,
-                readdir: vfs_readdir,
-                closedir: vfs_closedir,
-                realpath: vfs_realpath,
-                readlink: vfs_readlink,
-                unlink: vfs_unlink,
-                ..default_syscalls()
-            }
-        }
-
-        pub(crate) fn build(self) -> (Syscalls, VfsState) {
-            (Self::vfs_syscalls(), self.state)
-        }
-
-        pub(crate) fn run<T>(self, f: impl FnOnce() -> T) -> T {
-            let (syscalls, state) = self.build();
-            VFS_STATE.with(|cell| {
-                let previous = cell.replace(Some(state));
-                let result = with_test_syscalls(syscalls, f);
-                cell.replace(previous);
-                result
-            })
-        }
-
-        pub(crate) fn run_with_fd_ops<T>(
-            self,
-            dup_fn: fn(c_int) -> c_int,
-            dup2_fn: fn(c_int, c_int) -> c_int,
-            close_fn: fn(c_int) -> c_int,
-            f: impl FnOnce() -> T,
-        ) -> T {
-            let (mut syscalls, state) = self.build();
-            syscalls.dup = dup_fn;
-            syscalls.dup2 = dup2_fn;
-            syscalls.close = close_fn;
-            VFS_STATE.with(|cell| {
-                let previous = cell.replace(Some(state));
-                let result = with_test_syscalls(syscalls, f);
-                cell.replace(previous);
-                result
-            })
-        }
-
-        pub(crate) fn run_with_waitpid<T>(
-            self,
-            waitpid_fn: fn(Pid, *mut c_int, c_int) -> Pid,
-            f: impl FnOnce() -> T,
-        ) -> T {
-            let (mut syscalls, state) = self.build();
-            syscalls.waitpid = waitpid_fn;
-            VFS_STATE.with(|cell| {
-                let previous = cell.replace(Some(state));
-                let result = with_test_syscalls(syscalls, f);
-                cell.replace(previous);
-                result
-            })
-        }
-
-        pub(crate) fn run_with_fcntl_and_isatty<T>(
-            self,
-            fcntl_fn: fn(c_int, c_int, c_int) -> c_int,
-            isatty_fn: fn(c_int) -> c_int,
-            f: impl FnOnce() -> T,
-        ) -> T {
-            let (mut syscalls, state) = self.build();
-            syscalls.fcntl = fcntl_fn;
-            syscalls.isatty = isatty_fn;
-            VFS_STATE.with(|cell| {
-                let previous = cell.replace(Some(state));
-                let result = with_test_syscalls(syscalls, f);
-                cell.replace(previous);
-                result
-            })
-        }
-    }
-
-    fn vfs_resolve(path_ptr: *const c_char) -> PathBuf {
-        let cstr = unsafe { CStr::from_ptr(path_ptr) };
-        let s = cstr.to_str().unwrap_or("");
-        let p = PathBuf::from(s);
-        if p.is_absolute() {
-            p
-        } else {
-            with_vfs(|state| state.cwd.join(&p))
-        }
-    }
-
-    fn vfs_open(path: *const c_char, flags: c_int, mode: mode_t) -> c_int {
-        let resolved = vfs_resolve(path);
-        with_vfs(|state| {
-            let creating = flags & super::O_CREAT != 0;
-            let truncating = flags & super::O_TRUNC != 0;
-            let exclusive = flags & super::O_EXCL != 0;
-            let appending = flags & super::O_APPEND != 0;
-
-            if state.dirs.contains(&resolved) {
-                super::set_errno(libc::EISDIR);
-                return -1;
-            }
-
-            if exclusive && creating && state.files.contains_key(&resolved) {
-                super::set_errno(libc::EEXIST);
-                return -1;
-            }
-
-            if creating {
-                if !state.files.contains_key(&resolved) {
-                    let parent = resolved.parent().unwrap_or(std::path::Path::new("/"));
-                    if !state.dirs.contains(parent) {
-                        super::set_errno(libc::ENOENT);
-                        return -1;
-                    }
-                    state.files.insert(
-                        resolved.clone(),
-                        VfsFile { contents: Vec::new(), mode },
-                    );
-                }
-            }
-
-            if !state.files.contains_key(&resolved) {
-                super::set_errno(libc::ENOENT);
-                return -1;
-            }
-
-            if truncating {
-                if let Some(file) = state.files.get_mut(&resolved) {
-                    file.contents.clear();
-                }
-            }
-
-            let offset = if appending {
-                state.files.get(&resolved).map_or(0, |f| f.contents.len())
-            } else {
-                0
-            };
-
-            let fd = state.next_fd;
-            state.next_fd += 1;
-            state.fd_table.insert(
-                fd,
-                VfsFd {
-                    path: resolved,
-                    offset,
-                    flags,
-                },
-            );
-            fd
-        })
-    }
-
-    fn vfs_write(fd: c_int, buf: *const u8, count: usize) -> isize {
-        let in_vfs = with_vfs(|state| state.fd_table.contains_key(&fd));
-        if !in_vfs {
-            return unsafe { libc::write(fd, buf as *const libc::c_void, count) };
-        }
-        with_vfs(|state| {
-            let vfd = state.fd_table.get_mut(&fd).unwrap();
-            let path = vfd.path.clone();
-            let offset = vfd.offset;
-            let data = unsafe { std::slice::from_raw_parts(buf, count) };
-            if let Some(file) = state.files.get_mut(&path) {
-                if offset >= file.contents.len() {
-                    file.contents.extend_from_slice(data);
-                } else {
-                    let end = offset + data.len();
-                    if end > file.contents.len() {
-                        file.contents.resize(end, 0);
-                    }
-                    file.contents[offset..end].copy_from_slice(data);
-                }
-                vfd.offset = offset + data.len();
-                count as isize
-            } else {
-                super::set_errno(libc::EBADF);
-                -1
-            }
-        })
-    }
-
-    fn vfs_read(fd: c_int, buf: *mut u8, count: usize) -> isize {
-        let in_vfs = with_vfs(|state| state.fd_table.contains_key(&fd));
-        if !in_vfs {
-            return unsafe { libc::read(fd, buf as *mut libc::c_void, count) };
-        }
-        with_vfs(|state| {
-            let vfd = state.fd_table.get_mut(&fd).unwrap();
-            let path = vfd.path.clone();
-            let offset = vfd.offset;
-            if let Some(file) = state.files.get(&path) {
-                let available = file.contents.len().saturating_sub(offset);
-                let to_read = count.min(available);
-                if to_read > 0 {
-                    unsafe {
-                        std::ptr::copy_nonoverlapping(
-                            file.contents[offset..].as_ptr(),
-                            buf,
-                            to_read,
-                        );
-                    }
-                }
-                vfd.offset += to_read;
-                to_read as isize
-            } else {
-                0
-            }
-        })
-    }
-
-    fn vfs_close(fd: c_int) -> c_int {
-        let in_vfs = with_vfs(|state| state.fd_table.contains_key(&fd));
-        if !in_vfs {
-            return unsafe { libc::close(fd) };
-        }
-        with_vfs(|state| {
-            state.fd_table.remove(&fd);
-            0
-        })
-    }
-
-    fn vfs_fill_stat(stat_buf: *mut libc::stat, mode: mode_t, size: u64) {
-        unsafe {
-            std::ptr::write_bytes(stat_buf, 0, 1);
-            (*stat_buf).st_mode = mode;
-            (*stat_buf).st_size = size as i64;
-        }
-    }
-
-    fn vfs_stat(path: *const c_char, buf: *mut libc::stat) -> c_int {
-        let resolved = vfs_resolve(path);
-        with_vfs(|state| {
-            if let Some(file) = state.files.get(&resolved) {
-                vfs_fill_stat(buf, super::S_IFREG | file.mode, file.contents.len() as u64);
-                0
-            } else if state.dirs.contains(&resolved) {
-                vfs_fill_stat(buf, super::S_IFDIR | 0o755, 0);
-                0
-            } else {
-                super::set_errno(libc::ENOENT);
-                -1
-            }
-        })
-    }
-
-    fn vfs_fstat(fd: c_int, buf: *mut libc::stat) -> c_int {
-        with_vfs(|state| {
-            let Some(vfd) = state.fd_table.get(&fd) else {
-                super::set_errno(libc::EBADF);
-                return -1;
-            };
-            let path = vfd.path.clone();
-            if let Some(file) = state.files.get(&path) {
-                vfs_fill_stat(buf, super::S_IFREG | file.mode, file.contents.len() as u64);
-                0
-            } else if state.dirs.contains(&path) {
-                vfs_fill_stat(buf, super::S_IFDIR | 0o755, 0);
-                0
-            } else {
-                super::set_errno(libc::EBADF);
-                -1
-            }
-        })
-    }
-
-    fn vfs_access(path: *const c_char, mode: c_int) -> c_int {
-        let resolved = vfs_resolve(path);
-        with_vfs(|state| {
-            if state.files.contains_key(&resolved) || state.dirs.contains(&resolved) {
-                if mode == super::X_OK {
-                    if let Some(file) = state.files.get(&resolved) {
-                        if file.mode & 0o111 == 0 {
-                            super::set_errno(libc::EACCES);
-                            return -1;
-                        }
-                    }
-                }
-                if mode == super::R_OK {
-                    if let Some(file) = state.files.get(&resolved) {
-                        if file.mode & 0o444 == 0 {
-                            super::set_errno(libc::EACCES);
-                            return -1;
-                        }
-                    }
-                }
-                0
-            } else {
-                super::set_errno(libc::ENOENT);
-                -1
-            }
-        })
-    }
-
-    fn vfs_chdir(path: *const c_char) -> c_int {
-        let resolved = vfs_resolve(path);
-        with_vfs(|state| {
-            if state.dirs.contains(&resolved) {
-                state.cwd = resolved;
-                0
-            } else {
-                super::set_errno(libc::ENOENT);
-                -1
-            }
-        })
-    }
-
-    fn vfs_getcwd(buf: *mut c_char, size: usize) -> *mut c_char {
-        with_vfs(|state| {
-            let cwd_str = state.cwd.display().to_string();
-            let needed = cwd_str.len() + 1;
-            if needed > size {
-                super::set_errno(libc::ERANGE);
-                return std::ptr::null_mut();
-            }
-            unsafe {
-                std::ptr::copy_nonoverlapping(cwd_str.as_ptr().cast(), buf, cwd_str.len());
-                *buf.add(cwd_str.len()) = 0;
-            }
-            buf
-        })
-    }
-
-    static VFS_DIR_ENTRIES: Mutex<Vec<(usize, Vec<String>, usize)>> = Mutex::new(Vec::new());
-
-    fn vfs_opendir(path: *const c_char) -> *mut libc::DIR {
-        let resolved = vfs_resolve(path);
-        let entries: Vec<String> = with_vfs(|state| {
-            if !state.dirs.contains(&resolved) {
-                return Vec::new();
-            }
-            let mut names = Vec::new();
-            for file_path in state.files.keys() {
-                if file_path.parent() == Some(&resolved) {
-                    if let Some(name) = file_path.file_name() {
-                        names.push(name.to_string_lossy().into_owned());
-                    }
-                }
-            }
-            for dir_path in &state.dirs {
-                if dir_path.parent() == Some(&resolved) && dir_path != &resolved {
-                    if let Some(name) = dir_path.file_name() {
-                        names.push(name.to_string_lossy().into_owned());
-                    }
-                }
-            }
-            names.sort();
-            names.dedup();
-            names
-        });
-        if entries.is_empty() {
-            let resolved_check = vfs_resolve(path);
-            let is_dir = with_vfs(|state| state.dirs.contains(&resolved_check));
-            if !is_dir {
-                super::set_errno(libc::ENOENT);
-                return std::ptr::null_mut();
-            }
-        }
-        let mut guard = VFS_DIR_ENTRIES.lock().unwrap();
-        let id = guard.len() + 1;
-        guard.push((id, entries, 0));
-        id as *mut libc::DIR
-    }
-
-    fn vfs_readdir(dirp: *mut libc::DIR) -> *mut libc::dirent {
-        thread_local! {
-            static DIRENT_BUF: RefCell<libc::dirent> = RefCell::new(unsafe { std::mem::zeroed() });
-        }
-        let id = dirp as usize;
-        let mut guard = VFS_DIR_ENTRIES.lock().unwrap();
-        let Some(entry) = guard.iter_mut().find(|(eid, _, _)| *eid == id) else {
-            return std::ptr::null_mut();
-        };
-        let (_, entries, index) = entry;
-        if *index >= entries.len() {
-            return std::ptr::null_mut();
-        }
-        let name = &entries[*index];
-        *index += 1;
-        DIRENT_BUF.with(|cell| {
-            let mut dirent = cell.borrow_mut();
-            let bytes = name.as_bytes();
-            let len = bytes.len().min(255);
-            unsafe {
-                std::ptr::copy_nonoverlapping(bytes.as_ptr(), dirent.d_name.as_mut_ptr().cast(), len);
-                *dirent.d_name.as_mut_ptr().add(len) = 0;
-            }
-            &mut *dirent as *mut libc::dirent
-        })
-    }
-
-    fn vfs_closedir(dirp: *mut libc::DIR) -> c_int {
-        let id = dirp as usize;
-        let mut guard = VFS_DIR_ENTRIES.lock().unwrap();
-        guard.retain(|(eid, _, _)| *eid != id);
-        0
-    }
-
-    fn vfs_realpath(path: *const c_char, resolved: *mut c_char) -> *mut c_char {
-        let p = vfs_resolve(path);
-        let exists = with_vfs(|state| {
-            state.files.contains_key(&p) || state.dirs.contains(&p)
-        });
-        if !exists {
-            super::set_errno(libc::ENOENT);
-            return std::ptr::null_mut();
-        }
-        let s = p.display().to_string();
-        if resolved.is_null() {
-            let c = CString::new(s).unwrap();
-            unsafe { libc::strdup(c.as_ptr()) }
-        } else {
-            let bytes = s.as_bytes();
-            unsafe {
-                std::ptr::copy_nonoverlapping(bytes.as_ptr().cast(), resolved, bytes.len());
-                *resolved.add(bytes.len()) = 0;
-            }
-            resolved
-        }
-    }
-
-    fn vfs_readlink(_path: *const c_char, _buf: *mut c_char, _bufsiz: usize) -> isize {
-        super::set_errno(libc::EINVAL);
-        -1
-    }
-
-    fn vfs_unlink(path: *const c_char) -> c_int {
-        let resolved = vfs_resolve(path);
-        with_vfs(|state| {
-            if state.files.remove(&resolved).is_some() {
-                0
-            } else {
-                super::set_errno(libc::ENOENT);
-                -1
-            }
-        })
-    }
-
-    // --- FakeSpawn infrastructure for tests ---
-
-    #[derive(Clone, Debug)]
-    pub(crate) struct FakeChild {
-        pub(crate) pid: Pid,
-        pub(crate) exit_status: c_int,
-        pub(crate) stdout_data: Vec<u8>,
+    pub(crate) enum ArgMatcher {
+        Any,
+        Int(i64),
+        Str(String),
+        Bytes(Vec<u8>),
+        Fd(c_int),
     }
 
     #[derive(Clone, Debug)]
     #[allow(dead_code)]
-    pub(crate) struct FakeSpawnState {
-        children: Vec<FakeChild>,
-        spawn_index: usize,
-        pipe_fds: HashMap<c_int, Vec<u8>>,
-        next_pipe_fd: c_int,
+    pub(crate) enum TraceResult {
+        Int(i64),
+        Fd(c_int),
+        Pid(Pid),
+        Bytes(Vec<u8>),
+        Err(c_int),
+        Status(i32),
+        Fds(c_int, c_int),
+        Void,
+        CwdStr(String),
+        RealpathStr(String),
+        ReadlinkStr(String),
+        StatDir,
+        StatFile(mode_t),
+        StatFifo,
+        DirEntry(String),
+    }
+
+    #[derive(Clone, Debug)]
+    pub(crate) struct TraceEntry {
+        pub syscall: &'static str,
+        pub args: Vec<ArgMatcher>,
+        pub result: TraceResult,
+        pub child_trace: Option<Vec<TraceEntry>>,
     }
 
     thread_local! {
-        static FAKE_SPAWN_STATE: RefCell<Option<FakeSpawnState>> =
-            const { RefCell::new(None) };
+        static TRACE_LOG: RefCell<Option<Vec<TraceEntry>>> = const { RefCell::new(None) };
+        static TRACE_INDEX: RefCell<usize> = const { RefCell::new(0) };
+        static CHILD_TRACES: RefCell<Vec<Vec<TraceEntry>>> = const { RefCell::new(Vec::new()) };
+        static TEST_EXIT_STATUS: RefCell<Option<i32>> = const { RefCell::new(None) };
     }
 
-    fn with_fake_spawn<R>(f: impl FnOnce(&mut FakeSpawnState) -> R) -> R {
-        FAKE_SPAWN_STATE.with(|cell| {
-            let mut borrow = cell.borrow_mut();
-            f(borrow.as_mut().expect("FakeSpawn not initialized"))
-        })
-    }
-
-    pub(crate) struct FakeSpawnBuilder {
-        children: Vec<FakeChild>,
-        next_pid: Pid,
-    }
-
-    impl FakeSpawnBuilder {
-        pub(crate) fn new() -> Self {
-            Self {
-                children: Vec::new(),
-                next_pid: 1000,
-            }
-        }
-
-        pub(crate) fn child(mut self, exit_status: i32, stdout_data: &[u8]) -> Self {
-            self.children.push(FakeChild {
-                pid: self.next_pid,
-                exit_status,
-                stdout_data: stdout_data.to_vec(),
+    fn trace_dispatch(name: &str, args: &[ArgMatcher]) -> TraceEntry {
+        TRACE_LOG.with(|cell| {
+            let borrow = cell.borrow();
+            let trace = borrow.as_ref().unwrap_or_else(|| panic!("syscall '{name}' called but no trace is active"));
+            let index = TRACE_INDEX.with(|idx| {
+                let i = *idx.borrow();
+                *idx.borrow_mut() = i + 1;
+                i
             });
-            self.next_pid += 1;
-            self
-        }
-
-        #[allow(dead_code)]
-        pub(crate) fn child_with_pid(mut self, pid: Pid, exit_status: i32, stdout_data: &[u8]) -> Self {
-            self.children.push(FakeChild {
-                pid,
-                exit_status,
-                stdout_data: stdout_data.to_vec(),
-            });
-            self
-        }
-
-        fn fake_spawn_syscalls() -> Syscalls {
-            Syscalls {
-                fork: fake_fork,
-                execvp: fake_execvp,
-                waitpid: fake_waitpid,
-                pipe: fake_pipe,
-                read: fake_spawn_read,
-                close: fake_spawn_close,
-                dup2: fake_spawn_dup2,
-                setpgid: |_, _| 0,
-                ..default_syscalls()
+            if index >= trace.len() {
+                panic!(
+                    "unexpected syscall '{name}' at index {index} (trace has {} entries)\n  called with args: {args:?}",
+                    trace.len()
+                );
             }
-        }
-
-        pub(crate) fn build(self) -> (Syscalls, FakeSpawnState) {
-            let state = FakeSpawnState {
-                children: self.children,
-                spawn_index: 0,
-                pipe_fds: HashMap::new(),
-                next_pipe_fd: 200,
-            };
-            (Self::fake_spawn_syscalls(), state)
-        }
-
-        pub(crate) fn run<T>(self, f: impl FnOnce() -> T) -> T {
-            let (syscalls, state) = self.build();
-            FAKE_SPAWN_STATE.with(|cell| {
-                let previous = cell.replace(Some(state));
-                let result = with_test_syscalls(syscalls, f);
-                cell.replace(previous);
-                result
-            })
-        }
-    }
-
-    impl VfsBuilder {
-        #[allow(dead_code)]
-        pub(crate) fn with_fake_spawn(self, spawn: FakeSpawnBuilder) -> VfsWithFakeSpawn {
-            VfsWithFakeSpawn { vfs: self, spawn }
-        }
-    }
-
-    #[allow(dead_code)]
-    pub(crate) struct VfsWithFakeSpawn {
-        vfs: VfsBuilder,
-        spawn: FakeSpawnBuilder,
-    }
-
-    impl VfsWithFakeSpawn {
-        #[allow(dead_code)]
-        pub(crate) fn run<T>(self, f: impl FnOnce() -> T) -> T {
-            let (_, vfs_state) = self.vfs.build();
-            let (spawn_syscalls, spawn_state) = self.spawn.build();
-            let combined = Syscalls {
-                open: vfs_open,
-                write: vfs_write,
-                stat: vfs_stat,
-                lstat: vfs_stat,
-                fstat: vfs_fstat,
-                access: vfs_access,
-                chdir: vfs_chdir,
-                getcwd: vfs_getcwd,
-                opendir: vfs_opendir,
-                readdir: vfs_readdir,
-                closedir: vfs_closedir,
-                realpath: vfs_realpath,
-                readlink: vfs_readlink,
-                unlink: vfs_unlink,
-                ..spawn_syscalls
-            };
-
-            VFS_STATE.with(|vcell| {
-                let vprev = vcell.replace(Some(vfs_state));
-                let result = FAKE_SPAWN_STATE.with(|scell| {
-                    let sprev = scell.replace(Some(spawn_state));
-                    let result = with_test_syscalls(combined, f);
-                    scell.replace(sprev);
-                    result
+            let entry = trace[index].clone();
+            if entry.syscall != name {
+                panic!(
+                    "trace mismatch at index {index}: expected '{expected}', got '{name}'\n  expected args: {expected_args:?}\n  actual args: {args:?}",
+                    expected = entry.syscall,
+                    expected_args = entry.args,
+                );
+            }
+            for (i, (expected, actual)) in entry.args.iter().zip(args.iter()).enumerate() {
+                match (expected, actual) {
+                    (ArgMatcher::Any, _) => {}
+                    (ArgMatcher::Int(e), ArgMatcher::Int(a)) if e == a => {}
+                    (ArgMatcher::Fd(e), ArgMatcher::Fd(a)) if e == a => {}
+                    (ArgMatcher::Fd(e), ArgMatcher::Int(a)) if *e as i64 == *a => {}
+                    (ArgMatcher::Int(e), ArgMatcher::Fd(a)) if *e == *a as i64 => {}
+                    (ArgMatcher::Str(e), ArgMatcher::Str(a)) if e == a => {}
+                    (ArgMatcher::Bytes(e), ArgMatcher::Bytes(a)) if e == a => {}
+                    _ => panic!(
+                        "trace arg mismatch at index {index}, syscall '{name}', arg {i}: expected {expected:?}, got {actual:?}",
+                    ),
+                }
+            }
+            if let Some(child_trace) = &entry.child_trace {
+                CHILD_TRACES.with(|cell| {
+                    cell.borrow_mut().push(child_trace.clone());
                 });
-                vcell.replace(vprev);
-                result
-            })
-        }
-    }
-
-    fn fake_fork() -> Pid {
-        with_fake_spawn(|state| {
-            if state.spawn_index < state.children.len() {
-                let child = &state.children[state.spawn_index];
-                let pid = child.pid;
-                state.spawn_index += 1;
-                pid
-            } else {
-                super::set_errno(libc::EAGAIN);
-                -1
             }
+            entry
         })
     }
 
-    fn fake_execvp(_file: *const c_char, _argv: *const *const c_char) -> c_int {
-        unsafe { libc::_exit(0) };
+    fn apply_trace_result_int(entry: &TraceEntry) -> c_int {
+        match &entry.result {
+            TraceResult::Int(v) => *v as c_int,
+            TraceResult::Fd(fd) => *fd,
+            TraceResult::Err(errno) => {
+                super::set_errno(*errno);
+                -1
+            }
+            other => panic!("trace result type mismatch for '{}': expected Int/Fd/Err, got {other:?}", entry.syscall),
+        }
     }
 
-    fn fake_waitpid(pid: Pid, status: *mut c_int, _options: c_int) -> Pid {
-        with_fake_spawn(|state| {
-            if let Some(child) = state.children.iter().find(|c| c.pid == pid) {
+    fn apply_trace_result_isize(entry: &TraceEntry) -> isize {
+        match &entry.result {
+            TraceResult::Int(v) => *v as isize,
+            TraceResult::Err(errno) => {
+                super::set_errno(*errno);
+                -1
+            }
+            _ => panic!("trace result type mismatch for '{}': expected Int/Err", entry.syscall),
+        }
+    }
+
+    fn apply_trace_result_pid(entry: &TraceEntry) -> Pid {
+        match &entry.result {
+            TraceResult::Pid(p) => *p,
+            TraceResult::Int(v) => *v as Pid,
+            TraceResult::Err(errno) => {
+                super::set_errno(*errno);
+                -1
+            }
+            other => panic!("trace result type mismatch for '{}': expected Pid/Err, got {other:?}", entry.syscall),
+        }
+    }
+
+    // Trace-dispatching syscall implementations
+    fn trace_getpid() -> Pid {
+        let entry = trace_dispatch("getpid", &[]);
+        apply_trace_result_pid(&entry)
+    }
+    fn trace_waitpid(pid: Pid, status: *mut c_int, options: c_int) -> Pid {
+        let entry = trace_dispatch("waitpid", &[ArgMatcher::Int(pid as i64), ArgMatcher::Any, ArgMatcher::Int(options as i64)]);
+        if !status.is_null() {
+            if let TraceResult::Status(s) = entry.result {
+                unsafe { *status = s << 8; }
+                return pid;
+            }
+        }
+        apply_trace_result_pid(&entry)
+    }
+    fn trace_kill(pid: Pid, sig: c_int) -> c_int {
+        let entry = trace_dispatch("kill", &[ArgMatcher::Int(pid as i64), ArgMatcher::Int(sig as i64)]);
+        apply_trace_result_int(&entry)
+    }
+    fn trace_signal(sig: c_int, handler: libc::sighandler_t) -> libc::sighandler_t {
+        let _ = handler;
+        let entry = trace_dispatch("signal", &[ArgMatcher::Int(sig as i64), ArgMatcher::Any]);
+        match &entry.result {
+            TraceResult::Int(v) => *v as libc::sighandler_t,
+            TraceResult::Err(errno) => {
+                super::set_errno(*errno);
+                SIG_ERR_HANDLER
+            }
+            _ => 0 as libc::sighandler_t,
+        }
+    }
+    fn trace_isatty(fd: c_int) -> c_int {
+        let entry = trace_dispatch("isatty", &[ArgMatcher::Fd(fd)]);
+        apply_trace_result_int(&entry)
+    }
+    fn trace_tcgetpgrp(fd: c_int) -> Pid {
+        let entry = trace_dispatch("tcgetpgrp", &[ArgMatcher::Fd(fd)]);
+        apply_trace_result_pid(&entry)
+    }
+    fn trace_tcsetpgrp(fd: c_int, pgrp: Pid) -> c_int {
+        let entry = trace_dispatch("tcsetpgrp", &[ArgMatcher::Fd(fd), ArgMatcher::Int(pgrp as i64)]);
+        apply_trace_result_int(&entry)
+    }
+    fn trace_setpgid(pid: Pid, pgid: Pid) -> c_int {
+        let entry = trace_dispatch("setpgid", &[ArgMatcher::Int(pid as i64), ArgMatcher::Int(pgid as i64)]);
+        apply_trace_result_int(&entry)
+    }
+    fn trace_pipe(fds: *mut c_int) -> c_int {
+        let entry = trace_dispatch("pipe", &[]);
+        match &entry.result {
+            TraceResult::Fds(r, w) => {
+                unsafe { *fds = *r; *fds.add(1) = *w; }
+                0
+            }
+            TraceResult::Err(errno) => {
+                super::set_errno(*errno);
+                -1
+            }
+            other => panic!("trace result type mismatch for 'pipe': expected Fds/Err, got {other:?}"),
+        }
+    }
+    fn trace_dup(fd: c_int) -> c_int {
+        let entry = trace_dispatch("dup", &[ArgMatcher::Fd(fd)]);
+        apply_trace_result_int(&entry)
+    }
+    fn trace_dup2(oldfd: c_int, newfd: c_int) -> c_int {
+        let entry = trace_dispatch("dup2", &[ArgMatcher::Fd(oldfd), ArgMatcher::Fd(newfd)]);
+        apply_trace_result_int(&entry)
+    }
+    fn trace_close(fd: c_int) -> c_int {
+        let entry = trace_dispatch("close", &[ArgMatcher::Fd(fd)]);
+        apply_trace_result_int(&entry)
+    }
+    fn trace_fcntl(fd: c_int, cmd: c_int, arg: c_int) -> c_int {
+        let entry = trace_dispatch("fcntl", &[ArgMatcher::Fd(fd), ArgMatcher::Int(cmd as i64), ArgMatcher::Int(arg as i64)]);
+        apply_trace_result_int(&entry)
+    }
+    fn trace_read(fd: c_int, buf: *mut u8, count: usize) -> isize {
+        let entry = trace_dispatch("read", &[ArgMatcher::Fd(fd), ArgMatcher::Any]);
+        match &entry.result {
+            TraceResult::Bytes(data) => {
+                let n = data.len().min(count);
+                unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), buf, n); }
+                n as isize
+            }
+            TraceResult::Int(v) => *v as isize,
+            TraceResult::Err(errno) => {
+                super::set_errno(*errno);
+                -1
+            }
+            other => panic!("trace result type mismatch for 'read': expected Bytes/Int/Err, got {other:?}"),
+        }
+    }
+    fn trace_umask(cmask: FileModeMask) -> FileModeMask {
+        let entry = trace_dispatch("umask", &[ArgMatcher::Int(cmask as i64)]);
+        match &entry.result {
+            TraceResult::Int(v) => *v as FileModeMask,
+            other => panic!("trace result type mismatch for 'umask': expected Int, got {other:?}"),
+        }
+    }
+    fn trace_times(_buffer: *mut libc::tms) -> ClockTicks {
+        let entry = trace_dispatch("times", &[ArgMatcher::Any]);
+        match &entry.result {
+            TraceResult::Int(v) => *v as ClockTicks,
+            TraceResult::Err(_) => ClockTicks::MAX,
+            other => panic!("trace result type mismatch for 'times': expected Int/Err, got {other:?}"),
+        }
+    }
+    fn trace_sysconf(name: c_int) -> c_long {
+        let entry = trace_dispatch("sysconf", &[ArgMatcher::Int(name as i64)]);
+        match &entry.result {
+            TraceResult::Int(v) => *v as c_long,
+            other => panic!("trace result type mismatch for 'sysconf': expected Int, got {other:?}"),
+        }
+    }
+    fn trace_execvp(file: *const c_char, _argv: *const *const c_char) -> c_int {
+        let name = unsafe { CStr::from_ptr(file) }.to_string_lossy().to_string();
+        let entry = trace_dispatch("execvp", &[ArgMatcher::Str(name), ArgMatcher::Any]);
+        apply_trace_result_int(&entry)
+    }
+    fn trace_open(path: *const c_char, flags: c_int, mode: mode_t) -> c_int {
+        let p = unsafe { CStr::from_ptr(path) }.to_string_lossy().to_string();
+        let entry = trace_dispatch("open", &[ArgMatcher::Str(p), ArgMatcher::Int(flags as i64), ArgMatcher::Int(mode as i64)]);
+        apply_trace_result_int(&entry)
+    }
+    fn trace_write(fd: c_int, buf: *const u8, count: usize) -> isize {
+        let data = unsafe { std::slice::from_raw_parts(buf, count) };
+        let entry = trace_dispatch("write", &[ArgMatcher::Fd(fd), ArgMatcher::Bytes(data.to_vec())]);
+        apply_trace_result_isize(&entry)
+    }
+    fn trace_stat(path: *const c_char, buf: *mut libc::stat) -> c_int {
+        let p = unsafe { CStr::from_ptr(path) }.to_string_lossy().to_string();
+        let entry = trace_dispatch("stat", &[ArgMatcher::Str(p), ArgMatcher::Any]);
+        match &entry.result {
+            TraceResult::StatDir => {
+                unsafe { std::ptr::write_bytes(buf, 0, 1); (*buf).st_mode = libc::S_IFDIR | 0o755; }
+                0
+            }
+            TraceResult::StatFile(mode) => {
+                unsafe { std::ptr::write_bytes(buf, 0, 1); (*buf).st_mode = libc::S_IFREG | mode; }
+                0
+            }
+            TraceResult::StatFifo => {
+                unsafe { std::ptr::write_bytes(buf, 0, 1); (*buf).st_mode = libc::S_IFIFO | 0o644; }
+                0
+            }
+            TraceResult::Err(errno) => {
+                super::set_errno(*errno);
+                -1
+            }
+            TraceResult::Int(v) => *v as c_int,
+            other => panic!("trace result type mismatch for 'stat': expected StatDir/StatFile/Err, got {other:?}"),
+        }
+    }
+    fn trace_lstat(path: *const c_char, buf: *mut libc::stat) -> c_int {
+        let p = unsafe { CStr::from_ptr(path) }.to_string_lossy().to_string();
+        let entry = trace_dispatch("lstat", &[ArgMatcher::Str(p), ArgMatcher::Any]);
+        match &entry.result {
+            TraceResult::StatDir => {
+                unsafe { std::ptr::write_bytes(buf, 0, 1); (*buf).st_mode = libc::S_IFDIR | 0o755; }
+                0
+            }
+            TraceResult::StatFile(mode) => {
+                unsafe { std::ptr::write_bytes(buf, 0, 1); (*buf).st_mode = libc::S_IFREG | mode; }
+                0
+            }
+            TraceResult::Err(errno) => {
+                super::set_errno(*errno);
+                -1
+            }
+            TraceResult::Int(v) => *v as c_int,
+            other => panic!("trace result type mismatch for 'lstat': expected StatDir/StatFile/Err, got {other:?}"),
+        }
+    }
+    fn trace_fstat(fd: c_int, buf: *mut libc::stat) -> c_int {
+        let entry = trace_dispatch("fstat", &[ArgMatcher::Fd(fd), ArgMatcher::Any]);
+        match &entry.result {
+            TraceResult::StatDir => {
+                unsafe { std::ptr::write_bytes(buf, 0, 1); (*buf).st_mode = libc::S_IFDIR | 0o755; }
+                0
+            }
+            TraceResult::StatFile(mode) => {
+                unsafe { std::ptr::write_bytes(buf, 0, 1); (*buf).st_mode = libc::S_IFREG | mode; }
+                0
+            }
+            TraceResult::StatFifo => {
+                unsafe { std::ptr::write_bytes(buf, 0, 1); (*buf).st_mode = libc::S_IFIFO | 0o644; }
+                0
+            }
+            TraceResult::Err(errno) => {
+                super::set_errno(*errno);
+                -1
+            }
+            TraceResult::Int(v) => *v as c_int,
+            other => panic!("trace result type mismatch for 'fstat': expected StatDir/StatFile/StatFifo/Err, got {other:?}"),
+        }
+    }
+    fn trace_access(path: *const c_char, mode: c_int) -> c_int {
+        let p = unsafe { CStr::from_ptr(path) }.to_string_lossy().to_string();
+        let entry = trace_dispatch("access", &[ArgMatcher::Str(p), ArgMatcher::Int(mode as i64)]);
+        apply_trace_result_int(&entry)
+    }
+    fn trace_chdir(path: *const c_char) -> c_int {
+        let p = unsafe { CStr::from_ptr(path) }.to_string_lossy().to_string();
+        let entry = trace_dispatch("chdir", &[ArgMatcher::Str(p)]);
+        apply_trace_result_int(&entry)
+    }
+    fn trace_getcwd(buf: *mut c_char, size: usize) -> *mut c_char {
+        let entry = trace_dispatch("getcwd", &[]);
+        match &entry.result {
+            TraceResult::CwdStr(s) => {
+                let bytes = s.as_bytes();
+                if bytes.len() + 1 > size {
+                    super::set_errno(libc::ERANGE);
+                    return std::ptr::null_mut();
+                }
                 unsafe {
-                    *status = child.exit_status << 8;
+                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf as *mut u8, bytes.len());
+                    *buf.add(bytes.len()) = 0;
                 }
-                pid
-            } else if pid == -1 {
-                if let Some(child) = state.children.first() {
-                    let pid = child.pid;
-                    let status_val = child.exit_status;
+                buf
+            }
+            TraceResult::Err(errno) => {
+                super::set_errno(*errno);
+                std::ptr::null_mut()
+            }
+            other => panic!("trace result type mismatch for 'getcwd': expected CwdStr/Err, got {other:?}"),
+        }
+    }
+    fn trace_opendir(path: *const c_char) -> *mut libc::DIR {
+        let p = unsafe { CStr::from_ptr(path) }.to_string_lossy().to_string();
+        let entry = trace_dispatch("opendir", &[ArgMatcher::Str(p)]);
+        match &entry.result {
+            TraceResult::Int(v) => *v as *mut libc::DIR,
+            TraceResult::Err(errno) => {
+                super::set_errno(*errno);
+                std::ptr::null_mut()
+            }
+            other => panic!("trace result type mismatch for 'opendir': expected Int/Err, got {other:?}"),
+        }
+    }
+    thread_local! {
+        static FAKE_DIRENT: std::cell::RefCell<libc::dirent> = const { std::cell::RefCell::new(unsafe { std::mem::zeroed() }) };
+    }
+    fn trace_readdir(_dirp: *mut libc::DIR) -> *mut libc::dirent {
+        let entry = trace_dispatch("readdir", &[ArgMatcher::Any]);
+        match &entry.result {
+            TraceResult::DirEntry(name) => {
+                FAKE_DIRENT.with(|cell| {
+                    let mut d = cell.borrow_mut();
+                    d.d_name = unsafe { std::mem::zeroed() };
+                    let bytes = name.as_bytes();
+                    let len = bytes.len().min(d.d_name.len() - 1);
+                    for (i, &b) in bytes[..len].iter().enumerate() {
+                        d.d_name[i] = b as i8;
+                    }
+                    d.d_name[len] = 0;
+                    &mut *d as *mut libc::dirent
+                })
+            }
+            TraceResult::Int(0) => {
+                super::set_errno(0);
+                std::ptr::null_mut()
+            }
+            TraceResult::Err(errno) => {
+                super::set_errno(*errno);
+                std::ptr::null_mut()
+            }
+            other => panic!("trace result type mismatch for 'readdir': expected DirEntry/Int(0)/Err, got {other:?}"),
+        }
+    }
+    fn trace_closedir(_dirp: *mut libc::DIR) -> c_int {
+        let entry = trace_dispatch("closedir", &[ArgMatcher::Any]);
+        apply_trace_result_int(&entry)
+    }
+    fn trace_realpath(path: *const c_char, resolved: *mut c_char) -> *mut c_char {
+        let p = unsafe { CStr::from_ptr(path) }.to_string_lossy().to_string();
+        let entry = trace_dispatch("realpath", &[ArgMatcher::Str(p), ArgMatcher::Any]);
+        match &entry.result {
+            TraceResult::RealpathStr(s) => {
+                let c_result = std::ffi::CString::new(s.as_str()).unwrap();
+                if resolved.is_null() {
+                    let ptr = unsafe { libc::malloc(c_result.as_bytes_with_nul().len()) } as *mut c_char;
                     unsafe {
-                        *status = status_val << 8;
+                        std::ptr::copy_nonoverlapping(c_result.as_ptr(), ptr, c_result.as_bytes_with_nul().len());
                     }
-                    pid
+                    ptr
                 } else {
-                    super::set_errno(libc::ECHILD);
-                    -1
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(c_result.as_ptr(), resolved, c_result.as_bytes_with_nul().len());
+                    }
+                    resolved
                 }
-            } else {
-                super::set_errno(libc::ECHILD);
+            }
+            TraceResult::Err(errno) => {
+                super::set_errno(*errno);
+                std::ptr::null_mut()
+            }
+            other => panic!("trace result type mismatch for 'realpath': expected RealpathStr/Err, got {other:?}"),
+        }
+    }
+    fn trace_readlink(path: *const c_char, buf: *mut c_char, bufsiz: usize) -> isize {
+        let p = unsafe { CStr::from_ptr(path) }.to_string_lossy().to_string();
+        let entry = trace_dispatch("readlink", &[ArgMatcher::Str(p), ArgMatcher::Any]);
+        match &entry.result {
+            TraceResult::ReadlinkStr(s) => {
+                let bytes = s.as_bytes();
+                let n = bytes.len().min(bufsiz);
+                unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf as *mut u8, n); }
+                n as isize
+            }
+            TraceResult::Err(errno) => {
+                super::set_errno(*errno);
                 -1
             }
+            other => panic!("trace result type mismatch for 'readlink': expected ReadlinkStr/Err, got {other:?}"),
+        }
+    }
+    fn trace_unlink(path: *const c_char) -> c_int {
+        let p = unsafe { CStr::from_ptr(path) }.to_string_lossy().to_string();
+        let entry = trace_dispatch("unlink", &[ArgMatcher::Str(p)]);
+        apply_trace_result_int(&entry)
+    }
+    fn trace_fork() -> Pid {
+        let entry = trace_dispatch("fork", &[]);
+        apply_trace_result_pid(&entry)
+    }
+    fn trace_exit_process(status: c_int) {
+        let _entry = trace_dispatch("exit_process", &[ArgMatcher::Int(status as i64)]);
+        TEST_EXIT_STATUS.with(|cell| cell.replace(Some(status)));
+        std::panic::panic_any(ChildExitPanic(status));
+    }
+
+    #[allow(dead_code)]
+    pub(crate) struct ChildExitPanic(pub i32);
+
+    pub(crate) fn trace_syscalls() -> Syscalls {
+        Syscalls {
+            getpid: trace_getpid,
+            waitpid: trace_waitpid,
+            kill: trace_kill,
+            signal: trace_signal,
+            isatty: trace_isatty,
+            tcgetpgrp: trace_tcgetpgrp,
+            tcsetpgrp: trace_tcsetpgrp,
+            setpgid: trace_setpgid,
+            pipe: trace_pipe,
+            dup: trace_dup,
+            dup2: trace_dup2,
+            close: trace_close,
+            fcntl: trace_fcntl,
+            read: trace_read,
+            umask: trace_umask,
+            times: trace_times,
+            sysconf: trace_sysconf,
+            execvp: trace_execvp,
+            open: trace_open,
+            write: trace_write,
+            stat: trace_stat,
+            lstat: trace_lstat,
+            fstat: trace_fstat,
+            access: trace_access,
+            chdir: trace_chdir,
+            getcwd: trace_getcwd,
+            opendir: trace_opendir,
+            readdir: trace_readdir,
+            closedir: trace_closedir,
+            realpath: trace_realpath,
+            readlink: trace_readlink,
+            unlink: trace_unlink,
+            fork: trace_fork,
+            exit_process: trace_exit_process,
+        }
+    }
+
+    pub(crate) fn no_syscalls_table() -> Syscalls {
+        fn panic_getpid() -> Pid { panic!("unexpected syscall 'getpid' in pure-logic test") }
+        fn panic_waitpid(_: Pid, _: *mut c_int, _: c_int) -> Pid { panic!("unexpected syscall 'waitpid' in pure-logic test") }
+        fn panic_kill(_: Pid, _: c_int) -> c_int { panic!("unexpected syscall 'kill' in pure-logic test") }
+        fn panic_signal(_: c_int, _: libc::sighandler_t) -> libc::sighandler_t { panic!("unexpected syscall 'signal' in pure-logic test") }
+        fn panic_isatty(_: c_int) -> c_int { panic!("unexpected syscall 'isatty' in pure-logic test") }
+        fn panic_tcgetpgrp(_: c_int) -> Pid { panic!("unexpected syscall 'tcgetpgrp' in pure-logic test") }
+        fn panic_tcsetpgrp(_: c_int, _: Pid) -> c_int { panic!("unexpected syscall 'tcsetpgrp' in pure-logic test") }
+        fn panic_setpgid(_: Pid, _: Pid) -> c_int { panic!("unexpected syscall 'setpgid' in pure-logic test") }
+        fn panic_pipe(_: *mut c_int) -> c_int { panic!("unexpected syscall 'pipe' in pure-logic test") }
+        fn panic_dup(_: c_int) -> c_int { panic!("unexpected syscall 'dup' in pure-logic test") }
+        fn panic_dup2(_: c_int, _: c_int) -> c_int { panic!("unexpected syscall 'dup2' in pure-logic test") }
+        fn panic_close(_: c_int) -> c_int { panic!("unexpected syscall 'close' in pure-logic test") }
+        fn panic_fcntl(_: c_int, _: c_int, _: c_int) -> c_int { panic!("unexpected syscall 'fcntl' in pure-logic test") }
+        fn panic_read(_: c_int, _: *mut u8, _: usize) -> isize { panic!("unexpected syscall 'read' in pure-logic test") }
+        fn panic_umask(_: FileModeMask) -> FileModeMask { panic!("unexpected syscall 'umask' in pure-logic test") }
+        fn panic_times(_: *mut libc::tms) -> ClockTicks { panic!("unexpected syscall 'times' in pure-logic test") }
+        fn panic_sysconf(_: c_int) -> c_long { panic!("unexpected syscall 'sysconf' in pure-logic test") }
+        fn panic_execvp(_: *const c_char, _: *const *const c_char) -> c_int { panic!("unexpected syscall 'execvp' in pure-logic test") }
+        fn panic_open(_: *const c_char, _: c_int, _: mode_t) -> c_int { panic!("unexpected syscall 'open' in pure-logic test") }
+        fn panic_write(_: c_int, _: *const u8, _: usize) -> isize { panic!("unexpected syscall 'write' in pure-logic test") }
+        fn panic_stat(_: *const c_char, _: *mut libc::stat) -> c_int { panic!("unexpected syscall 'stat' in pure-logic test") }
+        fn panic_lstat(_: *const c_char, _: *mut libc::stat) -> c_int { panic!("unexpected syscall 'lstat' in pure-logic test") }
+        fn panic_fstat(_: c_int, _: *mut libc::stat) -> c_int { panic!("unexpected syscall 'fstat' in pure-logic test") }
+        fn panic_access(_: *const c_char, _: c_int) -> c_int { panic!("unexpected syscall 'access' in pure-logic test") }
+        fn panic_chdir(_: *const c_char) -> c_int { panic!("unexpected syscall 'chdir' in pure-logic test") }
+        fn panic_getcwd(_: *mut c_char, _: usize) -> *mut c_char { panic!("unexpected syscall 'getcwd' in pure-logic test") }
+        fn panic_opendir(_: *const c_char) -> *mut libc::DIR { panic!("unexpected syscall 'opendir' in pure-logic test") }
+        fn panic_readdir(_: *mut libc::DIR) -> *mut libc::dirent { panic!("unexpected syscall 'readdir' in pure-logic test") }
+        fn panic_closedir(_: *mut libc::DIR) -> c_int { panic!("unexpected syscall 'closedir' in pure-logic test") }
+        fn panic_realpath(_: *const c_char, _: *mut c_char) -> *mut c_char { panic!("unexpected syscall 'realpath' in pure-logic test") }
+        fn panic_readlink(_: *const c_char, _: *mut c_char, _: usize) -> isize { panic!("unexpected syscall 'readlink' in pure-logic test") }
+        fn panic_unlink(_: *const c_char) -> c_int { panic!("unexpected syscall 'unlink' in pure-logic test") }
+        fn panic_fork() -> Pid { panic!("unexpected syscall 'fork' in pure-logic test") }
+        fn panic_exit_process(_: c_int) { panic!("unexpected syscall 'exit_process' in pure-logic test") }
+
+        Syscalls {
+            getpid: panic_getpid, waitpid: panic_waitpid, kill: panic_kill,
+            signal: panic_signal, isatty: panic_isatty, tcgetpgrp: panic_tcgetpgrp,
+            tcsetpgrp: panic_tcsetpgrp, setpgid: panic_setpgid, pipe: panic_pipe,
+            dup: panic_dup, dup2: panic_dup2, close: panic_close, fcntl: panic_fcntl,
+            read: panic_read, umask: panic_umask, times: panic_times, sysconf: panic_sysconf,
+            execvp: panic_execvp, open: panic_open, write: panic_write, stat: panic_stat,
+            lstat: panic_lstat, fstat: panic_fstat, access: panic_access, chdir: panic_chdir,
+            getcwd: panic_getcwd, opendir: panic_opendir, readdir: panic_readdir,
+            closedir: panic_closedir, realpath: panic_realpath, readlink: panic_readlink,
+            unlink: panic_unlink, fork: panic_fork, exit_process: panic_exit_process,
+        }
+    }
+
+    pub(crate) fn assert_no_syscalls<T>(f: impl FnOnce() -> T) -> T {
+        with_test_syscalls(no_syscalls_table(), f)
+    }
+
+    pub(crate) fn run_trace<T>(trace: Vec<TraceEntry>, f: impl FnOnce() -> T) -> T {
+        let syscalls = trace_syscalls();
+        TRACE_LOG.with(|cell| {
+            let previous_trace = cell.replace(Some(trace));
+            let previous_index = TRACE_INDEX.with(|idx| idx.replace(0));
+            let previous_children = CHILD_TRACES.with(|c| std::mem::take(&mut *c.borrow_mut()));
+
+            let result = with_test_syscalls(syscalls, f);
+
+            let consumed = TRACE_INDEX.with(|idx| *idx.borrow());
+            let total = cell.borrow().as_ref().map_or(0, |t| t.len());
+            if consumed < total {
+                panic!("trace not fully consumed: {consumed}/{total} entries used");
+            }
+
+            CHILD_TRACES.with(|c| *c.borrow_mut() = previous_children);
+            TRACE_INDEX.with(|idx| idx.replace(previous_index));
+            cell.replace(previous_trace);
+            result
         })
     }
 
-    fn fake_pipe(fds: *mut c_int) -> c_int {
-        with_fake_spawn(|state| {
-            let r = state.next_pipe_fd;
-            let w = state.next_pipe_fd + 1;
-            state.next_pipe_fd += 2;
-
-            if state.spawn_index < state.children.len() {
-                let data = state.children[state.spawn_index].stdout_data.clone();
-                state.pipe_fds.insert(r, data);
-            } else {
-                state.pipe_fds.insert(r, Vec::new());
-            }
-            state.pipe_fds.insert(w, Vec::new());
-
-            unsafe {
-                *fds = r;
-                *fds.add(1) = w;
-            }
-            0
-        })
+    #[allow(dead_code)]
+    pub(crate) fn take_child_traces() -> Vec<Vec<TraceEntry>> {
+        CHILD_TRACES.with(|c| std::mem::take(&mut *c.borrow_mut()))
     }
 
-    fn fake_spawn_read(fd: c_int, buf: *mut u8, count: usize) -> isize {
-        let result = FAKE_SPAWN_STATE.with(|cell| {
-            let borrow = cell.borrow();
-            if let Some(state) = borrow.as_ref() {
-                if let Some(data) = state.pipe_fds.get(&fd) {
-                    let to_read = count.min(data.len());
-                    if to_read > 0 {
-                        unsafe {
-                            std::ptr::copy_nonoverlapping(data.as_ptr(), buf, to_read);
-                        }
-                    }
-                    return Some(to_read as isize);
+    #[allow(dead_code)]
+    impl TraceEntry {
+        fn without_child_trace(&self) -> TraceEntry {
+            TraceEntry {
+                syscall: self.syscall,
+                args: self.args.clone(),
+                result: self.result.clone(),
+                child_trace: None,
+            }
+        }
+
+        fn with_result(&self, result: TraceResult) -> TraceEntry {
+            TraceEntry {
+                syscall: self.syscall,
+                args: self.args.clone(),
+                result,
+                child_trace: self.child_trace.clone(),
+            }
+        }
+    }
+
+    #[allow(dead_code)]
+    fn exit_process_entry() -> TraceEntry {
+        TraceEntry {
+            syscall: "exit_process",
+            args: vec![ArgMatcher::Any],
+            result: TraceResult::Void,
+            child_trace: None,
+        }
+    }
+
+    #[allow(dead_code)]
+    fn enumerate_fork_paths(trace: &[TraceEntry]) -> Vec<Vec<TraceEntry>> {
+        let mut paths = vec![];
+
+        let parent: Vec<TraceEntry> = trace.iter().map(|e| e.without_child_trace()).collect();
+        paths.push(parent);
+
+        for (i, entry) in trace.iter().enumerate() {
+            if let Some(child_trace) = &entry.child_trace {
+                let prefix: Vec<TraceEntry> = trace[..i].iter().map(|e| e.without_child_trace()).collect();
+                let fork_as_child = entry.with_result(TraceResult::Pid(0)).without_child_trace();
+
+                let mut child_path = prefix.clone();
+                child_path.push(fork_as_child.clone());
+                child_path.extend(child_trace.iter().map(|e| e.without_child_trace()));
+                child_path.push(exit_process_entry());
+                paths.push(child_path);
+
+                let nested = enumerate_fork_paths(child_trace);
+                for nested_path in nested.into_iter().skip(1) {
+                    let mut full = prefix.clone();
+                    full.push(fork_as_child.clone());
+                    full.extend(nested_path);
+                    paths.push(full);
                 }
             }
-            None
-        });
+        }
 
-        if let Some(n) = result {
-            if n > 0 {
-                FAKE_SPAWN_STATE.with(|cell| {
-                    let mut borrow = cell.borrow_mut();
-                    if let Some(state) = borrow.as_mut() {
-                        if let Some(data) = state.pipe_fds.get_mut(&fd) {
-                            let consumed = n as usize;
-                            *data = data[consumed..].to_vec();
+        paths
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn run_forked_trace(trace: Vec<TraceEntry>, f: impl Fn()) {
+        let paths = enumerate_fork_paths(&trace);
+
+        for (run_index, path) in paths.iter().enumerate() {
+            let is_parent = run_index == 0;
+            let syscalls = trace_syscalls();
+
+            TRACE_LOG.with(|cell| {
+                let prev_trace = cell.replace(Some(path.clone()));
+                let prev_index = TRACE_INDEX.with(|idx| idx.replace(0));
+                let prev_children = CHILD_TRACES.with(|c| std::mem::take(&mut *c.borrow_mut()));
+
+                let result = std::panic::catch_unwind(
+                    std::panic::AssertUnwindSafe(|| with_test_syscalls(syscalls, &f))
+                );
+
+                let consumed = TRACE_INDEX.with(|idx| *idx.borrow());
+                let total = cell.borrow().as_ref().map_or(0, |t| t.len());
+
+                CHILD_TRACES.with(|c| *c.borrow_mut() = prev_children);
+                TRACE_INDEX.with(|idx| idx.replace(prev_index));
+                cell.replace(prev_trace);
+
+                match result {
+                    Ok(_) => {
+                        if !is_parent {
+                            panic!(
+                                "fork child run {run_index} returned normally (expected ChildExitPanic)"
+                            );
+                        }
+                        if consumed < total {
+                            panic!(
+                                "trace not fully consumed in parent run: {consumed}/{total} entries used"
+                            );
                         }
                     }
-                });
-            }
-            n
-        } else {
-            let vfs_result = VFS_STATE.with(|cell| {
-                let borrow = cell.borrow();
-                borrow.is_some()
+                    Err(payload) => {
+                        if payload.downcast_ref::<ChildExitPanic>().is_some() {
+                            if is_parent {
+                                panic!(
+                                    "parent run (run 0) got ChildExitPanic — exit_process called in parent path"
+                                );
+                            }
+                            if consumed < total {
+                                panic!(
+                                    "child trace not fully consumed in run {run_index}: {consumed}/{total} entries used"
+                                );
+                            }
+                        } else {
+                            std::panic::resume_unwind(payload);
+                        }
+                    }
+                }
             });
-            if vfs_result {
-                vfs_read(fd, buf, count)
-            } else {
-                super::set_errno(libc::EBADF);
-                -1
-            }
         }
     }
 
-    fn fake_spawn_close(fd: c_int) -> c_int {
-        let removed = FAKE_SPAWN_STATE.with(|cell| {
-            let mut borrow = cell.borrow_mut();
-            if let Some(state) = borrow.as_mut() {
-                state.pipe_fds.remove(&fd).is_some()
-            } else {
-                false
-            }
-        });
-        if removed {
-            return 0;
-        }
-        let vfs_result = VFS_STATE.with(|cell| {
-            let borrow = cell.borrow();
-            borrow.is_some()
-        });
-        if vfs_result {
-            vfs_close(fd)
-        } else {
-            0
-        }
+    // Helper constructors for trace entries
+    pub(crate) fn t(syscall: &'static str, args: Vec<ArgMatcher>, result: TraceResult) -> TraceEntry {
+        TraceEntry { syscall, args, result, child_trace: None }
     }
 
-    fn fake_spawn_dup2(oldfd: c_int, newfd: c_int) -> c_int {
-        let _ = (oldfd, newfd);
-        newfd
+    pub(crate) fn t_fork(result: TraceResult, child: Vec<TraceEntry>) -> TraceEntry {
+        TraceEntry { syscall: "fork", args: vec![], result, child_trace: Some(child) }
     }
+
+    #[allow(dead_code)]
+    pub(crate) trait IntoArgMatcher {
+        fn into_arg(self) -> ArgMatcher;
+    }
+    impl IntoArgMatcher for i32 {
+        fn into_arg(self) -> ArgMatcher { ArgMatcher::Int(self as i64) }
+    }
+    impl IntoArgMatcher for i64 {
+        fn into_arg(self) -> ArgMatcher { ArgMatcher::Int(self) }
+    }
+    impl IntoArgMatcher for &str {
+        fn into_arg(self) -> ArgMatcher { ArgMatcher::Str(self.to_string()) }
+    }
+    impl IntoArgMatcher for &[u8] {
+        fn into_arg(self) -> ArgMatcher { ArgMatcher::Bytes(self.to_vec()) }
+    }
+    impl IntoArgMatcher for &Vec<u8> {
+        fn into_arg(self) -> ArgMatcher { ArgMatcher::Bytes(self.clone()) }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn arg_from(v: impl IntoArgMatcher) -> ArgMatcher {
+        v.into_arg()
+    }
+
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1718,6 +1481,7 @@ pub fn open_for_redirect(path: &str, flags: c_int, mode: mode_t, noclobber: bool
 
 // --- Process wrapper functions ---
 
+#[derive(Clone, Debug)]
 pub struct ChildHandle {
     pub pid: Pid,
     pub stdout_fd: Option<c_int>,
@@ -1782,6 +1546,11 @@ pub fn fork_process() -> SysResult<Pid> {
     }
 }
 
+pub fn exit_process(status: c_int) -> ! {
+    (syscalls().exit_process)(status);
+    unreachable!()
+}
+
 pub fn spawn_child(
     program: &str,
     argv: &[&str],
@@ -1829,7 +1598,7 @@ pub fn spawn_child(
         }
         let rest: Vec<String> = argv.get(1..).unwrap_or(&[]).iter().map(|s| s.to_string()).collect();
         let _ = exec_replace(program, &rest);
-        unsafe { libc::_exit(127) };
+        exit_process(127);
     }
 
     // Parent process
@@ -1847,37 +1616,6 @@ pub fn spawn_child(
     }
 
     Ok(ChildHandle { pid, stdout_fd: stdout_read })
-}
-
-pub fn capture_child_output(
-    program: &str,
-    argv: &[&str],
-    env_vars: Option<&[(&str, &str)]>,
-) -> SysResult<(i32, Vec<u8>)> {
-    let handle = spawn_child(program, argv, env_vars, &[], None, true, None)?;
-    let stdout_fd = handle.stdout_fd.expect("piped stdout");
-    let mut output = Vec::new();
-    let mut buf = [0u8; 8192];
-    loop {
-        let n = read_fd(stdout_fd, &mut buf)?;
-        if n == 0 {
-            break;
-        }
-        output.extend_from_slice(&buf[..n]);
-    }
-    close_fd(stdout_fd)?;
-    let ws = wait_pid(handle.pid, false)?.expect("child status");
-    Ok((decode_wait_status(ws.status), output))
-}
-
-pub fn run_to_status(
-    program: &str,
-    argv: &[&str],
-    env_vars: Option<&[(&str, &str)]>,
-) -> SysResult<i32> {
-    let handle = spawn_child(program, argv, env_vars, &[], None, false, None)?;
-    let ws = wait_pid(handle.pid, false)?.expect("child status");
-    Ok(decode_wait_status(ws.status))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2272,20 +2010,23 @@ mod tests {
 
     #[test]
     fn signal_helpers_cover_pending_ignore_default_and_error_paths() {
-        fn ok_signal(_sig: c_int, _handler: libc::sighandler_t) -> libc::sighandler_t {
-            0
-        }
-        fn err_signal(_sig: c_int, _handler: libc::sighandler_t) -> libc::sighandler_t {
-            SIG_ERR_HANDLER
-        }
+        use test_support::{run_trace, t, TraceResult, ArgMatcher};
 
-        test_support::with_signal_syscall_for_test(ok_signal, || {
+        run_trace(vec![
+            t("signal", vec![ArgMatcher::Int(SIGINT as i64), ArgMatcher::Any], TraceResult::Int(0)),
+            t("signal", vec![ArgMatcher::Int(SIGTERM as i64), ArgMatcher::Any], TraceResult::Int(0)),
+            t("signal", vec![ArgMatcher::Int(SIGQUIT as i64), ArgMatcher::Any], TraceResult::Int(0)),
+        ], || {
             install_shell_signal_handler(SIGINT).expect("install");
             ignore_signal(SIGTERM).expect("ignore");
             default_signal_action(SIGQUIT).expect("default");
         });
 
-        test_support::with_signal_syscall_for_test(err_signal, || {
+        run_trace(vec![
+            t("signal", vec![ArgMatcher::Int(SIGINT as i64), ArgMatcher::Any], TraceResult::Err(libc::EINVAL)),
+            t("signal", vec![ArgMatcher::Int(SIGTERM as i64), ArgMatcher::Any], TraceResult::Err(libc::EINVAL)),
+            t("signal", vec![ArgMatcher::Int(SIGQUIT as i64), ArgMatcher::Any], TraceResult::Err(libc::EINVAL)),
+        ], || {
             assert!(install_shell_signal_handler(SIGINT).is_err());
             assert!(ignore_signal(SIGTERM).is_err());
             assert!(default_signal_action(SIGQUIT).is_err());
@@ -2406,70 +2147,36 @@ mod tests {
 
     #[test]
     fn ensure_blocking_read_fd_clears_nonblocking_for_ttys_and_fifos() {
-        static LAST_SET_FLAGS: AtomicUsize = AtomicUsize::new(usize::MAX);
+        use test_support::{run_trace, t, TraceResult, ArgMatcher};
 
-        fn fake_isatty(_fd: c_int) -> c_int {
-            1
-        }
-        fn fake_fcntl(_fd: c_int, cmd: c_int, flags: c_int) -> c_int {
-            match cmd {
-                F_GETFL => O_NONBLOCK | 0o2,
-                F_SETFL => {
-                    LAST_SET_FLAGS.store(flags as usize, Ordering::SeqCst);
-                    0
-                }
-                _ => -1,
-            }
-        }
-
-        test_support::with_fcntl_and_isatty_for_test(fake_fcntl, fake_isatty, || {
-            LAST_SET_FLAGS.store(usize::MAX, Ordering::SeqCst);
+        // TTY path: isatty→1, fcntl F_GETFL→O_NONBLOCK|2, fcntl F_SETFL→0
+        run_trace(vec![
+            t("isatty", vec![ArgMatcher::Fd(STDIN_FILENO)], TraceResult::Int(1)),
+            t("fcntl", vec![ArgMatcher::Fd(STDIN_FILENO), ArgMatcher::Int(F_GETFL as i64), ArgMatcher::Int(0)], TraceResult::Int((O_NONBLOCK | 0o2) as i64)),
+            t("fcntl", vec![ArgMatcher::Fd(STDIN_FILENO), ArgMatcher::Int(F_SETFL as i64), ArgMatcher::Int(0o2)], TraceResult::Int(0)),
+        ], || {
             ensure_blocking_read_fd(STDIN_FILENO).expect("tty blocking");
-            assert_eq!(LAST_SET_FLAGS.load(Ordering::SeqCst), 0o2);
         });
 
-        fn not_tty(_fd: c_int) -> c_int {
-            0
-        }
-        fn fake_fstat_fifo(_fd: c_int, buf: *mut libc::stat) -> c_int {
-            unsafe { std::ptr::write_bytes(buf, 0, 1); (*buf).st_mode = libc::S_IFIFO; }
-            0
-        }
-
-        let fake = Syscalls { fcntl: fake_fcntl, isatty: not_tty, fstat: fake_fstat_fifo, ..default_syscalls() };
-        test_support::with_test_syscalls(fake, || {
-            LAST_SET_FLAGS.store(usize::MAX, Ordering::SeqCst);
+        // FIFO path: isatty→0, fstat→S_IFIFO, fcntl F_GETFL→O_NONBLOCK|2, fcntl F_SETFL→0
+        run_trace(vec![
+            t("isatty", vec![ArgMatcher::Fd(42)], TraceResult::Int(0)),
+            t("fstat", vec![ArgMatcher::Fd(42), ArgMatcher::Any], TraceResult::StatFifo),
+            t("fcntl", vec![ArgMatcher::Fd(42), ArgMatcher::Int(F_GETFL as i64), ArgMatcher::Int(0)], TraceResult::Int((O_NONBLOCK | 0o2) as i64)),
+            t("fcntl", vec![ArgMatcher::Fd(42), ArgMatcher::Int(F_SETFL as i64), ArgMatcher::Int(0o2)], TraceResult::Int(0)),
+        ], || {
             ensure_blocking_read_fd(42).expect("fifo blocking");
-            assert_eq!(LAST_SET_FLAGS.load(Ordering::SeqCst), 0o2);
         });
     }
 
     #[test]
-    fn ensure_blocking_read_fd_skips_regular_files_and_surfaces_fcntl_errors() {
-        static FCNTL_CALLS: AtomicUsize = AtomicUsize::new(0);
+    fn ensure_blocking_read_fd_surfaces_fcntl_errors() {
+        use test_support::{run_trace, t, TraceResult, ArgMatcher};
 
-        fn not_tty(_fd: c_int) -> c_int {
-            0
-        }
-        fn counting_fcntl(_fd: c_int, _cmd: c_int, _flags: c_int) -> c_int {
-            FCNTL_CALLS.fetch_add(1, Ordering::SeqCst);
-            0
-        }
-        fn failing_fcntl(_fd: c_int, _cmd: c_int, _flags: c_int) -> c_int {
-            -1
-        }
-
-        test_support::VfsBuilder::new()
-            .file("/tmp/regular.txt", b"x")
-            .run_with_fcntl_and_isatty(counting_fcntl, not_tty, || {
-                let fd = open_file("/tmp/regular.txt", O_RDONLY, 0).expect("open vfs file");
-                FCNTL_CALLS.store(0, Ordering::SeqCst);
-                ensure_blocking_read_fd(fd).expect("regular file");
-                assert_eq!(FCNTL_CALLS.load(Ordering::SeqCst), 0);
-                close_fd(fd).expect("close vfs fd");
-            });
-
-        test_support::with_fcntl_and_isatty_for_test(failing_fcntl, |_| 1, || {
+        run_trace(vec![
+            t("isatty", vec![ArgMatcher::Fd(STDIN_FILENO)], TraceResult::Int(1)),
+            t("fcntl", vec![ArgMatcher::Fd(STDIN_FILENO), ArgMatcher::Int(F_GETFL as i64), ArgMatcher::Int(0)], TraceResult::Err(libc::EIO)),
+        ], || {
             assert!(ensure_blocking_read_fd(STDIN_FILENO).is_err());
         });
     }
