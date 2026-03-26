@@ -1254,7 +1254,7 @@ mod tests {
     use crate::shell::ShellOptions;
     use crate::syntax::{Assignment, HereDoc, Redirection, Word};
     use std::collections::{BTreeMap, BTreeSet, HashMap};
-    use crate::sys::test_support::{TraceResult, ArgMatcher, run_trace, run_forked_trace, t, t_fork, assert_no_syscalls};
+    use crate::sys::test_support::{TraceResult, ArgMatcher, run_trace, t, t_fork, assert_no_syscalls};
 
     fn test_shell() -> Shell {
         Shell {
@@ -1295,7 +1295,7 @@ mod tests {
 
     #[test]
     fn execute_pipeline_async_single_command() {
-        run_forked_trace(vec![
+        run_trace(vec![
             t("stat", vec![ArgMatcher::Str("/usr/bin/true".into()), ArgMatcher::Any], TraceResult::StatFile(0o755)),
             t_fork(TraceResult::Pid(1000), vec![
                 t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(0)], TraceResult::Int(0)),
@@ -1322,11 +1322,22 @@ mod tests {
         run_trace(vec![
             t("stat", vec![ArgMatcher::Str("/usr/bin/printf".into()), ArgMatcher::Any], TraceResult::StatFile(0o755)),
             t("pipe", vec![], TraceResult::Fds(200, 201)),
-            t_fork(TraceResult::Pid(1000), vec![]),
+            t_fork(TraceResult::Pid(1000), vec![
+                t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(0)], TraceResult::Int(0)),
+                t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
+                t("dup2", vec![ArgMatcher::Fd(201), ArgMatcher::Fd(1)], TraceResult::Int(0)),
+                t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
+                t("execvp", vec![ArgMatcher::Str("/usr/bin/printf".into()), ArgMatcher::Any], TraceResult::Int(0)),
+            ]),
             t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
             t("setpgid", vec![ArgMatcher::Int(1000), ArgMatcher::Int(1000)], TraceResult::Int(0)),
             t("stat", vec![ArgMatcher::Str("/usr/bin/wc".into()), ArgMatcher::Any], TraceResult::StatFile(0o755)),
-            t_fork(TraceResult::Pid(1001), vec![]),
+            t_fork(TraceResult::Pid(1001), vec![
+                t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)], TraceResult::Int(0)),
+                t("dup2", vec![ArgMatcher::Fd(200), ArgMatcher::Fd(0)], TraceResult::Int(0)),
+                t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
+                t("execvp", vec![ArgMatcher::Str("/usr/bin/wc".into()), ArgMatcher::Any], TraceResult::Int(0)),
+            ]),
             t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
             t("setpgid", vec![ArgMatcher::Int(1001), ArgMatcher::Int(1000)], TraceResult::Int(0)),
             t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
@@ -1386,7 +1397,7 @@ mod tests {
 
     #[test]
     fn spawn_prepared_enoexec_falls_back_to_source() {
-        run_forked_trace(vec![
+        run_trace(vec![
             t_fork(TraceResult::Pid(1000), vec![
                 t("execvp", vec![ArgMatcher::Str("/tmp/script.sh".into()), ArgMatcher::Any], TraceResult::Err(sys::ENOEXEC)),
                 t("open", vec![ArgMatcher::Str("/tmp/script.sh".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(10)),
@@ -1699,11 +1710,22 @@ mod tests {
         run_trace(vec![
             // Command 0 (Subshell): pipe_stdout=true, NewGroup
             t("pipe", vec![], TraceResult::Fds(200, 201)),
-            t_fork(TraceResult::Pid(1000), vec![]),
+            t_fork(TraceResult::Pid(1000), vec![
+                t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
+                t("dup2", vec![ArgMatcher::Fd(201), ArgMatcher::Fd(1)], TraceResult::Int(0)),
+                t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
+                t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(0)], TraceResult::Int(0)),
+                t_fork(TraceResult::Pid(2000), vec![]),
+                t("waitpid", vec![ArgMatcher::Int(2000), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
+            ]),
             t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
             t("setpgid", vec![ArgMatcher::Int(1000), ArgMatcher::Int(1000)], TraceResult::Int(0)),
             // Command 1 (Group): stdin=200, pipe_stdout=false, Join(1000)
-            t_fork(TraceResult::Pid(1001), vec![]),
+            t_fork(TraceResult::Pid(1001), vec![
+                t("dup2", vec![ArgMatcher::Fd(200), ArgMatcher::Fd(0)], TraceResult::Int(0)),
+                t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
+                t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)], TraceResult::Int(0)),
+            ]),
             t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
             t("setpgid", vec![ArgMatcher::Int(1001), ArgMatcher::Int(1000)], TraceResult::Int(0)),
             // Wait
@@ -1967,29 +1989,59 @@ mod tests {
         run_trace(vec![
             // Command 0 (FunctionDef): pipe_stdout=true, NewGroup
             t("pipe", vec![], TraceResult::Fds(200, 201)),
-            t_fork(TraceResult::Pid(1000), vec![]),
+            t_fork(TraceResult::Pid(1000), vec![
+                t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
+                t("dup2", vec![ArgMatcher::Fd(201), ArgMatcher::Fd(1)], TraceResult::Int(0)),
+                t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
+                t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(0)], TraceResult::Int(0)),
+            ]),
             t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
             t("setpgid", vec![ArgMatcher::Int(1000), ArgMatcher::Int(1000)], TraceResult::Int(0)),
             // Command 1 (If): stdin=200, pipe_stdout=true, Join(1000)
             t("pipe", vec![], TraceResult::Fds(202, 203)),
-            t_fork(TraceResult::Pid(1001), vec![]),
+            t_fork(TraceResult::Pid(1001), vec![
+                t("dup2", vec![ArgMatcher::Fd(200), ArgMatcher::Fd(0)], TraceResult::Int(0)),
+                t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
+                t("close", vec![ArgMatcher::Fd(202)], TraceResult::Int(0)),
+                t("dup2", vec![ArgMatcher::Fd(203), ArgMatcher::Fd(1)], TraceResult::Int(0)),
+                t("close", vec![ArgMatcher::Fd(203)], TraceResult::Int(0)),
+                t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)], TraceResult::Int(0)),
+            ]),
             t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
             t("close", vec![ArgMatcher::Fd(203)], TraceResult::Int(0)),
             t("setpgid", vec![ArgMatcher::Int(1001), ArgMatcher::Int(1000)], TraceResult::Int(0)),
             // Command 2 (Loop): stdin=202, pipe_stdout=true, Join(1000)
             t("pipe", vec![], TraceResult::Fds(204, 205)),
-            t_fork(TraceResult::Pid(1002), vec![]),
+            t_fork(TraceResult::Pid(1002), vec![
+                t("dup2", vec![ArgMatcher::Fd(202), ArgMatcher::Fd(0)], TraceResult::Int(0)),
+                t("close", vec![ArgMatcher::Fd(202)], TraceResult::Int(0)),
+                t("close", vec![ArgMatcher::Fd(204)], TraceResult::Int(0)),
+                t("dup2", vec![ArgMatcher::Fd(205), ArgMatcher::Fd(1)], TraceResult::Int(0)),
+                t("close", vec![ArgMatcher::Fd(205)], TraceResult::Int(0)),
+                t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)], TraceResult::Int(0)),
+            ]),
             t("close", vec![ArgMatcher::Fd(202)], TraceResult::Int(0)),
             t("close", vec![ArgMatcher::Fd(205)], TraceResult::Int(0)),
             t("setpgid", vec![ArgMatcher::Int(1002), ArgMatcher::Int(1000)], TraceResult::Int(0)),
             // Command 3 (For): stdin=204, pipe_stdout=true, Join(1000)
             t("pipe", vec![], TraceResult::Fds(206, 207)),
-            t_fork(TraceResult::Pid(1003), vec![]),
+            t_fork(TraceResult::Pid(1003), vec![
+                t("dup2", vec![ArgMatcher::Fd(204), ArgMatcher::Fd(0)], TraceResult::Int(0)),
+                t("close", vec![ArgMatcher::Fd(204)], TraceResult::Int(0)),
+                t("close", vec![ArgMatcher::Fd(206)], TraceResult::Int(0)),
+                t("dup2", vec![ArgMatcher::Fd(207), ArgMatcher::Fd(1)], TraceResult::Int(0)),
+                t("close", vec![ArgMatcher::Fd(207)], TraceResult::Int(0)),
+                t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)], TraceResult::Int(0)),
+            ]),
             t("close", vec![ArgMatcher::Fd(204)], TraceResult::Int(0)),
             t("close", vec![ArgMatcher::Fd(207)], TraceResult::Int(0)),
             t("setpgid", vec![ArgMatcher::Int(1003), ArgMatcher::Int(1000)], TraceResult::Int(0)),
             // Command 4 (Case): stdin=206, pipe_stdout=false, Join(1000)
-            t_fork(TraceResult::Pid(1004), vec![]),
+            t_fork(TraceResult::Pid(1004), vec![
+                t("dup2", vec![ArgMatcher::Fd(206), ArgMatcher::Fd(0)], TraceResult::Int(0)),
+                t("close", vec![ArgMatcher::Fd(206)], TraceResult::Int(0)),
+                t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)], TraceResult::Int(0)),
+            ]),
             t("close", vec![ArgMatcher::Fd(206)], TraceResult::Int(0)),
             t("setpgid", vec![ArgMatcher::Int(1004), ArgMatcher::Int(1000)], TraceResult::Int(0)),
             // Wait for all children
@@ -2538,7 +2590,7 @@ mod tests {
 
     #[test]
     fn spawn_prepared_with_new_process_group() {
-        run_forked_trace(vec![
+        run_trace(vec![
             t("access", vec![ArgMatcher::Str("/tmp/script.sh".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
             t_fork(TraceResult::Pid(1000), vec![
                 t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(0)], TraceResult::Int(0)),
@@ -2563,7 +2615,7 @@ mod tests {
 
     #[test]
     fn spawn_prepared_with_stdout_redirect() {
-        run_forked_trace(vec![
+        run_trace(vec![
             t("access", vec![ArgMatcher::Str("/bin/echo".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
             t_fork(TraceResult::Pid(1000), vec![
                 t("close", vec![ArgMatcher::Fd(1)], TraceResult::Int(0)),
@@ -2593,7 +2645,7 @@ mod tests {
 
     #[test]
     fn spawn_prepared_with_join_process_group() {
-        run_forked_trace(vec![
+        run_trace(vec![
             t("access", vec![ArgMatcher::Str("/bin/echo".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
             t_fork(TraceResult::Pid(1000), vec![
                 t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(42)], TraceResult::Int(0)),

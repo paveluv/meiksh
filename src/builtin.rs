@@ -1611,7 +1611,7 @@ mod tests {
     use crate::syntax::Word;
     use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-    use crate::sys::test_support::{TraceResult, ArgMatcher, run_trace, run_forked_trace, t, t_fork, assert_no_syscalls};
+    use crate::sys::test_support::{TraceResult, ArgMatcher, run_trace, t, t_fork, assert_no_syscalls};
 
     fn test_shell() -> Shell {
         Shell {
@@ -2559,7 +2559,7 @@ mod tests {
 
     #[test]
     fn command_spawns_external_utility() {
-        run_forked_trace(vec![
+        run_trace(vec![
             t("access", vec![ArgMatcher::Str("/tmp/missing-interp".into()), ArgMatcher::Any], TraceResult::Int(0)),
             t("access", vec![ArgMatcher::Str("/tmp/missing-interp".into()), ArgMatcher::Any], TraceResult::Int(0)),
             t_fork(TraceResult::Pid(5000), vec![
