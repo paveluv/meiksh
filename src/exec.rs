@@ -96,7 +96,7 @@ fn execute_pipeline(shell: &mut Shell, pipeline: &Pipeline, asynchronous: bool) 
 fn fork_and_execute_command(
     shell: &mut Shell,
     command: &Command,
-    stdin_fd: Option<libc::c_int>,
+    stdin_fd: Option<sys::RawFd>,
     pipe_stdout: bool,
     process_group: ProcessGroupPlan,
 ) -> Result<sys::ChildHandle, ShellError> {
@@ -125,7 +125,7 @@ fn fork_and_execute_command(
         }
         let mut child_shell = shell.clone();
         let status = execute_command(&mut child_shell, command).unwrap_or(1);
-        sys::exit_process(status as libc::c_int);
+        sys::exit_process(status as sys::RawFd);
     }
 
     if let Some(fd) = stdin_fd {
@@ -205,7 +205,7 @@ fn execute_command(shell: &mut Shell, command: &Command) -> Result<i32, ShellErr
             if pid == 0 {
                 let mut child_shell = shell.clone();
                 let status = execute_nested_program(&mut child_shell, program).unwrap_or(1);
-                sys::exit_process(status as libc::c_int);
+                sys::exit_process(status as sys::RawFd);
             }
             let ws = sys::wait_pid(pid, false)?.expect("child status");
             Ok(sys::decode_wait_status(ws.status))
@@ -603,7 +603,7 @@ fn spawn_prepared_inner(
 ) -> Result<sys::ChildHandle, ShellError> {
     if !fallback_to_sh && !prepared.exec_path.is_empty() && prepared.exec_path.contains('/') {
         if sys::access_path(&prepared.exec_path, sys::F_OK).is_err() {
-            return Err(sys::SysError::Errno(libc::ENOENT).into());
+            return Err(sys::SysError::Errno(sys::ENOENT).into());
         }
     }
 
@@ -796,7 +796,7 @@ fn resolve_command_path(shell: &Shell, program: &str) -> Option<PathBuf> {
 
     let path = shell
         .get_var("PATH")
-        .or_else(|| std::env::var("PATH").ok())
+        .or_else(|| sys::env_var("PATH"))
         .unwrap_or_default();
 
     path.split(':')
@@ -1441,7 +1441,7 @@ mod tests {
 
     #[test]
     fn maybe_spawn_with_fallback_handles_enoexec_error() {
-        let enoexec_err = sys::SysError::Errno(libc::ENOEXEC);
+        let enoexec_err = sys::SysError::Errno(sys::ENOEXEC);
         run_trace(vec![
             t("pipe", vec![], TraceResult::Fds(200, 201)),
             t_fork(TraceResult::Pid(1000), vec![]),
@@ -1474,7 +1474,7 @@ mod tests {
     #[test]
     fn spawn_prepared_errors_for_missing_executable() {
         run_trace(vec![
-            t("access", vec![ArgMatcher::Str("/nonexistent/missing".into()), ArgMatcher::Int(0)], TraceResult::Err(libc::ENOENT)),
+            t("access", vec![ArgMatcher::Str("/nonexistent/missing".into()), ArgMatcher::Int(0)], TraceResult::Err(sys::ENOENT)),
         ], || {
             let missing = PreparedProcess {
                 exec_path: "/nonexistent/missing".into(),
@@ -1826,7 +1826,7 @@ mod tests {
     #[test]
     fn execute_nested_program_sets_up_heredoc_fd() {
         run_trace(vec![
-            t("dup", vec![ArgMatcher::Fd(0)], TraceResult::Err(libc::EBADF)),
+            t("dup", vec![ArgMatcher::Fd(0)], TraceResult::Err(sys::EBADF)),
             t("pipe", vec![], TraceResult::Fds(10, 11)),
             t("write", vec![ArgMatcher::Fd(11), ArgMatcher::Bytes(b"hello\n".to_vec())], TraceResult::Int(6)),
             t("close", vec![ArgMatcher::Fd(11)], TraceResult::Int(0)),
@@ -2480,15 +2480,15 @@ mod tests {
         run_trace(vec![
             // DupOutput "bad" → error, no syscalls
             // Write with noclobber → open returns EEXIST
-            t("open", vec![ArgMatcher::Str("/redir/noclobber.txt".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Err(libc::EEXIST)),
+            t("open", vec![ArgMatcher::Str("/redir/noclobber.txt".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Err(sys::EEXIST)),
             // Guard drop with saved=(99, None) → close(99)
             t("close", vec![ArgMatcher::Fd(99)], TraceResult::Int(0)),
             // apply_shell_redirections with dup returning EBADF for high fd → treated as absent
-            t("dup", vec![ArgMatcher::Fd(123_456)], TraceResult::Err(libc::EBADF)),
-            t("close", vec![ArgMatcher::Fd(123_456)], TraceResult::Err(libc::EBADF)),
-            t("close", vec![ArgMatcher::Fd(123_456)], TraceResult::Err(libc::EBADF)),
+            t("dup", vec![ArgMatcher::Fd(123_456)], TraceResult::Err(sys::EBADF)),
+            t("close", vec![ArgMatcher::Fd(123_456)], TraceResult::Err(sys::EBADF)),
+            t("close", vec![ArgMatcher::Fd(123_456)], TraceResult::Err(sys::EBADF)),
             // apply_shell_redirections with dup failure (errno 22)
-            t("dup", vec![ArgMatcher::Fd(42)], TraceResult::Err(libc::EINVAL)),
+            t("dup", vec![ArgMatcher::Fd(42)], TraceResult::Err(sys::EINVAL)),
         ], || {
             let error = apply_shell_redirection(
                 &ExpandedRedirection {
@@ -2547,7 +2547,7 @@ mod tests {
     #[test]
     fn apply_child_fd_actions_dup_error() {
         run_trace(vec![
-            t("dup2", vec![ArgMatcher::Fd(-1), ArgMatcher::Fd(56)], TraceResult::Err(libc::EBADF)),
+            t("dup2", vec![ArgMatcher::Fd(-1), ArgMatcher::Fd(56)], TraceResult::Err(sys::EBADF)),
         ], || {
             let error = apply_child_fd_actions(&[ChildFdAction::DupFd {
                 source_fd: -1,
@@ -2561,8 +2561,8 @@ mod tests {
     #[test]
     fn apply_child_fd_actions_close_error() {
         run_trace(vec![
-            t("close", vec![ArgMatcher::Fd(56)], TraceResult::Err(libc::EINVAL)),
-            t("close", vec![ArgMatcher::Fd(57)], TraceResult::Err(libc::EINVAL)),
+            t("close", vec![ArgMatcher::Fd(56)], TraceResult::Err(sys::EINVAL)),
+            t("close", vec![ArgMatcher::Fd(57)], TraceResult::Err(sys::EINVAL)),
         ], || {
             let error = apply_child_fd_actions(&[ChildFdAction::CloseFd { target_fd: 56 }])
                 .expect_err("child close failure");
@@ -2637,7 +2637,7 @@ mod tests {
             assert!(child.wait_with_output().expect("wait output").status.success());
 
             let child = maybe_spawn_with_fallback(
-                sys::SysError::Errno(libc::ENOEXEC),
+                sys::SysError::Errno(sys::ENOEXEC),
                 &prepared,
                 None,
                 false,
@@ -2727,7 +2727,7 @@ mod tests {
         run_trace(vec![
             t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(1)),
             t("isatty", vec![ArgMatcher::Fd(2)], TraceResult::Int(1)),
-            t("tcgetpgrp", vec![ArgMatcher::Fd(0)], TraceResult::Err(libc::ENOTTY)),
+            t("tcgetpgrp", vec![ArgMatcher::Fd(0)], TraceResult::Err(sys::ENOTTY)),
         ], || {
             assert_eq!(handoff_foreground(Some(77)), None);
         });
