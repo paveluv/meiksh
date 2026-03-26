@@ -584,8 +584,7 @@ fn spawn_prepared_inner(
 ) -> Result<sys::ChildHandle, ShellError> {
     if !fallback_to_sh && !prepared.exec_path.is_empty() && prepared.exec_path.contains('/') {
         if sys::access_path(&prepared.exec_path, sys::F_OK).is_err() {
-            return Err(std::io::Error::new(std::io::ErrorKind::NotFound,
-                format!("{}: not found", prepared.exec_path)).into());
+            return Err(sys::SysError::Errno(libc::ENOENT).into());
         }
     }
 
@@ -650,7 +649,7 @@ fn spawn_prepared_inner(
 
     match result {
         Ok(handle) => Ok(handle),
-        Err(error) if error.raw_os_error() == Some(8) && !fallback_to_sh => {
+        Err(error) if error.is_enoexec() && !fallback_to_sh => {
             spawn_prepared_inner(prepared, None, pipe_stdout, process_group, true)
         }
         Err(error) => Err(error.into()),
@@ -670,13 +669,13 @@ fn spawn_with_fallback(
 
 #[allow(dead_code)]
 fn maybe_spawn_with_fallback(
-    error: std::io::Error,
+    error: sys::SysError,
     prepared: &PreparedProcess,
     stdin_fd: Option<i32>,
     pipe_stdout: bool,
     process_group: ProcessGroupPlan,
 ) -> Result<sys::ChildHandle, ShellError> {
-    if error.raw_os_error() == Some(8) {
+    if error.is_enoexec() {
         spawn_with_fallback(prepared, stdin_fd, pipe_stdout, process_group)
     } else {
         Err(error.into())
@@ -791,7 +790,7 @@ fn resolve_command_path(shell: &Shell, program: &str) -> Option<PathBuf> {
 // PipelineInput is replaced by raw fd from ChildHandle.stdout_fd
 
 #[allow(dead_code)]
-fn apply_child_fd_actions(actions: &[ChildFdAction]) -> std::io::Result<()> {
+fn apply_child_fd_actions(actions: &[ChildFdAction]) -> sys::SysResult<()> {
     for action in actions {
         match action {
             ChildFdAction::DupRawFd { fd, target_fd, .. } => {
@@ -802,7 +801,7 @@ fn apply_child_fd_actions(actions: &[ChildFdAction]) -> std::io::Result<()> {
             }
             ChildFdAction::CloseFd { target_fd } => {
                 if let Err(error) = sys::close_fd(*target_fd) {
-                    if error.raw_os_error() != Some(9) {
+                    if !error.is_ebadf() {
                         return Err(error);
                     }
                 }
@@ -813,7 +812,7 @@ fn apply_child_fd_actions(actions: &[ChildFdAction]) -> std::io::Result<()> {
 }
 
 #[allow(dead_code)]
-fn apply_child_setup(actions: &[ChildFdAction], process_group: ProcessGroupPlan) -> std::io::Result<()> {
+fn apply_child_setup(actions: &[ChildFdAction], process_group: ProcessGroupPlan) -> sys::SysResult<()> {
     apply_child_fd_actions(actions)?;
     match process_group {
         ProcessGroupPlan::None => {}
@@ -879,7 +878,7 @@ fn apply_shell_redirections(
         if let std::collections::hash_map::Entry::Vacant(entry) = saved.entry(redirection.fd) {
             let original = match sys::duplicate_fd_to_new(redirection.fd) {
                 Ok(fd) => Some(fd),
-                Err(error) if error.raw_os_error() == Some(9) => None,
+                Err(error) if error.is_ebadf() => None,
                 Err(error) => return Err(error.into()),
             };
             entry.insert(original);
@@ -953,7 +952,7 @@ fn replace_shell_fd(fd: i32, target_fd: i32) -> Result<(), ShellError> {
 
 fn close_shell_fd(target_fd: i32) -> Result<(), ShellError> {
     if let Err(error) = sys::close_fd(target_fd) {
-        if error.raw_os_error() != Some(9) {
+        if !error.is_ebadf() {
             return Err(error.into());
         }
     }
@@ -1393,7 +1392,7 @@ mod tests {
                 assert_eq!(String::from_utf8_lossy(&output.stdout), "unit:ok");
             });
 
-        let enoexec_err = std::io::Error::from_raw_os_error(libc::ENOEXEC);
+        let enoexec_err = sys::SysError::Errno(libc::ENOEXEC);
         sys::test_support::VfsBuilder::new()
             .file("/tmp/fallback-script", b"cat")
             .with_fake_spawn(
@@ -2407,7 +2406,7 @@ mod tests {
                 assert!(child.wait_with_output().expect("wait output").status.success());
 
                 let child = maybe_spawn_with_fallback(
-                    std::io::Error::from_raw_os_error(libc::ENOEXEC),
+                    sys::SysError::Errno(libc::ENOEXEC),
                     &prepared,
                     None,
                     false,

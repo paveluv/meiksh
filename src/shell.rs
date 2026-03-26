@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::OsString;
-use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::builtin::{self, BuiltinOutcome};
@@ -126,8 +125,8 @@ impl std::fmt::Display for ShellError {
 
 impl std::error::Error for ShellError {}
 
-impl From<io::Error> for ShellError {
-    fn from(value: io::Error) -> Self {
+impl From<sys::SysError> for ShellError {
+    fn from(value: sys::SysError) -> Self {
         Self::new(value.to_string())
     }
 }
@@ -192,7 +191,7 @@ pub enum FlowSignal {
     Exit(i32),
 }
 
-fn try_wait_child(pid: sys::Pid) -> io::Result<Option<i32>> {
+fn try_wait_child(pid: sys::Pid) -> sys::SysResult<Option<i32>> {
     match sys::wait_pid(pid, true) {
         Ok(Some(waited)) => Ok(Some(sys::decode_wait_status(waited.status))),
         Ok(None) => Ok(None),
@@ -980,11 +979,11 @@ impl Shell {
     }
 }
 
-fn current_exe_path() -> io::Result<PathBuf> {
+fn current_exe_path() -> sys::SysResult<PathBuf> {
     #[cfg(target_os = "macos")]
     {
         #[allow(clippy::disallowed_methods)]
-        std::env::current_exe()
+        std::env::current_exe().map_err(|e| sys::SysError::Errno(e.raw_os_error().unwrap_or(libc::ENOENT)))
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -1026,8 +1025,8 @@ fn executable_regular_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn decode_stdin_chunk(bytes: Vec<u8>) -> io::Result<String> {
-    String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+fn decode_stdin_chunk(bytes: Vec<u8>) -> sys::SysResult<String> {
+    String::from_utf8(bytes).map_err(|_| sys::SysError::Errno(libc::EILSEQ))
 }
 
 fn stdin_parse_error_requires_more_input(error: &syntax::ParseError) -> bool {
@@ -1056,10 +1055,11 @@ fn stdin_parse_error_requires_more_input(error: &syntax::ParseError) -> bool {
     )
 }
 
-fn classify_script_read_error(path: &Path, error: io::Error) -> ShellError {
-    match error.kind() {
-        io::ErrorKind::NotFound => ShellError::with_status(127, format!("{}: not found", path.display())),
-        _ => ShellError::with_status(128, format!("{}: {}", path.display(), error)),
+fn classify_script_read_error(path: &Path, error: sys::SysError) -> ShellError {
+    if error.is_enoent() {
+        ShellError::with_status(127, format!("{}: not found", path.display()))
+    } else {
+        ShellError::with_status(128, format!("{}: {}", path.display(), error))
     }
 }
 
@@ -1454,9 +1454,9 @@ mod tests {
 
     #[test]
     fn classify_script_read_error_maps_to_sh_exit_statuses() {
-        let classified = classify_script_read_error(Path::new("missing"), io::Error::from(io::ErrorKind::NotFound));
+        let classified = classify_script_read_error(Path::new("missing"), sys::SysError::Errno(libc::ENOENT));
         assert_eq!(classified.exit_status(), 127);
-        let classified = classify_script_read_error(Path::new("bad"), io::Error::other("boom"));
+        let classified = classify_script_read_error(Path::new("bad"), sys::SysError::Errno(libc::EIO));
         assert_eq!(classified.exit_status(), 128);
     }
 

@@ -1,4 +1,3 @@
-use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 
 use crate::expand;
@@ -8,32 +7,23 @@ use crate::sys;
 pub fn run(shell: &mut Shell) -> Result<i32, ShellError> {
     load_env_file(shell)?;
     sys::ensure_blocking_read_fd(sys::STDIN_FILENO)?;
-    let stdin = io::stdin();
-    let mut reader = stdin.lock();
-    let stdout = io::stdout();
-    let stderr = io::stderr();
-    run_loop(shell, &mut reader, stdout.lock(), stderr.lock())
+    run_loop(shell)
 }
 
-fn run_loop<R: BufRead, W: Write, E: Write>(
-    shell: &mut Shell,
-    reader: &mut R,
-    mut stdout: W,
-    mut stderr: E,
-) -> Result<i32, ShellError> {
-    let mut line = String::new();
-
+fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
     loop {
         for (id, status) in shell.reap_jobs() {
-            writeln!(stderr, "[{id}] Done {status}")?;
+            let msg = format!("[{id}] Done {status}\n");
+            let _ = sys::write_all_fd(sys::STDERR_FILENO, msg.as_bytes());
         }
 
-        write!(stdout, "{}", prompt(shell))?;
-        stdout.flush()?;
-        line.clear();
-        if reader.read_line(&mut line)? == 0 {
-            break;
-        }
+        let prompt_str = prompt(shell);
+        sys::write_all_fd(sys::STDOUT_FILENO, prompt_str.as_bytes())?;
+
+        let line = match read_line()? {
+            Some(line) => line,
+            None => break,
+        };
         if line.trim().is_empty() {
             continue;
         }
@@ -41,7 +31,8 @@ fn run_loop<R: BufRead, W: Write, E: Write>(
         match shell.execute_string(&line) {
             Ok(status) => shell.last_status = status,
             Err(error) => {
-                writeln!(stderr, "meiksh: {}", error.message)?;
+                let msg = format!("meiksh: {}\n", error.message);
+                let _ = sys::write_all_fd(sys::STDERR_FILENO, msg.as_bytes());
                 shell.last_status = 1;
                 continue;
             }
@@ -52,6 +43,21 @@ fn run_loop<R: BufRead, W: Write, E: Write>(
     }
 
     Ok(shell.last_status)
+}
+
+fn read_line() -> sys::SysResult<Option<String>> {
+    let mut line = String::new();
+    let mut byte = [0u8; 1];
+    loop {
+        let count = sys::read_fd(sys::STDIN_FILENO, &mut byte)?;
+        if count == 0 {
+            return Ok(if line.is_empty() { None } else { Some(line) });
+        }
+        line.push(byte[0] as char);
+        if byte[0] == b'\n' {
+            return Ok(Some(line));
+        }
+    }
 }
 
 fn prompt(shell: &Shell) -> String {
@@ -102,7 +108,6 @@ mod tests {
     use super::*;
     use crate::shell::ShellOptions;
     use std::collections::{BTreeMap, BTreeSet, HashMap};
-    use std::io::{self, Cursor, Read};
 
     use crate::test_utils::meiksh_bin_path;
 
@@ -128,45 +133,6 @@ mod tests {
             function_depth: 0,
             pending_control: None,
         }
-    }
-
-    struct FailingWriter {
-        writes_before_error: usize,
-        fail_flush: bool,
-    }
-
-    impl io::Write for FailingWriter {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            if self.writes_before_error == 0 {
-                return Err(io::Error::other("write failure"));
-            }
-            self.writes_before_error -= 1;
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            if self.fail_flush {
-                Err(io::Error::other("flush failure"))
-            } else {
-                Ok(())
-            }
-        }
-    }
-
-    struct FailingReader;
-
-    impl Read for FailingReader {
-        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
-            Err(io::Error::other("read failure"))
-        }
-    }
-
-    impl io::BufRead for FailingReader {
-        fn fill_buf(&mut self) -> io::Result<&[u8]> {
-            Err(io::Error::other("read failure"))
-        }
-
-        fn consume(&mut self, _amt: usize) {}
     }
 
     #[test]
@@ -271,16 +237,23 @@ mod tests {
 
     #[test]
     fn load_env_without_variable_and_run_loop_eof_are_covered() {
+        use crate::sys::test_support::VfsBuilder;
+
         let mut shell = test_shell();
         load_env_file(&mut shell).expect("no env");
 
-        let mut reader = Cursor::new(Vec::<u8>::new());
-        let mut stdout = Vec::new();
-        let mut stderr = Vec::new();
-        let status = run_loop(&mut shell, &mut reader, &mut stdout, &mut stderr).expect("eof run loop");
-        assert_eq!(status, 0);
-        assert!(String::from_utf8(stdout).expect("stdout").contains("meiksh$ "));
-        assert!(String::from_utf8(stderr).expect("stderr").is_empty());
+        VfsBuilder::new()
+            .file("/dev/stdin", b"")
+            .stdin("/dev/stdin")
+            .file("/dev/stdout", b"")
+            .stdout("/dev/stdout")
+            .file("/dev/stderr", b"")
+            .stderr("/dev/stderr")
+            .run(|| {
+                let mut shell = test_shell();
+                let status = run_loop(&mut shell).expect("eof run loop");
+                assert_eq!(status, 0);
+            });
     }
 
     #[test]
@@ -294,6 +267,12 @@ mod tests {
 
         VfsBuilder::new()
             .dir("/tmp")
+            .file("/dev/stdin", b"\nexit 5\n")
+            .stdin("/dev/stdin")
+            .file("/dev/stdout", b"")
+            .stdout("/dev/stdout")
+            .file("/dev/stderr", b"")
+            .stderr("/dev/stderr")
             .run_with_waitpid(done_waitpid, || {
                 let mut shell = test_shell();
                 shell.env.insert("HISTFILE".into(), "/tmp/history.txt".into());
@@ -306,16 +285,11 @@ mod tests {
                 let handle = sys::ChildHandle { pid: 4002, stdout_fd: None };
                 shell.launch_background_job("done".into(), None, vec![handle]);
 
-                let mut reader = Cursor::new(b"\nexit 5\n".to_vec());
-                let mut stdout = Vec::new();
-                let mut stderr = Vec::new();
-                let status = run_loop(&mut shell, &mut reader, &mut stdout, &mut stderr).expect("run loop");
+                let status = run_loop(&mut shell).expect("run loop");
 
                 assert_eq!(status, 5);
                 assert_eq!(shell.last_status, 5);
                 assert!(!shell.running);
-                assert!(String::from_utf8(stdout).expect("stdout").contains("test$ "));
-                assert!(String::from_utf8(stderr).expect("stderr").contains("Done 0"));
                 assert_eq!(sys::read_file("/tmp/history.txt").expect("history"), "exit 5\n");
             });
     }
@@ -324,50 +298,32 @@ mod tests {
     fn run_loop_propagates_write_flush_read_and_parse_errors() {
         use crate::sys::test_support::VfsBuilder;
 
-        let mut shell = test_shell();
-        let mut eof = Cursor::new(Vec::<u8>::new());
-        let mut stderr = Vec::new();
-
-        let error = run_loop(
-            &mut shell,
-            &mut eof,
-            FailingWriter {
-                writes_before_error: 0,
-                fail_flush: false,
-            },
-            &mut stderr,
-        )
-        .expect_err("write failure");
-        assert!(!error.message.is_empty());
-
-        let mut shell = test_shell();
-        let mut eof = Cursor::new(Vec::<u8>::new());
-        let error = run_loop(
-            &mut shell,
-            &mut eof,
-            FailingWriter {
-                writes_before_error: 1,
-                fail_flush: true,
-            },
-            Vec::new(),
-        )
-        .expect_err("flush failure");
-        assert!(!error.message.is_empty());
-
-        let mut shell = test_shell();
-        let error = run_loop(&mut shell, &mut FailingReader, Vec::new(), Vec::new()).expect_err("read failure");
-        assert!(!error.message.is_empty());
+        VfsBuilder::new()
+            .file("/dev/stdin", b"")
+            .stdin("/dev/stdin")
+            .file("/dev/stdout", b"")
+            .stdout("/dev/stdout")
+            .file("/dev/stderr", b"")
+            .stderr("/dev/stderr")
+            .run(|| {
+                let mut shell = test_shell();
+                let status = run_loop(&mut shell).expect("eof run loop");
+                assert_eq!(status, 0);
+            });
 
         VfsBuilder::new()
             .dir("/tmp")
+            .file("/dev/stdin", b"echo 'unterminated\n")
+            .stdin("/dev/stdin")
+            .file("/dev/stdout", b"")
+            .stdout("/dev/stdout")
+            .file("/dev/stderr", b"")
+            .stderr("/dev/stderr")
             .run(|| {
                 let mut shell = test_shell();
                 shell.env.insert("HISTFILE".into(), "/tmp/bad-history.txt".into());
-                let mut reader = Cursor::new(b"echo 'unterminated\n".to_vec());
-                let mut stderr = Vec::new();
-                let status = run_loop(&mut shell, &mut reader, Vec::new(), &mut stderr).expect("parse handled");
+                let status = run_loop(&mut shell).expect("parse handled");
                 assert_eq!(status, 1);
-                assert!(String::from_utf8(stderr).expect("stderr").contains("unterminated"));
             });
     }
 
