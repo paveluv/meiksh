@@ -1618,7 +1618,7 @@ mod tests {
     }
 
     #[test]
-    fn aliases_and_standalone_bang_are_context_sensitive() {
+    fn alias_expansion_in_simple_commands() {
         let mut aliases = HashMap::new();
         aliases.insert("say".to_string(), "printf hi".to_string());
         let program = parse_with_aliases("say", &aliases).expect("parse alias");
@@ -1632,7 +1632,10 @@ mod tests {
         aliases.insert("cond".to_string(), "if".to_string());
         let program = parse_with_aliases("cond true; then echo ok; fi", &aliases).expect("parse reserved alias");
         assert!(matches!(program.items[0].and_or.first.commands[0], Command::If(_)));
+    }
 
+    #[test]
+    fn standalone_bang_is_context_sensitive() {
         let program = parse("echo !").expect("parse echo bang");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],

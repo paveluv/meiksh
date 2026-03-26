@@ -252,12 +252,15 @@ mod tests {
     }
 
     #[test]
-    fn load_env_without_variable_and_run_loop_eof_are_covered() {
+    fn load_env_file_noop_when_env_variable_unset() {
         run_trace(vec![], || {
             let mut shell = test_shell();
             load_env_file(&mut shell).expect("no env");
         });
+    }
 
+    #[test]
+    fn run_loop_exits_on_immediate_eof() {
         run_trace(vec![
             t("write", vec![ArgMatcher::Fd(sys::STDOUT_FILENO), ArgMatcher::Bytes(b"meiksh$ ".to_vec())],
                 TraceResult::Int(8)),

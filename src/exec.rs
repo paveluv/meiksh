@@ -1479,7 +1479,7 @@ mod tests {
     }
 
     #[test]
-    fn redirection_helpers_cover_fd_actions_and_rendering() {
+    fn apply_child_fd_actions_applies_dup_close() {
         run_trace(vec![
             t("dup2", vec![ArgMatcher::Fd(10), ArgMatcher::Fd(90)], TraceResult::Int(90)),
             t("dup2", vec![ArgMatcher::Fd(90), ArgMatcher::Fd(91)], TraceResult::Int(91)),
@@ -1501,7 +1501,10 @@ mod tests {
             ])
             .expect("apply child actions");
         });
+    }
 
+    #[test]
+    fn render_simple_handles_redirection_syntax() {
         assert_no_syscalls(|| {
             let simple = SimpleCommand {
                 words: vec![Word { raw: "echo".into() }],
@@ -1517,7 +1520,10 @@ mod tests {
             assert!(rendered.contains("0<&5"));
             assert!(rendered.contains("1>&-"));
         });
+    }
 
+    #[test]
+    fn prepare_redirections_produces_correct_fd_actions() {
         run_trace(vec![
             t("open", vec![ArgMatcher::Str("/tmp/rw.txt".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(100)),
         ], || {
@@ -1640,7 +1646,83 @@ mod tests {
     }
 
     #[test]
-    fn spawn_pipeline_and_render_helpers_cover_all_command_forms() {
+    fn render_helpers_cover_program_function_if_loop_simple_pipeline() {
+        assert_no_syscalls(|| {
+            let program = Program {
+                items: vec![ListItem {
+                    and_or: AndOr {
+                        first: Pipeline {
+                            negated: false,
+                            commands: vec![Command::Simple(SimpleCommand {
+                                words: vec![Word {
+                                    raw: "true".to_string(),
+                                }],
+                                ..SimpleCommand::default()
+                            })],
+                        },
+                        rest: Vec::new(),
+                    },
+                    asynchronous: false,
+                }],
+            };
+
+            let function = FunctionDef {
+                name: "greet".to_string(),
+                body: Box::new(Command::Group(program.clone())),
+            };
+            let if_command = IfCommand {
+                condition: program.clone(),
+                then_branch: program.clone(),
+                elif_branches: Vec::new(),
+                else_branch: None,
+            };
+            let loop_command = LoopCommand {
+                kind: LoopKind::While,
+                condition: program.clone(),
+                body: program.clone(),
+            };
+            assert!(render_program(&program).contains("true"));
+            assert!(render_function(&function).contains("greet()"));
+            assert!(render_if(&if_command).starts_with("if "));
+            assert!(render_loop(&loop_command).starts_with("while "));
+
+            let simple = SimpleCommand {
+                assignments: vec![Assignment {
+                    name: "X".to_string(),
+                    value: Word {
+                        raw: "1".to_string(),
+                    },
+                }],
+                words: vec![Word {
+                    raw: "echo".to_string(),
+                }],
+                redirections: vec![Redirection {
+                    fd: None,
+                    kind: RedirectionKind::Write,
+                    target: Word {
+                        raw: "out".to_string(),
+                    },
+                    here_doc: None,
+                }],
+            };
+            assert_eq!(render_simple(&simple), "X=1 echo >out");
+
+            let pipeline = Pipeline {
+                negated: true,
+                commands: vec![
+                    Command::Subshell(program.clone()),
+                    Command::Group(program.clone()),
+                    Command::FunctionDef(function),
+                    Command::If(if_command),
+                    Command::Loop(loop_command),
+                ],
+            };
+            assert!(render_pipeline(&pipeline).starts_with("! "));
+        });
+    }
+
+    #[test]
+    fn spawn_pipeline_forks_compound_commands() {
         let program = Program {
             items: vec![ListItem {
                 and_or: AndOr {
@@ -1658,59 +1740,6 @@ mod tests {
                 asynchronous: false,
             }],
         };
-
-        let function = FunctionDef {
-            name: "greet".to_string(),
-            body: Box::new(Command::Group(program.clone())),
-        };
-        let if_command = IfCommand {
-            condition: program.clone(),
-            then_branch: program.clone(),
-            elif_branches: Vec::new(),
-            else_branch: None,
-        };
-        let loop_command = LoopCommand {
-            kind: LoopKind::While,
-            condition: program.clone(),
-            body: program.clone(),
-        };
-        assert!(render_program(&program).contains("true"));
-        assert!(render_function(&function).contains("greet()"));
-        assert!(render_if(&if_command).starts_with("if "));
-        assert!(render_loop(&loop_command).starts_with("while "));
-
-        let simple = SimpleCommand {
-            assignments: vec![Assignment {
-                name: "X".to_string(),
-                value: Word {
-                    raw: "1".to_string(),
-                },
-            }],
-            words: vec![Word {
-                raw: "echo".to_string(),
-            }],
-            redirections: vec![Redirection {
-                fd: None,
-                kind: RedirectionKind::Write,
-                target: Word {
-                    raw: "out".to_string(),
-                },
-                here_doc: None,
-            }],
-        };
-        assert_eq!(render_simple(&simple), "X=1 echo >out");
-
-        let pipeline = Pipeline {
-            negated: true,
-            commands: vec![
-                Command::Subshell(program.clone()),
-                Command::Group(program.clone()),
-                Command::FunctionDef(function),
-                Command::If(if_command),
-                Command::Loop(loop_command),
-            ],
-        };
-        assert!(render_pipeline(&pipeline).starts_with("! "));
 
         run_trace(vec![
             // Command 0 (Subshell): pipe_stdout=true, NewGroup
@@ -1742,7 +1771,7 @@ mod tests {
     }
 
     #[test]
-    fn nested_program_helpers_cover_rendering_and_heredoc_detection() {
+    fn render_program_handles_async_and_heredoc_items() {
         assert_no_syscalls(|| {
             let async_program = Program {
                 items: vec![
@@ -1780,7 +1809,10 @@ mod tests {
             let heredoc_program = crate::syntax::parse(": <<EOF\nhello\nEOF\n").expect("parse heredoc");
             assert_eq!(render_program(&heredoc_program), ": <<EOF\nhello\nEOF");
         });
+    }
 
+    #[test]
+    fn execute_nested_program_sets_up_heredoc_fd() {
         run_trace(vec![
             t("dup", vec![ArgMatcher::Fd(0)], TraceResult::Err(libc::EBADF)),
             t("pipe", vec![], TraceResult::Fds(10, 11)),
@@ -1872,7 +1904,7 @@ mod tests {
     }
 
     #[test]
-    fn exec_helpers_cover_then_else_and_render_paths() {
+    fn execute_if_covers_then_and_else_branches() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
             shell.env.insert("PATH".into(), "/usr/bin:/bin".into());
@@ -1896,7 +1928,12 @@ mod tests {
             let status = execute_program(&mut shell, &if_program).expect("exec");
             assert_eq!(status, 0);
             assert_eq!(shell.get_var("VALUE").as_deref(), Some("no"));
+        });
+    }
 
+    #[test]
+    fn render_and_or_produces_correct_output() {
+        assert_no_syscalls(|| {
             let render = render_and_or(&AndOr {
                 first: Pipeline {
                     negated: false,
@@ -2103,7 +2140,7 @@ mod tests {
     }
 
     #[test]
-    fn exec_additional_edges_cover_for_render_or_and_exit_breaks() {
+    fn render_and_or_covers_or_and_for_variants() {
         assert_no_syscalls(|| {
             let render = render_and_or(&AndOr {
                 first: Pipeline {
@@ -2127,7 +2164,12 @@ mod tests {
             });
             assert!(render.contains("||"));
             assert!(render.contains("for item in a"));
+        });
+    }
 
+    #[test]
+    fn loop_and_function_exit_behavior() {
+        assert_no_syscalls(|| {
             let mut shell = test_shell();
             let if_program = crate::syntax::parse("if false; then VALUE=yes; fi").expect("parse");
             let status = execute_program(&mut shell, &if_program).expect("exec");
@@ -2156,7 +2198,7 @@ mod tests {
     }
 
     #[test]
-    fn control_flow_builtins_propagate_across_functions_and_nested_loops() {
+    fn control_flow_propagates_across_functions_and_loops() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
             let program = crate::syntax::parse("f() { return 6; VALUE=bad; }; f").expect("parse");
@@ -2210,18 +2252,6 @@ mod tests {
             let status = execute_program(&mut shell, &program).expect("exec");
             assert_eq!(status, 0);
             assert_eq!(shell.get_var("AFTER"), None);
-
-            let simple = SimpleCommand {
-                words: vec![Word { raw: "echo".into() }],
-                redirections: vec![Redirection {
-                    fd: Some(1),
-                    kind: RedirectionKind::ClobberWrite,
-                    target: Word { raw: "out".into() },
-                    here_doc: None,
-                }],
-                ..SimpleCommand::default()
-            };
-            assert!(render_simple(&simple).contains(">|out"));
 
             let mut shell = test_shell();
             let program = crate::syntax::parse(
@@ -2294,7 +2324,24 @@ mod tests {
     }
 
     #[test]
-    fn shell_redirection_helpers_cover_current_shell_paths() {
+    fn render_simple_handles_clobber_write() {
+        assert_no_syscalls(|| {
+            let simple = SimpleCommand {
+                words: vec![Word { raw: "echo".into() }],
+                redirections: vec![Redirection {
+                    fd: Some(1),
+                    kind: RedirectionKind::ClobberWrite,
+                    target: Word { raw: "out".into() },
+                    here_doc: None,
+                }],
+                ..SimpleCommand::default()
+            };
+            assert!(render_simple(&simple).contains(">|out"));
+        });
+    }
+
+    #[test]
+    fn current_shell_redirections_write_append_read() {
         run_trace(vec![
             // apply_shell_redirections: save fd 42, open write, dup2+close, open append, dup2+close
             t("dup", vec![ArgMatcher::Fd(42)], TraceResult::Fd(92)),
@@ -2315,19 +2362,6 @@ mod tests {
             t("open", vec![ArgMatcher::Str("/redir/rw.txt".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(103)),
             t("dup2", vec![ArgMatcher::Fd(103), ArgMatcher::Fd(42)], TraceResult::Int(42)),
             t("close", vec![ArgMatcher::Fd(103)], TraceResult::Int(0)),
-            // apply_shell_redirection HereDoc
-            t("pipe", vec![], TraceResult::Fds(104, 105)),
-            t("write", vec![ArgMatcher::Fd(105), ArgMatcher::Bytes(b"body\n".to_vec())], TraceResult::Int(5)),
-            t("close", vec![ArgMatcher::Fd(105)], TraceResult::Int(0)),
-            t("dup2", vec![ArgMatcher::Fd(104), ArgMatcher::Fd(42)], TraceResult::Int(42)),
-            t("close", vec![ArgMatcher::Fd(104)], TraceResult::Int(0)),
-            // apply_shell_redirection DupOutput "1"
-            t("dup2", vec![ArgMatcher::Fd(1), ArgMatcher::Fd(42)], TraceResult::Int(42)),
-            // apply_shell_redirection DupOutput "-"
-            t("close", vec![ArgMatcher::Fd(42)], TraceResult::Int(0)),
-            // DupOutput "bad" → error, no syscalls
-            // Write with noclobber → open returns EEXIST
-            t("open", vec![ArgMatcher::Str("/redir/noclobber.txt".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Err(libc::EEXIST)),
         ], || {
             let target_fd = 42;
             let guard = apply_shell_redirections(
@@ -2371,10 +2405,22 @@ mod tests {
                 false,
             )
             .expect("readwrite redirection");
+        });
+    }
 
+    #[test]
+    fn current_shell_heredoc_redirections() {
+        run_trace(vec![
+            // apply_shell_redirection HereDoc
+            t("pipe", vec![], TraceResult::Fds(104, 105)),
+            t("write", vec![ArgMatcher::Fd(105), ArgMatcher::Bytes(b"body\n".to_vec())], TraceResult::Int(5)),
+            t("close", vec![ArgMatcher::Fd(105)], TraceResult::Int(0)),
+            t("dup2", vec![ArgMatcher::Fd(104), ArgMatcher::Fd(42)], TraceResult::Int(42)),
+            t("close", vec![ArgMatcher::Fd(104)], TraceResult::Int(0)),
+        ], || {
             apply_shell_redirection(
                 &ExpandedRedirection {
-                    fd: target_fd,
+                    fd: 42,
                     kind: RedirectionKind::HereDoc,
                     target: "EOF".into(),
                     here_doc_body: Some("body\n".into()),
@@ -2382,10 +2428,20 @@ mod tests {
                 false,
             )
             .expect("heredoc redirection");
+        });
+    }
 
+    #[test]
+    fn current_shell_dup_and_close_redirections() {
+        run_trace(vec![
+            // apply_shell_redirection DupOutput "1"
+            t("dup2", vec![ArgMatcher::Fd(1), ArgMatcher::Fd(42)], TraceResult::Int(42)),
+            // apply_shell_redirection DupOutput "-"
+            t("close", vec![ArgMatcher::Fd(42)], TraceResult::Int(0)),
+        ], || {
             apply_shell_redirection(
                 &ExpandedRedirection {
-                    fd: target_fd,
+                    fd: 42,
                     kind: RedirectionKind::DupOutput,
                     target: "1".into(),
                     here_doc_body: None,
@@ -2396,7 +2452,7 @@ mod tests {
 
             apply_shell_redirection(
                 &ExpandedRedirection {
-                    fd: target_fd,
+                    fd: 42,
                     kind: RedirectionKind::DupOutput,
                     target: "-".into(),
                     here_doc_body: None,
@@ -2404,10 +2460,27 @@ mod tests {
                 false,
             )
             .expect("close dup output");
+        });
+    }
 
+    #[test]
+    fn current_shell_noclobber_and_guard_cleanup() {
+        run_trace(vec![
+            // DupOutput "bad" → error, no syscalls
+            // Write with noclobber → open returns EEXIST
+            t("open", vec![ArgMatcher::Str("/redir/noclobber.txt".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Err(libc::EEXIST)),
+            // Guard drop with saved=(99, None) → close(99)
+            t("close", vec![ArgMatcher::Fd(99)], TraceResult::Int(0)),
+            // apply_shell_redirections with dup returning EBADF for high fd → treated as absent
+            t("dup", vec![ArgMatcher::Fd(123_456)], TraceResult::Err(libc::EBADF)),
+            t("close", vec![ArgMatcher::Fd(123_456)], TraceResult::Err(libc::EBADF)),
+            t("close", vec![ArgMatcher::Fd(123_456)], TraceResult::Err(libc::EBADF)),
+            // apply_shell_redirections with dup failure (errno 22)
+            t("dup", vec![ArgMatcher::Fd(42)], TraceResult::Err(libc::EINVAL)),
+        ], || {
             let error = apply_shell_redirection(
                 &ExpandedRedirection {
-                    fd: target_fd,
+                    fd: 42,
                     kind: RedirectionKind::DupOutput,
                     target: "bad".into(),
                     here_doc_body: None,
@@ -2419,7 +2492,7 @@ mod tests {
 
             let error = apply_shell_redirection(
                 &ExpandedRedirection {
-                    fd: target_fd,
+                    fd: 42,
                     kind: RedirectionKind::Write,
                     target: "/redir/noclobber.txt".into(),
                     here_doc_body: None,
@@ -2428,8 +2501,65 @@ mod tests {
             )
             .expect_err("noclobber");
             assert!(!error.message.is_empty());
+
+            drop(ShellRedirectionGuard {
+                saved: vec![(99, None)],
+            });
+
+            let guard = apply_shell_redirections(
+                &[ExpandedRedirection {
+                    fd: 123_456,
+                    kind: RedirectionKind::DupOutput,
+                    target: "-".into(),
+                    here_doc_body: None,
+                }],
+                false,
+            )
+            .expect("invalid fd is treated as absent");
+            drop(guard);
+
+            let error = apply_shell_redirections(
+                &[ExpandedRedirection {
+                    fd: 42,
+                    kind: RedirectionKind::DupOutput,
+                    target: "-".into(),
+                    here_doc_body: None,
+                }],
+                false,
+            )
+            .expect_err("dup failure");
+            assert!(!error.message.is_empty());
+        });
+    }
+
+    #[test]
+    fn apply_child_fd_actions_error_paths() {
+        run_trace(vec![
+            t("dup2", vec![ArgMatcher::Fd(-1), ArgMatcher::Fd(56)], TraceResult::Err(libc::EBADF)),
+        ], || {
+            let error = apply_child_fd_actions(&[ChildFdAction::DupFd {
+                source_fd: -1,
+                target_fd: 56,
+            }])
+            .expect_err("child dup failure");
+            assert!(!error.to_string().is_empty());
         });
 
+        run_trace(vec![
+            t("close", vec![ArgMatcher::Fd(56)], TraceResult::Err(libc::EINVAL)),
+            t("close", vec![ArgMatcher::Fd(57)], TraceResult::Err(libc::EINVAL)),
+        ], || {
+            let error = apply_child_fd_actions(&[ChildFdAction::CloseFd { target_fd: 56 }])
+                .expect_err("child close failure");
+            assert!(!error.to_string().is_empty());
+
+            let error = close_shell_fd(57).expect_err("close failure");
+            assert!(!error.message.is_empty());
+        });
+    }
+
+    #[test]
+    fn render_command_for_redirected() {
         assert_no_syscalls(|| {
             let command = Command::Redirected(
                 Box::new(Command::Group(Program::default())),
@@ -2446,88 +2576,33 @@ mod tests {
 
             replace_shell_fd(42, 42).expect("same-fd replacement");
         });
-
-        // Guard drop with saved=(99, None) → close(99)
-        run_trace(vec![
-            t("close", vec![ArgMatcher::Fd(99)], TraceResult::Int(0)),
-        ], || {
-            drop(ShellRedirectionGuard {
-                saved: vec![(99, None)],
-            });
-        });
-
-        // apply_shell_redirections with dup returning EBADF for high fd → treated as absent
-        run_trace(vec![
-            t("dup", vec![ArgMatcher::Fd(123_456)], TraceResult::Err(libc::EBADF)),
-            t("close", vec![ArgMatcher::Fd(123_456)], TraceResult::Err(libc::EBADF)),
-            t("close", vec![ArgMatcher::Fd(123_456)], TraceResult::Err(libc::EBADF)),
-        ], || {
-            let guard = apply_shell_redirections(
-                &[ExpandedRedirection {
-                    fd: 123_456,
-                    kind: RedirectionKind::DupOutput,
-                    target: "-".into(),
-                    here_doc_body: None,
-                }],
-                false,
-            )
-            .expect("invalid fd is treated as absent");
-            drop(guard);
-        });
-
-        // apply_shell_redirections with dup failure (errno 22)
-        run_trace(vec![
-            t("dup", vec![ArgMatcher::Fd(42)], TraceResult::Err(libc::EINVAL)),
-        ], || {
-            let error = apply_shell_redirections(
-                &[ExpandedRedirection {
-                    fd: 42,
-                    kind: RedirectionKind::DupOutput,
-                    target: "-".into(),
-                    here_doc_body: None,
-                }],
-                false,
-            )
-            .expect_err("dup failure");
-            assert!(!error.message.is_empty());
-        });
-
-        // apply_child_fd_actions with dup2 failure
-        run_trace(vec![
-            t("dup2", vec![ArgMatcher::Fd(-1), ArgMatcher::Fd(56)], TraceResult::Err(libc::EBADF)),
-        ], || {
-            let error = apply_child_fd_actions(&[ChildFdAction::DupFd {
-                source_fd: -1,
-                target_fd: 56,
-            }])
-            .expect_err("child dup failure");
-            assert!(!error.to_string().is_empty());
-        });
-
-        // apply_child_fd_actions with close failure, close_shell_fd with close failure
-        run_trace(vec![
-            t("close", vec![ArgMatcher::Fd(56)], TraceResult::Err(libc::EINVAL)),
-            t("close", vec![ArgMatcher::Fd(57)], TraceResult::Err(libc::EINVAL)),
-        ], || {
-            let error = apply_child_fd_actions(&[ChildFdAction::CloseFd { target_fd: 56 }])
-                .expect_err("child close failure");
-            assert!(!error.to_string().is_empty());
-
-            let error = close_shell_fd(57).expect_err("close failure");
-            assert!(!error.message.is_empty());
-        });
-
     }
 
     #[test]
-    fn prepared_process_helpers_cover_fallback_and_pre_exec_paths() {
-        // Block 1: spawn_prepared(NewGroup), spawn_with_fallback, maybe_spawn_with_fallback
+    fn spawn_prepared_with_new_process_group() {
         run_trace(vec![
             // spawn_prepared: access check, fork, setpgid, waitpid
             t("access", vec![ArgMatcher::Str("/tmp/script.sh".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
             t_fork(TraceResult::Pid(1000), vec![]),
             t("setpgid", vec![ArgMatcher::Int(1000), ArgMatcher::Int(0)], TraceResult::Int(0)),
             t("waitpid", vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
+        ], || {
+            let prepared = PreparedProcess {
+                exec_path: "/tmp/script.sh".into(),
+                argv: vec!["/tmp/script.sh".into()],
+                child_env: Vec::new(),
+                redirections: Vec::new(),
+                noclobber: false,
+            };
+            let child = spawn_prepared(&prepared, None, false, ProcessGroupPlan::NewGroup)
+                .expect("spawn newgroup");
+            assert!(child.wait_with_output().expect("wait output").status.success());
+        });
+    }
+
+    #[test]
+    fn spawn_with_fallback_handles_enoexec() {
+        run_trace(vec![
             // spawn_with_fallback: no access check (fallback), fork, waitpid
             t_fork(TraceResult::Pid(1001), vec![]),
             t("waitpid", vec![ArgMatcher::Int(1001), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
@@ -2542,10 +2617,6 @@ mod tests {
                 redirections: Vec::new(),
                 noclobber: false,
             };
-            let child = spawn_prepared(&prepared, None, false, ProcessGroupPlan::NewGroup)
-                .expect("spawn newgroup");
-            assert!(child.wait_with_output().expect("wait output").status.success());
-
             let child = spawn_with_fallback(&prepared, None, false, ProcessGroupPlan::None)
                 .expect("fallback spawn");
             assert!(child.wait_with_output().expect("wait output").status.success());
@@ -2560,8 +2631,10 @@ mod tests {
             .expect("enoexec fallback helper");
             assert!(child.wait_with_output().expect("wait output").status.success());
         });
+    }
 
-        // Block 2: spawn with stdout redirect (DupOutput "-"), NewGroup, Join(0)
+    #[test]
+    fn spawn_with_stdout_redirect_and_process_group_plans() {
         run_trace(vec![
             // spawn with DupOutput "-": access, fork, waitpid
             t("access", vec![ArgMatcher::Str("/bin/echo".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
@@ -2608,8 +2681,10 @@ mod tests {
                 .expect("spawn join");
             assert!(child.wait().expect("wait").success());
         });
+    }
 
-        // Block 3: handoff_foreground and restore_foreground
+    #[test]
+    fn handoff_and_restore_foreground() {
         run_trace(vec![
             // handoff_foreground(Some(77)): isatty(0), isatty(2), tcgetpgrp(0), tcsetpgrp(0, 77)
             t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(1)),
@@ -2631,7 +2706,6 @@ mod tests {
             assert_eq!(handoff_foreground(None), None);
         });
 
-        // Block 4: handoff_foreground with tcgetpgrp failure
         run_trace(vec![
             t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(1)),
             t("isatty", vec![ArgMatcher::Fd(2)], TraceResult::Int(1)),
@@ -2639,8 +2713,10 @@ mod tests {
         ], || {
             assert_eq!(handoff_foreground(Some(77)), None);
         });
+    }
 
-        // Block 5: apply_child_setup
+    #[test]
+    fn apply_child_setup_for_process_groups() {
         run_trace(vec![
             // apply_child_setup([], None) → no syscalls
             // apply_child_setup([], NewGroup) → setpgid(0, 0)

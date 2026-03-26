@@ -1769,12 +1769,19 @@ mod tests {
     }
 
     #[test]
-    fn shell_name_and_cstr_helpers_work() {
+    fn shell_name_from_args_returns_first_arg_or_default() {
         assert_eq!(shell_name_from_args(&["meiksh".to_string(), "-c".to_string()]), "meiksh");
         assert_eq!(shell_name_from_args(&[]), "meiksh");
+    }
+
+    #[test]
+    fn cstr_lossy_handles_nul_terminated_and_plain_bytes() {
         assert_eq!(cstr_lossy(b"abc\0rest"), "abc".to_string());
         assert_eq!(cstr_lossy(b"plain-bytes"), "plain-bytes".to_string());
+    }
 
+    #[test]
+    fn execvp_failure_returns_minus_one() {
         fn fail_execvp(_file: *const c_char, _argv: *const *const c_char) -> c_int { -1 }
         let fake = Syscalls { execvp: fail_execvp, ..default_syscalls() };
         test_support::with_test_syscalls(fake, || {
@@ -1809,12 +1816,16 @@ mod tests {
     }
 
     #[test]
-    fn wait_pid_error_and_exec_replace_nul_error_work() {
+    fn wait_pid_error_surfaces_errno() {
         fn fail_waitpid(_pid: Pid, _status: *mut c_int, _options: c_int) -> Pid { -1 }
         let fake = Syscalls { waitpid: fail_waitpid, ..default_syscalls() };
         test_support::with_test_syscalls(fake, || {
             assert!(wait_pid(999_999, false).is_err());
         });
+    }
+
+    #[test]
+    fn exec_replace_rejects_nul_in_program_and_args() {
         let err = exec_replace("bad\0program", &[]).unwrap_err();
         assert_eq!(err, SysError::NulInPath);
         assert!(err.errno().is_none());
@@ -1823,7 +1834,10 @@ mod tests {
 
         let err = exec_replace("ok", &["bad\0arg".to_string()]).unwrap_err();
         assert_eq!(err, SysError::NulInPath);
+    }
 
+    #[test]
+    fn sys_error_helper_methods_report_correct_variants() {
         let errno_err = SysError::Errno(libc::ENOENT);
         assert_eq!(errno_err.errno(), Some(libc::ENOENT));
         assert!(errno_err.is_enoent());
@@ -1865,10 +1879,23 @@ mod tests {
     }
 
     #[test]
-    fn sys_injected_success_paths_cover_remaining_branches() {
+    fn success_process_identity() {
         fn fake_getpid() -> Pid {
             4242
         }
+
+        let fake = Syscalls {
+            getpid: fake_getpid,
+            ..default_syscalls()
+        };
+
+        test_support::with_test_syscalls(fake, || {
+            assert_eq!(current_pid(), 4242);
+        });
+    }
+
+    #[test]
+    fn success_wait_and_signal() {
         fn fake_waitpid(_pid: Pid, status: *mut c_int, _options: c_int) -> Pid {
             unsafe {
                 *status = 9 << 8;
@@ -1881,6 +1908,25 @@ mod tests {
         fn fake_signal(_sig: c_int, _handler: libc::sighandler_t) -> libc::sighandler_t {
             0
         }
+
+        let fake = Syscalls {
+            waitpid: fake_waitpid,
+            kill: fake_kill,
+            signal: fake_signal,
+            ..default_syscalls()
+        };
+
+        test_support::with_test_syscalls(fake, || {
+            assert_eq!(
+                wait_pid(1, false).expect("wait").expect("status"),
+                WaitStatus { pid: 99, status: 9 << 8 }
+            );
+            assert!(send_signal(1, 0).is_ok());
+        });
+    }
+
+    #[test]
+    fn success_terminal_control() {
         fn fake_isatty(_fd: c_int) -> c_int {
             1
         }
@@ -1893,6 +1939,25 @@ mod tests {
         fn fake_setpgid(_pid: Pid, _pgid: Pid) -> c_int {
             0
         }
+
+        let fake = Syscalls {
+            isatty: fake_isatty,
+            tcgetpgrp: fake_tcgetpgrp,
+            tcsetpgrp: fake_tcsetpgrp,
+            setpgid: fake_setpgid,
+            ..default_syscalls()
+        };
+
+        test_support::with_test_syscalls(fake, || {
+            assert!(is_interactive_fd(0));
+            assert_eq!(current_foreground_pgrp(0).expect("pgrp"), 77);
+            assert!(set_foreground_pgrp(0, 77).is_ok());
+            assert!(set_process_group(1, 1).is_ok());
+        });
+    }
+
+    #[test]
+    fn success_pipe_and_fd() {
         fn fake_pipe(fds: *mut c_int) -> c_int {
             unsafe {
                 *fds.add(0) = 10;
@@ -1909,6 +1974,25 @@ mod tests {
         fn fake_close(_fd: c_int) -> c_int {
             0
         }
+
+        let fake = Syscalls {
+            pipe: fake_pipe,
+            dup: fake_dup,
+            dup2: fake_dup2,
+            close: fake_close,
+            ..default_syscalls()
+        };
+
+        test_support::with_test_syscalls(fake, || {
+            assert_eq!(create_pipe().expect("pipe"), (10, 11));
+            assert_eq!(duplicate_fd_to_new(4).expect("dup"), 104);
+            assert!(duplicate_fd(4, 5).is_ok());
+            assert!(close_fd(4).is_ok());
+        });
+    }
+
+    #[test]
+    fn success_file_io() {
         fn fake_fcntl(_fd: c_int, cmd: c_int, arg: c_int) -> c_int {
             match cmd {
                 F_GETFL => arg,
@@ -1925,6 +2009,25 @@ mod tests {
             }
             1
         }
+
+        let fake = Syscalls {
+            fcntl: fake_fcntl,
+            read: fake_read,
+            ..default_syscalls()
+        };
+
+        test_support::with_test_syscalls(fake, || {
+            let mut buffer = [0u8; 1];
+            assert_eq!(read_fd(0, &mut buffer).expect("read"), 1);
+            assert_eq!(buffer, [b'X']);
+            let mut reader = FdReader::new(0);
+            assert_eq!(reader.read(&mut buffer).expect("reader read"), 1);
+            assert_eq!(buffer, [b'X']);
+        });
+    }
+
+    #[test]
+    fn success_umask_times_sysconf() {
         fn fake_umask(mask: FileModeMask) -> FileModeMask {
             mask
         }
@@ -1940,53 +2043,15 @@ mod tests {
         fn fake_sysconf(_name: c_int) -> c_long {
             60
         }
-        fn fake_execvp(_file: *const c_char, _argv: *const *const c_char) -> c_int {
-            0
-        }
 
         let fake = Syscalls {
-            getpid: fake_getpid,
-            waitpid: fake_waitpid,
-            kill: fake_kill,
-            signal: fake_signal,
-            isatty: fake_isatty,
-            tcgetpgrp: fake_tcgetpgrp,
-            tcsetpgrp: fake_tcsetpgrp,
-            setpgid: fake_setpgid,
-            pipe: fake_pipe,
-            dup: fake_dup,
-            dup2: fake_dup2,
-            close: fake_close,
-            fcntl: fake_fcntl,
-            read: fake_read,
             umask: fake_umask,
             times: fake_times,
             sysconf: fake_sysconf,
-            execvp: fake_execvp,
             ..default_syscalls()
         };
 
         test_support::with_test_syscalls(fake, || {
-            assert_eq!(current_pid(), 4242);
-            assert!(is_interactive_fd(0));
-            assert_eq!(
-                wait_pid(1, false).expect("wait").expect("status"),
-                WaitStatus { pid: 99, status: 9 << 8 }
-            );
-            assert!(send_signal(1, 0).is_ok());
-            assert_eq!(current_foreground_pgrp(0).expect("pgrp"), 77);
-            assert!(set_foreground_pgrp(0, 77).is_ok());
-            assert!(set_process_group(1, 1).is_ok());
-            assert_eq!(create_pipe().expect("pipe"), (10, 11));
-            assert_eq!(duplicate_fd_to_new(4).expect("dup"), 104);
-            assert!(duplicate_fd(4, 5).is_ok());
-            assert!(close_fd(4).is_ok());
-            let mut buffer = [0u8; 1];
-            assert_eq!(read_fd(0, &mut buffer).expect("read"), 1);
-            assert_eq!(buffer, [b'X']);
-            let mut reader = FdReader::new(0);
-            assert_eq!(reader.read(&mut buffer).expect("reader read"), 1);
-            assert_eq!(buffer, [b'X']);
             assert_eq!(current_umask(), 0);
             assert_eq!(set_umask(0o027), 0o027);
             assert_eq!(
@@ -1999,6 +2064,21 @@ mod tests {
                 }
             );
             assert_eq!(clock_ticks_per_second().expect("ticks"), 60);
+        });
+    }
+
+    #[test]
+    fn success_exec() {
+        fn fake_execvp(_file: *const c_char, _argv: *const *const c_char) -> c_int {
+            0
+        }
+
+        let fake = Syscalls {
+            execvp: fake_execvp,
+            ..default_syscalls()
+        };
+
+        test_support::with_test_syscalls(fake, || {
             assert!(exec_replace("echo", &["hello".to_string(), "world".to_string()]).is_ok());
         });
     }
@@ -2009,7 +2089,7 @@ mod tests {
     }
 
     #[test]
-    fn signal_helpers_cover_pending_ignore_default_and_error_paths() {
+    fn signal_handler_installation_succeeds() {
         use test_support::{run_trace, t, TraceResult, ArgMatcher};
 
         run_trace(vec![
@@ -2021,6 +2101,11 @@ mod tests {
             ignore_signal(SIGTERM).expect("ignore");
             default_signal_action(SIGQUIT).expect("default");
         });
+    }
+
+    #[test]
+    fn signal_handler_error_paths() {
+        use test_support::{run_trace, t, TraceResult, ArgMatcher};
 
         run_trace(vec![
             t("signal", vec![ArgMatcher::Int(SIGINT as i64), ArgMatcher::Any], TraceResult::Err(libc::EINVAL)),
@@ -2031,7 +2116,10 @@ mod tests {
             assert!(ignore_signal(SIGTERM).is_err());
             assert!(default_signal_action(SIGQUIT).is_err());
         });
+    }
 
+    #[test]
+    fn pending_signal_tracking() {
         test_support::with_pending_signals_for_test(&[SIGINT], || {
             assert_eq!(has_pending_signal(), Some(SIGINT));
             assert_eq!(take_pending_signals(), vec![SIGINT]);
@@ -2039,26 +2127,54 @@ mod tests {
         test_support::with_pending_signals_for_test(&[99], || {
             assert_eq!(has_pending_signal(), None);
         });
+    }
 
+    #[test]
+    fn signal_utility_helpers() {
         let interrupted_error = SysError::Errno(EINTR);
         assert!(interrupted(&interrupted_error));
         assert_eq!(supported_trap_signals(), vec![SIGHUP, SIGINT, SIGQUIT, SIGABRT, SIGALRM, SIGTERM]);
     }
 
     #[test]
-    fn sys_injected_error_paths_cover_remaining_branches() {
+    fn error_process_identity() {
         fn fake_getpid() -> Pid {
             1
         }
+
+        let fake = Syscalls {
+            getpid: fake_getpid,
+            ..default_syscalls()
+        };
+
+        test_support::with_test_syscalls(fake, || {
+            assert_eq!(current_pid(), 1);
+        });
+    }
+
+    #[test]
+    fn error_wait_and_signal() {
         fn fake_waitpid(_pid: Pid, _status: *mut c_int, _options: c_int) -> Pid {
             -1
         }
         fn fake_kill(_pid: Pid, _sig: c_int) -> c_int {
             -1
         }
-        fn fake_signal(_sig: c_int, _handler: libc::sighandler_t) -> libc::sighandler_t {
-            SIG_ERR_HANDLER
-        }
+
+        let fake = Syscalls {
+            waitpid: fake_waitpid,
+            kill: fake_kill,
+            ..default_syscalls()
+        };
+
+        test_support::with_test_syscalls(fake, || {
+            assert!(send_signal(1, 0).is_err());
+            assert!(wait_pid(1, false).is_err());
+        });
+    }
+
+    #[test]
+    fn error_terminal_control() {
         fn fake_isatty(_fd: c_int) -> c_int {
             0
         }
@@ -2071,6 +2187,25 @@ mod tests {
         fn fake_setpgid(_pid: Pid, _pgid: Pid) -> c_int {
             -1
         }
+
+        let fake = Syscalls {
+            isatty: fake_isatty,
+            tcgetpgrp: fake_tcgetpgrp,
+            tcsetpgrp: fake_tcsetpgrp,
+            setpgid: fake_setpgid,
+            ..default_syscalls()
+        };
+
+        test_support::with_test_syscalls(fake, || {
+            assert!(!is_interactive_fd(0));
+            assert!(current_foreground_pgrp(0).is_err());
+            assert!(set_foreground_pgrp(0, 1).is_err());
+            assert!(set_process_group(1, 1).is_err());
+        });
+    }
+
+    #[test]
+    fn error_pipe_and_fd() {
         fn fake_pipe(_fds: *mut c_int) -> c_int {
             -1
         }
@@ -2083,65 +2218,78 @@ mod tests {
         fn fake_close(_fd: c_int) -> c_int {
             -1
         }
-        fn fake_fcntl(_fd: c_int, _cmd: c_int, _arg: c_int) -> c_int {
-            -1
-        }
+
+        let fake = Syscalls {
+            pipe: fake_pipe,
+            dup: fake_dup,
+            dup2: fake_dup2,
+            close: fake_close,
+            ..default_syscalls()
+        };
+
+        test_support::with_test_syscalls(fake, || {
+            assert!(create_pipe().is_err());
+            assert!(duplicate_fd_to_new(1).is_err());
+            assert!(duplicate_fd(1, 2).is_err());
+            assert!(close_fd(1).is_err());
+        });
+    }
+
+    #[test]
+    fn error_file_io() {
         fn fake_read(_fd: c_int, _buf: *mut u8, _count: usize) -> isize {
             -1
         }
-        fn fake_umask(mask: FileModeMask) -> FileModeMask {
-            mask
-        }
+
+        let fake = Syscalls {
+            read: fake_read,
+            ..default_syscalls()
+        };
+
+        test_support::with_test_syscalls(fake, || {
+            assert!(read_fd(0, &mut [0u8; 1]).is_err());
+        });
+    }
+
+    #[test]
+    fn error_times_sysconf() {
         fn fake_times(_buffer: *mut libc::tms) -> ClockTicks {
             ClockTicks::MAX
         }
         fn fake_sysconf(_name: c_int) -> c_long {
             -1
         }
+
+        let fake = Syscalls {
+            times: fake_times,
+            sysconf: fake_sysconf,
+            ..default_syscalls()
+        };
+
+        test_support::with_test_syscalls(fake, || {
+            assert!(process_times().is_err());
+            assert!(clock_ticks_per_second().is_err());
+        });
+    }
+
+    #[test]
+    fn error_exec() {
         fn fake_execvp(_file: *const c_char, _argv: *const *const c_char) -> c_int {
             -1
         }
 
         let fake = Syscalls {
-            getpid: fake_getpid,
-            waitpid: fake_waitpid,
-            kill: fake_kill,
-            signal: fake_signal,
-            isatty: fake_isatty,
-            tcgetpgrp: fake_tcgetpgrp,
-            tcsetpgrp: fake_tcsetpgrp,
-            setpgid: fake_setpgid,
-            pipe: fake_pipe,
-            dup: fake_dup,
-            dup2: fake_dup2,
-            close: fake_close,
-            fcntl: fake_fcntl,
-            read: fake_read,
-            umask: fake_umask,
-            times: fake_times,
-            sysconf: fake_sysconf,
             execvp: fake_execvp,
             ..default_syscalls()
         };
 
         test_support::with_test_syscalls(fake, || {
-            assert_eq!(current_pid(), 1);
-            assert!(!is_interactive_fd(0));
-            assert!(send_signal(1, 0).is_err());
-            assert!(current_foreground_pgrp(0).is_err());
-            assert!(set_foreground_pgrp(0, 1).is_err());
-            assert!(set_process_group(1, 1).is_err());
-            assert!(create_pipe().is_err());
-            assert!(duplicate_fd_to_new(1).is_err());
-            assert!(duplicate_fd(1, 2).is_err());
-            assert!(close_fd(1).is_err());
-            assert!(read_fd(0, &mut [0u8; 1]).is_err());
-            assert!(process_times().is_err());
-            assert!(clock_ticks_per_second().is_err());
             assert!(exec_replace("echo", &["hi".to_string()]).is_err());
-            assert!(wait_pid(1, false).is_err());
         });
+    }
 
+    #[test]
+    fn decode_wait_status_signal_terminated() {
         assert_eq!(decode_wait_status(9), 137);
     }
 
