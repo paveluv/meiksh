@@ -14,8 +14,6 @@ It is not the primary conformance ledger. Requirement status belongs in `docs/sp
 - Semantic target: Issue 8 first, with Issue 7 compatibility notes when needed for documentation review
 - Conformance policy: POSIX behavior decisions must be based on the local POSIX reference documents in `docs/posix/`, not on probing whatever `/bin/sh` happens to do on the host system
 
-## Current Policy Decisions
-
 ## Low-Level Interface Boundary
 
 - `src/sys.rs` is the only production module that may depend on `libc` directly.
@@ -75,7 +73,7 @@ The following `std` types and methods are banned from production code (enforced 
 
 - `ENV` is only sourced when it expands to an absolute path that exists.
 - Prompting defaults to `meiksh$ ` unless `PS1` is set.
-- History currently appends plain input lines to `HISTFILE` or `.meiksh_history`.
+- History currently appends plain input lines to `HISTFILE` or `$HOME/.sh_history`.
 - Job control is still partial: `wait`, `fg`, and `bg` operate on the shell's current job table, but tty foreground handoff and some POSIX-required output/details are not implemented yet.
 
 ## Error Handling

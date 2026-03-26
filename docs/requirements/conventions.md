@@ -43,7 +43,7 @@ Test status values:
 
 - Every tracked item must cite at least one local POSIX page path.
 - Use code paths under `src/` for implementation evidence.
-- Use unit tests, spec tests, or scripts as validation evidence.
+- Use unit tests, integration tests, or scripts as validation evidence.
 - Coverage numbers are quality evidence only; they are not conformance evidence by themselves.
 
 ## Granularity Rules
