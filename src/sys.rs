@@ -495,6 +495,17 @@ pub(crate) mod test_support {
                     expected_args = entry.args,
                 );
             }
+            if name == "write" && entry.args.len() >= 2 {
+                let is_stdout_or_stderr = matches!(
+                    &entry.args[0],
+                    ArgMatcher::Fd(1) | ArgMatcher::Fd(2)
+                );
+                if is_stdout_or_stderr && matches!(&entry.args[1], ArgMatcher::Any) {
+                    panic!(
+                        "trace at index {index}: write to stdout/stderr must use ArgMatcher::Bytes, not ArgMatcher::Any",
+                    );
+                }
+            }
             for (i, (expected, actual)) in entry.args.iter().zip(args.iter()).enumerate() {
                 match (expected, actual) {
                     (ArgMatcher::Any, _) => {}

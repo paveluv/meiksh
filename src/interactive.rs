@@ -411,7 +411,10 @@ mod tests {
                 // reap notification written to stderr
                 t(
                     "write",
-                    vec![ArgMatcher::Fd(sys::STDERR_FILENO), ArgMatcher::Any],
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"[1] Done 0\n".to_vec()),
+                    ],
                     TraceResult::Int(0),
                 ),
                 // first prompt
@@ -674,7 +677,10 @@ mod tests {
                 // parse error written to stderr
                 t(
                     "write",
-                    vec![ArgMatcher::Fd(sys::STDERR_FILENO), ArgMatcher::Any],
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"meiksh: unterminated single quote\n".to_vec()),
+                    ],
                     TraceResult::Int(0),
                 ),
                 // prompt again
@@ -865,7 +871,10 @@ mod tests {
                 // Stopped notification written to stderr
                 t(
                     "write",
-                    vec![ArgMatcher::Fd(sys::STDERR_FILENO), ArgMatcher::Any],
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"[1] Stopped (SIGTSTP)\n".to_vec()),
+                    ],
                     TraceResult::Int(0),
                 ),
                 // prompt
