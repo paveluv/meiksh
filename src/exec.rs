@@ -2110,7 +2110,7 @@ mod tests {
                 t(
                     "write",
                     vec![ArgMatcher::Fd(11), ArgMatcher::Bytes(b"body\n".to_vec())],
-                    TraceResult::Int(5),
+                    TraceResult::Auto,
                 ),
                 t("close", vec![ArgMatcher::Fd(11)], TraceResult::Int(0)),
             ],
@@ -2396,7 +2396,7 @@ mod tests {
                 t(
                     "write",
                     vec![ArgMatcher::Fd(11), ArgMatcher::Bytes(b"hello\n".to_vec())],
-                    TraceResult::Int(6),
+                    TraceResult::Auto,
                 ),
                 t("close", vec![ArgMatcher::Fd(11)], TraceResult::Int(0)),
                 t(
@@ -3236,7 +3236,7 @@ mod tests {
                 t(
                     "write",
                     vec![ArgMatcher::Fd(105), ArgMatcher::Bytes(b"body\n".to_vec())],
-                    TraceResult::Int(5),
+                    TraceResult::Auto,
                 ),
                 t("close", vec![ArgMatcher::Fd(105)], TraceResult::Int(0)),
                 t(
@@ -4528,7 +4528,7 @@ mod tests {
                     ArgMatcher::Fd(2),
                     ArgMatcher::Bytes(b"+ echo hello\n".to_vec()),
                 ],
-                TraceResult::Int(13),
+                TraceResult::Auto,
             )],
             || {
                 let mut shell = test_shell();
@@ -4566,7 +4566,7 @@ mod tests {
                     ArgMatcher::Fd(2),
                     ArgMatcher::Bytes(b"+ FOO=bar cmd\n".to_vec()),
                 ],
-                TraceResult::Int(14),
+                TraceResult::Auto,
             )],
             || {
                 let mut shell = test_shell();
@@ -4646,7 +4646,7 @@ mod tests {
                         ArgMatcher::Fd(sys::STDERR_FILENO),
                         ArgMatcher::Bytes(b"[1] Stopped (SIGTSTP)\tvim\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -4730,7 +4730,7 @@ mod tests {
                         ArgMatcher::Fd(sys::STDERR_FILENO),
                         ArgMatcher::Bytes(b"[1] Stopped (SIGTSTP)\tvim\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -4825,7 +4825,7 @@ mod tests {
                         ArgMatcher::Fd(sys::STDERR_FILENO),
                         ArgMatcher::Bytes(b"[1] 9200\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
             ],
             || {

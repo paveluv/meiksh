@@ -2083,7 +2083,7 @@ mod tests {
                         ArgMatcher::Fd(1),
                         ArgMatcher::Bytes(b"ll='ls -l'\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
                 t(
                     "write",
@@ -2091,7 +2091,7 @@ mod tests {
                         ArgMatcher::Fd(2),
                         ArgMatcher::Bytes(b"alias: missing: not found\n".to_vec()),
                     ],
-                    TraceResult::Int("alias: missing: not found\n".len() as i64),
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -2272,7 +2272,7 @@ mod tests {
                     ArgMatcher::Fd(2),
                     ArgMatcher::Bytes(msg.as_bytes().to_vec()),
                 ],
-                TraceResult::Int(msg.len() as i64),
+                TraceResult::Auto,
             )
         }
 
@@ -2323,7 +2323,7 @@ mod tests {
                 ArgMatcher::Fd(2),
                 ArgMatcher::Bytes(read_err_msg.as_bytes().to_vec()),
             ],
-            TraceResult::Int(read_err_msg.len() as i64),
+            TraceResult::Auto,
         ));
 
         // Block 4: open value_nl, read "value\n" byte-by-byte, readonly error → write_stderr, close
@@ -2365,7 +2365,7 @@ mod tests {
         trace.push(t(
             "write",
             vec![ArgMatcher::Fd(2), ArgMatcher::Bytes(b"cont> ".to_vec())],
-            TraceResult::Int(6),
+            TraceResult::Auto,
         ));
         trace.extend(byte_reads(103, b"continued\n"));
         trace.push(t("close", vec![ArgMatcher::Fd(103)], TraceResult::Int(0)));
@@ -2543,7 +2543,7 @@ mod tests {
                         ArgMatcher::Fd(2),
                         ArgMatcher::Bytes(times_err_msg.as_bytes().to_vec()),
                     ],
-                    TraceResult::Int(times_err_msg.len() as i64),
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -2563,7 +2563,7 @@ mod tests {
                         ArgMatcher::Fd(2),
                         ArgMatcher::Bytes(b"umask: invalid option: -Z\n".to_vec()),
                     ],
-                    TraceResult::Int("umask: invalid option: -Z\n".len() as i64),
+                    TraceResult::Auto,
                 ),
                 // umask -- 077 → current_umask() then set_umask(077)
                 t("umask", vec![ArgMatcher::Int(0)], TraceResult::Int(0)),
@@ -2582,7 +2582,7 @@ mod tests {
                         ArgMatcher::Fd(2),
                         ArgMatcher::Bytes(b"umask: too many arguments\n".to_vec()),
                     ],
-                    TraceResult::Int("umask: too many arguments\n".len() as i64),
+                    TraceResult::Auto,
                 ),
                 // umask u+s → current_umask() then set_umask (s has no effect on permission bits)
                 t("umask", vec![ArgMatcher::Int(0)], TraceResult::Int(0)),
@@ -2597,7 +2597,7 @@ mod tests {
                         ArgMatcher::Fd(2),
                         ArgMatcher::Bytes(b"umask: invalid mask: u+Q\n".to_vec()),
                     ],
-                    TraceResult::Int("umask: invalid mask: u+Q\n".len() as i64),
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -2660,7 +2660,7 @@ mod tests {
                     ArgMatcher::Fd(2),
                     ArgMatcher::Bytes(b"command: utility name required\n".to_vec()),
                 ],
-                TraceResult::Int("command: utility name required\n".len() as i64),
+                TraceResult::Auto,
             )],
             || {
                 let mut shell = test_shell();
@@ -2723,7 +2723,7 @@ mod tests {
                     ArgMatcher::Fd(2),
                     ArgMatcher::Bytes(b"wait: invalid job id: %bad\n".to_vec()),
                 ],
-                TraceResult::Int("wait: invalid job id: %bad\n".len() as i64),
+                TraceResult::Auto,
             )],
             || {
                 let mut shell = test_shell();
@@ -2743,7 +2743,7 @@ mod tests {
                     ArgMatcher::Fd(sys::STDERR_FILENO),
                     ArgMatcher::Bytes(b"fg: no job control\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             )],
             || {
                 let mut shell = test_shell();
@@ -2764,7 +2764,7 @@ mod tests {
                     ArgMatcher::Fd(sys::STDERR_FILENO),
                     ArgMatcher::Bytes(b"bg: no job control\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             )],
             || {
                 let mut shell = test_shell();
@@ -2982,7 +2982,7 @@ mod tests {
                         ArgMatcher::Fd(2),
                         ArgMatcher::Bytes(b"set: invalid option: z\n".to_vec()),
                     ],
-                    TraceResult::Int("set: invalid option: z\n".len() as i64),
+                    TraceResult::Auto,
                 ),
                 t(
                     "write",
@@ -2990,7 +2990,7 @@ mod tests {
                         ArgMatcher::Fd(2),
                         ArgMatcher::Bytes(b"set: invalid option name: pipefail\n".to_vec()),
                     ],
-                    TraceResult::Int("set: invalid option name: pipefail\n".len() as i64),
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -3099,7 +3099,7 @@ mod tests {
                         ArgMatcher::Fd(2),
                         ArgMatcher::Bytes(b"pwd: invalid option: -Z\n".to_vec()),
                     ],
-                    TraceResult::Int("pwd: invalid option: -Z\n".len() as i64),
+                    TraceResult::Auto,
                 ),
                 t(
                     "write",
@@ -3107,7 +3107,7 @@ mod tests {
                         ArgMatcher::Fd(2),
                         ArgMatcher::Bytes(b"pwd: too many arguments\n".to_vec()),
                     ],
-                    TraceResult::Int("pwd: too many arguments\n".len() as i64),
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -3133,7 +3133,7 @@ mod tests {
                     ArgMatcher::Fd(2),
                     ArgMatcher::Bytes(b"unset: RO: readonly variable\n".to_vec()),
                 ],
-                TraceResult::Int("unset: RO: readonly variable\n".len() as i64),
+                TraceResult::Auto,
             )],
             || {
                 let mut shell = test_shell();
@@ -3199,7 +3199,7 @@ mod tests {
                         ArgMatcher::Fd(2),
                         ArgMatcher::Bytes(b"command: too many arguments\n".to_vec()),
                     ],
-                    TraceResult::Int("command: too many arguments\n".len() as i64),
+                    TraceResult::Auto,
                 ),
                 // command -v (missing) → write_stderr
                 t(
@@ -3208,7 +3208,7 @@ mod tests {
                         ArgMatcher::Fd(2),
                         ArgMatcher::Bytes(b"command: utility name required\n".to_vec()),
                     ],
-                    TraceResult::Int("command: utility name required\n".len() as i64),
+                    TraceResult::Auto,
                 ),
                 // command -v meiksh-not-real → access in PATH
                 t(
@@ -3310,7 +3310,7 @@ mod tests {
                         ArgMatcher::Fd(2),
                         ArgMatcher::Bytes(b"command: meiksh-not-real: not found\n".to_vec()),
                     ],
-                    TraceResult::Int("command: meiksh-not-real: not found\n".len() as i64),
+                    TraceResult::Auto,
                 ),
                 t(
                     "write",
@@ -3318,7 +3318,7 @@ mod tests {
                         ArgMatcher::Fd(2),
                         ArgMatcher::Bytes(b"return: not in a function\n".to_vec()),
                     ],
-                    TraceResult::Int("return: not in a function\n".len() as i64),
+                    TraceResult::Auto,
                 ),
                 t(
                     "access",
@@ -3338,7 +3338,7 @@ mod tests {
                             b"command: /tmp/plain-file: Permission denied\n".to_vec(),
                         ),
                     ],
-                    TraceResult::Int("command: /tmp/plain-file: Permission denied\n".len() as i64),
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -3447,7 +3447,7 @@ mod tests {
                 t(
                     "write",
                     vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"/home\n".to_vec())],
-                    TraceResult::Int(6),
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -3470,7 +3470,7 @@ mod tests {
                         ArgMatcher::Fd(1),
                         ArgMatcher::Bytes(b"export ONLY_NAME\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
                 t(
                     "write",
@@ -3478,7 +3478,7 @@ mod tests {
                         ArgMatcher::Fd(1),
                         ArgMatcher::Bytes(b"export PATH='/usr/bin:/bin'\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -3526,7 +3526,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"ll='ls -l'\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             )],
             || {
                 let mut shell = test_shell();
@@ -3551,7 +3551,7 @@ mod tests {
                         ArgMatcher::Fd(1),
                         ArgMatcher::Bytes(b"0m0.00s 0m0.00s\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
                 t(
                     "write",
@@ -3559,7 +3559,7 @@ mod tests {
                         ArgMatcher::Fd(1),
                         ArgMatcher::Bytes(b"0m0.00s 0m0.00s\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -3615,7 +3615,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"trap -- - EXIT\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -3623,7 +3623,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"trap -- - HUP\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -3631,7 +3631,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"trap -- - INT\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -3639,7 +3639,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"trap -- - QUIT\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -3647,7 +3647,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"trap -- - ILL\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -3655,7 +3655,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"trap -- - ABRT\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -3663,7 +3663,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"trap -- - FPE\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -3671,7 +3671,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"trap -- - BUS\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -3679,7 +3679,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"trap -- - USR1\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -3687,7 +3687,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"trap -- - SEGV\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -3695,7 +3695,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"trap -- - USR2\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -3703,7 +3703,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"trap -- - PIPE\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -3711,7 +3711,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"trap -- - ALRM\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -3719,7 +3719,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"trap -- - TERM\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -3727,7 +3727,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"trap -- - CHLD\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -3735,7 +3735,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"trap -- - TSTP\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -3743,7 +3743,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"trap -- - TTIN\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -3751,7 +3751,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"trap -- - TTOU\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -3759,7 +3759,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"trap -- - SYS\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
         ];
         let mut trace_entries = trap_p_defaults;
@@ -3815,7 +3815,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"trap -- - EXIT\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -3823,7 +3823,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"trap -- - INT\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             // shell.set_trap(SIGTERM, Ignore) → signal(SIGTERM, SIG_IGN)
             t(
@@ -3844,7 +3844,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"trap -- 'printf hi' INT\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -3852,7 +3852,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"trap -- 'printf hi' QUIT\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -3860,7 +3860,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"trap -- 'printf hi' ABRT\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -3868,7 +3868,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"trap -- 'printf hi' ALRM\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -3876,7 +3876,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"trap -- '' TERM\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             // print_traps EXIT → 1 stdout line
             t(
@@ -3885,7 +3885,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"trap -- - EXIT\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             // trap "printf hi" BAD → write_stderr
             t(
@@ -3894,7 +3894,7 @@ mod tests {
                     ArgMatcher::Fd(2),
                     ArgMatcher::Bytes(b"trap: invalid condition: BAD\n".to_vec()),
                 ],
-                TraceResult::Int("trap: invalid condition: BAD\n".len() as i64),
+                TraceResult::Auto,
             ),
             // trap 999 → write_stderr
             t(
@@ -3903,7 +3903,7 @@ mod tests {
                     ArgMatcher::Fd(2),
                     ArgMatcher::Bytes(b"trap: invalid condition: 999\n".to_vec()),
                 ],
-                TraceResult::Int("trap: invalid condition: 999\n".len() as i64),
+                TraceResult::Auto,
             ),
             // trap("printf hi") → trap_impl err → write_stderr
             t(
@@ -3912,7 +3912,7 @@ mod tests {
                     ArgMatcher::Fd(2),
                     ArgMatcher::Bytes(b"trap: condition argument required\n".to_vec()),
                 ],
-                TraceResult::Int("trap: condition argument required\n".len() as i64),
+                TraceResult::Auto,
             ),
         ]);
         run_trace(trace_entries, || {
@@ -4032,7 +4032,7 @@ mod tests {
                         ArgMatcher::Fd(1),
                         ArgMatcher::Bytes(b"/previous\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -4703,7 +4703,7 @@ mod tests {
                         ArgMatcher::Fd(2),
                         ArgMatcher::Bytes(b"jobs: invalid option: -z\n".to_vec()),
                     ],
-                    TraceResult::Int("jobs: invalid option: -z\n".len() as i64),
+                    TraceResult::Auto,
                 ),
                 t(
                     "write",
@@ -4711,7 +4711,7 @@ mod tests {
                         ArgMatcher::Fd(2),
                         ArgMatcher::Bytes(b"jobs: invalid job id: bad\n".to_vec()),
                     ],
-                    TraceResult::Int("jobs: invalid job id: bad\n".len() as i64),
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -4751,7 +4751,7 @@ mod tests {
                         ArgMatcher::Fd(1),
                         ArgMatcher::Bytes(b"[1] + Running sleep\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -4816,7 +4816,7 @@ mod tests {
                         ArgMatcher::Fd(1),
                         ArgMatcher::Bytes(b"[1] sleep\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
                 // wait %1 → wait_on_job_index → waitpid(3001, WUNTRACED)
                 t(
@@ -4832,7 +4832,7 @@ mod tests {
                 t(
                     "write",
                     vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"sleep\n".to_vec())],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
                 // fg %2 (running job) → wait_for_job → waitpid(3002, WUNTRACED)
                 t(
@@ -5048,7 +5048,7 @@ mod tests {
                         ArgMatcher::Fd(1),
                         ArgMatcher::Bytes(b"A_VAR=one\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
                 t(
                     "write",
@@ -5056,7 +5056,7 @@ mod tests {
                         ArgMatcher::Fd(1),
                         ArgMatcher::Bytes(b"B_VAR=two\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -5080,7 +5080,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"allexport off\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -5088,7 +5088,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"errexit off\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -5096,7 +5096,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"hashall off\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -5104,7 +5104,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"monitor off\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -5112,7 +5112,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"noclobber off\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -5120,7 +5120,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"noglob off\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -5128,7 +5128,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"noexec off\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -5136,7 +5136,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"notify off\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -5144,7 +5144,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"nounset off\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -5152,7 +5152,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"verbose off\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -5160,7 +5160,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"xtrace off\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
         ];
         run_trace(writes, || {
@@ -5181,7 +5181,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"set +o allexport\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -5189,7 +5189,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"set +o errexit\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -5197,7 +5197,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"set +o hashall\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -5205,7 +5205,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"set +o monitor\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -5213,7 +5213,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"set +o noclobber\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -5221,7 +5221,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"set +o noglob\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -5229,7 +5229,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"set +o noexec\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -5237,7 +5237,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"set +o notify\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -5245,7 +5245,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"set +o nounset\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -5253,7 +5253,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"set +o verbose\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
             t(
                 "write",
@@ -5261,7 +5261,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"set +o xtrace\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             ),
         ];
         run_trace(writes, || {
@@ -5288,7 +5288,7 @@ mod tests {
                         ArgMatcher::Fd(1),
                         ArgMatcher::Bytes(b"[1]   Done\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -5329,7 +5329,7 @@ mod tests {
                         ArgMatcher::Fd(1),
                         ArgMatcher::Bytes(b"[2] + Running sleep 100\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -5407,7 +5407,7 @@ mod tests {
                         ArgMatcher::Fd(1),
                         ArgMatcher::Bytes(b"[3]   Done(42)\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
                 // live: job 1 Running → stdout
                 t(
@@ -5416,7 +5416,7 @@ mod tests {
                         ArgMatcher::Fd(1),
                         ArgMatcher::Bytes(b"[1] - Running sleep 10\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
                 // live: job 2 Stopped → stdout
                 t(
@@ -5425,7 +5425,7 @@ mod tests {
                         ArgMatcher::Fd(1),
                         ArgMatcher::Bytes(b"[2] + Stopped (SIGTSTP) cat\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -5460,7 +5460,7 @@ mod tests {
                 t(
                     "write",
                     vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"5010\n".to_vec())],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -5487,7 +5487,7 @@ mod tests {
                         ArgMatcher::Fd(1),
                         ArgMatcher::Bytes(b"[1] + 5020 Running sleep 200\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -5514,7 +5514,7 @@ mod tests {
                         ArgMatcher::Fd(1),
                         ArgMatcher::Bytes(b"[1]   Done(7)\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -5551,7 +5551,7 @@ mod tests {
                 t(
                     "write",
                     vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"sleep 5\n".to_vec())],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
                 // continue_job: set foreground pgrp + send SIGCONT
                 t(
@@ -5614,7 +5614,7 @@ mod tests {
                         ArgMatcher::Fd(1),
                         ArgMatcher::Bytes(b"[1] sleep 99\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -5645,7 +5645,7 @@ mod tests {
             vec![t(
                 "write",
                 vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"HUP INT QUIT ILL ABRT FPE KILL BUS USR1 SEGV USR2 PIPE ALRM TERM CHLD CONT TSTP TTIN TTOU SYS\n".to_vec())],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             )],
             || {
                 let mut shell = test_shell();
@@ -5661,7 +5661,7 @@ mod tests {
             vec![t(
                 "write",
                 vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"INT\n".to_vec())],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             )],
             || {
                 let mut shell = test_shell();
@@ -5681,7 +5681,7 @@ mod tests {
                     ArgMatcher::Fd(sys::STDERR_FILENO),
                     ArgMatcher::Bytes(b"kill: unknown signal: 999\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             )],
             || {
                 let mut shell = test_shell();
@@ -5701,7 +5701,7 @@ mod tests {
                     ArgMatcher::Fd(sys::STDERR_FILENO),
                     ArgMatcher::Bytes(b"kill: invalid exit status: abc\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             )],
             || {
                 let mut shell = test_shell();
@@ -5791,7 +5791,7 @@ mod tests {
                     ArgMatcher::Fd(sys::STDERR_FILENO),
                     ArgMatcher::Bytes(b"kill: %99: no such job\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             )],
             || {
                 let mut shell = test_shell();
@@ -5810,7 +5810,7 @@ mod tests {
                     ArgMatcher::Fd(sys::STDERR_FILENO),
                     ArgMatcher::Bytes(b"kill: invalid pid: notapid\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             )],
             || {
                 let mut shell = test_shell();
@@ -5833,7 +5833,7 @@ mod tests {
                             .to_vec(),
                     ),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             )],
             || {
                 let mut shell = test_shell();
@@ -5852,7 +5852,7 @@ mod tests {
                     ArgMatcher::Fd(sys::STDERR_FILENO),
                     ArgMatcher::Bytes(b"kill: no process id specified\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             )],
             || {
                 let mut shell = test_shell();
@@ -5889,7 +5889,7 @@ mod tests {
                     ArgMatcher::Fd(sys::STDERR_FILENO),
                     ArgMatcher::Bytes(b"kill: -s requires a signal name\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             )],
             || {
                 let mut shell = test_shell();
@@ -5925,7 +5925,7 @@ mod tests {
                         ArgMatcher::Fd(sys::STDERR_FILENO),
                         ArgMatcher::Bytes(b"kill: (99999): No such process\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -5952,7 +5952,7 @@ mod tests {
                         ArgMatcher::Fd(sys::STDERR_FILENO),
                         ArgMatcher::Bytes(b"kill: (7010): No such process\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -5973,7 +5973,7 @@ mod tests {
                     ArgMatcher::Fd(sys::STDERR_FILENO),
                     ArgMatcher::Bytes(b"kill: no process id specified\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             )],
             || {
                 let mut shell = test_shell();
@@ -6029,7 +6029,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"[1] + Stopped (SIGTSTP) vim\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             )],
             || {
                 let mut shell = test_shell();
@@ -6051,7 +6051,7 @@ mod tests {
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"[1] + 5060 Stopped (SIGTSTP) vim\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             )],
             || {
                 let mut shell = test_shell();
@@ -6125,7 +6125,7 @@ mod tests {
                         ArgMatcher::Fd(1),
                         ArgMatcher::Bytes(b"[1]   Done\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -6157,7 +6157,7 @@ mod tests {
                         ArgMatcher::Fd(1),
                         ArgMatcher::Bytes(b"[2] + Running running-cmd\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -6185,7 +6185,7 @@ mod tests {
                         ArgMatcher::Fd(1),
                         ArgMatcher::Bytes(b"[1] + Stopped (SIGTSTP) vim\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
             ],
             || {
