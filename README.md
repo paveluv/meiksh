@@ -17,7 +17,9 @@ The current semantic target is POSIX Issue 8, with Issue 7 behavior still tracke
 
 `meiksh` is already a working shell with substantial parser, expansion, execution, and builtin coverage, including:
 
-- `-a`, `-c`, `-C`, `-f`, `-n`, `-u`, `-v`, and `-s` startup handling for the implemented subset, including POSIX-style `command_name` / `$0`, named `-o` / `+o` forms for the same subset, lone `-` stdin handling, `$-` reporting for active flags (with `i` fixed at startup per POSIX), verbose input echoing, plain `nounset` expansion failures, and blocking-read correction for inherited non-blocking stdin
+- `-a`, `-b`, `-c`, `-C`, `-e`, `-f`, `-h`, `-m`, `-n`, `-s`, `-u`, `-v`, and `-x` startup handling, including combined flags with `-c` (e.g. `sh -ec '...'`), POSIX-style `command_name` / `$0`, named `-o` / `+o` forms for all 11 option names (`allexport`, `errexit`, `hashall`, `monitor`, `noclobber`, `noglob`, `noexec`, `notify`, `nounset`, `verbose`, `xtrace`), lone `-` stdin handling, `$-` reporting for all active flags (with `i` fixed at startup per POSIX), verbose input echoing, plain `nounset` expansion failures, and blocking-read correction for inherited non-blocking stdin
+- `set -e` (errexit) with full POSIX exception rules: suppressed in `if`/`while`/`until`/`elif` conditions, negated pipelines, and non-final AND-OR commands; per-subshell tracking; exit on non-zero status
+- `set -x` (xtrace) with `PS4` parameter expansion; trace output to stderr after expansion and before execution
 - simple commands, pipelines, `&&` / `||`, background execution (including AND-OR lists with `&` in a subshell, stdin from `/dev/null`, and `[%d] %d\n` job messages), subshells, groups, functions, `if`, `case`, `for`, `while`, and `until`
 - parser-time alias expansion, including blank-terminated alias chaining and same-source visibility across top-level and nested bodies
 - context-sensitive `!` pipeline negation and POSIX grammar-sensitive reserved-word handling for `for`, `case`, brace groups, and linebreaks after `|`, `&&`, and `||`
@@ -31,11 +33,11 @@ The current semantic target is POSIX Issue 8, with Issue 7 behavior still tracke
 
 The project does **not** yet claim full POSIX conformance. Remaining gaps are tracked in `docs/spec-matrix.md` and `docs/requirements/gap-register.md`. The largest open areas are currently:
 
-- the remaining `sh` utility startup details, especially broader option coverage and the remaining top-level exit-status/error-classification polish
 - tilde, double-quote, and arithmetic-expansion edge cases
 - subshell / command-substitution execution-environment fidelity
-- broader builtin completion, including the still-open `set`, `read`, `trap`, `umask`, and missing mirrored utility pages such as `hash`, `getopts`, `ulimit`, and `fc`
-- stopped-job accounting, `set -m`, and tty mode save/restore for job control
+- broader builtin completion, including the still-open `read`, `trap`, `umask`, `cd -L/-P/-e`, and missing mirrored utility pages such as `hash`, `getopts`, `ulimit`, and `fc`
+- stopped-job accounting, `set -m` runtime effect, and tty mode save/restore for job control
+- interactive editing (vi-mode) and command history list semantics
 
 ## Repository Layout
 

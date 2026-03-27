@@ -142,6 +142,7 @@ mod tests {
             function_depth: 0,
             pending_control: None,
             interactive: false,
+            errexit_suppressed: false,
         }
     }
 
