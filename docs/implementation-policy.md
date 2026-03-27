@@ -46,6 +46,7 @@ The following `std` types and methods are banned from production code (enforced 
 ## Parser
 
 - `meiksh` preserves raw quoting inside parsed words and defers most semantic interpretation to expansion time.
+- The tokenizer recognizes `$(...)`, `$((...))`, `${...}`, and `` `...` `` as word-level constructs, keeping them as single word tokens even when unquoted. Nested delimiter tracking respects single-quotes, double-quotes, backslash escapes, and recursive `$`-constructs via dedicated scanner helpers (`scan_dollar_construct`, `scan_paren_body`, `scan_brace_body`, `scan_backtick_body`, `scan_dquote_body`).
 - Alias expansion now runs at parser time for aliases already present in shell state before a parse begins. Top-level source execution reparses later list items after earlier ones execute, so aliases defined earlier in the same top-level source can affect later top-level commands. Nested program bodies are also reparsed with the updated alias table when they execute, including bodies that contain here-documents. Aliases ending in blank can expose the next simple-command word to alias substitution.
 - Here-document bodies are attached during parsing; `<<-` strips leading tab characters while reading, and expansions run only when the delimiter is unquoted.
 - `if`, `while`, `until`, `for`, and `case` are parsed as compound commands. Exact reserved words are no longer accepted as function names, but reserved-word coverage is still incomplete for the full POSIX grammar.
@@ -55,9 +56,12 @@ The following `std` types and methods are banned from production code (enforced 
 ## Expansion
 
 - Variable values are currently stored as `String` values in shell state even though the long-term target is byte-oriented storage.
-- Command substitution executes in a forked child that inherits the shell state and executes the already-parsed AST directly. A non-zero child exit status sets `$?` but does not make the substitution fail; the captured output is always returned.
+- Command substitution executes in a forked child that inherits the shell state and executes the already-parsed AST directly. Both `$(cmd)` and `` `cmd` `` forms are supported. A non-zero child exit status sets `$?` but does not make the substitution fail; the captured output is always returned. Backtick escaping follows POSIX rules: `\$`, `` \` ``, and `\\` are special outside double-quotes; `\"` and `\newline` are additionally special inside double-quotes.
 - Arithmetic expansion currently supports integer literals and `+`, `-`, `*`, `/`, and `%`.
-- Parameter expansion supports plain substitutions, `${#parameter}` length, the default/assign/error/alternate forms (`:-`, `-`, `:=`, `=`, `:?`, `?`, `:+`, `+`), and multi-digit positional references such as `${10}`.
+- Parameter expansion supports plain substitutions, `${#parameter}` length, the default/assign/error/alternate forms (`:-`, `-`, `:=`, `=`, `:?`, `?`, `:+`, `+`), and multi-digit positional references such as `${10}`. The `${...}` brace scanner (`scan_to_closing_brace`) correctly handles `}` inside single-quotes, double-quotes (including `\}`), backslash escapes, and nested `${...}`, `$(...)`, `$((...))`, and backtick constructs.
+- The expansion pipeline uses a `Segment` enum (`Text(String, bool)`, `AtBreak`, `AtEmpty`) to represent intermediate expansion results. `expand_dollar` returns an `Expansion` enum: `One(String)` for all parameters except quoted `$@`, and `AtFields(Vec<String>)` for quoted `$@`. The `expand_word` function dispatches to three paths: (A) has `$@` expansion → split at `AtBreak` markers; (B) all segments are quoted → flatten to one field; (C) has unquoted content → field-split then pathname-expand.
+- `"$@"` (quoted) produces separate fields, one per positional parameter. With zero positionals it produces zero fields, including when embedded in a word like `"pre$@suf"`. `"$*"` (quoted) joins positionals with IFS[0] (space if IFS unset, empty if IFS is empty). Unquoted `$@` and `$*` both produce a single string that undergoes normal field splitting.
+- The `Context` trait provides `positional_params() -> Vec<String>` for direct access to the positional parameter list, used by both `$@` and `$*` expansion.
 - Unquoted field splitting now distinguishes IFS whitespace from non-whitespace delimiters, and pathname expansion applies after field splitting with dotfile suppression unless the pattern segment starts with `.`.
 - `set -f` and shell startup `-f` disable pathname expansion while preserving the rest of word expansion.
 

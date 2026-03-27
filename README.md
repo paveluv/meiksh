@@ -21,7 +21,7 @@ The current semantic target is POSIX Issue 8, with Issue 7 behavior still tracke
 - simple commands, pipelines, `&&` / `||`, background execution, subshells, groups, functions, `if`, `case`, `for`, `while`, and `until`
 - parser-time alias expansion, including blank-terminated alias chaining and same-source visibility across top-level and nested bodies
 - context-sensitive `!` pipeline negation and POSIX grammar-sensitive reserved-word handling for `for`, `case`, brace groups, and linebreaks after `|`, `&&`, and `||`
-- parameter expansion, including POSIX default/assign/error/alternate and pattern-removal operators, Issue 8 dollar-single-quotes, plus command substitution, arithmetic expansion, field splitting, pathname expansion, and here-documents
+- parameter expansion, including POSIX default/assign/error/alternate and pattern-removal operators, Issue 8 dollar-single-quotes, command substitution (`$(cmd)` and `` `cmd` ``), arithmetic expansion, quote-aware `${...}` brace scanning, `"$@"` separate-field semantics, `"$*"` IFS joining, field splitting, pathname expansion, and here-documents
 - current-shell redirections for builtins and compound commands, including numeric fd forms
 - a growing set of POSIX builtins such as `alias`, `bg`, `break`, `cd`, `command`, `continue`, `.`, `eval`, `exec`, `exit`, `export`, `fg`, `jobs`, `pwd`, `read`, `readonly`, `return`, `set`, `shift`, `times`, `trap`, `umask`, `unalias`, `unset`, and `wait`
 - utility-specific progress on recent builtin fidelity work and shell-language closure, including parser-aware alias behavior, grammar-faithful `for`/`case` reserved-word handling, brace-group reserved-word parsing, linebreak-sensitive pipelines and AND-OR lists, `${parameter%word}` / `${parameter##word}`-style pattern trimming, `command -p/-v/-V`, `cd -` / `OLDPWD` / `CDPATH`, `.` `PATH` search for readable slashless files, `jobs -p`, `pwd -L/-P`, `export -p`, `readonly -p`, `unalias -a`, `unset -f/-v`, intrinsic `read`, syscall-backed `times` and `umask`, `trap -p` plus EXIT and selected signal traps, and `wait` support for both `%job` and numeric pid operands
@@ -30,7 +30,7 @@ The current semantic target is POSIX Issue 8, with Issue 7 behavior still tracke
 The project does **not** yet claim full POSIX conformance. Remaining gaps are tracked in `docs/spec-matrix.md` and `docs/requirements/gap-register.md`. The largest open areas are currently:
 
 - the remaining `sh` utility startup details, especially broader option coverage and the remaining top-level exit-status/error-classification polish
-- field-splitting, tilde, double-quote, and arithmetic-expansion edge cases
+- tilde, double-quote, and arithmetic-expansion edge cases
 - subshell / command-substitution execution-environment fidelity
 - broader builtin completion, including the still-open `set`, `read`, `trap`, `umask`, and missing mirrored utility pages such as `hash`, `getopts`, `ulimit`, and `fc`
 - stopped-job accounting, `set -m`, and tty mode save/restore for job control

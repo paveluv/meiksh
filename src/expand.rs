@@ -21,6 +21,7 @@ pub trait Context {
     fn env_var(&self, name: &str) -> Option<String>;
     fn special_param(&self, name: char) -> Option<String>;
     fn positional_param(&self, index: usize) -> Option<String>;
+    fn positional_params(&self) -> Vec<String>;
     fn set_var(&mut self, name: &str, value: String) -> Result<(), ExpandError>;
     fn nounset_enabled(&self) -> bool;
     fn pathname_expansion_enabled(&self) -> bool {
@@ -28,6 +29,18 @@ pub trait Context {
     }
     fn shell_name(&self) -> &str;
     fn command_substitute(&mut self, command: &str) -> Result<String, ExpandError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Segment {
+    Text(String, bool),
+    AtBreak,
+    AtEmpty,
+}
+
+enum Expansion {
+    One(String),
+    AtFields(Vec<String>),
 }
 
 pub fn expand_words<C: Context>(ctx: &mut C, words: &[Word]) -> Result<Vec<String>, ExpandError> {
@@ -40,12 +53,28 @@ pub fn expand_words<C: Context>(ctx: &mut C, words: &[Word]) -> Result<Vec<Strin
 
 pub fn expand_word<C: Context>(ctx: &mut C, word: &Word) -> Result<Vec<String>, ExpandError> {
     let expanded = expand_raw(ctx, &word.raw)?;
-    if expanded.only_quoted {
-        return Ok(vec![flatten_pieces(&expanded.pieces)]);
+
+    if expanded.has_at_expansion {
+        return expand_word_with_at_fields(&expanded);
     }
 
-    let fields = split_fields_from_pieces(
-        &expanded.pieces,
+    if expanded.segments.is_empty() {
+        if expanded.had_quoted_content {
+            return Ok(vec![String::new()]);
+        }
+        return Ok(Vec::new());
+    }
+
+    let all_quoted = !expanded
+        .segments
+        .iter()
+        .any(|seg| matches!(seg, Segment::Text(_, false)));
+    if all_quoted {
+        return Ok(vec![flatten_segments(&expanded.segments)]);
+    }
+
+    let fields = split_fields_from_segments(
+        &expanded.segments,
         &ctx.env_var("IFS").unwrap_or_else(|| " \t\n".to_string()),
     );
     if fields.is_empty() {
@@ -68,9 +97,42 @@ pub fn expand_word<C: Context>(ctx: &mut C, word: &Word) -> Result<Vec<String>, 
     Ok(result)
 }
 
+fn expand_word_with_at_fields(expanded: &ExpandedWord) -> Result<Vec<String>, ExpandError> {
+    let has_at_empty = expanded
+        .segments
+        .iter()
+        .any(|s| matches!(s, Segment::AtEmpty));
+    let has_at_break = expanded
+        .segments
+        .iter()
+        .any(|s| matches!(s, Segment::AtBreak));
+
+    if has_at_empty && !has_at_break {
+        return Ok(Vec::new());
+    }
+
+    if !has_at_break {
+        return Ok(vec![flatten_segments(&expanded.segments)]);
+    }
+
+    let mut fields = Vec::new();
+    let mut current = String::new();
+
+    for seg in &expanded.segments {
+        if let Segment::Text(text, _) = seg {
+            current.push_str(text);
+        } else if matches!(seg, Segment::AtBreak) {
+            fields.push(std::mem::take(&mut current));
+        }
+    }
+    fields.push(current);
+
+    Ok(fields)
+}
+
 pub fn expand_word_text<C: Context>(ctx: &mut C, word: &Word) -> Result<String, ExpandError> {
     let expanded = expand_raw(ctx, &word.raw)?;
-    Ok(flatten_pieces(&expanded.pieces))
+    Ok(flatten_segments(&expanded.segments))
 }
 
 pub fn expand_parameter_text<C: Context>(ctx: &mut C, raw: &str) -> Result<String, ExpandError> {
@@ -92,15 +154,48 @@ pub fn expand_parameter_text<C: Context>(ctx: &mut C, raw: &str) -> Result<Strin
     Ok(result)
 }
 
+fn flatten_expansion(expansion: Expansion) -> String {
+    match expansion {
+        Expansion::One(s) => s,
+        Expansion::AtFields(fields) => fields.join(" "),
+    }
+}
+
+fn apply_expansion(
+    segments: &mut Vec<Segment>,
+    expansion: Expansion,
+    quoted: bool,
+    has_at: &mut bool,
+) {
+    match expansion {
+        Expansion::One(s) => push_segment(segments, s, quoted),
+        Expansion::AtFields(params) => {
+            *has_at = true;
+            if params.is_empty() {
+                segments.push(Segment::AtEmpty);
+            } else {
+                for (i, param) in params.into_iter().enumerate() {
+                    if i > 0 {
+                        segments.push(Segment::AtBreak);
+                    }
+                    push_segment(segments, param, true);
+                }
+            }
+        }
+    }
+}
+
 fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, ExpandError> {
     let chars: Vec<char> = raw.chars().collect();
     let mut index = 0usize;
-    let mut pieces = Vec::new();
-    let mut only_quoted = true;
+    let mut segments = Vec::new();
+    let mut had_quoted_content = false;
+    let mut has_at_expansion = false;
 
     while index < chars.len() {
         match chars[index] {
             '\'' => {
+                had_quoted_content = true;
                 index += 1;
                 let start = index;
                 while index < chars.len() && chars[index] != '\'' {
@@ -111,10 +206,11 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
                         message: "unterminated single quote".to_string(),
                     });
                 }
-                push_piece(&mut pieces, chars[start..index].iter().collect(), true);
+                push_segment(&mut segments, chars[start..index].iter().collect(), true);
                 index += 1;
             }
             '"' => {
+                had_quoted_content = true;
                 index += 1;
                 let mut buffer = String::new();
                 while index < chars.len() && chars[index] != '"' {
@@ -128,11 +224,21 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
                         }
                         '$' => {
                             if !buffer.is_empty() {
-                                push_piece(&mut pieces, std::mem::take(&mut buffer), true);
+                                push_segment(&mut segments, std::mem::take(&mut buffer), true);
                             }
-                            let (value, consumed) = expand_dollar(ctx, &chars[index..], true)?;
-                            push_piece(&mut pieces, value, true);
+                            let (expansion, consumed) = expand_dollar(ctx, &chars[index..], true)?;
+                            apply_expansion(&mut segments, expansion, true, &mut has_at_expansion);
                             index += consumed;
+                        }
+                        '`' => {
+                            if !buffer.is_empty() {
+                                push_segment(&mut segments, std::mem::take(&mut buffer), true);
+                            }
+                            index += 1;
+                            let command = scan_backtick_command(&chars, &mut index, true)?;
+                            let output = ctx.command_substitute(&command)?;
+                            let trimmed = output.trim_end_matches('\n').to_string();
+                            push_segment(&mut segments, trimmed, true);
                         }
                         ch => {
                             buffer.push(ch);
@@ -146,44 +252,87 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
                     });
                 }
                 if !buffer.is_empty() {
-                    push_piece(&mut pieces, buffer, true);
+                    push_segment(&mut segments, buffer, true);
                 }
                 index += 1;
             }
             '\\' => {
-                only_quoted = false;
                 index += 1;
                 if index < chars.len() {
-                    push_piece(&mut pieces, chars[index].to_string(), true);
+                    push_segment(&mut segments, chars[index].to_string(), true);
                     index += 1;
                 }
             }
             '$' => {
                 let dollar_single_quotes = chars.get(index + 1) == Some(&'\'');
-                if !dollar_single_quotes {
-                    only_quoted = false;
+                if dollar_single_quotes {
+                    had_quoted_content = true;
                 }
-                let (value, consumed) = expand_dollar(ctx, &chars[index..], false)?;
-                push_piece(&mut pieces, value, dollar_single_quotes);
+                let (expansion, consumed) = expand_dollar(ctx, &chars[index..], false)?;
+                apply_expansion(
+                    &mut segments,
+                    expansion,
+                    dollar_single_quotes,
+                    &mut has_at_expansion,
+                );
                 index += consumed;
             }
+            '`' => {
+                index += 1;
+                let command = scan_backtick_command(&chars, &mut index, false)?;
+                let output = ctx.command_substitute(&command)?;
+                let trimmed = output.trim_end_matches('\n').to_string();
+                push_segment(&mut segments, trimmed, false);
+            }
             '~' if index == 0 => {
-                only_quoted = false;
                 let home = ctx.env_var("HOME").unwrap_or_else(|| "~".to_string());
-                push_piece(&mut pieces, home, false);
+                push_segment(&mut segments, home, false);
                 index += 1;
             }
             ch => {
-                only_quoted = false;
-                push_piece(&mut pieces, ch.to_string(), false);
+                push_segment(&mut segments, ch.to_string(), false);
                 index += 1;
             }
         }
     }
 
     Ok(ExpandedWord {
-        pieces,
-        only_quoted,
+        segments,
+        had_quoted_content,
+        has_at_expansion,
+    })
+}
+
+fn scan_backtick_command(
+    chars: &[char],
+    index: &mut usize,
+    in_double_quotes: bool,
+) -> Result<String, ExpandError> {
+    let mut command = String::new();
+    while *index < chars.len() {
+        let ch = chars[*index];
+        if ch == '`' {
+            *index += 1;
+            return Ok(command);
+        }
+        if ch == '\\' && *index + 1 < chars.len() {
+            let next = chars[*index + 1];
+            let special = if in_double_quotes {
+                matches!(next, '$' | '`' | '\\' | '"' | '\n')
+            } else {
+                matches!(next, '$' | '`' | '\\')
+            };
+            if special {
+                command.push(next);
+                *index += 2;
+                continue;
+            }
+        }
+        command.push(ch);
+        *index += 1;
+    }
+    Err(ExpandError {
+        message: "unterminated backquote".to_string(),
     })
 }
 
@@ -216,8 +365,8 @@ pub fn expand_here_document<C: Context>(ctx: &mut C, text: &str) -> Result<Strin
                 }
             }
             '$' => {
-                let (value, consumed) = expand_dollar(ctx, &chars[index..], false)?;
-                result.push_str(&value);
+                let (expansion, consumed) = expand_dollar(ctx, &chars[index..], false)?;
+                result.push_str(&flatten_expansion(expansion));
                 index += consumed;
             }
             ch => {
@@ -234,26 +383,21 @@ fn expand_dollar<C: Context>(
     ctx: &mut C,
     chars: &[char],
     quoted: bool,
-) -> Result<(String, usize), ExpandError> {
+) -> Result<(Expansion, usize), ExpandError> {
     if chars.len() < 2 {
-        return Ok(("$".to_string(), 1));
+        return Ok((Expansion::One("$".to_string()), 1));
     }
 
     match chars[1] {
-        '\'' if !quoted => parse_dollar_single_quoted(chars),
+        '\'' if !quoted => {
+            let (s, n) = parse_dollar_single_quoted(chars)?;
+            Ok((Expansion::One(s), n))
+        }
         '{' => {
-            let mut index = 2usize;
-            while index < chars.len() && chars[index] != '}' {
-                index += 1;
-            }
-            if index >= chars.len() {
-                return Err(ExpandError {
-                    message: "unterminated parameter expansion".to_string(),
-                });
-            }
-            let expr: String = chars[2..index].iter().collect();
+            let end = scan_to_closing_brace(chars, 2)?;
+            let expr: String = chars[2..end].iter().collect();
             let value = expand_braced_parameter(ctx, &expr, quoted)?;
-            Ok((value, index + 1))
+            Ok((Expansion::One(value), end + 1))
         }
         '(' => {
             if chars.get(2) == Some(&'(') {
@@ -267,7 +411,7 @@ fn expand_dollar<C: Context>(
                     } else if ch == ')' {
                         if depth == 1 && chars.get(index + 1) == Some(&')') {
                             let value = eval_arithmetic(&expression)?;
-                            return Ok((value.to_string(), index + 2));
+                            return Ok((Expansion::One(value.to_string()), index + 2));
                         }
                         depth = depth.saturating_sub(1);
                     }
@@ -290,7 +434,7 @@ fn expand_dollar<C: Context>(
                         if depth == 0 {
                             let output = ctx.command_substitute(&command)?;
                             let trimmed = output.trim_end_matches('\n').to_string();
-                            return Ok((trimmed, index + 1));
+                            return Ok((Expansion::One(trimmed), index + 1));
                         }
                     }
                     command.push(ch);
@@ -301,22 +445,41 @@ fn expand_dollar<C: Context>(
                 })
             }
         }
-        '?' | '$' | '!' | '#' | '*' | '@' | '-' | '0' => {
+        '@' => {
+            if quoted {
+                let params = ctx.positional_params();
+                Ok((Expansion::AtFields(params), 2))
+            } else {
+                let value =
+                    require_set_parameter(ctx, "@", Some(ctx.positional_params().join(" ")))?;
+                Ok((Expansion::One(value), 2))
+            }
+        }
+        '*' => {
+            let ifs = ctx.env_var("IFS");
+            let sep = match ifs.as_deref() {
+                None => " ".to_string(),
+                Some("") => String::new(),
+                Some(s) => s.chars().next().unwrap().to_string(),
+            };
+            let value = ctx.positional_params().join(&sep);
+            Ok((Expansion::One(value), 2))
+        }
+        '?' | '$' | '!' | '#' | '-' | '0' => {
             let ch = chars[1];
             let value = if ch == '0' {
                 require_set_parameter(ctx, "0", Some(ctx.shell_name().to_string()))?
             } else {
                 require_set_parameter(ctx, &ch.to_string(), ctx.special_param(ch))?
             };
-            let _ = quoted;
-            Ok((value, 2))
+            Ok((Expansion::One(value), 2))
         }
         next if next.is_ascii_digit() => Ok((
-            require_set_parameter(
+            Expansion::One(require_set_parameter(
                 ctx,
                 &next.to_string(),
                 ctx.positional_param(next.to_digit(10).unwrap_or_default() as usize),
-            )?,
+            )?),
             2,
         )),
         next if next == '_' || next.is_ascii_alphabetic() => {
@@ -329,11 +492,11 @@ fn expand_dollar<C: Context>(
                 index += 1;
             }
             Ok((
-                require_set_parameter(ctx, &name, lookup_param(ctx, &name))?,
+                Expansion::One(require_set_parameter(ctx, &name, lookup_param(ctx, &name))?),
                 index,
             ))
         }
-        _ => Ok(("$".to_string(), 1)),
+        _ => Ok((Expansion::One("$".to_string()), 1)),
     }
 }
 
@@ -348,18 +511,10 @@ fn expand_parameter_dollar<C: Context>(
     match chars[1] {
         '\'' => parse_dollar_single_quoted(chars),
         '{' => {
-            let mut index = 2usize;
-            while index < chars.len() && chars[index] != '}' {
-                index += 1;
-            }
-            if index >= chars.len() {
-                return Err(ExpandError {
-                    message: "unterminated parameter expansion".to_string(),
-                });
-            }
-            let expr: String = chars[2..index].iter().collect();
+            let end = scan_to_closing_brace(chars, 2)?;
+            let expr: String = chars[2..end].iter().collect();
             let value = expand_braced_parameter_text(ctx, &expr)?;
-            Ok((value, index + 1))
+            Ok((value, end + 1))
         }
         '?' | '$' | '!' | '#' | '*' | '@' | '-' | '0' => {
             let ch = chars[1];
@@ -464,6 +619,95 @@ fn parse_dollar_single_quoted(chars: &[char]) -> Result<(String, usize), ExpandE
     }
     Err(ExpandError {
         message: "unterminated dollar-single-quotes".to_string(),
+    })
+}
+
+fn scan_to_closing_brace(chars: &[char], start: usize) -> Result<usize, ExpandError> {
+    let mut index = start;
+    while index < chars.len() {
+        match chars[index] {
+            '}' => return Ok(index),
+            '\\' => {
+                index += 2;
+            }
+            '\'' => {
+                index += 1;
+                while index < chars.len() && chars[index] != '\'' {
+                    index += 1;
+                }
+                if index < chars.len() {
+                    index += 1;
+                }
+            }
+            '"' => {
+                index += 1;
+                while index < chars.len() && chars[index] != '"' {
+                    if chars[index] == '\\' {
+                        index += 1;
+                    }
+                    index += 1;
+                }
+                if index < chars.len() {
+                    index += 1;
+                }
+            }
+            '$' if matches!(chars.get(index + 1), Some(&'{')) => {
+                index += 2;
+                let inner = scan_to_closing_brace(chars, index)?;
+                index = inner + 1;
+            }
+            '$' if matches!(chars.get(index + 1), Some(&'(')) => {
+                if chars.get(index + 2) == Some(&'(') {
+                    index += 3;
+                    let mut depth = 1usize;
+                    while index < chars.len() {
+                        if chars[index] == '(' {
+                            depth += 1;
+                        } else if chars[index] == ')' {
+                            if depth == 1 && chars.get(index + 1) == Some(&')') {
+                                index += 2;
+                                break;
+                            }
+                            depth = depth.saturating_sub(1);
+                        }
+                        index += 1;
+                    }
+                } else {
+                    index += 2;
+                    let mut depth = 1usize;
+                    while index < chars.len() {
+                        if chars[index] == '(' {
+                            depth += 1;
+                        } else if chars[index] == ')' {
+                            depth -= 1;
+                            if depth == 0 {
+                                index += 1;
+                                break;
+                            }
+                        }
+                        index += 1;
+                    }
+                }
+            }
+            '`' => {
+                index += 1;
+                while index < chars.len() && chars[index] != '`' {
+                    if chars[index] == '\\' {
+                        index += 1;
+                    }
+                    index += 1;
+                }
+                if index < chars.len() {
+                    index += 1;
+                }
+            }
+            _ => {
+                index += 1;
+            }
+        }
+    }
+    Err(ExpandError {
+        message: "unterminated parameter expansion".to_string(),
     })
 }
 
@@ -759,7 +1003,7 @@ fn expand_parameter_word<C: Context>(
     _quoted: bool,
 ) -> Result<String, ExpandError> {
     let expanded = expand_raw(ctx, raw)?;
-    Ok(flatten_pieces(&expanded.pieces))
+    Ok(flatten_segments(&expanded.segments))
 }
 
 fn expand_parameter_pattern_word<C: Context>(
@@ -767,7 +1011,7 @@ fn expand_parameter_pattern_word<C: Context>(
     raw: &str,
 ) -> Result<String, ExpandError> {
     let expanded = expand_raw(ctx, raw)?;
-    Ok(render_pattern_from_pieces(&expanded.pieces))
+    Ok(render_pattern_from_segments(&expanded.segments))
 }
 
 fn parse_parameter_expression(
@@ -852,8 +1096,9 @@ fn require_set_parameter<C: Context>(
 
 #[derive(Debug)]
 struct ExpandedWord {
-    pieces: Vec<(String, bool)>,
-    only_quoted: bool,
+    segments: Vec<Segment>,
+    had_quoted_content: bool,
+    has_at_expansion: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -862,13 +1107,13 @@ struct Field {
     has_unquoted_glob: bool,
 }
 
-fn split_fields_from_pieces(pieces: &[(String, bool)], ifs: &str) -> Vec<Field> {
+fn split_fields_from_segments(segments: &[Segment], ifs: &str) -> Vec<Field> {
     if ifs.is_empty() {
         return vec![Field {
-            text: flatten_pieces(pieces),
-            has_unquoted_glob: pieces
-                .iter()
-                .any(|(text, quoted)| !quoted && text.chars().any(is_glob_char)),
+            text: flatten_segments(segments),
+            has_unquoted_glob: segments.iter().any(
+                |seg| matches!(seg, Segment::Text(text, false) if text.chars().any(is_glob_char)),
+            ),
         }];
     }
 
@@ -880,7 +1125,7 @@ fn split_fields_from_pieces(pieces: &[(String, bool)], ifs: &str) -> Vec<Field> 
         .chars()
         .filter(|ch| !matches!(ch, ' ' | '\t' | '\n'))
         .collect();
-    let chars = flatten_piece_chars(pieces);
+    let chars = flatten_segment_chars(segments);
 
     let mut fields = Vec::new();
     let mut current = String::new();
@@ -929,36 +1174,44 @@ fn split_fields_from_pieces(pieces: &[(String, bool)], ifs: &str) -> Vec<Field> 
     fields
 }
 
-fn push_piece(segments: &mut Vec<(String, bool)>, text: String, quoted: bool) {
+fn push_segment(segments: &mut Vec<Segment>, text: String, quoted: bool) {
     if text.is_empty() {
         return;
     }
-    if let Some((last, last_quoted)) = segments.last_mut() {
+    if let Some(Segment::Text(last, last_quoted)) = segments.last_mut() {
         if *last_quoted == quoted {
             last.push_str(&text);
             return;
         }
     }
-    segments.push((text, quoted));
+    segments.push(Segment::Text(text, quoted));
 }
 
-fn flatten_pieces(pieces: &[(String, bool)]) -> String {
-    pieces.iter().map(|(part, _)| part).cloned().collect()
+fn flatten_segments(segments: &[Segment]) -> String {
+    let mut result = String::new();
+    for seg in segments {
+        if let Segment::Text(part, _) = seg {
+            result.push_str(part);
+        }
+    }
+    result
 }
 
-fn flatten_piece_chars(pieces: &[(String, bool)]) -> Vec<(char, bool)> {
+fn flatten_segment_chars(segments: &[Segment]) -> Vec<(char, bool)> {
     let mut chars = Vec::new();
-    for (text, quoted) in pieces {
-        for ch in text.chars() {
-            chars.push((ch, *quoted));
+    for seg in segments {
+        if let Segment::Text(text, quoted) = seg {
+            for ch in text.chars() {
+                chars.push((ch, *quoted));
+            }
         }
     }
     chars
 }
 
-fn render_pattern_from_pieces(pieces: &[(String, bool)]) -> String {
+fn render_pattern_from_segments(segments: &[Segment]) -> String {
     let mut pattern = String::new();
-    for (ch, quoted) in flatten_piece_chars(pieces) {
+    for (ch, quoted) in flatten_segment_chars(segments) {
         if quoted {
             pattern.push('\\');
         }
@@ -1340,20 +1593,7 @@ mod tests {
                 '?' => Some("0".to_string()),
                 '#' => Some(self.positional.len().to_string()),
                 '-' => Some("aC".to_string()),
-                '*' => Some(
-                    self.positional.join(
-                        &self
-                            .env
-                            .get("IFS")
-                            .cloned()
-                            .unwrap_or_else(|| " \t\n".to_string())
-                            .chars()
-                            .next()
-                            .map(|ch| ch.to_string())
-                            .unwrap_or_default(),
-                    ),
-                ),
-                '@' => Some(self.positional.join(" ")),
+                '*' | '@' => Some(self.positional.join(" ")),
                 _ => None,
             }
         }
@@ -1364,6 +1604,10 @@ mod tests {
             } else {
                 self.positional.get(index - 1).cloned()
             }
+        }
+
+        fn positional_params(&self) -> Vec<String> {
+            self.positional.clone()
         }
 
         fn set_var(&mut self, name: &str, value: String) -> Result<(), ExpandError> {
@@ -1812,7 +2056,7 @@ mod tests {
             .expect("expand"),
             Vec::<String>::new()
         );
-        assert!(split_fields_from_pieces(&[], " \t\n").is_empty());
+        assert!(split_fields_from_segments(&[], " \t\n").is_empty());
     }
 
     #[test]
@@ -1944,20 +2188,26 @@ mod tests {
         assert_eq!(lookup_param(&ctx, "0"), Some("meiksh".to_string()));
         assert_eq!(lookup_param(&ctx, "X"), Some("fallback".to_string()));
         assert_eq!(lookup_param(&ctx, "99"), None);
-        assert_eq!(ctx.special_param('*'), Some("alpha beta".to_string()));
+        assert_eq!(
+            ctx.positional_params(),
+            vec!["alpha".to_string(), "beta".to_string()]
+        );
         assert_eq!(ctx.positional_param(0), Some("meiksh".to_string()));
 
-        let mut segments = Vec::new();
-        push_piece(&mut segments, "a".into(), false);
-        push_piece(&mut segments, String::new(), false);
-        push_piece(&mut segments, "b".into(), false);
-        push_piece(&mut segments, "c".into(), true);
+        let mut segs = Vec::new();
+        push_segment(&mut segs, "a".into(), false);
+        push_segment(&mut segs, String::new(), false);
+        push_segment(&mut segs, "b".into(), false);
+        push_segment(&mut segs, "c".into(), true);
         assert_eq!(
-            segments,
-            vec![("ab".to_string(), false), ("c".to_string(), true)]
+            segs,
+            vec![
+                Segment::Text("ab".to_string(), false),
+                Segment::Text("c".to_string(), true)
+            ]
         );
 
-        assert_eq!(flatten_pieces(&segments), "abc".to_string());
+        assert_eq!(flatten_segments(&segs), "abc".to_string());
         assert!(pattern_matches("beta", "b*"));
         assert!(!pattern_matches("beta", "a*"));
         assert_eq!(eval_arithmetic("42").expect("direct eval"), 42);
@@ -2050,6 +2300,10 @@ mod tests {
             }
         }
 
+        fn positional_params(&self) -> Vec<String> {
+            Vec::new()
+        }
+
         fn set_var(&mut self, name: &str, value: String) -> Result<(), ExpandError> {
             self.env.insert(name.to_string(), value);
             Ok(())
@@ -2068,35 +2322,49 @@ mod tests {
         }
     }
 
+    fn expect_one(result: Result<(Expansion, usize), ExpandError>) -> (String, usize) {
+        let (expansion, consumed) = result.expect("expansion");
+        match expansion {
+            Expansion::One(s) => (s, consumed),
+            Expansion::AtFields(_) => panic!("expected One, got AtFields"),
+        }
+    }
+
     #[test]
     fn direct_expand_dollar_covers_fallbacks_and_nesting() {
         let mut ctx = FakeContext::new();
         assert_eq!(
-            expand_dollar(&mut ctx, &['$'], false).expect("single"),
+            expect_one(expand_dollar(&mut ctx, &['$'], false)),
             ("$".to_string(), 1)
         );
         assert_eq!(
-            expand_dollar(&mut ctx, &['$', '-'], false).expect("dash"),
+            expect_one(expand_dollar(&mut ctx, &['$', '-'], false)),
             ("aC".to_string(), 2)
         );
         assert_eq!(
-            expand_dollar(&mut ctx, &['$', '$'], false).expect("pid default"),
+            expect_one(expand_dollar(&mut ctx, &['$', '$'], false)),
             ("".to_string(), 2)
         );
-        assert_eq!(
-            expand_dollar(&mut ctx, &['$', '@'], true).expect("quoted at"),
-            ("alpha beta".to_string(), 2)
-        );
+
+        let (at_expansion, at_consumed) =
+            expand_dollar(&mut ctx, &['$', '@'], true).expect("quoted at");
+        assert_eq!(at_consumed, 2);
+        match at_expansion {
+            Expansion::AtFields(fields) => {
+                assert_eq!(fields, vec!["alpha".to_string(), "beta".to_string()]);
+            }
+            _ => panic!("expected AtFields for quoted $@"),
+        }
 
         let arithmetic_chars: Vec<char> = "$((1 + (2 * 3)))".chars().collect();
         assert_eq!(
-            expand_dollar(&mut ctx, &arithmetic_chars, false).expect("nested arithmetic"),
+            expect_one(expand_dollar(&mut ctx, &arithmetic_chars, false)),
             ("7".to_string(), arithmetic_chars.len())
         );
 
         let command_chars: Vec<char> = "$(printf (hi))".chars().collect();
         assert_eq!(
-            expand_dollar(&mut ctx, &command_chars, false).expect("nested command"),
+            expect_one(expand_dollar(&mut ctx, &command_chars, false)),
             ("printf (hi)".to_string(), command_chars.len())
         );
     }
@@ -2353,9 +2621,9 @@ mod tests {
 
     #[test]
     fn field_and_pattern_helpers_cover_corner_cases() {
-        let pieces = vec![("*.txt".to_string(), false)];
+        let segs = vec![Segment::Text("*.txt".to_string(), false)];
         assert_eq!(
-            split_fields_from_pieces(&pieces, ""),
+            split_fields_from_segments(&segs, ""),
             vec![Field {
                 text: "*.txt".to_string(),
                 has_unquoted_glob: true,
@@ -2363,7 +2631,7 @@ mod tests {
         );
 
         assert_eq!(
-            split_fields_from_pieces(&[("alpha,  beta".to_string(), false)], " ,"),
+            split_fields_from_segments(&[Segment::Text("alpha,  beta".to_string(), false)], " ,"),
             vec![
                 Field {
                     text: "alpha".to_string(),
@@ -2404,7 +2672,7 @@ mod tests {
             Some((true, 4))
         );
         assert_eq!(
-            render_pattern_from_pieces(&[("*".to_string(), true)]),
+            render_pattern_from_segments(&[Segment::Text("*".to_string(), true)]),
             "\\*".to_string()
         );
     }
@@ -2604,5 +2872,662 @@ mod tests {
 
         let literal = expand_here_document(&mut ctx, "\\x").expect("expand heredoc");
         assert_eq!(literal, "\\x");
+    }
+
+    #[test]
+    fn quoted_at_produces_separate_fields() {
+        let mut ctx = FakeContext::new();
+        ctx.positional = vec!["a".into(), "b".into(), "c".into()];
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "\"$@\"".into()
+                }
+            )
+            .expect("quoted at 3"),
+            vec!["a", "b", "c"]
+        );
+
+        ctx.positional = vec!["one".into()];
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "\"$@\"".into()
+                }
+            )
+            .expect("quoted at 1"),
+            vec!["one"]
+        );
+
+        ctx.positional = Vec::new();
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "\"$@\"".into()
+                }
+            )
+            .expect("quoted at 0"),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn quoted_at_with_prefix_and_suffix() {
+        let mut ctx = FakeContext::new();
+        ctx.positional = vec!["a".into(), "b".into()];
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "\"pre$@suf\"".into()
+                }
+            )
+            .expect("prefix suffix"),
+            vec!["prea", "bsuf"]
+        );
+
+        ctx.positional = vec!["only".into()];
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "\"[$@]\"".into()
+                }
+            )
+            .expect("brackets one"),
+            vec!["[only]"]
+        );
+
+        ctx.positional = Vec::new();
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "\"pre$@suf\"".into()
+                }
+            )
+            .expect("prefix empty"),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn quoted_at_at_produces_merged_fields() {
+        let mut ctx = FakeContext::new();
+        ctx.positional = vec!["a".into(), "b".into()];
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "\"$@$@\"".into()
+                }
+            )
+            .expect("at at"),
+            vec!["a", "ba", "b"]
+        );
+    }
+
+    #[test]
+    fn unquoted_at_undergoes_field_splitting() {
+        let mut ctx = FakeContext::new();
+        ctx.positional = vec!["a b".into(), "c".into()];
+        assert_eq!(
+            expand_word(&mut ctx, &Word { raw: "$@".into() }).expect("unquoted at"),
+            vec!["a", "b", "c"]
+        );
+
+        ctx.positional = Vec::new();
+        assert_eq!(
+            expand_word(&mut ctx, &Word { raw: "$@".into() }).expect("unquoted at empty"),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn quoted_star_joins_with_ifs() {
+        let mut ctx = FakeContext::new();
+        ctx.positional = vec!["a".into(), "b".into(), "c".into()];
+        ctx.env.insert("IFS".into(), ":".into());
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "\"$*\"".into()
+                }
+            )
+            .expect("star colon"),
+            vec!["a:b:c"]
+        );
+
+        ctx.env.insert("IFS".into(), String::new());
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "\"$*\"".into()
+                }
+            )
+            .expect("star empty ifs"),
+            vec!["abc"]
+        );
+
+        ctx.env.remove("IFS");
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "\"$*\"".into()
+                }
+            )
+            .expect("star unset ifs"),
+            vec!["a b c"]
+        );
+    }
+
+    #[test]
+    fn backtick_command_substitution_in_expander() {
+        let mut ctx = FakeContext::new();
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "`echo hello`".into()
+                }
+            )
+            .expect("backtick"),
+            vec!["echo", "hello"]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "\"`echo hello`\"".into()
+                }
+            )
+            .expect("quoted bt"),
+            vec!["echo hello"]
+        );
+    }
+
+    #[test]
+    fn backtick_backslash_escapes() {
+        let mut ctx = FakeContext::new();
+        assert_eq!(
+            expand_word_text(
+                &mut ctx,
+                &Word {
+                    raw: "`echo \\$USER`".into()
+                }
+            )
+            .expect("escaped dollar"),
+            "echo $USER"
+        );
+        assert_eq!(
+            expand_word_text(
+                &mut ctx,
+                &Word {
+                    raw: "\"`echo \\$USER`\"".into()
+                }
+            )
+            .expect("escaped dollar dq"),
+            "echo $USER"
+        );
+    }
+
+    #[test]
+    fn brace_scanning_respects_quotes_and_nesting() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert("VAR".into(), String::new());
+
+        assert_eq!(
+            expand_word_text(
+                &mut ctx,
+                &Word {
+                    raw: "${VAR:-\"a}b\"}".into()
+                }
+            )
+            .expect("quoted brace in default"),
+            "a}b"
+        );
+
+        assert_eq!(
+            expand_word_text(
+                &mut ctx,
+                &Word {
+                    raw: "${VAR:-$(echo ok)}".into()
+                }
+            )
+            .expect("command sub in brace"),
+            "echo ok"
+        );
+
+        assert_eq!(
+            expand_word_text(
+                &mut ctx,
+                &Word {
+                    raw: "${VAR:-$((1+2))}".into()
+                }
+            )
+            .expect("arith in brace"),
+            "3"
+        );
+
+        ctx.env.insert("INNER".into(), "val".into());
+        assert_eq!(
+            expand_word_text(
+                &mut ctx,
+                &Word {
+                    raw: "${VAR:-${INNER}}".into()
+                }
+            )
+            .expect("nested brace"),
+            "val"
+        );
+
+        assert_eq!(
+            expand_word_text(
+                &mut ctx,
+                &Word {
+                    raw: "${VAR:-`echo hi`}".into()
+                }
+            )
+            .expect("backtick in brace"),
+            "echo hi"
+        );
+
+        assert_eq!(
+            expand_word_text(
+                &mut ctx,
+                &Word {
+                    raw: "${VAR:-'a}b'}".into()
+                }
+            )
+            .expect("single quote in brace"),
+            "a}b"
+        );
+
+        assert_eq!(
+            expand_word_text(
+                &mut ctx,
+                &Word {
+                    raw: "${VAR:-\\}}".into()
+                }
+            )
+            .expect("escaped brace"),
+            "}"
+        );
+    }
+
+    #[test]
+    fn here_document_expands_at_sign() {
+        let mut ctx = FakeContext::new();
+        ctx.positional = vec!["x".into(), "y".into()];
+        let result = expand_here_document(&mut ctx, "$@\n").expect("heredoc at");
+        assert_eq!(result, "x y\n");
+    }
+
+    #[test]
+    fn error_parameter_expansion_operators() {
+        let mut ctx = FakeContext::new();
+        let error = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "${UNSET:?custom error}".into(),
+            },
+        )
+        .expect_err("colon question");
+        assert_eq!(error.message, "custom error");
+
+        let error = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "${UNSET?also error}".into(),
+            },
+        )
+        .expect_err("question");
+        assert_eq!(error.message, "also error");
+    }
+
+    #[test]
+    fn flatten_segment_chars_skips_at_break() {
+        let segs = vec![
+            Segment::Text("a".into(), false),
+            Segment::AtBreak,
+            Segment::Text("b".into(), true),
+        ];
+        let chars = flatten_segment_chars(&segs);
+        assert_eq!(chars, vec![('a', false), ('b', true)]);
+    }
+
+    #[test]
+    fn scan_to_closing_brace_error_on_unterminated() {
+        let chars: Vec<char> = "${var".chars().collect();
+        let err = scan_to_closing_brace(&chars, 2).expect_err("unterminated");
+        assert_eq!(err.message, "unterminated parameter expansion");
+    }
+
+    #[test]
+    fn expand_word_empty_quoted_at_with_other_quoted() {
+        let mut ctx = FakeContext::new();
+        ctx.positional = Vec::new();
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "\"\"\"$@\"".into()
+                }
+            )
+            .expect("empty at dq"),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn backtick_inside_double_quotes_with_buffer() {
+        let mut ctx = FakeContext::new();
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "\"hello `echo world`\"".into()
+                }
+            )
+            .expect("bt dq buffer"),
+            vec!["hello echo world"]
+        );
+    }
+
+    #[test]
+    fn scan_backtick_command_unterminated() {
+        let chars: Vec<char> = "`unterminated".chars().collect();
+        let mut index = 1usize;
+        let err = scan_backtick_command(&chars, &mut index, false).expect_err("unterminated");
+        assert_eq!(err.message, "unterminated backquote");
+    }
+
+    #[test]
+    fn scan_backtick_command_escape_outside_dq() {
+        let chars: Vec<char> = "`echo \\\\ok`".chars().collect();
+        let mut index = 1usize;
+        let result = scan_backtick_command(&chars, &mut index, false).expect("bt escape");
+        assert_eq!(result, "echo \\ok");
+    }
+
+    #[test]
+    fn here_document_with_at_expansion() {
+        let mut ctx = FakeContext::new();
+        ctx.positional = vec!["a".into(), "b".into()];
+        let result = expand_here_document(&mut ctx, "args: $@\n").expect("heredoc @");
+        assert_eq!(result, "args: a b\n");
+    }
+
+    #[test]
+    fn brace_scanning_handles_complex_nesting() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert("VAR".into(), String::new());
+
+        assert_eq!(
+            expand_word_text(
+                &mut ctx,
+                &Word {
+                    raw: "${VAR:-$((2+3))}".into()
+                }
+            )
+            .expect("arith in brace scan"),
+            "5"
+        );
+
+        assert_eq!(
+            expand_word_text(
+                &mut ctx,
+                &Word {
+                    raw: "${VAR:-$(echo deep)}".into()
+                }
+            )
+            .expect("cmd sub in brace scan"),
+            "echo deep"
+        );
+
+        assert_eq!(
+            expand_word_text(
+                &mut ctx,
+                &Word {
+                    raw: "${VAR:-`echo bt`}".into()
+                }
+            )
+            .expect("backtick in brace scan"),
+            "echo bt"
+        );
+
+        assert_eq!(
+            expand_word_text(
+                &mut ctx,
+                &Word {
+                    raw: "${VAR:-\"inside\"}".into()
+                }
+            )
+            .expect("dq in brace scan with escape"),
+            "inside"
+        );
+    }
+
+    #[test]
+    fn error_parameter_expansion_with_null_or_not_set() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert("EMPTY".into(), String::new());
+
+        let err = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "${EMPTY:?null or unset}".into(),
+            },
+        )
+        .expect_err("colon question null");
+        assert_eq!(err.message, "null or unset");
+
+        let ok = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "\"${EMPTY?not an error}\"".into(),
+            },
+        )
+        .expect("question set but empty");
+        assert_eq!(ok, vec![String::new()]);
+
+        let err = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "${NOEXIST?custom msg}".into(),
+            },
+        )
+        .expect_err("question unset");
+        assert_eq!(err.message, "custom msg");
+    }
+
+    #[test]
+    fn field_splitting_empty_result_returns_empty_vec() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert("WS".into(), "   ".into());
+        assert_eq!(
+            expand_word(&mut ctx, &Word { raw: "$WS".into() }).expect("whitespace only"),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn at_break_with_glob_in_at_fields() {
+        let mut ctx = FakeContext::new();
+        ctx.pathname_expansion_enabled = false;
+        ctx.positional = vec!["*.txt".into(), "b".into()];
+        let result = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "\"$@\"".into(),
+            },
+        )
+        .expect("at with glob-like");
+        assert_eq!(result, vec!["*.txt", "b"]);
+    }
+
+    #[test]
+    fn flatten_expansion_covers_at_fields() {
+        assert_eq!(flatten_expansion(Expansion::One("hello".into())), "hello");
+        assert_eq!(
+            flatten_expansion(Expansion::AtFields(vec!["a".into(), "b".into()])),
+            "a b"
+        );
+    }
+
+    #[test]
+    fn scan_backtick_non_special_escape_in_dquote() {
+        let chars: Vec<char> = "`echo \\x`".chars().collect();
+        let mut index = 1usize;
+        let result = scan_backtick_command(&chars, &mut index, true).expect("non-special escape");
+        assert_eq!(result, "echo \\x");
+    }
+
+    #[test]
+    fn at_empty_combined_with_at_break() {
+        let mut ctx = FakeContext::new();
+        ctx.positional = vec!["x".into()];
+        let result = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "\"$@\"".into(),
+            },
+        )
+        .expect("at one param");
+        assert_eq!(result, vec!["x"]);
+
+        ctx.positional = Vec::new();
+        let result2 = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "\"$@\"".into(),
+            },
+        )
+        .expect("at empty");
+        assert_eq!(result2, Vec::<String>::new());
+    }
+
+    #[test]
+    fn brace_scanning_with_arith_and_cmd_sub_and_backtick() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert("V".into(), String::new());
+
+        assert_eq!(
+            expand_word_text(
+                &mut ctx,
+                &Word {
+                    raw: "${V:-$((1+(2*3)))}".into()
+                }
+            )
+            .expect("nested arith in scan"),
+            "7"
+        );
+
+        assert_eq!(
+            expand_word_text(
+                &mut ctx,
+                &Word {
+                    raw: "${V:-$(echo (hi))}".into()
+                }
+            )
+            .expect("nested cmd sub in scan"),
+            "echo (hi)"
+        );
+
+        assert_eq!(
+            expand_word_text(
+                &mut ctx,
+                &Word {
+                    raw: "${V:-`echo \\\\x`}".into()
+                }
+            )
+            .expect("bt escape in scan"),
+            "echo \\x"
+        );
+
+        assert_eq!(
+            expand_word_text(
+                &mut ctx,
+                &Word {
+                    raw: "${V:-\"q\\}x\"}".into()
+                }
+            )
+            .expect("dq escape in scan"),
+            "q}x"
+        );
+    }
+
+    #[test]
+    fn colon_question_error_with_null_value() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert("NULL".into(), String::new());
+        let err = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "${NULL:?is null}".into(),
+            },
+        )
+        .expect_err(":? with null");
+        assert_eq!(err.message, "is null");
+
+        ctx.nounset_enabled = true;
+        let err = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "${NULL:?$NOVAR}".into(),
+            },
+        )
+        .expect_err(":? nounset propagation");
+        assert_eq!(err.message, "NOVAR: parameter not set");
+
+        let err = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "${NOEXIST?$NOVAR}".into(),
+            },
+        )
+        .expect_err("? nounset propagation");
+        assert_eq!(err.message, "NOVAR: parameter not set");
+    }
+
+    #[test]
+    fn question_error_with_unset_default_message() {
+        let mut ctx = FakeContext::new();
+        let err = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "${NOVAR?}".into(),
+            },
+        )
+        .expect_err("? with unset");
+        assert_eq!(err.message, "");
+
+        ctx.env.insert("SET".into(), "val".into());
+        assert_eq!(
+            expand_word_text(
+                &mut ctx,
+                &Word {
+                    raw: "${SET:?no error}".into()
+                }
+            )
+            .expect(":? success"),
+            "val"
+        );
+        assert_eq!(
+            expand_word_text(
+                &mut ctx,
+                &Word {
+                    raw: "${SET?no error}".into()
+                }
+            )
+            .expect("? success"),
+            "val"
+        );
     }
 }

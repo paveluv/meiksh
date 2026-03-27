@@ -917,18 +917,7 @@ impl expand::Context for Shell {
             '!' => self.last_background.map(|pid| pid.to_string()),
             '#' => Some(self.positional.len().to_string()),
             '-' => Some(self.active_option_flags()),
-            '*' => Some(
-                self.positional.join(
-                    &self
-                        .get_var("IFS")
-                        .unwrap_or_else(|| " \t\n".to_string())
-                        .chars()
-                        .next()
-                        .map(|ch| ch.to_string())
-                        .unwrap_or_default(),
-                ),
-            ),
-            '@' => Some(self.positional.join(" ")),
+            '*' | '@' => Some(self.positional.join(" ")),
             '0' => Some(self.shell_name.clone()),
             digit if digit.is_ascii_digit() => {
                 let index = digit.to_digit(10)? as usize;
@@ -944,6 +933,10 @@ impl expand::Context for Shell {
         } else {
             self.positional.get(index - 1).cloned()
         }
+    }
+
+    fn positional_params(&self) -> Vec<String> {
+        self.positional.clone()
     }
 
     fn set_var(&mut self, name: &str, value: String) -> Result<(), ExpandError> {
