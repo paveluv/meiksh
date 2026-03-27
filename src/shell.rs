@@ -2171,7 +2171,10 @@ mod tests {
                 ),
                 t(
                     "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    vec![
+                        ArgMatcher::Fd(1),
+                        ArgMatcher::Bytes(b"[1] Done 0\n".to_vec()),
+                    ],
                     TraceResult::Int(0),
                 ),
             ],
@@ -2197,7 +2200,10 @@ mod tests {
                 ),
                 t(
                     "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    vec![
+                        ArgMatcher::Fd(1),
+                        ArgMatcher::Bytes(b"[1] Running sleep\n".to_vec()),
+                    ],
                     TraceResult::Int(0),
                 ),
                 t(
@@ -2272,7 +2278,10 @@ mod tests {
                 ),
                 t(
                     "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    vec![
+                        ArgMatcher::Fd(1),
+                        ArgMatcher::Bytes(b"[1] Done 0\n".to_vec()),
+                    ],
                     TraceResult::Int(0),
                 ),
             ],
