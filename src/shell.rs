@@ -2521,7 +2521,7 @@ mod tests {
                         ArgMatcher::Any,
                         ArgMatcher::Int(sys::WUNTRACED as i64),
                     ],
-                    TraceResult::Err(sys::EINTR),
+                    TraceResult::Interrupt(sys::SIGINT),
                 ),
             ],
             || {
@@ -2533,7 +2533,6 @@ mod tests {
                     )
                     .expect("trap");
                 shell.register_background_job("sleep".into(), None, vec![fake_handle(2001)]);
-                sys::test_support::set_pending_signals_for_test(&[sys::SIGINT]);
                 assert_eq!(
                     shell.wait_for_job_operand(1).expect("interrupted wait"),
                     130
@@ -2658,7 +2657,7 @@ mod tests {
                         ArgMatcher::Any,
                         ArgMatcher::Int(sys::WUNTRACED as i64),
                     ],
-                    TraceResult::Err(sys::EINTR),
+                    TraceResult::Interrupt(sys::SIGINT),
                 ),
                 t(
                     "waitpid",
@@ -2680,7 +2679,6 @@ mod tests {
                     .expect("trap");
 
                 shell.register_background_job("sleep".into(), None, vec![fake_handle(2003)]);
-                sys::test_support::set_pending_signals_for_test(&[sys::SIGINT]);
                 assert_eq!(
                     shell.wait_for_pid_operand(2003).expect("pid interrupt"),
                     130
@@ -2708,7 +2706,7 @@ mod tests {
                         ArgMatcher::Any,
                         ArgMatcher::Int(sys::WUNTRACED as i64),
                     ],
-                    TraceResult::Err(sys::EINTR),
+                    TraceResult::Interrupt(sys::SIGINT),
                 ),
             ],
             || {
@@ -2721,7 +2719,6 @@ mod tests {
                     .expect("trap");
                 shell.register_background_job("sleep".into(), None, vec![fake_handle(2002)]);
                 shell.register_background_job("sleep".into(), None, vec![fake_handle(2005)]);
-                sys::test_support::set_pending_signals_for_test(&[sys::SIGINT]);
                 assert_eq!(shell.wait_for_all_jobs().expect("wait all status"), 130);
             },
         );

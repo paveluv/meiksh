@@ -443,6 +443,7 @@ pub(crate) mod test_support {
         Pid(Pid),
         Bytes(Vec<u8>),
         Err(c_int),
+        Interrupt(c_int),
         Status(i32),
         StoppedSig(i32),
         Fds(c_int, c_int),
@@ -530,6 +531,11 @@ pub(crate) mod test_support {
         })
     }
 
+    fn apply_interrupt(signal: c_int) {
+        set_pending_signals_for_test(&[signal]);
+        super::set_errno(super::EINTR);
+    }
+
     fn apply_trace_result_int(entry: &TraceEntry) -> c_int {
         match &entry.result {
             TraceResult::Auto => panic!(
@@ -542,8 +548,12 @@ pub(crate) mod test_support {
                 super::set_errno(*errno);
                 -1
             }
+            TraceResult::Interrupt(signal) => {
+                apply_interrupt(*signal);
+                -1
+            }
             other => panic!(
-                "trace result type mismatch for '{}': expected Int/Fd/Err, got {other:?}",
+                "trace result type mismatch for '{}': expected Int/Fd/Err/Interrupt, got {other:?}",
                 entry.syscall
             ),
         }
@@ -560,8 +570,12 @@ pub(crate) mod test_support {
                 super::set_errno(*errno);
                 -1
             }
+            TraceResult::Interrupt(signal) => {
+                apply_interrupt(*signal);
+                -1
+            }
             _ => panic!(
-                "trace result type mismatch for '{}': expected Int/Err",
+                "trace result type mismatch for '{}': expected Int/Err/Interrupt",
                 entry.syscall
             ),
         }
@@ -575,8 +589,12 @@ pub(crate) mod test_support {
                 super::set_errno(*errno);
                 -1
             }
+            TraceResult::Interrupt(signal) => {
+                apply_interrupt(*signal);
+                -1
+            }
             other => panic!(
-                "trace result type mismatch for '{}': expected Pid/Err, got {other:?}",
+                "trace result type mismatch for '{}': expected Pid/Err/Interrupt, got {other:?}",
                 entry.syscall
             ),
         }
