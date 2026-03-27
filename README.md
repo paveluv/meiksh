@@ -23,7 +23,7 @@ The current semantic target is POSIX Issue 8, with Issue 7 behavior still tracke
 - simple commands, pipelines, `&&` / `||`, background execution (including AND-OR lists with `&` in a subshell, stdin from `/dev/null`, and `[%d] %d\n` job messages), subshells, groups, functions, `if`, `case`, `for`, `while`, and `until`
 - parser-time alias expansion, including blank-terminated alias chaining and same-source visibility across top-level and nested bodies
 - context-sensitive `!` pipeline negation and POSIX grammar-sensitive reserved-word handling for `for`, `case`, brace groups, and linebreaks after `|`, `&&`, and `||`
-- parameter expansion, including POSIX default/assign/error/alternate and pattern-removal operators, Issue 8 dollar-single-quotes, command substitution (`$(cmd)` and `` `cmd` ``), arithmetic expansion, quote-aware `${...}` brace scanning, `"$@"` separate-field semantics, `"$*"` IFS joining, field splitting, pathname expansion, and here-documents; assignment values skip field splitting and pathname expansion per POSIX 2.9.1.1
+- parameter expansion, including POSIX default/assign/error/alternate and pattern-removal operators, Issue 8 dollar-single-quotes, command substitution (`$(cmd)` and `` `cmd` ``), full arithmetic expansion (all POSIX operators, variable references, hex/octal, assignment side effects), tilde expansion (`~`, `~user` via `getpwnam`, tilde after `:` in assignments), POSIX-compliant double-quote backslash escaping, quote-aware `${...}` brace scanning, `"$@"` separate-field semantics, `"$*"` IFS joining, field splitting, pathname expansion, and here-documents; assignment values skip field splitting and pathname expansion per POSIX 2.9.1.1
 - current-shell redirections for builtins and compound commands, including numeric fd forms
 - POSIX command search with `X_OK` executable checking, correct `argv[0]` (command name as typed), exit 126/127 distinction for EACCES vs ENOENT, and ENOEXEC fallback setting `$0`
 - temporary prefix variable assignments for non-special builtins and functions (save/restore), with permanent assignments for special builtins per POSIX 2.9.1.2
@@ -33,7 +33,6 @@ The current semantic target is POSIX Issue 8, with Issue 7 behavior still tracke
 
 The project does **not** yet claim full POSIX conformance. Remaining gaps are tracked in `docs/spec-matrix.md` and `docs/requirements/gap-register.md`. The largest open areas are currently:
 
-- tilde, double-quote, and arithmetic-expansion edge cases
 - subshell / command-substitution execution-environment fidelity
 - broader builtin completion, including the still-open `read`, `trap`, `umask`, `cd -L/-P/-e`, and missing mirrored utility pages such as `hash`, `getopts`, `ulimit`, and `fc`
 - stopped-job accounting, `set -m` runtime effect, and tty mode save/restore for job control

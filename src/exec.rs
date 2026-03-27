@@ -677,7 +677,7 @@ fn expand_simple(
 ) -> Result<ExpandedSimpleCommand, ShellError> {
     let mut assignments = Vec::new();
     for assignment in &simple.assignments {
-        let value = expand::expand_word_text(shell, &assignment.value)?;
+        let value = expand::expand_assignment_value(shell, &assignment.value)?;
         assignments.push((assignment.name.clone(), value));
     }
 
