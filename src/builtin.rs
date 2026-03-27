@@ -5679,8 +5679,7 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Any,
-                    ArgMatcher::Any,
+                    ArgMatcher::Bytes(b"kill: unknown signal: 999\n".to_vec()),
                 ],
                 TraceResult::Int(0),
             )],
@@ -5700,8 +5699,7 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Any,
-                    ArgMatcher::Any,
+                    ArgMatcher::Bytes(b"kill: invalid exit status: abc\n".to_vec()),
                 ],
                 TraceResult::Int(0),
             )],
@@ -5791,8 +5789,7 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Any,
-                    ArgMatcher::Any,
+                    ArgMatcher::Bytes(b"kill: %99: no such job\n".to_vec()),
                 ],
                 TraceResult::Int(0),
             )],
@@ -5811,8 +5808,7 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Any,
-                    ArgMatcher::Any,
+                    ArgMatcher::Bytes(b"kill: invalid pid: notapid\n".to_vec()),
                 ],
                 TraceResult::Int(0),
             )],
@@ -5832,8 +5828,10 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Any,
-                    ArgMatcher::Any,
+                    ArgMatcher::Bytes(
+                        b"kill: usage: kill [-s sigspec | -signum] pid... | -l [exit_status]\n"
+                            .to_vec(),
+                    ),
                 ],
                 TraceResult::Int(0),
             )],
@@ -5852,8 +5850,7 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Any,
-                    ArgMatcher::Any,
+                    ArgMatcher::Bytes(b"kill: no process id specified\n".to_vec()),
                 ],
                 TraceResult::Int(0),
             )],
@@ -5890,8 +5887,7 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Any,
-                    ArgMatcher::Any,
+                    ArgMatcher::Bytes(b"kill: -s requires a signal name\n".to_vec()),
                 ],
                 TraceResult::Int(0),
             )],
@@ -5927,8 +5923,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Any,
-                        ArgMatcher::Any,
+                        ArgMatcher::Bytes(b"kill: (99999): No such process\n".to_vec()),
                     ],
                     TraceResult::Int(0),
                 ),
@@ -5955,8 +5950,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Any,
-                        ArgMatcher::Any,
+                        ArgMatcher::Bytes(b"kill: (7010): No such process\n".to_vec()),
                     ],
                     TraceResult::Int(0),
                 ),
@@ -5977,8 +5971,7 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Any,
-                    ArgMatcher::Any,
+                    ArgMatcher::Bytes(b"kill: no process id specified\n".to_vec()),
                 ],
                 TraceResult::Int(0),
             )],

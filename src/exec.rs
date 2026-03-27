@@ -4644,8 +4644,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Any,
-                        ArgMatcher::Any,
+                        ArgMatcher::Bytes(b"[1] Stopped (SIGTSTP)\tvim\n".to_vec()),
                     ],
                     TraceResult::Int(0),
                 ),
@@ -4729,8 +4728,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Any,
-                        ArgMatcher::Any,
+                        ArgMatcher::Bytes(b"[1] Stopped (SIGTSTP)\tvim\n".to_vec()),
                     ],
                     TraceResult::Int(0),
                 ),
@@ -4825,8 +4823,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Any,
-                        ArgMatcher::Any,
+                        ArgMatcher::Bytes(b"[1] 9200\n".to_vec()),
                     ],
                     TraceResult::Int(0),
                 ),
