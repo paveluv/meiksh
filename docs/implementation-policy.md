@@ -89,10 +89,10 @@ The following `std` types and methods are banned from production code (enforced 
 
 ### Syscall trace model
 
-All unit tests that exercise OS-interacting code paths use the **syscall trace model** implemented in `sys::test_support`. Every OS interaction in both production and test code goes through the `sys::Syscalls` function-pointer table, which tests replace with a trace-validating mock:
+All unit tests that exercise OS-interacting code paths use the **trace model** implemented in `sys::test_support`. Every OS interaction in both production and test code goes through the `sys::SystemInterface` function-pointer table, which tests replace with a trace-validating mock:
 
 - **`run_trace(trace, closure)`**: installs a sequence of expected `TraceEntry` values (syscall name, argument matchers, canned result). Each syscall invocation consumes the next entry, validating name and arguments. Panics on mismatch or unconsumed entries. When the trace contains `fork` entries with child traces (`t_fork`), `run_trace` uses `enumerate_fork_paths` to generate all parent/child execution paths and runs the closure once per path. Child paths intercept `exit_process` via a `ChildExitPanic` payload. A runtime assertion enforces that every successful fork (pid > 0) has an explicit child trace.
-- **`assert_no_syscalls(closure)`**: installs a `Syscalls` table that panics on any invocation. Used for pure-logic tests (Category B) to prove they issue no OS calls.
+- **`assert_no_syscalls(closure)`**: installs a `SystemInterface` table that panics on any invocation. Used for pure-logic tests (Category B) to prove they issue no OS calls.
 - **`ArgMatcher`** supports `Exact`, `Str`, `Fd`, `Int`, `Pid`, `Bytes`, and `Any` for flexible argument validation with wildcards.
 
 ### Test isolation rules

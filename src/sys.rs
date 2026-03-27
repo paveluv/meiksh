@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use libc::{self, c_char, c_int, c_long, mode_t};
@@ -110,7 +111,7 @@ impl SysError {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct Syscalls {
+pub(crate) struct SystemInterface {
     getpid: fn() -> Pid,
     waitpid: fn(Pid, *mut c_int, c_int) -> Pid,
     kill: fn(Pid, c_int) -> c_int,
@@ -129,7 +130,7 @@ pub(crate) struct Syscalls {
     times: fn(*mut libc::tms) -> ClockTicks,
     sysconf: fn(c_int) -> c_long,
     execvp: fn(*const c_char, *const *const c_char) -> c_int,
-    // Filesystem syscalls
+    // Filesystem
     open: fn(*const c_char, c_int, mode_t) -> c_int,
     write: fn(c_int, *const u8, usize) -> isize,
     stat: fn(*const c_char, *mut libc::stat) -> c_int,
@@ -141,13 +142,18 @@ pub(crate) struct Syscalls {
     readdir: fn(*mut libc::DIR) -> *mut libc::dirent,
     closedir: fn(*mut libc::DIR) -> c_int,
     realpath: fn(*const c_char, *mut c_char) -> *mut c_char,
-    // Process syscalls
+    // Process
     fork: fn() -> Pid,
     exit_process: fn(c_int),
+    // Environment
+    pub(crate) setenv: fn(&str, &str) -> SysResult<()>,
+    pub(crate) unsetenv: fn(&str) -> SysResult<()>,
+    pub(crate) getenv: fn(&str) -> Option<String>,
+    pub(crate) get_environ: fn() -> HashMap<String, String>,
 }
 
-pub(crate) fn default_syscalls() -> Syscalls {
-    Syscalls {
+pub(crate) fn default_interface() -> SystemInterface {
+    SystemInterface {
         getpid: || unsafe { libc::getpid() },
         waitpid: |pid, status, options| unsafe { libc::waitpid(pid, status, options) },
         kill: |pid, sig| unsafe { libc::kill(pid, sig) },
@@ -183,6 +189,41 @@ pub(crate) fn default_syscalls() -> Syscalls {
             flush_coverage();
             unsafe { libc::_exit(status) }
         },
+        setenv: |key, value| {
+            let c_key = CString::new(key).map_err(|_| SysError::NulInPath)?;
+            let c_value = CString::new(value).map_err(|_| SysError::NulInPath)?;
+            let result = unsafe { libc::setenv(c_key.as_ptr(), c_value.as_ptr(), 1) };
+            if result == 0 { Ok(()) } else { Err(last_error()) }
+        },
+        unsetenv: |key| {
+            let c_key = CString::new(key).map_err(|_| SysError::NulInPath)?;
+            let result = unsafe { libc::unsetenv(c_key.as_ptr()) };
+            if result == 0 { Ok(()) } else { Err(last_error()) }
+        },
+        getenv: |key| {
+            let c_key = CString::new(key).ok()?;
+            let ptr = unsafe { libc::getenv(c_key.as_ptr()) };
+            if ptr.is_null() {
+                None
+            } else {
+                Some(unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned())
+            }
+        },
+        get_environ: || {
+            unsafe extern "C" { static environ: *const *const c_char; }
+            let mut map = HashMap::new();
+            unsafe {
+                let mut ptr = environ;
+                while !(*ptr).is_null() {
+                    let entry = CStr::from_ptr(*ptr).to_string_lossy();
+                    if let Some((key, value)) = entry.split_once('=') {
+                        map.insert(key.to_string(), value.to_string());
+                    }
+                    ptr = ptr.add(1);
+                }
+            }
+            map
+        },
     }
 }
 
@@ -194,15 +235,15 @@ extern "C" fn record_signal(sig: c_int) {
     }
 }
 
-fn syscalls() -> Syscalls {
+pub(crate) fn sys_interface() -> SystemInterface {
     #[cfg(test)]
     {
-        return test_support::current_syscalls().unwrap_or_else(default_syscalls);
+        return test_support::current_interface().unwrap_or_else(default_interface);
     }
 
     #[cfg(not(test))]
     {
-        default_syscalls()
+        default_interface()
     }
 }
 
@@ -236,7 +277,7 @@ pub(crate) mod test_support {
     use std::sync::Mutex;
 
     thread_local! {
-        static TEST_SYSCALLS: RefCell<Option<Syscalls>> = const { RefCell::new(None) };
+        static TEST_INTERFACE: RefCell<Option<SystemInterface>> = const { RefCell::new(None) };
         static TEST_ERRNO: RefCell<c_int> = const { RefCell::new(0) };
         static TEST_PENDING_SIGNALS: RefCell<usize> = const { RefCell::new(0) };
         static TEST_PROCESS_IDS: RefCell<Option<(libc::uid_t, libc::uid_t, libc::gid_t, libc::gid_t)>> =
@@ -248,8 +289,8 @@ pub(crate) mod test_support {
         &LOCK
     }
 
-    pub(crate) fn current_syscalls() -> Option<Syscalls> {
-        TEST_SYSCALLS.with(|cell| *cell.borrow())
+    pub(crate) fn current_interface() -> Option<SystemInterface> {
+        TEST_INTERFACE.with(|cell| *cell.borrow())
     }
 
     pub(crate) fn current_process_ids() -> Option<(libc::uid_t, libc::uid_t, libc::gid_t, libc::gid_t)> {
@@ -273,10 +314,10 @@ pub(crate) mod test_support {
         TEST_PENDING_SIGNALS.with(|cell| cell.replace(0))
     }
 
-    pub(crate) fn with_test_syscalls<T>(syscalls: Syscalls, f: impl FnOnce() -> T) -> T {
+    pub(crate) fn with_test_interface<T>(iface: SystemInterface, f: impl FnOnce() -> T) -> T {
         let _guard = syscall_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        TEST_SYSCALLS.with(|cell| {
-            let previous = cell.replace(Some(syscalls));
+        TEST_INTERFACE.with(|cell| {
+            let previous = cell.replace(Some(iface));
             let result = f();
             cell.replace(previous);
             result
@@ -339,6 +380,9 @@ pub(crate) mod test_support {
         StatFile(mode_t),
         StatFifo,
         DirEntry(String),
+        Str(String),
+        NullStr,
+        EnvMap(HashMap<String, String>),
     }
 
     #[derive(Clone, Debug)]
@@ -728,11 +772,46 @@ pub(crate) mod test_support {
         std::panic::panic_any(ChildExitPanic(status));
     }
 
+    fn trace_setenv(key: &str, value: &str) -> SysResult<()> {
+        let entry = trace_dispatch("setenv", &[ArgMatcher::Str(key.to_string()), ArgMatcher::Str(value.to_string())]);
+        match entry.result {
+            TraceResult::Int(0) => Ok(()),
+            TraceResult::Err(errno) => Err(SysError::Errno(errno)),
+            other => panic!("setenv trace: unexpected result {other:?}"),
+        }
+    }
+
+    fn trace_unsetenv(key: &str) -> SysResult<()> {
+        let entry = trace_dispatch("unsetenv", &[ArgMatcher::Str(key.to_string())]);
+        match entry.result {
+            TraceResult::Int(0) => Ok(()),
+            TraceResult::Err(errno) => Err(SysError::Errno(errno)),
+            other => panic!("unsetenv trace: unexpected result {other:?}"),
+        }
+    }
+
+    fn trace_getenv(key: &str) -> Option<String> {
+        let entry = trace_dispatch("getenv", &[ArgMatcher::Str(key.to_string())]);
+        match entry.result {
+            TraceResult::Str(s) => Some(s),
+            TraceResult::NullStr => None,
+            other => panic!("getenv trace: unexpected result {other:?}"),
+        }
+    }
+
+    fn trace_get_environ() -> HashMap<String, String> {
+        let entry = trace_dispatch("get_environ", &[]);
+        match entry.result {
+            TraceResult::EnvMap(map) => map,
+            other => panic!("get_environ trace: unexpected result {other:?}"),
+        }
+    }
+
     #[allow(dead_code)]
     pub(crate) struct ChildExitPanic(pub i32);
 
-    pub(crate) fn trace_syscalls() -> Syscalls {
-        Syscalls {
+    pub(crate) fn trace_interface() -> SystemInterface {
+        SystemInterface {
             getpid: trace_getpid,
             waitpid: trace_waitpid,
             kill: trace_kill,
@@ -764,10 +843,14 @@ pub(crate) mod test_support {
             realpath: trace_realpath,
             fork: trace_fork,
             exit_process: trace_exit_process,
+            setenv: trace_setenv,
+            unsetenv: trace_unsetenv,
+            getenv: trace_getenv,
+            get_environ: trace_get_environ,
         }
     }
 
-    pub(crate) fn no_syscalls_table() -> Syscalls {
+    pub(crate) fn no_interface_table() -> SystemInterface {
         fn panic_getpid() -> Pid { panic!("unexpected syscall 'getpid' in pure-logic test") }
         fn panic_waitpid(_: Pid, _: *mut c_int, _: c_int) -> Pid { panic!("unexpected syscall 'waitpid' in pure-logic test") }
         fn panic_kill(_: Pid, _: c_int) -> c_int { panic!("unexpected syscall 'kill' in pure-logic test") }
@@ -799,8 +882,12 @@ pub(crate) mod test_support {
         fn panic_realpath(_: *const c_char, _: *mut c_char) -> *mut c_char { panic!("unexpected syscall 'realpath' in pure-logic test") }
         fn panic_fork() -> Pid { panic!("unexpected syscall 'fork' in pure-logic test") }
         fn panic_exit_process(_: c_int) { panic!("unexpected syscall 'exit_process' in pure-logic test") }
+        fn panic_setenv(_: &str, _: &str) -> SysResult<()> { panic!("unexpected call 'setenv' in pure-logic test") }
+        fn panic_unsetenv(_: &str) -> SysResult<()> { panic!("unexpected call 'unsetenv' in pure-logic test") }
+        fn panic_getenv(_: &str) -> Option<String> { panic!("unexpected call 'getenv' in pure-logic test") }
+        fn panic_get_environ() -> HashMap<String, String> { panic!("unexpected call 'get_environ' in pure-logic test") }
 
-        Syscalls {
+        SystemInterface {
             getpid: panic_getpid, waitpid: panic_waitpid, kill: panic_kill,
             signal: panic_signal, isatty: panic_isatty, tcgetpgrp: panic_tcgetpgrp,
             tcsetpgrp: panic_tcsetpgrp, setpgid: panic_setpgid, pipe: panic_pipe,
@@ -811,11 +898,13 @@ pub(crate) mod test_support {
             getcwd: panic_getcwd, opendir: panic_opendir, readdir: panic_readdir,
             closedir: panic_closedir, realpath: panic_realpath,
             fork: panic_fork, exit_process: panic_exit_process,
+            setenv: panic_setenv, unsetenv: panic_unsetenv,
+            getenv: panic_getenv, get_environ: panic_get_environ,
         }
     }
 
     pub(crate) fn assert_no_syscalls<T>(f: impl FnOnce() -> T) -> T {
-        with_test_syscalls(no_syscalls_table(), f)
+        with_test_interface(no_interface_table(), f)
     }
 
     fn validate_fork_child_traces(trace: &[TraceEntry]) {
@@ -842,7 +931,7 @@ pub(crate) mod test_support {
 
         for (run_index, path) in paths.iter().enumerate() {
             let is_parent = run_index == 0;
-            let syscalls = trace_syscalls();
+            let iface = trace_interface();
 
             TRACE_LOG.with(|cell| {
                 let prev_trace = cell.replace(Some(path.clone()));
@@ -850,7 +939,7 @@ pub(crate) mod test_support {
                 let prev_children = CHILD_TRACES.with(|c| std::mem::take(&mut *c.borrow_mut()));
 
                 let result = std::panic::catch_unwind(
-                    std::panic::AssertUnwindSafe(|| with_test_syscalls(syscalls, &f))
+                    std::panic::AssertUnwindSafe(|| with_test_interface(iface, &f))
                 );
 
                 let consumed = TRACE_INDEX.with(|idx| *idx.borrow());
@@ -1001,11 +1090,11 @@ pub struct WaitStatus {
 }
 
 pub fn current_pid() -> Pid {
-    (syscalls().getpid)()
+    (sys_interface().getpid)()
 }
 
 pub fn is_interactive_fd(fd: c_int) -> bool {
-    (syscalls().isatty)(fd) == 1
+    (sys_interface().isatty)(fd) == 1
 }
 
 pub fn has_same_real_and_effective_ids() -> bool {
@@ -1019,7 +1108,7 @@ pub fn has_same_real_and_effective_ids() -> bool {
 pub fn wait_pid(pid: Pid, nohang: bool) -> SysResult<Option<WaitStatus>> {
     let mut status = 0;
     let options = if nohang { WNOHANG } else { 0 };
-    let result = (syscalls().waitpid)(pid, &mut status, options);
+    let result = (sys_interface().waitpid)(pid, &mut status, options);
     if result > 0 {
         Ok(Some(WaitStatus { pid: result, status }))
     } else if result == 0 {
@@ -1030,7 +1119,7 @@ pub fn wait_pid(pid: Pid, nohang: bool) -> SysResult<Option<WaitStatus>> {
 }
 
 pub fn send_signal(pid: Pid, signal: c_int) -> SysResult<()> {
-    let result = (syscalls().kill)(pid, signal);
+    let result = (sys_interface().kill)(pid, signal);
     if result == 0 {
         Ok(())
     } else {
@@ -1039,7 +1128,7 @@ pub fn send_signal(pid: Pid, signal: c_int) -> SysResult<()> {
 }
 
 pub fn install_shell_signal_handler(signal: c_int) -> SysResult<()> {
-    let result = (syscalls().signal)(signal, record_signal as *const () as libc::sighandler_t);
+    let result = (sys_interface().signal)(signal, record_signal as *const () as libc::sighandler_t);
     if result == SIG_ERR_HANDLER {
         Err(last_error())
     } else {
@@ -1048,7 +1137,7 @@ pub fn install_shell_signal_handler(signal: c_int) -> SysResult<()> {
 }
 
 pub fn ignore_signal(signal: c_int) -> SysResult<()> {
-    let result = (syscalls().signal)(signal, SIG_IGN_HANDLER);
+    let result = (sys_interface().signal)(signal, SIG_IGN_HANDLER);
     if result == SIG_ERR_HANDLER {
         Err(last_error())
     } else {
@@ -1057,7 +1146,7 @@ pub fn ignore_signal(signal: c_int) -> SysResult<()> {
 }
 
 pub fn default_signal_action(signal: c_int) -> SysResult<()> {
-    let result = (syscalls().signal)(signal, SIG_DFL_HANDLER);
+    let result = (sys_interface().signal)(signal, SIG_DFL_HANDLER);
     if result == SIG_ERR_HANDLER {
         Err(last_error())
     } else {
@@ -1097,7 +1186,7 @@ pub fn interrupted(error: &SysError) -> bool {
 }
 
 pub fn current_foreground_pgrp(fd: c_int) -> SysResult<Pid> {
-    let result = (syscalls().tcgetpgrp)(fd);
+    let result = (sys_interface().tcgetpgrp)(fd);
     if result >= 0 {
         Ok(result)
     } else {
@@ -1106,7 +1195,7 @@ pub fn current_foreground_pgrp(fd: c_int) -> SysResult<Pid> {
 }
 
 pub fn set_foreground_pgrp(fd: c_int, pgrp: Pid) -> SysResult<()> {
-    let result = (syscalls().tcsetpgrp)(fd, pgrp);
+    let result = (sys_interface().tcsetpgrp)(fd, pgrp);
     if result == 0 {
         Ok(())
     } else {
@@ -1115,7 +1204,7 @@ pub fn set_foreground_pgrp(fd: c_int, pgrp: Pid) -> SysResult<()> {
 }
 
 pub fn set_process_group(pid: Pid, pgid: Pid) -> SysResult<()> {
-    let result = (syscalls().setpgid)(pid, pgid);
+    let result = (sys_interface().setpgid)(pid, pgid);
     if result == 0 {
         Ok(())
     } else {
@@ -1125,7 +1214,7 @@ pub fn set_process_group(pid: Pid, pgid: Pid) -> SysResult<()> {
 
 pub fn create_pipe() -> SysResult<(c_int, c_int)> {
     let mut fds = [0; 2];
-    let result = (syscalls().pipe)(fds.as_mut_ptr());
+    let result = (sys_interface().pipe)(fds.as_mut_ptr());
     if result == 0 {
         Ok((fds[0], fds[1]))
     } else {
@@ -1134,7 +1223,7 @@ pub fn create_pipe() -> SysResult<(c_int, c_int)> {
 }
 
 pub fn duplicate_fd(oldfd: c_int, newfd: c_int) -> SysResult<()> {
-    let result = (syscalls().dup2)(oldfd, newfd);
+    let result = (sys_interface().dup2)(oldfd, newfd);
     if result >= 0 {
         Ok(())
     } else {
@@ -1143,7 +1232,7 @@ pub fn duplicate_fd(oldfd: c_int, newfd: c_int) -> SysResult<()> {
 }
 
 pub fn duplicate_fd_to_new(fd: c_int) -> SysResult<c_int> {
-    let result = (syscalls().dup)(fd);
+    let result = (sys_interface().dup)(fd);
     if result >= 0 {
         Ok(result)
     } else {
@@ -1152,7 +1241,7 @@ pub fn duplicate_fd_to_new(fd: c_int) -> SysResult<c_int> {
 }
 
 pub fn close_fd(fd: c_int) -> SysResult<()> {
-    let result = (syscalls().close)(fd);
+    let result = (sys_interface().close)(fd);
     if result == 0 {
         Ok(())
     } else {
@@ -1161,7 +1250,7 @@ pub fn close_fd(fd: c_int) -> SysResult<()> {
 }
 
 fn fd_status_flags(fd: c_int) -> SysResult<c_int> {
-    let result = (syscalls().fcntl)(fd, F_GETFL, 0);
+    let result = (sys_interface().fcntl)(fd, F_GETFL, 0);
     if result >= 0 {
         Ok(result)
     } else {
@@ -1170,7 +1259,7 @@ fn fd_status_flags(fd: c_int) -> SysResult<c_int> {
 }
 
 fn set_fd_status_flags(fd: c_int, flags: c_int) -> SysResult<()> {
-    let result = (syscalls().fcntl)(fd, F_SETFL, flags);
+    let result = (sys_interface().fcntl)(fd, F_SETFL, flags);
     if result >= 0 {
         Ok(())
     } else {
@@ -1180,7 +1269,7 @@ fn set_fd_status_flags(fd: c_int, flags: c_int) -> SysResult<()> {
 
 fn fifo_like_fd(fd: c_int) -> bool {
     let mut buf = std::mem::MaybeUninit::<libc::stat>::zeroed();
-    let result = (syscalls().fstat)(fd, buf.as_mut_ptr());
+    let result = (sys_interface().fstat)(fd, buf.as_mut_ptr());
     if result != 0 {
         return false;
     }
@@ -1200,7 +1289,7 @@ pub fn ensure_blocking_read_fd(fd: c_int) -> SysResult<()> {
 }
 
 pub fn read_fd(fd: c_int, buf: &mut [u8]) -> SysResult<usize> {
-    let result = (syscalls().read)(fd, buf.as_mut_ptr(), buf.len());
+    let result = (sys_interface().read)(fd, buf.as_mut_ptr(), buf.len());
     if result >= 0 {
         Ok(result as usize)
     } else {
@@ -1251,7 +1340,7 @@ fn to_cstring(path: &str) -> SysResult<CString> {
 fn stat_raw(path: &str) -> SysResult<libc::stat> {
     let c_path = to_cstring(path)?;
     let mut buf = std::mem::MaybeUninit::<libc::stat>::zeroed();
-    let result = (syscalls().stat)(c_path.as_ptr(), buf.as_mut_ptr());
+    let result = (sys_interface().stat)(c_path.as_ptr(), buf.as_mut_ptr());
     if result == 0 {
         Ok(unsafe { buf.assume_init() })
     } else {
@@ -1261,7 +1350,7 @@ fn stat_raw(path: &str) -> SysResult<libc::stat> {
 
 pub fn open_file(path: &str, flags: c_int, mode: mode_t) -> SysResult<c_int> {
     let c_path = to_cstring(path)?;
-    let result = (syscalls().open)(c_path.as_ptr(), flags, mode);
+    let result = (sys_interface().open)(c_path.as_ptr(), flags, mode);
     if result >= 0 {
         Ok(result)
     } else {
@@ -1270,7 +1359,7 @@ pub fn open_file(path: &str, flags: c_int, mode: mode_t) -> SysResult<c_int> {
 }
 
 pub fn write_fd(fd: c_int, data: &[u8]) -> SysResult<usize> {
-    let result = (syscalls().write)(fd, data.as_ptr(), data.len());
+    let result = (sys_interface().write)(fd, data.as_ptr(), data.len());
     if result >= 0 {
         Ok(result as usize)
     } else {
@@ -1299,7 +1388,7 @@ pub fn stat_path(path: &str) -> SysResult<FileStat> {
 
 pub fn access_path(path: &str, mode: c_int) -> SysResult<()> {
     let c_path = to_cstring(path)?;
-    let result = (syscalls().access)(c_path.as_ptr(), mode);
+    let result = (sys_interface().access)(c_path.as_ptr(), mode);
     if result == 0 {
         Ok(())
     } else {
@@ -1321,7 +1410,7 @@ pub fn is_regular_file(path: &str) -> bool {
 
 pub fn change_dir(path: &str) -> SysResult<()> {
     let c_path = to_cstring(path)?;
-    let result = (syscalls().chdir)(c_path.as_ptr());
+    let result = (sys_interface().chdir)(c_path.as_ptr());
     if result == 0 {
         Ok(())
     } else {
@@ -1331,7 +1420,7 @@ pub fn change_dir(path: &str) -> SysResult<()> {
 
 pub fn get_cwd() -> SysResult<String> {
     let mut buf = vec![0u8; 4096];
-    let result = (syscalls().getcwd)(buf.as_mut_ptr().cast(), buf.len());
+    let result = (sys_interface().getcwd)(buf.as_mut_ptr().cast(), buf.len());
     if result.is_null() {
         Err(last_error())
     } else {
@@ -1342,7 +1431,7 @@ pub fn get_cwd() -> SysResult<String> {
 
 pub fn read_dir_entries(path: &str) -> SysResult<Vec<String>> {
     let c_path = to_cstring(path)?;
-    let dirp = (syscalls().opendir)(c_path.as_ptr());
+    let dirp = (sys_interface().opendir)(c_path.as_ptr());
     if dirp.is_null() {
         return Err(last_error());
     }
@@ -1350,10 +1439,10 @@ pub fn read_dir_entries(path: &str) -> SysResult<Vec<String>> {
     let mut entries = Vec::new();
     loop {
         set_errno(0);
-        let ent = (syscalls().readdir)(dirp);
+        let ent = (sys_interface().readdir)(dirp);
         if ent.is_null() {
             let errno = last_error();
-            (syscalls().closedir)(dirp);
+            (sys_interface().closedir)(dirp);
             if errno.errno() == Some(0) {
                 break;
             }
@@ -1370,7 +1459,7 @@ pub fn read_dir_entries(path: &str) -> SysResult<Vec<String>> {
 
 pub fn canonicalize(path: &str) -> SysResult<String> {
     let c_path = to_cstring(path)?;
-    let result = (syscalls().realpath)(c_path.as_ptr(), std::ptr::null_mut());
+    let result = (sys_interface().realpath)(c_path.as_ptr(), std::ptr::null_mut());
     if result.is_null() {
         Err(last_error())
     } else {
@@ -1463,7 +1552,7 @@ impl ChildHandle {
 }
 
 pub fn fork_process() -> SysResult<Pid> {
-    let pid = (syscalls().fork)();
+    let pid = (sys_interface().fork)();
     if pid < 0 {
         Err(last_error())
     } else {
@@ -1472,7 +1561,7 @@ pub fn fork_process() -> SysResult<Pid> {
 }
 
 pub fn exit_process(status: c_int) -> ! {
-    (syscalls().exit_process)(status);
+    (sys_interface().exit_process)(status);
     unreachable!()
 }
 
@@ -1523,7 +1612,7 @@ pub fn spawn_child(
         }
         if let Some(vars) = env_vars {
             for &(key, value) in vars {
-                env_set_var(key, value);
+                let _ = (sys_interface().setenv)(key, value);
             }
         }
         let rest: Vec<String> = argv.get(1..).unwrap_or(&[]).iter().map(|s| s.to_string()).collect();
@@ -1554,18 +1643,18 @@ pub struct ProcessTimes {
 }
 
 pub fn current_umask() -> FileModeMask {
-    let mask = (syscalls().umask)(0);
-    (syscalls().umask)(mask);
+    let mask = (sys_interface().umask)(0);
+    (sys_interface().umask)(mask);
     mask & 0o777
 }
 
 pub fn set_umask(mask: FileModeMask) -> FileModeMask {
-    (syscalls().umask)(mask & 0o777) & 0o777
+    (sys_interface().umask)(mask & 0o777) & 0o777
 }
 
 pub fn process_times() -> SysResult<ProcessTimes> {
     let mut raw = std::mem::MaybeUninit::<libc::tms>::zeroed();
-    let result = (syscalls().times)(raw.as_mut_ptr());
+    let result = (sys_interface().times)(raw.as_mut_ptr());
     if result == ClockTicks::MAX {
         return Err(last_error());
     }
@@ -1579,7 +1668,7 @@ pub fn process_times() -> SysResult<ProcessTimes> {
 }
 
 pub fn clock_ticks_per_second() -> SysResult<u64> {
-    let result = (syscalls().sysconf)(SC_CLK_TCK);
+    let result = (sys_interface().sysconf)(SC_CLK_TCK);
     if result > 0 {
         Ok(result as u64)
     } else {
@@ -1600,7 +1689,7 @@ pub fn exec_replace(program: &str, argv: &[String]) -> SysResult<()> {
     let mut pointers: Vec<*const c_char> = owned.iter().map(|arg| arg.as_ptr()).collect();
     pointers.push(std::ptr::null());
 
-    let result = (syscalls().execvp)(owned[0].as_ptr(), pointers.as_ptr());
+    let result = (sys_interface().execvp)(owned[0].as_ptr(), pointers.as_ptr());
     if result == -1 {
         Err(last_error())
     } else {
@@ -1666,22 +1755,8 @@ pub fn cstr_lossy(bytes: &[u8]) -> String {
 }
 
 #[allow(clippy::disallowed_methods)]
-pub fn env_var(key: &str) -> Option<String> {
-    std::env::var(key).ok()
-}
-
-#[allow(clippy::disallowed_methods)]
-pub fn env_vars() -> std::collections::HashMap<String, String> {
-    std::env::vars().collect()
-}
-
-#[allow(clippy::disallowed_methods)]
 pub fn env_args_os() -> Vec<std::ffi::OsString> {
     std::env::args_os().collect()
-}
-
-pub fn env_set_var(key: &str, value: &str) {
-    unsafe { std::env::set_var(key, value) };
 }
 
 #[cfg(test)]
@@ -1696,8 +1771,8 @@ mod tests {
         }
         fn fake_close(_fd: c_int) -> c_int { 0 }
 
-        let fake = Syscalls { pipe: fake_pipe, close: fake_close, ..default_syscalls() };
-        test_support::with_test_syscalls(fake, || {
+        let fake = SystemInterface { pipe: fake_pipe, close: fake_close, ..default_interface() };
+        test_support::with_test_interface(fake, || {
             let (read_fd, write_fd) = create_pipe().expect("pipe");
             assert_eq!(read_fd, 10);
             assert_eq!(write_fd, 11);
@@ -1729,11 +1804,11 @@ mod tests {
     #[test]
     fn execvp_failure_returns_minus_one() {
         fn fail_execvp(_file: *const c_char, _argv: *const *const c_char) -> c_int { -1 }
-        let fake = Syscalls { execvp: fail_execvp, ..default_syscalls() };
-        test_support::with_test_syscalls(fake, || {
+        let fake = SystemInterface { execvp: fail_execvp, ..default_interface() };
+        test_support::with_test_interface(fake, || {
             let program = CString::new("meiksh-command-that-does-not-exist").expect("cstring");
             let argv = [program.as_ptr(), std::ptr::null()];
-            assert_eq!((syscalls().execvp)(program.as_ptr(), argv.as_ptr()), -1);
+            assert_eq!((sys_interface().execvp)(program.as_ptr(), argv.as_ptr()), -1);
         });
     }
 
@@ -1746,12 +1821,12 @@ mod tests {
         fn fail_tcsetpgrp(_fd: c_int, _pgid: Pid) -> c_int { -1 }
         fn fail_setpgid(_pid: Pid, _pgid: Pid) -> c_int { -1 }
 
-        let fake = Syscalls {
+        let fake = SystemInterface {
             isatty: fail_isatty, dup2: fail_dup2, close: fail_close,
             tcgetpgrp: fail_tcgetpgrp, tcsetpgrp: fail_tcsetpgrp, setpgid: fail_setpgid,
-            ..default_syscalls()
+            ..default_interface()
         };
-        test_support::with_test_syscalls(fake, || {
+        test_support::with_test_interface(fake, || {
             assert!(!is_interactive_fd(-1));
             assert!(duplicate_fd(-1, -1).is_err());
             assert!(close_fd(-1).is_err());
@@ -1764,8 +1839,8 @@ mod tests {
     #[test]
     fn wait_pid_error_surfaces_errno() {
         fn fail_waitpid(_pid: Pid, _status: *mut c_int, _options: c_int) -> Pid { -1 }
-        let fake = Syscalls { waitpid: fail_waitpid, ..default_syscalls() };
-        test_support::with_test_syscalls(fake, || {
+        let fake = SystemInterface { waitpid: fail_waitpid, ..default_interface() };
+        test_support::with_test_interface(fake, || {
             assert!(wait_pid(999_999, false).is_err());
         });
     }
@@ -1809,8 +1884,8 @@ mod tests {
         fn fake_dup2(oldfd: c_int, _newfd: c_int) -> c_int { oldfd }
         fn fake_close(_fd: c_int) -> c_int { 0 }
 
-        let fake = Syscalls { pipe: fake_pipe, dup2: fake_dup2, close: fake_close, ..default_syscalls() };
-        test_support::with_test_syscalls(fake, || {
+        let fake = SystemInterface { pipe: fake_pipe, dup2: fake_dup2, close: fake_close, ..default_interface() };
+        test_support::with_test_interface(fake, || {
             let (read_fd, write_fd) = create_pipe().expect("pipe");
             duplicate_fd(read_fd, read_fd).expect("dup self");
             close_fd(read_fd).expect("close read");
@@ -1830,12 +1905,12 @@ mod tests {
             4242
         }
 
-        let fake = Syscalls {
+        let fake = SystemInterface {
             getpid: fake_getpid,
-            ..default_syscalls()
+            ..default_interface()
         };
 
-        test_support::with_test_syscalls(fake, || {
+        test_support::with_test_interface(fake, || {
             assert_eq!(current_pid(), 4242);
         });
     }
@@ -1855,14 +1930,14 @@ mod tests {
             0
         }
 
-        let fake = Syscalls {
+        let fake = SystemInterface {
             waitpid: fake_waitpid,
             kill: fake_kill,
             signal: fake_signal,
-            ..default_syscalls()
+            ..default_interface()
         };
 
-        test_support::with_test_syscalls(fake, || {
+        test_support::with_test_interface(fake, || {
             assert_eq!(
                 wait_pid(1, false).expect("wait").expect("status"),
                 WaitStatus { pid: 99, status: 9 << 8 }
@@ -1886,15 +1961,15 @@ mod tests {
             0
         }
 
-        let fake = Syscalls {
+        let fake = SystemInterface {
             isatty: fake_isatty,
             tcgetpgrp: fake_tcgetpgrp,
             tcsetpgrp: fake_tcsetpgrp,
             setpgid: fake_setpgid,
-            ..default_syscalls()
+            ..default_interface()
         };
 
-        test_support::with_test_syscalls(fake, || {
+        test_support::with_test_interface(fake, || {
             assert!(is_interactive_fd(0));
             assert_eq!(current_foreground_pgrp(0).expect("pgrp"), 77);
             assert!(set_foreground_pgrp(0, 77).is_ok());
@@ -1921,15 +1996,15 @@ mod tests {
             0
         }
 
-        let fake = Syscalls {
+        let fake = SystemInterface {
             pipe: fake_pipe,
             dup: fake_dup,
             dup2: fake_dup2,
             close: fake_close,
-            ..default_syscalls()
+            ..default_interface()
         };
 
-        test_support::with_test_syscalls(fake, || {
+        test_support::with_test_interface(fake, || {
             assert_eq!(create_pipe().expect("pipe"), (10, 11));
             assert_eq!(duplicate_fd_to_new(4).expect("dup"), 104);
             assert!(duplicate_fd(4, 5).is_ok());
@@ -1956,13 +2031,13 @@ mod tests {
             1
         }
 
-        let fake = Syscalls {
+        let fake = SystemInterface {
             fcntl: fake_fcntl,
             read: fake_read,
-            ..default_syscalls()
+            ..default_interface()
         };
 
-        test_support::with_test_syscalls(fake, || {
+        test_support::with_test_interface(fake, || {
             let mut buffer = [0u8; 1];
             assert_eq!(read_fd(0, &mut buffer).expect("read"), 1);
             assert_eq!(buffer, [b'X']);
@@ -1990,14 +2065,14 @@ mod tests {
             60
         }
 
-        let fake = Syscalls {
+        let fake = SystemInterface {
             umask: fake_umask,
             times: fake_times,
             sysconf: fake_sysconf,
-            ..default_syscalls()
+            ..default_interface()
         };
 
-        test_support::with_test_syscalls(fake, || {
+        test_support::with_test_interface(fake, || {
             assert_eq!(current_umask(), 0);
             assert_eq!(set_umask(0o027), 0o027);
             assert_eq!(
@@ -2019,12 +2094,12 @@ mod tests {
             0
         }
 
-        let fake = Syscalls {
+        let fake = SystemInterface {
             execvp: fake_execvp,
-            ..default_syscalls()
+            ..default_interface()
         };
 
-        test_support::with_test_syscalls(fake, || {
+        test_support::with_test_interface(fake, || {
             assert!(exec_replace("echo", &["hello".to_string(), "world".to_string()]).is_ok());
         });
     }
@@ -2088,12 +2163,12 @@ mod tests {
             1
         }
 
-        let fake = Syscalls {
+        let fake = SystemInterface {
             getpid: fake_getpid,
-            ..default_syscalls()
+            ..default_interface()
         };
 
-        test_support::with_test_syscalls(fake, || {
+        test_support::with_test_interface(fake, || {
             assert_eq!(current_pid(), 1);
         });
     }
@@ -2107,13 +2182,13 @@ mod tests {
             -1
         }
 
-        let fake = Syscalls {
+        let fake = SystemInterface {
             waitpid: fake_waitpid,
             kill: fake_kill,
-            ..default_syscalls()
+            ..default_interface()
         };
 
-        test_support::with_test_syscalls(fake, || {
+        test_support::with_test_interface(fake, || {
             assert!(send_signal(1, 0).is_err());
             assert!(wait_pid(1, false).is_err());
         });
@@ -2134,15 +2209,15 @@ mod tests {
             -1
         }
 
-        let fake = Syscalls {
+        let fake = SystemInterface {
             isatty: fake_isatty,
             tcgetpgrp: fake_tcgetpgrp,
             tcsetpgrp: fake_tcsetpgrp,
             setpgid: fake_setpgid,
-            ..default_syscalls()
+            ..default_interface()
         };
 
-        test_support::with_test_syscalls(fake, || {
+        test_support::with_test_interface(fake, || {
             assert!(!is_interactive_fd(0));
             assert!(current_foreground_pgrp(0).is_err());
             assert!(set_foreground_pgrp(0, 1).is_err());
@@ -2165,15 +2240,15 @@ mod tests {
             -1
         }
 
-        let fake = Syscalls {
+        let fake = SystemInterface {
             pipe: fake_pipe,
             dup: fake_dup,
             dup2: fake_dup2,
             close: fake_close,
-            ..default_syscalls()
+            ..default_interface()
         };
 
-        test_support::with_test_syscalls(fake, || {
+        test_support::with_test_interface(fake, || {
             assert!(create_pipe().is_err());
             assert!(duplicate_fd_to_new(1).is_err());
             assert!(duplicate_fd(1, 2).is_err());
@@ -2187,12 +2262,12 @@ mod tests {
             -1
         }
 
-        let fake = Syscalls {
+        let fake = SystemInterface {
             read: fake_read,
-            ..default_syscalls()
+            ..default_interface()
         };
 
-        test_support::with_test_syscalls(fake, || {
+        test_support::with_test_interface(fake, || {
             assert!(read_fd(0, &mut [0u8; 1]).is_err());
         });
     }
@@ -2206,13 +2281,13 @@ mod tests {
             -1
         }
 
-        let fake = Syscalls {
+        let fake = SystemInterface {
             times: fake_times,
             sysconf: fake_sysconf,
-            ..default_syscalls()
+            ..default_interface()
         };
 
-        test_support::with_test_syscalls(fake, || {
+        test_support::with_test_interface(fake, || {
             assert!(process_times().is_err());
             assert!(clock_ticks_per_second().is_err());
         });
@@ -2224,12 +2299,12 @@ mod tests {
             -1
         }
 
-        let fake = Syscalls {
+        let fake = SystemInterface {
             execvp: fake_execvp,
-            ..default_syscalls()
+            ..default_interface()
         };
 
-        test_support::with_test_syscalls(fake, || {
+        test_support::with_test_interface(fake, || {
             assert!(exec_replace("echo", &["hi".to_string()]).is_err());
         });
     }
@@ -2278,5 +2353,110 @@ mod tests {
         ], || {
             assert!(ensure_blocking_read_fd(STDIN_FILENO).is_err());
         });
+    }
+
+    #[test]
+    fn setenv_success() {
+        use test_support::{run_trace, t, TraceResult, ArgMatcher};
+
+        run_trace(vec![
+            t("setenv", vec![ArgMatcher::Str("MY_KEY".into()), ArgMatcher::Str("my_val".into())], TraceResult::Int(0)),
+        ], || {
+            let result = (sys_interface().setenv)("MY_KEY", "my_val");
+            assert!(result.is_ok());
+        });
+    }
+
+    #[test]
+    fn setenv_error() {
+        use test_support::{run_trace, t, TraceResult, ArgMatcher};
+
+        run_trace(vec![
+            t("setenv", vec![ArgMatcher::Str("K".into()), ArgMatcher::Str("V".into())], TraceResult::Err(libc::ENOMEM)),
+        ], || {
+            let result = (sys_interface().setenv)("K", "V");
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn unsetenv_success() {
+        use test_support::{run_trace, t, TraceResult, ArgMatcher};
+
+        run_trace(vec![
+            t("unsetenv", vec![ArgMatcher::Str("MY_KEY".into())], TraceResult::Int(0)),
+        ], || {
+            let result = (sys_interface().unsetenv)("MY_KEY");
+            assert!(result.is_ok());
+        });
+    }
+
+    #[test]
+    fn unsetenv_error() {
+        use test_support::{run_trace, t, TraceResult, ArgMatcher};
+
+        run_trace(vec![
+            t("unsetenv", vec![ArgMatcher::Str("K".into())], TraceResult::Err(libc::EINVAL)),
+        ], || {
+            let result = (sys_interface().unsetenv)("K");
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn getenv_found() {
+        use test_support::{run_trace, t, TraceResult, ArgMatcher};
+
+        run_trace(vec![
+            t("getenv", vec![ArgMatcher::Str("HOME".into())], TraceResult::Str("/home/user".into())),
+        ], || {
+            let val = (sys_interface().getenv)("HOME");
+            assert_eq!(val, Some("/home/user".to_string()));
+        });
+    }
+
+    #[test]
+    fn getenv_not_found() {
+        use test_support::{run_trace, t, TraceResult, ArgMatcher};
+
+        run_trace(vec![
+            t("getenv", vec![ArgMatcher::Str("MISSING".into())], TraceResult::NullStr),
+        ], || {
+            let val = (sys_interface().getenv)("MISSING");
+            assert_eq!(val, None);
+        });
+    }
+
+    #[test]
+    fn get_environ_returns_map() {
+        use test_support::{run_trace, t, TraceResult, ArgMatcher};
+
+        let mut expected = HashMap::new();
+        expected.insert("HOME".to_string(), "/home/user".to_string());
+        expected.insert("PATH".to_string(), "/usr/bin".to_string());
+
+        run_trace(vec![
+            t("get_environ", vec![], TraceResult::EnvMap(expected.clone())),
+        ], || {
+            let map = (sys_interface().get_environ)();
+            assert_eq!(map.len(), 2);
+            assert_eq!(map.get("HOME"), Some(&"/home/user".to_string()));
+            assert_eq!(map.get("PATH"), Some(&"/usr/bin".to_string()));
+        });
+    }
+
+    #[test]
+    fn default_env_functions_roundtrip() {
+        let iface = default_interface();
+        let key = "MEIKSH_TEST_ROUNDTRIP_878c2a";
+
+        (iface.setenv)(key, "hello").expect("setenv");
+        assert_eq!((iface.getenv)(key), Some("hello".to_string()));
+
+        let map = (iface.get_environ)();
+        assert_eq!(map.get(key), Some(&"hello".to_string()));
+
+        (iface.unsetenv)(key).expect("unsetenv");
+        assert_eq!((iface.getenv)(key), None);
     }
 }
