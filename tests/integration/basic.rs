@@ -847,7 +847,7 @@ fn exec_builtin_replaces_process_in_subshell() {
         .output()
         .expect("run meiksh");
     assert!(output.status.success());
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "/bin/echo hello\n");
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "hello\n");
 }
 
 #[test]
@@ -1217,16 +1217,12 @@ fn honors_noclobber_and_force_clobber() {
 }
 
 #[test]
-fn background_and_or_returns_current_error() {
+fn background_and_or_list_runs_asynchronously() {
     let output = Command::new(meiksh())
         .args(["-c", "true && true &"])
         .output()
         .expect("run meiksh");
-    assert!(!output.status.success());
-    assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("background execution currently supports single pipelines")
-    );
+    assert!(output.status.success());
 }
 
 #[test]

@@ -70,7 +70,12 @@ The following `std` types and methods are banned from production code (enforced 
 - Builtins mutate the current shell state only when they execute outside a pipeline/background context.
 - `return`, `break`, and `continue` execute in the current shell and propagate through function and loop boundaries using current-shell control flow rather than subshell emulation.
 - External commands are executed via fork+exec in `exec.rs`. The child process inherits redirections, environment, and process group settings, then calls `sys::exec_replace`. Subshells, pipelines, and command substitution also use fork, with the child inheriting a cloned `Shell` instance and executing the already-parsed AST directly.
-- Executable text files that fail with `ENOEXEC` are handled in the child process by cloning the shell and interpreting the script via `source_path`, without depending on `/bin/sh`.
+- `exec_replace(file, argv)` takes a separate `file` (the resolved path for `execvp`) and full `argv` vector (where `argv[0]` is the command name as typed by the user, not the resolved path), per POSIX 2.9.1.6.
+- Command PATH search (`resolve_command_path`) checks both `is_regular_file()` and `is_executable()` via `stat_path`. Pre-exec access checks use `F_OK` then `X_OK` separately to distinguish not-found (ENOENT → exit 127) from found-but-not-executable (EACCES → exit 126).
+- Executable text files that fail with `ENOEXEC` are handled in the child process by cloning the shell, setting `shell_name` to the original command name (for `$0`), and interpreting the script via `source_path`, without depending on `/bin/sh`.
+- Prefix variable assignments before non-special builtins and functions are temporary: `save_vars` snapshots the variable value and export status before the command, and `restore_vars` reverts them after. Special-builtin prefix assignments remain permanent per POSIX 2.9.1.2.
+- Assignment values are expanded via `expand_word_text` which performs tilde, parameter, command substitution, arithmetic expansion, and quote removal — but not field splitting or pathname expansion, per POSIX 2.9.1.1 step 4.
+- Background (`&`) commands redirect stdin from `/dev/null` via `stdin_override` threaded through `spawn_and_or` → `spawn_pipeline`. AND-OR lists terminated by `&` (e.g. `cmd1 && cmd2 &`) execute the full AND-OR list asynchronously in a forked subshell. The job start message prints `[%d] %d\n` (job id and last PID).
 - Simple, builtin, function, and compound-command execution supports numeric descriptor prefixes for `<`, `>`, `>|`, `>>`, `<<`, `<&`, `>&`, and `<>`; `set -C` enables noclobber for plain `>` while `>|` forces truncation.
 
 ## Interactive Behavior
