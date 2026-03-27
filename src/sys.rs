@@ -1,3 +1,20 @@
+macro_rules! sys_println {
+    () => {
+        let _ = $crate::sys::write_all_fd($crate::sys::STDOUT_FILENO, b"\n");
+    };
+    ($($arg:tt)*) => {{
+        let msg = format!("{}\n", format_args!($($arg)*));
+        let _ = $crate::sys::write_all_fd($crate::sys::STDOUT_FILENO, msg.as_bytes());
+    }};
+}
+
+macro_rules! sys_eprintln {
+    ($($arg:tt)*) => {{
+        let msg = format!("{}\n", format_args!($($arg)*));
+        let _ = $crate::sys::write_all_fd($crate::sys::STDERR_FILENO, msg.as_bytes());
+    }};
+}
+
 use libc::{self, c_char, c_int, c_long, mode_t};
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
