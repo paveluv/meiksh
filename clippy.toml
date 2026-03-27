@@ -12,6 +12,11 @@ disallowed-types = [
     { path = "std::io::Result", reason = "Use sys::SysResult instead" },
 ]
 
+disallowed-macros = [
+    { path = "std::println", reason = "Use sys_println! (routes through sys::write_all_fd) instead" },
+    { path = "std::eprintln", reason = "Use sys_eprintln! (routes through sys::write_all_fd) instead" },
+]
+
 disallowed-methods = [
     { path = "std::env::set_current_dir", reason = "Use sys::change_dir instead" },
     { path = "std::env::current_dir", reason = "Use sys::get_cwd instead" },

@@ -763,21 +763,23 @@ impl Shell {
         let finished = self.reap_jobs();
         for (id, state) in finished {
             if let JobState::Done(status) = state {
-                println!("[{id}] Done {status}");
+                sys_println!("[{id}] Done {status}");
             }
         }
         for job in &self.jobs {
             match job.state {
-                JobState::Running => println!("[{}] Running {}", job.id, job.command),
+                JobState::Running => sys_println!("[{}] Running {}", job.id, job.command),
                 JobState::Stopped(sig) => {
-                    println!(
+                    sys_println!(
                         "[{}] Stopped ({}) {}",
                         job.id,
                         sys::signal_name(sig),
                         job.command
                     );
                 }
-                JobState::Done(status) => println!("[{}] Done {} {}", job.id, status, job.command),
+                JobState::Done(status) => {
+                    sys_println!("[{}] Done {} {}", job.id, status, job.command)
+                }
             }
         }
     }
@@ -2157,18 +2159,20 @@ mod tests {
     fn print_jobs_shows_done_for_finished_job() {
         run_trace(
             vec![
-                // reap_jobs for 1001 (explicit call)
                 t(
                     "waitpid",
                     vec![ArgMatcher::Int(1001), ArgMatcher::Any, ArgMatcher::Any],
                     TraceResult::Status(0),
                 ),
-                // print_jobs → reap_jobs → try_wait_child(1002) WNOHANG → done
-                // This covers the "Done" branch in print_jobs
                 t(
                     "waitpid",
                     vec![ArgMatcher::Int(1002), ArgMatcher::Any, ArgMatcher::Any],
                     TraceResult::Status(0),
+                ),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
                 ),
             ],
             || {
@@ -2176,7 +2180,6 @@ mod tests {
                 shell.register_background_job("done".into(), None, vec![fake_handle(1001)]);
                 shell.reap_jobs();
                 shell.register_background_job("sleep".into(), None, vec![fake_handle(1002)]);
-                // Covers "Done" branch in print_jobs (1002 finishes with WNOHANG)
                 shell.print_jobs();
                 assert!(shell.jobs.is_empty());
             },
@@ -2185,13 +2188,17 @@ mod tests {
 
     #[test]
     fn print_jobs_shows_running_for_active_job() {
-        // Cover the "Running" branch
         run_trace(
             vec![
                 t(
                     "waitpid",
                     vec![ArgMatcher::Int(1003), ArgMatcher::Any, ArgMatcher::Any],
                     TraceResult::Pid(0),
+                ),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
                 ),
                 t(
                     "waitpid",
@@ -2257,11 +2264,18 @@ mod tests {
     #[test]
     fn print_jobs_emits_finished_branch_when_job_is_done() {
         run_trace(
-            vec![t(
-                "waitpid",
-                vec![ArgMatcher::Int(1001), ArgMatcher::Any, ArgMatcher::Any],
-                TraceResult::Status(0),
-            )],
+            vec![
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(1001), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Status(0),
+                ),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+            ],
             || {
                 let mut shell = test_shell();
                 shell.register_background_job("done".into(), None, vec![fake_handle(1001)]);

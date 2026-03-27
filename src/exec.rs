@@ -646,7 +646,7 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
         match result {
             Ok(status) => Ok(status),
             Err(error) if !is_special_builtin => {
-                eprintln!("{}", error.display_message());
+                sys_eprintln!("{}", error.display_message());
                 Ok(error.exit_status())
             }
             Err(error) => Err(error),

@@ -121,7 +121,7 @@ fn cd(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> 
     shell.set_var("OLDPWD", old_pwd)?;
     shell.set_var("PWD", new_pwd.clone())?;
     if print_new_pwd {
-        println!("{new_pwd}");
+        sys_println!("{new_pwd}");
     }
     Ok(BuiltinOutcome::Status(0))
 }
@@ -281,7 +281,7 @@ fn pwd(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
         }
     }
 
-    println!("{}", pwd_output(shell, logical)?);
+    sys_println!("{}", pwd_output(shell, logical)?);
     Ok(BuiltinOutcome::Status(0))
 }
 
@@ -301,7 +301,7 @@ fn export(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellErr
     let (print, index) = parse_declaration_listing_flag("export", argv)?;
     if print || index == argv.len() {
         for line in exported_lines(shell) {
-            println!("{line}");
+            sys_println!("{line}");
         }
         return Ok(BuiltinOutcome::Status(0));
     }
@@ -319,7 +319,7 @@ fn readonly(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellE
     let (print, index) = parse_declaration_listing_flag("readonly", argv)?;
     if print || index == argv.len() {
         for line in readonly_lines(shell) {
-            println!("{line}");
+            sys_println!("{line}");
         }
         return Ok(BuiltinOutcome::Status(0));
     }
@@ -358,7 +358,7 @@ fn set(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
         let mut items: Vec<_> = shell.env.iter().collect();
         items.sort_by(|a, b| a.0.cmp(b.0));
         for (name, value) in items {
-            println!("{name}={value}");
+            sys_println!("{name}={value}");
         }
     } else {
         let mut index = 1usize;
@@ -376,9 +376,9 @@ fn set(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
                         for (name, enabled) in shell.options.reportable_options() {
                             if reinput {
                                 let prefix = if enabled { '-' } else { '+' };
-                                println!("set {prefix}o {name}");
+                                sys_println!("set {prefix}o {name}");
                             } else {
-                                println!("{name} {}", if enabled { "on" } else { "off" });
+                                sys_println!("{name} {}", if enabled { "on" } else { "off" });
                             }
                         }
                         return BuiltinOutcome::Status(0);
@@ -563,7 +563,7 @@ fn jobs(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
                 } else {
                     format!("Done({status})")
                 };
-                println!("[{id}] {marker} {state_str}");
+                sys_println!("[{id}] {marker} {state_str}");
             }
         }
     }
@@ -574,19 +574,21 @@ fn jobs(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
         match mode {
             JobsMode::PidOnly => {
                 if let Some(pid) = job_display_pid(job) {
-                    println!("{pid}");
+                    sys_println!("{pid}");
                 }
             }
             _ => {
                 let marker = job_current_marker(job.id, current_id, previous_id);
                 let (state_str, pid_field) = format_job_state(job);
                 if mode == JobsMode::Long {
-                    println!(
+                    sys_println!(
                         "[{}] {marker} {} {state_str} {}",
-                        job.id, pid_field, job.command
+                        job.id,
+                        pid_field,
+                        job.command
                     );
                 } else {
-                    println!("[{}] {marker} {state_str} {}", job.id, job.command);
+                    sys_println!("[{}] {marker} {state_str} {}", job.id, job.command);
                 }
             }
         }
@@ -683,7 +685,7 @@ fn fg(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> 
             message: "fg: no current job".to_string(),
         })?;
     if let Some(job) = shell.jobs.iter().find(|job| job.id == id) {
-        println!("{}", job.command);
+        sys_println!("{}", job.command);
     }
     shell.continue_job(id, true)?;
     let status = shell.wait_for_job(id)?;
@@ -709,7 +711,7 @@ fn bg(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> 
         })?;
     shell.continue_job(id, false)?;
     if let Some(job) = shell.jobs.iter().find(|job| job.id == id) {
-        println!("[{id}] {}", job.command);
+        sys_println!("[{id}] {}", job.command);
     }
     Ok(BuiltinOutcome::Status(0))
 }
@@ -745,7 +747,7 @@ fn kill(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
                 .iter()
                 .map(|(name, _)| *name)
                 .collect();
-            println!("{}", names.join(" "));
+            sys_println!("{}", names.join(" "));
             return Ok(BuiltinOutcome::Status(0));
         }
         for arg in &args[1..] {
@@ -753,7 +755,7 @@ fn kill(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
                 let sig = if code > 128 { code - 128 } else { code };
                 let name = sys::signal_name(sig);
                 if name != "UNKNOWN" {
-                    println!("{}", &name[3..]);
+                    sys_println!("{}", &name[3..]);
                 } else {
                     write_stderr(&format!("kill: unknown signal: {arg}\n"));
                     return Ok(BuiltinOutcome::Status(1));
@@ -1082,7 +1084,7 @@ fn alias(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellErro
         let mut items: Vec<_> = shell.aliases.iter().collect();
         items.sort_by(|a, b| a.0.cmp(b.0));
         for (name, value) in items {
-            println!("{}", format_alias_definition(name, value));
+            sys_println!("{}", format_alias_definition(name, value));
         }
         return Ok(BuiltinOutcome::Status(0));
     }
@@ -1091,7 +1093,7 @@ fn alias(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellErro
         if let Some((name, value)) = item.split_once('=') {
             shell.aliases.insert(name.to_string(), value.to_string());
         } else if let Some(value) = shell.aliases.get(item) {
-            println!("{}", format_alias_definition(item, value));
+            sys_println!("{}", format_alias_definition(item, value));
         } else {
             write_stderr(&format!("alias: {item}: not found\n"));
             status = 1;
@@ -1145,12 +1147,12 @@ fn unalias(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellEr
 fn times() -> BuiltinOutcome {
     match (sys::process_times(), sys::clock_ticks_per_second()) {
         (Ok(times), Ok(ticks_per_second)) => {
-            println!(
+            sys_println!(
                 "{} {}",
                 format_times_value(times.user_ticks, ticks_per_second),
                 format_times_value(times.system_ticks, ticks_per_second)
             );
-            println!(
+            sys_println!(
                 "{} {}",
                 format_times_value(times.child_user_ticks, ticks_per_second),
                 format_times_value(times.child_system_ticks, ticks_per_second)
@@ -1279,7 +1281,7 @@ fn print_traps(
         if let Some(action) =
             trap_output_action(shell, condition, include_defaults, !operands.is_empty())
         {
-            println!("trap -- {action} {}", format_trap_condition(condition));
+            sys_println!("trap -- {action} {}", format_trap_condition(condition));
         }
     }
     Ok(())
@@ -1407,9 +1409,9 @@ fn umask(argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     let current = sys::current_umask() as u16;
     if index == argv.len() {
         if symbolic_output {
-            println!("{}", format_umask_symbolic(current));
+            sys_println!("{}", format_umask_symbolic(current));
         } else {
-            println!("{current:04o}");
+            sys_println!("{current:04o}");
         }
         return Ok(BuiltinOutcome::Status(0));
     }
@@ -1581,14 +1583,14 @@ fn command(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellEr
             let Some(line) = command_short_description(shell, name, use_default_path) else {
                 return Ok(BuiltinOutcome::Status(1));
             };
-            println!("{line}");
+            sys_println!("{line}");
             Ok(BuiltinOutcome::Status(0))
         }
         CommandMode::QueryVerbose => {
             let Some(line) = command_verbose_description(shell, name, use_default_path) else {
                 return Ok(BuiltinOutcome::Status(1));
             };
-            println!("{line}");
+            sys_println!("{line}");
             Ok(BuiltinOutcome::Status(0))
         }
         CommandMode::Execute => execute_command_utility(shell, &argv[index..], use_default_path),
@@ -2074,11 +2076,18 @@ mod tests {
     #[test]
     fn alias_and_unalias_manage_alias_table() {
         run_trace(
-            vec![t(
-                "write",
-                vec![ArgMatcher::Fd(2), ArgMatcher::Any],
-                TraceResult::Int("alias: missing: not found\n".len() as i64),
-            )],
+            vec![
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(2), ArgMatcher::Any],
+                    TraceResult::Int("alias: missing: not found\n".len() as i64),
+                ),
+            ],
             || {
                 let mut shell = test_shell();
                 run(&mut shell, &["alias".into(), "ll=ls -l".into()]).expect("alias");
@@ -3365,7 +3374,14 @@ mod tests {
     #[test]
     fn pwd_builtin_succeeds() {
         run_trace(
-            vec![t("getcwd", vec![], TraceResult::CwdStr("/home".into()))],
+            vec![
+                t("getcwd", vec![], TraceResult::CwdStr("/home".into())),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(6),
+                ),
+            ],
             || {
                 let mut shell = test_shell();
                 assert!(matches!(
@@ -3378,16 +3394,30 @@ mod tests {
 
     #[test]
     fn export_listing_succeeds() {
-        assert_no_syscalls(|| {
-            let mut shell = test_shell();
-            shell.env.insert("PATH".into(), "/usr/bin:/bin".into());
-            shell.exported.insert("PATH".into());
-            shell.exported.insert("ONLY_NAME".into());
-            assert!(matches!(
-                run(&mut shell, &["export".into()]).expect("export list"),
-                BuiltinOutcome::Status(0)
-            ));
-        });
+        run_trace(
+            vec![
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert("PATH".into(), "/usr/bin:/bin".into());
+                shell.exported.insert("PATH".into());
+                shell.exported.insert("ONLY_NAME".into());
+                assert!(matches!(
+                    run(&mut shell, &["export".into()]).expect("export list"),
+                    BuiltinOutcome::Status(0)
+                ));
+            },
+        );
     }
 
     #[test]
@@ -3415,14 +3445,21 @@ mod tests {
 
     #[test]
     fn alias_listing_succeeds() {
-        assert_no_syscalls(|| {
-            let mut shell = test_shell();
-            shell.aliases.insert("ll".into(), "ls -l".into());
-            assert!(matches!(
-                run(&mut shell, &["alias".into()]).expect("alias list"),
-                BuiltinOutcome::Status(0)
-            ));
-        });
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.aliases.insert("ll".into(), "ls -l".into());
+                assert!(matches!(
+                    run(&mut shell, &["alias".into()]).expect("alias list"),
+                    BuiltinOutcome::Status(0)
+                ));
+            },
+        );
     }
 
     #[test]
@@ -3431,6 +3468,16 @@ mod tests {
             vec![
                 t("times", vec![ArgMatcher::Any], TraceResult::Int(0)),
                 t("sysconf", vec![ArgMatcher::Any], TraceResult::Int(100)),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
             ],
             || {
                 let mut shell = test_shell();
@@ -3478,172 +3525,223 @@ mod tests {
 
     #[test]
     fn trap_helpers_cover_listing_reset_and_invalid_paths() {
-        run_trace(
-            vec![
-                // trap "printf hi" QUIT ABRT ALRM TERM → 4 signal(install_handler)
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(sys::SIGQUIT as i64), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(sys::SIGABRT as i64), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(sys::SIGALRM as i64), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(sys::SIGTERM as i64), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                // trap "" TERM → signal(SIGTERM, SIG_IGN)
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(sys::SIGTERM as i64), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                // trap - TERM → signal(SIGTERM, SIG_DFL)
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(sys::SIGTERM as i64), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                // trap 1 1 → default_signal_action(SIGHUP) x2 (two "1" args)
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(sys::SIGHUP as i64), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(sys::SIGHUP as i64), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                // shell.set_trap(SIGTERM, Ignore) → signal(SIGTERM, SIG_IGN)
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(sys::SIGTERM as i64), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                // shell.set_trap(SIGINT, Command) → signal(SIGINT, handler)
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(sys::SIGINT as i64), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                // trap "printf hi" BAD → write_stderr
+        let trap_p_defaults: Vec<_> = (0..19)
+            .map(|_| {
                 t(
                     "write",
-                    vec![ArgMatcher::Fd(2), ArgMatcher::Any],
-                    TraceResult::Int("trap: invalid condition: BAD\n".len() as i64),
-                ),
-                // trap 999 → write_stderr
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(2), ArgMatcher::Any],
-                    TraceResult::Int("trap: invalid condition: 999\n".len() as i64),
-                ),
-                // trap("printf hi") → trap_impl err → write_stderr
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(2), ArgMatcher::Any],
-                    TraceResult::Int("trap: condition argument required\n".len() as i64),
-                ),
-            ],
-            || {
-                let mut shell = test_shell();
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                )
+            })
+            .collect();
+        let mut trace_entries = trap_p_defaults;
+        trace_entries.extend(vec![
+            // trap "printf hi" QUIT ABRT ALRM TERM → 4 signal(install_handler)
+            t(
+                "signal",
+                vec![ArgMatcher::Int(sys::SIGQUIT as i64), ArgMatcher::Any],
+                TraceResult::Int(0),
+            ),
+            t(
+                "signal",
+                vec![ArgMatcher::Int(sys::SIGABRT as i64), ArgMatcher::Any],
+                TraceResult::Int(0),
+            ),
+            t(
+                "signal",
+                vec![ArgMatcher::Int(sys::SIGALRM as i64), ArgMatcher::Any],
+                TraceResult::Int(0),
+            ),
+            t(
+                "signal",
+                vec![ArgMatcher::Int(sys::SIGTERM as i64), ArgMatcher::Any],
+                TraceResult::Int(0),
+            ),
+            // trap "" TERM → signal(SIGTERM, SIG_IGN)
+            t(
+                "signal",
+                vec![ArgMatcher::Int(sys::SIGTERM as i64), ArgMatcher::Any],
+                TraceResult::Int(0),
+            ),
+            // trap - TERM → signal(SIGTERM, SIG_DFL)
+            t(
+                "signal",
+                vec![ArgMatcher::Int(sys::SIGTERM as i64), ArgMatcher::Any],
+                TraceResult::Int(0),
+            ),
+            // trap 1 1 → default_signal_action(SIGHUP) x2 (two "1" args)
+            t(
+                "signal",
+                vec![ArgMatcher::Int(sys::SIGHUP as i64), ArgMatcher::Any],
+                TraceResult::Int(0),
+            ),
+            t(
+                "signal",
+                vec![ArgMatcher::Int(sys::SIGHUP as i64), ArgMatcher::Any],
+                TraceResult::Int(0),
+            ),
+            // trap -p EXIT INT → 2 stdout lines
+            t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                TraceResult::Int(0),
+            ),
+            t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                TraceResult::Int(0),
+            ),
+            // shell.set_trap(SIGTERM, Ignore) → signal(SIGTERM, SIG_IGN)
+            t(
+                "signal",
+                vec![ArgMatcher::Int(sys::SIGTERM as i64), ArgMatcher::Any],
+                TraceResult::Int(0),
+            ),
+            // shell.set_trap(SIGINT, Command) → signal(SIGINT, handler)
+            t(
+                "signal",
+                vec![ArgMatcher::Int(sys::SIGINT as i64), ArgMatcher::Any],
+                TraceResult::Int(0),
+            ),
+            // print_traps non-default → 5 stdout lines (QUIT, ABRT, ALRM, TERM, INT)
+            t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                TraceResult::Int(0),
+            ),
+            t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                TraceResult::Int(0),
+            ),
+            t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                TraceResult::Int(0),
+            ),
+            t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                TraceResult::Int(0),
+            ),
+            t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                TraceResult::Int(0),
+            ),
+            // print_traps EXIT → 1 stdout line
+            t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                TraceResult::Int(0),
+            ),
+            // trap "printf hi" BAD → write_stderr
+            t(
+                "write",
+                vec![ArgMatcher::Fd(2), ArgMatcher::Any],
+                TraceResult::Int("trap: invalid condition: BAD\n".len() as i64),
+            ),
+            // trap 999 → write_stderr
+            t(
+                "write",
+                vec![ArgMatcher::Fd(2), ArgMatcher::Any],
+                TraceResult::Int("trap: invalid condition: 999\n".len() as i64),
+            ),
+            // trap("printf hi") → trap_impl err → write_stderr
+            t(
+                "write",
+                vec![ArgMatcher::Fd(2), ArgMatcher::Any],
+                TraceResult::Int("trap: condition argument required\n".len() as i64),
+            ),
+        ]);
+        run_trace(trace_entries, || {
+            let mut shell = test_shell();
 
-                assert_eq!(
-                    trap_impl(&mut shell, &["trap".into(), "-p".into()]).expect("trap -p"),
-                    0
-                );
-                assert_eq!(
-                    trap_impl(
-                        &mut shell,
-                        &[
-                            "trap".into(),
-                            "printf hi".into(),
-                            "QUIT".into(),
-                            "ABRT".into(),
-                            "ALRM".into(),
-                            "TERM".into(),
-                        ],
-                    )
-                    .expect("trap set many"),
-                    0
-                );
-                assert_eq!(
-                    trap_impl(&mut shell, &["trap".into(), "".into(), "TERM".into()])
-                        .expect("trap ignore"),
-                    0
-                );
-                assert_eq!(
-                    trap_impl(&mut shell, &["trap".into(), "-".into(), "TERM".into()])
-                        .expect("trap default"),
-                    0
-                );
-                assert_eq!(
-                    trap_impl(&mut shell, &["trap".into(), "1".into(), "1".into()])
-                        .expect("numeric reset"),
-                    0
-                );
-                assert_eq!(
-                    trap_impl(
-                        &mut shell,
-                        &["trap".into(), "-p".into(), "EXIT".into(), "INT".into()]
-                    )
-                    .expect("trap -p operands"),
-                    0
-                );
-                shell
-                    .set_trap(
-                        TrapCondition::Signal(sys::SIGTERM),
-                        Some(TrapAction::Ignore),
-                    )
-                    .expect("set ignore");
-                shell
-                    .set_trap(
-                        TrapCondition::Signal(sys::SIGINT),
-                        Some(TrapAction::Command("printf hi".into())),
-                    )
-                    .expect("set command");
-                print_traps(&shell, false, &[]).expect("print non-default traps");
-                print_traps(&shell, false, &["EXIT".into()]).expect("skip default trap");
-                assert!(print_traps(&shell, false, &["BAD".into()]).is_err());
-                assert_eq!(
-                    trap_impl(
-                        &mut shell,
-                        &["trap".into(), "printf hi".into(), "BAD".into()]
-                    )
-                    .expect("invalid set"),
-                    1
-                );
-                assert_eq!(
-                    trap_impl(&mut shell, &["trap".into(), "999".into()]).expect("invalid reset"),
-                    1
-                );
-                assert!(trap_impl(&mut shell, &["trap".into(), "printf hi".into()]).is_err());
-                assert!(matches!(
-                    trap(&mut shell, &["trap".into(), "printf hi".into()]),
-                    BuiltinOutcome::Status(1)
-                ));
-                assert_eq!(
-                    trap_output_action(&shell, TrapCondition::Exit, false, false),
-                    None
-                );
-                assert!(
-                    matches!(parse_wait_operand("bad", &shell), Err(message) if message.contains("invalid process id"))
-                );
-                assert_eq!(format_trap_condition(TrapCondition::Signal(99)), "99");
-                assert_eq!(supported_trap_conditions().len(), 19);
-                assert_eq!(parse_trap_condition("BAD"), None);
-            },
-        );
+            assert_eq!(
+                trap_impl(&mut shell, &["trap".into(), "-p".into()]).expect("trap -p"),
+                0
+            );
+            assert_eq!(
+                trap_impl(
+                    &mut shell,
+                    &[
+                        "trap".into(),
+                        "printf hi".into(),
+                        "QUIT".into(),
+                        "ABRT".into(),
+                        "ALRM".into(),
+                        "TERM".into(),
+                    ],
+                )
+                .expect("trap set many"),
+                0
+            );
+            assert_eq!(
+                trap_impl(&mut shell, &["trap".into(), "".into(), "TERM".into()])
+                    .expect("trap ignore"),
+                0
+            );
+            assert_eq!(
+                trap_impl(&mut shell, &["trap".into(), "-".into(), "TERM".into()])
+                    .expect("trap default"),
+                0
+            );
+            assert_eq!(
+                trap_impl(&mut shell, &["trap".into(), "1".into(), "1".into()])
+                    .expect("numeric reset"),
+                0
+            );
+            assert_eq!(
+                trap_impl(
+                    &mut shell,
+                    &["trap".into(), "-p".into(), "EXIT".into(), "INT".into()]
+                )
+                .expect("trap -p operands"),
+                0
+            );
+            shell
+                .set_trap(
+                    TrapCondition::Signal(sys::SIGTERM),
+                    Some(TrapAction::Ignore),
+                )
+                .expect("set ignore");
+            shell
+                .set_trap(
+                    TrapCondition::Signal(sys::SIGINT),
+                    Some(TrapAction::Command("printf hi".into())),
+                )
+                .expect("set command");
+            print_traps(&shell, false, &[]).expect("print non-default traps");
+            print_traps(&shell, false, &["EXIT".into()]).expect("skip default trap");
+            assert!(print_traps(&shell, false, &["BAD".into()]).is_err());
+            assert_eq!(
+                trap_impl(
+                    &mut shell,
+                    &["trap".into(), "printf hi".into(), "BAD".into()]
+                )
+                .expect("invalid set"),
+                1
+            );
+            assert_eq!(
+                trap_impl(&mut shell, &["trap".into(), "999".into()]).expect("invalid reset"),
+                1
+            );
+            assert!(trap_impl(&mut shell, &["trap".into(), "printf hi".into()]).is_err());
+            assert!(matches!(
+                trap(&mut shell, &["trap".into(), "printf hi".into()]),
+                BuiltinOutcome::Status(1)
+            ));
+            assert_eq!(
+                trap_output_action(&shell, TrapCondition::Exit, false, false),
+                None
+            );
+            assert!(
+                matches!(parse_wait_operand("bad", &shell), Err(message) if message.contains("invalid process id"))
+            );
+            assert_eq!(format_trap_condition(TrapCondition::Signal(99)), "99");
+            assert_eq!(supported_trap_conditions().len(), 19);
+            assert_eq!(parse_trap_condition("BAD"), None);
+        });
     }
 
     #[test]
@@ -3665,6 +3763,11 @@ mod tests {
                 t(
                     "chdir",
                     vec![ArgMatcher::Str("/previous".into())],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
                     TraceResult::Int(0),
                 ),
             ],
@@ -4371,6 +4474,12 @@ mod tests {
                     vec![ArgMatcher::Int(3002), ArgMatcher::Any, ArgMatcher::Any],
                     TraceResult::Int(0),
                 ),
+                // "sleep" job reuses id 1 → selected by %{finished_id} → prints Running
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
             ],
             || {
                 let mut shell = test_shell();
@@ -4427,6 +4536,12 @@ mod tests {
                     vec![ArgMatcher::Int(3001), ArgMatcher::Int(sys::SIGCONT as i64)],
                     TraceResult::Int(0),
                 ),
+                // bg prints "[1] sleep"
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
                 // wait %1 → wait_on_job_index → waitpid(3001, WUNTRACED)
                 t(
                     "waitpid",
@@ -4436,6 +4551,12 @@ mod tests {
                         ArgMatcher::Int(sys::WUNTRACED as i64),
                     ],
                     TraceResult::Status(0),
+                ),
+                // fg prints "sleep"
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
                 ),
                 // fg %2 (running job) → wait_for_job → waitpid(3002, WUNTRACED)
                 t(
@@ -4643,20 +4764,43 @@ mod tests {
 
     #[test]
     fn set_no_args_lists_variables() {
-        assert_no_syscalls(|| {
-            let mut shell = test_shell();
-            shell.env.insert("B_VAR".into(), "two".into());
-            shell.env.insert("A_VAR".into(), "one".into());
-            assert!(matches!(
-                run(&mut shell, &["set".into()]).expect("set list"),
-                BuiltinOutcome::Status(0)
-            ));
-        });
+        run_trace(
+            vec![
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert("B_VAR".into(), "two".into());
+                shell.env.insert("A_VAR".into(), "one".into());
+                assert!(matches!(
+                    run(&mut shell, &["set".into()]).expect("set list"),
+                    BuiltinOutcome::Status(0)
+                ));
+            },
+        );
     }
 
     #[test]
     fn set_minus_o_lists_options() {
-        assert_no_syscalls(|| {
+        let writes: Vec<_> = (0..11)
+            .map(|_| {
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                )
+            })
+            .collect();
+        run_trace(writes, || {
             let mut shell = test_shell();
             assert!(matches!(
                 run(&mut shell, &["set".into(), "-o".into()]).expect("set -o"),
@@ -4667,7 +4811,16 @@ mod tests {
 
     #[test]
     fn set_plus_o_lists_options_in_reinput_format() {
-        assert_no_syscalls(|| {
+        let writes: Vec<_> = (0..11)
+            .map(|_| {
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                )
+            })
+            .collect();
+        run_trace(writes, || {
             let mut shell = test_shell();
             assert!(matches!(
                 run(&mut shell, &["set".into(), "+o".into()]).expect("set +o"),
@@ -4679,11 +4832,18 @@ mod tests {
     #[test]
     fn jobs_shows_done_and_running_entries() {
         run_trace(
-            vec![t(
-                "waitpid",
-                vec![ArgMatcher::Int(3001), ArgMatcher::Any, ArgMatcher::Any],
-                TraceResult::Status(0),
-            )],
+            vec![
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(3001), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Status(0),
+                ),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+            ],
             || {
                 let mut shell = test_shell();
                 shell.register_background_job(
@@ -4715,6 +4875,11 @@ mod tests {
                     "waitpid",
                     vec![ArgMatcher::Int(4002), ArgMatcher::Any, ArgMatcher::Any],
                     TraceResult::Pid(0),
+                ),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
                 ),
             ],
             || {
@@ -4779,12 +4944,29 @@ mod tests {
                     vec![ArgMatcher::Int(5001), ArgMatcher::Any, ArgMatcher::Any],
                     TraceResult::Pid(0),
                 ),
-                // reap_jobs: job 2 (Stopped) is skipped by reap_jobs
                 // reap_jobs: job 3 (Running) → try_wait_child returns exited(42)
                 t(
                     "waitpid",
                     vec![ArgMatcher::Int(5003), ArgMatcher::Any, ArgMatcher::Any],
                     TraceResult::Status(42),
+                ),
+                // finished: job 3 Done(42) → stdout
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+                // live: job 1 Running → stdout
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+                // live: job 2 Stopped → stdout
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
                 ),
             ],
             || {
@@ -4810,11 +4992,18 @@ mod tests {
     #[test]
     fn jobs_pid_only_mode_prints_pgid() {
         run_trace(
-            vec![t(
-                "waitpid",
-                vec![ArgMatcher::Int(5010), ArgMatcher::Any, ArgMatcher::Any],
-                TraceResult::Pid(0),
-            )],
+            vec![
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(5010), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Pid(0),
+                ),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+            ],
             || {
                 let mut shell = test_shell();
                 shell.jobs.push(make_job(1, 5010, "sleep 100"));
@@ -4827,11 +5016,18 @@ mod tests {
     #[test]
     fn jobs_long_mode_includes_pid() {
         run_trace(
-            vec![t(
-                "waitpid",
-                vec![ArgMatcher::Int(5020), ArgMatcher::Any, ArgMatcher::Any],
-                TraceResult::Pid(0),
-            )],
+            vec![
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(5020), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Pid(0),
+                ),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+            ],
             || {
                 let mut shell = test_shell();
                 shell.jobs.push(make_job(1, 5020, "sleep 200"));
@@ -4844,11 +5040,18 @@ mod tests {
     #[test]
     fn jobs_done_nonzero_status_in_finished_list() {
         run_trace(
-            vec![t(
-                "waitpid",
-                vec![ArgMatcher::Int(5030), ArgMatcher::Any, ArgMatcher::Any],
-                TraceResult::Status(7),
-            )],
+            vec![
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(5030), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Status(7),
+                ),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+            ],
             || {
                 let mut shell = test_shell();
                 shell.jobs.push(make_job(1, 5030, "exit7"));
@@ -4879,6 +5082,12 @@ mod tests {
     fn fg_with_monitor_waits_for_job() {
         run_trace(
             vec![
+                // fg prints the command
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
                 // continue_job: set foreground pgrp + send SIGCONT
                 t(
                     "tcsetpgrp",
@@ -4928,11 +5137,18 @@ mod tests {
     #[test]
     fn bg_with_stopped_job_sends_sigcont() {
         run_trace(
-            vec![t(
-                "kill",
-                vec![ArgMatcher::Int(-6010), ArgMatcher::Int(sys::SIGCONT as i64)],
-                TraceResult::Int(0),
-            )],
+            vec![
+                t(
+                    "kill",
+                    vec![ArgMatcher::Int(-6010), ArgMatcher::Int(sys::SIGCONT as i64)],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+            ],
             || {
                 let mut shell = test_shell();
                 shell.options.monitor = true;
@@ -4957,21 +5173,35 @@ mod tests {
 
     #[test]
     fn kill_list_signals() {
-        assert_no_syscalls(|| {
-            let mut shell = test_shell();
-            let outcome = run(&mut shell, &["kill".into(), "-l".into()]).expect("kill -l");
-            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-        });
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = run(&mut shell, &["kill".into(), "-l".into()]).expect("kill -l");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
     }
 
     #[test]
     fn kill_list_translates_exit_code() {
-        assert_no_syscalls(|| {
-            let mut shell = test_shell();
-            let outcome =
-                run(&mut shell, &["kill".into(), "-l".into(), "130".into()]).expect("kill -l 130");
-            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-        });
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = run(&mut shell, &["kill".into(), "-l".into(), "130".into()])
+                    .expect("kill -l 130");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
     }
 
     #[test]
@@ -5331,26 +5561,40 @@ mod tests {
 
     #[test]
     fn jobs_stopped_job_format_state() {
-        run_trace(vec![], || {
-            let mut shell = test_shell();
-            let mut job = make_job(1, 5050, "vim");
-            job.state = crate::shell::JobState::Stopped(sys::SIGTSTP);
-            shell.jobs.push(job);
-            let outcome = run(&mut shell, &["jobs".into()]).expect("jobs");
-            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-        });
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                let mut job = make_job(1, 5050, "vim");
+                job.state = crate::shell::JobState::Stopped(sys::SIGTSTP);
+                shell.jobs.push(job);
+                let outcome = run(&mut shell, &["jobs".into()]).expect("jobs");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
     }
 
     #[test]
     fn jobs_long_mode_stopped_job() {
-        run_trace(vec![], || {
-            let mut shell = test_shell();
-            let mut job = make_job(1, 5060, "vim");
-            job.state = crate::shell::JobState::Stopped(sys::SIGTSTP);
-            shell.jobs.push(job);
-            let outcome = run(&mut shell, &["jobs".into(), "-l".into()]).expect("jobs -l");
-            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-        });
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                let mut job = make_job(1, 5060, "vim");
+                job.state = crate::shell::JobState::Stopped(sys::SIGTSTP);
+                shell.jobs.push(job);
+                let outcome = run(&mut shell, &["jobs".into(), "-l".into()]).expect("jobs -l");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
     }
 
     #[test]
@@ -5403,11 +5647,15 @@ mod tests {
     fn jobs_finished_job_prints_done_line_when_selected() {
         run_trace(
             vec![
-                // job 1 finishes
                 t(
                     "waitpid",
                     vec![ArgMatcher::Int(5070), ArgMatcher::Any, ArgMatcher::Any],
                     TraceResult::Status(0),
+                ),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
                 ),
             ],
             || {
@@ -5423,7 +5671,6 @@ mod tests {
     fn jobs_finished_job_skipped_when_not_selected() {
         run_trace(
             vec![
-                // job 1 finishes; job 2 stays running
                 t(
                     "waitpid",
                     vec![ArgMatcher::Int(5080), ArgMatcher::Any, ArgMatcher::Any],
@@ -5433,6 +5680,11 @@ mod tests {
                     "waitpid",
                     vec![ArgMatcher::Int(5081), ArgMatcher::Any, ArgMatcher::Any],
                     TraceResult::Pid(0),
+                ),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
                 ),
             ],
             || {
@@ -5449,11 +5701,15 @@ mod tests {
     fn jobs_stopped_job_in_finished_list_skips_done_block() {
         run_trace(
             vec![
-                // Job 1 gets stopped during reap_jobs (child returns stopped)
                 t(
                     "waitpid",
                     vec![ArgMatcher::Int(5090), ArgMatcher::Any, ArgMatcher::Any],
                     TraceResult::StoppedSig(sys::SIGTSTP),
+                ),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Any],
+                    TraceResult::Int(0),
                 ),
             ],
             || {
