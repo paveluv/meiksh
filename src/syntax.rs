@@ -236,6 +236,242 @@ impl ParseSession {
     }
 }
 
+fn scan_dollar_construct(
+    chars: &[char],
+    index: &mut usize,
+    current: &mut String,
+) -> Result<(), ParseError> {
+    current.push('$');
+    let next = chars[*index + 1];
+    if next == '(' {
+        if chars.get(*index + 2) == Some(&'(') {
+            current.push('(');
+            current.push('(');
+            *index += 3;
+            let mut depth = 1usize;
+            while *index < chars.len() {
+                let ch = chars[*index];
+                current.push(ch);
+                if ch == '(' {
+                    depth += 1;
+                } else if ch == ')' {
+                    if depth == 1 && chars.get(*index + 1) == Some(&')') {
+                        current.push(')');
+                        *index += 2;
+                        return Ok(());
+                    }
+                    depth = depth.saturating_sub(1);
+                }
+                *index += 1;
+            }
+            return Err(ParseError {
+                message: "unterminated arithmetic expansion".to_string(),
+            });
+        }
+        current.push('(');
+        *index += 2;
+        scan_paren_body(chars, index, current)?;
+        return Ok(());
+    }
+    current.push('{');
+    *index += 2;
+    scan_brace_body(chars, index, current)
+}
+
+fn scan_paren_body(
+    chars: &[char],
+    index: &mut usize,
+    current: &mut String,
+) -> Result<(), ParseError> {
+    let mut depth = 1usize;
+    while *index < chars.len() {
+        let ch = chars[*index];
+        match ch {
+            '(' => {
+                depth += 1;
+                current.push(ch);
+                *index += 1;
+            }
+            ')' => {
+                depth -= 1;
+                current.push(ch);
+                *index += 1;
+                if depth == 0 {
+                    return Ok(());
+                }
+            }
+            '\'' => {
+                current.push(ch);
+                *index += 1;
+                while *index < chars.len() {
+                    current.push(chars[*index]);
+                    if chars[*index] == '\'' {
+                        *index += 1;
+                        break;
+                    }
+                    *index += 1;
+                }
+            }
+            '"' => {
+                current.push(ch);
+                *index += 1;
+                scan_dquote_body(chars, index, current)?;
+            }
+            '\\' => {
+                current.push(ch);
+                *index += 1;
+                if *index < chars.len() {
+                    current.push(chars[*index]);
+                    *index += 1;
+                }
+            }
+            '$' if matches!(chars.get(*index + 1), Some('(' | '{')) => {
+                scan_dollar_construct(chars, index, current)?;
+            }
+            '`' => {
+                scan_backtick_body(chars, index, current)?;
+            }
+            _ => {
+                current.push(ch);
+                *index += 1;
+            }
+        }
+    }
+    Err(ParseError {
+        message: "unterminated command substitution".to_string(),
+    })
+}
+
+fn scan_brace_body(
+    chars: &[char],
+    index: &mut usize,
+    current: &mut String,
+) -> Result<(), ParseError> {
+    while *index < chars.len() {
+        let ch = chars[*index];
+        match ch {
+            '}' => {
+                current.push(ch);
+                *index += 1;
+                return Ok(());
+            }
+            '\\' => {
+                current.push(ch);
+                *index += 1;
+                if *index < chars.len() {
+                    current.push(chars[*index]);
+                    *index += 1;
+                }
+            }
+            '\'' => {
+                current.push(ch);
+                *index += 1;
+                while *index < chars.len() {
+                    current.push(chars[*index]);
+                    if chars[*index] == '\'' {
+                        *index += 1;
+                        break;
+                    }
+                    *index += 1;
+                }
+            }
+            '"' => {
+                current.push(ch);
+                *index += 1;
+                scan_dquote_body(chars, index, current)?;
+            }
+            '$' if matches!(chars.get(*index + 1), Some('(' | '{')) => {
+                scan_dollar_construct(chars, index, current)?;
+            }
+            '`' => {
+                scan_backtick_body(chars, index, current)?;
+            }
+            _ => {
+                current.push(ch);
+                *index += 1;
+            }
+        }
+    }
+    Err(ParseError {
+        message: "unterminated parameter expansion".to_string(),
+    })
+}
+
+fn scan_backtick_body(
+    chars: &[char],
+    index: &mut usize,
+    current: &mut String,
+) -> Result<(), ParseError> {
+    current.push('`');
+    *index += 1;
+    while *index < chars.len() {
+        let next = chars[*index];
+        current.push(next);
+        if next == '\\' && *index + 1 < chars.len() {
+            current.push(chars[*index + 1]);
+            *index += 2;
+            continue;
+        }
+        *index += 1;
+        if next == '`' {
+            return Ok(());
+        }
+    }
+    Err(ParseError {
+        message: "unterminated backquote".to_string(),
+    })
+}
+
+fn scan_dquote_body(
+    chars: &[char],
+    index: &mut usize,
+    current: &mut String,
+) -> Result<(), ParseError> {
+    while *index < chars.len() {
+        let ch = chars[*index];
+        current.push(ch);
+        match ch {
+            '\\' => {
+                *index += 1;
+                if *index < chars.len() {
+                    current.push(chars[*index]);
+                    *index += 1;
+                }
+            }
+            '"' => {
+                *index += 1;
+                return Ok(());
+            }
+            '$' if matches!(chars.get(*index + 1), Some('(' | '{')) => {
+                current.pop();
+                scan_dollar_construct(chars, index, current)?;
+            }
+            '`' => {
+                *index += 1;
+                while *index < chars.len() {
+                    let next = chars[*index];
+                    current.push(next);
+                    if next == '\\' && *index + 1 < chars.len() {
+                        current.push(chars[*index + 1]);
+                        *index += 2;
+                        continue;
+                    }
+                    *index += 1;
+                    if next == '`' {
+                        break;
+                    }
+                }
+            }
+            _ => {
+                *index += 1;
+            }
+        }
+    }
+    Err(ParseError {
+        message: "unterminated double quote".to_string(),
+    })
+}
+
 fn tokenize(source: &str) -> Result<Tokenized, ParseError> {
     let chars: Vec<char> = source.chars().collect();
     let mut tokens = Vec::new();
@@ -303,25 +539,7 @@ fn tokenize(source: &str) -> Result<Tokenized, ParseError> {
             '"' => {
                 current.push(ch);
                 index += 1;
-                let mut escaped = false;
-                while index < chars.len() {
-                    let next = chars[index];
-                    current.push(next);
-                    if escaped {
-                        escaped = false;
-                    } else if next == '\\' {
-                        escaped = true;
-                    } else if next == '"' {
-                        index += 1;
-                        break;
-                    }
-                    index += 1;
-                }
-                if !current.ends_with('"') {
-                    return Err(ParseError {
-                        message: "unterminated double quote".to_string(),
-                    });
-                }
+                scan_dquote_body(&chars, &mut index, &mut current)?;
             }
             '\\' => {
                 current.push(ch);
@@ -477,6 +695,31 @@ fn tokenize(source: &str) -> Result<Tokenized, ParseError> {
                         kind: TokenKind::Greater,
                     });
                     index += 1;
+                }
+            }
+            '$' if matches!(chars.get(index + 1), Some('(' | '{')) => {
+                scan_dollar_construct(&chars, &mut index, &mut current)?;
+            }
+            '`' => {
+                current.push('`');
+                index += 1;
+                while index < chars.len() {
+                    let next = chars[index];
+                    current.push(next);
+                    if next == '\\' && index + 1 < chars.len() {
+                        current.push(chars[index + 1]);
+                        index += 2;
+                        continue;
+                    }
+                    index += 1;
+                    if next == '`' {
+                        break;
+                    }
+                }
+                if !current.ends_with('`') {
+                    return Err(ParseError {
+                        message: "unterminated backquote".to_string(),
+                    });
                 }
             }
             _ => {
@@ -1952,5 +2195,195 @@ mod tests {
             HashMap::new(),
         );
         assert!(parser.redirection_kind_at(99).is_err());
+    }
+
+    #[test]
+    fn tokenizer_keeps_dollar_paren_as_single_word() {
+        let program = parse("echo $(cmd arg)").expect("parse dollar paren");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd)
+                if cmd.words.len() == 2 && cmd.words[1].raw == "$(cmd arg)"
+        ));
+    }
+
+    #[test]
+    fn tokenizer_keeps_dollar_double_paren_as_single_word() {
+        let program = parse("echo $((1 + 2))").expect("parse dollar arith");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd)
+                if cmd.words.len() == 2 && cmd.words[1].raw == "$((1 + 2))"
+        ));
+
+        let nested = parse("echo $((1 + (2 * 3)))").expect("parse nested arith");
+        assert!(matches!(
+            &nested.items[0].and_or.first.commands[0],
+            Command::Simple(cmd)
+                if cmd.words[1].raw == "$((1 + (2 * 3)))"
+        ));
+
+        let error = parse("echo $((1 + 2").expect_err("unterminated arith");
+        assert_eq!(error.message, "unterminated arithmetic expansion");
+    }
+
+    #[test]
+    fn tokenizer_keeps_dollar_brace_as_single_word() {
+        let program = parse("echo ${VAR:-default}").expect("parse dollar brace");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd)
+                if cmd.words.len() == 2 && cmd.words[1].raw == "${VAR:-default}"
+        ));
+
+        let nested = parse("echo ${VAR:-${INNER}}").expect("parse nested brace");
+        assert!(matches!(
+            &nested.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.words[1].raw == "${VAR:-${INNER}}"
+        ));
+    }
+
+    #[test]
+    fn tokenizer_keeps_backtick_as_single_word() {
+        let program = parse("echo `cmd arg`").expect("parse backtick");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd)
+                if cmd.words.len() == 2 && cmd.words[1].raw == "`cmd arg`"
+        ));
+
+        let error = parse("echo `unterminated").expect_err("unterminated backtick");
+        assert_eq!(error.message, "unterminated backquote");
+    }
+
+    #[test]
+    fn tokenizer_backtick_inside_double_quotes() {
+        let program = parse("echo \"`cmd`\"").expect("parse dquote backtick");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd)
+                if cmd.words[1].raw == "\"`cmd`\""
+        ));
+    }
+
+    #[test]
+    fn tokenizer_dollar_paren_inside_double_quotes() {
+        let program = parse("echo \"$(cmd arg)\"").expect("parse dquote dollar paren");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd)
+                if cmd.words[1].raw == "\"$(cmd arg)\""
+        ));
+    }
+
+    #[test]
+    fn tokenizer_dollar_brace_inside_double_quotes() {
+        let program = parse("echo \"${VAR:-val}\"").expect("parse dquote dollar brace");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd)
+                if cmd.words[1].raw == "\"${VAR:-val}\""
+        ));
+    }
+
+    #[test]
+    fn tokenizer_nested_constructs_in_paren_body() {
+        let program = parse("echo $(echo 'hi' \"$VAR\" \\x `inner` ${B} $((1+1)))")
+            .expect("parse nested paren");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd)
+                if cmd.words.len() == 2
+        ));
+    }
+
+    #[test]
+    fn tokenizer_nested_constructs_in_brace_body() {
+        let program = parse("echo ${VAR:-'a}b'}").expect("parse brace sq");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.words[1].raw == "${VAR:-'a}b'}"
+        ));
+
+        let program = parse("echo ${VAR:-\"a}b\"}").expect("parse brace dq");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.words[1].raw == "${VAR:-\"a}b\"}"
+        ));
+
+        let program = parse("echo ${VAR:-\\}}").expect("parse brace escaped");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.words[1].raw == "${VAR:-\\}}"
+        ));
+
+        let program = parse("echo ${VAR:-`cmd`}").expect("parse brace backtick");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.words[1].raw == "${VAR:-`cmd`}"
+        ));
+
+        let program = parse("echo ${VAR:-$(cmd)}").expect("parse brace cmdsubst");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.words[1].raw == "${VAR:-$(cmd)}"
+        ));
+
+        let error = parse("echo ${VAR:-unclosed").expect_err("unterminated brace body");
+        assert_eq!(error.message, "unterminated parameter expansion");
+
+        let error = parse("echo $(unclosed").expect_err("unterminated paren body");
+        assert_eq!(error.message, "unterminated command substitution");
+    }
+
+    #[test]
+    fn tokenizer_backtick_with_escape() {
+        let program = parse("echo `echo \\$VAR`").expect("parse bt escape");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.words[1].raw == "`echo \\$VAR`"
+        ));
+    }
+
+    #[test]
+    fn tokenizer_dollar_brace_from_toplevel() {
+        let program = parse("echo ${VAR}done").expect("parse brace toplevel");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.words[1].raw == "${VAR}done"
+        ));
+    }
+
+    #[test]
+    fn tokenizer_nested_paren_depth() {
+        let program = parse("echo $(echo (a) (b))").expect("parse nested parens");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.words[1].raw == "$(echo (a) (b))"
+        ));
+    }
+
+    #[test]
+    fn tokenizer_backtick_body_escape() {
+        let program = parse("echo ${VAR:-`echo \\`inner\\``}").expect("parse bt body escape");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.words.len() == 2
+        ));
+    }
+
+    #[test]
+    fn tokenizer_backtick_escape_in_dquote() {
+        let program = parse("echo \"`echo \\$X`\"").expect("parse dq bt escape");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.words[1].raw == "\"`echo \\$X`\""
+        ));
+    }
+
+    #[test]
+    fn tokenizer_unterminated_backtick_in_brace() {
+        let error = parse("echo ${VAR:-`unterminated}").expect_err("unterminated bt in brace");
+        assert_eq!(error.message, "unterminated backquote");
     }
 }
