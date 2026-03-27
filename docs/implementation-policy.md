@@ -77,6 +77,8 @@ The following `std` types and methods are banned from production code (enforced 
 - Assignment values are expanded via `expand_word_text` which performs tilde, parameter, command substitution, arithmetic expansion, and quote removal — but not field splitting or pathname expansion, per POSIX 2.9.1.1 step 4.
 - Background (`&`) commands redirect stdin from `/dev/null` via `stdin_override` threaded through `spawn_and_or` → `spawn_pipeline`. AND-OR lists terminated by `&` (e.g. `cmd1 && cmd2 &`) execute the full AND-OR list asynchronously in a forked subshell. The job start message prints `[%d] %d\n` (job id and last PID).
 - Simple, builtin, function, and compound-command execution supports numeric descriptor prefixes for `<`, `>`, `>|`, `>>`, `<<`, `<&`, `>&`, and `<>`; `set -C` enables noclobber for plain `>` while `>|` forces truncation.
+- `set -e` (errexit) is implemented with POSIX exception rules: errexit is suppressed in the condition positions of `if`/`while`/`until`/`elif`, in negated pipelines (`!`), and in non-final commands of AND-OR lists. The suppression is tracked via `Shell::errexit_suppressed` which is saved/restored around each suppression context. Individual pipeline command failures do not trigger errexit; only the pipeline's final exit status is checked. `check_errexit` runs after `execute_and_or` returns the final pipeline status.
+- `set -x` (xtrace) writes a trace line to stderr after word expansion and before command execution. The prefix is the parameter-expanded value of `PS4` (default `"+ "`). The trace includes prefix assignments and the expanded command words.
 
 ## Interactive Behavior
 

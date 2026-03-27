@@ -1435,3 +1435,159 @@ fn pipeline_with_pty_exercises_terminal_foreground_control() {
         "expected 'ok' in stdout, got: {stdout}"
     );
 }
+
+#[test]
+fn errexit_exits_on_failed_command() {
+    let output = Command::new(meiksh())
+        .args(["-ec", "false; echo unreachable"])
+        .output()
+        .expect("run meiksh");
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("unreachable"),
+        "should not reach echo after false with -e"
+    );
+}
+
+#[test]
+fn errexit_suppressed_in_if_condition() {
+    let output = Command::new(meiksh())
+        .args(["-ec", "if false; then echo then; fi; echo ok"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "ok");
+}
+
+#[test]
+fn errexit_suppressed_in_while_condition() {
+    let output = Command::new(meiksh())
+        .args(["-ec", "while false; do echo body; done; echo ok"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "ok");
+}
+
+#[test]
+fn errexit_suppressed_in_non_final_and_or() {
+    let output = Command::new(meiksh())
+        .args(["-ec", "false || echo ok"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "ok");
+}
+
+#[test]
+fn errexit_fires_on_final_and_or_command() {
+    let output = Command::new(meiksh())
+        .args(["-ec", "true && false; echo unreachable"])
+        .output()
+        .expect("run meiksh");
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("unreachable"),
+        "should not reach echo after && false with -e"
+    );
+}
+
+#[test]
+fn errexit_suppressed_in_negated_pipeline() {
+    let output = Command::new(meiksh())
+        .args(["-ec", "! true; echo ok"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "ok");
+}
+
+#[test]
+fn xtrace_outputs_trace_to_stderr() {
+    let output = Command::new(meiksh())
+        .args(["-xc", "echo hello"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("+ echo hello"),
+        "expected xtrace output, got stderr: {stderr}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "hello");
+}
+
+#[test]
+fn xtrace_uses_custom_ps4() {
+    let output = Command::new(meiksh())
+        .args(["-xc", "PS4='>> '; echo hello"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(">> echo hello"),
+        "expected custom PS4 prefix, got stderr: {stderr}"
+    );
+}
+
+#[test]
+fn combined_c_flag_with_other_options() {
+    let output = Command::new(meiksh())
+        .args(["-ac", "echo $-"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.trim().contains('a'),
+        "expected 'a' in $- output, got: {stdout}"
+    );
+    assert!(
+        stdout.trim().contains('c'),
+        "expected 'c' in $- output, got: {stdout}"
+    );
+}
+
+#[test]
+fn set_e_and_set_x_work_at_runtime() {
+    let output = Command::new(meiksh())
+        .args(["-c", "set -x; echo traced"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("+ echo traced"),
+        "expected xtrace output after set -x, got stderr: {stderr}"
+    );
+
+    let output = Command::new(meiksh())
+        .args(["-c", "set -e; false; echo unreachable"])
+        .output()
+        .expect("run meiksh");
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("unreachable"));
+}
+
+#[test]
+fn dollar_dash_includes_new_option_flags() {
+    let output = Command::new(meiksh())
+        .args(["-ec", "echo $-"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.trim().contains('e'),
+        "expected 'e' in $- output, got: {stdout}"
+    );
+}

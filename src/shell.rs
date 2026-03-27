@@ -23,36 +23,50 @@ pub fn run_from_env() -> i32 {
 pub struct ShellOptions {
     pub allexport: bool,
     pub command_string: Option<String>,
+    pub errexit: bool,
     pub syntax_check_only: bool,
     pub force_interactive: bool,
+    pub hashall: bool,
     pub noclobber: bool,
     pub noglob: bool,
+    pub notify: bool,
     pub nounset: bool,
     pub verbose: bool,
+    pub xtrace: bool,
     pub script_path: Option<PathBuf>,
     pub shell_name_override: Option<String>,
     pub positional: Vec<String>,
 }
 
-const REPORTABLE_OPTION_NAMES: [(&str, char); 6] = [
+const REPORTABLE_OPTION_NAMES: [(&str, char); 11] = [
     ("allexport", 'a'),
+    ("errexit", 'e'),
+    ("hashall", 'h'),
+    ("monitor", 'm'),
     ("noclobber", 'C'),
     ("noglob", 'f'),
     ("noexec", 'n'),
+    ("notify", 'b'),
     ("nounset", 'u'),
     ("verbose", 'v'),
+    ("xtrace", 'x'),
 ];
 
 impl ShellOptions {
     pub fn set_short_option(&mut self, ch: char, enabled: bool) -> Result<(), ShellError> {
         match ch {
             'a' => self.allexport = enabled,
+            'b' => self.notify = enabled,
             'C' => self.noclobber = enabled,
+            'e' => self.errexit = enabled,
             'f' => self.noglob = enabled,
+            'h' => self.hashall = enabled,
             'i' => self.force_interactive = enabled,
+            'm' => { /* monitor: accepted but deferred to Milestone 8 */ }
             'n' => self.syntax_check_only = enabled,
             'u' => self.nounset = enabled,
             'v' => self.verbose = enabled,
+            'x' => self.xtrace = enabled,
             _ => return Err(ShellError::with_status(2, format!("invalid option: {ch}"))),
         }
         Ok(())
@@ -71,14 +85,19 @@ impl ShellOptions {
         self.set_short_option(*letter, enabled)
     }
 
-    pub fn reportable_options(&self) -> [(&'static str, bool); 6] {
+    pub fn reportable_options(&self) -> [(&'static str, bool); 11] {
         [
             ("allexport", self.allexport),
+            ("errexit", self.errexit),
+            ("hashall", self.hashall),
+            ("monitor", false),
             ("noclobber", self.noclobber),
             ("noglob", self.noglob),
             ("noexec", self.syntax_check_only),
+            ("notify", self.notify),
             ("nounset", self.nounset),
             ("verbose", self.verbose),
+            ("xtrace", self.xtrace),
         ]
     }
 }
@@ -169,6 +188,7 @@ pub struct Shell {
     pub function_depth: usize,
     pub pending_control: Option<PendingControl>,
     pub(crate) interactive: bool,
+    pub(crate) errexit_suppressed: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -250,6 +270,7 @@ impl Shell {
             function_depth: 0,
             pending_control: None,
             interactive,
+            errexit_suppressed: false,
         })
     }
 
@@ -282,6 +303,7 @@ impl Shell {
             loop_depth: 0,
             function_depth: 0,
             pending_control: None,
+            errexit_suppressed: false,
         })
     }
 
@@ -978,11 +1000,6 @@ fn parse_options(args: &[String]) -> Result<ShellOptions, ShellError> {
             options.positional = args.iter().skip(index + 3).cloned().collect();
             return Ok(options);
         }
-        if arg == "-n" {
-            options.syntax_check_only = true;
-            index += 1;
-            continue;
-        }
         if arg == "-o" || arg == "+o" {
             let enabled = arg == "-o";
             let name = args
@@ -1012,11 +1029,22 @@ fn parse_options(args: &[String]) -> Result<ShellOptions, ShellError> {
         if (arg.starts_with('-') || arg.starts_with('+')) && arg != "-" && arg != "+" {
             let enabled = arg.starts_with('-');
             let mut read_stdin = false;
+            let mut saw_c = false;
             for ch in arg[1..].chars() {
                 match ch {
+                    'c' if enabled => saw_c = true,
                     's' if enabled => read_stdin = true,
                     _ => options.set_short_option(ch, enabled)?,
                 }
+            }
+            if saw_c {
+                let command = args.get(index + 1).ok_or_else(|| ShellError {
+                    message: ShellError::with_status(2, "-c requires an argument").message,
+                })?;
+                options.command_string = Some(command.clone());
+                options.shell_name_override = args.get(index + 2).cloned();
+                options.positional = args.iter().skip(index + 3).cloned().collect();
+                return Ok(options);
             }
             if read_stdin {
                 options.positional = args.iter().skip(index + 1).cloned().collect();
@@ -1044,11 +1072,20 @@ impl Shell {
         if self.options.allexport {
             flags.push('a');
         }
+        if self.options.notify {
+            flags.push('b');
+        }
         if self.options.noclobber {
             flags.push('C');
         }
+        if self.options.errexit {
+            flags.push('e');
+        }
         if self.options.noglob {
             flags.push('f');
+        }
+        if self.options.hashall {
+            flags.push('h');
         }
         if self.is_interactive() {
             flags.push('i');
@@ -1061,6 +1098,9 @@ impl Shell {
         }
         if self.options.verbose {
             flags.push('v');
+        }
+        if self.options.xtrace {
+            flags.push('x');
         }
         if self.options.command_string.is_some() {
             flags.push('c');
@@ -1184,6 +1224,7 @@ mod tests {
             function_depth: 0,
             pending_control: None,
             interactive: false,
+            errexit_suppressed: false,
         }
     }
 
@@ -2431,6 +2472,108 @@ mod tests {
         shell.known_job_statuses.insert(id, 5);
         assert_no_syscalls(|| {
             assert_eq!(shell.wait_for_job_operand(id).expect("known job path"), 5);
+        });
+    }
+
+    #[test]
+    fn parse_options_combined_c_with_other_flags() {
+        assert_no_syscalls(|| {
+            let options = parse_options(&[
+                "meiksh".into(),
+                "-ac".into(),
+                "echo ok".into(),
+                "name".into(),
+            ])
+            .expect("parse -ac");
+            assert!(options.allexport);
+            assert_eq!(options.command_string.as_deref(), Some("echo ok"));
+            assert_eq!(options.shell_name_override.as_deref(), Some("name"));
+
+            let options = parse_options(&["meiksh".into(), "-euc".into(), "echo ok".into()])
+                .expect("parse -euc");
+            assert!(options.errexit);
+            assert!(options.nounset);
+            assert_eq!(options.command_string.as_deref(), Some("echo ok"));
+
+            let error =
+                parse_options(&["meiksh".into(), "-ec".into()]).expect_err("missing -c arg");
+            assert_eq!(error.display_message(), "-c requires an argument");
+        });
+    }
+
+    #[test]
+    fn set_short_option_accepts_new_options() {
+        assert_no_syscalls(|| {
+            let mut opts = ShellOptions::default();
+            opts.set_short_option('e', true).expect("set -e");
+            assert!(opts.errexit);
+            opts.set_short_option('e', false).expect("set +e");
+            assert!(!opts.errexit);
+
+            opts.set_short_option('x', true).expect("set -x");
+            assert!(opts.xtrace);
+            opts.set_short_option('x', false).expect("set +x");
+            assert!(!opts.xtrace);
+
+            opts.set_short_option('b', true).expect("set -b");
+            assert!(opts.notify);
+
+            opts.set_short_option('h', true).expect("set -h");
+            assert!(opts.hashall);
+
+            opts.set_short_option('m', true).expect("set -m");
+        });
+    }
+
+    #[test]
+    fn set_named_option_accepts_new_options() {
+        assert_no_syscalls(|| {
+            let mut opts = ShellOptions::default();
+            opts.set_named_option("errexit", true).expect("errexit");
+            assert!(opts.errexit);
+            opts.set_named_option("xtrace", true).expect("xtrace");
+            assert!(opts.xtrace);
+            opts.set_named_option("notify", true).expect("notify");
+            assert!(opts.notify);
+            opts.set_named_option("hashall", true).expect("hashall");
+            assert!(opts.hashall);
+            opts.set_named_option("monitor", true).expect("monitor");
+        });
+    }
+
+    #[test]
+    fn active_option_flags_includes_new_options() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.options.errexit = true;
+            shell.options.xtrace = true;
+            shell.options.notify = true;
+            shell.options.hashall = true;
+            let flags = shell.active_option_flags();
+            assert!(flags.contains('e'));
+            assert!(flags.contains('x'));
+            assert!(flags.contains('b'));
+            assert!(flags.contains('h'));
+        });
+    }
+
+    #[test]
+    fn reportable_options_includes_new_options() {
+        assert_no_syscalls(|| {
+            let mut opts = ShellOptions::default();
+            opts.errexit = true;
+            opts.xtrace = true;
+            let reported = opts.reportable_options();
+            let names: Vec<&str> = reported.iter().map(|(n, _)| *n).collect();
+            assert!(names.contains(&"errexit"));
+            assert!(names.contains(&"xtrace"));
+            assert!(names.contains(&"notify"));
+            assert!(names.contains(&"hashall"));
+            assert!(names.contains(&"monitor"));
+            let errexit = reported.iter().find(|(n, _)| *n == "errexit").unwrap();
+            assert!(errexit.1);
+            let xtrace = reported.iter().find(|(n, _)| *n == "xtrace").unwrap();
+            assert!(xtrace.1);
         });
     }
 }

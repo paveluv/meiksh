@@ -306,17 +306,9 @@ fn set(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
                 _ if (arg.starts_with('-') || arg.starts_with('+')) && arg != "-" && arg != "+" => {
                     let enabled = arg.starts_with('-');
                     for ch in arg[1..].chars() {
-                        match ch {
-                            'a' => shell.options.allexport = enabled,
-                            'C' => shell.options.noclobber = enabled,
-                            'f' => shell.options.noglob = enabled,
-                            'n' => shell.options.syntax_check_only = enabled,
-                            'u' => shell.options.nounset = enabled,
-                            'v' => shell.options.verbose = enabled,
-                            _ => {
-                                write_stderr(&format!("set: invalid option: {ch}\n"));
-                                return BuiltinOutcome::Status(2);
-                            }
+                        if let Err(error) = shell.options.set_short_option(ch, enabled) {
+                            write_stderr(&format!("set: {}\n", error.display_message()));
+                            return BuiltinOutcome::Status(error.exit_status());
                         }
                     }
                     index += 1;
@@ -1696,6 +1688,7 @@ mod tests {
             function_depth: 0,
             pending_control: None,
             interactive: false,
+            errexit_suppressed: false,
         }
     }
 

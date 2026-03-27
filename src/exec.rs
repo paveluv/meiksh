@@ -34,6 +34,13 @@ pub fn execute_program(shell: &mut Shell, program: &Program) -> Result<i32, Shel
     Ok(status)
 }
 
+fn check_errexit(shell: &mut Shell, status: i32) {
+    if status != 0 && shell.options.errexit && !shell.errexit_suppressed {
+        shell.running = false;
+        shell.last_status = status;
+    }
+}
+
 fn execute_list_item(shell: &mut Shell, item: &ListItem) -> Result<i32, ShellError> {
     if item.asynchronous {
         let devnull = sys::open_file("/dev/null", sys::O_RDONLY, 0)?;
@@ -49,13 +56,39 @@ fn execute_list_item(shell: &mut Shell, item: &ListItem) -> Result<i32, ShellErr
 }
 
 fn execute_and_or(shell: &mut Shell, node: &AndOr) -> Result<i32, ShellError> {
+    if node.rest.is_empty() {
+        let saved_suppressed = shell.errexit_suppressed;
+        if node.first.negated {
+            shell.errexit_suppressed = true;
+        }
+        let status = execute_pipeline(shell, &node.first, false)?;
+        shell.errexit_suppressed = saved_suppressed;
+        if !node.first.negated {
+            check_errexit(shell, status);
+        }
+        return Ok(status);
+    }
+    let saved_suppressed = shell.errexit_suppressed;
+    shell.errexit_suppressed = true;
     let mut status = execute_pipeline(shell, &node.first, false)?;
-    for (op, pipeline) in &node.rest {
+    for (i, (op, pipeline)) in node.rest.iter().enumerate() {
+        let is_last = i == node.rest.len() - 1;
+        if is_last {
+            shell.errexit_suppressed = saved_suppressed;
+            if pipeline.negated {
+                shell.errexit_suppressed = true;
+            }
+        }
         match op {
             LogicalOp::And if status == 0 => status = execute_pipeline(shell, pipeline, false)?,
             LogicalOp::Or if status != 0 => status = execute_pipeline(shell, pipeline, false)?,
             _ => {}
         }
+    }
+    shell.errexit_suppressed = saved_suppressed;
+    let last_pipeline = node.rest.last().map(|(_, p)| p).unwrap_or(&node.first);
+    if !last_pipeline.negated {
+        check_errexit(shell, status);
     }
     Ok(status)
 }
@@ -99,7 +132,12 @@ fn execute_pipeline(
 ) -> Result<i32, ShellError> {
     if pipeline.commands.len() == 1 {
         if !asynchronous {
+            let saved_suppressed = shell.errexit_suppressed;
+            if pipeline.negated {
+                shell.errexit_suppressed = true;
+            }
             let status = execute_command(shell, &pipeline.commands[0])?;
+            shell.errexit_suppressed = saved_suppressed;
             return Ok(if pipeline.negated {
                 if status == 0 { 1 } else { 0 }
             } else {
@@ -282,12 +320,19 @@ fn execute_redirected(
 }
 
 fn execute_if(shell: &mut Shell, if_command: &IfCommand) -> Result<i32, ShellError> {
-    if execute_nested_program(shell, &if_command.condition)? == 0 {
+    let saved_suppressed = shell.errexit_suppressed;
+    shell.errexit_suppressed = true;
+    let cond = execute_nested_program(shell, &if_command.condition)?;
+    shell.errexit_suppressed = saved_suppressed;
+    if cond == 0 {
         return execute_nested_program(shell, &if_command.then_branch);
     }
 
     for branch in &if_command.elif_branches {
-        if execute_nested_program(shell, &branch.condition)? == 0 {
+        shell.errexit_suppressed = true;
+        let cond = execute_nested_program(shell, &branch.condition)?;
+        shell.errexit_suppressed = saved_suppressed;
+        if cond == 0 {
             return execute_nested_program(shell, &branch.body);
         }
     }
@@ -304,7 +349,10 @@ fn execute_loop(shell: &mut Shell, loop_command: &LoopCommand) -> Result<i32, Sh
     let result = (|| {
         let mut last_status = 0;
         loop {
+            let saved_suppressed = shell.errexit_suppressed;
+            shell.errexit_suppressed = true;
             let condition_status = execute_nested_program(shell, &loop_command.condition)?;
+            shell.errexit_suppressed = saved_suppressed;
             match shell.pending_control {
                 Some(PendingControl::Return(_)) => break,
                 Some(PendingControl::Break(levels)) => {
@@ -472,8 +520,35 @@ fn run_builtin_flow(
     }
 }
 
+fn write_xtrace(shell: &mut Shell, expanded: &ExpandedSimpleCommand) {
+    if !shell.options.xtrace {
+        return;
+    }
+    let ps4_raw = shell.get_var("PS4").unwrap_or_else(|| "+ ".to_string());
+    let prefix = expand::expand_parameter_text(shell, &ps4_raw).unwrap_or_else(|_| "+ ".into());
+    let mut line = prefix;
+    for (name, value) in &expanded.assignments {
+        line.push_str(name);
+        line.push('=');
+        line.push_str(value);
+        line.push(' ');
+    }
+    for (i, word) in expanded.argv.iter().enumerate() {
+        if i > 0 {
+            line.push(' ');
+        }
+        line.push_str(word);
+    }
+    line.push('\n');
+    let _ = sys::write_all_fd(sys::STDERR_FILENO, line.as_bytes());
+}
+
 fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, ShellError> {
     let expanded = expand_simple(shell, simple)?;
+
+    if !expanded.argv.is_empty() || !expanded.assignments.is_empty() {
+        write_xtrace(shell, &expanded);
+    }
 
     if expanded.argv.is_empty() {
         return with_shell_redirections(&expanded.redirections, shell.options.noclobber, || {
@@ -1452,6 +1527,7 @@ mod tests {
             function_depth: 0,
             pending_control: None,
             interactive: false,
+            errexit_suppressed: false,
         }
     }
 
@@ -4178,6 +4254,233 @@ mod tests {
                 let spawned = spawn_and_or(&mut shell, &node, Some(50)).expect("spawn");
                 assert_eq!(spawned.children.len(), 1);
                 assert!(spawned.pgid.is_some());
+            },
+        );
+    }
+
+    #[test]
+    fn errexit_exits_on_nonzero_simple_command() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.options.errexit = true;
+            let program = crate::syntax::parse("false").expect("parse");
+            let status = execute_program(&mut shell, &program).expect("execute");
+            assert_eq!(status, 1);
+            assert!(!shell.running);
+        });
+    }
+
+    #[test]
+    fn errexit_does_not_exit_on_zero_status() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.options.errexit = true;
+            let program = crate::syntax::parse("true").expect("parse");
+            let status = execute_program(&mut shell, &program).expect("execute");
+            assert_eq!(status, 0);
+            assert!(shell.running);
+        });
+    }
+
+    #[test]
+    fn errexit_suppressed_in_if_condition() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.options.errexit = true;
+            let program = crate::syntax::parse("if false; then :; fi; true").expect("parse");
+            let status = execute_program(&mut shell, &program).expect("execute");
+            assert_eq!(status, 0);
+            assert!(shell.running);
+        });
+    }
+
+    #[test]
+    fn errexit_suppressed_in_elif_condition() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.options.errexit = true;
+            let program = crate::syntax::parse("if false; then :; elif false; then :; fi; true")
+                .expect("parse");
+            let status = execute_program(&mut shell, &program).expect("execute");
+            assert_eq!(status, 0);
+            assert!(shell.running);
+        });
+    }
+
+    #[test]
+    fn errexit_suppressed_in_while_condition() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.options.errexit = true;
+            let program = crate::syntax::parse("while false; do :; done; true").expect("parse");
+            let status = execute_program(&mut shell, &program).expect("execute");
+            assert_eq!(status, 0);
+            assert!(shell.running);
+        });
+    }
+
+    #[test]
+    fn errexit_suppressed_in_until_condition() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.options.errexit = true;
+            let program = crate::syntax::parse("until true; do :; done; true").expect("parse");
+            let status = execute_program(&mut shell, &program).expect("execute");
+            assert_eq!(status, 0);
+            assert!(shell.running);
+        });
+    }
+
+    #[test]
+    fn errexit_suppressed_in_non_final_and_or_commands() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.options.errexit = true;
+            let program = crate::syntax::parse("false || true").expect("parse");
+            let status = execute_program(&mut shell, &program).expect("execute");
+            assert_eq!(status, 0);
+            assert!(shell.running);
+        });
+    }
+
+    #[test]
+    fn errexit_fires_on_final_and_or_command() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.options.errexit = true;
+            let program = crate::syntax::parse("true && false").expect("parse");
+            let status = execute_program(&mut shell, &program).expect("execute");
+            assert_eq!(status, 1);
+            assert!(!shell.running);
+        });
+    }
+
+    #[test]
+    fn errexit_suppressed_in_negated_pipeline() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.options.errexit = true;
+            let program = crate::syntax::parse("! true; true").expect("parse");
+            let status = execute_program(&mut shell, &program).expect("execute");
+            assert_eq!(status, 0);
+            assert!(shell.running);
+        });
+    }
+
+    #[test]
+    fn errexit_suppressed_in_negated_final_and_or_pipeline() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.options.errexit = true;
+            let program = crate::syntax::parse("true && ! true; true").expect("parse");
+            let status = execute_program(&mut shell, &program).expect("execute");
+            assert_eq!(status, 0);
+            assert!(shell.running);
+        });
+    }
+
+    #[test]
+    fn errexit_multi_step_and_or_suppresses_non_final() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.options.errexit = true;
+            let program = crate::syntax::parse("false || false || true").expect("parse");
+            let status = execute_program(&mut shell, &program).expect("execute");
+            assert_eq!(status, 0);
+            assert!(shell.running);
+        });
+    }
+
+    #[test]
+    fn check_errexit_does_nothing_when_disabled() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.options.errexit = false;
+            check_errexit(&mut shell, 1);
+            assert!(shell.running);
+        });
+    }
+
+    #[test]
+    fn check_errexit_does_nothing_when_suppressed() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.options.errexit = true;
+            shell.errexit_suppressed = true;
+            check_errexit(&mut shell, 1);
+            assert!(shell.running);
+        });
+    }
+
+    #[test]
+    fn check_errexit_stops_shell_on_failure() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.options.errexit = true;
+            check_errexit(&mut shell, 1);
+            assert!(!shell.running);
+            assert_eq!(shell.last_status, 1);
+        });
+    }
+
+    #[test]
+    fn xtrace_writes_trace_to_stderr() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"+ echo hello\n".to_vec()),
+                ],
+                TraceResult::Int(13),
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.options.xtrace = true;
+                let expanded = ExpandedSimpleCommand {
+                    assignments: vec![],
+                    argv: vec!["echo".to_string(), "hello".to_string()],
+                    redirections: vec![],
+                };
+                write_xtrace(&mut shell, &expanded);
+            },
+        );
+    }
+
+    #[test]
+    fn xtrace_skipped_when_disabled() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.options.xtrace = false;
+            let expanded = ExpandedSimpleCommand {
+                assignments: vec![],
+                argv: vec!["echo".to_string()],
+                redirections: vec![],
+            };
+            write_xtrace(&mut shell, &expanded);
+        });
+    }
+
+    #[test]
+    fn xtrace_includes_assignments() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"+ FOO=bar cmd\n".to_vec()),
+                ],
+                TraceResult::Int(14),
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.options.xtrace = true;
+                let expanded = ExpandedSimpleCommand {
+                    assignments: vec![("FOO".to_string(), "bar".to_string())],
+                    argv: vec!["cmd".to_string()],
+                    redirections: vec![],
+                };
+                write_xtrace(&mut shell, &expanded);
             },
         );
     }
