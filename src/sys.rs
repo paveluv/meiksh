@@ -1,7 +1,7 @@
+use libc::{self, c_char, c_int, c_long, mode_t};
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use libc::{self, c_char, c_int, c_long, mode_t};
 
 pub type Pid = libc::pid_t;
 pub type RawFd = c_int;
@@ -193,12 +193,20 @@ pub(crate) fn default_interface() -> SystemInterface {
             let c_key = CString::new(key).map_err(|_| SysError::NulInPath)?;
             let c_value = CString::new(value).map_err(|_| SysError::NulInPath)?;
             let result = unsafe { libc::setenv(c_key.as_ptr(), c_value.as_ptr(), 1) };
-            if result == 0 { Ok(()) } else { Err(last_error()) }
+            if result == 0 {
+                Ok(())
+            } else {
+                Err(last_error())
+            }
         },
         unsetenv: |key| {
             let c_key = CString::new(key).map_err(|_| SysError::NulInPath)?;
             let result = unsafe { libc::unsetenv(c_key.as_ptr()) };
-            if result == 0 { Ok(()) } else { Err(last_error()) }
+            if result == 0 {
+                Ok(())
+            } else {
+                Err(last_error())
+            }
         },
         getenv: |key| {
             let c_key = CString::new(key).ok()?;
@@ -206,11 +214,17 @@ pub(crate) fn default_interface() -> SystemInterface {
             if ptr.is_null() {
                 None
             } else {
-                Some(unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned())
+                Some(
+                    unsafe { CStr::from_ptr(ptr) }
+                        .to_string_lossy()
+                        .into_owned(),
+                )
             }
         },
         get_environ: || {
-            unsafe extern "C" { static environ: *const *const c_char; }
+            unsafe extern "C" {
+                static environ: *const *const c_char;
+            }
             let mut map = HashMap::new();
             unsafe {
                 let mut ptr = environ;
@@ -293,7 +307,8 @@ pub(crate) mod test_support {
         TEST_INTERFACE.with(|cell| *cell.borrow())
     }
 
-    pub(crate) fn current_process_ids() -> Option<(libc::uid_t, libc::uid_t, libc::gid_t, libc::gid_t)> {
+    pub(crate) fn current_process_ids()
+    -> Option<(libc::uid_t, libc::uid_t, libc::gid_t, libc::gid_t)> {
         TEST_PROCESS_IDS.with(|cell| *cell.borrow())
     }
 
@@ -315,7 +330,9 @@ pub(crate) mod test_support {
     }
 
     pub(crate) fn with_test_interface<T>(iface: SystemInterface, f: impl FnOnce() -> T) -> T {
-        let _guard = syscall_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = syscall_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         TEST_INTERFACE.with(|cell| {
             let previous = cell.replace(Some(iface));
             let result = f();
@@ -454,7 +471,10 @@ pub(crate) mod test_support {
                 super::set_errno(*errno);
                 -1
             }
-            other => panic!("trace result type mismatch for '{}': expected Int/Fd/Err, got {other:?}", entry.syscall),
+            other => panic!(
+                "trace result type mismatch for '{}': expected Int/Fd/Err, got {other:?}",
+                entry.syscall
+            ),
         }
     }
 
@@ -465,7 +485,10 @@ pub(crate) mod test_support {
                 super::set_errno(*errno);
                 -1
             }
-            _ => panic!("trace result type mismatch for '{}': expected Int/Err", entry.syscall),
+            _ => panic!(
+                "trace result type mismatch for '{}': expected Int/Err",
+                entry.syscall
+            ),
         }
     }
 
@@ -477,7 +500,10 @@ pub(crate) mod test_support {
                 super::set_errno(*errno);
                 -1
             }
-            other => panic!("trace result type mismatch for '{}': expected Pid/Err, got {other:?}", entry.syscall),
+            other => panic!(
+                "trace result type mismatch for '{}': expected Pid/Err, got {other:?}",
+                entry.syscall
+            ),
         }
     }
 
@@ -487,17 +513,29 @@ pub(crate) mod test_support {
         apply_trace_result_pid(&entry)
     }
     fn trace_waitpid(pid: Pid, status: *mut c_int, options: c_int) -> Pid {
-        let entry = trace_dispatch("waitpid", &[ArgMatcher::Int(pid as i64), ArgMatcher::Any, ArgMatcher::Int(options as i64)]);
+        let entry = trace_dispatch(
+            "waitpid",
+            &[
+                ArgMatcher::Int(pid as i64),
+                ArgMatcher::Any,
+                ArgMatcher::Int(options as i64),
+            ],
+        );
         if !status.is_null() {
             if let TraceResult::Status(s) = entry.result {
-                unsafe { *status = s << 8; }
+                unsafe {
+                    *status = s << 8;
+                }
                 return pid;
             }
         }
         apply_trace_result_pid(&entry)
     }
     fn trace_kill(pid: Pid, sig: c_int) -> c_int {
-        let entry = trace_dispatch("kill", &[ArgMatcher::Int(pid as i64), ArgMatcher::Int(sig as i64)]);
+        let entry = trace_dispatch(
+            "kill",
+            &[ArgMatcher::Int(pid as i64), ArgMatcher::Int(sig as i64)],
+        );
         apply_trace_result_int(&entry)
     }
     fn trace_signal(sig: c_int, handler: libc::sighandler_t) -> libc::sighandler_t {
@@ -521,25 +559,36 @@ pub(crate) mod test_support {
         apply_trace_result_pid(&entry)
     }
     fn trace_tcsetpgrp(fd: c_int, pgrp: Pid) -> c_int {
-        let entry = trace_dispatch("tcsetpgrp", &[ArgMatcher::Fd(fd), ArgMatcher::Int(pgrp as i64)]);
+        let entry = trace_dispatch(
+            "tcsetpgrp",
+            &[ArgMatcher::Fd(fd), ArgMatcher::Int(pgrp as i64)],
+        );
         apply_trace_result_int(&entry)
     }
     fn trace_setpgid(pid: Pid, pgid: Pid) -> c_int {
-        let entry = trace_dispatch("setpgid", &[ArgMatcher::Int(pid as i64), ArgMatcher::Int(pgid as i64)]);
+        let entry = trace_dispatch(
+            "setpgid",
+            &[ArgMatcher::Int(pid as i64), ArgMatcher::Int(pgid as i64)],
+        );
         apply_trace_result_int(&entry)
     }
     fn trace_pipe(fds: *mut c_int) -> c_int {
         let entry = trace_dispatch("pipe", &[]);
         match &entry.result {
             TraceResult::Fds(r, w) => {
-                unsafe { *fds = *r; *fds.add(1) = *w; }
+                unsafe {
+                    *fds = *r;
+                    *fds.add(1) = *w;
+                }
                 0
             }
             TraceResult::Err(errno) => {
                 super::set_errno(*errno);
                 -1
             }
-            other => panic!("trace result type mismatch for 'pipe': expected Fds/Err, got {other:?}"),
+            other => {
+                panic!("trace result type mismatch for 'pipe': expected Fds/Err, got {other:?}")
+            }
         }
     }
     fn trace_dup(fd: c_int) -> c_int {
@@ -555,7 +604,14 @@ pub(crate) mod test_support {
         apply_trace_result_int(&entry)
     }
     fn trace_fcntl(fd: c_int, cmd: c_int, arg: c_int) -> c_int {
-        let entry = trace_dispatch("fcntl", &[ArgMatcher::Fd(fd), ArgMatcher::Int(cmd as i64), ArgMatcher::Int(arg as i64)]);
+        let entry = trace_dispatch(
+            "fcntl",
+            &[
+                ArgMatcher::Fd(fd),
+                ArgMatcher::Int(cmd as i64),
+                ArgMatcher::Int(arg as i64),
+            ],
+        );
         apply_trace_result_int(&entry)
     }
     fn trace_read(fd: c_int, buf: *mut u8, count: usize) -> isize {
@@ -563,7 +619,9 @@ pub(crate) mod test_support {
         match &entry.result {
             TraceResult::Bytes(data) => {
                 let n = data.len().min(count);
-                unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), buf, n); }
+                unsafe {
+                    std::ptr::copy_nonoverlapping(data.as_ptr(), buf, n);
+                }
                 n as isize
             }
             TraceResult::Int(v) => *v as isize,
@@ -571,7 +629,9 @@ pub(crate) mod test_support {
                 super::set_errno(*errno);
                 -1
             }
-            other => panic!("trace result type mismatch for 'read': expected Bytes/Int/Err, got {other:?}"),
+            other => panic!(
+                "trace result type mismatch for 'read': expected Bytes/Int/Err, got {other:?}"
+            ),
         }
     }
     fn trace_umask(cmask: FileModeMask) -> FileModeMask {
@@ -586,45 +646,74 @@ pub(crate) mod test_support {
         match &entry.result {
             TraceResult::Int(v) => *v as ClockTicks,
             TraceResult::Err(_) => ClockTicks::MAX,
-            other => panic!("trace result type mismatch for 'times': expected Int/Err, got {other:?}"),
+            other => {
+                panic!("trace result type mismatch for 'times': expected Int/Err, got {other:?}")
+            }
         }
     }
     fn trace_sysconf(name: c_int) -> c_long {
         let entry = trace_dispatch("sysconf", &[ArgMatcher::Int(name as i64)]);
         match &entry.result {
             TraceResult::Int(v) => *v as c_long,
-            other => panic!("trace result type mismatch for 'sysconf': expected Int, got {other:?}"),
+            other => {
+                panic!("trace result type mismatch for 'sysconf': expected Int, got {other:?}")
+            }
         }
     }
     fn trace_execvp(file: *const c_char, _argv: *const *const c_char) -> c_int {
-        let name = unsafe { CStr::from_ptr(file) }.to_string_lossy().to_string();
+        let name = unsafe { CStr::from_ptr(file) }
+            .to_string_lossy()
+            .to_string();
         let entry = trace_dispatch("execvp", &[ArgMatcher::Str(name), ArgMatcher::Any]);
         apply_trace_result_int(&entry)
     }
     fn trace_open(path: *const c_char, flags: c_int, mode: mode_t) -> c_int {
-        let p = unsafe { CStr::from_ptr(path) }.to_string_lossy().to_string();
-        let entry = trace_dispatch("open", &[ArgMatcher::Str(p), ArgMatcher::Int(flags as i64), ArgMatcher::Int(mode as i64)]);
+        let p = unsafe { CStr::from_ptr(path) }
+            .to_string_lossy()
+            .to_string();
+        let entry = trace_dispatch(
+            "open",
+            &[
+                ArgMatcher::Str(p),
+                ArgMatcher::Int(flags as i64),
+                ArgMatcher::Int(mode as i64),
+            ],
+        );
         apply_trace_result_int(&entry)
     }
     fn trace_write(fd: c_int, buf: *const u8, count: usize) -> isize {
         let data = unsafe { std::slice::from_raw_parts(buf, count) };
-        let entry = trace_dispatch("write", &[ArgMatcher::Fd(fd), ArgMatcher::Bytes(data.to_vec())]);
+        let entry = trace_dispatch(
+            "write",
+            &[ArgMatcher::Fd(fd), ArgMatcher::Bytes(data.to_vec())],
+        );
         apply_trace_result_isize(&entry)
     }
     fn trace_stat(path: *const c_char, buf: *mut libc::stat) -> c_int {
-        let p = unsafe { CStr::from_ptr(path) }.to_string_lossy().to_string();
+        let p = unsafe { CStr::from_ptr(path) }
+            .to_string_lossy()
+            .to_string();
         let entry = trace_dispatch("stat", &[ArgMatcher::Str(p), ArgMatcher::Any]);
         match &entry.result {
             TraceResult::StatDir => {
-                unsafe { std::ptr::write_bytes(buf, 0, 1); (*buf).st_mode = libc::S_IFDIR | 0o755; }
+                unsafe {
+                    std::ptr::write_bytes(buf, 0, 1);
+                    (*buf).st_mode = libc::S_IFDIR | 0o755;
+                }
                 0
             }
             TraceResult::StatFile(mode) => {
-                unsafe { std::ptr::write_bytes(buf, 0, 1); (*buf).st_mode = libc::S_IFREG | mode; }
+                unsafe {
+                    std::ptr::write_bytes(buf, 0, 1);
+                    (*buf).st_mode = libc::S_IFREG | mode;
+                }
                 0
             }
             TraceResult::StatFifo => {
-                unsafe { std::ptr::write_bytes(buf, 0, 1); (*buf).st_mode = libc::S_IFIFO | 0o644; }
+                unsafe {
+                    std::ptr::write_bytes(buf, 0, 1);
+                    (*buf).st_mode = libc::S_IFIFO | 0o644;
+                }
                 0
             }
             TraceResult::Err(errno) => {
@@ -632,22 +721,33 @@ pub(crate) mod test_support {
                 -1
             }
             TraceResult::Int(v) => *v as c_int,
-            other => panic!("trace result type mismatch for 'stat': expected StatDir/StatFile/Err, got {other:?}"),
+            other => panic!(
+                "trace result type mismatch for 'stat': expected StatDir/StatFile/Err, got {other:?}"
+            ),
         }
     }
     fn trace_fstat(fd: c_int, buf: *mut libc::stat) -> c_int {
         let entry = trace_dispatch("fstat", &[ArgMatcher::Fd(fd), ArgMatcher::Any]);
         match &entry.result {
             TraceResult::StatDir => {
-                unsafe { std::ptr::write_bytes(buf, 0, 1); (*buf).st_mode = libc::S_IFDIR | 0o755; }
+                unsafe {
+                    std::ptr::write_bytes(buf, 0, 1);
+                    (*buf).st_mode = libc::S_IFDIR | 0o755;
+                }
                 0
             }
             TraceResult::StatFile(mode) => {
-                unsafe { std::ptr::write_bytes(buf, 0, 1); (*buf).st_mode = libc::S_IFREG | mode; }
+                unsafe {
+                    std::ptr::write_bytes(buf, 0, 1);
+                    (*buf).st_mode = libc::S_IFREG | mode;
+                }
                 0
             }
             TraceResult::StatFifo => {
-                unsafe { std::ptr::write_bytes(buf, 0, 1); (*buf).st_mode = libc::S_IFIFO | 0o644; }
+                unsafe {
+                    std::ptr::write_bytes(buf, 0, 1);
+                    (*buf).st_mode = libc::S_IFIFO | 0o644;
+                }
                 0
             }
             TraceResult::Err(errno) => {
@@ -655,16 +755,25 @@ pub(crate) mod test_support {
                 -1
             }
             TraceResult::Int(v) => *v as c_int,
-            other => panic!("trace result type mismatch for 'fstat': expected StatDir/StatFile/StatFifo/Err, got {other:?}"),
+            other => panic!(
+                "trace result type mismatch for 'fstat': expected StatDir/StatFile/StatFifo/Err, got {other:?}"
+            ),
         }
     }
     fn trace_access(path: *const c_char, mode: c_int) -> c_int {
-        let p = unsafe { CStr::from_ptr(path) }.to_string_lossy().to_string();
-        let entry = trace_dispatch("access", &[ArgMatcher::Str(p), ArgMatcher::Int(mode as i64)]);
+        let p = unsafe { CStr::from_ptr(path) }
+            .to_string_lossy()
+            .to_string();
+        let entry = trace_dispatch(
+            "access",
+            &[ArgMatcher::Str(p), ArgMatcher::Int(mode as i64)],
+        );
         apply_trace_result_int(&entry)
     }
     fn trace_chdir(path: *const c_char) -> c_int {
-        let p = unsafe { CStr::from_ptr(path) }.to_string_lossy().to_string();
+        let p = unsafe { CStr::from_ptr(path) }
+            .to_string_lossy()
+            .to_string();
         let entry = trace_dispatch("chdir", &[ArgMatcher::Str(p)]);
         apply_trace_result_int(&entry)
     }
@@ -687,11 +796,15 @@ pub(crate) mod test_support {
                 super::set_errno(*errno);
                 std::ptr::null_mut()
             }
-            other => panic!("trace result type mismatch for 'getcwd': expected CwdStr/Err, got {other:?}"),
+            other => panic!(
+                "trace result type mismatch for 'getcwd': expected CwdStr/Err, got {other:?}"
+            ),
         }
     }
     fn trace_opendir(path: *const c_char) -> *mut libc::DIR {
-        let p = unsafe { CStr::from_ptr(path) }.to_string_lossy().to_string();
+        let p = unsafe { CStr::from_ptr(path) }
+            .to_string_lossy()
+            .to_string();
         let entry = trace_dispatch("opendir", &[ArgMatcher::Str(p)]);
         match &entry.result {
             TraceResult::Int(v) => *v as *mut libc::DIR,
@@ -699,7 +812,9 @@ pub(crate) mod test_support {
                 super::set_errno(*errno);
                 std::ptr::null_mut()
             }
-            other => panic!("trace result type mismatch for 'opendir': expected Int/Err, got {other:?}"),
+            other => {
+                panic!("trace result type mismatch for 'opendir': expected Int/Err, got {other:?}")
+            }
         }
     }
     thread_local! {
@@ -708,19 +823,17 @@ pub(crate) mod test_support {
     fn trace_readdir(_dirp: *mut libc::DIR) -> *mut libc::dirent {
         let entry = trace_dispatch("readdir", &[ArgMatcher::Any]);
         match &entry.result {
-            TraceResult::DirEntry(name) => {
-                FAKE_DIRENT.with(|cell| {
-                    let mut d = cell.borrow_mut();
-                    d.d_name = unsafe { std::mem::zeroed() };
-                    let bytes = name.as_bytes();
-                    let len = bytes.len().min(d.d_name.len() - 1);
-                    for (i, &b) in bytes[..len].iter().enumerate() {
-                        d.d_name[i] = b as i8;
-                    }
-                    d.d_name[len] = 0;
-                    &mut *d as *mut libc::dirent
-                })
-            }
+            TraceResult::DirEntry(name) => FAKE_DIRENT.with(|cell| {
+                let mut d = cell.borrow_mut();
+                d.d_name = unsafe { std::mem::zeroed() };
+                let bytes = name.as_bytes();
+                let len = bytes.len().min(d.d_name.len() - 1);
+                for (i, &b) in bytes[..len].iter().enumerate() {
+                    d.d_name[i] = b as i8;
+                }
+                d.d_name[len] = 0;
+                &mut *d as *mut libc::dirent
+            }),
             TraceResult::Int(0) => {
                 super::set_errno(0);
                 std::ptr::null_mut()
@@ -729,7 +842,9 @@ pub(crate) mod test_support {
                 super::set_errno(*errno);
                 std::ptr::null_mut()
             }
-            other => panic!("trace result type mismatch for 'readdir': expected DirEntry/Int(0)/Err, got {other:?}"),
+            other => panic!(
+                "trace result type mismatch for 'readdir': expected DirEntry/Int(0)/Err, got {other:?}"
+            ),
         }
     }
     fn trace_closedir(_dirp: *mut libc::DIR) -> c_int {
@@ -737,20 +852,31 @@ pub(crate) mod test_support {
         apply_trace_result_int(&entry)
     }
     fn trace_realpath(path: *const c_char, resolved: *mut c_char) -> *mut c_char {
-        let p = unsafe { CStr::from_ptr(path) }.to_string_lossy().to_string();
+        let p = unsafe { CStr::from_ptr(path) }
+            .to_string_lossy()
+            .to_string();
         let entry = trace_dispatch("realpath", &[ArgMatcher::Str(p), ArgMatcher::Any]);
         match &entry.result {
             TraceResult::RealpathStr(s) => {
                 let c_result = std::ffi::CString::new(s.as_str()).unwrap();
                 if resolved.is_null() {
-                    let ptr = unsafe { libc::malloc(c_result.as_bytes_with_nul().len()) } as *mut c_char;
+                    let ptr =
+                        unsafe { libc::malloc(c_result.as_bytes_with_nul().len()) } as *mut c_char;
                     unsafe {
-                        std::ptr::copy_nonoverlapping(c_result.as_ptr(), ptr, c_result.as_bytes_with_nul().len());
+                        std::ptr::copy_nonoverlapping(
+                            c_result.as_ptr(),
+                            ptr,
+                            c_result.as_bytes_with_nul().len(),
+                        );
                     }
                     ptr
                 } else {
                     unsafe {
-                        std::ptr::copy_nonoverlapping(c_result.as_ptr(), resolved, c_result.as_bytes_with_nul().len());
+                        std::ptr::copy_nonoverlapping(
+                            c_result.as_ptr(),
+                            resolved,
+                            c_result.as_bytes_with_nul().len(),
+                        );
                     }
                     resolved
                 }
@@ -759,7 +885,9 @@ pub(crate) mod test_support {
                 super::set_errno(*errno);
                 std::ptr::null_mut()
             }
-            other => panic!("trace result type mismatch for 'realpath': expected RealpathStr/Err, got {other:?}"),
+            other => panic!(
+                "trace result type mismatch for 'realpath': expected RealpathStr/Err, got {other:?}"
+            ),
         }
     }
     fn trace_fork() -> Pid {
@@ -773,7 +901,13 @@ pub(crate) mod test_support {
     }
 
     fn trace_setenv(key: &str, value: &str) -> SysResult<()> {
-        let entry = trace_dispatch("setenv", &[ArgMatcher::Str(key.to_string()), ArgMatcher::Str(value.to_string())]);
+        let entry = trace_dispatch(
+            "setenv",
+            &[
+                ArgMatcher::Str(key.to_string()),
+                ArgMatcher::Str(value.to_string()),
+            ],
+        );
         match entry.result {
             TraceResult::Int(0) => Ok(()),
             TraceResult::Err(errno) => Err(SysError::Errno(errno)),
@@ -851,55 +985,148 @@ pub(crate) mod test_support {
     }
 
     pub(crate) fn no_interface_table() -> SystemInterface {
-        fn panic_getpid() -> Pid { panic!("unexpected syscall 'getpid' in pure-logic test") }
-        fn panic_waitpid(_: Pid, _: *mut c_int, _: c_int) -> Pid { panic!("unexpected syscall 'waitpid' in pure-logic test") }
-        fn panic_kill(_: Pid, _: c_int) -> c_int { panic!("unexpected syscall 'kill' in pure-logic test") }
-        fn panic_signal(_: c_int, _: libc::sighandler_t) -> libc::sighandler_t { panic!("unexpected syscall 'signal' in pure-logic test") }
-        fn panic_isatty(_: c_int) -> c_int { panic!("unexpected syscall 'isatty' in pure-logic test") }
-        fn panic_tcgetpgrp(_: c_int) -> Pid { panic!("unexpected syscall 'tcgetpgrp' in pure-logic test") }
-        fn panic_tcsetpgrp(_: c_int, _: Pid) -> c_int { panic!("unexpected syscall 'tcsetpgrp' in pure-logic test") }
-        fn panic_setpgid(_: Pid, _: Pid) -> c_int { panic!("unexpected syscall 'setpgid' in pure-logic test") }
-        fn panic_pipe(_: *mut c_int) -> c_int { panic!("unexpected syscall 'pipe' in pure-logic test") }
-        fn panic_dup(_: c_int) -> c_int { panic!("unexpected syscall 'dup' in pure-logic test") }
-        fn panic_dup2(_: c_int, _: c_int) -> c_int { panic!("unexpected syscall 'dup2' in pure-logic test") }
-        fn panic_close(_: c_int) -> c_int { panic!("unexpected syscall 'close' in pure-logic test") }
-        fn panic_fcntl(_: c_int, _: c_int, _: c_int) -> c_int { panic!("unexpected syscall 'fcntl' in pure-logic test") }
-        fn panic_read(_: c_int, _: *mut u8, _: usize) -> isize { panic!("unexpected syscall 'read' in pure-logic test") }
-        fn panic_umask(_: FileModeMask) -> FileModeMask { panic!("unexpected syscall 'umask' in pure-logic test") }
-        fn panic_times(_: *mut libc::tms) -> ClockTicks { panic!("unexpected syscall 'times' in pure-logic test") }
-        fn panic_sysconf(_: c_int) -> c_long { panic!("unexpected syscall 'sysconf' in pure-logic test") }
-        fn panic_execvp(_: *const c_char, _: *const *const c_char) -> c_int { panic!("unexpected syscall 'execvp' in pure-logic test") }
-        fn panic_open(_: *const c_char, _: c_int, _: mode_t) -> c_int { panic!("unexpected syscall 'open' in pure-logic test") }
-        fn panic_write(_: c_int, _: *const u8, _: usize) -> isize { panic!("unexpected syscall 'write' in pure-logic test") }
-        fn panic_stat(_: *const c_char, _: *mut libc::stat) -> c_int { panic!("unexpected syscall 'stat' in pure-logic test") }
-        fn panic_fstat(_: c_int, _: *mut libc::stat) -> c_int { panic!("unexpected syscall 'fstat' in pure-logic test") }
-        fn panic_access(_: *const c_char, _: c_int) -> c_int { panic!("unexpected syscall 'access' in pure-logic test") }
-        fn panic_chdir(_: *const c_char) -> c_int { panic!("unexpected syscall 'chdir' in pure-logic test") }
-        fn panic_getcwd(_: *mut c_char, _: usize) -> *mut c_char { panic!("unexpected syscall 'getcwd' in pure-logic test") }
-        fn panic_opendir(_: *const c_char) -> *mut libc::DIR { panic!("unexpected syscall 'opendir' in pure-logic test") }
-        fn panic_readdir(_: *mut libc::DIR) -> *mut libc::dirent { panic!("unexpected syscall 'readdir' in pure-logic test") }
-        fn panic_closedir(_: *mut libc::DIR) -> c_int { panic!("unexpected syscall 'closedir' in pure-logic test") }
-        fn panic_realpath(_: *const c_char, _: *mut c_char) -> *mut c_char { panic!("unexpected syscall 'realpath' in pure-logic test") }
-        fn panic_fork() -> Pid { panic!("unexpected syscall 'fork' in pure-logic test") }
-        fn panic_exit_process(_: c_int) { panic!("unexpected syscall 'exit_process' in pure-logic test") }
-        fn panic_setenv(_: &str, _: &str) -> SysResult<()> { panic!("unexpected call 'setenv' in pure-logic test") }
-        fn panic_unsetenv(_: &str) -> SysResult<()> { panic!("unexpected call 'unsetenv' in pure-logic test") }
-        fn panic_getenv(_: &str) -> Option<String> { panic!("unexpected call 'getenv' in pure-logic test") }
-        fn panic_get_environ() -> HashMap<String, String> { panic!("unexpected call 'get_environ' in pure-logic test") }
+        fn panic_getpid() -> Pid {
+            panic!("unexpected syscall 'getpid' in pure-logic test")
+        }
+        fn panic_waitpid(_: Pid, _: *mut c_int, _: c_int) -> Pid {
+            panic!("unexpected syscall 'waitpid' in pure-logic test")
+        }
+        fn panic_kill(_: Pid, _: c_int) -> c_int {
+            panic!("unexpected syscall 'kill' in pure-logic test")
+        }
+        fn panic_signal(_: c_int, _: libc::sighandler_t) -> libc::sighandler_t {
+            panic!("unexpected syscall 'signal' in pure-logic test")
+        }
+        fn panic_isatty(_: c_int) -> c_int {
+            panic!("unexpected syscall 'isatty' in pure-logic test")
+        }
+        fn panic_tcgetpgrp(_: c_int) -> Pid {
+            panic!("unexpected syscall 'tcgetpgrp' in pure-logic test")
+        }
+        fn panic_tcsetpgrp(_: c_int, _: Pid) -> c_int {
+            panic!("unexpected syscall 'tcsetpgrp' in pure-logic test")
+        }
+        fn panic_setpgid(_: Pid, _: Pid) -> c_int {
+            panic!("unexpected syscall 'setpgid' in pure-logic test")
+        }
+        fn panic_pipe(_: *mut c_int) -> c_int {
+            panic!("unexpected syscall 'pipe' in pure-logic test")
+        }
+        fn panic_dup(_: c_int) -> c_int {
+            panic!("unexpected syscall 'dup' in pure-logic test")
+        }
+        fn panic_dup2(_: c_int, _: c_int) -> c_int {
+            panic!("unexpected syscall 'dup2' in pure-logic test")
+        }
+        fn panic_close(_: c_int) -> c_int {
+            panic!("unexpected syscall 'close' in pure-logic test")
+        }
+        fn panic_fcntl(_: c_int, _: c_int, _: c_int) -> c_int {
+            panic!("unexpected syscall 'fcntl' in pure-logic test")
+        }
+        fn panic_read(_: c_int, _: *mut u8, _: usize) -> isize {
+            panic!("unexpected syscall 'read' in pure-logic test")
+        }
+        fn panic_umask(_: FileModeMask) -> FileModeMask {
+            panic!("unexpected syscall 'umask' in pure-logic test")
+        }
+        fn panic_times(_: *mut libc::tms) -> ClockTicks {
+            panic!("unexpected syscall 'times' in pure-logic test")
+        }
+        fn panic_sysconf(_: c_int) -> c_long {
+            panic!("unexpected syscall 'sysconf' in pure-logic test")
+        }
+        fn panic_execvp(_: *const c_char, _: *const *const c_char) -> c_int {
+            panic!("unexpected syscall 'execvp' in pure-logic test")
+        }
+        fn panic_open(_: *const c_char, _: c_int, _: mode_t) -> c_int {
+            panic!("unexpected syscall 'open' in pure-logic test")
+        }
+        fn panic_write(_: c_int, _: *const u8, _: usize) -> isize {
+            panic!("unexpected syscall 'write' in pure-logic test")
+        }
+        fn panic_stat(_: *const c_char, _: *mut libc::stat) -> c_int {
+            panic!("unexpected syscall 'stat' in pure-logic test")
+        }
+        fn panic_fstat(_: c_int, _: *mut libc::stat) -> c_int {
+            panic!("unexpected syscall 'fstat' in pure-logic test")
+        }
+        fn panic_access(_: *const c_char, _: c_int) -> c_int {
+            panic!("unexpected syscall 'access' in pure-logic test")
+        }
+        fn panic_chdir(_: *const c_char) -> c_int {
+            panic!("unexpected syscall 'chdir' in pure-logic test")
+        }
+        fn panic_getcwd(_: *mut c_char, _: usize) -> *mut c_char {
+            panic!("unexpected syscall 'getcwd' in pure-logic test")
+        }
+        fn panic_opendir(_: *const c_char) -> *mut libc::DIR {
+            panic!("unexpected syscall 'opendir' in pure-logic test")
+        }
+        fn panic_readdir(_: *mut libc::DIR) -> *mut libc::dirent {
+            panic!("unexpected syscall 'readdir' in pure-logic test")
+        }
+        fn panic_closedir(_: *mut libc::DIR) -> c_int {
+            panic!("unexpected syscall 'closedir' in pure-logic test")
+        }
+        fn panic_realpath(_: *const c_char, _: *mut c_char) -> *mut c_char {
+            panic!("unexpected syscall 'realpath' in pure-logic test")
+        }
+        fn panic_fork() -> Pid {
+            panic!("unexpected syscall 'fork' in pure-logic test")
+        }
+        fn panic_exit_process(_: c_int) {
+            panic!("unexpected syscall 'exit_process' in pure-logic test")
+        }
+        fn panic_setenv(_: &str, _: &str) -> SysResult<()> {
+            panic!("unexpected call 'setenv' in pure-logic test")
+        }
+        fn panic_unsetenv(_: &str) -> SysResult<()> {
+            panic!("unexpected call 'unsetenv' in pure-logic test")
+        }
+        fn panic_getenv(_: &str) -> Option<String> {
+            panic!("unexpected call 'getenv' in pure-logic test")
+        }
+        fn panic_get_environ() -> HashMap<String, String> {
+            panic!("unexpected call 'get_environ' in pure-logic test")
+        }
 
         SystemInterface {
-            getpid: panic_getpid, waitpid: panic_waitpid, kill: panic_kill,
-            signal: panic_signal, isatty: panic_isatty, tcgetpgrp: panic_tcgetpgrp,
-            tcsetpgrp: panic_tcsetpgrp, setpgid: panic_setpgid, pipe: panic_pipe,
-            dup: panic_dup, dup2: panic_dup2, close: panic_close, fcntl: panic_fcntl,
-            read: panic_read, umask: panic_umask, times: panic_times, sysconf: panic_sysconf,
-            execvp: panic_execvp, open: panic_open, write: panic_write, stat: panic_stat,
-            fstat: panic_fstat, access: panic_access, chdir: panic_chdir,
-            getcwd: panic_getcwd, opendir: panic_opendir, readdir: panic_readdir,
-            closedir: panic_closedir, realpath: panic_realpath,
-            fork: panic_fork, exit_process: panic_exit_process,
-            setenv: panic_setenv, unsetenv: panic_unsetenv,
-            getenv: panic_getenv, get_environ: panic_get_environ,
+            getpid: panic_getpid,
+            waitpid: panic_waitpid,
+            kill: panic_kill,
+            signal: panic_signal,
+            isatty: panic_isatty,
+            tcgetpgrp: panic_tcgetpgrp,
+            tcsetpgrp: panic_tcsetpgrp,
+            setpgid: panic_setpgid,
+            pipe: panic_pipe,
+            dup: panic_dup,
+            dup2: panic_dup2,
+            close: panic_close,
+            fcntl: panic_fcntl,
+            read: panic_read,
+            umask: panic_umask,
+            times: panic_times,
+            sysconf: panic_sysconf,
+            execvp: panic_execvp,
+            open: panic_open,
+            write: panic_write,
+            stat: panic_stat,
+            fstat: panic_fstat,
+            access: panic_access,
+            chdir: panic_chdir,
+            getcwd: panic_getcwd,
+            opendir: panic_opendir,
+            readdir: panic_readdir,
+            closedir: panic_closedir,
+            realpath: panic_realpath,
+            fork: panic_fork,
+            exit_process: panic_exit_process,
+            setenv: panic_setenv,
+            unsetenv: panic_unsetenv,
+            getenv: panic_getenv,
+            get_environ: panic_get_environ,
         }
     }
 
@@ -1025,7 +1252,8 @@ pub(crate) mod test_support {
 
         for (i, entry) in trace.iter().enumerate() {
             if let Some(child_trace) = &entry.child_trace {
-                let prefix: Vec<TraceEntry> = trace[..i].iter().map(|e| e.without_child_trace()).collect();
+                let prefix: Vec<TraceEntry> =
+                    trace[..i].iter().map(|e| e.without_child_trace()).collect();
                 let fork_as_child = entry.with_result(TraceResult::Pid(0)).without_child_trace();
 
                 let mut child_path = prefix.clone();
@@ -1048,12 +1276,26 @@ pub(crate) mod test_support {
     }
 
     // Helper constructors for trace entries
-    pub(crate) fn t(syscall: &'static str, args: Vec<ArgMatcher>, result: TraceResult) -> TraceEntry {
-        TraceEntry { syscall, args, result, child_trace: None }
+    pub(crate) fn t(
+        syscall: &'static str,
+        args: Vec<ArgMatcher>,
+        result: TraceResult,
+    ) -> TraceEntry {
+        TraceEntry {
+            syscall,
+            args,
+            result,
+            child_trace: None,
+        }
     }
 
     pub(crate) fn t_fork(result: TraceResult, child: Vec<TraceEntry>) -> TraceEntry {
-        TraceEntry { syscall: "fork", args: vec![], result, child_trace: Some(child) }
+        TraceEntry {
+            syscall: "fork",
+            args: vec![],
+            result,
+            child_trace: Some(child),
+        }
     }
 
     #[allow(dead_code)]
@@ -1061,26 +1303,35 @@ pub(crate) mod test_support {
         fn into_arg(self) -> ArgMatcher;
     }
     impl IntoArgMatcher for i32 {
-        fn into_arg(self) -> ArgMatcher { ArgMatcher::Int(self as i64) }
+        fn into_arg(self) -> ArgMatcher {
+            ArgMatcher::Int(self as i64)
+        }
     }
     impl IntoArgMatcher for i64 {
-        fn into_arg(self) -> ArgMatcher { ArgMatcher::Int(self) }
+        fn into_arg(self) -> ArgMatcher {
+            ArgMatcher::Int(self)
+        }
     }
     impl IntoArgMatcher for &str {
-        fn into_arg(self) -> ArgMatcher { ArgMatcher::Str(self.to_string()) }
+        fn into_arg(self) -> ArgMatcher {
+            ArgMatcher::Str(self.to_string())
+        }
     }
     impl IntoArgMatcher for &[u8] {
-        fn into_arg(self) -> ArgMatcher { ArgMatcher::Bytes(self.to_vec()) }
+        fn into_arg(self) -> ArgMatcher {
+            ArgMatcher::Bytes(self.to_vec())
+        }
     }
     impl IntoArgMatcher for &Vec<u8> {
-        fn into_arg(self) -> ArgMatcher { ArgMatcher::Bytes(self.clone()) }
+        fn into_arg(self) -> ArgMatcher {
+            ArgMatcher::Bytes(self.clone())
+        }
     }
 
     #[allow(dead_code)]
     pub(crate) fn arg_from(v: impl IntoArgMatcher) -> ArgMatcher {
         v.into_arg()
     }
-
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1110,7 +1361,10 @@ pub fn wait_pid(pid: Pid, nohang: bool) -> SysResult<Option<WaitStatus>> {
     let options = if nohang { WNOHANG } else { 0 };
     let result = (sys_interface().waitpid)(pid, &mut status, options);
     if result > 0 {
-        Ok(Some(WaitStatus { pid: result, status }))
+        Ok(Some(WaitStatus {
+            pid: result,
+            status,
+        }))
     } else if result == 0 {
         Ok(None)
     } else {
@@ -1160,9 +1414,11 @@ pub fn has_pending_signal() -> Option<c_int> {
     #[cfg(not(test))]
     let bits = PENDING_SIGNALS.load(Ordering::SeqCst);
 
-    supported_trap_signals()
-        .into_iter()
-        .find(|signal| signal_mask(*signal).map(|mask| bits & mask != 0).unwrap_or(false))
+    supported_trap_signals().into_iter().find(|signal| {
+        signal_mask(*signal)
+            .map(|mask| bits & mask != 0)
+            .unwrap_or(false)
+    })
 }
 
 pub fn take_pending_signals() -> Vec<c_int> {
@@ -1173,7 +1429,11 @@ pub fn take_pending_signals() -> Vec<c_int> {
 
     supported_trap_signals()
         .into_iter()
-        .filter(|signal| signal_mask(*signal).map(|mask| bits & mask != 0).unwrap_or(false))
+        .filter(|signal| {
+            signal_mask(*signal)
+                .map(|mask| bits & mask != 0)
+                .unwrap_or(false)
+        })
         .collect()
 }
 
@@ -1405,7 +1665,9 @@ pub fn is_directory(path: &str) -> bool {
 }
 
 pub fn is_regular_file(path: &str) -> bool {
-    stat_path(path).map(|s| s.is_regular_file()).unwrap_or(false)
+    stat_path(path)
+        .map(|s| s.is_regular_file())
+        .unwrap_or(false)
 }
 
 pub fn change_dir(path: &str) -> SysResult<()> {
@@ -1463,7 +1725,9 @@ pub fn canonicalize(path: &str) -> SysResult<String> {
     if result.is_null() {
         Err(last_error())
     } else {
-        let s = unsafe { CStr::from_ptr(result) }.to_string_lossy().into_owned();
+        let s = unsafe { CStr::from_ptr(result) }
+            .to_string_lossy()
+            .into_owned();
         unsafe { libc::free(result.cast()) };
         Ok(s)
     }
@@ -1484,7 +1748,12 @@ pub fn read_file(path: &str) -> SysResult<String> {
     Ok(String::from_utf8_lossy(&contents).into_owned())
 }
 
-pub fn open_for_redirect(path: &str, flags: c_int, mode: mode_t, noclobber: bool) -> SysResult<c_int> {
+pub fn open_for_redirect(
+    path: &str,
+    flags: c_int,
+    mode: mode_t,
+    noclobber: bool,
+) -> SysResult<c_int> {
     let actual_flags = if noclobber && (flags & O_TRUNC != 0) {
         (flags & !O_TRUNC) | O_EXCL | O_CREAT
     } else {
@@ -1537,7 +1806,9 @@ impl ChildHandle {
         }
         let ws = wait_pid(self.pid, false)?.expect("child status");
         Ok(ChildOutput {
-            status: ChildExitStatus { code: decode_wait_status(ws.status) },
+            status: ChildExitStatus {
+                code: decode_wait_status(ws.status),
+            },
             stdout: output,
         })
     }
@@ -1547,17 +1818,15 @@ impl ChildHandle {
             close_fd(fd)?;
         }
         let ws = wait_pid(self.pid, false)?.expect("child status");
-        Ok(ChildExitStatus { code: decode_wait_status(ws.status) })
+        Ok(ChildExitStatus {
+            code: decode_wait_status(ws.status),
+        })
     }
 }
 
 pub fn fork_process() -> SysResult<Pid> {
     let pid = (sys_interface().fork)();
-    if pid < 0 {
-        Err(last_error())
-    } else {
-        Ok(pid)
-    }
+    if pid < 0 { Err(last_error()) } else { Ok(pid) }
 }
 
 pub fn exit_process(status: c_int) -> ! {
@@ -1568,7 +1837,9 @@ pub fn exit_process(status: c_int) -> ! {
 #[cfg(coverage)]
 fn flush_coverage() {
     unsafe {
-        unsafe extern "C" { fn __llvm_profile_write_file() -> c_int; }
+        unsafe extern "C" {
+            fn __llvm_profile_write_file() -> c_int;
+        }
         __llvm_profile_write_file();
     }
 }
@@ -1615,7 +1886,12 @@ pub fn spawn_child(
                 let _ = env_set_var(key, value);
             }
         }
-        let rest: Vec<String> = argv.get(1..).unwrap_or(&[]).iter().map(|s| s.to_string()).collect();
+        let rest: Vec<String> = argv
+            .get(1..)
+            .unwrap_or(&[])
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         let _ = exec_replace(program, &rest);
         exit_process(127);
     }
@@ -1631,7 +1907,10 @@ pub fn spawn_child(
         None
     };
 
-    Ok(ChildHandle { pid, stdout_fd: stdout_read })
+    Ok(ChildHandle {
+        pid,
+        stdout_fd: stdout_read,
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1782,12 +2061,21 @@ mod tests {
     #[test]
     fn pipe_roundtrip() {
         fn fake_pipe(fds: *mut c_int) -> c_int {
-            unsafe { *fds.add(0) = 10; *fds.add(1) = 11; }
+            unsafe {
+                *fds.add(0) = 10;
+                *fds.add(1) = 11;
+            }
             0
         }
-        fn fake_close(_fd: c_int) -> c_int { 0 }
+        fn fake_close(_fd: c_int) -> c_int {
+            0
+        }
 
-        let fake = SystemInterface { pipe: fake_pipe, close: fake_close, ..default_interface() };
+        let fake = SystemInterface {
+            pipe: fake_pipe,
+            close: fake_close,
+            ..default_interface()
+        };
         test_support::with_test_interface(fake, || {
             let (read_fd, write_fd) = create_pipe().expect("pipe");
             assert_eq!(read_fd, 10);
@@ -1801,13 +2089,19 @@ mod tests {
     fn decodes_wait_status_shapes() {
         assert_eq!(decode_wait_status(0), 0);
         assert_eq!(decode_wait_status(7 << 8), 7);
-        assert_eq!(format_signal_exit(9), Some("terminated by signal 9".to_string()));
+        assert_eq!(
+            format_signal_exit(9),
+            Some("terminated by signal 9".to_string())
+        );
         assert_eq!(format_signal_exit(0), None);
     }
 
     #[test]
     fn shell_name_from_args_returns_first_arg_or_default() {
-        assert_eq!(shell_name_from_args(&["meiksh".to_string(), "-c".to_string()]), "meiksh");
+        assert_eq!(
+            shell_name_from_args(&["meiksh".to_string(), "-c".to_string()]),
+            "meiksh"
+        );
         assert_eq!(shell_name_from_args(&[]), "meiksh");
     }
 
@@ -1819,27 +2113,51 @@ mod tests {
 
     #[test]
     fn execvp_failure_returns_minus_one() {
-        fn fail_execvp(_file: *const c_char, _argv: *const *const c_char) -> c_int { -1 }
-        let fake = SystemInterface { execvp: fail_execvp, ..default_interface() };
+        fn fail_execvp(_file: *const c_char, _argv: *const *const c_char) -> c_int {
+            -1
+        }
+        let fake = SystemInterface {
+            execvp: fail_execvp,
+            ..default_interface()
+        };
         test_support::with_test_interface(fake, || {
             let program = CString::new("meiksh-command-that-does-not-exist").expect("cstring");
             let argv = [program.as_ptr(), std::ptr::null()];
-            assert_eq!((sys_interface().execvp)(program.as_ptr(), argv.as_ptr()), -1);
+            assert_eq!(
+                (sys_interface().execvp)(program.as_ptr(), argv.as_ptr()),
+                -1
+            );
         });
     }
 
     #[test]
     fn invalid_fd_operations_fail_cleanly() {
-        fn fail_isatty(_fd: c_int) -> c_int { 0 }
-        fn fail_dup2(_old: c_int, _new: c_int) -> c_int { -1 }
-        fn fail_close(_fd: c_int) -> c_int { -1 }
-        fn fail_tcgetpgrp(_fd: c_int) -> Pid { -1 }
-        fn fail_tcsetpgrp(_fd: c_int, _pgid: Pid) -> c_int { -1 }
-        fn fail_setpgid(_pid: Pid, _pgid: Pid) -> c_int { -1 }
+        fn fail_isatty(_fd: c_int) -> c_int {
+            0
+        }
+        fn fail_dup2(_old: c_int, _new: c_int) -> c_int {
+            -1
+        }
+        fn fail_close(_fd: c_int) -> c_int {
+            -1
+        }
+        fn fail_tcgetpgrp(_fd: c_int) -> Pid {
+            -1
+        }
+        fn fail_tcsetpgrp(_fd: c_int, _pgid: Pid) -> c_int {
+            -1
+        }
+        fn fail_setpgid(_pid: Pid, _pgid: Pid) -> c_int {
+            -1
+        }
 
         let fake = SystemInterface {
-            isatty: fail_isatty, dup2: fail_dup2, close: fail_close,
-            tcgetpgrp: fail_tcgetpgrp, tcsetpgrp: fail_tcsetpgrp, setpgid: fail_setpgid,
+            isatty: fail_isatty,
+            dup2: fail_dup2,
+            close: fail_close,
+            tcgetpgrp: fail_tcgetpgrp,
+            tcsetpgrp: fail_tcsetpgrp,
+            setpgid: fail_setpgid,
             ..default_interface()
         };
         test_support::with_test_interface(fake, || {
@@ -1854,8 +2172,13 @@ mod tests {
 
     #[test]
     fn wait_pid_error_surfaces_errno() {
-        fn fail_waitpid(_pid: Pid, _status: *mut c_int, _options: c_int) -> Pid { -1 }
-        let fake = SystemInterface { waitpid: fail_waitpid, ..default_interface() };
+        fn fail_waitpid(_pid: Pid, _status: *mut c_int, _options: c_int) -> Pid {
+            -1
+        }
+        let fake = SystemInterface {
+            waitpid: fail_waitpid,
+            ..default_interface()
+        };
         test_support::with_test_interface(fake, || {
             assert!(wait_pid(999_999, false).is_err());
         });
@@ -1894,13 +2217,25 @@ mod tests {
     #[test]
     fn sys_success_branches_cover_fd_helpers() {
         fn fake_pipe(fds: *mut c_int) -> c_int {
-            unsafe { *fds.add(0) = 20; *fds.add(1) = 21; }
+            unsafe {
+                *fds.add(0) = 20;
+                *fds.add(1) = 21;
+            }
             0
         }
-        fn fake_dup2(oldfd: c_int, _newfd: c_int) -> c_int { oldfd }
-        fn fake_close(_fd: c_int) -> c_int { 0 }
+        fn fake_dup2(oldfd: c_int, _newfd: c_int) -> c_int {
+            oldfd
+        }
+        fn fake_close(_fd: c_int) -> c_int {
+            0
+        }
 
-        let fake = SystemInterface { pipe: fake_pipe, dup2: fake_dup2, close: fake_close, ..default_interface() };
+        let fake = SystemInterface {
+            pipe: fake_pipe,
+            dup2: fake_dup2,
+            close: fake_close,
+            ..default_interface()
+        };
         test_support::with_test_interface(fake, || {
             let (read_fd, write_fd) = create_pipe().expect("pipe");
             duplicate_fd(read_fd, read_fd).expect("dup self");
@@ -1911,8 +2246,14 @@ mod tests {
 
     #[test]
     fn process_identity_helper_covers_mismatch_branch() {
-        assert!(!test_support::with_process_ids_for_test((1, 2, 3, 3), has_same_real_and_effective_ids));
-        assert!(!test_support::with_process_ids_for_test((1, 1, 3, 4), has_same_real_and_effective_ids));
+        assert!(!test_support::with_process_ids_for_test(
+            (1, 2, 3, 3),
+            has_same_real_and_effective_ids
+        ));
+        assert!(!test_support::with_process_ids_for_test(
+            (1, 1, 3, 4),
+            has_same_real_and_effective_ids
+        ));
     }
 
     #[test]
@@ -1956,7 +2297,10 @@ mod tests {
         test_support::with_test_interface(fake, || {
             assert_eq!(
                 wait_pid(1, false).expect("wait").expect("status"),
-                WaitStatus { pid: 99, status: 9 << 8 }
+                WaitStatus {
+                    pid: 99,
+                    status: 9 << 8
+                }
             );
             assert!(send_signal(1, 0).is_ok());
         });
@@ -2127,32 +2471,62 @@ mod tests {
 
     #[test]
     fn signal_handler_installation_succeeds() {
-        use test_support::{run_trace, t, TraceResult, ArgMatcher};
+        use test_support::{ArgMatcher, TraceResult, run_trace, t};
 
-        run_trace(vec![
-            t("signal", vec![ArgMatcher::Int(SIGINT as i64), ArgMatcher::Any], TraceResult::Int(0)),
-            t("signal", vec![ArgMatcher::Int(SIGTERM as i64), ArgMatcher::Any], TraceResult::Int(0)),
-            t("signal", vec![ArgMatcher::Int(SIGQUIT as i64), ArgMatcher::Any], TraceResult::Int(0)),
-        ], || {
-            install_shell_signal_handler(SIGINT).expect("install");
-            ignore_signal(SIGTERM).expect("ignore");
-            default_signal_action(SIGQUIT).expect("default");
-        });
+        run_trace(
+            vec![
+                t(
+                    "signal",
+                    vec![ArgMatcher::Int(SIGINT as i64), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "signal",
+                    vec![ArgMatcher::Int(SIGTERM as i64), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "signal",
+                    vec![ArgMatcher::Int(SIGQUIT as i64), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+            ],
+            || {
+                install_shell_signal_handler(SIGINT).expect("install");
+                ignore_signal(SIGTERM).expect("ignore");
+                default_signal_action(SIGQUIT).expect("default");
+            },
+        );
     }
 
     #[test]
     fn signal_handler_error_paths() {
-        use test_support::{run_trace, t, TraceResult, ArgMatcher};
+        use test_support::{ArgMatcher, TraceResult, run_trace, t};
 
-        run_trace(vec![
-            t("signal", vec![ArgMatcher::Int(SIGINT as i64), ArgMatcher::Any], TraceResult::Err(libc::EINVAL)),
-            t("signal", vec![ArgMatcher::Int(SIGTERM as i64), ArgMatcher::Any], TraceResult::Err(libc::EINVAL)),
-            t("signal", vec![ArgMatcher::Int(SIGQUIT as i64), ArgMatcher::Any], TraceResult::Err(libc::EINVAL)),
-        ], || {
-            assert!(install_shell_signal_handler(SIGINT).is_err());
-            assert!(ignore_signal(SIGTERM).is_err());
-            assert!(default_signal_action(SIGQUIT).is_err());
-        });
+        run_trace(
+            vec![
+                t(
+                    "signal",
+                    vec![ArgMatcher::Int(SIGINT as i64), ArgMatcher::Any],
+                    TraceResult::Err(libc::EINVAL),
+                ),
+                t(
+                    "signal",
+                    vec![ArgMatcher::Int(SIGTERM as i64), ArgMatcher::Any],
+                    TraceResult::Err(libc::EINVAL),
+                ),
+                t(
+                    "signal",
+                    vec![ArgMatcher::Int(SIGQUIT as i64), ArgMatcher::Any],
+                    TraceResult::Err(libc::EINVAL),
+                ),
+            ],
+            || {
+                assert!(install_shell_signal_handler(SIGINT).is_err());
+                assert!(ignore_signal(SIGTERM).is_err());
+                assert!(default_signal_action(SIGQUIT).is_err());
+            },
+        );
     }
 
     #[test]
@@ -2170,7 +2544,10 @@ mod tests {
     fn signal_utility_helpers() {
         let interrupted_error = SysError::Errno(EINTR);
         assert!(interrupted(&interrupted_error));
-        assert_eq!(supported_trap_signals(), vec![SIGHUP, SIGINT, SIGQUIT, SIGABRT, SIGALRM, SIGTERM]);
+        assert_eq!(
+            supported_trap_signals(),
+            vec![SIGHUP, SIGINT, SIGQUIT, SIGABRT, SIGALRM, SIGTERM]
+        );
     }
 
     #[test]
@@ -2332,133 +2709,232 @@ mod tests {
 
     #[test]
     fn ensure_blocking_read_fd_clears_nonblocking_for_tty() {
-        use test_support::{run_trace, t, TraceResult, ArgMatcher};
+        use test_support::{ArgMatcher, TraceResult, run_trace, t};
 
         // TTY path: isatty→1, fcntl F_GETFL→O_NONBLOCK|2, fcntl F_SETFL→0
-        run_trace(vec![
-            t("isatty", vec![ArgMatcher::Fd(STDIN_FILENO)], TraceResult::Int(1)),
-            t("fcntl", vec![ArgMatcher::Fd(STDIN_FILENO), ArgMatcher::Int(F_GETFL as i64), ArgMatcher::Int(0)], TraceResult::Int((O_NONBLOCK | 0o2) as i64)),
-            t("fcntl", vec![ArgMatcher::Fd(STDIN_FILENO), ArgMatcher::Int(F_SETFL as i64), ArgMatcher::Int(0o2)], TraceResult::Int(0)),
-        ], || {
-            ensure_blocking_read_fd(STDIN_FILENO).expect("tty blocking");
-        });
+        run_trace(
+            vec![
+                t(
+                    "isatty",
+                    vec![ArgMatcher::Fd(STDIN_FILENO)],
+                    TraceResult::Int(1),
+                ),
+                t(
+                    "fcntl",
+                    vec![
+                        ArgMatcher::Fd(STDIN_FILENO),
+                        ArgMatcher::Int(F_GETFL as i64),
+                        ArgMatcher::Int(0),
+                    ],
+                    TraceResult::Int((O_NONBLOCK | 0o2) as i64),
+                ),
+                t(
+                    "fcntl",
+                    vec![
+                        ArgMatcher::Fd(STDIN_FILENO),
+                        ArgMatcher::Int(F_SETFL as i64),
+                        ArgMatcher::Int(0o2),
+                    ],
+                    TraceResult::Int(0),
+                ),
+            ],
+            || {
+                ensure_blocking_read_fd(STDIN_FILENO).expect("tty blocking");
+            },
+        );
     }
 
     #[test]
     fn ensure_blocking_read_fd_clears_nonblocking_for_fifo() {
-        use test_support::{run_trace, t, TraceResult, ArgMatcher};
+        use test_support::{ArgMatcher, TraceResult, run_trace, t};
 
         // FIFO path: isatty→0, fstat→S_IFIFO, fcntl F_GETFL→O_NONBLOCK|2, fcntl F_SETFL→0
-        run_trace(vec![
-            t("isatty", vec![ArgMatcher::Fd(42)], TraceResult::Int(0)),
-            t("fstat", vec![ArgMatcher::Fd(42), ArgMatcher::Any], TraceResult::StatFifo),
-            t("fcntl", vec![ArgMatcher::Fd(42), ArgMatcher::Int(F_GETFL as i64), ArgMatcher::Int(0)], TraceResult::Int((O_NONBLOCK | 0o2) as i64)),
-            t("fcntl", vec![ArgMatcher::Fd(42), ArgMatcher::Int(F_SETFL as i64), ArgMatcher::Int(0o2)], TraceResult::Int(0)),
-        ], || {
-            ensure_blocking_read_fd(42).expect("fifo blocking");
-        });
+        run_trace(
+            vec![
+                t("isatty", vec![ArgMatcher::Fd(42)], TraceResult::Int(0)),
+                t(
+                    "fstat",
+                    vec![ArgMatcher::Fd(42), ArgMatcher::Any],
+                    TraceResult::StatFifo,
+                ),
+                t(
+                    "fcntl",
+                    vec![
+                        ArgMatcher::Fd(42),
+                        ArgMatcher::Int(F_GETFL as i64),
+                        ArgMatcher::Int(0),
+                    ],
+                    TraceResult::Int((O_NONBLOCK | 0o2) as i64),
+                ),
+                t(
+                    "fcntl",
+                    vec![
+                        ArgMatcher::Fd(42),
+                        ArgMatcher::Int(F_SETFL as i64),
+                        ArgMatcher::Int(0o2),
+                    ],
+                    TraceResult::Int(0),
+                ),
+            ],
+            || {
+                ensure_blocking_read_fd(42).expect("fifo blocking");
+            },
+        );
     }
 
     #[test]
     fn ensure_blocking_read_fd_surfaces_fcntl_errors() {
-        use test_support::{run_trace, t, TraceResult, ArgMatcher};
+        use test_support::{ArgMatcher, TraceResult, run_trace, t};
 
-        run_trace(vec![
-            t("isatty", vec![ArgMatcher::Fd(STDIN_FILENO)], TraceResult::Int(1)),
-            t("fcntl", vec![ArgMatcher::Fd(STDIN_FILENO), ArgMatcher::Int(F_GETFL as i64), ArgMatcher::Int(0)], TraceResult::Err(libc::EIO)),
-        ], || {
-            assert!(ensure_blocking_read_fd(STDIN_FILENO).is_err());
-        });
+        run_trace(
+            vec![
+                t(
+                    "isatty",
+                    vec![ArgMatcher::Fd(STDIN_FILENO)],
+                    TraceResult::Int(1),
+                ),
+                t(
+                    "fcntl",
+                    vec![
+                        ArgMatcher::Fd(STDIN_FILENO),
+                        ArgMatcher::Int(F_GETFL as i64),
+                        ArgMatcher::Int(0),
+                    ],
+                    TraceResult::Err(libc::EIO),
+                ),
+            ],
+            || {
+                assert!(ensure_blocking_read_fd(STDIN_FILENO).is_err());
+            },
+        );
     }
 
     #[test]
     fn setenv_success() {
-        use test_support::{run_trace, t, TraceResult, ArgMatcher};
+        use test_support::{ArgMatcher, TraceResult, run_trace, t};
 
-        run_trace(vec![
-            t("setenv", vec![ArgMatcher::Str("MY_KEY".into()), ArgMatcher::Str("my_val".into())], TraceResult::Int(0)),
-        ], || {
-            let result = (sys_interface().setenv)("MY_KEY", "my_val");
-            assert!(result.is_ok());
-        });
+        run_trace(
+            vec![t(
+                "setenv",
+                vec![
+                    ArgMatcher::Str("MY_KEY".into()),
+                    ArgMatcher::Str("my_val".into()),
+                ],
+                TraceResult::Int(0),
+            )],
+            || {
+                let result = (sys_interface().setenv)("MY_KEY", "my_val");
+                assert!(result.is_ok());
+            },
+        );
     }
 
     #[test]
     fn setenv_error() {
-        use test_support::{run_trace, t, TraceResult, ArgMatcher};
+        use test_support::{ArgMatcher, TraceResult, run_trace, t};
 
-        run_trace(vec![
-            t("setenv", vec![ArgMatcher::Str("K".into()), ArgMatcher::Str("V".into())], TraceResult::Err(libc::ENOMEM)),
-        ], || {
-            let result = (sys_interface().setenv)("K", "V");
-            assert!(result.is_err());
-        });
+        run_trace(
+            vec![t(
+                "setenv",
+                vec![ArgMatcher::Str("K".into()), ArgMatcher::Str("V".into())],
+                TraceResult::Err(libc::ENOMEM),
+            )],
+            || {
+                let result = (sys_interface().setenv)("K", "V");
+                assert!(result.is_err());
+            },
+        );
     }
 
     #[test]
     fn unsetenv_success() {
-        use test_support::{run_trace, t, TraceResult, ArgMatcher};
+        use test_support::{ArgMatcher, TraceResult, run_trace, t};
 
-        run_trace(vec![
-            t("unsetenv", vec![ArgMatcher::Str("MY_KEY".into())], TraceResult::Int(0)),
-        ], || {
-            let result = (sys_interface().unsetenv)("MY_KEY");
-            assert!(result.is_ok());
-        });
+        run_trace(
+            vec![t(
+                "unsetenv",
+                vec![ArgMatcher::Str("MY_KEY".into())],
+                TraceResult::Int(0),
+            )],
+            || {
+                let result = (sys_interface().unsetenv)("MY_KEY");
+                assert!(result.is_ok());
+            },
+        );
     }
 
     #[test]
     fn unsetenv_error() {
-        use test_support::{run_trace, t, TraceResult, ArgMatcher};
+        use test_support::{ArgMatcher, TraceResult, run_trace, t};
 
-        run_trace(vec![
-            t("unsetenv", vec![ArgMatcher::Str("K".into())], TraceResult::Err(libc::EINVAL)),
-        ], || {
-            let result = (sys_interface().unsetenv)("K");
-            assert!(result.is_err());
-        });
+        run_trace(
+            vec![t(
+                "unsetenv",
+                vec![ArgMatcher::Str("K".into())],
+                TraceResult::Err(libc::EINVAL),
+            )],
+            || {
+                let result = (sys_interface().unsetenv)("K");
+                assert!(result.is_err());
+            },
+        );
     }
 
     #[test]
     fn getenv_found() {
-        use test_support::{run_trace, t, TraceResult, ArgMatcher};
+        use test_support::{ArgMatcher, TraceResult, run_trace, t};
 
-        run_trace(vec![
-            t("getenv", vec![ArgMatcher::Str("HOME".into())], TraceResult::Str("/home/user".into())),
-        ], || {
-            let val = (sys_interface().getenv)("HOME");
-            assert_eq!(val, Some("/home/user".to_string()));
-        });
+        run_trace(
+            vec![t(
+                "getenv",
+                vec![ArgMatcher::Str("HOME".into())],
+                TraceResult::Str("/home/user".into()),
+            )],
+            || {
+                let val = (sys_interface().getenv)("HOME");
+                assert_eq!(val, Some("/home/user".to_string()));
+            },
+        );
     }
 
     #[test]
     fn getenv_not_found() {
-        use test_support::{run_trace, t, TraceResult, ArgMatcher};
+        use test_support::{ArgMatcher, TraceResult, run_trace, t};
 
-        run_trace(vec![
-            t("getenv", vec![ArgMatcher::Str("MISSING".into())], TraceResult::NullStr),
-        ], || {
-            let val = (sys_interface().getenv)("MISSING");
-            assert_eq!(val, None);
-        });
+        run_trace(
+            vec![t(
+                "getenv",
+                vec![ArgMatcher::Str("MISSING".into())],
+                TraceResult::NullStr,
+            )],
+            || {
+                let val = (sys_interface().getenv)("MISSING");
+                assert_eq!(val, None);
+            },
+        );
     }
 
     #[test]
     fn get_environ_returns_map() {
-        use test_support::{run_trace, t, TraceResult, ArgMatcher};
+        use test_support::{TraceResult, run_trace, t};
 
         let mut expected = HashMap::new();
         expected.insert("HOME".to_string(), "/home/user".to_string());
         expected.insert("PATH".to_string(), "/usr/bin".to_string());
 
-        run_trace(vec![
-            t("get_environ", vec![], TraceResult::EnvMap(expected.clone())),
-        ], || {
-            let map = (sys_interface().get_environ)();
-            assert_eq!(map.len(), 2);
-            assert_eq!(map.get("HOME"), Some(&"/home/user".to_string()));
-            assert_eq!(map.get("PATH"), Some(&"/usr/bin".to_string()));
-        });
+        run_trace(
+            vec![t(
+                "get_environ",
+                vec![],
+                TraceResult::EnvMap(expected.clone()),
+            )],
+            || {
+                let map = (sys_interface().get_environ)();
+                assert_eq!(map.len(), 2);
+                assert_eq!(map.get("HOME"), Some(&"/home/user".to_string()));
+                assert_eq!(map.get("PATH"), Some(&"/usr/bin".to_string()));
+            },
+        );
     }
 
     #[test]
@@ -2474,5 +2950,17 @@ mod tests {
 
         (iface.unsetenv)(key).expect("unsetenv");
         assert_eq!((iface.getenv)(key), None);
+    }
+
+    #[test]
+    fn default_setenv_rejects_key_with_equals() {
+        let iface = default_interface();
+        assert!((iface.setenv)("BAD=KEY", "val").is_err());
+    }
+
+    #[test]
+    fn default_unsetenv_rejects_key_with_equals() {
+        let iface = default_interface();
+        assert!((iface.unsetenv)("BAD=KEY").is_err());
     }
 }

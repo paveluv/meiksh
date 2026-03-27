@@ -55,7 +55,7 @@ The following `std` types and methods are banned from production code (enforced 
 ## Expansion
 
 - Variable values are currently stored as `String` values in shell state even though the long-term target is byte-oriented storage.
-- Command substitution executes in a forked child that inherits the shell state and executes the already-parsed AST directly.
+- Command substitution executes in a forked child that inherits the shell state and executes the already-parsed AST directly. A non-zero child exit status sets `$?` but does not make the substitution fail; the captured output is always returned.
 - Arithmetic expansion currently supports integer literals and `+`, `-`, `*`, `/`, and `%`.
 - Parameter expansion supports plain substitutions, `${#parameter}` length, the default/assign/error/alternate forms (`:-`, `-`, `:=`, `=`, `:?`, `?`, `:+`, `+`), and multi-digit positional references such as `${10}`.
 - Unquoted field splitting now distinguishes IFS whitespace from non-whitespace delimiters, and pathname expansion applies after field splitting with dotfile suppression unless the pattern segment starts with `.`.
@@ -74,6 +74,8 @@ The following `std` types and methods are banned from production code (enforced 
 - `ENV` is only sourced when it expands to an absolute path that exists.
 - Prompting defaults to `meiksh$ ` unless `PS1` is set.
 - History currently appends plain input lines to `HISTFILE` or `$HOME/.sh_history`.
+- Interactive shells ignore SIGQUIT and SIGTERM at startup, and install a SIGINT handler; SIGINT during line input discards the current line and re-prompts.
+- The `interactive` property is determined once at startup (from `-i` flag or terminal detection) and stored as a field, not recomputed dynamically.
 - Job control is still partial: `wait`, `fg`, and `bg` operate on the shell's current job table, but tty foreground handoff and some POSIX-required output/details are not implemented yet.
 
 ## Error Handling

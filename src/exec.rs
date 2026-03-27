@@ -4,11 +4,11 @@ use std::path::{Path, PathBuf};
 use crate::builtin;
 use crate::expand;
 use crate::shell::{FlowSignal, PendingControl, Shell, ShellError};
-use crate::sys;
 use crate::syntax::{
-    AndOr, CaseCommand, Command, ForCommand, FunctionDef, IfCommand, ListItem, LogicalOp,
-    HereDoc, LoopCommand, LoopKind, Pipeline, Program, RedirectionKind, SimpleCommand,
+    AndOr, CaseCommand, Command, ForCommand, FunctionDef, HereDoc, IfCommand, ListItem, LogicalOp,
+    LoopCommand, LoopKind, Pipeline, Program, RedirectionKind, SimpleCommand,
 };
+use crate::sys;
 
 #[derive(Clone, Copy, Debug)]
 enum ProcessGroupPlan {
@@ -66,7 +66,11 @@ fn spawn_and_or(shell: &mut Shell, node: &AndOr) -> Result<SpawnedProcesses, She
     spawn_pipeline(shell, &node.first)
 }
 
-fn execute_pipeline(shell: &mut Shell, pipeline: &Pipeline, asynchronous: bool) -> Result<i32, ShellError> {
+fn execute_pipeline(
+    shell: &mut Shell,
+    pipeline: &Pipeline,
+    asynchronous: bool,
+) -> Result<i32, ShellError> {
     if pipeline.commands.len() == 1 {
         if !asynchronous {
             let status = execute_command(shell, &pipeline.commands[0])?;
@@ -118,8 +122,12 @@ fn fork_and_execute_command(
             let _ = sys::close_fd(w);
         }
         match process_group {
-            ProcessGroupPlan::NewGroup => { let _ = sys::set_process_group(0, 0); }
-            ProcessGroupPlan::Join(pgid) => { let _ = sys::set_process_group(0, pgid); }
+            ProcessGroupPlan::NewGroup => {
+                let _ = sys::set_process_group(0, 0);
+            }
+            ProcessGroupPlan::Join(pgid) => {
+                let _ = sys::set_process_group(0, pgid);
+            }
             _ => {}
         }
         let mut child_shell = shell.clone();
@@ -135,7 +143,10 @@ fn fork_and_execute_command(
         r
     });
 
-    Ok(sys::ChildHandle { pid, stdout_fd: stdout_read })
+    Ok(sys::ChildHandle {
+        pid,
+        stdout_fd: stdout_read,
+    })
 }
 
 fn spawn_pipeline(shell: &mut Shell, pipeline: &Pipeline) -> Result<SpawnedProcesses, ShellError> {
@@ -169,7 +180,10 @@ fn spawn_pipeline(shell: &mut Shell, pipeline: &Pipeline) -> Result<SpawnedProce
             let _ = sys::set_process_group(handle.pid, job_pgid);
         }
         previous_stdout_fd = handle.stdout_fd;
-        children.push(sys::ChildHandle { pid: handle.pid, stdout_fd: None });
+        children.push(sys::ChildHandle {
+            pid: handle.pid,
+            stdout_fd: None,
+        });
     }
 
     Ok(SpawnedProcesses { children, pgid })
@@ -211,7 +225,8 @@ fn execute_command(shell: &mut Shell, command: &Command) -> Result<i32, ShellErr
         }
         Command::Group(program) => execute_nested_program(shell, program),
         Command::FunctionDef(function) => {
-            shell.functions
+            shell
+                .functions
                 .insert(function.name.clone(), (*function.body).clone());
             Ok(0)
         }
@@ -219,7 +234,9 @@ fn execute_command(shell: &mut Shell, command: &Command) -> Result<i32, ShellErr
         Command::Loop(loop_command) => execute_loop(shell, loop_command),
         Command::For(for_command) => execute_for(shell, for_command),
         Command::Case(case_command) => execute_case(shell, case_command),
-        Command::Redirected(command, redirections) => execute_redirected(shell, command, redirections),
+        Command::Redirected(command, redirections) => {
+            execute_redirected(shell, command, redirections)
+        }
     }
 }
 
@@ -229,7 +246,9 @@ fn execute_redirected(
     redirections: &[crate::syntax::Redirection],
 ) -> Result<i32, ShellError> {
     let expanded = expand_redirections(shell, redirections)?;
-    with_shell_redirections(&expanded, shell.options.noclobber, || execute_command(shell, command))
+    with_shell_redirections(&expanded, shell.options.noclobber, || {
+        execute_command(shell, command)
+    })
 }
 
 fn execute_if(shell: &mut Shell, if_command: &IfCommand) -> Result<i32, ShellError> {
@@ -388,15 +407,17 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
 
     if builtin::is_builtin(&expanded.argv[0]) {
         let is_special_builtin = builtin::is_special_builtin(&expanded.argv[0]);
-        let result = with_shell_redirections(&expanded.redirections, shell.options.noclobber, || {
-            match shell.run_builtin(&expanded.argv, &expanded.assignments)? {
+        let result = with_shell_redirections(
+            &expanded.redirections,
+            shell.options.noclobber,
+            || match shell.run_builtin(&expanded.argv, &expanded.assignments)? {
                 FlowSignal::Continue(status) => Ok(status),
                 FlowSignal::Exit(status) => {
                     shell.running = false;
                     Ok(status)
                 }
-            }
-        });
+            },
+        );
         match result {
             Ok(status) => Ok(status),
             Err(error) if !is_special_builtin => {
@@ -463,9 +484,18 @@ struct PreparedProcess {
 
 #[derive(Debug)]
 enum ChildFdAction {
-    DupRawFd { fd: i32, target_fd: i32, close_source: bool },
-    DupFd { source_fd: i32, target_fd: i32 },
-    CloseFd { target_fd: i32 },
+    DupRawFd {
+        fd: i32,
+        target_fd: i32,
+        close_source: bool,
+    },
+    DupFd {
+        source_fd: i32,
+        target_fd: i32,
+    },
+    CloseFd {
+        target_fd: i32,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -480,11 +510,17 @@ struct ShellRedirectionGuard {
     saved: Vec<(i32, Option<i32>)>,
 }
 
-fn expand_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<ExpandedSimpleCommand, ShellError> {
+fn expand_simple(
+    shell: &mut Shell,
+    simple: &SimpleCommand,
+) -> Result<ExpandedSimpleCommand, ShellError> {
     let mut assignments = Vec::new();
     for assignment in &simple.assignments {
         let fields = expand::expand_word(shell, &assignment.value)?;
-        assignments.push((assignment.name.clone(), fields.first().cloned().unwrap_or_default()));
+        assignments.push((
+            assignment.name.clone(),
+            fields.first().cloned().unwrap_or_default(),
+        ));
     }
 
     let argv = expand::expand_words(shell, &simple.words)?;
@@ -594,7 +630,8 @@ fn spawn_prepared(
     pipe_stdout: bool,
     process_group: ProcessGroupPlan,
 ) -> Result<sys::ChildHandle, ShellError> {
-    if !prepared.path_verified && !prepared.exec_path.is_empty() && prepared.exec_path.contains('/') {
+    if !prepared.path_verified && !prepared.exec_path.is_empty() && prepared.exec_path.contains('/')
+    {
         if sys::access_path(&prepared.exec_path, sys::F_OK).is_err() {
             return Err(sys::SysError::Errno(sys::ENOENT).into());
         }
@@ -624,8 +661,12 @@ fn spawn_prepared(
     if pid == 0 {
         // Child: set up process group, stdin, stdout, redirections
         match process_group {
-            ProcessGroupPlan::NewGroup => { let _ = sys::set_process_group(0, 0); }
-            ProcessGroupPlan::Join(pgid) => { let _ = sys::set_process_group(0, pgid); }
+            ProcessGroupPlan::NewGroup => {
+                let _ = sys::set_process_group(0, 0);
+            }
+            ProcessGroupPlan::Join(pgid) => {
+                let _ = sys::set_process_group(0, pgid);
+            }
             ProcessGroupPlan::None => {}
         }
         if let Some(fd) = effective_stdin {
@@ -644,7 +685,13 @@ fn spawn_prepared(
         }
 
         // Try exec; on ENOEXEC, interpret as shell script
-        let rest: Vec<String> = prepared.argv.get(1..).unwrap_or(&[]).iter().cloned().collect();
+        let rest: Vec<String> = prepared
+            .argv
+            .get(1..)
+            .unwrap_or(&[])
+            .iter()
+            .cloned()
+            .collect();
         match sys::exec_replace(&prepared.exec_path, &rest) {
             Err(err) if err.is_enoexec() => {
                 let mut child_shell = shell.clone();
@@ -667,12 +714,20 @@ fn spawn_prepared(
         r
     });
     for action in &prepared_redirections.actions {
-        if let ChildFdAction::DupRawFd { fd, close_source: true, .. } = action {
+        if let ChildFdAction::DupRawFd {
+            fd,
+            close_source: true,
+            ..
+        } = action
+        {
             let _ = sys::close_fd(*fd);
         }
     }
 
-    Ok(sys::ChildHandle { pid, stdout_fd: stdout_read })
+    Ok(sys::ChildHandle {
+        pid,
+        stdout_fd: stdout_read,
+    })
 }
 
 fn prepare_redirections(
@@ -720,7 +775,14 @@ fn prepare_redirections(
             }
             RedirectionKind::HereDoc => {
                 let (read_fd, write_fd) = sys::create_pipe()?;
-                sys::write_all_fd(write_fd, redirection.here_doc_body.as_deref().unwrap_or("").as_bytes())?;
+                sys::write_all_fd(
+                    write_fd,
+                    redirection
+                        .here_doc_body
+                        .as_deref()
+                        .unwrap_or("")
+                        .as_bytes(),
+                )?;
                 sys::close_fd(write_fd)?;
                 prepared.actions.push(ChildFdAction::DupRawFd {
                     fd: read_fd,
@@ -782,7 +844,10 @@ fn apply_child_fd_actions(actions: &[ChildFdAction]) -> sys::SysResult<()> {
             ChildFdAction::DupRawFd { fd, target_fd, .. } => {
                 sys::duplicate_fd(*fd, *target_fd)?;
             }
-            ChildFdAction::DupFd { source_fd, target_fd } => {
+            ChildFdAction::DupFd {
+                source_fd,
+                target_fd,
+            } => {
                 sys::duplicate_fd(*source_fd, *target_fd)?;
             }
             ChildFdAction::CloseFd { target_fd } => {
@@ -798,7 +863,10 @@ fn apply_child_fd_actions(actions: &[ChildFdAction]) -> sys::SysResult<()> {
 }
 
 #[allow(dead_code)]
-fn apply_child_setup(actions: &[ChildFdAction], process_group: ProcessGroupPlan) -> sys::SysResult<()> {
+fn apply_child_setup(
+    actions: &[ChildFdAction],
+    process_group: ProcessGroupPlan,
+) -> sys::SysResult<()> {
     apply_child_fd_actions(actions)?;
     match process_group {
         ProcessGroupPlan::None => {}
@@ -876,7 +944,10 @@ fn apply_shell_redirections(
     Ok(guard)
 }
 
-fn apply_shell_redirection(redirection: &ExpandedRedirection, noclobber: bool) -> Result<(), ShellError> {
+fn apply_shell_redirection(
+    redirection: &ExpandedRedirection,
+    noclobber: bool,
+) -> Result<(), ShellError> {
     match redirection.kind {
         RedirectionKind::Read => {
             let fd = sys::open_file(&redirection.target, sys::O_RDONLY | sys::O_CLOEXEC, 0)?;
@@ -898,7 +969,14 @@ fn apply_shell_redirection(redirection: &ExpandedRedirection, noclobber: bool) -
         }
         RedirectionKind::HereDoc => {
             let (read_fd, write_fd) = sys::create_pipe()?;
-            sys::write_all_fd(write_fd, redirection.here_doc_body.as_deref().unwrap_or("").as_bytes())?;
+            sys::write_all_fd(
+                write_fd,
+                redirection
+                    .here_doc_body
+                    .as_deref()
+                    .unwrap_or("")
+                    .as_bytes(),
+            )?;
             sys::close_fd(write_fd)?;
             replace_shell_fd(read_fd, redirection.fd)?;
         }
@@ -968,10 +1046,14 @@ fn match_pattern(text: &[char], ti: usize, pattern: &[char], pi: usize) -> bool 
         '?' => ti < text.len() && match_pattern(text, ti + 1, pattern, pi + 1),
         '[' => match match_bracket(text.get(ti).copied(), pattern, pi) {
             Some((matched, next_pi)) => matched && match_pattern(text, ti + 1, pattern, next_pi),
-            None => ti < text.len() && text[ti] == '[' && match_pattern(text, ti + 1, pattern, pi + 1),
+            None => {
+                ti < text.len() && text[ti] == '[' && match_pattern(text, ti + 1, pattern, pi + 1)
+            }
         },
         '\\' if pi + 1 < pattern.len() => {
-            ti < text.len() && text[ti] == pattern[pi + 1] && match_pattern(text, ti + 1, pattern, pi + 2)
+            ti < text.len()
+                && text[ti] == pattern[pi + 1]
+                && match_pattern(text, ti + 1, pattern, pi + 2)
         }
         ch => ti < text.len() && text[ti] == ch && match_pattern(text, ti + 1, pattern, pi + 1),
     }
@@ -1068,7 +1150,9 @@ fn render_command(command: &Command) -> String {
         Command::Loop(loop_command) => render_loop(loop_command),
         Command::For(for_command) => render_for(for_command),
         Command::Case(case_command) => render_case(case_command),
-        Command::Redirected(command, redirections) => render_redirected_command(command, redirections),
+        Command::Redirected(command, redirections) => {
+            render_redirected_command(command, redirections)
+        }
     }
 }
 
@@ -1086,10 +1170,14 @@ fn render_pipeline(pipeline: &Pipeline) -> String {
 }
 
 fn render_function(function: &FunctionDef) -> String {
-    format!("{}() {}", function.name, render_pipeline(&Pipeline {
-        negated: false,
-        commands: vec![(*function.body).clone()],
-    }))
+    format!(
+        "{}() {}",
+        function.name,
+        render_pipeline(&Pipeline {
+            negated: false,
+            commands: vec![(*function.body).clone()],
+        })
+    )
 }
 
 fn render_if(if_command: &IfCommand) -> String {
@@ -1133,7 +1221,10 @@ fn render_for(for_command: &ForCommand) -> String {
             text.push_str(&item.raw);
         }
     }
-    text.push_str(&format!("\ndo\n{}\ndone", render_program(&for_command.body)));
+    text.push_str(&format!(
+        "\ndo\n{}\ndone",
+        render_program(&for_command.body)
+    ));
     text
 }
 
@@ -1172,7 +1263,9 @@ fn render_simple(simple: &SimpleCommand) -> String {
     )
 }
 
-fn render_redirections_with_bodies(redirections: &[crate::syntax::Redirection]) -> (String, Vec<String>) {
+fn render_redirections_with_bodies(
+    redirections: &[crate::syntax::Redirection],
+) -> (String, Vec<String>) {
     let mut parts = Vec::new();
     let mut heredocs = Vec::new();
     for redirection in redirections {
@@ -1191,7 +1284,11 @@ fn render_redirection_operator(redirection: &crate::syntax::Redirection) -> Stri
         RedirectionKind::ClobberWrite => ">|",
         RedirectionKind::Append => ">>",
         RedirectionKind::HereDoc => {
-            if redirection.here_doc.as_ref().is_some_and(|here_doc| here_doc.strip_tabs) {
+            if redirection
+                .here_doc
+                .as_ref()
+                .is_some_and(|here_doc| here_doc.strip_tabs)
+            {
                 "<<-"
             } else {
                 "<<"
@@ -1213,7 +1310,10 @@ fn render_here_doc_body(here_doc: &HereDoc) -> String {
     }
 }
 
-fn render_command_line_with_redirections(base: String, redirections: &[crate::syntax::Redirection]) -> String {
+fn render_command_line_with_redirections(
+    base: String,
+    redirections: &[crate::syntax::Redirection],
+) -> String {
     let (redir_text, heredocs) = render_redirections_with_bodies(redirections);
     let mut line = base;
     if !redir_text.is_empty() {
@@ -1241,8 +1341,10 @@ mod tests {
     use super::*;
     use crate::shell::ShellOptions;
     use crate::syntax::{Assignment, HereDoc, Redirection, Word};
+    use crate::sys::test_support::{
+        ArgMatcher, TraceResult, assert_no_syscalls, run_trace, t, t_fork,
+    };
     use std::collections::{BTreeMap, BTreeSet, HashMap};
-    use crate::sys::test_support::{TraceResult, ArgMatcher, run_trace, t, t_fork, assert_no_syscalls};
 
     fn test_shell() -> Shell {
         Shell {
@@ -1264,6 +1366,7 @@ mod tests {
             loop_depth: 0,
             function_depth: 0,
             pending_control: None,
+            interactive: false,
         }
     }
 
@@ -1283,73 +1386,158 @@ mod tests {
 
     #[test]
     fn execute_pipeline_async_single_command() {
-        run_trace(vec![
-            t("stat", vec![ArgMatcher::Str("/usr/bin/true".into()), ArgMatcher::Any], TraceResult::StatFile(0o755)),
-            t_fork(TraceResult::Pid(1000), vec![
-                t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(0)], TraceResult::Int(0)),
-                t("execvp", vec![ArgMatcher::Str("/usr/bin/true".into()), ArgMatcher::Any], TraceResult::Int(0)),
-            ]),
-            t("setpgid", vec![ArgMatcher::Int(1000), ArgMatcher::Int(1000)], TraceResult::Int(0)),
-        ], || {
-            let mut shell = test_shell();
-            shell.env.insert("PATH".into(), "/usr/bin".into());
-            let pipeline = Pipeline {
-                negated: false,
-                commands: vec![Command::Simple(SimpleCommand {
-                    words: vec![Word { raw: "true".into() }],
-                    ..SimpleCommand::default()
-                })],
-            };
-            let status = execute_pipeline(&mut shell, &pipeline, true).expect("async");
-            assert_eq!(status, 0);
-        });
+        run_trace(
+            vec![
+                t(
+                    "stat",
+                    vec![ArgMatcher::Str("/usr/bin/true".into()), ArgMatcher::Any],
+                    TraceResult::StatFile(0o755),
+                ),
+                t_fork(
+                    TraceResult::Pid(1000),
+                    vec![
+                        t(
+                            "setpgid",
+                            vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "execvp",
+                            vec![ArgMatcher::Str("/usr/bin/true".into()), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                    ],
+                ),
+                t(
+                    "setpgid",
+                    vec![ArgMatcher::Int(1000), ArgMatcher::Int(1000)],
+                    TraceResult::Int(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert("PATH".into(), "/usr/bin".into());
+                let pipeline = Pipeline {
+                    negated: false,
+                    commands: vec![Command::Simple(SimpleCommand {
+                        words: vec![Word { raw: "true".into() }],
+                        ..SimpleCommand::default()
+                    })],
+                };
+                let status = execute_pipeline(&mut shell, &pipeline, true).expect("async");
+                assert_eq!(status, 0);
+            },
+        );
     }
 
     #[test]
     fn execute_pipeline_negated_multi_command() {
-        run_trace(vec![
-            t("stat", vec![ArgMatcher::Str("/usr/bin/printf".into()), ArgMatcher::Any], TraceResult::StatFile(0o755)),
-            t("pipe", vec![], TraceResult::Fds(200, 201)),
-            t_fork(TraceResult::Pid(1000), vec![
-                t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(0)], TraceResult::Int(0)),
-                t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
-                t("dup2", vec![ArgMatcher::Fd(201), ArgMatcher::Fd(1)], TraceResult::Int(0)),
+        run_trace(
+            vec![
+                t(
+                    "stat",
+                    vec![ArgMatcher::Str("/usr/bin/printf".into()), ArgMatcher::Any],
+                    TraceResult::StatFile(0o755),
+                ),
+                t("pipe", vec![], TraceResult::Fds(200, 201)),
+                t_fork(
+                    TraceResult::Pid(1000),
+                    vec![
+                        t(
+                            "setpgid",
+                            vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
+                            TraceResult::Int(0),
+                        ),
+                        t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
+                        t(
+                            "dup2",
+                            vec![ArgMatcher::Fd(201), ArgMatcher::Fd(1)],
+                            TraceResult::Int(0),
+                        ),
+                        t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
+                        t(
+                            "execvp",
+                            vec![ArgMatcher::Str("/usr/bin/printf".into()), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                    ],
+                ),
                 t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
-                t("execvp", vec![ArgMatcher::Str("/usr/bin/printf".into()), ArgMatcher::Any], TraceResult::Int(0)),
-            ]),
-            t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
-            t("setpgid", vec![ArgMatcher::Int(1000), ArgMatcher::Int(1000)], TraceResult::Int(0)),
-            t("stat", vec![ArgMatcher::Str("/usr/bin/wc".into()), ArgMatcher::Any], TraceResult::StatFile(0o755)),
-            t_fork(TraceResult::Pid(1001), vec![
-                t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)], TraceResult::Int(0)),
-                t("dup2", vec![ArgMatcher::Fd(200), ArgMatcher::Fd(0)], TraceResult::Int(0)),
+                t(
+                    "setpgid",
+                    vec![ArgMatcher::Int(1000), ArgMatcher::Int(1000)],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "stat",
+                    vec![ArgMatcher::Str("/usr/bin/wc".into()), ArgMatcher::Any],
+                    TraceResult::StatFile(0o755),
+                ),
+                t_fork(
+                    TraceResult::Pid(1001),
+                    vec![
+                        t(
+                            "setpgid",
+                            vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "dup2",
+                            vec![ArgMatcher::Fd(200), ArgMatcher::Fd(0)],
+                            TraceResult::Int(0),
+                        ),
+                        t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
+                        t(
+                            "execvp",
+                            vec![ArgMatcher::Str("/usr/bin/wc".into()), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                    ],
+                ),
                 t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
-                t("execvp", vec![ArgMatcher::Str("/usr/bin/wc".into()), ArgMatcher::Any], TraceResult::Int(0)),
-            ]),
-            t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
-            t("setpgid", vec![ArgMatcher::Int(1001), ArgMatcher::Int(1000)], TraceResult::Int(0)),
-            t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-            t("waitpid", vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
-            t("waitpid", vec![ArgMatcher::Int(1001), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
-        ], || {
-            let mut shell = test_shell();
-            shell.env.insert("PATH".into(), "/usr/bin".into());
-            let pipeline = Pipeline {
-                negated: true,
-                commands: vec![
-                    Command::Simple(SimpleCommand {
-                        words: vec![Word { raw: "printf".into() }, Word { raw: "ok".into() }],
-                        ..SimpleCommand::default()
-                    }),
-                    Command::Simple(SimpleCommand {
-                        words: vec![Word { raw: "wc".into() }, Word { raw: "-c".into() }],
-                        ..SimpleCommand::default()
-                    }),
-                ],
-            };
-            let status = execute_pipeline(&mut shell, &pipeline, false).expect("negated pipeline");
-            assert_eq!(status, 1);
-        });
+                t(
+                    "setpgid",
+                    vec![ArgMatcher::Int(1001), ArgMatcher::Int(1000)],
+                    TraceResult::Int(0),
+                ),
+                t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    TraceResult::Status(0),
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(1001), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    TraceResult::Status(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert("PATH".into(), "/usr/bin".into());
+                let pipeline = Pipeline {
+                    negated: true,
+                    commands: vec![
+                        Command::Simple(SimpleCommand {
+                            words: vec![
+                                Word {
+                                    raw: "printf".into(),
+                                },
+                                Word { raw: "ok".into() },
+                            ],
+                            ..SimpleCommand::default()
+                        }),
+                        Command::Simple(SimpleCommand {
+                            words: vec![Word { raw: "wc".into() }, Word { raw: "-c".into() }],
+                            ..SimpleCommand::default()
+                        }),
+                    ],
+                };
+                let status =
+                    execute_pipeline(&mut shell, &pipeline, false).expect("negated pipeline");
+                assert_eq!(status, 1);
+            },
+        );
     }
 
     #[test]
@@ -1378,80 +1566,134 @@ mod tests {
                 },
             )
             .expect("process");
-            assert_eq!(prepared.child_env, vec![("ASSIGN_VAR".into(), "works".into())]);
+            assert_eq!(
+                prepared.child_env,
+                vec![("ASSIGN_VAR".into(), "works".into())]
+            );
             assert_eq!(prepared.argv, vec!["echo", "hello"]);
         });
     }
 
     #[test]
     fn spawn_prepared_enoexec_falls_back_to_source() {
-        run_trace(vec![
-            t_fork(TraceResult::Pid(1000), vec![
-                t("execvp", vec![ArgMatcher::Str("/tmp/script.sh".into()), ArgMatcher::Any], TraceResult::Err(sys::ENOEXEC)),
-                t("open", vec![ArgMatcher::Str("/tmp/script.sh".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(10)),
-                t("read", vec![ArgMatcher::Fd(10), ArgMatcher::Any], TraceResult::Bytes(b"true\n".to_vec())),
-                t("read", vec![ArgMatcher::Fd(10), ArgMatcher::Any], TraceResult::Int(0)),
-                t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
-            ]),
-            t("waitpid", vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
-        ], || {
-            let shell = test_shell();
-            let prepared = PreparedProcess {
-                exec_path: "/tmp/script.sh".into(),
-                argv: vec!["/tmp/script.sh".into(), "arg1".into()],
-                child_env: Vec::new(),
-                redirections: Vec::new(),
-                noclobber: false,
-                path_verified: true,
-            };
-            let child = spawn_prepared(&shell, &prepared, None, false, ProcessGroupPlan::None)
-                .expect("enoexec fallback spawn");
-            let output = child.wait_with_output().expect("output");
-            assert!(output.status.success());
-        });
+        run_trace(
+            vec![
+                t_fork(
+                    TraceResult::Pid(1000),
+                    vec![
+                        t(
+                            "execvp",
+                            vec![ArgMatcher::Str("/tmp/script.sh".into()), ArgMatcher::Any],
+                            TraceResult::Err(sys::ENOEXEC),
+                        ),
+                        t(
+                            "open",
+                            vec![
+                                ArgMatcher::Str("/tmp/script.sh".into()),
+                                ArgMatcher::Any,
+                                ArgMatcher::Any,
+                            ],
+                            TraceResult::Fd(10),
+                        ),
+                        t(
+                            "read",
+                            vec![ArgMatcher::Fd(10), ArgMatcher::Any],
+                            TraceResult::Bytes(b"true\n".to_vec()),
+                        ),
+                        t(
+                            "read",
+                            vec![ArgMatcher::Fd(10), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                        t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
+                    ],
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    TraceResult::Status(0),
+                ),
+            ],
+            || {
+                let shell = test_shell();
+                let prepared = PreparedProcess {
+                    exec_path: "/tmp/script.sh".into(),
+                    argv: vec!["/tmp/script.sh".into(), "arg1".into()],
+                    child_env: Vec::new(),
+                    redirections: Vec::new(),
+                    noclobber: false,
+                    path_verified: true,
+                };
+                let child = spawn_prepared(&shell, &prepared, None, false, ProcessGroupPlan::None)
+                    .expect("enoexec fallback spawn");
+                let output = child.wait_with_output().expect("output");
+                assert!(output.status.success());
+            },
+        );
     }
 
     #[test]
     fn spawn_prepared_errors_for_missing_executable() {
-        run_trace(vec![
-            t("access", vec![ArgMatcher::Str("/nonexistent/missing".into()), ArgMatcher::Int(0)], TraceResult::Err(sys::ENOENT)),
-        ], || {
-            let missing = PreparedProcess {
-                exec_path: "/nonexistent/missing".into(),
-                argv: vec!["missing".into()],
-                child_env: Vec::new(),
-                redirections: Vec::new(),
-                noclobber: false,
-                path_verified: false,
-            };
-            let shell = test_shell();
-            assert!(spawn_prepared(&shell, &missing, None, false, ProcessGroupPlan::None).is_err());
-        });
+        run_trace(
+            vec![t(
+                "access",
+                vec![
+                    ArgMatcher::Str("/nonexistent/missing".into()),
+                    ArgMatcher::Int(0),
+                ],
+                TraceResult::Err(sys::ENOENT),
+            )],
+            || {
+                let missing = PreparedProcess {
+                    exec_path: "/nonexistent/missing".into(),
+                    argv: vec!["missing".into()],
+                    child_env: Vec::new(),
+                    redirections: Vec::new(),
+                    noclobber: false,
+                    path_verified: false,
+                };
+                let shell = test_shell();
+                assert!(
+                    spawn_prepared(&shell, &missing, None, false, ProcessGroupPlan::None).is_err()
+                );
+            },
+        );
     }
 
     #[test]
     fn apply_child_fd_actions_applies_dup_close() {
-        run_trace(vec![
-            t("dup2", vec![ArgMatcher::Fd(10), ArgMatcher::Fd(90)], TraceResult::Int(90)),
-            t("dup2", vec![ArgMatcher::Fd(90), ArgMatcher::Fd(91)], TraceResult::Int(91)),
-            t("close", vec![ArgMatcher::Fd(91)], TraceResult::Int(0)),
-            t("close", vec![ArgMatcher::Fd(123_456)], TraceResult::Int(0)),
-        ], || {
-            apply_child_fd_actions(&[
-                ChildFdAction::DupRawFd {
-                    fd: 10,
-                    target_fd: 90,
-                    close_source: true,
-                },
-                ChildFdAction::DupFd {
-                    source_fd: 90,
-                    target_fd: 91,
-                },
-                ChildFdAction::CloseFd { target_fd: 91 },
-                ChildFdAction::CloseFd { target_fd: 123_456 },
-            ])
-            .expect("apply child actions");
-        });
+        run_trace(
+            vec![
+                t(
+                    "dup2",
+                    vec![ArgMatcher::Fd(10), ArgMatcher::Fd(90)],
+                    TraceResult::Int(90),
+                ),
+                t(
+                    "dup2",
+                    vec![ArgMatcher::Fd(90), ArgMatcher::Fd(91)],
+                    TraceResult::Int(91),
+                ),
+                t("close", vec![ArgMatcher::Fd(91)], TraceResult::Int(0)),
+                t("close", vec![ArgMatcher::Fd(123_456)], TraceResult::Int(0)),
+            ],
+            || {
+                apply_child_fd_actions(&[
+                    ChildFdAction::DupRawFd {
+                        fd: 10,
+                        target_fd: 90,
+                        close_source: true,
+                    },
+                    ChildFdAction::DupFd {
+                        source_fd: 90,
+                        target_fd: 91,
+                    },
+                    ChildFdAction::CloseFd { target_fd: 91 },
+                    ChildFdAction::CloseFd { target_fd: 123_456 },
+                ])
+                .expect("apply child actions");
+            },
+        );
     }
 
     #[test]
@@ -1460,9 +1702,24 @@ mod tests {
             let simple = SimpleCommand {
                 words: vec![Word { raw: "echo".into() }],
                 redirections: vec![
-                    Redirection { fd: Some(5), kind: RedirectionKind::ReadWrite, target: Word { raw: "rw".into() }, here_doc: None },
-                    Redirection { fd: Some(0), kind: RedirectionKind::DupInput, target: Word { raw: "5".into() }, here_doc: None },
-                    Redirection { fd: Some(1), kind: RedirectionKind::DupOutput, target: Word { raw: "-".into() }, here_doc: None },
+                    Redirection {
+                        fd: Some(5),
+                        kind: RedirectionKind::ReadWrite,
+                        target: Word { raw: "rw".into() },
+                        here_doc: None,
+                    },
+                    Redirection {
+                        fd: Some(0),
+                        kind: RedirectionKind::DupInput,
+                        target: Word { raw: "5".into() },
+                        here_doc: None,
+                    },
+                    Redirection {
+                        fd: Some(1),
+                        kind: RedirectionKind::DupOutput,
+                        target: Word { raw: "-".into() },
+                        here_doc: None,
+                    },
                 ],
                 ..SimpleCommand::default()
             };
@@ -1475,28 +1732,40 @@ mod tests {
 
     #[test]
     fn prepare_redirections_produces_correct_fd_actions() {
-        run_trace(vec![
-            t("open", vec![ArgMatcher::Str("/tmp/rw.txt".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(100)),
-        ], || {
-            let prepared = prepare_redirections(&[
-                ExpandedRedirection {
-                    fd: 1,
-                    kind: RedirectionKind::DupOutput,
-                    target: "-".into(),
-                    here_doc_body: None,
-                },
-                ExpandedRedirection {
-                    fd: 0,
-                    kind: RedirectionKind::ReadWrite,
-                    target: "/tmp/rw.txt".into(),
-                    here_doc_body: None,
-                },
-            ], false)
-            .expect("prepare");
-            assert!(prepared.stdin_redirected);
-            assert!(prepared.stdout_redirected);
-            assert_eq!(prepared.actions.len(), 2);
-        });
+        run_trace(
+            vec![t(
+                "open",
+                vec![
+                    ArgMatcher::Str("/tmp/rw.txt".into()),
+                    ArgMatcher::Any,
+                    ArgMatcher::Any,
+                ],
+                TraceResult::Fd(100),
+            )],
+            || {
+                let prepared = prepare_redirections(
+                    &[
+                        ExpandedRedirection {
+                            fd: 1,
+                            kind: RedirectionKind::DupOutput,
+                            target: "-".into(),
+                            here_doc_body: None,
+                        },
+                        ExpandedRedirection {
+                            fd: 0,
+                            kind: RedirectionKind::ReadWrite,
+                            target: "/tmp/rw.txt".into(),
+                            here_doc_body: None,
+                        },
+                    ],
+                    false,
+                )
+                .expect("prepare");
+                assert!(prepared.stdin_redirected);
+                assert!(prepared.stdout_redirected);
+                assert_eq!(prepared.actions.len(), 2);
+            },
+        );
     }
 
     #[test]
@@ -1519,14 +1788,20 @@ mod tests {
             .expect_err("expected missing here-document body");
             assert_eq!(error.message, "missing here-document body");
 
-            let error = prepare_redirections(&[ExpandedRedirection {
-                fd: 1,
-                kind: RedirectionKind::DupOutput,
-                target: "bad".into(),
-                here_doc_body: None,
-            }], false)
+            let error = prepare_redirections(
+                &[ExpandedRedirection {
+                    fd: 1,
+                    kind: RedirectionKind::DupOutput,
+                    target: "bad".into(),
+                    here_doc_body: None,
+                }],
+                false,
+            )
             .expect_err("bad dup target");
-            assert_eq!(error.message, "redirection target must be a file descriptor or '-'");
+            assert_eq!(
+                error.message,
+                "redirection target must be a file descriptor or '-'"
+            );
 
             let mut shell = test_shell();
             let expanded = expand_redirections(
@@ -1582,21 +1857,58 @@ mod tests {
 
     #[test]
     fn prepare_redirections_creates_heredoc_pipe() {
-        run_trace(vec![
-            t("pipe", vec![], TraceResult::Fds(10, 11)),
-            t("write", vec![ArgMatcher::Fd(11), ArgMatcher::Bytes(b"body\n".to_vec())], TraceResult::Int(5)),
-            t("close", vec![ArgMatcher::Fd(11)], TraceResult::Int(0)),
-        ], || {
-            let prepared = prepare_redirections(&[ExpandedRedirection {
-                fd: 0,
-                kind: RedirectionKind::HereDoc,
-                target: "EOF".into(),
-                here_doc_body: Some("body\n".into()),
-            }], false)
-            .expect("prepare heredoc");
-            assert!(prepared.stdin_redirected);
-            assert_eq!(prepared.actions.len(), 1);
-        });
+        run_trace(
+            vec![
+                t("pipe", vec![], TraceResult::Fds(10, 11)),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(11), ArgMatcher::Bytes(b"body\n".to_vec())],
+                    TraceResult::Int(5),
+                ),
+                t("close", vec![ArgMatcher::Fd(11)], TraceResult::Int(0)),
+            ],
+            || {
+                let prepared = prepare_redirections(
+                    &[ExpandedRedirection {
+                        fd: 0,
+                        kind: RedirectionKind::HereDoc,
+                        target: "EOF".into(),
+                        here_doc_body: Some("body\n".into()),
+                    }],
+                    false,
+                )
+                .expect("prepare heredoc");
+                assert!(prepared.stdin_redirected);
+                assert_eq!(prepared.actions.len(), 1);
+            },
+        );
+    }
+
+    #[test]
+    fn prepare_redirections_heredoc_write_error() {
+        run_trace(
+            vec![
+                t("pipe", vec![], TraceResult::Fds(10, 11)),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(11), ArgMatcher::Bytes(b"body\n".to_vec())],
+                    TraceResult::Err(sys::EIO),
+                ),
+            ],
+            || {
+                let err = prepare_redirections(
+                    &[ExpandedRedirection {
+                        fd: 0,
+                        kind: RedirectionKind::HereDoc,
+                        target: "EOF".into(),
+                        here_doc_body: Some("body\n".into()),
+                    }],
+                    false,
+                )
+                .expect_err("heredoc write should fail");
+                assert!(!err.message.is_empty());
+            },
+        );
     }
 
     #[test]
@@ -1695,44 +2007,92 @@ mod tests {
             }],
         };
 
-        run_trace(vec![
-            // Command 0 (Subshell): pipe_stdout=true, NewGroup
-            t("pipe", vec![], TraceResult::Fds(200, 201)),
-            t_fork(TraceResult::Pid(1000), vec![
-                t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
-                t("dup2", vec![ArgMatcher::Fd(201), ArgMatcher::Fd(1)], TraceResult::Int(0)),
+        run_trace(
+            vec![
+                // Command 0 (Subshell): pipe_stdout=true, NewGroup
+                t("pipe", vec![], TraceResult::Fds(200, 201)),
+                t_fork(
+                    TraceResult::Pid(1000),
+                    vec![
+                        t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
+                        t(
+                            "dup2",
+                            vec![ArgMatcher::Fd(201), ArgMatcher::Fd(1)],
+                            TraceResult::Int(0),
+                        ),
+                        t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
+                        t(
+                            "setpgid",
+                            vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
+                            TraceResult::Int(0),
+                        ),
+                        t_fork(TraceResult::Pid(2000), vec![]),
+                        t(
+                            "waitpid",
+                            vec![ArgMatcher::Int(2000), ArgMatcher::Any, ArgMatcher::Int(0)],
+                            TraceResult::Status(0),
+                        ),
+                    ],
+                ),
                 t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
-                t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(0)], TraceResult::Int(0)),
-                t_fork(TraceResult::Pid(2000), vec![]),
-                t("waitpid", vec![ArgMatcher::Int(2000), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
-            ]),
-            t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
-            t("setpgid", vec![ArgMatcher::Int(1000), ArgMatcher::Int(1000)], TraceResult::Int(0)),
-            // Command 1 (Group): stdin=200, pipe_stdout=false, Join(1000)
-            t_fork(TraceResult::Pid(1001), vec![
-                t("dup2", vec![ArgMatcher::Fd(200), ArgMatcher::Fd(0)], TraceResult::Int(0)),
+                t(
+                    "setpgid",
+                    vec![ArgMatcher::Int(1000), ArgMatcher::Int(1000)],
+                    TraceResult::Int(0),
+                ),
+                // Command 1 (Group): stdin=200, pipe_stdout=false, Join(1000)
+                t_fork(
+                    TraceResult::Pid(1001),
+                    vec![
+                        t(
+                            "dup2",
+                            vec![ArgMatcher::Fd(200), ArgMatcher::Fd(0)],
+                            TraceResult::Int(0),
+                        ),
+                        t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
+                        t(
+                            "setpgid",
+                            vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)],
+                            TraceResult::Int(0),
+                        ),
+                    ],
+                ),
                 t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
-                t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)], TraceResult::Int(0)),
-            ]),
-            t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
-            t("setpgid", vec![ArgMatcher::Int(1001), ArgMatcher::Int(1000)], TraceResult::Int(0)),
-            // Wait
-            t("waitpid", vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
-            t("waitpid", vec![ArgMatcher::Int(1001), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
-        ], || {
-            let mut shell = test_shell();
-            let spawned = spawn_pipeline(&mut shell, &Pipeline {
-                negated: false,
-                commands: vec![
-                    Command::Subshell(program.clone()),
-                    Command::Group(program.clone()),
-                ],
-            })
-            .expect("spawn");
-            for child in spawned.children {
-                let _ = child.wait().expect("wait");
-            }
-        });
+                t(
+                    "setpgid",
+                    vec![ArgMatcher::Int(1001), ArgMatcher::Int(1000)],
+                    TraceResult::Int(0),
+                ),
+                // Wait
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    TraceResult::Status(0),
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(1001), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    TraceResult::Status(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let spawned = spawn_pipeline(
+                    &mut shell,
+                    &Pipeline {
+                        negated: false,
+                        commands: vec![
+                            Command::Subshell(program.clone()),
+                            Command::Group(program.clone()),
+                        ],
+                    },
+                )
+                .expect("spawn");
+                for child in spawned.children {
+                    let _ = child.wait().expect("wait");
+                }
+            },
+        );
     }
 
     #[test]
@@ -1758,7 +2118,9 @@ mod tests {
                             first: Pipeline {
                                 negated: false,
                                 commands: vec![Command::Simple(SimpleCommand {
-                                    words: vec![Word { raw: "false".into() }],
+                                    words: vec![Word {
+                                        raw: "false".into(),
+                                    }],
                                     ..SimpleCommand::default()
                                 })],
                             },
@@ -1771,27 +2133,41 @@ mod tests {
             assert_eq!(render_list_item(&async_program.items[0]), "true &");
             assert_eq!(render_program(&async_program), "true &\nfalse");
 
-            let heredoc_program = crate::syntax::parse(": <<EOF\nhello\nEOF\n").expect("parse heredoc");
+            let heredoc_program =
+                crate::syntax::parse(": <<EOF\nhello\nEOF\n").expect("parse heredoc");
             assert_eq!(render_program(&heredoc_program), ": <<EOF\nhello\nEOF");
         });
     }
 
     #[test]
     fn execute_nested_program_sets_up_heredoc_fd() {
-        run_trace(vec![
-            t("dup", vec![ArgMatcher::Fd(0)], TraceResult::Err(sys::EBADF)),
-            t("pipe", vec![], TraceResult::Fds(10, 11)),
-            t("write", vec![ArgMatcher::Fd(11), ArgMatcher::Bytes(b"hello\n".to_vec())], TraceResult::Int(6)),
-            t("close", vec![ArgMatcher::Fd(11)], TraceResult::Int(0)),
-            t("dup2", vec![ArgMatcher::Fd(10), ArgMatcher::Fd(0)], TraceResult::Int(0)),
-            t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
-            t("close", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-        ], || {
-            let heredoc_program = crate::syntax::parse(": <<EOF\nhello\nEOF\n").expect("parse heredoc");
-            let mut shell = test_shell();
-            let status = execute_nested_program(&mut shell, &heredoc_program).expect("execute heredoc nested");
-            assert_eq!(status, 0);
-        });
+        run_trace(
+            vec![
+                t("dup", vec![ArgMatcher::Fd(0)], TraceResult::Err(sys::EBADF)),
+                t("pipe", vec![], TraceResult::Fds(10, 11)),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(11), ArgMatcher::Bytes(b"hello\n".to_vec())],
+                    TraceResult::Int(6),
+                ),
+                t("close", vec![ArgMatcher::Fd(11)], TraceResult::Int(0)),
+                t(
+                    "dup2",
+                    vec![ArgMatcher::Fd(10), ArgMatcher::Fd(0)],
+                    TraceResult::Int(0),
+                ),
+                t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
+                t("close", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
+            ],
+            || {
+                let heredoc_program =
+                    crate::syntax::parse(": <<EOF\nhello\nEOF\n").expect("parse heredoc");
+                let mut shell = test_shell();
+                let status = execute_nested_program(&mut shell, &heredoc_program)
+                    .expect("execute heredoc nested");
+                assert_eq!(status, 0);
+            },
+        );
     }
 
     #[test]
@@ -1858,10 +2234,9 @@ mod tests {
             assert_eq!(shell.get_var("VALUE").as_deref(), Some("yes"));
 
             let mut shell = test_shell();
-            let program = crate::syntax::parse(
-                "name=zeta; case $name in alpha|beta) VALUE=hit ;; esac",
-            )
-            .expect("parse");
+            let program =
+                crate::syntax::parse("name=zeta; case $name in alpha|beta) VALUE=hit ;; esac")
+                    .expect("parse");
             let status = execute_program(&mut shell, &program).expect("execute");
             assert_eq!(status, 0);
             assert_eq!(shell.get_var("VALUE"), None);
@@ -1875,21 +2250,24 @@ mod tests {
             shell.env.insert("PATH".into(), "/usr/bin:/bin".into());
             shell.exported.insert("PATH".into());
 
-            let if_program = crate::syntax::parse("if true; then VALUE=yes; else VALUE=no; fi").expect("parse");
+            let if_program =
+                crate::syntax::parse("if true; then VALUE=yes; else VALUE=no; fi").expect("parse");
             let status = execute_program(&mut shell, &if_program).expect("exec");
             assert_eq!(status, 0);
             assert_eq!(shell.get_var("VALUE").as_deref(), Some("yes"));
 
             let mut shell = test_shell();
-            let if_program = crate::syntax::parse("if false; then VALUE=yes; else VALUE=no; fi").expect("parse");
+            let if_program =
+                crate::syntax::parse("if false; then VALUE=yes; else VALUE=no; fi").expect("parse");
             let status = execute_program(&mut shell, &if_program).expect("exec");
             assert_eq!(status, 0);
             assert_eq!(shell.get_var("VALUE").as_deref(), Some("no"));
 
             let mut shell = test_shell();
-            let if_program =
-                crate::syntax::parse("if false; then VALUE=yes; elif false; then VALUE=maybe; else VALUE=no; fi")
-                    .expect("parse");
+            let if_program = crate::syntax::parse(
+                "if false; then VALUE=yes; elif false; then VALUE=maybe; else VALUE=no; fi",
+            )
+            .expect("parse");
             let status = execute_program(&mut shell, &if_program).expect("exec");
             assert_eq!(status, 0);
             assert_eq!(shell.get_var("VALUE").as_deref(), Some("no"));
@@ -1912,7 +2290,9 @@ mod tests {
                     Pipeline {
                         negated: false,
                         commands: vec![Command::Simple(SimpleCommand {
-                            words: vec![Word { raw: "false".into() }],
+                            words: vec![Word {
+                                raw: "false".into(),
+                            }],
                             ..SimpleCommand::default()
                         })],
                     },
@@ -1974,77 +2354,187 @@ mod tests {
                 }),
             ],
         };
-        run_trace(vec![
-            // Command 0 (FunctionDef): pipe_stdout=true, NewGroup
-            t("pipe", vec![], TraceResult::Fds(200, 201)),
-            t_fork(TraceResult::Pid(1000), vec![
-                t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
-                t("dup2", vec![ArgMatcher::Fd(201), ArgMatcher::Fd(1)], TraceResult::Int(0)),
+        run_trace(
+            vec![
+                // Command 0 (FunctionDef): pipe_stdout=true, NewGroup
+                t("pipe", vec![], TraceResult::Fds(200, 201)),
+                t_fork(
+                    TraceResult::Pid(1000),
+                    vec![
+                        t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
+                        t(
+                            "dup2",
+                            vec![ArgMatcher::Fd(201), ArgMatcher::Fd(1)],
+                            TraceResult::Int(0),
+                        ),
+                        t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
+                        t(
+                            "setpgid",
+                            vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
+                            TraceResult::Int(0),
+                        ),
+                    ],
+                ),
                 t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
-                t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(0)], TraceResult::Int(0)),
-            ]),
-            t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
-            t("setpgid", vec![ArgMatcher::Int(1000), ArgMatcher::Int(1000)], TraceResult::Int(0)),
-            // Command 1 (If): stdin=200, pipe_stdout=true, Join(1000)
-            t("pipe", vec![], TraceResult::Fds(202, 203)),
-            t_fork(TraceResult::Pid(1001), vec![
-                t("dup2", vec![ArgMatcher::Fd(200), ArgMatcher::Fd(0)], TraceResult::Int(0)),
+                t(
+                    "setpgid",
+                    vec![ArgMatcher::Int(1000), ArgMatcher::Int(1000)],
+                    TraceResult::Int(0),
+                ),
+                // Command 1 (If): stdin=200, pipe_stdout=true, Join(1000)
+                t("pipe", vec![], TraceResult::Fds(202, 203)),
+                t_fork(
+                    TraceResult::Pid(1001),
+                    vec![
+                        t(
+                            "dup2",
+                            vec![ArgMatcher::Fd(200), ArgMatcher::Fd(0)],
+                            TraceResult::Int(0),
+                        ),
+                        t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
+                        t("close", vec![ArgMatcher::Fd(202)], TraceResult::Int(0)),
+                        t(
+                            "dup2",
+                            vec![ArgMatcher::Fd(203), ArgMatcher::Fd(1)],
+                            TraceResult::Int(0),
+                        ),
+                        t("close", vec![ArgMatcher::Fd(203)], TraceResult::Int(0)),
+                        t(
+                            "setpgid",
+                            vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)],
+                            TraceResult::Int(0),
+                        ),
+                    ],
+                ),
                 t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
-                t("close", vec![ArgMatcher::Fd(202)], TraceResult::Int(0)),
-                t("dup2", vec![ArgMatcher::Fd(203), ArgMatcher::Fd(1)], TraceResult::Int(0)),
                 t("close", vec![ArgMatcher::Fd(203)], TraceResult::Int(0)),
-                t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)], TraceResult::Int(0)),
-            ]),
-            t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
-            t("close", vec![ArgMatcher::Fd(203)], TraceResult::Int(0)),
-            t("setpgid", vec![ArgMatcher::Int(1001), ArgMatcher::Int(1000)], TraceResult::Int(0)),
-            // Command 2 (Loop): stdin=202, pipe_stdout=true, Join(1000)
-            t("pipe", vec![], TraceResult::Fds(204, 205)),
-            t_fork(TraceResult::Pid(1002), vec![
-                t("dup2", vec![ArgMatcher::Fd(202), ArgMatcher::Fd(0)], TraceResult::Int(0)),
+                t(
+                    "setpgid",
+                    vec![ArgMatcher::Int(1001), ArgMatcher::Int(1000)],
+                    TraceResult::Int(0),
+                ),
+                // Command 2 (Loop): stdin=202, pipe_stdout=true, Join(1000)
+                t("pipe", vec![], TraceResult::Fds(204, 205)),
+                t_fork(
+                    TraceResult::Pid(1002),
+                    vec![
+                        t(
+                            "dup2",
+                            vec![ArgMatcher::Fd(202), ArgMatcher::Fd(0)],
+                            TraceResult::Int(0),
+                        ),
+                        t("close", vec![ArgMatcher::Fd(202)], TraceResult::Int(0)),
+                        t("close", vec![ArgMatcher::Fd(204)], TraceResult::Int(0)),
+                        t(
+                            "dup2",
+                            vec![ArgMatcher::Fd(205), ArgMatcher::Fd(1)],
+                            TraceResult::Int(0),
+                        ),
+                        t("close", vec![ArgMatcher::Fd(205)], TraceResult::Int(0)),
+                        t(
+                            "setpgid",
+                            vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)],
+                            TraceResult::Int(0),
+                        ),
+                    ],
+                ),
                 t("close", vec![ArgMatcher::Fd(202)], TraceResult::Int(0)),
-                t("close", vec![ArgMatcher::Fd(204)], TraceResult::Int(0)),
-                t("dup2", vec![ArgMatcher::Fd(205), ArgMatcher::Fd(1)], TraceResult::Int(0)),
                 t("close", vec![ArgMatcher::Fd(205)], TraceResult::Int(0)),
-                t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)], TraceResult::Int(0)),
-            ]),
-            t("close", vec![ArgMatcher::Fd(202)], TraceResult::Int(0)),
-            t("close", vec![ArgMatcher::Fd(205)], TraceResult::Int(0)),
-            t("setpgid", vec![ArgMatcher::Int(1002), ArgMatcher::Int(1000)], TraceResult::Int(0)),
-            // Command 3 (For): stdin=204, pipe_stdout=true, Join(1000)
-            t("pipe", vec![], TraceResult::Fds(206, 207)),
-            t_fork(TraceResult::Pid(1003), vec![
-                t("dup2", vec![ArgMatcher::Fd(204), ArgMatcher::Fd(0)], TraceResult::Int(0)),
+                t(
+                    "setpgid",
+                    vec![ArgMatcher::Int(1002), ArgMatcher::Int(1000)],
+                    TraceResult::Int(0),
+                ),
+                // Command 3 (For): stdin=204, pipe_stdout=true, Join(1000)
+                t("pipe", vec![], TraceResult::Fds(206, 207)),
+                t_fork(
+                    TraceResult::Pid(1003),
+                    vec![
+                        t(
+                            "dup2",
+                            vec![ArgMatcher::Fd(204), ArgMatcher::Fd(0)],
+                            TraceResult::Int(0),
+                        ),
+                        t("close", vec![ArgMatcher::Fd(204)], TraceResult::Int(0)),
+                        t("close", vec![ArgMatcher::Fd(206)], TraceResult::Int(0)),
+                        t(
+                            "dup2",
+                            vec![ArgMatcher::Fd(207), ArgMatcher::Fd(1)],
+                            TraceResult::Int(0),
+                        ),
+                        t("close", vec![ArgMatcher::Fd(207)], TraceResult::Int(0)),
+                        t(
+                            "setpgid",
+                            vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)],
+                            TraceResult::Int(0),
+                        ),
+                    ],
+                ),
                 t("close", vec![ArgMatcher::Fd(204)], TraceResult::Int(0)),
-                t("close", vec![ArgMatcher::Fd(206)], TraceResult::Int(0)),
-                t("dup2", vec![ArgMatcher::Fd(207), ArgMatcher::Fd(1)], TraceResult::Int(0)),
                 t("close", vec![ArgMatcher::Fd(207)], TraceResult::Int(0)),
-                t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)], TraceResult::Int(0)),
-            ]),
-            t("close", vec![ArgMatcher::Fd(204)], TraceResult::Int(0)),
-            t("close", vec![ArgMatcher::Fd(207)], TraceResult::Int(0)),
-            t("setpgid", vec![ArgMatcher::Int(1003), ArgMatcher::Int(1000)], TraceResult::Int(0)),
-            // Command 4 (Case): stdin=206, pipe_stdout=false, Join(1000)
-            t_fork(TraceResult::Pid(1004), vec![
-                t("dup2", vec![ArgMatcher::Fd(206), ArgMatcher::Fd(0)], TraceResult::Int(0)),
+                t(
+                    "setpgid",
+                    vec![ArgMatcher::Int(1003), ArgMatcher::Int(1000)],
+                    TraceResult::Int(0),
+                ),
+                // Command 4 (Case): stdin=206, pipe_stdout=false, Join(1000)
+                t_fork(
+                    TraceResult::Pid(1004),
+                    vec![
+                        t(
+                            "dup2",
+                            vec![ArgMatcher::Fd(206), ArgMatcher::Fd(0)],
+                            TraceResult::Int(0),
+                        ),
+                        t("close", vec![ArgMatcher::Fd(206)], TraceResult::Int(0)),
+                        t(
+                            "setpgid",
+                            vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)],
+                            TraceResult::Int(0),
+                        ),
+                    ],
+                ),
                 t("close", vec![ArgMatcher::Fd(206)], TraceResult::Int(0)),
-                t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)], TraceResult::Int(0)),
-            ]),
-            t("close", vec![ArgMatcher::Fd(206)], TraceResult::Int(0)),
-            t("setpgid", vec![ArgMatcher::Int(1004), ArgMatcher::Int(1000)], TraceResult::Int(0)),
-            // Wait for all children
-            t("waitpid", vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
-            t("waitpid", vec![ArgMatcher::Int(1001), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
-            t("waitpid", vec![ArgMatcher::Int(1002), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
-            t("waitpid", vec![ArgMatcher::Int(1003), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
-            t("waitpid", vec![ArgMatcher::Int(1004), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
-        ], || {
-            let mut shell = test_shell();
-            let children = spawn_pipeline(&mut shell, &pipeline).expect("spawn");
-            for child in children.children {
-                let _ = child.wait().expect("wait");
-            }
-        });
+                t(
+                    "setpgid",
+                    vec![ArgMatcher::Int(1004), ArgMatcher::Int(1000)],
+                    TraceResult::Int(0),
+                ),
+                // Wait for all children
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    TraceResult::Status(0),
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(1001), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    TraceResult::Status(0),
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(1002), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    TraceResult::Status(0),
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(1003), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    TraceResult::Status(0),
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(1004), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    TraceResult::Status(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let children = spawn_pipeline(&mut shell, &pipeline).expect("spawn");
+                for child in children.children {
+                    let _ = child.wait().expect("wait");
+                }
+            },
+        );
     }
 
     #[test]
@@ -2056,13 +2546,30 @@ mod tests {
                 body: Program::default(),
             };
             assert!(render_for(&for_command).contains("in a b"));
-            assert!(render_for(&ForCommand { name: "item".into(), items: None, body: Program::default() }).starts_with("for item\n"));
+            assert!(
+                render_for(&ForCommand {
+                    name: "item".into(),
+                    items: None,
+                    body: Program::default()
+                })
+                .starts_with("for item\n")
+            );
 
             let simple = SimpleCommand {
                 words: vec![Word { raw: "echo".into() }],
                 redirections: vec![
-                    Redirection { fd: None, kind: RedirectionKind::Read, target: Word { raw: "in".into() }, here_doc: None },
-                    Redirection { fd: None, kind: RedirectionKind::Append, target: Word { raw: "out".into() }, here_doc: None },
+                    Redirection {
+                        fd: None,
+                        kind: RedirectionKind::Read,
+                        target: Word { raw: "in".into() },
+                        here_doc: None,
+                    },
+                    Redirection {
+                        fd: None,
+                        kind: RedirectionKind::Append,
+                        target: Word { raw: "out".into() },
+                        here_doc: None,
+                    },
                     Redirection {
                         fd: None,
                         kind: RedirectionKind::HereDoc,
@@ -2103,18 +2610,22 @@ mod tests {
             assert!(rendered.contains("body\nEOF"));
 
             let case_command = CaseCommand {
-                word: Word { raw: "$item".into() },
+                word: Word {
+                    raw: "$item".into(),
+                },
                 arms: vec![crate::syntax::CaseArm {
                     patterns: vec![Word { raw: "a*".into() }, Word { raw: "b".into() }],
                     body: Program::default(),
                 }],
             };
             assert!(render_case(&case_command).contains("a* | b)"));
-            assert!(render_pipeline(&Pipeline {
-                negated: false,
-                commands: vec![Command::Case(case_command)],
-            })
-            .contains("case "));
+            assert!(
+                render_pipeline(&Pipeline {
+                    negated: false,
+                    commands: vec![Command::Case(case_command)],
+                })
+                .contains("case ")
+            );
         });
     }
 
@@ -2141,7 +2652,9 @@ mod tests {
                 first: Pipeline {
                     negated: false,
                     commands: vec![Command::Simple(SimpleCommand {
-                        words: vec![Word { raw: "false".into() }],
+                        words: vec![Word {
+                            raw: "false".into(),
+                        }],
                         ..SimpleCommand::default()
                     })],
                 },
@@ -2172,7 +2685,8 @@ mod tests {
             assert_eq!(shell.get_var("VALUE"), None);
 
             let mut shell = test_shell();
-            let for_program = crate::syntax::parse("for item in a b; do exit 9; done").expect("parse");
+            let for_program =
+                crate::syntax::parse("for item in a b; do exit 9; done").expect("parse");
             let status = execute_program(&mut shell, &for_program).expect("exec");
             assert_eq!(status, 9);
             assert!(!shell.running);
@@ -2185,7 +2699,8 @@ mod tests {
             assert!(!shell.running);
 
             let mut shell = test_shell();
-            let program = crate::syntax::parse("greet() { RESULT=$X; }; X=ok greet").expect("parse");
+            let program =
+                crate::syntax::parse("greet() { RESULT=$X; }; X=ok greet").expect("parse");
             let status = execute_program(&mut shell, &program).expect("exec");
             assert_eq!(status, 0);
             assert_eq!(shell.get_var("RESULT").as_deref(), Some("ok"));
@@ -2213,16 +2728,18 @@ mod tests {
             assert_eq!(shell.get_var("outer").as_deref(), Some("y"));
 
             let mut shell = test_shell();
-            let program =
-                crate::syntax::parse("for outer in x y; do for inner in a b; do break 2; done; VALUE=bad; done")
-                    .expect("parse");
+            let program = crate::syntax::parse(
+                "for outer in x y; do for inner in a b; do break 2; done; VALUE=bad; done",
+            )
+            .expect("parse");
             let status = execute_program(&mut shell, &program).expect("exec");
             assert_eq!(status, 0);
             assert_eq!(shell.get_var("VALUE"), None);
             assert_eq!(shell.get_var("outer").as_deref(), Some("x"));
 
             let mut shell = test_shell();
-            let program = crate::syntax::parse("f() { while true; do return 4; done; }; f").expect("parse");
+            let program =
+                crate::syntax::parse("f() { while true; do return 4; done; }; f").expect("parse");
             let status = execute_program(&mut shell, &program).expect("exec");
             assert_eq!(status, 4);
             assert_eq!(shell.pending_control, None);
@@ -2233,8 +2750,10 @@ mod tests {
             assert_eq!(error.message, "break: only meaningful in a loop");
 
             let mut shell = test_shell();
-            let program = crate::syntax::parse("for outer in x; do while break 2; do printf no; done; AFTER=bad; done")
-                .expect("parse");
+            let program = crate::syntax::parse(
+                "for outer in x; do while break 2; do printf no; done; AFTER=bad; done",
+            )
+            .expect("parse");
             let status = execute_program(&mut shell, &program).expect("exec");
             assert_eq!(status, 0);
             assert_eq!(shell.get_var("AFTER"), None);
@@ -2249,10 +2768,8 @@ mod tests {
             assert_eq!(shell.get_var("AFTER"), None);
 
             let mut shell = test_shell();
-            let program = crate::syntax::parse(
-                "f() { while return 3; do printf no; done; }; f",
-            )
-            .expect("parse");
+            let program = crate::syntax::parse("f() { while return 3; do printf no; done; }; f")
+                .expect("parse");
             let status = execute_program(&mut shell, &program).expect("exec");
             assert_eq!(status, 3);
 
@@ -2275,21 +2792,25 @@ mod tests {
             assert_eq!(shell.get_var("COUNT").as_deref(), Some("0"));
 
             let mut shell = test_shell();
-            let program = crate::syntax::parse("f() { for item in a; do return 5; done; }; f").expect("parse");
+            let program = crate::syntax::parse("f() { for item in a; do return 5; done; }; f")
+                .expect("parse");
             let status = execute_program(&mut shell, &program).expect("exec");
             assert_eq!(status, 5);
 
             let mut shell = test_shell();
-            let program = crate::syntax::parse("for outer in x; do for inner in y; do break 2; done; DONE=no; done")
-                .expect("parse");
+            let program = crate::syntax::parse(
+                "for outer in x; do for inner in y; do break 2; done; DONE=no; done",
+            )
+            .expect("parse");
             let status = execute_program(&mut shell, &program).expect("exec");
             assert_eq!(status, 0);
             assert_eq!(shell.get_var("DONE"), None);
 
             let mut shell = test_shell();
-            let program =
-                crate::syntax::parse("for outer in x; do for inner in y; do continue 2; done; DONE=no; done")
-                    .expect("parse");
+            let program = crate::syntax::parse(
+                "for outer in x; do for inner in y; do continue 2; done; DONE=no; done",
+            )
+            .expect("parse");
             let status = execute_program(&mut shell, &program).expect("exec");
             assert_eq!(status, 0);
             assert_eq!(shell.get_var("DONE"), None);
@@ -2337,223 +2858,369 @@ mod tests {
 
     #[test]
     fn current_shell_redirections_write_append_read() {
-        run_trace(vec![
-            // apply_shell_redirections: save fd 42, open write, dup2+close, open append, dup2+close
-            t("dup", vec![ArgMatcher::Fd(42)], TraceResult::Fd(92)),
-            t("open", vec![ArgMatcher::Str("/redir/write.txt".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(100)),
-            t("dup2", vec![ArgMatcher::Fd(100), ArgMatcher::Fd(42)], TraceResult::Int(42)),
-            t("close", vec![ArgMatcher::Fd(100)], TraceResult::Int(0)),
-            t("open", vec![ArgMatcher::Str("/redir/append.txt".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(101)),
-            t("dup2", vec![ArgMatcher::Fd(101), ArgMatcher::Fd(42)], TraceResult::Int(42)),
-            t("close", vec![ArgMatcher::Fd(101)], TraceResult::Int(0)),
-            // drop(guard): restore fd 42 from saved 92
-            t("dup2", vec![ArgMatcher::Fd(92), ArgMatcher::Fd(42)], TraceResult::Int(42)),
-            t("close", vec![ArgMatcher::Fd(92)], TraceResult::Int(0)),
-            // apply_shell_redirection Read
-            t("open", vec![ArgMatcher::Str("/redir/input.txt".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(102)),
-            t("dup2", vec![ArgMatcher::Fd(102), ArgMatcher::Fd(42)], TraceResult::Int(42)),
-            t("close", vec![ArgMatcher::Fd(102)], TraceResult::Int(0)),
-            // apply_shell_redirection ReadWrite
-            t("open", vec![ArgMatcher::Str("/redir/rw.txt".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(103)),
-            t("dup2", vec![ArgMatcher::Fd(103), ArgMatcher::Fd(42)], TraceResult::Int(42)),
-            t("close", vec![ArgMatcher::Fd(103)], TraceResult::Int(0)),
-        ], || {
-            let target_fd = 42;
-            let guard = apply_shell_redirections(
-                &[
-                    ExpandedRedirection {
+        run_trace(
+            vec![
+                // apply_shell_redirections: save fd 42, open write, dup2+close, open append, dup2+close
+                t("dup", vec![ArgMatcher::Fd(42)], TraceResult::Fd(92)),
+                t(
+                    "open",
+                    vec![
+                        ArgMatcher::Str("/redir/write.txt".into()),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Fd(100),
+                ),
+                t(
+                    "dup2",
+                    vec![ArgMatcher::Fd(100), ArgMatcher::Fd(42)],
+                    TraceResult::Int(42),
+                ),
+                t("close", vec![ArgMatcher::Fd(100)], TraceResult::Int(0)),
+                t(
+                    "open",
+                    vec![
+                        ArgMatcher::Str("/redir/append.txt".into()),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Fd(101),
+                ),
+                t(
+                    "dup2",
+                    vec![ArgMatcher::Fd(101), ArgMatcher::Fd(42)],
+                    TraceResult::Int(42),
+                ),
+                t("close", vec![ArgMatcher::Fd(101)], TraceResult::Int(0)),
+                // drop(guard): restore fd 42 from saved 92
+                t(
+                    "dup2",
+                    vec![ArgMatcher::Fd(92), ArgMatcher::Fd(42)],
+                    TraceResult::Int(42),
+                ),
+                t("close", vec![ArgMatcher::Fd(92)], TraceResult::Int(0)),
+                // apply_shell_redirection Read
+                t(
+                    "open",
+                    vec![
+                        ArgMatcher::Str("/redir/input.txt".into()),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Fd(102),
+                ),
+                t(
+                    "dup2",
+                    vec![ArgMatcher::Fd(102), ArgMatcher::Fd(42)],
+                    TraceResult::Int(42),
+                ),
+                t("close", vec![ArgMatcher::Fd(102)], TraceResult::Int(0)),
+                // apply_shell_redirection ReadWrite
+                t(
+                    "open",
+                    vec![
+                        ArgMatcher::Str("/redir/rw.txt".into()),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Fd(103),
+                ),
+                t(
+                    "dup2",
+                    vec![ArgMatcher::Fd(103), ArgMatcher::Fd(42)],
+                    TraceResult::Int(42),
+                ),
+                t("close", vec![ArgMatcher::Fd(103)], TraceResult::Int(0)),
+            ],
+            || {
+                let target_fd = 42;
+                let guard = apply_shell_redirections(
+                    &[
+                        ExpandedRedirection {
+                            fd: target_fd,
+                            kind: RedirectionKind::Write,
+                            target: "/redir/write.txt".into(),
+                            here_doc_body: None,
+                        },
+                        ExpandedRedirection {
+                            fd: target_fd,
+                            kind: RedirectionKind::Append,
+                            target: "/redir/append.txt".into(),
+                            here_doc_body: None,
+                        },
+                    ],
+                    false,
+                )
+                .expect("redir guard");
+                drop(guard);
+
+                apply_shell_redirection(
+                    &ExpandedRedirection {
                         fd: target_fd,
-                        kind: RedirectionKind::Write,
-                        target: "/redir/write.txt".into(),
+                        kind: RedirectionKind::Read,
+                        target: "/redir/input.txt".into(),
                         here_doc_body: None,
                     },
-                    ExpandedRedirection {
+                    false,
+                )
+                .expect("read redirection");
+
+                apply_shell_redirection(
+                    &ExpandedRedirection {
                         fd: target_fd,
-                        kind: RedirectionKind::Append,
-                        target: "/redir/append.txt".into(),
+                        kind: RedirectionKind::ReadWrite,
+                        target: "/redir/rw.txt".into(),
                         here_doc_body: None,
                     },
-                ],
-                false,
-            )
-            .expect("redir guard");
-            drop(guard);
-
-            apply_shell_redirection(
-                &ExpandedRedirection {
-                    fd: target_fd,
-                    kind: RedirectionKind::Read,
-                    target: "/redir/input.txt".into(),
-                    here_doc_body: None,
-                },
-                false,
-            )
-            .expect("read redirection");
-
-            apply_shell_redirection(
-                &ExpandedRedirection {
-                    fd: target_fd,
-                    kind: RedirectionKind::ReadWrite,
-                    target: "/redir/rw.txt".into(),
-                    here_doc_body: None,
-                },
-                false,
-            )
-            .expect("readwrite redirection");
-        });
+                    false,
+                )
+                .expect("readwrite redirection");
+            },
+        );
     }
 
     #[test]
     fn current_shell_heredoc_redirections() {
-        run_trace(vec![
-            // apply_shell_redirection HereDoc
-            t("pipe", vec![], TraceResult::Fds(104, 105)),
-            t("write", vec![ArgMatcher::Fd(105), ArgMatcher::Bytes(b"body\n".to_vec())], TraceResult::Int(5)),
-            t("close", vec![ArgMatcher::Fd(105)], TraceResult::Int(0)),
-            t("dup2", vec![ArgMatcher::Fd(104), ArgMatcher::Fd(42)], TraceResult::Int(42)),
-            t("close", vec![ArgMatcher::Fd(104)], TraceResult::Int(0)),
-        ], || {
-            apply_shell_redirection(
-                &ExpandedRedirection {
-                    fd: 42,
-                    kind: RedirectionKind::HereDoc,
-                    target: "EOF".into(),
-                    here_doc_body: Some("body\n".into()),
-                },
-                false,
-            )
-            .expect("heredoc redirection");
-        });
+        run_trace(
+            vec![
+                // apply_shell_redirection HereDoc
+                t("pipe", vec![], TraceResult::Fds(104, 105)),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(105), ArgMatcher::Bytes(b"body\n".to_vec())],
+                    TraceResult::Int(5),
+                ),
+                t("close", vec![ArgMatcher::Fd(105)], TraceResult::Int(0)),
+                t(
+                    "dup2",
+                    vec![ArgMatcher::Fd(104), ArgMatcher::Fd(42)],
+                    TraceResult::Int(42),
+                ),
+                t("close", vec![ArgMatcher::Fd(104)], TraceResult::Int(0)),
+            ],
+            || {
+                apply_shell_redirection(
+                    &ExpandedRedirection {
+                        fd: 42,
+                        kind: RedirectionKind::HereDoc,
+                        target: "EOF".into(),
+                        here_doc_body: Some("body\n".into()),
+                    },
+                    false,
+                )
+                .expect("heredoc redirection");
+            },
+        );
+    }
+
+    #[test]
+    fn current_shell_heredoc_write_error() {
+        run_trace(
+            vec![
+                t("pipe", vec![], TraceResult::Fds(104, 105)),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(105), ArgMatcher::Bytes(b"body\n".to_vec())],
+                    TraceResult::Err(sys::EIO),
+                ),
+            ],
+            || {
+                let err = apply_shell_redirection(
+                    &ExpandedRedirection {
+                        fd: 42,
+                        kind: RedirectionKind::HereDoc,
+                        target: "EOF".into(),
+                        here_doc_body: Some("body\n".into()),
+                    },
+                    false,
+                )
+                .expect_err("heredoc write should fail");
+                assert!(!err.message.is_empty());
+            },
+        );
     }
 
     #[test]
     fn current_shell_dup_and_close_redirections() {
-        run_trace(vec![
-            // apply_shell_redirection DupOutput "1"
-            t("dup2", vec![ArgMatcher::Fd(1), ArgMatcher::Fd(42)], TraceResult::Int(42)),
-            // apply_shell_redirection DupOutput "-"
-            t("close", vec![ArgMatcher::Fd(42)], TraceResult::Int(0)),
-        ], || {
-            apply_shell_redirection(
-                &ExpandedRedirection {
-                    fd: 42,
-                    kind: RedirectionKind::DupOutput,
-                    target: "1".into(),
-                    here_doc_body: None,
-                },
-                false,
-            )
-            .expect("dup output");
+        run_trace(
+            vec![
+                // apply_shell_redirection DupOutput "1"
+                t(
+                    "dup2",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Fd(42)],
+                    TraceResult::Int(42),
+                ),
+                // apply_shell_redirection DupOutput "-"
+                t("close", vec![ArgMatcher::Fd(42)], TraceResult::Int(0)),
+            ],
+            || {
+                apply_shell_redirection(
+                    &ExpandedRedirection {
+                        fd: 42,
+                        kind: RedirectionKind::DupOutput,
+                        target: "1".into(),
+                        here_doc_body: None,
+                    },
+                    false,
+                )
+                .expect("dup output");
 
-            apply_shell_redirection(
-                &ExpandedRedirection {
-                    fd: 42,
-                    kind: RedirectionKind::DupOutput,
-                    target: "-".into(),
-                    here_doc_body: None,
-                },
-                false,
-            )
-            .expect("close dup output");
-        });
+                apply_shell_redirection(
+                    &ExpandedRedirection {
+                        fd: 42,
+                        kind: RedirectionKind::DupOutput,
+                        target: "-".into(),
+                        here_doc_body: None,
+                    },
+                    false,
+                )
+                .expect("close dup output");
+            },
+        );
     }
 
     #[test]
     fn current_shell_noclobber_and_guard_cleanup() {
-        run_trace(vec![
-            // DupOutput "bad" → error, no OS calls
-            // Write with noclobber → open returns EEXIST
-            t("open", vec![ArgMatcher::Str("/redir/noclobber.txt".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Err(sys::EEXIST)),
-            // Guard drop with saved=(99, None) → close(99)
-            t("close", vec![ArgMatcher::Fd(99)], TraceResult::Int(0)),
-            // apply_shell_redirections with dup returning EBADF for high fd → treated as absent
-            t("dup", vec![ArgMatcher::Fd(123_456)], TraceResult::Err(sys::EBADF)),
-            t("close", vec![ArgMatcher::Fd(123_456)], TraceResult::Err(sys::EBADF)),
-            t("close", vec![ArgMatcher::Fd(123_456)], TraceResult::Err(sys::EBADF)),
-            // apply_shell_redirections with dup failure (errno 22)
-            t("dup", vec![ArgMatcher::Fd(42)], TraceResult::Err(sys::EINVAL)),
-        ], || {
-            let error = apply_shell_redirection(
-                &ExpandedRedirection {
-                    fd: 42,
-                    kind: RedirectionKind::DupOutput,
-                    target: "bad".into(),
-                    here_doc_body: None,
-                },
-                false,
-            )
-            .expect_err("bad dup output");
-            assert_eq!(error.message, "redirection target must be a file descriptor or '-'");
+        run_trace(
+            vec![
+                // DupOutput "bad" → error, no OS calls
+                // Write with noclobber → open returns EEXIST
+                t(
+                    "open",
+                    vec![
+                        ArgMatcher::Str("/redir/noclobber.txt".into()),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Err(sys::EEXIST),
+                ),
+                // Guard drop with saved=(99, None) → close(99)
+                t("close", vec![ArgMatcher::Fd(99)], TraceResult::Int(0)),
+                // apply_shell_redirections with dup returning EBADF for high fd → treated as absent
+                t(
+                    "dup",
+                    vec![ArgMatcher::Fd(123_456)],
+                    TraceResult::Err(sys::EBADF),
+                ),
+                t(
+                    "close",
+                    vec![ArgMatcher::Fd(123_456)],
+                    TraceResult::Err(sys::EBADF),
+                ),
+                t(
+                    "close",
+                    vec![ArgMatcher::Fd(123_456)],
+                    TraceResult::Err(sys::EBADF),
+                ),
+                // apply_shell_redirections with dup failure (errno 22)
+                t(
+                    "dup",
+                    vec![ArgMatcher::Fd(42)],
+                    TraceResult::Err(sys::EINVAL),
+                ),
+            ],
+            || {
+                let error = apply_shell_redirection(
+                    &ExpandedRedirection {
+                        fd: 42,
+                        kind: RedirectionKind::DupOutput,
+                        target: "bad".into(),
+                        here_doc_body: None,
+                    },
+                    false,
+                )
+                .expect_err("bad dup output");
+                assert_eq!(
+                    error.message,
+                    "redirection target must be a file descriptor or '-'"
+                );
 
-            let error = apply_shell_redirection(
-                &ExpandedRedirection {
-                    fd: 42,
-                    kind: RedirectionKind::Write,
-                    target: "/redir/noclobber.txt".into(),
-                    here_doc_body: None,
-                },
-                true,
-            )
-            .expect_err("noclobber");
-            assert!(!error.message.is_empty());
+                let error = apply_shell_redirection(
+                    &ExpandedRedirection {
+                        fd: 42,
+                        kind: RedirectionKind::Write,
+                        target: "/redir/noclobber.txt".into(),
+                        here_doc_body: None,
+                    },
+                    true,
+                )
+                .expect_err("noclobber");
+                assert!(!error.message.is_empty());
 
-            drop(ShellRedirectionGuard {
-                saved: vec![(99, None)],
-            });
+                drop(ShellRedirectionGuard {
+                    saved: vec![(99, None)],
+                });
 
-            let guard = apply_shell_redirections(
-                &[ExpandedRedirection {
-                    fd: 123_456,
-                    kind: RedirectionKind::DupOutput,
-                    target: "-".into(),
-                    here_doc_body: None,
-                }],
-                false,
-            )
-            .expect("invalid fd is treated as absent");
-            drop(guard);
+                let guard = apply_shell_redirections(
+                    &[ExpandedRedirection {
+                        fd: 123_456,
+                        kind: RedirectionKind::DupOutput,
+                        target: "-".into(),
+                        here_doc_body: None,
+                    }],
+                    false,
+                )
+                .expect("invalid fd is treated as absent");
+                drop(guard);
 
-            let error = apply_shell_redirections(
-                &[ExpandedRedirection {
-                    fd: 42,
-                    kind: RedirectionKind::DupOutput,
-                    target: "-".into(),
-                    here_doc_body: None,
-                }],
-                false,
-            )
-            .expect_err("dup failure");
-            assert!(!error.message.is_empty());
-        });
+                let error = apply_shell_redirections(
+                    &[ExpandedRedirection {
+                        fd: 42,
+                        kind: RedirectionKind::DupOutput,
+                        target: "-".into(),
+                        here_doc_body: None,
+                    }],
+                    false,
+                )
+                .expect_err("dup failure");
+                assert!(!error.message.is_empty());
+            },
+        );
     }
 
     #[test]
     fn apply_child_fd_actions_dup_error() {
-        run_trace(vec![
-            t("dup2", vec![ArgMatcher::Fd(-1), ArgMatcher::Fd(56)], TraceResult::Err(sys::EBADF)),
-        ], || {
-            let error = apply_child_fd_actions(&[ChildFdAction::DupFd {
-                source_fd: -1,
-                target_fd: 56,
-            }])
-            .expect_err("child dup failure");
-            assert!(!error.to_string().is_empty());
-        });
+        run_trace(
+            vec![t(
+                "dup2",
+                vec![ArgMatcher::Fd(-1), ArgMatcher::Fd(56)],
+                TraceResult::Err(sys::EBADF),
+            )],
+            || {
+                let error = apply_child_fd_actions(&[ChildFdAction::DupFd {
+                    source_fd: -1,
+                    target_fd: 56,
+                }])
+                .expect_err("child dup failure");
+                assert!(!error.to_string().is_empty());
+            },
+        );
     }
 
     #[test]
     fn apply_child_fd_actions_close_error() {
-        run_trace(vec![
-            t("close", vec![ArgMatcher::Fd(56)], TraceResult::Err(sys::EINVAL)),
-            t("close", vec![ArgMatcher::Fd(57)], TraceResult::Err(sys::EINVAL)),
-        ], || {
-            let error = apply_child_fd_actions(&[ChildFdAction::CloseFd { target_fd: 56 }])
-                .expect_err("child close failure");
-            assert!(!error.to_string().is_empty());
+        run_trace(
+            vec![
+                t(
+                    "close",
+                    vec![ArgMatcher::Fd(56)],
+                    TraceResult::Err(sys::EINVAL),
+                ),
+                t(
+                    "close",
+                    vec![ArgMatcher::Fd(57)],
+                    TraceResult::Err(sys::EINVAL),
+                ),
+            ],
+            || {
+                let error = apply_child_fd_actions(&[ChildFdAction::CloseFd { target_fd: 56 }])
+                    .expect_err("child close failure");
+                assert!(!error.to_string().is_empty());
 
-            let error = close_shell_fd(57).expect_err("close failure");
-            assert!(!error.message.is_empty());
-        });
+                let error = close_shell_fd(57).expect_err("close failure");
+                assert!(!error.message.is_empty());
+            },
+        );
     }
 
     #[test]
@@ -2578,132 +3245,235 @@ mod tests {
 
     #[test]
     fn spawn_prepared_with_new_process_group() {
-        run_trace(vec![
-            t("access", vec![ArgMatcher::Str("/tmp/script.sh".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
-            t_fork(TraceResult::Pid(1000), vec![
-                t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(0)], TraceResult::Int(0)),
-                t("execvp", vec![ArgMatcher::Str("/tmp/script.sh".into()), ArgMatcher::Any], TraceResult::Int(0)),
-            ]),
-            t("waitpid", vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
-        ], || {
-            let shell = test_shell();
-            let prepared = PreparedProcess {
-                exec_path: "/tmp/script.sh".into(),
-                argv: vec!["/tmp/script.sh".into()],
-                child_env: Vec::new(),
-                redirections: Vec::new(),
-                noclobber: false,
-                path_verified: false,
-            };
-            let child = spawn_prepared(&shell, &prepared, None, false, ProcessGroupPlan::NewGroup)
-                .expect("spawn newgroup");
-            assert!(child.wait_with_output().expect("wait output").status.success());
-        });
+        run_trace(
+            vec![
+                t(
+                    "access",
+                    vec![ArgMatcher::Str("/tmp/script.sh".into()), ArgMatcher::Int(0)],
+                    TraceResult::Int(0),
+                ),
+                t_fork(
+                    TraceResult::Pid(1000),
+                    vec![
+                        t(
+                            "setpgid",
+                            vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "execvp",
+                            vec![ArgMatcher::Str("/tmp/script.sh".into()), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                    ],
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    TraceResult::Status(0),
+                ),
+            ],
+            || {
+                let shell = test_shell();
+                let prepared = PreparedProcess {
+                    exec_path: "/tmp/script.sh".into(),
+                    argv: vec!["/tmp/script.sh".into()],
+                    child_env: Vec::new(),
+                    redirections: Vec::new(),
+                    noclobber: false,
+                    path_verified: false,
+                };
+                let child =
+                    spawn_prepared(&shell, &prepared, None, false, ProcessGroupPlan::NewGroup)
+                        .expect("spawn newgroup");
+                assert!(
+                    child
+                        .wait_with_output()
+                        .expect("wait output")
+                        .status
+                        .success()
+                );
+            },
+        );
     }
 
     #[test]
     fn spawn_prepared_with_stdout_redirect() {
-        run_trace(vec![
-            t("access", vec![ArgMatcher::Str("/bin/echo".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
-            t_fork(TraceResult::Pid(1000), vec![
-                t("close", vec![ArgMatcher::Fd(1)], TraceResult::Int(0)),
-                t("execvp", vec![ArgMatcher::Str("/bin/echo".into()), ArgMatcher::Any], TraceResult::Int(0)),
-            ]),
-            t("waitpid", vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
-        ], || {
-            let shell = test_shell();
-            let prepared = PreparedProcess {
-                exec_path: "/bin/echo".into(),
-                argv: vec!["/bin/echo".into(), "hello".into()],
-                child_env: Vec::new(),
-                redirections: vec![ExpandedRedirection {
-                    fd: 1,
-                    kind: RedirectionKind::DupOutput,
-                    target: "-".into(),
-                    here_doc_body: None,
-                }],
-                noclobber: false,
-                path_verified: false,
-            };
-            let child = spawn_prepared(&shell, &prepared, None, false, ProcessGroupPlan::None)
-                .expect("spawn with stdout redirect");
-            assert!(child.wait().expect("wait").success());
-        });
+        run_trace(
+            vec![
+                t(
+                    "access",
+                    vec![ArgMatcher::Str("/bin/echo".into()), ArgMatcher::Int(0)],
+                    TraceResult::Int(0),
+                ),
+                t_fork(
+                    TraceResult::Pid(1000),
+                    vec![
+                        t("close", vec![ArgMatcher::Fd(1)], TraceResult::Int(0)),
+                        t(
+                            "execvp",
+                            vec![ArgMatcher::Str("/bin/echo".into()), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                    ],
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    TraceResult::Status(0),
+                ),
+            ],
+            || {
+                let shell = test_shell();
+                let prepared = PreparedProcess {
+                    exec_path: "/bin/echo".into(),
+                    argv: vec!["/bin/echo".into(), "hello".into()],
+                    child_env: Vec::new(),
+                    redirections: vec![ExpandedRedirection {
+                        fd: 1,
+                        kind: RedirectionKind::DupOutput,
+                        target: "-".into(),
+                        here_doc_body: None,
+                    }],
+                    noclobber: false,
+                    path_verified: false,
+                };
+                let child = spawn_prepared(&shell, &prepared, None, false, ProcessGroupPlan::None)
+                    .expect("spawn with stdout redirect");
+                assert!(child.wait().expect("wait").success());
+            },
+        );
     }
 
     #[test]
     fn spawn_prepared_with_join_process_group() {
-        run_trace(vec![
-            t("access", vec![ArgMatcher::Str("/bin/echo".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
-            t_fork(TraceResult::Pid(1000), vec![
-                t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(42)], TraceResult::Int(0)),
-                t("execvp", vec![ArgMatcher::Str("/bin/echo".into()), ArgMatcher::Any], TraceResult::Int(0)),
-            ]),
-            t("waitpid", vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
-        ], || {
-            let shell = test_shell();
-            let prepared = PreparedProcess {
-                exec_path: "/bin/echo".into(),
-                argv: vec!["/bin/echo".into()],
-                child_env: Vec::new(),
-                redirections: Vec::new(),
-                noclobber: false,
-                path_verified: false,
-            };
-            let child = spawn_prepared(&shell, &prepared, None, false, ProcessGroupPlan::Join(42))
-                .expect("spawn join");
-            assert!(child.wait().expect("wait").success());
-        });
+        run_trace(
+            vec![
+                t(
+                    "access",
+                    vec![ArgMatcher::Str("/bin/echo".into()), ArgMatcher::Int(0)],
+                    TraceResult::Int(0),
+                ),
+                t_fork(
+                    TraceResult::Pid(1000),
+                    vec![
+                        t(
+                            "setpgid",
+                            vec![ArgMatcher::Int(0), ArgMatcher::Int(42)],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "execvp",
+                            vec![ArgMatcher::Str("/bin/echo".into()), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                    ],
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    TraceResult::Status(0),
+                ),
+            ],
+            || {
+                let shell = test_shell();
+                let prepared = PreparedProcess {
+                    exec_path: "/bin/echo".into(),
+                    argv: vec!["/bin/echo".into()],
+                    child_env: Vec::new(),
+                    redirections: Vec::new(),
+                    noclobber: false,
+                    path_verified: false,
+                };
+                let child =
+                    spawn_prepared(&shell, &prepared, None, false, ProcessGroupPlan::Join(42))
+                        .expect("spawn join");
+                assert!(child.wait().expect("wait").success());
+            },
+        );
     }
 
     #[test]
     fn handoff_foreground_switches_and_restores_pgrp() {
-        run_trace(vec![
-            // handoff_foreground(Some(77)): isatty(0), isatty(2), tcgetpgrp(0), tcsetpgrp(0, 77)
-            t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(1)),
-            t("isatty", vec![ArgMatcher::Fd(2)], TraceResult::Int(1)),
-            t("tcgetpgrp", vec![ArgMatcher::Fd(0)], TraceResult::Pid(55)),
-            t("tcsetpgrp", vec![ArgMatcher::Fd(0), ArgMatcher::Int(77)], TraceResult::Int(0)),
-            // handoff_foreground(Some(77)) again
-            t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(1)),
-            t("isatty", vec![ArgMatcher::Fd(2)], TraceResult::Int(1)),
-            t("tcgetpgrp", vec![ArgMatcher::Fd(0)], TraceResult::Pid(55)),
-            t("tcsetpgrp", vec![ArgMatcher::Fd(0), ArgMatcher::Int(77)], TraceResult::Int(0)),
-            // restore_foreground(Some(55)): tcsetpgrp(0, 55)
-            t("tcsetpgrp", vec![ArgMatcher::Fd(0), ArgMatcher::Int(55)], TraceResult::Int(0)),
-            // handoff_foreground(None): no syscalls
-        ], || {
-            assert_eq!(handoff_foreground(Some(77)), Some(55));
-            assert_eq!(handoff_foreground(Some(77)), Some(55));
-            restore_foreground(Some(55));
-            assert_eq!(handoff_foreground(None), None);
-        });
+        run_trace(
+            vec![
+                // handoff_foreground(Some(77)): isatty(0), isatty(2), tcgetpgrp(0), tcsetpgrp(0, 77)
+                t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(1)),
+                t("isatty", vec![ArgMatcher::Fd(2)], TraceResult::Int(1)),
+                t("tcgetpgrp", vec![ArgMatcher::Fd(0)], TraceResult::Pid(55)),
+                t(
+                    "tcsetpgrp",
+                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(77)],
+                    TraceResult::Int(0),
+                ),
+                // handoff_foreground(Some(77)) again
+                t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(1)),
+                t("isatty", vec![ArgMatcher::Fd(2)], TraceResult::Int(1)),
+                t("tcgetpgrp", vec![ArgMatcher::Fd(0)], TraceResult::Pid(55)),
+                t(
+                    "tcsetpgrp",
+                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(77)],
+                    TraceResult::Int(0),
+                ),
+                // restore_foreground(Some(55)): tcsetpgrp(0, 55)
+                t(
+                    "tcsetpgrp",
+                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(55)],
+                    TraceResult::Int(0),
+                ),
+                // handoff_foreground(None): no syscalls
+            ],
+            || {
+                assert_eq!(handoff_foreground(Some(77)), Some(55));
+                assert_eq!(handoff_foreground(Some(77)), Some(55));
+                restore_foreground(Some(55));
+                assert_eq!(handoff_foreground(None), None);
+            },
+        );
     }
 
     #[test]
     fn handoff_foreground_returns_none_on_enotty() {
-        run_trace(vec![
-            t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(1)),
-            t("isatty", vec![ArgMatcher::Fd(2)], TraceResult::Int(1)),
-            t("tcgetpgrp", vec![ArgMatcher::Fd(0)], TraceResult::Err(sys::ENOTTY)),
-        ], || {
-            assert_eq!(handoff_foreground(Some(77)), None);
-        });
+        run_trace(
+            vec![
+                t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(1)),
+                t("isatty", vec![ArgMatcher::Fd(2)], TraceResult::Int(1)),
+                t(
+                    "tcgetpgrp",
+                    vec![ArgMatcher::Fd(0)],
+                    TraceResult::Err(sys::ENOTTY),
+                ),
+            ],
+            || {
+                assert_eq!(handoff_foreground(Some(77)), None);
+            },
+        );
     }
 
     #[test]
     fn apply_child_setup_for_process_groups() {
-        run_trace(vec![
-            // apply_child_setup([], None) → no OS calls
-            // apply_child_setup([], NewGroup) → setpgid(0, 0)
-            t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(0)], TraceResult::Int(0)),
-            // apply_child_setup([], Join(0)) → setpgid(0, 0)
-            t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(0)], TraceResult::Int(0)),
-        ], || {
-            apply_child_setup(&[], ProcessGroupPlan::None).expect("setup none");
-            apply_child_setup(&[], ProcessGroupPlan::NewGroup).expect("setup newgroup");
-            apply_child_setup(&[], ProcessGroupPlan::Join(0)).expect("setup join");
-        });
+        run_trace(
+            vec![
+                // apply_child_setup([], None) → no OS calls
+                // apply_child_setup([], NewGroup) → setpgid(0, 0)
+                t(
+                    "setpgid",
+                    vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
+                    TraceResult::Int(0),
+                ),
+                // apply_child_setup([], Join(0)) → setpgid(0, 0)
+                t(
+                    "setpgid",
+                    vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
+                    TraceResult::Int(0),
+                ),
+            ],
+            || {
+                apply_child_setup(&[], ProcessGroupPlan::None).expect("setup none");
+                apply_child_setup(&[], ProcessGroupPlan::NewGroup).expect("setup newgroup");
+                apply_child_setup(&[], ProcessGroupPlan::Join(0)).expect("setup join");
+            },
+        );
     }
 
     #[test]
@@ -2712,10 +3482,13 @@ mod tests {
             let program = Program {
                 items: vec![ListItem {
                     and_or: AndOr {
-                        first: Pipeline { negated: false, commands: vec![Command::Simple(SimpleCommand {
-                            words: vec![Word { raw: "true".into() }],
-                            ..SimpleCommand::default()
-                        })] },
+                        first: Pipeline {
+                            negated: false,
+                            commands: vec![Command::Simple(SimpleCommand {
+                                words: vec![Word { raw: "true".into() }],
+                                ..SimpleCommand::default()
+                            })],
+                        },
                         rest: Vec::new(),
                     },
                     asynchronous: false,
@@ -2743,10 +3516,13 @@ mod tests {
             let program = Program {
                 items: vec![ListItem {
                     and_or: AndOr {
-                        first: Pipeline { negated: false, commands: vec![Command::Simple(SimpleCommand {
-                            words: vec![Word { raw: "true".into() }],
-                            ..SimpleCommand::default()
-                        })] },
+                        first: Pipeline {
+                            negated: false,
+                            commands: vec![Command::Simple(SimpleCommand {
+                                words: vec![Word { raw: "true".into() }],
+                                ..SimpleCommand::default()
+                            })],
+                        },
                         rest: Vec::new(),
                     },
                     asynchronous: false,
@@ -2763,141 +3539,296 @@ mod tests {
 
     #[test]
     fn apply_shell_redirection_append_and_readwrite() {
-        run_trace(vec![
-            // Append: save fd 1, open file, dup2, close; then guard restores
-            t("dup", vec![ArgMatcher::Fd(1)], TraceResult::Fd(51)),
-            t("open", vec![ArgMatcher::Str("/tmp/out".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(50)),
-            t("dup2", vec![ArgMatcher::Fd(50), ArgMatcher::Fd(1)], TraceResult::Int(0)),
-            t("close", vec![ArgMatcher::Fd(50)], TraceResult::Int(0)),
-            t("dup2", vec![ArgMatcher::Fd(51), ArgMatcher::Fd(1)], TraceResult::Int(0)),
-            t("close", vec![ArgMatcher::Fd(51)], TraceResult::Int(0)),
-            // ReadWrite: save fd 0, open file, dup2, close; then guard restores
-            t("dup", vec![ArgMatcher::Fd(0)], TraceResult::Fd(53)),
-            t("open", vec![ArgMatcher::Str("/tmp/rw".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(52)),
-            t("dup2", vec![ArgMatcher::Fd(52), ArgMatcher::Fd(0)], TraceResult::Int(0)),
-            t("close", vec![ArgMatcher::Fd(52)], TraceResult::Int(0)),
-            t("dup2", vec![ArgMatcher::Fd(53), ArgMatcher::Fd(0)], TraceResult::Int(0)),
-            t("close", vec![ArgMatcher::Fd(53)], TraceResult::Int(0)),
-        ], || {
-            let redirections = vec![
-                ExpandedRedirection { fd: 1, kind: RedirectionKind::Append, target: "/tmp/out".into(), here_doc_body: None },
-            ];
-            with_shell_redirections(&redirections, false, || Ok(0)).expect("append");
+        run_trace(
+            vec![
+                // Append: save fd 1, open file, dup2, close; then guard restores
+                t("dup", vec![ArgMatcher::Fd(1)], TraceResult::Fd(51)),
+                t(
+                    "open",
+                    vec![
+                        ArgMatcher::Str("/tmp/out".into()),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Fd(50),
+                ),
+                t(
+                    "dup2",
+                    vec![ArgMatcher::Fd(50), ArgMatcher::Fd(1)],
+                    TraceResult::Int(0),
+                ),
+                t("close", vec![ArgMatcher::Fd(50)], TraceResult::Int(0)),
+                t(
+                    "dup2",
+                    vec![ArgMatcher::Fd(51), ArgMatcher::Fd(1)],
+                    TraceResult::Int(0),
+                ),
+                t("close", vec![ArgMatcher::Fd(51)], TraceResult::Int(0)),
+                // ReadWrite: save fd 0, open file, dup2, close; then guard restores
+                t("dup", vec![ArgMatcher::Fd(0)], TraceResult::Fd(53)),
+                t(
+                    "open",
+                    vec![
+                        ArgMatcher::Str("/tmp/rw".into()),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Fd(52),
+                ),
+                t(
+                    "dup2",
+                    vec![ArgMatcher::Fd(52), ArgMatcher::Fd(0)],
+                    TraceResult::Int(0),
+                ),
+                t("close", vec![ArgMatcher::Fd(52)], TraceResult::Int(0)),
+                t(
+                    "dup2",
+                    vec![ArgMatcher::Fd(53), ArgMatcher::Fd(0)],
+                    TraceResult::Int(0),
+                ),
+                t("close", vec![ArgMatcher::Fd(53)], TraceResult::Int(0)),
+            ],
+            || {
+                let redirections = vec![ExpandedRedirection {
+                    fd: 1,
+                    kind: RedirectionKind::Append,
+                    target: "/tmp/out".into(),
+                    here_doc_body: None,
+                }];
+                with_shell_redirections(&redirections, false, || Ok(0)).expect("append");
 
-            let redirections = vec![
-                ExpandedRedirection { fd: 0, kind: RedirectionKind::ReadWrite, target: "/tmp/rw".into(), here_doc_body: None },
-            ];
-            with_shell_redirections(&redirections, false, || Ok(0)).expect("readwrite");
-        });
+                let redirections = vec![ExpandedRedirection {
+                    fd: 0,
+                    kind: RedirectionKind::ReadWrite,
+                    target: "/tmp/rw".into(),
+                    here_doc_body: None,
+                }];
+                with_shell_redirections(&redirections, false, || Ok(0)).expect("readwrite");
+            },
+        );
     }
 
     #[test]
     fn prepare_redirections_covers_append_readwrite_and_dup() {
-        run_trace(vec![
-            t("open", vec![ArgMatcher::Str("/tmp/log".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(60)),
-            t("open", vec![ArgMatcher::Str("/tmp/rw".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(61)),
-        ], || {
-            let redirections = vec![
-                ExpandedRedirection { fd: 1, kind: RedirectionKind::Append, target: "/tmp/log".into(), here_doc_body: None },
-                ExpandedRedirection { fd: 0, kind: RedirectionKind::ReadWrite, target: "/tmp/rw".into(), here_doc_body: None },
-            ];
-            let prepared = prepare_redirections(&redirections, false).expect("prepare");
-            assert_eq!(prepared.actions.len(), 2);
-        });
+        run_trace(
+            vec![
+                t(
+                    "open",
+                    vec![
+                        ArgMatcher::Str("/tmp/log".into()),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Fd(60),
+                ),
+                t(
+                    "open",
+                    vec![
+                        ArgMatcher::Str("/tmp/rw".into()),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Fd(61),
+                ),
+            ],
+            || {
+                let redirections = vec![
+                    ExpandedRedirection {
+                        fd: 1,
+                        kind: RedirectionKind::Append,
+                        target: "/tmp/log".into(),
+                        here_doc_body: None,
+                    },
+                    ExpandedRedirection {
+                        fd: 0,
+                        kind: RedirectionKind::ReadWrite,
+                        target: "/tmp/rw".into(),
+                        here_doc_body: None,
+                    },
+                ];
+                let prepared = prepare_redirections(&redirections, false).expect("prepare");
+                assert_eq!(prepared.actions.len(), 2);
+            },
+        );
     }
 
     #[test]
     fn spawn_prepared_with_no_process_group() {
-        run_trace(vec![
-            t("access", vec![ArgMatcher::Str("/bin/true".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
-            t_fork(TraceResult::Pid(1000), vec![
-                t("execvp", vec![ArgMatcher::Str("/bin/true".into()), ArgMatcher::Any], TraceResult::Int(0)),
-            ]),
-            t("waitpid", vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
-        ], || {
-            let mut shell = test_shell();
-            let prepared = PreparedProcess {
-                exec_path: "/bin/true".into(),
-                argv: vec!["true".into()],
-                redirections: vec![],
-                child_env: vec![],
-                path_verified: false,
-                noclobber: false,
-            };
-            let handle = spawn_prepared(&mut shell, &prepared, None, false, ProcessGroupPlan::None).expect("spawn");
-            let ws = sys::wait_pid(handle.pid, false).expect("wait").expect("status");
-            assert_eq!(sys::decode_wait_status(ws.status), 0);
-        });
+        run_trace(
+            vec![
+                t(
+                    "access",
+                    vec![ArgMatcher::Str("/bin/true".into()), ArgMatcher::Int(0)],
+                    TraceResult::Int(0),
+                ),
+                t_fork(
+                    TraceResult::Pid(1000),
+                    vec![t(
+                        "execvp",
+                        vec![ArgMatcher::Str("/bin/true".into()), ArgMatcher::Any],
+                        TraceResult::Int(0),
+                    )],
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    TraceResult::Status(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let prepared = PreparedProcess {
+                    exec_path: "/bin/true".into(),
+                    argv: vec!["true".into()],
+                    redirections: vec![],
+                    child_env: vec![],
+                    path_verified: false,
+                    noclobber: false,
+                };
+                let handle =
+                    spawn_prepared(&mut shell, &prepared, None, false, ProcessGroupPlan::None)
+                        .expect("spawn");
+                let ws = sys::wait_pid(handle.pid, false)
+                    .expect("wait")
+                    .expect("status");
+                assert_eq!(sys::decode_wait_status(ws.status), 0);
+            },
+        );
     }
 
     #[test]
     fn spawn_prepared_stdin_closed_when_redirected() {
-        run_trace(vec![
-            t("open", vec![ArgMatcher::Str("/tmp/in".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(60)),
-            t("close", vec![ArgMatcher::Fd(100)], TraceResult::Int(0)),
-            t_fork(TraceResult::Pid(1000), vec![
-                t("dup2", vec![ArgMatcher::Fd(60), ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t("execvp", vec![ArgMatcher::Str("/bin/cat".into()), ArgMatcher::Any], TraceResult::Int(0)),
-            ]),
-            t("close", vec![ArgMatcher::Fd(60)], TraceResult::Int(0)),
-        ], || {
-            let mut shell = test_shell();
-            let prepared = PreparedProcess {
-                exec_path: "/bin/cat".into(),
-                argv: vec!["cat".into()],
-                redirections: vec![
-                    ExpandedRedirection { fd: 0, kind: RedirectionKind::Read, target: "/tmp/in".into(), here_doc_body: None },
-                ],
-                child_env: vec![],
-                path_verified: true,
-                noclobber: false,
-            };
-            let _handle = spawn_prepared(&mut shell, &prepared, Some(100), false, ProcessGroupPlan::None).expect("spawn");
-        });
+        run_trace(
+            vec![
+                t(
+                    "open",
+                    vec![
+                        ArgMatcher::Str("/tmp/in".into()),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Fd(60),
+                ),
+                t("close", vec![ArgMatcher::Fd(100)], TraceResult::Int(0)),
+                t_fork(
+                    TraceResult::Pid(1000),
+                    vec![
+                        t(
+                            "dup2",
+                            vec![ArgMatcher::Fd(60), ArgMatcher::Fd(0)],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "execvp",
+                            vec![ArgMatcher::Str("/bin/cat".into()), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                    ],
+                ),
+                t("close", vec![ArgMatcher::Fd(60)], TraceResult::Int(0)),
+            ],
+            || {
+                let mut shell = test_shell();
+                let prepared = PreparedProcess {
+                    exec_path: "/bin/cat".into(),
+                    argv: vec!["cat".into()],
+                    redirections: vec![ExpandedRedirection {
+                        fd: 0,
+                        kind: RedirectionKind::Read,
+                        target: "/tmp/in".into(),
+                        here_doc_body: None,
+                    }],
+                    child_env: vec![],
+                    path_verified: true,
+                    noclobber: false,
+                };
+                let _handle = spawn_prepared(
+                    &mut shell,
+                    &prepared,
+                    Some(100),
+                    false,
+                    ProcessGroupPlan::None,
+                )
+                .expect("spawn");
+            },
+        );
     }
 
     #[test]
     fn spawn_prepared_child_sets_env() {
-        run_trace(vec![
-            t_fork(TraceResult::Pid(1000), vec![
-                t("setenv", vec![ArgMatcher::Str("MEIKSH_TEST_COVERAGE".into()), ArgMatcher::Str("1".into())], TraceResult::Int(0)),
-                t("execvp", vec![ArgMatcher::Str("/bin/true".into()), ArgMatcher::Any], TraceResult::Int(0)),
-            ]),
-        ], || {
-            let mut shell = test_shell();
-            let prepared = PreparedProcess {
-                exec_path: "/bin/true".into(),
-                argv: vec!["true".into()],
-                redirections: vec![],
-                child_env: vec![("MEIKSH_TEST_COVERAGE".into(), "1".into())],
-                path_verified: true,
-                noclobber: false,
-            };
-            let _handle = spawn_prepared(&mut shell, &prepared, None, false, ProcessGroupPlan::None).expect("spawn");
-        });
+        run_trace(
+            vec![t_fork(
+                TraceResult::Pid(1000),
+                vec![
+                    t(
+                        "setenv",
+                        vec![
+                            ArgMatcher::Str("MEIKSH_TEST_COVERAGE".into()),
+                            ArgMatcher::Str("1".into()),
+                        ],
+                        TraceResult::Int(0),
+                    ),
+                    t(
+                        "execvp",
+                        vec![ArgMatcher::Str("/bin/true".into()), ArgMatcher::Any],
+                        TraceResult::Int(0),
+                    ),
+                ],
+            )],
+            || {
+                let mut shell = test_shell();
+                let prepared = PreparedProcess {
+                    exec_path: "/bin/true".into(),
+                    argv: vec!["true".into()],
+                    redirections: vec![],
+                    child_env: vec![("MEIKSH_TEST_COVERAGE".into(), "1".into())],
+                    path_verified: true,
+                    noclobber: false,
+                };
+                let _handle =
+                    spawn_prepared(&mut shell, &prepared, None, false, ProcessGroupPlan::None)
+                        .expect("spawn");
+            },
+        );
     }
 
     #[test]
     fn fork_and_execute_command_with_none_pgid() {
-        run_trace(vec![
-            t_fork(TraceResult::Pid(1000), vec![]),
-            t("waitpid", vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
-        ], || {
-            let mut shell = test_shell();
-            let cmd = Command::Group(Program::default());
-            let handle = fork_and_execute_command(&mut shell, &cmd, None, false, ProcessGroupPlan::None).expect("fork");
-            let ws = sys::wait_pid(handle.pid, false).expect("wait").expect("status");
-            assert_eq!(sys::decode_wait_status(ws.status), 0);
-        });
+        run_trace(
+            vec![
+                t_fork(TraceResult::Pid(1000), vec![]),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    TraceResult::Status(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let cmd = Command::Group(Program::default());
+                let handle =
+                    fork_and_execute_command(&mut shell, &cmd, None, false, ProcessGroupPlan::None)
+                        .expect("fork");
+                let ws = sys::wait_pid(handle.pid, false)
+                    .expect("wait")
+                    .expect("status");
+                assert_eq!(sys::decode_wait_status(ws.status), 0);
+            },
+        );
     }
 
     #[test]
     fn apply_child_fd_close_ebadf_is_ignored() {
-        run_trace(vec![
-            t("close", vec![ArgMatcher::Fd(99)], TraceResult::Err(sys::EBADF)),
-        ], || {
-            let actions = vec![ChildFdAction::CloseFd { target_fd: 99 }];
-            apply_child_fd_actions(&actions).expect("ebadf should be ignored");
-        });
+        run_trace(
+            vec![t(
+                "close",
+                vec![ArgMatcher::Fd(99)],
+                TraceResult::Err(sys::EBADF),
+            )],
+            || {
+                let actions = vec![ChildFdAction::CloseFd { target_fd: 99 }];
+                apply_child_fd_actions(&actions).expect("ebadf should be ignored");
+            },
+        );
     }
 }
