@@ -6,7 +6,10 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    fs,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 fn meiksh() -> &'static str {
     env!("CARGO_BIN_EXE_meiksh")
@@ -50,7 +53,12 @@ fn run_meiksh_with_stdin(script: &str, stdin: &[u8]) -> std::process::Output {
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn meiksh");
-    child.stdin.take().expect("stdin").write_all(stdin).expect("write stdin");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(stdin)
+        .expect("write stdin");
     child.wait_with_output().expect("wait for meiksh")
 }
 
@@ -188,19 +196,22 @@ fn read_builtin_assigns_variables_in_current_shell() {
         b"alpha beta gamma\n",
     );
     assert!(output.status.success());
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "0|alpha|beta gamma");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "0|alpha|beta gamma"
+    );
 
     let eof = run_meiksh_with_stdin(
         "read only; STATUS=$?; printf %s \"$STATUS|$only\"",
         b"tail-without-newline",
     );
     assert!(eof.status.success());
-    assert_eq!(String::from_utf8_lossy(&eof.stdout), "1|tail-without-newline");
-
-    let raw = run_meiksh_with_stdin(
-        "read -r value; printf %s \"$value\"",
-        b"one\\\\two\n",
+    assert_eq!(
+        String::from_utf8_lossy(&eof.stdout),
+        "1|tail-without-newline"
     );
+
+    let raw = run_meiksh_with_stdin("read -r value; printf %s \"$value\"", b"one\\\\two\n");
     assert!(raw.status.success());
     assert_eq!(String::from_utf8_lossy(&raw.stdout), "one\\\\two");
 }
@@ -218,7 +229,10 @@ fn umask_and_times_builtins_follow_current_shell_state() {
     let umask_stdout = String::from_utf8_lossy(&umask_output.stdout);
     let lines: Vec<_> = umask_stdout.lines().collect();
     assert_eq!(lines, vec!["0077", "u=rwx,g=,o="]);
-    assert_eq!(fs::metadata(&path).expect("metadata").permissions().mode() & 0o777, 0o600);
+    assert_eq!(
+        fs::metadata(&path).expect("metadata").permissions().mode() & 0o777,
+        0o600
+    );
 
     let times_output = Command::new(meiksh())
         .args(["-c", "times"])
@@ -231,7 +245,11 @@ fn umask_and_times_builtins_follow_current_shell_state() {
     for line in time_lines {
         let fields: Vec<_> = line.split_whitespace().collect();
         assert_eq!(fields.len(), 2);
-        assert!(fields.iter().all(|field| field.contains('m') && field.ends_with('s')));
+        assert!(
+            fields
+                .iter()
+                .all(|field| field.contains('m') && field.ends_with('s'))
+        );
     }
 }
 
@@ -246,7 +264,10 @@ fn handles_redirections() {
         .output()
         .expect("run meiksh");
     assert!(output.status.success());
-    assert_eq!(fs::read_to_string(&path).expect("read redirect target"), "hi");
+    assert_eq!(
+        fs::read_to_string(&path).expect("read redirect target"),
+        "hi"
+    );
 }
 
 #[test]
@@ -256,20 +277,37 @@ fn redirects_current_shell_builtins_and_compound_commands() {
     let group_path = root.join("group.txt");
 
     let builtin = Command::new(meiksh())
-        .args(["-c", &format!("pwd > {}; printf ok", builtin_path.display())])
+        .args([
+            "-c",
+            &format!("pwd > {}; printf ok", builtin_path.display()),
+        ])
         .output()
         .expect("run meiksh");
     assert!(builtin.status.success());
     assert_eq!(String::from_utf8_lossy(&builtin.stdout), "ok");
-    assert!(!fs::read_to_string(&builtin_path).expect("read builtin output").trim().is_empty());
+    assert!(
+        !fs::read_to_string(&builtin_path)
+            .expect("read builtin output")
+            .trim()
+            .is_empty()
+    );
 
     let group = Command::new(meiksh())
-        .args(["-c", &format!("{{ printf inside; }} > {}; printf outside", group_path.display())])
+        .args([
+            "-c",
+            &format!(
+                "{{ printf inside; }} > {}; printf outside",
+                group_path.display()
+            ),
+        ])
         .output()
         .expect("run meiksh");
     assert!(group.status.success());
     assert_eq!(String::from_utf8_lossy(&group.stdout), "outside");
-    assert_eq!(fs::read_to_string(&group_path).expect("read group output"), "inside");
+    assert_eq!(
+        fs::read_to_string(&group_path).expect("read group output"),
+        "inside"
+    );
 
     let pipeline = Command::new(meiksh())
         .args([
@@ -280,7 +318,10 @@ fn redirects_current_shell_builtins_and_compound_commands() {
         .expect("run meiksh");
     assert!(pipeline.status.success());
     assert_eq!(String::from_utf8_lossy(&pipeline.stdout).trim(), "0");
-    assert_eq!(fs::read_to_string(&group_path).expect("read group output again"), "inside");
+    assert_eq!(
+        fs::read_to_string(&group_path).expect("read group output again"),
+        "inside"
+    );
 }
 
 #[test]
@@ -296,7 +337,10 @@ fn handles_append_and_input_redirections() {
         output.display(),
         output.display()
     );
-    let status = Command::new(meiksh()).args(["-c", &script]).status().expect("run meiksh");
+    let status = Command::new(meiksh())
+        .args(["-c", &script])
+        .status()
+        .expect("run meiksh");
     assert!(status.success());
     assert_eq!(fs::read_to_string(&output).expect("read output"), "abcdef");
 }
@@ -357,7 +401,6 @@ fn trap_wait_and_job_control_paths_cover_milestone_five() {
     let stdout = String::from_utf8_lossy(&jobs_output.stdout);
     assert!(stdout.contains("[1]"));
     assert!(stdout.contains("Running sleep 0.1"));
-
 }
 
 #[test]
@@ -405,7 +448,11 @@ fn cd_dash_and_jobs_p_follow_milestone_six_paths() {
     let lines: Vec<_> = stdout.lines().filter(|line| !line.is_empty()).collect();
     assert!(lines.contains(&format!("pwd:{}", original.display()).as_str()));
     assert!(lines.contains(&format!("old:{}", target.display()).as_str()));
-    assert!(lines.last().is_some_and(|line| line.chars().all(|ch| ch.is_ascii_digit())));
+    assert!(
+        lines
+            .last()
+            .is_some_and(|line| line.chars().all(|ch| ch.is_ascii_digit()))
+    );
 }
 
 #[test]
@@ -443,7 +490,11 @@ fn sh_s_option_sets_positionals_from_operands() {
         .stderr(Stdio::piped())
         .spawn()
         .and_then(|mut child| {
-            child.stdin.as_mut().unwrap().write_all(b"printf '%s|%s' \"$1\" \"$2\"\n")?;
+            child
+                .stdin
+                .as_mut()
+                .unwrap()
+                .write_all(b"printf '%s|%s' \"$1\" \"$2\"\n")?;
             child.wait_with_output()
         })
         .expect("run meiksh -s");
@@ -486,7 +537,8 @@ fn sh_stdin_does_not_read_ahead_past_the_current_command() {
         .stderr(Stdio::piped())
         .spawn()
         .and_then(|mut child| {
-            child.stdin
+            child
+                .stdin
                 .as_mut()
                 .unwrap()
                 .write_all(b"cat\necho after\n")?;
@@ -523,7 +575,10 @@ fn sh_startup_option_subset_supports_allexport_nounset_verbose_named_o_and_dolla
         .expect("run meiksh dollar dash");
     assert!(dash_output.status.success());
     assert_eq!(String::from_utf8_lossy(&dash_output.stdout), "aCuvc");
-    assert_eq!(String::from_utf8_lossy(&dash_output.stderr), "printf '%s' \"$-\"");
+    assert_eq!(
+        String::from_utf8_lossy(&dash_output.stderr),
+        "printf '%s' \"$-\""
+    );
 
     let named_output = Command::new(meiksh())
         .args([
@@ -539,7 +594,10 @@ fn sh_startup_option_subset_supports_allexport_nounset_verbose_named_o_and_dolla
         .output()
         .expect("run meiksh -o noglob -o nounset -o verbose");
     assert!(named_output.status.success());
-    assert_eq!(String::from_utf8_lossy(&named_output.stdout), "*.definitely_missing|fuvc");
+    assert_eq!(
+        String::from_utf8_lossy(&named_output.stdout),
+        "*.definitely_missing|fuvc"
+    );
     assert_eq!(
         String::from_utf8_lossy(&named_output.stderr),
         "printf '%s|%s' *.definitely_missing \"$-\""
@@ -564,11 +622,17 @@ fn sh_nounset_fails_plain_unset_expansions_but_allows_defaulting_forms() {
     assert_eq!(String::from_utf8_lossy(&default_output.stdout), "default");
 
     let set_builtin_output = Command::new(meiksh())
-        .args(["-c", "set -u; set -v; printf '%s|%s' \"$-\" \"${MISSING-fallback}\""])
+        .args([
+            "-c",
+            "set -u; set -v; printf '%s|%s' \"$-\" \"${MISSING-fallback}\"",
+        ])
         .output()
         .expect("run set -u");
     assert!(set_builtin_output.status.success());
-    assert_eq!(String::from_utf8_lossy(&set_builtin_output.stdout), "uvc|fallback");
+    assert_eq!(
+        String::from_utf8_lossy(&set_builtin_output.stdout),
+        "uvc|fallback"
+    );
     assert!(String::from_utf8_lossy(&set_builtin_output.stderr).is_empty());
 }
 
@@ -583,7 +647,11 @@ fn sh_command_file_sets_special_parameter_zero_and_searches_path() {
     let script = dir.join("path-script");
     fs::write(&script, "printf %s \"$0\"").expect("write script");
     fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("chmod script");
-    let path = format!("{}:{}", dir.display(), std::env::var("PATH").unwrap_or_default());
+    let path = format!(
+        "{}:{}",
+        dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
 
     let output = Command::new(meiksh())
         .current_dir(&elsewhere)
@@ -641,7 +709,8 @@ fn interactive_shell_expands_env_and_continues_after_error() {
         .stderr(std::process::Stdio::piped())
         .spawn()
         .and_then(|mut child| {
-            child.stdin
+            child
+                .stdin
                 .as_mut()
                 .unwrap()
                 .write_all(b"echo 'unterminated\nprintenv TEST_ENV_LOADED\nexit\n")?;
@@ -702,14 +771,20 @@ fn control_flow_builtins_obey_function_and_loop_semantics() {
     assert_eq!(String::from_utf8_lossy(&function.stdout), "hi");
 
     let break_output = Command::new(meiksh())
-        .args(["-c", "for item in a b; do printf $item; break; printf no; done"])
+        .args([
+            "-c",
+            "for item in a b; do printf $item; break; printf no; done",
+        ])
         .output()
         .expect("run meiksh");
     assert!(break_output.status.success());
     assert_eq!(String::from_utf8_lossy(&break_output.stdout), "a");
 
     let continue_output = Command::new(meiksh())
-        .args(["-c", "for item in a b; do continue; printf no; done; printf ok"])
+        .args([
+            "-c",
+            "for item in a b; do continue; printf no; done; printf ok",
+        ])
         .output()
         .expect("run meiksh");
     assert!(continue_output.status.success());
@@ -723,7 +798,9 @@ fn invalid_control_flow_builtins_fail_non_interactive_shells() {
         .output()
         .expect("run meiksh");
     assert!(!break_output.status.success());
-    assert!(String::from_utf8_lossy(&break_output.stderr).contains("break: only meaningful in a loop"));
+    assert!(
+        String::from_utf8_lossy(&break_output.stderr).contains("break: only meaningful in a loop")
+    );
 
     let return_output = Command::new(meiksh())
         .args(["-c", "return"])
@@ -828,14 +905,20 @@ fn negated_pipeline_flips_status() {
         .output()
         .expect("run meiksh");
     assert!(linebreak_pipeline.status.success());
-    assert_eq!(String::from_utf8_lossy(&linebreak_pipeline.stdout).trim(), "2");
+    assert_eq!(
+        String::from_utf8_lossy(&linebreak_pipeline.stdout).trim(),
+        "2"
+    );
 
     let linebreak_and_or = Command::new(meiksh())
         .args(["-c", "false ||\n printf pass; true &&\n printf done"])
         .output()
         .expect("run meiksh");
     assert!(linebreak_and_or.status.success());
-    assert_eq!(String::from_utf8_lossy(&linebreak_and_or.stdout), "passdone");
+    assert_eq!(
+        String::from_utf8_lossy(&linebreak_and_or.stdout),
+        "passdone"
+    );
 }
 
 #[test]
@@ -956,15 +1039,24 @@ fn expands_parameters_and_pathnames_more_like_posix() {
         .output()
         .expect("run meiksh");
     assert!(glob.status.success());
-    assert_eq!(String::from_utf8_lossy(&glob.stdout), "a.txt|b.txt|*.txt|.hidden.txt|");
+    assert_eq!(
+        String::from_utf8_lossy(&glob.stdout),
+        "a.txt|b.txt|*.txt|.hidden.txt|"
+    );
 
     let noglob = Command::new(meiksh())
         .current_dir(dir.path())
-        .args(["-c", "set -f; printf '%s|' *.txt; set +f; printf '%s|' *.txt"])
+        .args([
+            "-c",
+            "set -f; printf '%s|' *.txt; set +f; printf '%s|' *.txt",
+        ])
         .output()
         .expect("run meiksh");
     assert!(noglob.status.success());
-    assert_eq!(String::from_utf8_lossy(&noglob.stdout), "*.txt|a.txt|b.txt|");
+    assert_eq!(
+        String::from_utf8_lossy(&noglob.stdout),
+        "*.txt|a.txt|b.txt|"
+    );
 
     let shell_option = Command::new(meiksh())
         .current_dir(dir.path())
@@ -985,7 +1077,10 @@ fn dollar_single_quotes_follow_issue_eight_rules() {
         .output()
         .expect("run meiksh");
     assert!(output.status.success());
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "a b|line\nnext|$'literal'");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "a b|line\nnext|$'literal'"
+    );
 }
 
 #[test]
@@ -998,7 +1093,10 @@ fn field_splitting_respects_ifs_defaults_and_star_joining() {
         .output()
         .expect("run meiksh");
     assert!(output.status.success());
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "<a><b>|<a b>|<a><b>|<c><a:b:c>");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "<a><b>|<a b>|<a><b>|<c><a:b:c>"
+    );
 }
 
 #[test]
@@ -1012,10 +1110,7 @@ fn falls_back_on_enoexec_scripts() {
     fs::set_permissions(&slash_script, permissions).expect("chmod slash script");
 
     let slash_output = Command::new(meiksh())
-        .args([
-            "-c",
-            &format!("{} arg", slash_script.display()),
-        ])
+        .args(["-c", &format!("{} arg", slash_script.display())])
         .output()
         .expect("run meiksh");
     assert!(slash_output.status.success());
@@ -1027,7 +1122,11 @@ fn falls_back_on_enoexec_scripts() {
     permissions.set_mode(0o755);
     fs::set_permissions(&path_script, permissions).expect("chmod path script");
 
-    let path_value = format!("{}:{}", dir.path().display(), std::env::var("PATH").unwrap_or_default());
+    let path_value = format!(
+        "{}:{}",
+        dir.path().display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
     let path_output = Command::new(meiksh())
         .env("PATH", path_value)
         .args(["-c", "printf piped | path-script"])
@@ -1086,8 +1185,14 @@ fn handles_extended_redirection_matrix() {
         .output()
         .expect("run meiksh");
     assert!(precedence_output.status.success());
-    assert_eq!(String::from_utf8_lossy(&precedence_output.stdout).trim(), "0");
-    assert_eq!(fs::read_to_string(&output).expect("read redirected output"), "hidden");
+    assert_eq!(
+        String::from_utf8_lossy(&precedence_output.stdout).trim(),
+        "0"
+    );
+    assert_eq!(
+        fs::read_to_string(&output).expect("read redirected output"),
+        "hidden"
+    );
 }
 
 #[test]
@@ -1140,7 +1245,11 @@ fn interactive_shell_sources_env_file() {
         .spawn()
         .and_then(|mut child| {
             use std::io::Write;
-            child.stdin.as_mut().unwrap().write_all(b"printenv TEST_ENV_LOADED\nexit\n")?;
+            child
+                .stdin
+                .as_mut()
+                .unwrap()
+                .write_all(b"printenv TEST_ENV_LOADED\nexit\n")?;
             child.wait_with_output()
         })
         .expect("run meiksh");
@@ -1203,7 +1312,13 @@ fn executes_for_loops() {
     assert_eq!(String::from_utf8_lossy(&explicit.stdout), "c");
 
     let positional = Command::new(meiksh())
-        .args(["-c", "for item; do LAST=$item; done; printf $LAST", "meiksh", "x", "y"])
+        .args([
+            "-c",
+            "for item; do LAST=$item; done; printf $LAST",
+            "meiksh",
+            "x",
+            "y",
+        ])
         .output()
         .expect("run meiksh");
     assert!(positional.status.success());
@@ -1217,17 +1332,20 @@ fn executes_for_loops() {
         .output()
         .expect("run meiksh");
     assert!(linebreak_before_in.status.success());
-    assert_eq!(String::from_utf8_lossy(&linebreak_before_in.stdout), "alpha|beta|");
+    assert_eq!(
+        String::from_utf8_lossy(&linebreak_before_in.stdout),
+        "alpha|beta|"
+    );
 
     let reserved_words_in_wordlist = Command::new(meiksh())
-        .args([
-            "-c",
-            "for item in do done; do printf '%s|' \"$item\"; done",
-        ])
+        .args(["-c", "for item in do done; do printf '%s|' \"$item\"; done"])
         .output()
         .expect("run meiksh");
     assert!(reserved_words_in_wordlist.status.success());
-    assert_eq!(String::from_utf8_lossy(&reserved_words_in_wordlist.stdout), "do|done|");
+    assert_eq!(
+        String::from_utf8_lossy(&reserved_words_in_wordlist.stdout),
+        "do|done|"
+    );
 }
 
 #[test]
@@ -1253,10 +1371,7 @@ fn executes_case_commands() {
     assert_eq!(String::from_utf8_lossy(&wildcard.stdout), "yes");
 
     let star = Command::new(meiksh())
-        .args([
-            "-c",
-            "name=beta; case $name in *) printf yes ;; esac",
-        ])
+        .args(["-c", "name=beta; case $name in *) printf yes ;; esac"])
         .output()
         .expect("run meiksh");
     assert!(star.status.success());
@@ -1285,8 +1400,18 @@ fn pipeline_with_pty_exercises_terminal_foreground_control() {
     use std::os::unix::io::FromRawFd;
     let mut primary: i32 = -1;
     let mut secondary: i32 = -1;
-    let ret = unsafe { libc::openpty(&mut primary, &mut secondary, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut()) };
-    if ret != 0 { return; }
+    let ret = unsafe {
+        libc::openpty(
+            &mut primary,
+            &mut secondary,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    if ret != 0 {
+        return;
+    }
 
     let secondary_fd = secondary;
     let output = unsafe {
@@ -1303,8 +1428,14 @@ fn pipeline_with_pty_exercises_terminal_foreground_control() {
         cmd.output().expect("run meiksh")
     };
 
-    unsafe { libc::close(primary); libc::close(secondary); }
+    unsafe {
+        libc::close(primary);
+        libc::close(secondary);
+    }
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("ok"), "expected 'ok' in stdout, got: {stdout}");
+    assert!(
+        stdout.contains("ok"),
+        "expected 'ok' in stdout, got: {stdout}"
+    );
 }

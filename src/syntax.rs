@@ -197,8 +197,11 @@ pub fn parse_with_aliases(
     aliases: &HashMap<String, String>,
 ) -> Result<Program, ParseError> {
     let tokenized = tokenize(source)?;
-    Parser::new(tokenized.tokens, tokenized.here_docs, aliases.clone())
-        .parse_program_until(false, &[], false)
+    Parser::new(tokenized.tokens, tokenized.here_docs, aliases.clone()).parse_program_until(
+        false,
+        &[],
+        false,
+    )
 }
 
 pub struct ParseSession {
@@ -620,7 +623,11 @@ struct Parser {
 }
 
 impl Parser {
-    fn new(tokens: Vec<Token>, here_docs: VecDeque<HereDoc>, aliases: HashMap<String, String>) -> Self {
+    fn new(
+        tokens: Vec<Token>,
+        here_docs: VecDeque<HereDoc>,
+        aliases: HashMap<String, String>,
+    ) -> Self {
         Self {
             tokens,
             here_docs,
@@ -815,7 +822,9 @@ impl Parser {
         let items = if self.peek_reserved_word("in") {
             self.index += 1;
             let mut items = Vec::new();
-            while !self.is_eof() && !matches!(self.peek_kind(), TokenKind::Semi | TokenKind::Newline) {
+            while !self.is_eof()
+                && !matches!(self.peek_kind(), TokenKind::Semi | TokenKind::Newline)
+            {
                 match self.peek_kind().clone() {
                     TokenKind::Word(text) => {
                         self.index += 1;
@@ -940,7 +949,10 @@ impl Parser {
             command.words.push(word);
         }
 
-        if command.words.is_empty() && command.assignments.is_empty() && command.redirections.is_empty() {
+        if command.words.is_empty()
+            && command.assignments.is_empty()
+            && command.redirections.is_empty()
+        {
             return Err(ParseError {
                 message: "expected command".to_string(),
             });
@@ -956,17 +968,19 @@ impl Parser {
                     && self
                         .tokens
                         .get(self.index + 1)
-                        .map(|token| matches!(
-                            token.kind,
-                            TokenKind::Less
-                                | TokenKind::Greater
-                                | TokenKind::DGreat
-                                | TokenKind::DLess
-                                | TokenKind::LessAnd
-                                | TokenKind::GreatAnd
-                                | TokenKind::LessGreat
-                                | TokenKind::Clobber
-                        ))
+                        .map(|token| {
+                            matches!(
+                                token.kind,
+                                TokenKind::Less
+                                    | TokenKind::Greater
+                                    | TokenKind::DGreat
+                                    | TokenKind::DLess
+                                    | TokenKind::LessAnd
+                                    | TokenKind::GreatAnd
+                                    | TokenKind::LessGreat
+                                    | TokenKind::Clobber
+                            )
+                        })
                         .unwrap_or(false) =>
             {
                 let fd = text.parse::<i32>().map_err(|_| ParseError {
@@ -1098,7 +1112,8 @@ impl Parser {
     }
 
     fn expand_alias_at_current_token(&mut self) -> Result<bool, ParseError> {
-        let Some(TokenKind::Word(text)) = self.tokens.get(self.index).map(|token| &token.kind) else {
+        let Some(TokenKind::Word(text)) = self.tokens.get(self.index).map(|token| &token.kind)
+        else {
             return Ok(false);
         };
         if !is_alias_word(text) {
@@ -1115,11 +1130,15 @@ impl Parser {
         self.alias_expansions_remaining -= 1;
         let tokenized = tokenize(&replacement)?;
         let mut replacement_tokens = tokenized.tokens;
-        if matches!(replacement_tokens.last().map(|token| &token.kind), Some(TokenKind::Eof)) {
+        if replacement_tokens
+            .last()
+            .is_some_and(|t| matches!(t.kind, TokenKind::Eof))
+        {
             replacement_tokens.pop();
         }
         let inserted_len = replacement_tokens.len();
-        self.tokens.splice(self.index..=self.index, replacement_tokens);
+        self.tokens
+            .splice(self.index..=self.index, replacement_tokens);
         if alias_has_trailing_blank(&replacement) {
             self.alias_expand_next_word_at = Some(self.index + inserted_len);
         }
@@ -1212,8 +1231,7 @@ fn is_name(name: &str) -> bool {
 fn is_reserved_word(word: &str) -> bool {
     matches!(
         word,
-        "if"
-            | "then"
+        "if" | "then"
             | "else"
             | "elif"
             | "fi"
@@ -1258,7 +1276,8 @@ mod tests {
             Some(Command::Subshell(_))
         ));
 
-        let linebreak_and_or = parse("true &&\n echo done ||\n echo fail").expect("parse linebreak and-or");
+        let linebreak_and_or =
+            parse("true &&\n echo done ||\n echo fail").expect("parse linebreak and-or");
         assert_eq!(linebreak_and_or.items[0].and_or.rest.len(), 2);
     }
 
@@ -1396,8 +1415,9 @@ mod tests {
 
     #[test]
     fn parses_if_with_elif_and_else() {
-        let program = parse("if true; then echo yes; elif false; then echo no; else echo maybe; fi")
-            .expect("parse");
+        let program =
+            parse("if true; then echo yes; elif false; then echo no; else echo maybe; fi")
+                .expect("parse");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::If(if_command)
@@ -1416,13 +1436,19 @@ mod tests {
         let while_program = parse("while true; do echo yes; done").expect("parse");
         assert!(matches!(
             while_program.items[0].and_or.first.commands[0],
-            Command::Loop(LoopCommand { kind: LoopKind::While, .. })
+            Command::Loop(LoopCommand {
+                kind: LoopKind::While,
+                ..
+            })
         ));
 
         let until_program = parse("until false; do echo yes; done").expect("parse");
         assert!(matches!(
             until_program.items[0].and_or.first.commands[0],
-            Command::Loop(LoopCommand { kind: LoopKind::Until, .. })
+            Command::Loop(LoopCommand {
+                kind: LoopKind::Until,
+                ..
+            })
         ));
     }
 
@@ -1451,8 +1477,8 @@ mod tests {
                         == Some(vec!["a", "b"])
         ));
 
-        let reserved_words_as_items =
-            parse("for item in do done; do echo $item; done").expect("parse reserved words in wordlist");
+        let reserved_words_as_items = parse("for item in do done; do echo $item; done")
+            .expect("parse reserved words in wordlist");
         assert!(matches!(
             &reserved_words_as_items.items[0].and_or.first.commands[0],
             Command::For(for_command)
@@ -1463,7 +1489,8 @@ mod tests {
 
     #[test]
     fn parses_case_commands() {
-        let program = parse("case $name in foo|bar) echo hit ;; baz) echo miss ;; esac").expect("parse");
+        let program =
+            parse("case $name in foo|bar) echo hit ;; baz) echo miss ;; esac").expect("parse");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Case(case_command)
@@ -1495,7 +1522,15 @@ mod tests {
 
     #[test]
     fn parser_covers_misc_error_and_token_paths() {
-        assert_eq!(format!("{}", ParseError { message: "x".into() }), "x");
+        assert_eq!(
+            format!(
+                "{}",
+                ParseError {
+                    message: "x".into()
+                }
+            ),
+            "x"
+        );
         assert!(parse("echo \"unterminated").is_err());
         assert!(parse("cat <").is_err());
         assert!(parse("for 1 in a; do echo hi; done").is_err());
@@ -1552,7 +1587,10 @@ mod tests {
         let parser = Parser::new(closer_tokens, VecDeque::new(), HashMap::new());
         assert!(parser.at_closer());
 
-        assert_eq!(split_assignment("NAME=value"), Some(("NAME".into(), "value".into())));
+        assert_eq!(
+            split_assignment("NAME=value"),
+            Some(("NAME".into(), "value".into()))
+        );
         assert_eq!(split_assignment("1NAME=value"), None);
         assert!(is_alias_word("alias_name"));
         assert!(!is_alias_word("'alias'"));
@@ -1565,25 +1603,50 @@ mod tests {
     #[test]
     fn alias_helper_paths_cover_pending_and_depth_guard() {
         let mut parser = Parser::new(
-            vec![Token { kind: TokenKind::Word("word".into()) }, Token { kind: TokenKind::Eof }],
+            vec![
+                Token {
+                    kind: TokenKind::Word("word".into()),
+                },
+                Token {
+                    kind: TokenKind::Eof,
+                },
+            ],
             VecDeque::new(),
             HashMap::from([(String::from("word"), String::from("ok"))]),
         );
         parser.alias_expand_next_word_at = Some(0);
-        parser.expand_alias_after_blank_in_simple_command().expect("expand pending alias");
+        parser
+            .expand_alias_after_blank_in_simple_command()
+            .expect("expand pending alias");
         assert!(matches!(parser.peek_kind(), TokenKind::Word(text) if text == "ok"));
 
         let mut parser = Parser::new(
-            vec![Token { kind: TokenKind::Word("loop".into()) }, Token { kind: TokenKind::Eof }],
+            vec![
+                Token {
+                    kind: TokenKind::Word("loop".into()),
+                },
+                Token {
+                    kind: TokenKind::Eof,
+                },
+            ],
             VecDeque::new(),
             HashMap::from([(String::from("loop"), String::from("loop "))]),
         );
         parser.alias_expansions_remaining = 0;
-        let error = parser.expand_alias_at_current_token().expect_err("depth guard");
+        let error = parser
+            .expand_alias_at_current_token()
+            .expect_err("depth guard");
         assert_eq!(error.message, "alias expansion too deep");
 
         let mut parser = Parser::new(
-            vec![Token { kind: TokenKind::Word("tail".into()) }, Token { kind: TokenKind::Eof }],
+            vec![
+                Token {
+                    kind: TokenKind::Word("tail".into()),
+                },
+                Token {
+                    kind: TokenKind::Eof,
+                },
+            ],
             VecDeque::new(),
             HashMap::new(),
         );
@@ -1598,14 +1661,17 @@ mod tests {
     #[test]
     fn parse_session_uses_updated_aliases_between_items() {
         let mut session = ParseSession::new("alias setok='printf ok'; setok").expect("session");
-        let first = session.next_item(&HashMap::new()).expect("first item").expect("some item");
-        assert!(matches!(
-            first.and_or.first.commands[0],
-            Command::Simple(_)
-        ));
+        let first = session
+            .next_item(&HashMap::new())
+            .expect("first item")
+            .expect("some item");
+        assert!(matches!(first.and_or.first.commands[0], Command::Simple(_)));
 
         let second = session
-            .next_item(&HashMap::from([(String::from("setok"), String::from("printf ok"))]))
+            .next_item(&HashMap::from([(
+                String::from("setok"),
+                String::from("printf ok"),
+            )]))
             .expect("second item")
             .expect("some item");
         assert!(matches!(
@@ -1630,8 +1696,12 @@ mod tests {
 
         let mut aliases = HashMap::new();
         aliases.insert("cond".to_string(), "if".to_string());
-        let program = parse_with_aliases("cond true; then echo ok; fi", &aliases).expect("parse reserved alias");
-        assert!(matches!(program.items[0].and_or.first.commands[0], Command::If(_)));
+        let program = parse_with_aliases("cond true; then echo ok; fi", &aliases)
+            .expect("parse reserved alias");
+        assert!(matches!(
+            program.items[0].and_or.first.commands[0],
+            Command::If(_)
+        ));
     }
 
     #[test]
@@ -1683,100 +1753,125 @@ mod tests {
 
     #[test]
     fn parse_case_command_error_paths_are_covered() {
-        let mut parser = Parser::new(vec![
-            Token {
-                kind: TokenKind::Word("case".into()),
-            },
-            Token {
-                kind: TokenKind::Semi,
-            },
-            Token {
-                kind: TokenKind::Eof,
-            },
-        ], VecDeque::new(), HashMap::new());
+        let mut parser = Parser::new(
+            vec![
+                Token {
+                    kind: TokenKind::Word("case".into()),
+                },
+                Token {
+                    kind: TokenKind::Semi,
+                },
+                Token {
+                    kind: TokenKind::Eof,
+                },
+            ],
+            VecDeque::new(),
+            HashMap::new(),
+        );
         assert_eq!(
-            parser.parse_case_command().expect_err("missing word").message,
+            parser
+                .parse_case_command()
+                .expect_err("missing word")
+                .message,
             "expected case word"
         );
 
-        let mut parser = Parser::new(vec![
-            Token {
-                kind: TokenKind::Word("case".into()),
-            },
-            Token {
-                kind: TokenKind::Word("name".into()),
-            },
-            Token {
-                kind: TokenKind::Newline,
-            },
-            Token {
-                kind: TokenKind::Word("esac".into()),
-            },
-            Token {
-                kind: TokenKind::Eof,
-            },
-        ], VecDeque::new(), HashMap::new());
+        let mut parser = Parser::new(
+            vec![
+                Token {
+                    kind: TokenKind::Word("case".into()),
+                },
+                Token {
+                    kind: TokenKind::Word("name".into()),
+                },
+                Token {
+                    kind: TokenKind::Newline,
+                },
+                Token {
+                    kind: TokenKind::Word("esac".into()),
+                },
+                Token {
+                    kind: TokenKind::Eof,
+                },
+            ],
+            VecDeque::new(),
+            HashMap::new(),
+        );
         assert_eq!(
             parser.parse_case_command().expect_err("missing in").message,
             "expected 'in'"
         );
 
-        let mut parser = Parser::new(vec![
-            Token {
-                kind: TokenKind::Word("case".into()),
-            },
-            Token {
-                kind: TokenKind::Word("name".into()),
-            },
-            Token {
-                kind: TokenKind::Word("in".into()),
-            },
-            Token {
-                kind: TokenKind::RParen,
-            },
-            Token {
-                kind: TokenKind::Word("esac".into()),
-            },
-            Token {
-                kind: TokenKind::Eof,
-            },
-        ], VecDeque::new(), HashMap::new());
+        let mut parser = Parser::new(
+            vec![
+                Token {
+                    kind: TokenKind::Word("case".into()),
+                },
+                Token {
+                    kind: TokenKind::Word("name".into()),
+                },
+                Token {
+                    kind: TokenKind::Word("in".into()),
+                },
+                Token {
+                    kind: TokenKind::RParen,
+                },
+                Token {
+                    kind: TokenKind::Word("esac".into()),
+                },
+                Token {
+                    kind: TokenKind::Eof,
+                },
+            ],
+            VecDeque::new(),
+            HashMap::new(),
+        );
         assert_eq!(
-            parser.parse_case_command().expect_err("missing pattern").message,
+            parser
+                .parse_case_command()
+                .expect_err("missing pattern")
+                .message,
             "expected case pattern"
         );
 
-        let mut parser = Parser::new(vec![
-            Token {
-                kind: TokenKind::Word("case".into()),
-            },
-            Token {
-                kind: TokenKind::Word("name".into()),
-            },
-            Token {
-                kind: TokenKind::Word("in".into()),
-            },
-            Token {
-                kind: TokenKind::Word("foo".into()),
-            },
-            Token {
-                kind: TokenKind::RParen,
-            },
-            Token {
-                kind: TokenKind::Word("echo".into()),
-            },
-            Token {
-                kind: TokenKind::Word("hi".into()),
-            },
-            Token {
-                kind: TokenKind::Semi,
-            },
-            Token {
-                kind: TokenKind::Eof,
-            },
-        ], VecDeque::new(), HashMap::new());
+        let mut parser = Parser::new(
+            vec![
+                Token {
+                    kind: TokenKind::Word("case".into()),
+                },
+                Token {
+                    kind: TokenKind::Word("name".into()),
+                },
+                Token {
+                    kind: TokenKind::Word("in".into()),
+                },
+                Token {
+                    kind: TokenKind::Word("foo".into()),
+                },
+                Token {
+                    kind: TokenKind::RParen,
+                },
+                Token {
+                    kind: TokenKind::Word("echo".into()),
+                },
+                Token {
+                    kind: TokenKind::Word("hi".into()),
+                },
+                Token {
+                    kind: TokenKind::Semi,
+                },
+                Token {
+                    kind: TokenKind::Eof,
+                },
+            ],
+            VecDeque::new(),
+            HashMap::new(),
+        );
         assert_eq!(
-            parser.parse_case_command().expect_err("missing terminator").message,
+            parser
+                .parse_case_command()
+                .expect_err("missing terminator")
+                .message,
             "expected ';;' or 'esac'"
         );
     }
@@ -1842,11 +1937,20 @@ mod tests {
             HashMap::new(),
         );
         assert_eq!(
-            parser.try_parse_redirection().expect_err("invalid fd").message,
+            parser
+                .try_parse_redirection()
+                .expect_err("invalid fd")
+                .message,
             "invalid redirection file descriptor"
         );
 
-        let parser = Parser::new(vec![Token { kind: TokenKind::Eof }], VecDeque::new(), HashMap::new());
+        let parser = Parser::new(
+            vec![Token {
+                kind: TokenKind::Eof,
+            }],
+            VecDeque::new(),
+            HashMap::new(),
+        );
         assert!(parser.redirection_kind_at(99).is_err());
     }
 }

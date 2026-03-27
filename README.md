@@ -17,7 +17,7 @@ The current semantic target is POSIX Issue 8, with Issue 7 behavior still tracke
 
 `meiksh` is already a working shell with substantial parser, expansion, execution, and builtin coverage, including:
 
-- `-a`, `-c`, `-C`, `-f`, `-n`, `-u`, `-v`, and `-s` startup handling for the implemented subset, including POSIX-style `command_name` / `$0`, named `-o` / `+o` forms for the same subset, lone `-` stdin handling, `$-` reporting for active flags, verbose input echoing, plain `nounset` expansion failures, and blocking-read correction for inherited non-blocking stdin
+- `-a`, `-c`, `-C`, `-f`, `-n`, `-u`, `-v`, and `-s` startup handling for the implemented subset, including POSIX-style `command_name` / `$0`, named `-o` / `+o` forms for the same subset, lone `-` stdin handling, `$-` reporting for active flags (with `i` fixed at startup per POSIX), verbose input echoing, plain `nounset` expansion failures, and blocking-read correction for inherited non-blocking stdin
 - simple commands, pipelines, `&&` / `||`, background execution, subshells, groups, functions, `if`, `case`, `for`, `while`, and `until`
 - parser-time alias expansion, including blank-terminated alias chaining and same-source visibility across top-level and nested bodies
 - context-sensitive `!` pipeline negation and POSIX grammar-sensitive reserved-word handling for `for`, `case`, brace groups, and linebreaks after `|`, `&&`, and `||`
@@ -25,7 +25,7 @@ The current semantic target is POSIX Issue 8, with Issue 7 behavior still tracke
 - current-shell redirections for builtins and compound commands, including numeric fd forms
 - a growing set of POSIX builtins such as `alias`, `bg`, `break`, `cd`, `command`, `continue`, `.`, `eval`, `exec`, `exit`, `export`, `fg`, `jobs`, `pwd`, `read`, `readonly`, `return`, `set`, `shift`, `times`, `trap`, `umask`, `unalias`, `unset`, and `wait`
 - utility-specific progress on recent builtin fidelity work and shell-language closure, including parser-aware alias behavior, grammar-faithful `for`/`case` reserved-word handling, brace-group reserved-word parsing, linebreak-sensitive pipelines and AND-OR lists, `${parameter%word}` / `${parameter##word}`-style pattern trimming, `command -p/-v/-V`, `cd -` / `OLDPWD` / `CDPATH`, `.` `PATH` search for readable slashless files, `jobs -p`, `pwd -L/-P`, `export -p`, `readonly -p`, `unalias -a`, `unset -f/-v`, intrinsic `read`, syscall-backed `times` and `umask`, `trap -p` plus EXIT and selected signal traps, and `wait` support for both `%job` and numeric pid operands
-- interactive startup via parameter-expanded `ENV`, prompt handling, simple history in `HISTFILE` or `$HOME/.sh_history`, interactive command-error reporting without exiting the prompt loop, tracked background jobs, process-group-aware `fg`/`bg`, and best-effort tty foreground handoff for interactive descriptors
+- interactive startup via parameter-expanded `ENV`, prompt handling, simple history in `HISTFILE` or `$HOME/.sh_history`, interactive command-error reporting without exiting the prompt loop, POSIX-compliant interactive signal handling (SIGQUIT/SIGTERM ignored, SIGINT discards current line), tracked background jobs, process-group-aware `fg`/`bg`, and best-effort tty foreground handoff for interactive descriptors
 
 The project does **not** yet claim full POSIX conformance. Remaining gaps are tracked in `docs/spec-matrix.md` and `docs/requirements/gap-register.md`. The largest open areas are currently:
 
