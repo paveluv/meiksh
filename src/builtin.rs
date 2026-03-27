@@ -39,6 +39,7 @@ pub fn run(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellEr
         "fg" => fg(shell, argv)?,
         "bg" => bg(shell, argv)?,
         "wait" => wait(shell, argv)?,
+        "kill" => kill(shell, argv)?,
         "read" => read(shell, argv)?,
         "alias" => alias(shell, argv)?,
         "unalias" => unalias(shell, argv)?,
@@ -72,6 +73,7 @@ pub fn is_builtin(name: &str) -> bool {
             | "false"
             | "fg"
             | "jobs"
+            | "kill"
             | "pwd"
             | "read"
             | "readonly"
@@ -530,14 +532,14 @@ fn parse_loop_count(name: &str, argv: &[String]) -> Result<usize, ShellError> {
 }
 
 fn jobs(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
-    let (pid_only, index) = match parse_jobs_options(argv) {
+    let (mode, index) = match parse_jobs_options(argv) {
         Ok(value) => value,
         Err(message) => {
             write_stderr(&format!("{message}\n"));
             return BuiltinOutcome::Status(1);
         }
     };
-    let selected = match parse_jobs_operands(&argv[index..]) {
+    let selected = match parse_jobs_operands(&argv[index..], shell) {
         Ok(value) => value,
         Err(message) => {
             write_stderr(&format!("{message}\n"));
@@ -545,12 +547,23 @@ fn jobs(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
         }
     };
     let finished = shell.reap_jobs();
+    let current_id = shell.current_job_id();
+    let previous_id = shell.previous_job_id();
     let selected_contains = |id: usize| selected.as_ref().map_or(true, |ids| ids.contains(&id));
 
-    if !pid_only {
-        for (id, status) in finished {
-            if selected_contains(id) {
-                println!("[{id}] Done {status}");
+    if mode != JobsMode::PidOnly {
+        for (id, state) in &finished {
+            if !selected_contains(*id) {
+                continue;
+            }
+            if let crate::shell::JobState::Done(status) = state {
+                let marker = job_current_marker(*id, current_id, previous_id);
+                let state_str = if *status == 0 {
+                    "Done".to_string()
+                } else {
+                    format!("Done({status})")
+                };
+                println!("[{id}] {marker} {state_str}");
             }
         }
     }
@@ -558,19 +571,68 @@ fn jobs(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
         if !selected_contains(job.id) {
             continue;
         }
-        if pid_only {
-            if let Some(pid) = job_display_pid(job) {
-                println!("{pid}");
+        match mode {
+            JobsMode::PidOnly => {
+                if let Some(pid) = job_display_pid(job) {
+                    println!("{pid}");
+                }
             }
-        } else {
-            println!("[{}] Running {}", job.id, job.command);
+            _ => {
+                let marker = job_current_marker(job.id, current_id, previous_id);
+                let (state_str, pid_field) = format_job_state(job);
+                if mode == JobsMode::Long {
+                    println!(
+                        "[{}] {marker} {} {state_str} {}",
+                        job.id, pid_field, job.command
+                    );
+                } else {
+                    println!("[{}] {marker} {state_str} {}", job.id, job.command);
+                }
+            }
         }
     }
     BuiltinOutcome::Status(0)
 }
 
-fn parse_jobs_options(argv: &[String]) -> Result<(bool, usize), String> {
-    let mut pid_only = false;
+fn job_current_marker(id: usize, current: Option<usize>, previous: Option<usize>) -> char {
+    if Some(id) == current {
+        '+'
+    } else if Some(id) == previous {
+        '-'
+    } else {
+        ' '
+    }
+}
+
+fn format_job_state(job: &crate::shell::Job) -> (String, String) {
+    let pid_str = job_display_pid(job)
+        .map(|p| p.to_string())
+        .unwrap_or_default();
+    let state = match job.state {
+        crate::shell::JobState::Running => "Running".to_string(),
+        crate::shell::JobState::Stopped(sig) => {
+            format!("Stopped ({})", sys::signal_name(sig))
+        }
+        crate::shell::JobState::Done(status) => {
+            if status == 0 {
+                "Done".to_string()
+            } else {
+                format!("Done({status})")
+            }
+        }
+    };
+    (state, pid_str)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum JobsMode {
+    Normal,
+    Long,
+    PidOnly,
+}
+
+fn parse_jobs_options(argv: &[String]) -> Result<(JobsMode, usize), String> {
+    let mut mode = JobsMode::Normal;
     let mut index = 1usize;
     while let Some(arg) = argv.get(index) {
         if !arg.starts_with('-') || arg == "-" {
@@ -581,21 +643,22 @@ fn parse_jobs_options(argv: &[String]) -> Result<(bool, usize), String> {
             break;
         }
         match arg.as_str() {
-            "-p" => pid_only = true,
+            "-p" => mode = JobsMode::PidOnly,
+            "-l" => mode = JobsMode::Long,
             _ => return Err(format!("jobs: invalid option: {arg}")),
         }
         index += 1;
     }
-    Ok((pid_only, index))
+    Ok((mode, index))
 }
 
-fn parse_jobs_operands(operands: &[String]) -> Result<Option<Vec<usize>>, String> {
+fn parse_jobs_operands(operands: &[String], shell: &Shell) -> Result<Option<Vec<usize>>, String> {
     if operands.is_empty() {
         return Ok(None);
     }
     let mut ids = Vec::new();
     for operand in operands {
-        let Some(id) = parse_job_id_operand(Some(operand.as_str())) else {
+        let Some(id) = resolve_job_id(shell, Some(operand.as_str())) else {
             return Err(format!("jobs: invalid job id: {operand}"));
         };
         ids.push(id);
@@ -610,26 +673,41 @@ fn job_display_pid(job: &crate::shell::Job) -> Option<sys::Pid> {
 }
 
 fn fg(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
-    let id = parse_job_id_operand(argv.get(1).map(String::as_str))
-        .or_else(|| shell.jobs.last().map(|job| job.id))
+    if !shell.options.monitor {
+        write_stderr("fg: no job control\n");
+        return Ok(BuiltinOutcome::Status(1));
+    }
+    let id = resolve_job_id(shell, argv.get(1).map(String::as_str))
+        .or_else(|| shell.current_job_id())
         .ok_or_else(|| ShellError {
             message: "fg: no current job".to_string(),
         })?;
     if let Some(job) = shell.jobs.iter().find(|job| job.id == id) {
         println!("{}", job.command);
     }
-    shell.continue_job(id)?;
+    shell.continue_job(id, true)?;
     let status = shell.wait_for_job(id)?;
     Ok(BuiltinOutcome::Status(status))
 }
 
 fn bg(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
-    let id = parse_job_id_operand(argv.get(1).map(String::as_str))
-        .or_else(|| shell.jobs.last().map(|job| job.id))
+    if !shell.options.monitor {
+        write_stderr("bg: no job control\n");
+        return Ok(BuiltinOutcome::Status(1));
+    }
+    let id = resolve_job_id(shell, argv.get(1).map(String::as_str))
+        .or_else(|| {
+            shell
+                .jobs
+                .iter()
+                .rev()
+                .find(|j| matches!(j.state, crate::shell::JobState::Stopped(_)))
+                .map(|j| j.id)
+        })
         .ok_or_else(|| ShellError {
             message: "bg: no current job".to_string(),
         })?;
-    shell.continue_job(id)?;
+    shell.continue_job(id, false)?;
     if let Some(job) = shell.jobs.iter().find(|job| job.id == id) {
         println!("[{id}] {}", job.command);
     }
@@ -642,7 +720,7 @@ fn wait(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
     }
     let mut status = 0;
     for operand in &argv[1..] {
-        status = match parse_wait_operand(operand) {
+        status = match parse_wait_operand(operand, shell) {
             Ok(WaitOperand::Job(id)) => shell.wait_for_job_operand(id)?,
             Ok(WaitOperand::Pid(pid)) => shell.wait_for_pid_operand(pid)?,
             Err(message) => {
@@ -652,6 +730,113 @@ fn wait(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
         };
     }
     Ok(BuiltinOutcome::Status(status))
+}
+
+fn kill(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
+    if argv.len() < 2 {
+        write_stderr("kill: usage: kill [-s sigspec | -signum] pid... | -l [exit_status]\n");
+        return Ok(BuiltinOutcome::Status(2));
+    }
+
+    let mut args = &argv[1..];
+    if args[0] == "-l" || args[0] == "-L" {
+        if args.len() == 1 {
+            let names: Vec<&str> = sys::all_signal_names()
+                .iter()
+                .map(|(name, _)| *name)
+                .collect();
+            println!("{}", names.join(" "));
+            return Ok(BuiltinOutcome::Status(0));
+        }
+        for arg in &args[1..] {
+            if let Ok(code) = arg.parse::<i32>() {
+                let sig = if code > 128 { code - 128 } else { code };
+                let name = sys::signal_name(sig);
+                if name != "UNKNOWN" {
+                    println!("{}", &name[3..]);
+                } else {
+                    write_stderr(&format!("kill: unknown signal: {arg}\n"));
+                    return Ok(BuiltinOutcome::Status(1));
+                }
+            } else {
+                write_stderr(&format!("kill: invalid exit status: {arg}\n"));
+                return Ok(BuiltinOutcome::Status(1));
+            }
+        }
+        return Ok(BuiltinOutcome::Status(0));
+    }
+
+    let mut signal = sys::SIGTERM;
+    if args[0] == "-s" {
+        if args.len() < 3 {
+            write_stderr("kill: -s requires a signal name\n");
+            return Ok(BuiltinOutcome::Status(2));
+        }
+        signal = parse_kill_signal(&args[1])?;
+        args = &args[2..];
+    } else if args[0].starts_with('-') && args[0] != "--" {
+        let spec = &args[0][1..];
+        signal = parse_kill_signal(spec)?;
+        args = &args[1..];
+    }
+
+    if args.is_empty() || (args.len() == 1 && args[0] == "--") {
+        write_stderr("kill: no process id specified\n");
+        return Ok(BuiltinOutcome::Status(2));
+    }
+    if args[0] == "--" {
+        args = &args[1..];
+    }
+
+    let mut status = 0;
+    for operand in args {
+        if operand.starts_with('%') {
+            let resolved = resolve_job_id(shell, Some(operand))
+                .and_then(|id| shell.jobs.iter().find(|j| j.id == id));
+            if let Some(job) = resolved {
+                let pid = job
+                    .pgid
+                    .unwrap_or_else(|| job.children.first().map(|c| c.pid).unwrap_or(0));
+                if pid != 0 {
+                    if sys::send_signal(-pid, signal).is_err() {
+                        write_stderr(&format!("kill: ({pid}): No such process\n"));
+                        status = 1;
+                    }
+                }
+            } else {
+                write_stderr(&format!("kill: {operand}: no such job\n"));
+                status = 1;
+            }
+        } else if let Ok(pid) = operand.parse::<sys::Pid>() {
+            if sys::send_signal(pid, signal).is_err() {
+                write_stderr(&format!("kill: ({pid}): No such process\n"));
+                status = 1;
+            }
+        } else {
+            write_stderr(&format!("kill: invalid pid: {operand}\n"));
+            status = 1;
+        }
+    }
+    Ok(BuiltinOutcome::Status(status))
+}
+
+fn parse_kill_signal(spec: &str) -> Result<i32, ShellError> {
+    if let Ok(num) = spec.parse::<i32>() {
+        return Ok(num);
+    }
+    let upper = spec.to_uppercase();
+    let name = upper.strip_prefix("SIG").unwrap_or(&upper);
+    for (n, sig) in sys::all_signal_names() {
+        if *n == name {
+            return Ok(*sig);
+        }
+    }
+    if name == "0" {
+        return Ok(0);
+    }
+    Err(ShellError {
+        message: format!("kill: unknown signal: {spec}"),
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -995,16 +1180,32 @@ enum WaitOperand {
     Pid(sys::Pid),
 }
 
-fn parse_job_id_operand(operand: Option<&str>) -> Option<usize> {
-    operand?.trim_start_matches('%').parse::<usize>().ok()
+fn resolve_job_id(shell: &Shell, operand: Option<&str>) -> Option<usize> {
+    let operand = operand?;
+    let spec = operand.strip_prefix('%').unwrap_or(operand);
+    match spec {
+        "%" | "+" | "" => shell.current_job_id(),
+        "-" => shell.previous_job_id(),
+        _ => {
+            if let Some(rest) = spec.strip_prefix('?') {
+                return shell.find_job_by_substring(rest);
+            }
+            if let Ok(n) = spec.parse::<usize>() {
+                if shell.jobs.iter().any(|j| j.id == n) {
+                    return Some(n);
+                }
+                return None;
+            }
+            shell.find_job_by_prefix(spec)
+        }
+    }
 }
 
-fn parse_wait_operand(operand: &str) -> Result<WaitOperand, String> {
-    if let Some(rest) = operand.strip_prefix('%') {
-        return rest
-            .parse::<usize>()
+fn parse_wait_operand(operand: &str, shell: &Shell) -> Result<WaitOperand, String> {
+    if operand.starts_with('%') {
+        return resolve_job_id(shell, Some(operand))
             .map(WaitOperand::Job)
-            .map_err(|_| format!("wait: invalid job id: {operand}"));
+            .ok_or_else(|| format!("wait: invalid job id: {operand}"));
     }
     operand
         .parse::<sys::Pid>()
@@ -2496,20 +2697,38 @@ mod tests {
 
     #[test]
     fn fg_errors_without_current_job() {
-        assert_no_syscalls(|| {
-            let mut shell = test_shell();
-            let fg_error = run(&mut shell, &["fg".into()]).expect_err("fg");
-            assert_eq!(fg_error.message, "fg: no current job");
-        });
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(sys::STDERR_FILENO), ArgMatcher::Any],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                assert!(matches!(
+                    run(&mut shell, &["fg".into()]).expect("fg"),
+                    BuiltinOutcome::Status(1)
+                ));
+            },
+        );
     }
 
     #[test]
     fn bg_errors_without_current_job() {
-        assert_no_syscalls(|| {
-            let mut shell = test_shell();
-            let bg_error = run(&mut shell, &["bg".into()]).expect_err("bg");
-            assert_eq!(bg_error.message, "bg: no current job");
-        });
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(sys::STDERR_FILENO), ArgMatcher::Any],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                assert!(matches!(
+                    run(&mut shell, &["bg".into()]).expect("bg"),
+                    BuiltinOutcome::Status(1)
+                ));
+            },
+        );
     }
 
     #[test]
@@ -3418,7 +3637,7 @@ mod tests {
                     None
                 );
                 assert!(
-                    matches!(parse_wait_operand("bad"), Err(message) if message.contains("invalid process id"))
+                    matches!(parse_wait_operand("bad", &shell), Err(message) if message.contains("invalid process id"))
                 );
                 assert_eq!(format_trap_condition(TrapCondition::Signal(99)), "99");
                 assert_eq!(supported_trap_conditions().len(), 19);
@@ -4054,18 +4273,43 @@ mod tests {
         assert_no_syscalls(|| {
             assert_eq!(
                 parse_jobs_options(&["jobs".into(), "-p".into(), "%1".into()]).expect("jobs -p"),
-                (true, 2)
+                (JobsMode::PidOnly, 2)
             );
             assert_eq!(
                 parse_jobs_options(&["jobs".into(), "--".into(), "%1".into()]).expect("jobs --"),
-                (false, 2)
+                (JobsMode::Normal, 2)
             );
             assert_eq!(
-                parse_jobs_operands(&["%1".into(), "%2".into()]).expect("job ids"),
+                parse_jobs_options(&["jobs".into(), "-l".into()]).expect("jobs -l"),
+                (JobsMode::Long, 2)
+            );
+            let mut shell = test_shell();
+            use crate::shell::JobState;
+            shell.jobs.push(crate::shell::Job {
+                id: 1,
+                command: "sleep 1".into(),
+                pgid: None,
+                last_pid: None,
+                last_status: None,
+                children: Vec::new(),
+                state: JobState::Running,
+                saved_termios: None,
+            });
+            shell.jobs.push(crate::shell::Job {
+                id: 2,
+                command: "sleep 2".into(),
+                pgid: None,
+                last_pid: None,
+                last_status: None,
+                children: Vec::new(),
+                state: JobState::Running,
+                saved_termios: None,
+            });
+            assert_eq!(
+                parse_jobs_operands(&["%1".into(), "%2".into()], &shell).expect("job ids"),
                 Some(vec![1, 2])
             );
-            assert!(parse_jobs_options(&["jobs".into(), "-l".into()]).is_err());
-            assert!(parse_jobs_operands(&["bad".into()]).is_err());
+            assert!(parse_jobs_operands(&["bad".into()], &shell).is_err());
         });
     }
 
@@ -4089,7 +4333,7 @@ mod tests {
                 t(
                     "write",
                     vec![ArgMatcher::Fd(2), ArgMatcher::Any],
-                    TraceResult::Int("jobs: invalid option: -l\n".len() as i64),
+                    TraceResult::Int("jobs: invalid option: -z\n".len() as i64),
                 ),
                 t(
                     "write",
@@ -4100,7 +4344,7 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 assert!(matches!(
-                    run(&mut shell, &["jobs".into(), "-l".into()]).expect("bad jobs"),
+                    run(&mut shell, &["jobs".into(), "-z".into()]).expect("bad jobs"),
                     BuiltinOutcome::Status(1)
                 ));
                 assert!(matches!(
@@ -4177,38 +4421,43 @@ mod tests {
     fn wait_fg_bg_success_paths_are_exercised() {
         run_trace(
             vec![
-                // bg %1 → continue_job → kill(3001, SIGCONT)
+                // bg %1 → continue_job (stopped → Running) → kill(-3001, SIGCONT)
                 t(
                     "kill",
                     vec![ArgMatcher::Int(3001), ArgMatcher::Int(sys::SIGCONT as i64)],
                     TraceResult::Int(0),
                 ),
-                // wait %1 → wait_for_job_operand → waitpid(3001, blocking)
+                // wait %1 → wait_on_job_index → waitpid(3001, WUNTRACED)
                 t(
                     "waitpid",
-                    vec![ArgMatcher::Int(3001), ArgMatcher::Any, ArgMatcher::Any],
+                    vec![
+                        ArgMatcher::Int(3001),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
                     TraceResult::Status(0),
                 ),
-                // fg %2 → continue_job → kill(3002, SIGCONT)
-                t(
-                    "kill",
-                    vec![ArgMatcher::Int(3002), ArgMatcher::Int(sys::SIGCONT as i64)],
-                    TraceResult::Int(0),
-                ),
-                // fg wait → waitpid(3002, blocking)
+                // fg %2 (running job) → wait_for_job → waitpid(3002, WUNTRACED)
                 t(
                     "waitpid",
-                    vec![ArgMatcher::Int(3002), ArgMatcher::Any, ArgMatcher::Any],
+                    vec![
+                        ArgMatcher::Int(3002),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
                     TraceResult::Status(0),
                 ),
             ],
             || {
                 let mut shell = test_shell();
+                shell.options.monitor = true;
                 let handle = sys::ChildHandle {
                     pid: 3001,
                     stdout_fd: None,
                 };
                 let id = shell.register_background_job("sleep".into(), None, vec![handle]);
+                let idx = shell.jobs.iter().position(|j| j.id == id).unwrap();
+                shell.jobs[idx].state = crate::shell::JobState::Stopped(sys::SIGTSTP);
 
                 let outcome = run(&mut shell, &["bg".into(), format!("%{id}")]).expect("bg");
                 assert!(matches!(outcome, BuiltinOutcome::Status(0)));
@@ -4456,11 +4705,18 @@ mod tests {
     #[test]
     fn jobs_skips_unselected_running_job() {
         run_trace(
-            vec![t(
-                "waitpid",
-                vec![ArgMatcher::Int(4001), ArgMatcher::Any, ArgMatcher::Any],
-                TraceResult::Pid(0),
-            )],
+            vec![
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(4001), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Pid(0),
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(4002), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Pid(0),
+                ),
+            ],
             || {
                 let mut shell = test_shell();
                 shell.jobs.push(crate::shell::Job {
@@ -4473,6 +4729,21 @@ mod tests {
                         pid: 4001,
                         stdout_fd: None,
                     }],
+                    state: crate::shell::JobState::Running,
+                    saved_termios: None,
+                });
+                shell.jobs.push(crate::shell::Job {
+                    id: 2,
+                    command: "sleep 100".into(),
+                    pgid: None,
+                    last_pid: Some(4002),
+                    last_status: None,
+                    children: vec![crate::sys::ChildHandle {
+                        pid: 4002,
+                        stdout_fd: None,
+                    }],
+                    state: crate::shell::JobState::Running,
+                    saved_termios: None,
                 });
                 assert!(matches!(
                     run(&mut shell, &["jobs".into(), "%2".into()]).expect("jobs %2"),
@@ -4480,5 +4751,739 @@ mod tests {
                 ));
             },
         );
+    }
+
+    fn make_job(id: usize, pid: sys::Pid, cmd: &str) -> crate::shell::Job {
+        crate::shell::Job {
+            id,
+            command: cmd.into(),
+            pgid: Some(pid),
+            last_pid: Some(pid),
+            last_status: None,
+            children: vec![crate::sys::ChildHandle {
+                pid,
+                stdout_fd: None,
+            }],
+            state: crate::shell::JobState::Running,
+            saved_termios: None,
+        }
+    }
+
+    #[test]
+    fn jobs_displays_running_stopped_and_done_markers() {
+        run_trace(
+            vec![
+                // reap_jobs: job 1 (Running) → try_wait_child returns still running
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(5001), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Pid(0),
+                ),
+                // reap_jobs: job 2 (Stopped) is skipped by reap_jobs
+                // reap_jobs: job 3 (Running) → try_wait_child returns exited(42)
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(5003), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Status(42),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push({
+                    let mut j = make_job(1, 5001, "sleep 10");
+                    j.state = crate::shell::JobState::Running;
+                    j
+                });
+                shell.jobs.push({
+                    let mut j = make_job(2, 5002, "cat");
+                    j.state = crate::shell::JobState::Stopped(sys::SIGTSTP);
+                    j
+                });
+                shell.jobs.push(make_job(3, 5003, "false"));
+
+                let outcome = run(&mut shell, &["jobs".into()]).expect("jobs");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn jobs_pid_only_mode_prints_pgid() {
+        run_trace(
+            vec![t(
+                "waitpid",
+                vec![ArgMatcher::Int(5010), ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::Pid(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(make_job(1, 5010, "sleep 100"));
+                let outcome = run(&mut shell, &["jobs".into(), "-p".into()]).expect("jobs -p");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn jobs_long_mode_includes_pid() {
+        run_trace(
+            vec![t(
+                "waitpid",
+                vec![ArgMatcher::Int(5020), ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::Pid(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(make_job(1, 5020, "sleep 200"));
+                let outcome = run(&mut shell, &["jobs".into(), "-l".into()]).expect("jobs -l");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn jobs_done_nonzero_status_in_finished_list() {
+        run_trace(
+            vec![t(
+                "waitpid",
+                vec![ArgMatcher::Int(5030), ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::Status(7),
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(make_job(1, 5030, "exit7"));
+                let outcome = run(&mut shell, &["jobs".into()]).expect("jobs");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn jobs_skips_finished_in_pid_only_mode() {
+        run_trace(
+            vec![t(
+                "waitpid",
+                vec![ArgMatcher::Int(5040), ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::Status(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(make_job(1, 5040, "done-cmd"));
+                let outcome = run(&mut shell, &["jobs".into(), "-p".into()]).expect("jobs -p");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn fg_with_monitor_waits_for_job() {
+        run_trace(
+            vec![
+                // continue_job: set foreground pgrp + send SIGCONT
+                t(
+                    "tcsetpgrp",
+                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(6001)],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "kill",
+                    vec![ArgMatcher::Int(-6001), ArgMatcher::Int(sys::SIGCONT as i64)],
+                    TraceResult::Int(0),
+                ),
+                // wait_for_job → foreground_handoff: isatty(0), isatty(2), tcgetpgrp, tcsetpgrp
+                t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
+                // wait_for_job: waitpid on child
+                t(
+                    "waitpid",
+                    vec![
+                        ArgMatcher::Int(6001),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
+                    TraceResult::Status(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.options.monitor = true;
+                let mut job = make_job(1, 6001, "sleep 5");
+                job.state = crate::shell::JobState::Stopped(sys::SIGTSTP);
+                shell.jobs.push(job);
+                let outcome = run(&mut shell, &["fg".into(), "%1".into()]).expect("fg");
+                assert!(matches!(outcome, BuiltinOutcome::Status(_)));
+            },
+        );
+    }
+
+    #[test]
+    fn fg_no_current_job_returns_error() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.options.monitor = true;
+            let result = run(&mut shell, &["fg".into()]);
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn bg_with_stopped_job_sends_sigcont() {
+        run_trace(
+            vec![t(
+                "kill",
+                vec![ArgMatcher::Int(-6010), ArgMatcher::Int(sys::SIGCONT as i64)],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.options.monitor = true;
+                let mut job = make_job(1, 6010, "sleep 99");
+                job.state = crate::shell::JobState::Stopped(sys::SIGTSTP);
+                shell.jobs.push(job);
+                let outcome = run(&mut shell, &["bg".into()]).expect("bg");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn bg_no_stopped_job_returns_error() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.options.monitor = true;
+            let result = run(&mut shell, &["bg".into()]);
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn kill_list_signals() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let outcome = run(&mut shell, &["kill".into(), "-l".into()]).expect("kill -l");
+            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        });
+    }
+
+    #[test]
+    fn kill_list_translates_exit_code() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let outcome =
+                run(&mut shell, &["kill".into(), "-l".into(), "130".into()]).expect("kill -l 130");
+            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        });
+    }
+
+    #[test]
+    fn kill_list_unknown_code_errors() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Any,
+                    ArgMatcher::Any,
+                ],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = run(&mut shell, &["kill".into(), "-l".into(), "999".into()])
+                    .expect("kill -l 999");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn kill_list_invalid_not_number_errors() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Any,
+                    ArgMatcher::Any,
+                ],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = run(&mut shell, &["kill".into(), "-l".into(), "abc".into()])
+                    .expect("kill -l abc");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn kill_sends_signal_to_pid() {
+        run_trace(
+            vec![t(
+                "kill",
+                vec![ArgMatcher::Int(12345), ArgMatcher::Int(sys::SIGTERM as i64)],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = run(&mut shell, &["kill".into(), "12345".into()]).expect("kill pid");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn kill_with_named_signal() {
+        run_trace(
+            vec![t(
+                "kill",
+                vec![ArgMatcher::Int(12345), ArgMatcher::Int(sys::SIGINT as i64)],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = run(
+                    &mut shell,
+                    &["kill".into(), "-s".into(), "INT".into(), "12345".into()],
+                )
+                .expect("kill -s INT");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn kill_with_numeric_signal_shorthand() {
+        run_trace(
+            vec![t(
+                "kill",
+                vec![ArgMatcher::Int(12345), ArgMatcher::Int(9)],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = run(&mut shell, &["kill".into(), "-9".into(), "12345".into()])
+                    .expect("kill -9");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn kill_job_specifier_sends_to_pgid() {
+        run_trace(
+            vec![t(
+                "kill",
+                vec![ArgMatcher::Int(-7001), ArgMatcher::Int(sys::SIGTERM as i64)],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(make_job(1, 7001, "sleep 999"));
+                let outcome = run(&mut shell, &["kill".into(), "%1".into()]).expect("kill %1");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn kill_job_specifier_no_such_job() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Any,
+                    ArgMatcher::Any,
+                ],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = run(&mut shell, &["kill".into(), "%99".into()]).expect("kill %99");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn kill_invalid_pid() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Any,
+                    ArgMatcher::Any,
+                ],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome =
+                    run(&mut shell, &["kill".into(), "notapid".into()]).expect("kill notapid");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn kill_no_args_shows_usage() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Any,
+                    ArgMatcher::Any,
+                ],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = run(&mut shell, &["kill".into()]).expect("kill");
+                assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+            },
+        );
+    }
+
+    #[test]
+    fn kill_no_pid_after_signal_shows_error() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Any,
+                    ArgMatcher::Any,
+                ],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome =
+                    run(&mut shell, &["kill".into(), "-9".into()]).expect("kill -9 (no pid)");
+                assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+            },
+        );
+    }
+
+    #[test]
+    fn kill_with_double_dash_separator() {
+        run_trace(
+            vec![t(
+                "kill",
+                vec![ArgMatcher::Int(8888), ArgMatcher::Int(sys::SIGTERM as i64)],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = run(&mut shell, &["kill".into(), "--".into(), "8888".into()])
+                    .expect("kill -- pid");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn kill_s_requires_signal_name() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Any,
+                    ArgMatcher::Any,
+                ],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome =
+                    run(&mut shell, &["kill".into(), "-s".into()]).expect("kill -s (no arg)");
+                assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+            },
+        );
+    }
+
+    #[test]
+    fn kill_unknown_signal_name_returns_error() {
+        let mut shell = test_shell();
+        let result = run(
+            &mut shell,
+            &["kill".into(), "-s".into(), "BOGUS".into(), "1".into()],
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn kill_process_not_found_reports_error() {
+        run_trace(
+            vec![
+                t(
+                    "kill",
+                    vec![ArgMatcher::Int(99999), ArgMatcher::Int(sys::SIGTERM as i64)],
+                    TraceResult::Err(sys::ESRCH),
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Int(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome =
+                    run(&mut shell, &["kill".into(), "99999".into()]).expect("kill 99999");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn kill_job_process_not_found_reports_error() {
+        run_trace(
+            vec![
+                t(
+                    "kill",
+                    vec![ArgMatcher::Int(-7010), ArgMatcher::Int(sys::SIGTERM as i64)],
+                    TraceResult::Err(sys::ESRCH),
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Int(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(make_job(1, 7010, "dead"));
+                let outcome = run(&mut shell, &["kill".into(), "%1".into()]).expect("kill %1 dead");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn kill_only_double_dash_no_pid() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Any,
+                    ArgMatcher::Any,
+                ],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = run(&mut shell, &["kill".into(), "--".into()]).expect("kill --");
+                assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+            },
+        );
+    }
+
+    #[test]
+    fn parse_kill_signal_recognizes_sigprefix() {
+        assert_no_syscalls(|| {
+            let sig = parse_kill_signal("SIGTERM").expect("SIGTERM");
+            assert_eq!(sig, sys::SIGTERM);
+            let sig = parse_kill_signal("TERM").expect("TERM");
+            assert_eq!(sig, sys::SIGTERM);
+            let sig = parse_kill_signal("9").expect("9");
+            assert_eq!(sig, 9);
+        });
+    }
+
+    #[test]
+    fn parse_kill_signal_bogus_returns_error() {
+        assert_no_syscalls(|| {
+            assert!(parse_kill_signal("BOGUS").is_err());
+        });
+    }
+
+    #[test]
+    fn resolve_job_id_previous_and_substring() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.jobs.push(make_job(1, 8001, "sleep 10"));
+            let mut j2 = make_job(2, 8002, "cat file");
+            j2.state = crate::shell::JobState::Stopped(sys::SIGTSTP);
+            shell.jobs.push(j2);
+            let mut j3 = make_job(3, 8003, "grep pattern");
+            j3.state = crate::shell::JobState::Stopped(sys::SIGTSTP);
+            shell.jobs.push(j3);
+
+            assert_eq!(resolve_job_id(&shell, Some("%-")), Some(2));
+            assert_eq!(resolve_job_id(&shell, Some("%?file")), Some(2));
+            assert_eq!(resolve_job_id(&shell, Some("%99")), None);
+        });
+    }
+
+    #[test]
+    fn jobs_stopped_job_format_state() {
+        run_trace(vec![], || {
+            let mut shell = test_shell();
+            let mut job = make_job(1, 5050, "vim");
+            job.state = crate::shell::JobState::Stopped(sys::SIGTSTP);
+            shell.jobs.push(job);
+            let outcome = run(&mut shell, &["jobs".into()]).expect("jobs");
+            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        });
+    }
+
+    #[test]
+    fn jobs_long_mode_stopped_job() {
+        run_trace(vec![], || {
+            let mut shell = test_shell();
+            let mut job = make_job(1, 5060, "vim");
+            job.state = crate::shell::JobState::Stopped(sys::SIGTSTP);
+            shell.jobs.push(job);
+            let outcome = run(&mut shell, &["jobs".into(), "-l".into()]).expect("jobs -l");
+            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        });
+    }
+
+    #[test]
+    fn format_job_state_done_nonzero() {
+        assert_no_syscalls(|| {
+            let job = crate::shell::Job {
+                id: 1,
+                command: "bad".into(),
+                pgid: Some(100),
+                last_pid: Some(100),
+                last_status: None,
+                children: vec![],
+                state: crate::shell::JobState::Done(5),
+                saved_termios: None,
+            };
+            let (state_str, pid_str) = format_job_state(&job);
+            assert_eq!(state_str, "Done(5)");
+            assert_eq!(pid_str, "100");
+        });
+    }
+
+    #[test]
+    fn format_job_state_done_zero() {
+        assert_no_syscalls(|| {
+            let job = crate::shell::Job {
+                id: 1,
+                command: "ok".into(),
+                pgid: Some(200),
+                last_pid: Some(200),
+                last_status: None,
+                children: vec![],
+                state: crate::shell::JobState::Done(0),
+                saved_termios: None,
+            };
+            let (state_str, _) = format_job_state(&job);
+            assert_eq!(state_str, "Done");
+        });
+    }
+
+    #[test]
+    fn job_current_marker_returns_correct_symbols() {
+        assert_no_syscalls(|| {
+            assert_eq!(job_current_marker(1, Some(1), Some(2)), '+');
+            assert_eq!(job_current_marker(2, Some(1), Some(2)), '-');
+            assert_eq!(job_current_marker(3, Some(1), Some(2)), ' ');
+        });
+    }
+
+    #[test]
+    fn jobs_finished_job_prints_done_line_when_selected() {
+        run_trace(
+            vec![
+                // job 1 finishes
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(5070), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Status(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(make_job(1, 5070, "done-cmd"));
+                let outcome = run(&mut shell, &["jobs".into(), "%1".into()]).expect("jobs %1");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn jobs_finished_job_skipped_when_not_selected() {
+        run_trace(
+            vec![
+                // job 1 finishes; job 2 stays running
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(5080), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Status(0),
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(5081), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Pid(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(make_job(1, 5080, "done-cmd"));
+                shell.jobs.push(make_job(2, 5081, "running-cmd"));
+                let outcome = run(&mut shell, &["jobs".into(), "%2".into()]).expect("jobs %2");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn jobs_stopped_job_in_finished_list_skips_done_block() {
+        run_trace(
+            vec![
+                // Job 1 gets stopped during reap_jobs (child returns stopped)
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(5090), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::StoppedSig(sys::SIGTSTP),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(make_job(1, 5090, "vim"));
+                let outcome = run(&mut shell, &["jobs".into(), "%1".into()]).expect("jobs %1");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn kill_job_with_zero_pid_does_nothing() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut job = make_job(1, 0, "empty");
+            job.pgid = None;
+            job.children.clear();
+            job.last_pid = Some(0);
+            shell.jobs.push(job);
+            let outcome = run(&mut shell, &["kill".into(), "%1".into()]).expect("kill %1 zero-pid");
+            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        });
+    }
+
+    #[test]
+    fn parse_kill_signal_zero_via_sig_prefix() {
+        assert_no_syscalls(|| {
+            let sig = parse_kill_signal("SIG0").expect("SIG0");
+            assert_eq!(sig, 0);
+        });
     }
 }
