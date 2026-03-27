@@ -19,10 +19,23 @@ pub const STDERR_FILENO: c_int = libc::STDERR_FILENO;
 pub const SIGHUP: c_int = libc::SIGHUP;
 pub const SIGINT: c_int = libc::SIGINT;
 pub const SIGQUIT: c_int = libc::SIGQUIT;
+pub const SIGILL: c_int = libc::SIGILL;
 pub const SIGABRT: c_int = libc::SIGABRT;
+pub const SIGFPE: c_int = libc::SIGFPE;
+pub const SIGKILL: c_int = libc::SIGKILL;
+pub const SIGUSR1: c_int = libc::SIGUSR1;
+pub const SIGSEGV: c_int = libc::SIGSEGV;
+pub const SIGUSR2: c_int = libc::SIGUSR2;
+pub const SIGPIPE: c_int = libc::SIGPIPE;
 pub const SIGALRM: c_int = libc::SIGALRM;
 pub const SIGCONT: c_int = libc::SIGCONT;
 pub const SIGTERM: c_int = libc::SIGTERM;
+pub const SIGCHLD: c_int = libc::SIGCHLD;
+pub const SIGTSTP: c_int = libc::SIGTSTP;
+pub const SIGTTIN: c_int = libc::SIGTTIN;
+pub const SIGTTOU: c_int = libc::SIGTTOU;
+pub const SIGBUS: c_int = libc::SIGBUS;
+pub const SIGSYS: c_int = libc::SIGSYS;
 pub const WNOHANG: c_int = libc::WNOHANG;
 pub const ENOENT: c_int = libc::ENOENT;
 pub const ENOEXEC: c_int = libc::ENOEXEC;
@@ -1467,7 +1480,19 @@ pub fn take_pending_signals() -> Vec<c_int> {
 }
 
 pub fn supported_trap_signals() -> Vec<c_int> {
-    vec![SIGHUP, SIGINT, SIGQUIT, SIGABRT, SIGALRM, SIGTERM]
+    vec![
+        SIGHUP, SIGINT, SIGQUIT, SIGILL, SIGABRT, SIGFPE, SIGBUS, SIGUSR1, SIGSEGV, SIGUSR2,
+        SIGPIPE, SIGALRM, SIGTERM, SIGCHLD, SIGTSTP, SIGTTIN, SIGTTOU, SIGSYS,
+    ]
+}
+
+pub fn query_signal_disposition(signal: c_int) -> SysResult<bool> {
+    let prev = (sys_interface().signal)(signal, SIG_IGN_HANDLER);
+    if prev == SIG_ERR_HANDLER {
+        return Err(last_error());
+    }
+    let _ = (sys_interface().signal)(signal, prev);
+    Ok(prev == SIG_IGN_HANDLER)
 }
 
 pub fn interrupted(error: &SysError) -> bool {
@@ -2024,9 +2049,21 @@ fn signal_mask(signal: c_int) -> Option<usize> {
         SIGHUP => 0,
         SIGINT => 1,
         SIGQUIT => 2,
-        SIGABRT => 3,
-        SIGALRM => 4,
-        SIGTERM => 5,
+        SIGILL => 3,
+        SIGABRT => 4,
+        SIGFPE => 5,
+        SIGBUS => 6,
+        SIGUSR1 => 7,
+        SIGSEGV => 8,
+        SIGUSR2 => 9,
+        SIGPIPE => 10,
+        SIGALRM => 11,
+        SIGTERM => 12,
+        SIGCHLD => 13,
+        SIGTSTP => 14,
+        SIGTTIN => 15,
+        SIGTTOU => 16,
+        SIGSYS => 17,
         _ => return None,
     };
     Some(1usize << bit)
@@ -2576,10 +2613,18 @@ mod tests {
     fn signal_utility_helpers() {
         let interrupted_error = SysError::Errno(EINTR);
         assert!(interrupted(&interrupted_error));
-        assert_eq!(
-            supported_trap_signals(),
-            vec![SIGHUP, SIGINT, SIGQUIT, SIGABRT, SIGALRM, SIGTERM]
-        );
+        let trap_sigs = supported_trap_signals();
+        assert!(trap_sigs.contains(&SIGHUP));
+        assert!(trap_sigs.contains(&SIGINT));
+        assert!(trap_sigs.contains(&SIGQUIT));
+        assert!(trap_sigs.contains(&SIGABRT));
+        assert!(trap_sigs.contains(&SIGALRM));
+        assert!(trap_sigs.contains(&SIGTERM));
+        assert!(trap_sigs.contains(&SIGUSR1));
+        assert!(trap_sigs.contains(&SIGUSR2));
+        assert!(trap_sigs.contains(&SIGPIPE));
+        assert!(trap_sigs.contains(&SIGCHLD));
+        assert_eq!(trap_sigs.len(), 18);
     }
 
     #[test]

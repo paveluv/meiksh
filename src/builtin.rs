@@ -91,12 +91,31 @@ pub fn is_builtin(name: &str) -> bool {
 const DEFAULT_COMMAND_PATH: &str = "/usr/bin:/bin";
 
 fn cd(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
-    let (target, print_new_pwd) = parse_cd_target(shell, argv)?;
-    let (resolved_target, pwd_target, print_new_pwd) =
-        resolve_cd_target(shell, &target, print_new_pwd);
+    let (target, print_new_pwd, physical, check_pwd) = parse_cd_target(shell, argv)?;
+    let (resolved_target, _, print_new_pwd) = resolve_cd_target(shell, &target, print_new_pwd);
+
+    let curpath = if physical {
+        resolved_target.display().to_string()
+    } else {
+        cd_logical_curpath(shell, &resolved_target.display().to_string())?
+    };
+
     let old_pwd = current_logical_pwd(shell)?;
-    sys::change_dir(&resolved_target.display().to_string())?;
-    let new_pwd = cd_pwd_value(&pwd_target)?;
+    sys::change_dir(&curpath)?;
+
+    let new_pwd = if physical {
+        match sys::get_cwd() {
+            Ok(cwd) => cwd,
+            Err(_) if check_pwd => {
+                shell.set_var("OLDPWD", old_pwd)?;
+                return Ok(BuiltinOutcome::Status(1));
+            }
+            Err(_) => curpath.clone(),
+        }
+    } else {
+        curpath.clone()
+    };
+
     shell.set_var("OLDPWD", old_pwd)?;
     shell.set_var("PWD", new_pwd.clone())?;
     if print_new_pwd {
@@ -105,17 +124,78 @@ fn cd(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> 
     Ok(BuiltinOutcome::Status(0))
 }
 
-fn cd_pwd_value(target: &str) -> Result<String, ShellError> {
-    if logical_pwd_is_valid(target) {
-        return Ok(target.to_string());
-    }
-    Ok(sys::get_cwd()?)
+fn cd_logical_curpath(shell: &Shell, target: &str) -> Result<String, ShellError> {
+    let curpath = if target.starts_with('/') {
+        target.to_string()
+    } else {
+        let pwd = current_logical_pwd(shell)?;
+        if pwd.ends_with('/') {
+            format!("{pwd}{target}")
+        } else {
+            format!("{pwd}/{target}")
+        }
+    };
+    Ok(canonicalize_logical_path(&curpath))
 }
 
-fn parse_cd_target(shell: &Shell, argv: &[String]) -> Result<(String, bool), ShellError> {
+fn canonicalize_logical_path(path: &str) -> String {
+    let mut components: Vec<&str> = Vec::new();
+    for part in path.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                if !components.is_empty() {
+                    components.pop();
+                }
+            }
+            _ => components.push(part),
+        }
+    }
+    if components.is_empty() {
+        return "/".to_string();
+    }
+    let mut result = String::new();
+    for component in &components {
+        result.push('/');
+        result.push_str(component);
+    }
+    result
+}
+
+fn parse_cd_target(
+    shell: &Shell,
+    argv: &[String],
+) -> Result<(String, bool, bool, bool), ShellError> {
     let mut index = 1usize;
-    if argv.get(index).is_some_and(|arg| arg == "--") {
+    let mut physical = false;
+    let mut check_pwd = false;
+    while let Some(arg) = argv.get(index) {
+        if arg == "--" {
+            index += 1;
+            break;
+        }
+        if !arg.starts_with('-') || arg == "-" {
+            break;
+        }
+        for ch in arg[1..].chars() {
+            match ch {
+                'L' => {
+                    physical = false;
+                    check_pwd = false;
+                }
+                'P' => physical = true,
+                'e' => check_pwd = true,
+                _ => {
+                    return Err(ShellError {
+                        message: format!("cd: invalid option: -{ch}"),
+                    });
+                }
+            }
+        }
         index += 1;
+    }
+    if !physical {
+        check_pwd = false;
     }
     if argv.len() > index + 1 {
         return Err(ShellError {
@@ -126,6 +206,8 @@ fn parse_cd_target(shell: &Shell, argv: &[String]) -> Result<(String, bool), She
         return Ok((
             shell.get_var("HOME").unwrap_or_else(|| ".".to_string()),
             false,
+            physical,
+            check_pwd,
         ));
     };
     if target.is_empty() {
@@ -139,18 +221,19 @@ fn parse_cd_target(shell: &Shell, argv: &[String]) -> Result<(String, bool), She
                 message: "cd: OLDPWD not set".to_string(),
             })?,
             true,
+            physical,
+            check_pwd,
         ));
     }
-    if target.starts_with('-') {
-        return Err(ShellError {
-            message: format!("cd: invalid option: {target}"),
-        });
-    }
-    Ok((target.clone(), false))
+    Ok((target.clone(), false, physical, check_pwd))
 }
 
 fn resolve_cd_target(shell: &Shell, target: &str, print_new_pwd: bool) -> (PathBuf, String, bool) {
-    if print_new_pwd || target.starts_with('/') || target == "." || target == ".." {
+    if print_new_pwd || target.starts_with('/') {
+        return (PathBuf::from(target), target.to_string(), print_new_pwd);
+    }
+    let first_component = target.split('/').next().unwrap_or("");
+    if first_component == "." || first_component == ".." {
         return (PathBuf::from(target), target.to_string(), print_new_pwd);
     }
 
@@ -591,10 +674,11 @@ fn read_with_input(
         write_stderr("read: invalid usage\n");
         return Ok(BuiltinOutcome::Status(2));
     };
-    if vars.is_empty() {
-        write_stderr("read: variable name required\n");
-        return Ok(BuiltinOutcome::Status(2));
-    }
+    let vars = if vars.is_empty() {
+        vec!["REPLY".to_string()]
+    } else {
+        vars
+    };
 
     let (pieces, hit_delimiter) = match read_logical_line(shell, options, input_fd) {
         Ok(result) => result,
@@ -1019,14 +1103,29 @@ fn parse_trap_action(action: &str) -> Option<TrapAction> {
 }
 
 fn parse_trap_condition(text: &str) -> Option<TrapCondition> {
-    match text {
+    let name = text.strip_prefix("SIG").unwrap_or(text);
+    match name {
         "0" | "EXIT" => Some(TrapCondition::Exit),
         "HUP" | "1" => Some(TrapCondition::Signal(sys::SIGHUP)),
         "INT" | "2" => Some(TrapCondition::Signal(sys::SIGINT)),
         "QUIT" | "3" => Some(TrapCondition::Signal(sys::SIGQUIT)),
+        "ILL" | "4" => Some(TrapCondition::Signal(sys::SIGILL)),
         "ABRT" | "6" => Some(TrapCondition::Signal(sys::SIGABRT)),
+        "FPE" | "8" => Some(TrapCondition::Signal(sys::SIGFPE)),
+        "KILL" | "9" => Some(TrapCondition::Signal(sys::SIGKILL)),
+        "USR1" | "10" => Some(TrapCondition::Signal(sys::SIGUSR1)),
+        "SEGV" | "11" => Some(TrapCondition::Signal(sys::SIGSEGV)),
+        "USR2" | "12" => Some(TrapCondition::Signal(sys::SIGUSR2)),
+        "PIPE" | "13" => Some(TrapCondition::Signal(sys::SIGPIPE)),
         "ALRM" | "14" => Some(TrapCondition::Signal(sys::SIGALRM)),
         "TERM" | "15" => Some(TrapCondition::Signal(sys::SIGTERM)),
+        "CHLD" | "17" => Some(TrapCondition::Signal(sys::SIGCHLD)),
+        "CONT" | "18" => Some(TrapCondition::Signal(sys::SIGCONT)),
+        "TSTP" | "20" => Some(TrapCondition::Signal(sys::SIGTSTP)),
+        "TTIN" | "21" => Some(TrapCondition::Signal(sys::SIGTTIN)),
+        "TTOU" | "22" => Some(TrapCondition::Signal(sys::SIGTTOU)),
+        "BUS" => Some(TrapCondition::Signal(sys::SIGBUS)),
+        "SYS" => Some(TrapCondition::Signal(sys::SIGSYS)),
         _ => None,
     }
 }
@@ -1037,9 +1136,23 @@ fn format_trap_condition(condition: TrapCondition) -> String {
         TrapCondition::Signal(sys::SIGHUP) => "HUP".to_string(),
         TrapCondition::Signal(sys::SIGINT) => "INT".to_string(),
         TrapCondition::Signal(sys::SIGQUIT) => "QUIT".to_string(),
+        TrapCondition::Signal(sys::SIGILL) => "ILL".to_string(),
         TrapCondition::Signal(sys::SIGABRT) => "ABRT".to_string(),
+        TrapCondition::Signal(sys::SIGFPE) => "FPE".to_string(),
+        TrapCondition::Signal(sys::SIGKILL) => "KILL".to_string(),
+        TrapCondition::Signal(sys::SIGUSR1) => "USR1".to_string(),
+        TrapCondition::Signal(sys::SIGSEGV) => "SEGV".to_string(),
+        TrapCondition::Signal(sys::SIGUSR2) => "USR2".to_string(),
+        TrapCondition::Signal(sys::SIGPIPE) => "PIPE".to_string(),
         TrapCondition::Signal(sys::SIGALRM) => "ALRM".to_string(),
         TrapCondition::Signal(sys::SIGTERM) => "TERM".to_string(),
+        TrapCondition::Signal(sys::SIGCHLD) => "CHLD".to_string(),
+        TrapCondition::Signal(sys::SIGCONT) => "CONT".to_string(),
+        TrapCondition::Signal(sys::SIGTSTP) => "TSTP".to_string(),
+        TrapCondition::Signal(sys::SIGTTIN) => "TTIN".to_string(),
+        TrapCondition::Signal(sys::SIGTTOU) => "TTOU".to_string(),
+        TrapCondition::Signal(sys::SIGBUS) => "BUS".to_string(),
+        TrapCondition::Signal(sys::SIGSYS) => "SYS".to_string(),
         TrapCondition::Signal(signal) => signal.to_string(),
     }
 }
@@ -1181,6 +1294,8 @@ fn symbolic_permission_bits(perms: &str, targets: u16, allowed: u16) -> Option<u
             'r' => permission_bits_for_targets(targets, 0o444),
             'w' => permission_bits_for_targets(targets, 0o222),
             'x' => permission_bits_for_targets(targets, 0o111),
+            'X' => permission_bits_for_targets(targets, 0o111),
+            's' => 0,
             'u' => copy_permission_bits(allowed, targets, 0o700),
             'g' => copy_permission_bits(allowed, targets, 0o070),
             'o' => copy_permission_bits(allowed, targets, 0o007),
@@ -1684,6 +1799,7 @@ mod tests {
             known_pid_statuses: HashMap::new(),
             known_job_statuses: HashMap::new(),
             trap_actions: BTreeMap::new(),
+            ignored_on_entry: BTreeSet::new(),
             loop_depth: 0,
             function_depth: 0,
             pending_control: None,
@@ -1946,7 +2062,7 @@ mod tests {
 
         let mut trace: Vec<crate::sys::test_support::TraceEntry> = Vec::new();
 
-        // Block 1: open empty, read_with_input(["read"], fd) → no vars → write_stderr, close
+        // Block 1: open empty, read_with_input(["read"], fd) → reads into REPLY, EOF → status 1, close
         trace.push(t(
             "open",
             vec![
@@ -1956,7 +2072,11 @@ mod tests {
             ],
             TraceResult::Fd(100),
         ));
-        trace.push(wlen("read: variable name required\n"));
+        trace.push(t(
+            "read",
+            vec![ArgMatcher::Fd(100), ArgMatcher::Any],
+            TraceResult::Int(0),
+        ));
         trace.push(t("close", vec![ArgMatcher::Fd(100)], TraceResult::Int(0)));
 
         // Block 2: open empty, read_with_input(["read","-d","xx","NAME"], fd) → bad delim → write_stderr, close
@@ -2106,9 +2226,10 @@ mod tests {
 
             let empty_fd = sys::open_file("/tmp/empty", sys::O_RDONLY, 0).expect("open empty");
             assert!(matches!(
-                read_with_input(&mut shell, &["read".into()], empty_fd).expect("read no vars"),
-                BuiltinOutcome::Status(2)
+                read_with_input(&mut shell, &["read".into()], empty_fd).expect("read into REPLY"),
+                BuiltinOutcome::Status(1)
             ));
+            assert_eq!(shell.get_var("REPLY").as_deref(), Some(""));
             sys::close_fd(empty_fd).ok();
 
             let empty_fd2 = sys::open_file("/tmp/empty", sys::O_RDONLY, 0).expect("open empty2");
@@ -2232,13 +2353,17 @@ mod tests {
                     vec![ArgMatcher::Fd(2), ArgMatcher::Any],
                     TraceResult::Int("umask: too many arguments\n".len() as i64),
                 ),
-                // umask u+s → current_umask() then write_stderr
+                // umask u+s → current_umask() then set_umask (s has no effect on permission bits)
+                t("umask", vec![ArgMatcher::Int(0)], TraceResult::Int(0)),
+                t("umask", vec![ArgMatcher::Int(0)], TraceResult::Int(0)),
+                t("umask", vec![ArgMatcher::Int(0)], TraceResult::Int(0)),
+                // umask u+Q → current_umask() then write_stderr
                 t("umask", vec![ArgMatcher::Int(0)], TraceResult::Int(0)),
                 t("umask", vec![ArgMatcher::Int(0)], TraceResult::Int(0)),
                 t(
                     "write",
                     vec![ArgMatcher::Fd(2), ArgMatcher::Any],
-                    TraceResult::Int("umask: invalid mask: u+s\n".len() as i64),
+                    TraceResult::Int("umask: invalid mask: u+Q\n".len() as i64),
                 ),
             ],
             || {
@@ -2258,7 +2383,11 @@ mod tests {
                     BuiltinOutcome::Status(1)
                 ));
                 assert!(matches!(
-                    run(&mut shell, &["umask".into(), "u+s".into()]).expect("bad symbolic"),
+                    run(&mut shell, &["umask".into(), "u+s".into()]).expect("s perm accepted"),
+                    BuiltinOutcome::Status(0)
+                ));
+                assert!(matches!(
+                    run(&mut shell, &["umask".into(), "u+Q".into()]).expect("bad symbolic"),
                     BuiltinOutcome::Status(1)
                 ));
             },
@@ -3292,7 +3421,7 @@ mod tests {
                     matches!(parse_wait_operand("bad"), Err(message) if message.contains("invalid process id"))
                 );
                 assert_eq!(format_trap_condition(TrapCondition::Signal(99)), "99");
-                assert_eq!(supported_trap_conditions().len(), 7);
+                assert_eq!(supported_trap_conditions().len(), 19);
                 assert_eq!(parse_trap_condition("BAD"), None);
             },
         );
@@ -3334,11 +3463,130 @@ mod tests {
     }
 
     #[test]
+    fn cd_physical_with_e_returns_status_1_when_getcwd_fails() {
+        run_trace(
+            vec![
+                // current_logical_pwd: getcwd + realpath x2
+                t("getcwd", vec![], TraceResult::CwdStr("/old".into())),
+                t(
+                    "realpath",
+                    vec![ArgMatcher::Str("/old".into()), ArgMatcher::Any],
+                    TraceResult::RealpathStr("/old".into()),
+                ),
+                t(
+                    "realpath",
+                    vec![ArgMatcher::Str("/old".into()), ArgMatcher::Any],
+                    TraceResult::RealpathStr("/old".into()),
+                ),
+                // chdir("/somewhere")
+                t(
+                    "chdir",
+                    vec![ArgMatcher::Str("/somewhere".into())],
+                    TraceResult::Int(0),
+                ),
+                // get_cwd() fails
+                t("getcwd", vec![], TraceResult::Err(sys::ENOENT)),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert("PWD".into(), "/old".into());
+                let outcome = run(
+                    &mut shell,
+                    &["cd".into(), "-Pe".into(), "/somewhere".into()],
+                )
+                .expect("cd -Pe");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+                assert_eq!(shell.get_var("OLDPWD").as_deref(), Some("/old"));
+            },
+        );
+    }
+
+    #[test]
+    fn cd_physical_without_e_uses_curpath_when_getcwd_fails() {
+        run_trace(
+            vec![
+                // current_logical_pwd: getcwd + realpath x2
+                t("getcwd", vec![], TraceResult::CwdStr("/old".into())),
+                t(
+                    "realpath",
+                    vec![ArgMatcher::Str("/old".into()), ArgMatcher::Any],
+                    TraceResult::RealpathStr("/old".into()),
+                ),
+                t(
+                    "realpath",
+                    vec![ArgMatcher::Str("/old".into()), ArgMatcher::Any],
+                    TraceResult::RealpathStr("/old".into()),
+                ),
+                // chdir
+                t(
+                    "chdir",
+                    vec![ArgMatcher::Str("/somewhere".into())],
+                    TraceResult::Int(0),
+                ),
+                // get_cwd fails
+                t("getcwd", vec![], TraceResult::Err(sys::ENOENT)),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert("PWD".into(), "/old".into());
+                let outcome = run(&mut shell, &["cd".into(), "-P".into(), "/somewhere".into()])
+                    .expect("cd -P fallback");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert_eq!(shell.get_var("PWD").as_deref(), Some("/somewhere"));
+            },
+        );
+    }
+
+    #[test]
+    fn cd_logical_from_root_pwd() {
+        run_trace(
+            vec![
+                // cd_logical_curpath → current_logical_pwd: getcwd + realpath x2
+                t("getcwd", vec![], TraceResult::CwdStr("/".into())),
+                t(
+                    "realpath",
+                    vec![ArgMatcher::Str("/".into()), ArgMatcher::Any],
+                    TraceResult::RealpathStr("/".into()),
+                ),
+                t(
+                    "realpath",
+                    vec![ArgMatcher::Str("/".into()), ArgMatcher::Any],
+                    TraceResult::RealpathStr("/".into()),
+                ),
+                // old_pwd = current_logical_pwd: getcwd + realpath x2
+                t("getcwd", vec![], TraceResult::CwdStr("/".into())),
+                t(
+                    "realpath",
+                    vec![ArgMatcher::Str("/".into()), ArgMatcher::Any],
+                    TraceResult::RealpathStr("/".into()),
+                ),
+                t(
+                    "realpath",
+                    vec![ArgMatcher::Str("/".into()), ArgMatcher::Any],
+                    TraceResult::RealpathStr("/".into()),
+                ),
+                // chdir("/tmp")
+                t(
+                    "chdir",
+                    vec![ArgMatcher::Str("/tmp".into())],
+                    TraceResult::Int(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert("PWD".into(), "/".into());
+                let outcome = run(&mut shell, &["cd".into(), "tmp".into()]).expect("cd from root");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert_eq!(shell.get_var("PWD").as_deref(), Some("/tmp"));
+                assert_eq!(shell.get_var("OLDPWD").as_deref(), Some("/"));
+            },
+        );
+    }
+
+    #[test]
     fn cd_helper_argument_paths_are_split_out() {
         run_trace(
             vec![
-                // cd_pwd_value("./relative") → getcwd (not valid logical pwd)
-                t("getcwd", vec![], TraceResult::CwdStr("/work".into())),
                 // resolve_cd_target("target") CDPATH="/cdpath" → stat /cdpath/target → dir
                 t(
                     "stat",
@@ -3372,7 +3620,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                assert!(cd_pwd_value("./relative").is_ok());
+                assert!(!logical_pwd_is_valid("./relative"));
                 assert_eq!(
                     parse_cd_target(&shell, &["cd".into(), "one".into(), "two".into()])
                         .expect_err("too many")
@@ -3381,7 +3629,7 @@ mod tests {
                 );
                 assert_eq!(
                     parse_cd_target(&shell, &["cd".into()]).expect("default target"),
-                    (".".to_string(), false)
+                    (".".to_string(), false, false, false)
                 );
                 assert_eq!(
                     parse_cd_target(&shell, &["cd".into(), "-".into()])
@@ -3393,7 +3641,20 @@ mod tests {
                 let error = run(&mut shell, &["cd".into(), "".into()]).expect_err("empty cd");
                 assert_eq!(error.message, "cd: empty directory");
                 assert!(parse_cd_target(&shell, &["cd".into(), "--".into(), "-".into()]).is_ok());
-                assert!(parse_cd_target(&shell, &["cd".into(), "-P".into()]).is_err());
+                let (_, _, physical, check_pwd) =
+                    parse_cd_target(&shell, &["cd".into(), "-P".into()]).expect("-P");
+                assert!(physical);
+                assert!(!check_pwd);
+                let (_, _, physical, check_pwd) =
+                    parse_cd_target(&shell, &["cd".into(), "-Pe".into()]).expect("-Pe");
+                assert!(physical);
+                assert!(check_pwd);
+                let (_, _, physical, _) =
+                    parse_cd_target(&shell, &["cd".into(), "-LP".into()]).expect("-LP");
+                assert!(physical);
+                let (_, _, physical, _) =
+                    parse_cd_target(&shell, &["cd".into(), "-PL".into()]).expect("-PL");
+                assert!(!physical);
 
                 // First VFS block equivalent
                 let mut shell = test_shell();
@@ -3459,6 +3720,269 @@ mod tests {
                 assert!(!should_print);
             },
         );
+    }
+
+    #[test]
+    fn canonicalize_logical_path_handles_all_cases() {
+        assert_no_syscalls(|| {
+            assert_eq!(canonicalize_logical_path("/usr/.."), "/");
+            assert_eq!(canonicalize_logical_path("/a/b/../c"), "/a/c");
+            assert_eq!(canonicalize_logical_path("/a/./b"), "/a/b");
+            assert_eq!(canonicalize_logical_path("/"), "/");
+            assert_eq!(canonicalize_logical_path("/a/b/../../.."), "/");
+            assert_eq!(canonicalize_logical_path("/a//b"), "/a/b");
+        });
+    }
+
+    #[test]
+    fn parse_cd_target_rejects_invalid_option() {
+        assert_no_syscalls(|| {
+            let shell = test_shell();
+            let err =
+                parse_cd_target(&shell, &["cd".into(), "-Z".into()]).expect_err("should reject -Z");
+            assert_eq!(err.message, "cd: invalid option: -Z");
+        });
+    }
+
+    #[test]
+    fn trap_sig_prefix_and_new_signals() {
+        assert_no_syscalls(|| {
+            assert_eq!(
+                parse_trap_condition("SIGUSR1"),
+                Some(TrapCondition::Signal(sys::SIGUSR1))
+            );
+            assert_eq!(
+                parse_trap_condition("USR2"),
+                Some(TrapCondition::Signal(sys::SIGUSR2))
+            );
+            assert_eq!(
+                parse_trap_condition("SIGPIPE"),
+                Some(TrapCondition::Signal(sys::SIGPIPE))
+            );
+            assert_eq!(
+                parse_trap_condition("CHLD"),
+                Some(TrapCondition::Signal(sys::SIGCHLD))
+            );
+            assert_eq!(
+                parse_trap_condition("SIGTERM"),
+                Some(TrapCondition::Signal(sys::SIGTERM))
+            );
+            assert_eq!(
+                parse_trap_condition("SIGILL"),
+                Some(TrapCondition::Signal(sys::SIGILL))
+            );
+            assert_eq!(
+                parse_trap_condition("SIGFPE"),
+                Some(TrapCondition::Signal(sys::SIGFPE))
+            );
+            assert_eq!(
+                parse_trap_condition("SIGKILL"),
+                Some(TrapCondition::Signal(sys::SIGKILL))
+            );
+            assert_eq!(
+                parse_trap_condition("SIGSEGV"),
+                Some(TrapCondition::Signal(sys::SIGSEGV))
+            );
+            assert_eq!(
+                parse_trap_condition("BUS"),
+                Some(TrapCondition::Signal(sys::SIGBUS))
+            );
+            assert_eq!(
+                parse_trap_condition("SYS"),
+                Some(TrapCondition::Signal(sys::SIGSYS))
+            );
+            assert_eq!(
+                parse_trap_condition("TSTP"),
+                Some(TrapCondition::Signal(sys::SIGTSTP))
+            );
+            assert_eq!(
+                parse_trap_condition("TTIN"),
+                Some(TrapCondition::Signal(sys::SIGTTIN))
+            );
+            assert_eq!(
+                parse_trap_condition("TTOU"),
+                Some(TrapCondition::Signal(sys::SIGTTOU))
+            );
+            assert_eq!(
+                parse_trap_condition("CONT"),
+                Some(TrapCondition::Signal(sys::SIGCONT))
+            );
+            assert_eq!(
+                parse_trap_condition("4"),
+                Some(TrapCondition::Signal(sys::SIGILL))
+            );
+            assert_eq!(
+                parse_trap_condition("8"),
+                Some(TrapCondition::Signal(sys::SIGFPE))
+            );
+            assert_eq!(
+                parse_trap_condition("9"),
+                Some(TrapCondition::Signal(sys::SIGKILL))
+            );
+            assert_eq!(
+                parse_trap_condition("10"),
+                Some(TrapCondition::Signal(sys::SIGUSR1))
+            );
+            assert_eq!(
+                parse_trap_condition("11"),
+                Some(TrapCondition::Signal(sys::SIGSEGV))
+            );
+            assert_eq!(
+                parse_trap_condition("12"),
+                Some(TrapCondition::Signal(sys::SIGUSR2))
+            );
+            assert_eq!(
+                parse_trap_condition("13"),
+                Some(TrapCondition::Signal(sys::SIGPIPE))
+            );
+            assert_eq!(
+                parse_trap_condition("17"),
+                Some(TrapCondition::Signal(sys::SIGCHLD))
+            );
+            assert_eq!(
+                parse_trap_condition("18"),
+                Some(TrapCondition::Signal(sys::SIGCONT))
+            );
+            assert_eq!(
+                parse_trap_condition("20"),
+                Some(TrapCondition::Signal(sys::SIGTSTP))
+            );
+            assert_eq!(
+                parse_trap_condition("21"),
+                Some(TrapCondition::Signal(sys::SIGTTIN))
+            );
+            assert_eq!(
+                parse_trap_condition("22"),
+                Some(TrapCondition::Signal(sys::SIGTTOU))
+            );
+
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGUSR1)),
+                "USR1"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGUSR2)),
+                "USR2"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGPIPE)),
+                "PIPE"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGCHLD)),
+                "CHLD"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGILL)),
+                "ILL"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGFPE)),
+                "FPE"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGKILL)),
+                "KILL"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGSEGV)),
+                "SEGV"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGBUS)),
+                "BUS"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGSYS)),
+                "SYS"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGCONT)),
+                "CONT"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGTSTP)),
+                "TSTP"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGTTIN)),
+                "TTIN"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGTTOU)),
+                "TTOU"
+            );
+        });
+    }
+
+    #[test]
+    fn ignored_on_entry_prevents_trap_in_non_interactive_shell() {
+        run_trace(
+            vec![
+                t(
+                    "signal",
+                    vec![ArgMatcher::Int(sys::SIGTERM as i64), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "signal",
+                    vec![ArgMatcher::Int(sys::SIGTERM as i64), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell
+                    .ignored_on_entry
+                    .insert(TrapCondition::Signal(sys::SIGHUP));
+                shell.interactive = false;
+
+                shell
+                    .set_trap(
+                        TrapCondition::Signal(sys::SIGHUP),
+                        Some(TrapAction::Command("echo caught".into())),
+                    )
+                    .expect("should silently succeed");
+                assert!(
+                    shell
+                        .trap_action(TrapCondition::Signal(sys::SIGHUP))
+                        .is_none()
+                );
+
+                shell
+                    .set_trap(
+                        TrapCondition::Signal(sys::SIGTERM),
+                        Some(TrapAction::Command("echo caught".into())),
+                    )
+                    .expect("set SIGTERM");
+                assert!(
+                    shell
+                        .trap_action(TrapCondition::Signal(sys::SIGTERM))
+                        .is_some()
+                );
+
+                shell.interactive = true;
+                shell
+                    .set_trap(
+                        TrapCondition::Signal(sys::SIGTERM),
+                        Some(TrapAction::Ignore),
+                    )
+                    .expect("interactive can override");
+                assert_eq!(
+                    shell.trap_action(TrapCondition::Signal(sys::SIGTERM)),
+                    Some(&TrapAction::Ignore)
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn umask_symbolic_s_and_x_uppercase() {
+        assert_no_syscalls(|| {
+            assert_eq!(parse_umask_mask("u+s", 0o022), Some(0o022));
+            assert_eq!(parse_umask_mask("u+X", 0o022), Some(0o022));
+            assert_eq!(parse_umask_mask("g+s", 0o022), Some(0o022));
+        });
     }
 
     #[test]

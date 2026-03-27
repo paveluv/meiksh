@@ -1868,3 +1868,102 @@ fn subshell_changes_do_not_affect_parent() {
     assert!(output.status.success());
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "parent");
 }
+
+#[test]
+fn cd_logical_and_physical_modes() {
+    let output = Command::new(meiksh())
+        .args(["-c", "cd -L / && pwd"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "/");
+
+    let output = Command::new(meiksh())
+        .args(["-c", "cd -P / && pwd -P"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "/");
+
+    let output = Command::new(meiksh())
+        .args(["-c", "cd -LP / && echo ok"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "ok");
+
+    let output = Command::new(meiksh())
+        .args(["-c", "cd -PL / && echo ok"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "ok");
+}
+
+#[test]
+fn cd_logical_resolves_dotdot() {
+    let output = Command::new(meiksh())
+        .args(["-c", "cd /tmp && cd .. && echo $PWD"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "/");
+}
+
+#[test]
+fn trap_supports_broader_signal_names() {
+    let output = Command::new(meiksh())
+        .args(["-c", "trap 'echo caught' USR1 USR2 PIPE; trap -p USR1"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("USR1"), "should show USR1 trap: {stdout}");
+    assert!(
+        stdout.contains("echo caught"),
+        "should show action: {stdout}"
+    );
+}
+
+#[test]
+fn trap_accepts_sig_prefix() {
+    let output = Command::new(meiksh())
+        .args(["-c", "trap 'echo yes' SIGTERM; trap -p TERM"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("TERM"), "should show TERM trap: {stdout}");
+}
+
+#[test]
+fn read_without_variable_reads_into_reply() {
+    let output = Command::new(meiksh())
+        .args(["-c", "read <<EOF\nhello\nEOF\necho $REPLY"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "hello");
+}
+
+#[test]
+fn umask_accepts_symbolic_s_perm() {
+    let output = Command::new(meiksh())
+        .args(["-c", "umask u+s; echo ok"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
+}
+
+#[test]
+fn umask_accepts_symbolic_x_uppercase_perm() {
+    let output = Command::new(meiksh())
+        .args(["-c", "umask u+X; echo ok"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
+}
