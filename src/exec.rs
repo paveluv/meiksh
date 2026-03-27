@@ -640,7 +640,7 @@ fn spawn_prepared(
         let _ = apply_child_fd_actions(&prepared_redirections.actions);
 
         for (key, value) in &prepared.child_env {
-            sys::env_set_var(key, value);
+            let _ = (sys::sys_interface().setenv)(key, value);
         }
 
         // Try exec; on ENOEXEC, interpret as shell script
@@ -764,7 +764,7 @@ fn resolve_command_path(shell: &Shell, program: &str) -> Option<PathBuf> {
 
     let path = shell
         .get_var("PATH")
-        .or_else(|| sys::env_var("PATH"))
+        .or_else(|| (sys::sys_interface().getenv)("PATH"))
         .unwrap_or_default();
 
     path.split(':')
@@ -2461,7 +2461,7 @@ mod tests {
     #[test]
     fn current_shell_noclobber_and_guard_cleanup() {
         run_trace(vec![
-            // DupOutput "bad" → error, no syscalls
+            // DupOutput "bad" → error, no OS calls
             // Write with noclobber → open returns EEXIST
             t("open", vec![ArgMatcher::Str("/redir/noclobber.txt".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Err(sys::EEXIST)),
             // Guard drop with saved=(99, None) → close(99)
@@ -2694,7 +2694,7 @@ mod tests {
     #[test]
     fn apply_child_setup_for_process_groups() {
         run_trace(vec![
-            // apply_child_setup([], None) → no syscalls
+            // apply_child_setup([], None) → no OS calls
             // apply_child_setup([], NewGroup) → setpgid(0, 0)
             t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(0)], TraceResult::Int(0)),
             // apply_child_setup([], Join(0)) → setpgid(0, 0)
@@ -2860,6 +2860,7 @@ mod tests {
     fn spawn_prepared_child_sets_env() {
         run_trace(vec![
             t_fork(TraceResult::Pid(1000), vec![
+                t("setenv", vec![ArgMatcher::Str("MEIKSH_TEST_COVERAGE".into()), ArgMatcher::Str("1".into())], TraceResult::Int(0)),
                 t("execvp", vec![ArgMatcher::Str("/bin/true".into()), ArgMatcher::Any], TraceResult::Int(0)),
             ]),
         ], || {
