@@ -28,7 +28,7 @@ It is not the primary conformance ledger. Requirement status belongs in `docs/sp
 The following `std` types and methods are banned from production code (enforced via `clippy.toml`). Each has a corresponding `sys::` wrapper that routes through the mockable syscall layer:
 
 - **Types**: `std::fs::{File, OpenOptions, DirEntry, ReadDir, Metadata}`, `std::process::{Command, Child, Stdio, ExitStatus}`, `std::io::{Error, Result}`
-- **Methods**: `std::env::{var, vars, args_os, args, set_current_dir, current_dir, current_exe}`, `std::fs::{read_to_string, write, metadata, read_dir, create_dir, remove_file}`, `std::path::Path::{exists, is_file, is_dir, metadata, canonicalize}`, `std::io::{Error::last_os_error, stdin, stdout, stderr}`, `std::process::exit`
+- **Methods**: `std::env::{var, vars, set_var, remove_var, args_os, args, set_current_dir, current_dir, current_exe}`, `std::fs::{read_to_string, write, metadata, read_dir, create_dir, remove_file}`, `std::path::Path::{exists, is_file, is_dir, metadata, canonicalize}`, `std::io::{Error::last_os_error, stdin, stdout, stderr}`, `std::process::exit`
 - **Errno constants**: production code must use `sys::ENOENT`, `sys::ENOEXEC`, etc. instead of `libc::ENOENT`, `libc::ENOEXEC`, etc.
 
 ### Custom error types
@@ -39,8 +39,8 @@ The following `std` types and methods are banned from production code (enforced 
 
 ### Environment and process control
 
-- `sys::env_var`, `sys::env_vars`, `sys::env_args_os` wrap their `std::env` counterparts as the sole authorised callers.
-- `sys::env_set_var` wraps `std::env::set_var` (unsafe in edition 2024).
+- `sys::env_set_var`, `sys::env_unset_var`, `sys::env_var`, and `sys::env_vars` route through `SystemInterface` function pointers whose default implementations call `libc::setenv`, `libc::unsetenv`, `libc::getenv`, and iterate the `environ` array directly.
+- `sys::env_args_os` wraps `std::env::args_os` as the sole authorised `std::env` caller.
 - `sys::exit_process` wraps `libc::_exit`; `std::process::exit` is banned.
 
 ## Parser
