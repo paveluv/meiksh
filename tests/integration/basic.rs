@@ -937,29 +937,34 @@ fn aliases_defined_earlier_in_same_source_affect_later_commands() {
     assert!(reserved.status.success());
     assert_eq!(String::from_utf8_lossy(&reserved.stdout), "yes");
 
+    // Aliases defined inside compound commands are not visible to later
+    // commands in the same compound command body, because the body was
+    // already parsed before any of it executes (POSIX: aliases are
+    // resolved at parse time, not execution time).  However, aliases
+    // defined before a compound command ARE visible within it.
     let group = Command::new(meiksh())
-        .args(["-c", "{ alias say='printf group'; say; }"])
+        .args(["-c", "alias say='printf group'; { say; }"])
         .output()
         .expect("run meiksh");
     assert!(group.status.success());
     assert_eq!(String::from_utf8_lossy(&group.stdout), "group");
 
     let function = Command::new(meiksh())
-        .args(["-c", "f() { alias say='printf fn'; say; }; f"])
+        .args(["-c", "alias say='printf fn'; f() { say; }; f"])
         .output()
         .expect("run meiksh");
     assert!(function.status.success());
     assert_eq!(String::from_utf8_lossy(&function.stdout), "fn");
 
     let conditional = Command::new(meiksh())
-        .args(["-c", "if true; then alias say='printf branch'; say; fi"])
+        .args(["-c", "alias say='printf branch'; if true; then say; fi"])
         .output()
         .expect("run meiksh");
     assert!(conditional.status.success());
     assert_eq!(String::from_utf8_lossy(&conditional.stdout), "branch");
 
     let heredoc_nested = Command::new(meiksh())
-        .args(["-c", "f() { alias say='cat'; say <<EOF\nhello\nEOF\n}; f"])
+        .args(["-c", "alias say='cat'; f() { say <<EOF\nhello\nEOF\n}; f"])
         .output()
         .expect("run meiksh");
     assert!(heredoc_nested.status.success());
@@ -1766,4 +1771,100 @@ fn tilde_in_assignment_after_colon() {
         trimmed.contains(':'),
         "should have colon separator, got: {trimmed}"
     );
+}
+
+#[test]
+fn subshell_resets_command_traps() {
+    let output = Command::new(meiksh())
+        .args(["-c", "trap 'echo PARENT' TERM; (trap)"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("PARENT"),
+        "subshell should have reset command traps, got: {stdout}"
+    );
+}
+
+#[test]
+fn subshell_preserves_ignored_traps() {
+    let output = Command::new(meiksh())
+        .args(["-c", "trap '' TERM; (trap)"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("TERM"),
+        "subshell should preserve ignored traps, got: {stdout}"
+    );
+}
+
+#[test]
+fn command_substitution_resets_command_traps() {
+    let output = Command::new(meiksh())
+        .args(["-c", "trap 'echo PARENT' TERM; echo $(trap)"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("PARENT"),
+        "command substitution should have reset command traps, got: {stdout}"
+    );
+}
+
+#[test]
+fn direct_ast_execution_preserves_compound_commands() {
+    let output = Command::new(meiksh())
+        .args(["-c", "X=0; for i in 1 2 3; do X=$((X + i)); done; echo $X"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "6");
+
+    let output = Command::new(meiksh())
+        .args(["-c", "X=start; if true; then X=yes; else X=no; fi; echo $X"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "yes");
+
+    let output = Command::new(meiksh())
+        .args([
+            "-c",
+            "X=0; while [ $X -lt 3 ]; do X=$((X + 1)); done; echo $X",
+        ])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "3");
+
+    let output = Command::new(meiksh())
+        .args(["-c", "case hello in he*) echo matched;; *) echo no;; esac"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "matched");
+}
+
+#[test]
+fn brace_group_executes_in_current_environment() {
+    let output = Command::new(meiksh())
+        .args(["-c", "X=before; { X=after; }; echo $X"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "after");
+}
+
+#[test]
+fn subshell_changes_do_not_affect_parent() {
+    let output = Command::new(meiksh())
+        .args(["-c", "X=parent; (X=child); echo $X"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "parent");
 }
