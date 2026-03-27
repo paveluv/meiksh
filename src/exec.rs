@@ -109,6 +109,7 @@ fn spawn_and_or(
         }
         let _ = sys::set_process_group(0, 0);
         let mut child_shell = shell.clone();
+        let _ = child_shell.reset_traps_for_subshell();
         let status = execute_and_or(&mut child_shell, node).unwrap_or(1);
         sys::exit_process(status as sys::RawFd);
     }
@@ -195,6 +196,7 @@ fn fork_and_execute_command(
             _ => {}
         }
         let mut child_shell = shell.clone();
+        let _ = child_shell.reset_traps_for_subshell();
         let status = execute_command(&mut child_shell, command).unwrap_or(1);
         sys::exit_process(status as sys::RawFd);
     }
@@ -285,6 +287,7 @@ fn execute_command(shell: &mut Shell, command: &Command) -> Result<i32, ShellErr
             let pid = sys::fork_process()?;
             if pid == 0 {
                 let mut child_shell = shell.clone();
+                let _ = child_shell.reset_traps_for_subshell();
                 let status = execute_nested_program(&mut child_shell, program).unwrap_or(1);
                 sys::exit_process(status as sys::RawFd);
             }
@@ -848,6 +851,7 @@ fn spawn_prepared(
         match sys::exec_replace(&prepared.exec_path, &prepared.argv) {
             Err(err) if err.is_enoexec() => {
                 let mut child_shell = shell.clone();
+                let _ = child_shell.reset_traps_for_subshell();
                 child_shell.shell_name = prepared.argv[0].clone();
                 child_shell.positional = prepared.argv[1..].to_vec();
                 let status = child_shell
@@ -1297,7 +1301,16 @@ fn render_and_or(and_or: &AndOr) -> String {
 }
 
 fn execute_nested_program(shell: &mut Shell, program: &Program) -> Result<i32, ShellError> {
-    shell.execute_string(&render_program(program))
+    let mut status = 0;
+    for item in &program.items {
+        shell.run_pending_traps()?;
+        status = execute_list_item(shell, item)?;
+        shell.last_status = status;
+        if !shell.running || shell.has_pending_control() {
+            break;
+        }
+    }
+    Ok(status)
 }
 
 fn render_command(command: &Command) -> String {

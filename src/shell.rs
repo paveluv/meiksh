@@ -444,6 +444,7 @@ impl Shell {
             let _ = sys::duplicate_fd(write_fd, sys::STDOUT_FILENO);
             let _ = sys::close_fd(write_fd);
             let mut child_shell = self.clone();
+            let _ = child_shell.reset_traps_for_subshell();
             let status = child_shell.execute_string(source).unwrap_or(1);
             sys::exit_process(status as sys::RawFd);
         }
@@ -702,6 +703,24 @@ impl Shell {
             None => {
                 self.trap_actions.remove(&condition);
             }
+        }
+        Ok(())
+    }
+
+    pub fn reset_traps_for_subshell(&mut self) -> Result<(), ShellError> {
+        let to_reset: Vec<TrapCondition> = self
+            .trap_actions
+            .iter()
+            .filter_map(|(cond, action)| match action {
+                TrapAction::Command(_) => Some(*cond),
+                TrapAction::Ignore => None,
+            })
+            .collect();
+        for cond in to_reset {
+            if let TrapCondition::Signal(signal) = cond {
+                sys::default_signal_action(signal)?;
+            }
+            self.trap_actions.remove(&cond);
         }
         Ok(())
     }
@@ -2559,6 +2578,44 @@ mod tests {
             assert!(flags.contains('b'));
             assert!(flags.contains('h'));
         });
+    }
+
+    #[test]
+    fn reset_traps_for_subshell_keeps_ignore_removes_command() {
+        run_trace(
+            vec![t(
+                "signal",
+                vec![ArgMatcher::Int(crate::sys::SIGTERM as i64), ArgMatcher::Any],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.trap_actions.insert(
+                    TrapCondition::Signal(crate::sys::SIGINT),
+                    TrapAction::Ignore,
+                );
+                shell.trap_actions.insert(
+                    TrapCondition::Signal(crate::sys::SIGTERM),
+                    TrapAction::Command("echo trapped".to_string()),
+                );
+                shell.trap_actions.insert(
+                    TrapCondition::Exit,
+                    TrapAction::Command("echo bye".to_string()),
+                );
+
+                shell.reset_traps_for_subshell().expect("reset");
+
+                assert_eq!(
+                    shell.trap_action(TrapCondition::Signal(crate::sys::SIGINT)),
+                    Some(&TrapAction::Ignore),
+                );
+                assert_eq!(
+                    shell.trap_action(TrapCondition::Signal(crate::sys::SIGTERM)),
+                    None,
+                );
+                assert_eq!(shell.trap_action(TrapCondition::Exit), None);
+            },
+        );
     }
 
     #[test]
