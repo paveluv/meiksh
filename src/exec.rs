@@ -12,6 +12,7 @@ use crate::sys;
 
 #[derive(Clone, Copy, Debug)]
 enum ProcessGroupPlan {
+    #[cfg_attr(not(test), allow(dead_code))]
     None,
     NewGroup,
     Join(sys::Pid),
