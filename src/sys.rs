@@ -158,19 +158,19 @@ pub(crate) struct SystemInterface {
     tcgetpgrp: fn(c_int) -> Pid,
     tcsetpgrp: fn(c_int, Pid) -> c_int,
     setpgid: fn(Pid, Pid) -> c_int,
-    pipe: fn(*mut c_int) -> c_int,
+    pipe: fn(&mut [c_int; 2]) -> c_int,
     dup: fn(c_int) -> c_int,
     dup2: fn(c_int, c_int) -> c_int,
     close: fn(c_int) -> c_int,
     fcntl: fn(c_int, c_int, c_int) -> c_int,
-    read: fn(c_int, *mut u8, usize) -> isize,
+    read: fn(c_int, &mut [u8]) -> isize,
     umask: fn(FileModeMask) -> FileModeMask,
     times: fn(*mut libc::tms) -> ClockTicks,
     sysconf: fn(c_int) -> c_long,
     execvp: fn(*const c_char, *const *const c_char) -> c_int,
     // Filesystem
     open: fn(*const c_char, c_int, mode_t) -> c_int,
-    write: fn(c_int, *const u8, usize) -> isize,
+    write: fn(c_int, &[u8]) -> isize,
     stat: fn(*const c_char, *mut libc::stat) -> c_int,
     fstat: fn(c_int, *mut libc::stat) -> c_int,
     access: fn(*const c_char, c_int) -> c_int,
@@ -205,18 +205,18 @@ pub(crate) fn default_interface() -> SystemInterface {
         tcgetpgrp: |fd| unsafe { libc::tcgetpgrp(fd) },
         tcsetpgrp: |fd, pgrp| unsafe { libc::tcsetpgrp(fd, pgrp) },
         setpgid: |pid, pgid| unsafe { libc::setpgid(pid, pgid) },
-        pipe: |fds| unsafe { libc::pipe(fds) },
+        pipe: |fds| unsafe { libc::pipe(fds.as_mut_ptr()) },
         dup: |fd| unsafe { libc::dup(fd) },
         dup2: |oldfd, newfd| unsafe { libc::dup2(oldfd, newfd) },
         close: |fd| unsafe { libc::close(fd) },
         fcntl: |fd, cmd, arg| unsafe { libc::fcntl(fd, cmd, arg) },
-        read: |fd, buf, count| unsafe { libc::read(fd, buf.cast(), count) },
+        read: |fd, buf| unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) },
         umask: |cmask| unsafe { libc::umask(cmask) },
         times: |buffer| unsafe { libc::times(buffer) },
         sysconf: |name| unsafe { libc::sysconf(name) },
         execvp: |file, argv| unsafe { libc::execvp(file, argv) },
         open: |path, flags, mode| unsafe { libc::open(path, flags, mode as c_int) },
-        write: |fd, buf, count| unsafe { libc::write(fd, buf.cast(), count) },
+        write: |fd, data| unsafe { libc::write(fd, data.as_ptr().cast(), data.len()) },
         stat: |path, buf| unsafe { libc::stat(path, buf) },
         fstat: |fd, buf| unsafe { libc::fstat(fd, buf) },
         access: |path, mode| unsafe { libc::access(path, mode) },
@@ -636,14 +636,12 @@ pub(crate) mod test_support {
         );
         apply_trace_result_int(&entry)
     }
-    fn trace_pipe(fds: *mut c_int) -> c_int {
+    fn trace_pipe(fds: &mut [c_int; 2]) -> c_int {
         let entry = trace_dispatch("pipe", &[]);
         match &entry.result {
             TraceResult::Fds(r, w) => {
-                unsafe {
-                    *fds = *r;
-                    *fds.add(1) = *w;
-                }
+                fds[0] = *r;
+                fds[1] = *w;
                 0
             }
             TraceResult::Err(errno) => {
@@ -678,14 +676,12 @@ pub(crate) mod test_support {
         );
         apply_trace_result_int(&entry)
     }
-    fn trace_read(fd: c_int, buf: *mut u8, count: usize) -> isize {
+    fn trace_read(fd: c_int, buf: &mut [u8]) -> isize {
         let entry = trace_dispatch("read", &[ArgMatcher::Fd(fd), ArgMatcher::Any]);
         match &entry.result {
             TraceResult::Bytes(data) => {
-                let n = data.len().min(count);
-                unsafe {
-                    std::ptr::copy_nonoverlapping(data.as_ptr(), buf, n);
-                }
+                let n = data.len().min(buf.len());
+                buf[..n].copy_from_slice(&data[..n]);
                 n as isize
             }
             TraceResult::Int(v) => *v as isize,
@@ -745,8 +741,7 @@ pub(crate) mod test_support {
         );
         apply_trace_result_int(&entry)
     }
-    fn trace_write(fd: c_int, buf: *const u8, count: usize) -> isize {
-        let data = unsafe { std::slice::from_raw_parts(buf, count) };
+    fn trace_write(fd: c_int, data: &[u8]) -> isize {
         let entry = trace_dispatch(
             "write",
             &[ArgMatcher::Fd(fd), ArgMatcher::Bytes(data.to_vec())],
@@ -1096,7 +1091,7 @@ pub(crate) mod test_support {
         fn panic_setpgid(_: Pid, _: Pid) -> c_int {
             panic!("unexpected syscall 'setpgid' in pure-logic test")
         }
-        fn panic_pipe(_: *mut c_int) -> c_int {
+        fn panic_pipe(_: &mut [c_int; 2]) -> c_int {
             panic!("unexpected syscall 'pipe' in pure-logic test")
         }
         fn panic_dup(_: c_int) -> c_int {
@@ -1111,7 +1106,7 @@ pub(crate) mod test_support {
         fn panic_fcntl(_: c_int, _: c_int, _: c_int) -> c_int {
             panic!("unexpected syscall 'fcntl' in pure-logic test")
         }
-        fn panic_read(_: c_int, _: *mut u8, _: usize) -> isize {
+        fn panic_read(_: c_int, _: &mut [u8]) -> isize {
             panic!("unexpected syscall 'read' in pure-logic test")
         }
         fn panic_umask(_: FileModeMask) -> FileModeMask {
@@ -1129,7 +1124,7 @@ pub(crate) mod test_support {
         fn panic_open(_: *const c_char, _: c_int, _: mode_t) -> c_int {
             panic!("unexpected syscall 'open' in pure-logic test")
         }
-        fn panic_write(_: c_int, _: *const u8, _: usize) -> isize {
+        fn panic_write(_: c_int, _: &[u8]) -> isize {
             panic!("unexpected syscall 'write' in pure-logic test")
         }
         fn panic_stat(_: *const c_char, _: *mut libc::stat) -> c_int {
@@ -1623,7 +1618,7 @@ pub fn set_terminal_attrs(fd: c_int, termios: &libc::termios) -> SysResult<()> {
 
 pub fn create_pipe() -> SysResult<(c_int, c_int)> {
     let mut fds = [0; 2];
-    let result = (sys_interface().pipe)(fds.as_mut_ptr());
+    let result = (sys_interface().pipe)(&mut fds);
     if result == 0 {
         Ok((fds[0], fds[1]))
     } else {
@@ -1698,7 +1693,7 @@ pub fn ensure_blocking_read_fd(fd: c_int) -> SysResult<()> {
 }
 
 pub fn read_fd(fd: c_int, buf: &mut [u8]) -> SysResult<usize> {
-    let result = (sys_interface().read)(fd, buf.as_mut_ptr(), buf.len());
+    let result = (sys_interface().read)(fd, buf);
     if result >= 0 {
         Ok(result as usize)
     } else {
@@ -1768,7 +1763,7 @@ pub fn open_file(path: &str, flags: c_int, mode: mode_t) -> SysResult<c_int> {
 }
 
 pub fn write_fd(fd: c_int, data: &[u8]) -> SysResult<usize> {
-    let result = (sys_interface().write)(fd, data.as_ptr(), data.len());
+    let result = (sys_interface().write)(fd, data);
     if result >= 0 {
         Ok(result as usize)
     } else {
@@ -2280,11 +2275,9 @@ mod tests {
 
     #[test]
     fn pipe_roundtrip() {
-        fn fake_pipe(fds: *mut c_int) -> c_int {
-            unsafe {
-                *fds.add(0) = 10;
-                *fds.add(1) = 11;
-            }
+        fn fake_pipe(fds: &mut [c_int; 2]) -> c_int {
+            fds[0] = 10;
+            fds[1] = 11;
             0
         }
         fn fake_close(_fd: c_int) -> c_int {
@@ -2439,11 +2432,9 @@ mod tests {
 
     #[test]
     fn sys_success_branches_cover_fd_helpers() {
-        fn fake_pipe(fds: *mut c_int) -> c_int {
-            unsafe {
-                *fds.add(0) = 20;
-                *fds.add(1) = 21;
-            }
+        fn fake_pipe(fds: &mut [c_int; 2]) -> c_int {
+            fds[0] = 20;
+            fds[1] = 21;
             0
         }
         fn fake_dup2(oldfd: c_int, _newfd: c_int) -> c_int {
@@ -2562,11 +2553,9 @@ mod tests {
 
     #[test]
     fn success_pipe_and_fd() {
-        fn fake_pipe(fds: *mut c_int) -> c_int {
-            unsafe {
-                *fds.add(0) = 10;
-                *fds.add(1) = 11;
-            }
+        fn fake_pipe(fds: &mut [c_int; 2]) -> c_int {
+            fds[0] = 10;
+            fds[1] = 11;
             0
         }
         fn fake_dup(fd: c_int) -> c_int {
@@ -2604,13 +2593,11 @@ mod tests {
                 _ => -1,
             }
         }
-        fn fake_read(_fd: c_int, buf: *mut u8, count: usize) -> isize {
-            if count == 0 {
+        fn fake_read(_fd: c_int, buf: &mut [u8]) -> isize {
+            if buf.is_empty() {
                 return 0;
             }
-            unsafe {
-                *buf = b'X';
-            }
+            buf[0] = b'X';
             1
         }
 
@@ -2851,7 +2838,7 @@ mod tests {
 
     #[test]
     fn error_pipe_and_fd() {
-        fn fake_pipe(_fds: *mut c_int) -> c_int {
+        fn fake_pipe(_fds: &mut [c_int; 2]) -> c_int {
             -1
         }
         fn fake_dup(_fd: c_int) -> c_int {
@@ -2882,7 +2869,7 @@ mod tests {
 
     #[test]
     fn error_file_io() {
-        fn fake_read(_fd: c_int, _buf: *mut u8, _count: usize) -> isize {
+        fn fake_read(_fd: c_int, _buf: &mut [u8]) -> isize {
             -1
         }
 
