@@ -36,10 +36,12 @@ pub fn execute_program(shell: &mut Shell, program: &Program) -> Result<i32, Shel
 
 fn execute_list_item(shell: &mut Shell, item: &ListItem) -> Result<i32, ShellError> {
     if item.asynchronous {
-        let spawned = spawn_and_or(shell, &item.and_or)?;
+        let devnull = sys::open_file("/dev/null", sys::O_RDONLY, 0)?;
+        let spawned = spawn_and_or(shell, &item.and_or, Some(devnull))?;
+        let last_pid = spawned.children.last().map(|c| c.pid).unwrap_or(0);
         let description = render_and_or(&item.and_or);
         let id = shell.register_background_job(description, spawned.pgid, spawned.children);
-        println!("[{id}]");
+        println!("[{id}] {last_pid}");
         Ok(0)
     } else {
         execute_and_or(shell, &item.and_or)
@@ -58,13 +60,36 @@ fn execute_and_or(shell: &mut Shell, node: &AndOr) -> Result<i32, ShellError> {
     Ok(status)
 }
 
-fn spawn_and_or(shell: &mut Shell, node: &AndOr) -> Result<SpawnedProcesses, ShellError> {
-    if !node.rest.is_empty() {
-        return Err(ShellError {
-            message: "background execution currently supports single pipelines".to_string(),
-        });
+fn spawn_and_or(
+    shell: &mut Shell,
+    node: &AndOr,
+    stdin_override: Option<i32>,
+) -> Result<SpawnedProcesses, ShellError> {
+    if node.rest.is_empty() {
+        return spawn_pipeline(shell, &node.first, stdin_override);
     }
-    spawn_pipeline(shell, &node.first)
+    let pid = sys::fork_process()?;
+    if pid == 0 {
+        if let Some(fd) = stdin_override {
+            let _ = sys::duplicate_fd(fd, sys::STDIN_FILENO);
+            let _ = sys::close_fd(fd);
+        }
+        let _ = sys::set_process_group(0, 0);
+        let mut child_shell = shell.clone();
+        let status = execute_and_or(&mut child_shell, node).unwrap_or(1);
+        sys::exit_process(status as sys::RawFd);
+    }
+    if let Some(fd) = stdin_override {
+        let _ = sys::close_fd(fd);
+    }
+    let _ = sys::set_process_group(pid, pid);
+    Ok(SpawnedProcesses {
+        children: vec![sys::ChildHandle {
+            pid,
+            stdout_fd: None,
+        }],
+        pgid: Some(pid),
+    })
 }
 
 fn execute_pipeline(
@@ -83,7 +108,7 @@ fn execute_pipeline(
         }
     }
 
-    let spawned = spawn_pipeline(shell, pipeline)?;
+    let spawned = spawn_pipeline(shell, pipeline, None)?;
     if asynchronous {
         return Ok(0);
     }
@@ -150,8 +175,12 @@ fn fork_and_execute_command(
     })
 }
 
-fn spawn_pipeline(shell: &mut Shell, pipeline: &Pipeline) -> Result<SpawnedProcesses, ShellError> {
-    let mut previous_stdout_fd: Option<i32> = None;
+fn spawn_pipeline(
+    shell: &mut Shell,
+    pipeline: &Pipeline,
+    stdin_override: Option<i32>,
+) -> Result<SpawnedProcesses, ShellError> {
+    let mut previous_stdout_fd: Option<i32> = stdin_override;
     let mut children = Vec::new();
     let mut pgid = None;
 
@@ -394,6 +423,55 @@ fn execute_case(shell: &mut Shell, case_command: &CaseCommand) -> Result<i32, Sh
     Ok(0)
 }
 
+struct SavedVar {
+    name: String,
+    value: Option<String>,
+    was_exported: bool,
+}
+
+fn save_vars(shell: &Shell, assignments: &[(String, String)]) -> Vec<SavedVar> {
+    assignments
+        .iter()
+        .map(|(name, _)| SavedVar {
+            name: name.clone(),
+            value: shell.get_var(name),
+            was_exported: shell.exported.contains(name),
+        })
+        .collect()
+}
+
+fn restore_vars(shell: &mut Shell, saved: Vec<SavedVar>) {
+    for entry in saved {
+        match entry.value {
+            Some(v) => {
+                shell.env.insert(entry.name.clone(), v);
+            }
+            None => {
+                shell.env.remove(&entry.name);
+            }
+        }
+        if entry.was_exported {
+            shell.exported.insert(entry.name);
+        } else {
+            shell.exported.remove(&entry.name);
+        }
+    }
+}
+
+fn run_builtin_flow(
+    shell: &mut Shell,
+    argv: &[String],
+    assignments: &[(String, String)],
+) -> Result<i32, ShellError> {
+    match shell.run_builtin(argv, assignments)? {
+        FlowSignal::Continue(status) => Ok(status),
+        FlowSignal::Exit(status) => {
+            shell.running = false;
+            Ok(status)
+        }
+    }
+}
+
 fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, ShellError> {
     let expanded = expand_simple(shell, simple)?;
 
@@ -408,17 +486,22 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
 
     if builtin::is_builtin(&expanded.argv[0]) {
         let is_special_builtin = builtin::is_special_builtin(&expanded.argv[0]);
-        let result = with_shell_redirections(
-            &expanded.redirections,
-            shell.options.noclobber,
-            || match shell.run_builtin(&expanded.argv, &expanded.assignments)? {
-                FlowSignal::Continue(status) => Ok(status),
-                FlowSignal::Exit(status) => {
-                    shell.running = false;
-                    Ok(status)
-                }
-            },
-        );
+        let result = if is_special_builtin {
+            with_shell_redirections(&expanded.redirections, shell.options.noclobber, || {
+                run_builtin_flow(shell, &expanded.argv, &expanded.assignments)
+            })
+        } else {
+            let saved_vars = save_vars(shell, &expanded.assignments);
+            for (name, value) in &expanded.assignments {
+                shell.set_var(name, value.clone())?;
+            }
+            let result =
+                with_shell_redirections(&expanded.redirections, shell.options.noclobber, || {
+                    run_builtin_flow(shell, &expanded.argv, &[])
+                });
+            restore_vars(shell, saved_vars);
+            result
+        };
         match result {
             Ok(status) => Ok(status),
             Err(error) if !is_special_builtin => {
@@ -429,14 +512,16 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
         }
     } else if let Some(function) = shell.functions.get(&expanded.argv[0]).cloned() {
         with_shell_redirections(&expanded.redirections, shell.options.noclobber, || {
-            for (name, value) in expanded.assignments {
-                shell.set_var(&name, value)?;
+            let saved_vars = save_vars(shell, &expanded.assignments);
+            for (name, value) in &expanded.assignments {
+                shell.set_var(name, value.clone())?;
             }
             let saved = std::mem::replace(&mut shell.positional, expanded.argv[1..].to_vec());
             shell.function_depth += 1;
             let status = execute_command(shell, &function);
             shell.function_depth = shell.function_depth.saturating_sub(1);
             shell.positional = saved;
+            restore_vars(shell, saved_vars);
             match status {
                 Ok(status) => match shell.pending_control {
                     Some(PendingControl::Return(return_status)) => {
@@ -517,11 +602,8 @@ fn expand_simple(
 ) -> Result<ExpandedSimpleCommand, ShellError> {
     let mut assignments = Vec::new();
     for assignment in &simple.assignments {
-        let fields = expand::expand_word(shell, &assignment.value)?;
-        assignments.push((
-            assignment.name.clone(),
-            fields.first().cloned().unwrap_or_default(),
-        ));
+        let value = expand::expand_word_text(shell, &assignment.value)?;
+        assignments.push((assignment.name.clone(), value));
     }
 
     let argv = expand::expand_words(shell, &simple.words)?;
@@ -636,6 +718,9 @@ fn spawn_prepared(
         if sys::access_path(&prepared.exec_path, sys::F_OK).is_err() {
             return Err(sys::SysError::Errno(sys::ENOENT).into());
         }
+        if sys::access_path(&prepared.exec_path, sys::X_OK).is_err() {
+            return Err(sys::SysError::Errno(sys::EACCES).into());
+        }
     }
 
     let prepared_redirections = prepare_redirections(&prepared.redirections, prepared.noclobber)?;
@@ -685,24 +770,19 @@ fn spawn_prepared(
             let _ = sys::env_set_var(key, value);
         }
 
-        // Try exec; on ENOEXEC, interpret as shell script
-        let rest: Vec<String> = prepared
-            .argv
-            .get(1..)
-            .unwrap_or(&[])
-            .iter()
-            .cloned()
-            .collect();
-        match sys::exec_replace(&prepared.exec_path, &rest) {
+        match sys::exec_replace(&prepared.exec_path, &prepared.argv) {
             Err(err) if err.is_enoexec() => {
                 let mut child_shell = shell.clone();
-                child_shell.positional = rest;
+                child_shell.shell_name = prepared.argv[0].clone();
+                child_shell.positional = prepared.argv[1..].to_vec();
                 let status = child_shell
                     .source_path(std::path::Path::new(&prepared.exec_path))
                     .unwrap_or(126);
                 sys::exit_process(status as sys::RawFd);
             }
-            _ => sys::exit_process(127),
+            Err(err) if err.is_enoent() => sys::exit_process(127),
+            Err(_) => sys::exit_process(126),
+            Ok(()) => sys::exit_process(0),
         }
     }
 
@@ -833,7 +913,11 @@ fn resolve_command_path(shell: &Shell, program: &str) -> Option<PathBuf> {
     path.split(':')
         .filter(|segment| !segment.is_empty())
         .map(|segment| Path::new(segment).join(program))
-        .find(|candidate| sys::is_regular_file(&candidate.display().to_string()))
+        .find(|candidate| {
+            sys::stat_path(&candidate.display().to_string())
+                .map(|stat| stat.is_regular_file() && stat.is_executable())
+                .unwrap_or(false)
+        })
 }
 
 // PreparedProcess.build_command() is replaced by spawn_prepared_inner()
@@ -2087,6 +2171,7 @@ mod tests {
                             Command::Group(program.clone()),
                         ],
                     },
+                    None,
                 )
                 .expect("spawn");
                 for child in spawned.children {
@@ -2530,7 +2615,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let children = spawn_pipeline(&mut shell, &pipeline).expect("spawn");
+                let children = spawn_pipeline(&mut shell, &pipeline, None).expect("spawn");
                 for child in children.children {
                     let _ = child.wait().expect("wait");
                 }
@@ -3253,6 +3338,11 @@ mod tests {
                     vec![ArgMatcher::Str("/tmp/script.sh".into()), ArgMatcher::Int(0)],
                     TraceResult::Int(0),
                 ),
+                t(
+                    "access",
+                    vec![ArgMatcher::Str("/tmp/script.sh".into()), ArgMatcher::Int(1)],
+                    TraceResult::Int(0),
+                ),
                 t_fork(
                     TraceResult::Pid(1000),
                     vec![
@@ -3307,6 +3397,11 @@ mod tests {
                     vec![ArgMatcher::Str("/bin/echo".into()), ArgMatcher::Int(0)],
                     TraceResult::Int(0),
                 ),
+                t(
+                    "access",
+                    vec![ArgMatcher::Str("/bin/echo".into()), ArgMatcher::Int(1)],
+                    TraceResult::Int(0),
+                ),
                 t_fork(
                     TraceResult::Pid(1000),
                     vec![
@@ -3353,6 +3448,11 @@ mod tests {
                 t(
                     "access",
                     vec![ArgMatcher::Str("/bin/echo".into()), ArgMatcher::Int(0)],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "access",
+                    vec![ArgMatcher::Str("/bin/echo".into()), ArgMatcher::Int(1)],
                     TraceResult::Int(0),
                 ),
                 t_fork(
@@ -3662,6 +3762,11 @@ mod tests {
                     vec![ArgMatcher::Str("/bin/true".into()), ArgMatcher::Int(0)],
                     TraceResult::Int(0),
                 ),
+                t(
+                    "access",
+                    vec![ArgMatcher::Str("/bin/true".into()), ArgMatcher::Int(1)],
+                    TraceResult::Int(0),
+                ),
                 t_fork(
                     TraceResult::Pid(1000),
                     vec![t(
@@ -3829,6 +3934,250 @@ mod tests {
             || {
                 let actions = vec![ChildFdAction::CloseFd { target_fd: 99 }];
                 apply_child_fd_actions(&actions).expect("ebadf should be ignored");
+            },
+        );
+    }
+
+    #[test]
+    fn save_restore_vars_restores_previous_values() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.env.insert("FOO".into(), "original".into());
+            shell.exported.insert("FOO".into());
+
+            let assignments = vec![("FOO".into(), "temp".into()), ("BAR".into(), "new".into())];
+            let saved = save_vars(&shell, &assignments);
+
+            shell.set_var("FOO", "temp".into()).unwrap();
+            shell.set_var("BAR", "new".into()).unwrap();
+            assert_eq!(shell.get_var("FOO"), Some("temp".into()));
+            assert_eq!(shell.get_var("BAR"), Some("new".into()));
+
+            restore_vars(&mut shell, saved);
+            assert_eq!(shell.get_var("FOO"), Some("original".into()));
+            assert!(shell.exported.contains("FOO"));
+            assert_eq!(shell.get_var("BAR"), None);
+            assert!(!shell.exported.contains("BAR"));
+        });
+    }
+
+    #[test]
+    fn non_special_builtin_prefix_assignments_are_temporary() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.env.insert("FOO".into(), "original".into());
+            let program = crate::syntax::parse("FOO=temp true").expect("parse");
+            let status = execute_program(&mut shell, &program).expect("execute");
+            assert_eq!(status, 0);
+            assert_eq!(shell.get_var("FOO"), Some("original".into()));
+        });
+    }
+
+    #[test]
+    fn special_builtin_prefix_assignments_are_permanent() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let program = crate::syntax::parse("FOO=permanent :").expect("parse");
+            let status = execute_program(&mut shell, &program).expect("execute");
+            assert_eq!(status, 0);
+            assert_eq!(shell.get_var("FOO"), Some("permanent".into()));
+        });
+    }
+
+    #[test]
+    fn function_prefix_assignments_are_temporary() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.env.insert("FOO".into(), "original".into());
+            let program = crate::syntax::parse("myfn() { :; }; FOO=temp myfn").expect("parse");
+            let status = execute_program(&mut shell, &program).expect("execute");
+            assert_eq!(status, 0);
+            assert_eq!(shell.get_var("FOO"), Some("original".into()));
+        });
+    }
+
+    #[test]
+    fn non_special_builtin_exit_with_temp_assignments() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let program = crate::syntax::parse("FOO=bar exit 0").expect("parse");
+            let status = execute_program(&mut shell, &program).expect("execute");
+            assert_eq!(status, 0);
+            assert!(!shell.running);
+        });
+    }
+
+    #[test]
+    fn assignment_expansion_does_not_field_split() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.env.insert("IFS".into(), " ".into());
+            shell.env.insert("X".into(), "a b c".into());
+            let program = crate::syntax::parse("Y=$X").expect("parse");
+            let _status = execute_program(&mut shell, &program).expect("execute");
+            assert_eq!(shell.get_var("Y"), Some("a b c".into()));
+        });
+    }
+
+    #[test]
+    fn spawn_prepared_returns_eacces_for_non_executable_file() {
+        run_trace(
+            vec![
+                t(
+                    "access",
+                    vec![ArgMatcher::Str("/tmp/noexec.sh".into()), ArgMatcher::Int(0)],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "access",
+                    vec![ArgMatcher::Str("/tmp/noexec.sh".into()), ArgMatcher::Int(1)],
+                    TraceResult::Err(sys::EACCES),
+                ),
+            ],
+            || {
+                let shell = test_shell();
+                let prepared = PreparedProcess {
+                    exec_path: "/tmp/noexec.sh".into(),
+                    argv: vec!["noexec.sh".into()],
+                    child_env: Vec::new(),
+                    redirections: Vec::new(),
+                    noclobber: false,
+                    path_verified: false,
+                };
+                let err = spawn_prepared(&shell, &prepared, None, false, ProcessGroupPlan::None)
+                    .unwrap_err();
+                assert!(
+                    err.message.contains("Permission denied") || err.message.contains("errno 13")
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn child_exec_eacces_exits_126() {
+        run_trace(
+            vec![t_fork(
+                TraceResult::Pid(1000),
+                vec![
+                    t(
+                        "setpgid",
+                        vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
+                        TraceResult::Int(0),
+                    ),
+                    t(
+                        "execvp",
+                        vec![ArgMatcher::Str("/bin/noperm".into()), ArgMatcher::Any],
+                        TraceResult::Err(sys::EACCES),
+                    ),
+                ],
+            )],
+            || {
+                let shell = test_shell();
+                let prepared = PreparedProcess {
+                    exec_path: "/bin/noperm".into(),
+                    argv: vec!["noperm".into()],
+                    child_env: Vec::new(),
+                    redirections: Vec::new(),
+                    noclobber: false,
+                    path_verified: true,
+                };
+                let _handle =
+                    spawn_prepared(&shell, &prepared, None, false, ProcessGroupPlan::NewGroup)
+                        .expect("spawn");
+            },
+        );
+    }
+
+    #[test]
+    fn child_exec_enoent_exits_127() {
+        run_trace(
+            vec![t_fork(
+                TraceResult::Pid(1000),
+                vec![
+                    t(
+                        "setpgid",
+                        vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
+                        TraceResult::Int(0),
+                    ),
+                    t(
+                        "execvp",
+                        vec![ArgMatcher::Str("/bin/missing".into()), ArgMatcher::Any],
+                        TraceResult::Err(sys::ENOENT),
+                    ),
+                ],
+            )],
+            || {
+                let shell = test_shell();
+                let prepared = PreparedProcess {
+                    exec_path: "/bin/missing".into(),
+                    argv: vec!["missing".into()],
+                    child_env: Vec::new(),
+                    redirections: Vec::new(),
+                    noclobber: false,
+                    path_verified: true,
+                };
+                let _handle =
+                    spawn_prepared(&shell, &prepared, None, false, ProcessGroupPlan::NewGroup)
+                        .expect("spawn");
+            },
+        );
+    }
+
+    #[test]
+    fn spawn_and_or_with_and_or_list_forks_subshell() {
+        run_trace(
+            vec![
+                t_fork(
+                    TraceResult::Pid(1000),
+                    vec![
+                        t(
+                            "dup2",
+                            vec![ArgMatcher::Fd(50), ArgMatcher::Fd(0)],
+                            TraceResult::Int(0),
+                        ),
+                        t("close", vec![ArgMatcher::Fd(50)], TraceResult::Int(0)),
+                        t(
+                            "setpgid",
+                            vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
+                            TraceResult::Int(0),
+                        ),
+                    ],
+                ),
+                t("close", vec![ArgMatcher::Fd(50)], TraceResult::Int(0)),
+                t(
+                    "setpgid",
+                    vec![ArgMatcher::Int(1000), ArgMatcher::Int(1000)],
+                    TraceResult::Int(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let node = AndOr {
+                    first: Pipeline {
+                        negated: false,
+                        commands: vec![Command::Simple(SimpleCommand {
+                            words: vec![Word {
+                                raw: "true".to_string(),
+                            }],
+                            ..SimpleCommand::default()
+                        })],
+                    },
+                    rest: vec![(
+                        LogicalOp::And,
+                        Pipeline {
+                            negated: false,
+                            commands: vec![Command::Simple(SimpleCommand {
+                                words: vec![Word {
+                                    raw: ":".to_string(),
+                                }],
+                                ..SimpleCommand::default()
+                            })],
+                        },
+                    )],
+                };
+                let spawned = spawn_and_or(&mut shell, &node, Some(50)).expect("spawn");
+                assert_eq!(spawned.children.len(), 1);
+                assert!(spawned.pgid.is_some());
             },
         );
     }

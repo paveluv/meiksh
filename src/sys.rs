@@ -101,6 +101,10 @@ impl SysError {
         matches!(self, SysError::Errno(e) if *e == libc::EBADF)
     }
 
+    pub fn is_eacces(&self) -> bool {
+        matches!(self, SysError::Errno(e) if *e == libc::EACCES)
+    }
+
     pub fn is_enoexec(&self) -> bool {
         matches!(self, SysError::Errno(e) if *e == libc::ENOEXEC)
     }
@@ -1886,13 +1890,8 @@ pub fn spawn_child(
                 let _ = env_set_var(key, value);
             }
         }
-        let rest: Vec<String> = argv
-            .get(1..)
-            .unwrap_or(&[])
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        let _ = exec_replace(program, &rest);
+        let argv_owned: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+        let _ = exec_replace(program, &argv_owned);
         exit_process(127);
     }
 
@@ -1956,11 +1955,12 @@ pub fn clock_ticks_per_second() -> SysResult<u64> {
 }
 
 /// Execute a program, replacing the current process image.
-/// `program` is the file to exec and becomes argv[0].
-/// `argv` contains the remaining arguments (argv[1..]).
-pub fn exec_replace(program: &str, argv: &[String]) -> SysResult<()> {
-    let mut owned = Vec::with_capacity(argv.len() + 1);
-    owned.push(CString::new(program).map_err(|_| SysError::NulInPath)?);
+/// `file` is the pathname to exec (passed to `execvp`).
+/// `argv` is the full argument vector: `argv[0]` is the command name
+/// as typed by the user, `argv[1..]` are the remaining arguments.
+pub fn exec_replace(file: &str, argv: &[String]) -> SysResult<()> {
+    let c_file = CString::new(file).map_err(|_| SysError::NulInPath)?;
+    let mut owned = Vec::with_capacity(argv.len());
     for arg in argv {
         owned.push(CString::new(arg.as_str()).map_err(|_| SysError::NulInPath)?);
     }
@@ -1968,7 +1968,7 @@ pub fn exec_replace(program: &str, argv: &[String]) -> SysResult<()> {
     let mut pointers: Vec<*const c_char> = owned.iter().map(|arg| arg.as_ptr()).collect();
     pointers.push(std::ptr::null());
 
-    let result = (sys_interface().execvp)(owned[0].as_ptr(), pointers.as_ptr());
+    let result = (sys_interface().execvp)(c_file.as_ptr(), pointers.as_ptr());
     if result == -1 {
         Err(last_error())
     } else {
@@ -2208,6 +2208,9 @@ mod tests {
 
         let ebadf = SysError::Errno(libc::EBADF);
         assert!(ebadf.is_ebadf());
+        let eacces = SysError::Errno(libc::EACCES);
+        assert!(eacces.is_eacces());
+        assert!(!errno_err.is_eacces());
         let enoexec = SysError::Errno(libc::ENOEXEC);
         assert!(enoexec.is_enoexec());
         let eintr = SysError::Errno(EINTR);
