@@ -220,7 +220,7 @@ impl Shell {
             .shell_name_override
             .clone()
             .unwrap_or_else(|| sys::shell_name_from_args(&args).to_string());
-        let env: HashMap<String, String> = (sys::sys_interface().get_environ)();
+        let env: HashMap<String, String> = sys::env_vars();
         let exported: BTreeSet<String> = env.keys().cloned().collect();
         Ok(Self {
             positional: options.positional.clone(),
@@ -1046,7 +1046,7 @@ fn resolve_script_path(shell: &Shell, script: &Path) -> Option<PathBuf> {
 fn search_script_path(shell: &Shell, name: &str) -> Option<PathBuf> {
     let path_env = shell
         .get_var("PATH")
-        .or_else(|| (sys::sys_interface().getenv)("PATH"))
+        .or_else(|| sys::env_var("PATH"))
         .unwrap_or_default();
     for dir in path_env.split(':') {
         let base = if dir.is_empty() { PathBuf::from(".") } else { PathBuf::from(dir) };

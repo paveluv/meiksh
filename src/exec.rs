@@ -640,7 +640,7 @@ fn spawn_prepared(
         let _ = apply_child_fd_actions(&prepared_redirections.actions);
 
         for (key, value) in &prepared.child_env {
-            let _ = (sys::sys_interface().setenv)(key, value);
+            let _ = sys::env_set_var(key, value);
         }
 
         // Try exec; on ENOEXEC, interpret as shell script
@@ -764,7 +764,7 @@ fn resolve_command_path(shell: &Shell, program: &str) -> Option<PathBuf> {
 
     let path = shell
         .get_var("PATH")
-        .or_else(|| (sys::sys_interface().getenv)("PATH"))
+        .or_else(|| sys::env_var("PATH"))
         .unwrap_or_default();
 
     path.split(':')
