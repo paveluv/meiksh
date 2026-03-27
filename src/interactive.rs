@@ -180,7 +180,7 @@ mod tests {
                 t(
                     "write",
                     vec![ArgMatcher::Fd(10), ArgMatcher::Bytes(b"echo hi\n".to_vec())],
-                    TraceResult::Int(8),
+                    TraceResult::Auto,
                 ),
                 t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
             ],
@@ -376,7 +376,7 @@ mod tests {
                         ArgMatcher::Fd(sys::STDOUT_FILENO),
                         ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
                     ],
-                    TraceResult::Int(8),
+                    TraceResult::Auto,
                 ),
                 t(
                     "read",
@@ -415,7 +415,7 @@ mod tests {
                         ArgMatcher::Fd(sys::STDERR_FILENO),
                         ArgMatcher::Bytes(b"[1] Done 0\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
                 // first prompt
                 t(
@@ -424,7 +424,7 @@ mod tests {
                         ArgMatcher::Fd(sys::STDOUT_FILENO),
                         ArgMatcher::Bytes(b"test$ ".to_vec()),
                     ],
-                    TraceResult::Int(6),
+                    TraceResult::Auto,
                 ),
                 // read blank line
                 t(
@@ -440,7 +440,7 @@ mod tests {
                         ArgMatcher::Fd(sys::STDOUT_FILENO),
                         ArgMatcher::Bytes(b"test$ ".to_vec()),
                     ],
-                    TraceResult::Int(6),
+                    TraceResult::Auto,
                 ),
                 // read "exit 5\n" byte by byte
                 t(
@@ -491,7 +491,7 @@ mod tests {
                 t(
                     "write",
                     vec![ArgMatcher::Fd(10), ArgMatcher::Bytes(b"exit 5\n".to_vec())],
-                    TraceResult::Int(7),
+                    TraceResult::Auto,
                 ),
                 t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
             ],
@@ -534,7 +534,7 @@ mod tests {
                         ArgMatcher::Fd(sys::STDOUT_FILENO),
                         ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
                     ],
-                    TraceResult::Int(8),
+                    TraceResult::Auto,
                 ),
                 t(
                     "read",
@@ -560,7 +560,7 @@ mod tests {
                         ArgMatcher::Fd(sys::STDOUT_FILENO),
                         ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
                     ],
-                    TraceResult::Int(8),
+                    TraceResult::Auto,
                 ),
                 // read "echo 'unterminated\n" byte by byte
                 t(
@@ -671,7 +671,7 @@ mod tests {
                 t(
                     "write",
                     vec![ArgMatcher::Fd(10), ArgMatcher::Any],
-                    TraceResult::Int(19),
+                    TraceResult::Auto,
                 ),
                 t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
                 // parse error written to stderr
@@ -681,7 +681,7 @@ mod tests {
                         ArgMatcher::Fd(sys::STDERR_FILENO),
                         ArgMatcher::Bytes(b"meiksh: unterminated single quote\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
                 // prompt again
                 t(
@@ -690,7 +690,7 @@ mod tests {
                         ArgMatcher::Fd(sys::STDOUT_FILENO),
                         ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
                     ],
-                    TraceResult::Int(8),
+                    TraceResult::Auto,
                 ),
                 // EOF
                 t(
@@ -764,7 +764,7 @@ mod tests {
                         ArgMatcher::Fd(sys::STDERR_FILENO),
                         ArgMatcher::Bytes(b"\n".to_vec()),
                     ],
-                    TraceResult::Int(1),
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -784,7 +784,7 @@ mod tests {
                         ArgMatcher::Fd(sys::STDOUT_FILENO),
                         ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
                     ],
-                    TraceResult::Int(8),
+                    TraceResult::Auto,
                 ),
                 t(
                     "read",
@@ -797,7 +797,7 @@ mod tests {
                         ArgMatcher::Fd(sys::STDERR_FILENO),
                         ArgMatcher::Bytes(b"\n".to_vec()),
                     ],
-                    TraceResult::Int(1),
+                    TraceResult::Auto,
                 ),
                 t(
                     "write",
@@ -805,7 +805,7 @@ mod tests {
                         ArgMatcher::Fd(sys::STDOUT_FILENO),
                         ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
                     ],
-                    TraceResult::Int(8),
+                    TraceResult::Auto,
                 ),
                 t(
                     "read",
@@ -840,7 +840,7 @@ mod tests {
                         ArgMatcher::Fd(10),
                         ArgMatcher::Bytes(b"echo default\n".to_vec()),
                     ],
-                    TraceResult::Int(13),
+                    TraceResult::Auto,
                 ),
                 t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
             ],
@@ -875,7 +875,7 @@ mod tests {
                         ArgMatcher::Fd(sys::STDERR_FILENO),
                         ArgMatcher::Bytes(b"[1] Stopped (SIGTSTP)\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
                 // prompt
                 t(
@@ -884,7 +884,7 @@ mod tests {
                         ArgMatcher::Fd(sys::STDOUT_FILENO),
                         ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
                     ],
-                    TraceResult::Int(8),
+                    TraceResult::Auto,
                 ),
                 // read EOF
                 t(

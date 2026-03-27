@@ -437,6 +437,7 @@ pub(crate) mod test_support {
     #[derive(Clone, Debug)]
     #[allow(dead_code)]
     pub(crate) enum TraceResult {
+        Auto,
         Int(i64),
         Fd(c_int),
         Pid(Pid),
@@ -531,6 +532,10 @@ pub(crate) mod test_support {
 
     fn apply_trace_result_int(entry: &TraceEntry) -> c_int {
         match &entry.result {
+            TraceResult::Auto => panic!(
+                "TraceResult::Auto not supported for '{}'; handle it in the caller",
+                entry.syscall
+            ),
             TraceResult::Int(v) => *v as c_int,
             TraceResult::Fd(fd) => *fd,
             TraceResult::Err(errno) => {
@@ -546,6 +551,10 @@ pub(crate) mod test_support {
 
     fn apply_trace_result_isize(entry: &TraceEntry) -> isize {
         match &entry.result {
+            TraceResult::Auto => panic!(
+                "TraceResult::Auto not supported for '{}'; handle it in the caller",
+                entry.syscall
+            ),
             TraceResult::Int(v) => *v as isize,
             TraceResult::Err(errno) => {
                 super::set_errno(*errno);
@@ -757,7 +766,10 @@ pub(crate) mod test_support {
             "write",
             &[ArgMatcher::Fd(fd), ArgMatcher::Bytes(data.to_vec())],
         );
-        apply_trace_result_isize(&entry)
+        match &entry.result {
+            TraceResult::Auto => data.len() as isize,
+            _ => apply_trace_result_isize(&entry),
+        }
     }
     fn trace_stat(path: *const c_char, buf: *mut libc::stat) -> c_int {
         let p = unsafe { CStr::from_ptr(path) }

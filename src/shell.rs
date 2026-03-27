@@ -2175,7 +2175,7 @@ mod tests {
                         ArgMatcher::Fd(1),
                         ArgMatcher::Bytes(b"[1] Done 0\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -2204,7 +2204,7 @@ mod tests {
                         ArgMatcher::Fd(1),
                         ArgMatcher::Bytes(b"[1] Running sleep\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
                 t(
                     "waitpid",
@@ -2282,7 +2282,7 @@ mod tests {
                         ArgMatcher::Fd(1),
                         ArgMatcher::Bytes(b"[1] Done 0\n".to_vec()),
                     ],
-                    TraceResult::Int(0),
+                    TraceResult::Auto,
                 ),
             ],
             || {
