@@ -184,6 +184,7 @@ pub struct Shell {
     pub known_pid_statuses: HashMap<sys::Pid, i32>,
     pub known_job_statuses: HashMap<usize, i32>,
     pub trap_actions: BTreeMap<TrapCondition, TrapAction>,
+    pub ignored_on_entry: BTreeSet<TrapCondition>,
     pub loop_depth: usize,
     pub function_depth: usize,
     pub pending_control: Option<PendingControl>,
@@ -250,6 +251,7 @@ impl Shell {
         let interactive = options.force_interactive
             || (sys::is_interactive_fd(sys::STDIN_FILENO)
                 && sys::is_interactive_fd(sys::STDERR_FILENO));
+        let ignored_on_entry = Self::probe_ignored_signals();
         Ok(Self {
             positional: options.positional.clone(),
             options,
@@ -266,12 +268,23 @@ impl Shell {
             known_pid_statuses: HashMap::new(),
             known_job_statuses: HashMap::new(),
             trap_actions: BTreeMap::new(),
+            ignored_on_entry,
             loop_depth: 0,
             function_depth: 0,
             pending_control: None,
             interactive,
             errexit_suppressed: false,
         })
+    }
+
+    fn probe_ignored_signals() -> BTreeSet<TrapCondition> {
+        let mut set = BTreeSet::new();
+        for signal in sys::supported_trap_signals() {
+            if sys::query_signal_disposition(signal).unwrap_or(false) {
+                set.insert(TrapCondition::Signal(signal));
+            }
+        }
+        set
     }
 
     #[cfg(test)]
@@ -300,6 +313,7 @@ impl Shell {
             known_pid_statuses: HashMap::new(),
             known_job_statuses: HashMap::new(),
             trap_actions: BTreeMap::new(),
+            ignored_on_entry: BTreeSet::new(),
             loop_depth: 0,
             function_depth: 0,
             pending_control: None,
@@ -689,6 +703,9 @@ impl Shell {
         condition: TrapCondition,
         action: Option<TrapAction>,
     ) -> Result<(), ShellError> {
+        if !self.interactive && self.ignored_on_entry.contains(&condition) {
+            return Ok(());
+        }
         if let TrapCondition::Signal(signal) = condition {
             match action.as_ref() {
                 Some(TrapAction::Ignore) => sys::ignore_signal(signal)?,
@@ -1243,6 +1260,7 @@ mod tests {
             known_pid_statuses: HashMap::new(),
             known_job_statuses: HashMap::new(),
             trap_actions: BTreeMap::new(),
+            ignored_on_entry: BTreeSet::new(),
             loop_depth: 0,
             function_depth: 0,
             pending_control: None,

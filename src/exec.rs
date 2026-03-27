@@ -1536,6 +1536,7 @@ mod tests {
             known_pid_statuses: HashMap::new(),
             known_job_statuses: HashMap::new(),
             trap_actions: BTreeMap::new(),
+            ignored_on_entry: BTreeSet::new(),
             loop_depth: 0,
             function_depth: 0,
             pending_control: None,
