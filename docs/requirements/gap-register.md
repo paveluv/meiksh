@@ -12,14 +12,19 @@ This register turns broad partial-conformance areas into named backlog items tha
 
 | Gap ID | Linked requirement area | Current gap |
 | --- | --- | --- |
-| `GAP-SH-001` | `REQ-SH-OPTIONS-*` | `sh` and `set` now cover `-a`, `-C`, `-f`, `-n`, `-u`, `-v`, and named `-o`/`+o` forms for the implemented subset, but the rest of the full Issue 8 option surface still remains open. |
-| `GAP-SH-002` | `REQ-SH-STARTUP-*`, `REQ-SH-OPERANDS-*`, `REQ-SH-EXIT-*` | The non-interactive stdin no-read-ahead rule, blocking-stdin correction for inherited non-blocking FIFO/terminal descriptors, and the direct-ordinary-builtin versus direct-special-builtin error split are now implemented; the remaining startup gap is narrower utility-page polish around the rest of the option surface and top-level exit-status/error classification. |
+| `GAP-SH-001` | `REQ-SH-OPTIONS-*` | `sh` and `set` now cover `-a`, `-C`, `-f`, `-n`, `-u`, `-v`, and named `-o`/`+o` forms for the implemented subset, but critical options are still missing: `-e` (errexit), `-x` (xtrace), `-b` (notify), `-m` (monitor), `-h` (hashall). Any script using `set -e` fails. Combined option flags with `-c` (e.g. `sh -ac '...'`) also fail because `-c` is not handled inside the multi-char option loop. |
+| `GAP-SH-002` | `REQ-SH-STARTUP-*`, `REQ-SH-OPERANDS-*`, `REQ-SH-EXIT-*` | The non-interactive stdin no-read-ahead rule and blocking-stdin correction are implemented. Remaining: `$-` computes the `i` flag dynamically from current terminal state instead of fixing it at startup; utility-page exit-status/error classification polish. |
 | `GAP-SH-003` | `REQ-SH-INTERACTIVE-*` | Command history list semantics are still simplified, and command-line / vi-mode editing remain unimplemented. |
-| `GAP-EXPAND-001` | `REQ-EXPAND-FIELDS-*` | Field splitting still needs exact mixed-quoting, `"$@"`, and remaining IFS edge coverage. |
-| `GAP-EXPAND-002` | `REQ-EXPAND-TILDE-*`, `REQ-EXPAND-QUOTE-*`, `REQ-EXPAND-ARITH-*` | Tilde expansion, double-quote backslash rules, and arithmetic expansion are still only partially aligned with the mirrored Issue 8 text. |
-| `GAP-EXEC-001` | `REQ-EXEC-ERRORS-*` | Some POSIX shell-error consequence distinctions remain open, especially syntax / expansion / assignment / function-execution cases beyond the now-fixed ordinary-builtin versus special-builtin split. |
-| `GAP-EXEC-002` | `REQ-EXEC-ENV-*`, `REQ-EXPAND-CMDSUB-*`, `REQ-EXEC-GROUP-*` | Subshell and command substitution now use fork with inherited shell state. Remaining gaps are subshell trap reset and fine-grained environment isolation per POSIX shell execution environment rules. |
-| `GAP-EXEC-003` | `REQ-EXEC-SEARCH-*` | Command search still needs stricter executable-file semantics and broader utility-page parity for external lookup and failure cases. |
+| `GAP-SH-004` | `REQ-SH-INTERACTIVE-*`, `REQ-JOBS-SIGNALS-*` | Interactive shells do not ignore SIGQUIT and SIGTERM as required by POSIX. No SIGINT handling in the interactive loop for discarding the current line and re-prompting. |
+| `GAP-EXPAND-001` | `REQ-EXPAND-FIELDS-*`, `REQ-EXPAND-PARAMS-*` | `"$@"` does not produce separate fields — `special_param('@')` joins all positionals with a space and returns a single `String`, making it identical to `"$*"`. `"$@"` with zero positionals produces one empty field instead of zero. Field splitting still needs exact mixed-quoting and remaining IFS edge coverage. |
+| `GAP-EXPAND-002` | `REQ-EXPAND-TILDE-*`, `REQ-EXPAND-QUOTE-*`, `REQ-EXPAND-ARITH-*` | Tilde expansion only handles bare `~` at position 0; `~user` (via `getpwnam`) and tilde after `:` in assignment values are missing. Backslash inside double quotes escapes all characters instead of only `$`, `` ` ``, `"`, `\`, and newline. Arithmetic expansion supports only `+ - * / %` with integer literals; missing: comparison, bitwise, logical, ternary, assignment operators, variable references, and parameter expansion within `$((...))`. |
+| `GAP-EXPAND-003` | `REQ-EXPAND-PARAMS-*` | `${var:-word}` brace scanning finds the first `}` without respecting quotes or nested expansions, so `${var:-"a}b"}` terminates prematurely. Backtick command substitution (`` `cmd` ``) is not recognised by the tokenizer or expander. |
+| `GAP-EXPAND-004` | `REQ-EXPAND-CMDSUB-*` | Command substitution (`capture_output`) returns `Err` when the child exits non-zero. Per POSIX, `x=$(false)` should succeed with `x=""` and `$?=1`, not fail. |
+| `GAP-EXEC-001` | `REQ-EXEC-ERRORS-*` | Some POSIX shell-error consequence distinctions remain open. Prefix variable assignments before regular (non-special) builtins and functions are made permanent in the current shell instead of being temporary for the duration of the command (`shell.rs:617`, `exec.rs:410`). Assignment values undergo field splitting and pathname expansion via `expand_word` (`exec.rs:486`); POSIX excludes those from assignment expansion. |
+| `GAP-EXEC-002` | `REQ-EXEC-ENV-*`, `REQ-EXPAND-CMDSUB-*`, `REQ-EXEC-GROUP-*` | Subshell and command substitution use fork with inherited shell state. Remaining gaps: subshell trap reset, fine-grained environment isolation, and `execute_nested_program` (`exec.rs:1057`) round-trips the parsed AST through render+reparse which risks quoting, heredoc, and alias fidelity loss. |
+| `GAP-EXEC-003` | `REQ-EXEC-SEARCH-*`, `REQ-EXEC-UTILITY-*` | Command PATH search uses `is_regular_file` but does not check execute permission (`X_OK`). Pre-exec existence check uses `F_OK` instead of `X_OK`. `argv[0]` passed to `execvp` is the resolved path (e.g. `/usr/bin/ls`) instead of the command name as typed (e.g. `ls`). All exec failures other than ENOEXEC exit 127; EACCES should exit 126. ENOEXEC fallback does not set `$0` to the script path. |
+| `GAP-EXEC-004` | `REQ-EXEC-ASYNC-*` | Background (`&`) commands do not redirect stdin to `/dev/null` as required by POSIX. Background job message prints only `[N]` without the PID (POSIX requires `[%d] %d\n`). AND-OR lists with `&` (e.g. `cmd1 && cmd2 &`) are rejected instead of being executed asynchronously in a subshell. |
+| `GAP-EXEC-005` | `REQ-EXEC-STATUS-*` | `wait_on_job_index` (`shell.rs:775–776`) inserts a job's final status into `known_job_statuses` then immediately removes it on the next line, so a subsequent `wait` on the same job ID cannot retrieve the cached status. |
 | `GAP-BUILTIN-001` | `REQ-BUILTIN-CD-*` | `cd` still lacks `-L`/`-P`/`-e` and full logical-path fidelity after the new `CDPATH` coverage. |
 | `GAP-BUILTIN-002` | `REQ-BUILTIN-SET-*` | `set` now has a stronger core subset, including `-a`, `-u`, `-v`, named `-o`/`+o`, option-state reporting, and plain `nounset` expansion failures, but most remaining Issue 8 options and their exact semantics are still missing. |
 | `GAP-BUILTIN-003` | `REQ-BUILTIN-READ-*` | `read` still needs tighter multibyte, prompt, and corner-case conformance. |
@@ -32,9 +37,15 @@ This register turns broad partial-conformance areas into named backlog items tha
 
 ## Milestone Mapping
 
-- Milestone 0: structural mirror and matrix work is complete; `GAP-DOCS-001` is closed.
-- Milestone 1: `GAP-SH-001`, `GAP-SH-002`, `GAP-SH-003`
-- Milestone 2: `GAP-EXPAND-001`, `GAP-EXPAND-002`
-- Milestone 3: `GAP-BUILTIN-001`, `GAP-BUILTIN-002`, `GAP-BUILTIN-003`, `GAP-BUILTIN-004`, `GAP-BUILTIN-005`, `GAP-BUILTIN-006`
-- Milestone 4: `GAP-EXEC-001`, `GAP-EXEC-002`, `GAP-EXEC-003`
-- Milestone 5: `GAP-JOBS-001`, `GAP-JOBS-002`, `GAP-JOBS-003`
+Each milestone targets roughly equal implementation effort.
+
+- **Milestone 0** (complete): structural mirror and matrix work; `GAP-DOCS-001` closed.
+- **Milestone 1** — Quick correctness fixes: `GAP-SH-002`, `GAP-SH-004`, `GAP-EXPAND-004`, `GAP-EXEC-005`. Small surgical fixes that resolve clear bugs and POSIX violations without large refactors.
+- **Milestone 2** — Core expansion fixes: `GAP-EXPAND-001`, `GAP-EXPAND-003`. Fix `"$@"` separate-field semantics, zero-positional behavior, nested brace scanning, and backtick command substitution.
+- **Milestone 3** — Execution model fixes: `GAP-EXEC-001`, `GAP-EXEC-003`, `GAP-EXEC-004`. Temporary prefix assignments, assignment expansion without field splitting, command search `X_OK`/`argv[0]`/exit-code fixes, and async-list corrections.
+- **Milestone 4** — Shell options (errexit, xtrace): `GAP-SH-001`, `GAP-BUILTIN-002`. Add `-e`, `-x`, `-b`, `-h` and remaining `set` option surface. Errexit is pervasive and needs careful integration across all execution paths.
+- **Milestone 5** — Expansion completeness: `GAP-EXPAND-002`. Full arithmetic expression parser, `~user` via `getpwnam`, double-quote backslash fix, and parameter expansion within `$((...))`.
+- **Milestone 6** — Execution environment and subshells: `GAP-EXEC-002`. Eliminate render+reparse round-trip, subshell trap reset, and fine-grained environment isolation.
+- **Milestone 7** — Builtin completeness: `GAP-BUILTIN-001`, `GAP-BUILTIN-003`, `GAP-BUILTIN-004`, `GAP-BUILTIN-005`. `cd -L/-P/-e`, `read` edge cases, trap ignored-on-entry and signal names, symbolic `umask`.
+- **Milestone 8** — Job control: `GAP-JOBS-001`, `GAP-JOBS-002`, `GAP-JOBS-003`, `GAP-SH-001` (`-m` portion). `set -m`, stopped-job tracking, signal inheritance, termios save/restore, complete job-id grammar.
+- **Milestone 9** — Missing builtins and interactive editing: `GAP-BUILTIN-006`, `GAP-SH-003`. Implement `hash`, `getopts`, `ulimit`, `fc`, command history semantics, and vi-mode line editing.
