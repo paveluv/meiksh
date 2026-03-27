@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::builtin;
 use crate::expand;
-use crate::shell::{FlowSignal, PendingControl, Shell, ShellError};
+use crate::shell::{ChildWaitResult, FlowSignal, JobState, PendingControl, Shell, ShellError};
 use crate::syntax::{
     AndOr, CaseCommand, Command, ForCommand, FunctionDef, HereDoc, IfCommand, ListItem, LogicalOp,
     LoopCommand, LoopKind, Pipeline, Program, RedirectionKind, SimpleCommand,
@@ -43,12 +43,19 @@ fn check_errexit(shell: &mut Shell, status: i32) {
 
 fn execute_list_item(shell: &mut Shell, item: &ListItem) -> Result<i32, ShellError> {
     if item.asynchronous {
-        let devnull = sys::open_file("/dev/null", sys::O_RDONLY, 0)?;
-        let spawned = spawn_and_or(shell, &item.and_or, Some(devnull))?;
+        let stdin_override = if !shell.options.monitor {
+            Some(sys::open_file("/dev/null", sys::O_RDONLY, 0)?)
+        } else {
+            None
+        };
+        let spawned = spawn_and_or(shell, &item.and_or, stdin_override)?;
         let last_pid = spawned.children.last().map(|c| c.pid).unwrap_or(0);
         let description = render_and_or(&item.and_or);
         let id = shell.register_background_job(description, spawned.pgid, spawned.children);
-        println!("[{id}] {last_pid}");
+        if shell.interactive {
+            let msg = format!("[{id}] {last_pid}\n");
+            let _ = sys::write_all_fd(sys::STDERR_FILENO, msg.as_bytes());
+        }
         Ok(0)
     } else {
         execute_and_or(shell, &item.and_or)
@@ -98,7 +105,8 @@ fn spawn_and_or(
     node: &AndOr,
     stdin_override: Option<i32>,
 ) -> Result<SpawnedProcesses, ShellError> {
-    if node.rest.is_empty() {
+    let ignore_int_quit = !shell.options.monitor;
+    if node.rest.is_empty() && !ignore_int_quit {
         return spawn_pipeline(shell, &node.first, stdin_override);
     }
     let pid = sys::fork_process()?;
@@ -108,9 +116,17 @@ fn spawn_and_or(
             let _ = sys::close_fd(fd);
         }
         let _ = sys::set_process_group(0, 0);
+        if ignore_int_quit {
+            let _ = sys::ignore_signal(sys::SIGINT);
+            let _ = sys::ignore_signal(sys::SIGQUIT);
+        }
         let mut child_shell = shell.clone();
         let _ = child_shell.reset_traps_for_subshell();
-        let status = execute_and_or(&mut child_shell, node).unwrap_or(1);
+        let status = if node.rest.is_empty() {
+            execute_pipeline(&mut child_shell, &node.first, false).unwrap_or(1)
+        } else {
+            execute_and_or(&mut child_shell, node).unwrap_or(1)
+        };
         sys::exit_process(status as sys::RawFd);
     }
     if let Some(fd) = stdin_override {
@@ -152,7 +168,8 @@ fn execute_pipeline(
         return Ok(0);
     }
 
-    let status = wait_for_children(shell, spawned)?;
+    let desc = render_pipeline(pipeline);
+    let status = wait_for_children(shell, spawned, Some(&desc))?;
 
     if pipeline.negated {
         Ok(if status == 0 { 1 } else { 0 })
@@ -259,11 +276,35 @@ fn spawn_pipeline(
     Ok(SpawnedProcesses { children, pgid })
 }
 
-fn wait_for_children(shell: &mut Shell, spawned: SpawnedProcesses) -> Result<i32, ShellError> {
+fn wait_for_children(
+    shell: &mut Shell,
+    spawned: SpawnedProcesses,
+    command_desc: Option<&str>,
+) -> Result<i32, ShellError> {
     let saved_foreground = handoff_foreground(spawned.pgid);
     let mut status = 0;
     for handle in &spawned.children {
-        status = shell.wait_for_child_pid(handle.pid, false)?;
+        match shell.wait_for_child_pid(handle.pid, false)? {
+            ChildWaitResult::Exited(code) => status = code,
+            ChildWaitResult::Stopped(sig) => {
+                restore_foreground(saved_foreground);
+                let desc = command_desc.unwrap_or("").to_string();
+                let id =
+                    shell.register_background_job(desc, spawned.pgid, spawned.children.clone());
+                let idx = shell.jobs.iter().position(|j| j.id == id).unwrap();
+                shell.jobs[idx].state = JobState::Stopped(sig);
+                if shell.interactive {
+                    shell.jobs[idx].saved_termios = sys::get_terminal_attrs(sys::STDIN_FILENO).ok();
+                    let msg = format!(
+                        "[{id}] Stopped ({})\t{}\n",
+                        sys::signal_name(sig),
+                        shell.jobs[idx].command
+                    );
+                    let _ = sys::write_all_fd(sys::STDERR_FILENO, msg.as_bytes());
+                }
+                return Ok(128 + sig);
+            }
+        }
     }
     restore_foreground(saved_foreground);
     Ok(status)
@@ -273,11 +314,33 @@ fn wait_for_external_child(
     shell: &mut Shell,
     handle: &sys::ChildHandle,
     pgid: Option<sys::Pid>,
+    command_desc: Option<&str>,
 ) -> Result<i32, ShellError> {
     let saved_foreground = handoff_foreground(pgid);
-    let status = shell.wait_for_child_pid(handle.pid, false)?;
-    restore_foreground(saved_foreground);
-    Ok(status)
+    match shell.wait_for_child_pid(handle.pid, false)? {
+        ChildWaitResult::Exited(status) => {
+            restore_foreground(saved_foreground);
+            Ok(status)
+        }
+        ChildWaitResult::Stopped(sig) => {
+            restore_foreground(saved_foreground);
+            let desc = command_desc.unwrap_or("").to_string();
+            let children = vec![handle.clone()];
+            let id = shell.register_background_job(desc, pgid, children);
+            let idx = shell.jobs.iter().position(|j| j.id == id).unwrap();
+            shell.jobs[idx].state = JobState::Stopped(sig);
+            if shell.interactive {
+                shell.jobs[idx].saved_termios = sys::get_terminal_attrs(sys::STDIN_FILENO).ok();
+                let msg = format!(
+                    "[{id}] Stopped ({})\t{}\n",
+                    sys::signal_name(sig),
+                    shell.jobs[idx].command
+                );
+                let _ = sys::write_all_fd(sys::STDERR_FILENO, msg.as_bytes());
+            }
+            Ok(128 + sig)
+        }
+    }
 }
 
 fn execute_command(shell: &mut Shell, command: &Command) -> Result<i32, ShellError> {
@@ -616,7 +679,8 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
         let handle = spawn_prepared(shell, &prepared, None, false, ProcessGroupPlan::NewGroup)?;
         let pgid = handle.pid;
         let _ = sys::set_process_group(pgid, pgid);
-        let status = wait_for_external_child(shell, &handle, Some(pgid))?;
+        let desc = expanded.argv.join(" ");
+        let status = wait_for_external_child(shell, &handle, Some(pgid), Some(&desc))?;
         Ok(status)
     }
 }
@@ -1678,12 +1742,20 @@ mod tests {
                 t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
                 t(
                     "waitpid",
-                    vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    vec![
+                        ArgMatcher::Int(1000),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
                     TraceResult::Status(0),
                 ),
                 t(
                     "waitpid",
-                    vec![ArgMatcher::Int(1001), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    vec![
+                        ArgMatcher::Int(1001),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
                     TraceResult::Status(0),
                 ),
             ],
@@ -4231,6 +4303,16 @@ mod tests {
                             vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
                             TraceResult::Int(0),
                         ),
+                        t(
+                            "signal",
+                            vec![ArgMatcher::Int(sys::SIGINT as i64), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "signal",
+                            vec![ArgMatcher::Int(sys::SIGQUIT as i64), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
                     ],
                 ),
                 t("close", vec![ArgMatcher::Fd(50)], TraceResult::Int(0)),
@@ -4495,6 +4577,321 @@ mod tests {
                     redirections: vec![],
                 };
                 write_xtrace(&mut shell, &expanded);
+            },
+        );
+    }
+
+    #[test]
+    fn wait_for_children_handles_stopped_child() {
+        run_trace(
+            vec![t(
+                "waitpid",
+                vec![
+                    ArgMatcher::Int(9001),
+                    ArgMatcher::Any,
+                    ArgMatcher::Int(sys::WUNTRACED as i64),
+                ],
+                TraceResult::StoppedSig(sys::SIGTSTP),
+            )],
+            || {
+                let mut shell = test_shell();
+                let spawned = SpawnedProcesses {
+                    children: vec![sys::ChildHandle {
+                        pid: 9001,
+                        stdout_fd: None,
+                    }],
+                    pgid: None,
+                };
+                let status = wait_for_children(&mut shell, spawned, Some("sleep 100")).unwrap();
+                assert_eq!(status, 128 + sys::SIGTSTP);
+                assert_eq!(shell.jobs.len(), 1);
+                assert!(matches!(
+                    shell.jobs[0].state,
+                    crate::shell::JobState::Stopped(s) if s == sys::SIGTSTP
+                ));
+            },
+        );
+    }
+
+    #[test]
+    fn wait_for_children_stopped_interactive_saves_termios() {
+        run_trace(
+            vec![
+                t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(1)),
+                t("isatty", vec![ArgMatcher::Fd(2)], TraceResult::Int(1)),
+                t("tcgetpgrp", vec![ArgMatcher::Fd(0)], TraceResult::Pid(100)),
+                t(
+                    "tcsetpgrp",
+                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(9010)],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "waitpid",
+                    vec![
+                        ArgMatcher::Int(9010),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
+                    TraceResult::StoppedSig(sys::SIGTSTP),
+                ),
+                t(
+                    "tcsetpgrp",
+                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(100)],
+                    TraceResult::Int(0),
+                ),
+                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Int(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.interactive = true;
+                let spawned = SpawnedProcesses {
+                    children: vec![sys::ChildHandle {
+                        pid: 9010,
+                        stdout_fd: None,
+                    }],
+                    pgid: Some(9010),
+                };
+                let status = wait_for_children(&mut shell, spawned, Some("vim")).unwrap();
+                assert_eq!(status, 128 + sys::SIGTSTP);
+                assert_eq!(shell.jobs.len(), 1);
+                assert!(shell.jobs[0].saved_termios.is_some());
+            },
+        );
+    }
+
+    #[test]
+    fn wait_for_external_child_handles_stopped() {
+        run_trace(
+            vec![t(
+                "waitpid",
+                vec![
+                    ArgMatcher::Int(9020),
+                    ArgMatcher::Any,
+                    ArgMatcher::Int(sys::WUNTRACED as i64),
+                ],
+                TraceResult::StoppedSig(sys::SIGTSTP),
+            )],
+            || {
+                let mut shell = test_shell();
+                let handle = sys::ChildHandle {
+                    pid: 9020,
+                    stdout_fd: None,
+                };
+                let status =
+                    wait_for_external_child(&mut shell, &handle, None, Some("cat")).unwrap();
+                assert_eq!(status, 128 + sys::SIGTSTP);
+                assert_eq!(shell.jobs.len(), 1);
+                assert!(matches!(
+                    shell.jobs[0].state,
+                    crate::shell::JobState::Stopped(s) if s == sys::SIGTSTP
+                ));
+            },
+        );
+    }
+
+    #[test]
+    fn wait_for_external_child_stopped_interactive_saves_termios() {
+        run_trace(
+            vec![
+                t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(1)),
+                t("isatty", vec![ArgMatcher::Fd(2)], TraceResult::Int(1)),
+                t("tcgetpgrp", vec![ArgMatcher::Fd(0)], TraceResult::Pid(200)),
+                t(
+                    "tcsetpgrp",
+                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(9030)],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "waitpid",
+                    vec![
+                        ArgMatcher::Int(9030),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
+                    TraceResult::StoppedSig(sys::SIGTSTP),
+                ),
+                t(
+                    "tcsetpgrp",
+                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(200)],
+                    TraceResult::Int(0),
+                ),
+                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Int(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.interactive = true;
+                let handle = sys::ChildHandle {
+                    pid: 9030,
+                    stdout_fd: None,
+                };
+                let status =
+                    wait_for_external_child(&mut shell, &handle, Some(9030), Some("vim")).unwrap();
+                assert_eq!(status, 128 + sys::SIGTSTP);
+                assert!(shell.jobs[0].saved_termios.is_some());
+            },
+        );
+    }
+
+    #[test]
+    fn execute_list_item_async_with_monitor_enabled() {
+        run_trace(
+            vec![
+                t(
+                    "stat",
+                    vec![ArgMatcher::Str("/usr/bin/sleep".into()), ArgMatcher::Any],
+                    TraceResult::StatFile(0o755),
+                ),
+                t_fork(
+                    TraceResult::Pid(9100),
+                    vec![
+                        t(
+                            "setpgid",
+                            vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "execvp",
+                            vec![ArgMatcher::Str("/usr/bin/sleep".into()), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                    ],
+                ),
+                t(
+                    "setpgid",
+                    vec![ArgMatcher::Int(9100), ArgMatcher::Int(9100)],
+                    TraceResult::Int(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.options.monitor = true;
+                shell.env.insert("PATH".into(), "/usr/bin".into());
+                let program = crate::syntax::parse("sleep 10 &").expect("parse");
+                let status = execute_program(&mut shell, &program).expect("execute");
+                assert_eq!(status, 0);
+                assert_eq!(shell.jobs.len(), 1);
+            },
+        );
+    }
+
+    #[test]
+    fn execute_list_item_async_interactive_prints_job_id() {
+        run_trace(
+            vec![
+                t(
+                    "stat",
+                    vec![ArgMatcher::Str("/usr/bin/sleep".into()), ArgMatcher::Any],
+                    TraceResult::StatFile(0o755),
+                ),
+                t_fork(
+                    TraceResult::Pid(9200),
+                    vec![
+                        t(
+                            "setpgid",
+                            vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "execvp",
+                            vec![ArgMatcher::Str("/usr/bin/sleep".into()), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                    ],
+                ),
+                t(
+                    "setpgid",
+                    vec![ArgMatcher::Int(9200), ArgMatcher::Int(9200)],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Int(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.options.monitor = true;
+                shell.interactive = true;
+                shell.env.insert("PATH".into(), "/usr/bin".into());
+                let program = crate::syntax::parse("sleep 10 &").expect("parse");
+                let status = execute_program(&mut shell, &program).expect("execute");
+                assert_eq!(status, 0);
+                assert_eq!(shell.jobs.len(), 1);
+            },
+        );
+    }
+
+    #[test]
+    fn spawn_and_or_with_monitor_delegates_to_spawn_pipeline() {
+        run_trace(
+            vec![
+                t(
+                    "stat",
+                    vec![ArgMatcher::Str("/usr/bin/true".into()), ArgMatcher::Any],
+                    TraceResult::StatFile(0o755),
+                ),
+                t_fork(
+                    TraceResult::Pid(9300),
+                    vec![
+                        t(
+                            "setpgid",
+                            vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "execvp",
+                            vec![ArgMatcher::Str("/usr/bin/true".into()), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                    ],
+                ),
+                t(
+                    "setpgid",
+                    vec![ArgMatcher::Int(9300), ArgMatcher::Int(9300)],
+                    TraceResult::Int(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.options.monitor = true;
+                shell.env.insert("PATH".into(), "/usr/bin".into());
+                let node = AndOr {
+                    first: Pipeline {
+                        negated: false,
+                        commands: vec![Command::Simple(SimpleCommand {
+                            words: vec![Word {
+                                raw: "true".to_string(),
+                            }],
+                            ..SimpleCommand::default()
+                        })],
+                    },
+                    rest: vec![],
+                };
+                let spawned = spawn_and_or(&mut shell, &node, None).expect("spawn");
+                assert_eq!(spawned.children.len(), 1);
             },
         );
     }

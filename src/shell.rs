@@ -27,6 +27,7 @@ pub struct ShellOptions {
     pub syntax_check_only: bool,
     pub force_interactive: bool,
     pub hashall: bool,
+    pub monitor: bool,
     pub noclobber: bool,
     pub noglob: bool,
     pub notify: bool,
@@ -62,7 +63,7 @@ impl ShellOptions {
             'f' => self.noglob = enabled,
             'h' => self.hashall = enabled,
             'i' => self.force_interactive = enabled,
-            'm' => { /* monitor: accepted but deferred to Milestone 8 */ }
+            'm' => self.monitor = enabled,
             'n' => self.syntax_check_only = enabled,
             'u' => self.nounset = enabled,
             'v' => self.verbose = enabled,
@@ -90,7 +91,7 @@ impl ShellOptions {
             ("allexport", self.allexport),
             ("errexit", self.errexit),
             ("hashall", self.hashall),
-            ("monitor", false),
+            ("monitor", self.monitor),
             ("noclobber", self.noclobber),
             ("noglob", self.noglob),
             ("noexec", self.syntax_check_only),
@@ -192,6 +193,13 @@ pub struct Shell {
     pub(crate) errexit_suppressed: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JobState {
+    Running,
+    Stopped(i32),
+    Done(i32),
+}
+
 #[derive(Clone, Debug)]
 pub struct Job {
     pub id: usize,
@@ -200,6 +208,8 @@ pub struct Job {
     pub last_pid: Option<sys::Pid>,
     pub last_status: Option<i32>,
     pub children: Vec<sys::ChildHandle>,
+    pub state: JobState,
+    pub saved_termios: Option<libc::termios>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -219,9 +229,23 @@ pub enum FlowSignal {
     Exit(i32),
 }
 
-fn try_wait_child(pid: sys::Pid) -> sys::SysResult<Option<i32>> {
-    match sys::wait_pid(pid, true) {
-        Ok(Some(waited)) => Ok(Some(sys::decode_wait_status(waited.status))),
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChildWaitResult {
+    Exited(i32),
+    Stopped(i32),
+}
+
+fn try_wait_child(pid: sys::Pid) -> sys::SysResult<Option<ChildWaitResult>> {
+    match sys::wait_pid_untraced(pid, true) {
+        Ok(Some(waited)) => {
+            if sys::wifstopped(waited.status) {
+                Ok(Some(ChildWaitResult::Stopped(sys::wstopsig(waited.status))))
+            } else {
+                Ok(Some(ChildWaitResult::Exited(sys::decode_wait_status(
+                    waited.status,
+                ))))
+            }
+        }
         Ok(None) => Ok(None),
         Err(error) => Err(error),
     }
@@ -322,8 +346,14 @@ impl Shell {
     }
 
     pub fn run(&mut self) -> Result<i32, ShellError> {
+        if self.interactive && !self.options.monitor {
+            self.options.monitor = true;
+        }
         if self.interactive {
             self.setup_interactive_signals()?;
+            if self.options.monitor {
+                self.setup_job_control();
+            }
         }
         let status = if let Some(command) = self.options.command_string.clone() {
             self.run_source("<command>", &command)?
@@ -344,7 +374,18 @@ impl Shell {
         sys::ignore_signal(sys::SIGQUIT)?;
         sys::ignore_signal(sys::SIGTERM)?;
         sys::install_shell_signal_handler(sys::SIGINT)?;
+        if self.options.monitor {
+            sys::ignore_signal(sys::SIGTSTP)?;
+            sys::ignore_signal(sys::SIGTTIN)?;
+            sys::ignore_signal(sys::SIGTTOU)?;
+        }
         Ok(())
+    }
+
+    fn setup_job_control(&self) {
+        let pid = sys::current_pid();
+        let _ = sys::set_process_group(pid, pid);
+        let _ = sys::set_foreground_pgrp(sys::STDIN_FILENO, pid);
     }
 
     pub fn is_interactive(&self) -> bool {
@@ -552,23 +593,36 @@ impl Shell {
             last_pid: children.last().map(|c| c.pid),
             last_status: None,
             children,
+            state: JobState::Running,
+            saved_termios: None,
         });
         id
     }
 
-    pub fn reap_jobs(&mut self) -> Vec<(usize, i32)> {
+    pub fn reap_jobs(&mut self) -> Vec<(usize, JobState)> {
         let mut finished = Vec::new();
         let mut remaining = Vec::new();
 
         for mut job in self.jobs.drain(..) {
+            if matches!(job.state, JobState::Stopped(_)) {
+                remaining.push(job);
+                continue;
+            }
             let mut running = Vec::new();
+            let mut any_stopped = false;
+            let mut stop_signal = 0i32;
             for child in job.children.drain(..) {
                 match try_wait_child(child.pid) {
-                    Ok(Some(code)) => {
+                    Ok(Some(ChildWaitResult::Exited(code))) => {
                         self.known_pid_statuses.insert(child.pid, code);
                         if job.last_pid == Some(child.pid) {
                             job.last_status = Some(code);
                         }
+                    }
+                    Ok(Some(ChildWaitResult::Stopped(sig))) => {
+                        any_stopped = true;
+                        stop_signal = sig;
+                        running.push(child);
                     }
                     Ok(None) => running.push(child),
                     Err(_) => {
@@ -583,7 +637,12 @@ impl Shell {
             if job.children.is_empty() {
                 let final_status = job.last_status.unwrap_or(0);
                 self.known_job_statuses.insert(job.id, final_status);
-                finished.push((job.id, final_status));
+                job.state = JobState::Done(final_status);
+                finished.push((job.id, job.state));
+            } else if any_stopped {
+                job.state = JobState::Stopped(stop_signal);
+                finished.push((job.id, job.state));
+                remaining.push(job);
             } else {
                 remaining.push(job);
             }
@@ -606,35 +665,81 @@ impl Shell {
                 message: format!("job {id}: not found"),
             })?;
         let pgid = self.jobs[index].pgid;
+        if let Some(ref termios) = self.jobs[index].saved_termios {
+            let _ = sys::set_terminal_attrs(sys::STDIN_FILENO, termios);
+        }
         let saved_foreground = self.foreground_handoff(pgid);
-        let mut job = self.jobs.remove(index);
-        let mut status = job.last_status.unwrap_or(0);
-        for child in &job.children {
-            let waited = self.wait_for_child_pid(child.pid, false)?;
-            status = waited;
-            self.known_pid_statuses.insert(child.pid, waited);
-            if job.last_pid == Some(child.pid) {
-                job.last_status = Some(waited);
+        self.jobs[index].state = JobState::Running;
+        self.jobs[index].saved_termios = None;
+        let mut status = self.jobs[index].last_status.unwrap_or(0);
+        let children: Vec<sys::ChildHandle> = self.jobs[index].children.clone();
+        for child in &children {
+            match self.wait_for_child_pid(child.pid, false)? {
+                ChildWaitResult::Exited(code) => {
+                    status = code;
+                    let idx = self
+                        .jobs
+                        .iter()
+                        .position(|j| j.id == id)
+                        .expect("job vanished");
+                    self.known_pid_statuses.insert(child.pid, code);
+                    if self.jobs[idx].last_pid == Some(child.pid) {
+                        self.jobs[idx].last_status = Some(code);
+                    }
+                    if let Some(ci) = self.jobs[idx]
+                        .children
+                        .iter()
+                        .position(|c| c.pid == child.pid)
+                    {
+                        self.jobs[idx].children.remove(ci);
+                    }
+                }
+                ChildWaitResult::Stopped(sig) => {
+                    self.restore_foreground(saved_foreground);
+                    let idx = self
+                        .jobs
+                        .iter()
+                        .position(|j| j.id == id)
+                        .expect("job vanished");
+                    self.jobs[idx].state = JobState::Stopped(sig);
+                    if self.interactive {
+                        self.jobs[idx].saved_termios =
+                            sys::get_terminal_attrs(sys::STDIN_FILENO).ok();
+                    }
+                    self.last_status = 128 + sig;
+                    return Ok(128 + sig);
+                }
             }
         }
         self.restore_foreground(saved_foreground);
+        let idx = self.jobs.iter().position(|j| j.id == id);
+        if let Some(idx) = idx {
+            self.jobs.remove(idx);
+        }
         self.last_status = status;
         Ok(status)
     }
 
-    pub fn continue_job(&mut self, id: usize) -> Result<(), ShellError> {
+    pub fn continue_job(&mut self, id: usize, foreground: bool) -> Result<(), ShellError> {
         let job = self
             .jobs
-            .iter()
+            .iter_mut()
             .find(|job| job.id == id)
             .ok_or_else(|| ShellError {
                 message: format!("job {id}: not found"),
             })?;
-        if let Some(pgid) = job.pgid {
-            sys::send_signal(-pgid, sys::SIGCONT)?;
-        } else {
-            for child in &job.children {
-                sys::send_signal(child.pid, sys::SIGCONT)?;
+        let was_stopped = matches!(job.state, JobState::Stopped(_));
+        job.state = JobState::Running;
+        if was_stopped {
+            if let Some(pgid) = job.pgid {
+                if foreground {
+                    let _ = sys::set_foreground_pgrp(sys::STDIN_FILENO, pgid);
+                }
+                sys::send_signal(-pgid, sys::SIGCONT)?;
+            } else {
+                for child in &job.children {
+                    sys::send_signal(child.pid, sys::SIGCONT)?;
+                }
             }
         }
         Ok(())
@@ -656,11 +761,24 @@ impl Shell {
 
     pub fn print_jobs(&mut self) {
         let finished = self.reap_jobs();
-        for (id, status) in finished {
-            println!("[{id}] Done {status}");
+        for (id, state) in finished {
+            if let JobState::Done(status) = state {
+                println!("[{id}] Done {status}");
+            }
         }
         for job in &self.jobs {
-            println!("[{}] Running {}", job.id, job.command);
+            match job.state {
+                JobState::Running => println!("[{}] Running {}", job.id, job.command),
+                JobState::Stopped(sig) => {
+                    println!(
+                        "[{}] Stopped ({}) {}",
+                        job.id,
+                        sys::signal_name(sig),
+                        job.command
+                    );
+                }
+                JobState::Done(status) => println!("[{}] Done {} {}", job.id, status, job.command),
+            }
         }
     }
 
@@ -763,10 +881,11 @@ impl Shell {
             None => return Ok(127),
         };
         match self.wait_for_child_pid(pid, true) {
-            Ok(status) => {
+            Ok(ChildWaitResult::Exited(status)) => {
                 self.record_completed_child(job_index, child_index, pid, status);
                 Ok(status)
             }
+            Ok(ChildWaitResult::Stopped(sig)) => Ok(128 + sig),
             Err(error) if error.message.starts_with("wait interrupted:") => {
                 let status = error
                     .message
@@ -847,9 +966,13 @@ impl Shell {
             let pid = self.jobs[index].children[0].pid;
             let child_index = 0;
             match self.wait_for_child_pid(pid, interruptible) {
-                Ok(code) => {
+                Ok(ChildWaitResult::Exited(code)) => {
                     status = code;
                     self.record_completed_child(index, child_index, pid, code);
+                }
+                Ok(ChildWaitResult::Stopped(_sig)) => {
+                    self.restore_foreground(saved_foreground);
+                    return Ok(128 + _sig);
                 }
                 Err(error) => {
                     self.restore_foreground(saved_foreground);
@@ -887,10 +1010,17 @@ impl Shell {
         &mut self,
         pid: sys::Pid,
         interruptible: bool,
-    ) -> Result<i32, ShellError> {
+    ) -> Result<ChildWaitResult, ShellError> {
         loop {
-            match sys::wait_pid(pid, false) {
-                Ok(Some(waited)) => return Ok(sys::decode_wait_status(waited.status)),
+            match sys::wait_pid_untraced(pid, false) {
+                Ok(Some(waited)) => {
+                    if sys::wifstopped(waited.status) {
+                        return Ok(ChildWaitResult::Stopped(sys::wstopsig(waited.status)));
+                    }
+                    return Ok(ChildWaitResult::Exited(sys::decode_wait_status(
+                        waited.status,
+                    )));
+                }
                 Ok(None) => continue,
                 Err(error)
                     if interruptible
@@ -938,6 +1068,49 @@ impl Shell {
         for child in &job.children {
             self.known_pid_statuses.remove(&child.pid);
         }
+    }
+
+    pub fn current_job_id(&self) -> Option<usize> {
+        self.jobs
+            .iter()
+            .rev()
+            .find(|j| matches!(j.state, JobState::Stopped(_)))
+            .or_else(|| self.jobs.last())
+            .map(|j| j.id)
+    }
+
+    pub fn previous_job_id(&self) -> Option<usize> {
+        let current = self.current_job_id();
+        let stopped: Vec<&Job> = self
+            .jobs
+            .iter()
+            .filter(|j| matches!(j.state, JobState::Stopped(_)))
+            .collect();
+        if stopped.len() >= 2 {
+            let second_last = stopped[stopped.len() - 2];
+            if Some(second_last.id) != current {
+                return Some(second_last.id);
+            }
+        }
+        self.jobs
+            .iter()
+            .rev()
+            .find(|j| Some(j.id) != current)
+            .map(|j| j.id)
+    }
+
+    pub fn find_job_by_prefix(&self, prefix: &str) -> Option<usize> {
+        self.jobs
+            .iter()
+            .find(|j| j.command.starts_with(prefix))
+            .map(|j| j.id)
+    }
+
+    pub fn find_job_by_substring(&self, substring: &str) -> Option<usize> {
+        self.jobs
+            .iter()
+            .find(|j| j.command.contains(substring))
+            .map(|j| j.id)
     }
 
     fn foreground_handoff(&self, pgid: Option<sys::Pid>) -> Option<sys::Pid> {
@@ -1129,6 +1302,9 @@ impl Shell {
         }
         if self.is_interactive() {
             flags.push('i');
+        }
+        if self.options.monitor {
+            flags.push('m');
         }
         if self.options.syntax_check_only {
             flags.push('n');
@@ -1476,7 +1652,11 @@ mod tests {
         run_trace(
             vec![t(
                 "waitpid",
-                vec![ArgMatcher::Int(1001), ArgMatcher::Any, ArgMatcher::Int(0)],
+                vec![
+                    ArgMatcher::Int(1001),
+                    ArgMatcher::Any,
+                    ArgMatcher::Int(sys::WUNTRACED as i64),
+                ],
                 TraceResult::Status(7),
             )],
             || {
@@ -1560,7 +1740,7 @@ mod tests {
                 let mut shell = test_shell();
                 shell.register_background_job("exit 0".into(), None, vec![fake_handle(1001)]);
                 let finished = shell.reap_jobs();
-                assert_eq!(finished, vec![(1, 0)]);
+                assert_eq!(finished, vec![(1, JobState::Done(0))]);
                 assert!(shell.jobs.is_empty());
             },
         );
@@ -1618,7 +1798,7 @@ mod tests {
                 let id =
                     shell.register_background_job("exit 0".into(), None, vec![fake_handle(1001)]);
                 let finished = shell.reap_jobs();
-                assert_eq!(finished, vec![(id, 1)]);
+                assert_eq!(finished, vec![(id, JobState::Done(1))]);
                 assert!(shell.jobs.is_empty());
             },
         );
@@ -1628,7 +1808,7 @@ mod tests {
     fn continue_job_errors_when_job_missing() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            let error = shell.continue_job(99).expect_err("missing job");
+            let error = shell.continue_job(99, false).expect_err("missing job");
             assert_eq!(error.message, "job 99: not found");
 
             let error = shell.wait_for_job(99).expect_err("missing job");
@@ -2013,10 +2193,13 @@ mod tests {
                     vec![ArgMatcher::Int(1003), ArgMatcher::Any, ArgMatcher::Any],
                     TraceResult::Pid(0),
                 ),
-                // wait_for_child_pid(1003) blocking (no pgid → no foreground_handoff)
                 t(
                     "waitpid",
-                    vec![ArgMatcher::Int(1003), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    vec![
+                        ArgMatcher::Int(1003),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
                     TraceResult::Status(0),
                 ),
             ],
@@ -2291,7 +2474,9 @@ mod tests {
                     Some(11),
                     vec![fake_handle(1001)],
                 );
-                shell.continue_job(id).expect("continue pgid job");
+                let idx = shell.jobs.iter().position(|j| j.id == id).unwrap();
+                shell.jobs[idx].state = JobState::Stopped(sys::SIGTSTP);
+                shell.continue_job(id, false).expect("continue pgid job");
                 shell.jobs.clear();
             },
         );
@@ -2308,7 +2493,11 @@ mod tests {
                 ),
                 t(
                     "waitpid",
-                    vec![ArgMatcher::Int(2001), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    vec![
+                        ArgMatcher::Int(2001),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
                     TraceResult::Err(sys::EINTR),
                 ),
             ],
@@ -2337,17 +2526,29 @@ mod tests {
             vec![
                 t(
                     "waitpid",
-                    vec![ArgMatcher::Int(99), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    vec![
+                        ArgMatcher::Int(99),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
                     TraceResult::Err(sys::EINTR),
                 ),
                 t(
                     "waitpid",
-                    vec![ArgMatcher::Int(99), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    vec![
+                        ArgMatcher::Int(99),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
                     TraceResult::Pid(0),
                 ),
                 t(
                     "waitpid",
-                    vec![ArgMatcher::Int(99), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    vec![
+                        ArgMatcher::Int(99),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
                     TraceResult::Status(7),
                 ),
             ],
@@ -2357,7 +2558,7 @@ mod tests {
                     shell
                         .wait_for_child_pid(99, false)
                         .expect("retry after none"),
-                    7
+                    ChildWaitResult::Exited(7)
                 );
             },
         );
@@ -2392,12 +2593,20 @@ mod tests {
             vec![
                 t(
                     "waitpid",
-                    vec![ArgMatcher::Int(2002), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    vec![
+                        ArgMatcher::Int(2002),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
                     TraceResult::Err(sys::ECHILD),
                 ),
                 t(
                     "waitpid",
-                    vec![ArgMatcher::Int(99), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    vec![
+                        ArgMatcher::Int(99),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
                     TraceResult::Err(sys::ECHILD),
                 ),
             ],
@@ -2421,12 +2630,20 @@ mod tests {
                 ),
                 t(
                     "waitpid",
-                    vec![ArgMatcher::Int(2003), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    vec![
+                        ArgMatcher::Int(2003),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
                     TraceResult::Err(sys::EINTR),
                 ),
                 t(
                     "waitpid",
-                    vec![ArgMatcher::Int(2004), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    vec![
+                        ArgMatcher::Int(2004),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
                     TraceResult::Err(sys::ECHILD),
                 ),
             ],
@@ -2463,7 +2680,11 @@ mod tests {
                 ),
                 t(
                     "waitpid",
-                    vec![ArgMatcher::Int(2002), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    vec![
+                        ArgMatcher::Int(2002),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
                     TraceResult::Err(sys::EINTR),
                 ),
             ],
@@ -2488,7 +2709,11 @@ mod tests {
         run_trace(
             vec![t(
                 "waitpid",
-                vec![ArgMatcher::Int(3001), ArgMatcher::Any, ArgMatcher::Int(0)],
+                vec![
+                    ArgMatcher::Int(3001),
+                    ArgMatcher::Any,
+                    ArgMatcher::Int(sys::WUNTRACED as i64),
+                ],
                 TraceResult::Status(42),
             )],
             || {
@@ -2654,5 +2879,20 @@ mod tests {
             let xtrace = reported.iter().find(|(n, _)| *n == "xtrace").unwrap();
             assert!(xtrace.1);
         });
+    }
+
+    #[test]
+    fn try_wait_child_returns_stopped_for_stopped_process() {
+        run_trace(
+            vec![t(
+                "waitpid",
+                vec![ArgMatcher::Int(2222), ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::StoppedSig(sys::SIGTSTP),
+            )],
+            || {
+                let result = try_wait_child(2222).expect("try_wait_child");
+                assert_eq!(result, Some(ChildWaitResult::Stopped(sys::SIGTSTP)));
+            },
+        );
     }
 }

@@ -818,7 +818,7 @@ fn ordinary_builtin_errors_do_not_exit_non_interactive_shells() {
         .expect("run meiksh");
     assert!(fg_output.status.success());
     assert_eq!(String::from_utf8_lossy(&fg_output.stdout), "after");
-    assert!(String::from_utf8_lossy(&fg_output.stderr).contains("fg: no current job"));
+    assert!(String::from_utf8_lossy(&fg_output.stderr).contains("fg: no job control"));
 
     let pwd_output = Command::new(meiksh())
         .args(["-c", "pwd </definitely/missing-input; printf after"])

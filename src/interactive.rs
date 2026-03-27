@@ -12,8 +12,15 @@ pub fn run(shell: &mut Shell) -> Result<i32, ShellError> {
 
 fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
     loop {
-        for (id, status) in shell.reap_jobs() {
-            let msg = format!("[{id}] Done {status}\n");
+        for (id, state) in shell.reap_jobs() {
+            use crate::shell::JobState;
+            let msg = match state {
+                JobState::Done(status) => format!("[{id}] Done {status}\n"),
+                JobState::Stopped(sig) => {
+                    format!("[{id}] Stopped ({})\n", sys::signal_name(sig))
+                }
+                JobState::Running => continue,
+            };
             let _ = sys::write_all_fd(sys::STDERR_FILENO, msg.as_bytes());
         }
 
@@ -835,6 +842,62 @@ mod tests {
                 let mut shell = test_shell();
                 shell.env.insert("HOME".into(), "/home/user".into());
                 append_history(&shell, "echo default\n").expect("default history");
+            },
+        );
+    }
+
+    #[test]
+    fn run_loop_prints_stopped_and_running_reap_notifications() {
+        run_trace(
+            vec![
+                // reap_jobs: job 4010 is stopped
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(4010), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::StoppedSig(sys::SIGTSTP),
+                ),
+                // reap_jobs: job 4011 is still running
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(4011), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Pid(0),
+                ),
+                // Stopped notification written to stderr
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(sys::STDERR_FILENO), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+                // prompt
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDOUT_FILENO),
+                        ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
+                    ],
+                    TraceResult::Int(8),
+                ),
+                // read EOF
+                t(
+                    "read",
+                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                    TraceResult::Bytes(b"".to_vec()),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let handle_stopped = sys::ChildHandle {
+                    pid: 4010,
+                    stdout_fd: None,
+                };
+                shell.register_background_job("vim".into(), None, vec![handle_stopped]);
+                let handle_running = sys::ChildHandle {
+                    pid: 4011,
+                    stdout_fd: None,
+                };
+                shell.register_background_job("sleep 999".into(), None, vec![handle_running]);
+                let status = run_loop(&mut shell).expect("run loop");
+                assert_eq!(status, 0);
             },
         );
     }

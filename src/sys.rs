@@ -37,6 +37,7 @@ pub const SIGTTOU: c_int = libc::SIGTTOU;
 pub const SIGBUS: c_int = libc::SIGBUS;
 pub const SIGSYS: c_int = libc::SIGSYS;
 pub const WNOHANG: c_int = libc::WNOHANG;
+pub const WUNTRACED: c_int = libc::WUNTRACED;
 pub const ENOENT: c_int = libc::ENOENT;
 pub const ENOEXEC: c_int = libc::ENOEXEC;
 pub const EBADF: c_int = libc::EBADF;
@@ -49,10 +50,13 @@ pub const EILSEQ: c_int = libc::EILSEQ;
 pub const EIO: c_int = libc::EIO;
 pub const EISDIR: c_int = libc::EISDIR;
 pub const EINTR: c_int = libc::EINTR;
+pub const ESRCH: c_int = libc::ESRCH;
 
 const SIG_DFL_HANDLER: libc::sighandler_t = libc::SIG_DFL;
 const SIG_IGN_HANDLER: libc::sighandler_t = libc::SIG_IGN;
 const SIG_ERR_HANDLER: libc::sighandler_t = libc::SIG_ERR;
+
+pub const TCSADRAIN: c_int = libc::TCSADRAIN;
 
 pub const O_RDONLY: c_int = libc::O_RDONLY;
 pub const O_WRONLY: c_int = libc::O_WRONLY;
@@ -167,6 +171,9 @@ pub(crate) struct SystemInterface {
     unsetenv: fn(&str) -> SysResult<()>,
     getenv: fn(&str) -> Option<String>,
     get_environ: fn() -> HashMap<String, String>,
+    // Terminal attributes
+    tcgetattr: fn(c_int, *mut libc::termios) -> c_int,
+    tcsetattr: fn(c_int, c_int, *const libc::termios) -> c_int,
     // User database
     getpwnam: fn(&str) -> Option<String>,
 }
@@ -257,6 +264,8 @@ pub(crate) fn default_interface() -> SystemInterface {
             }
             map
         },
+        tcgetattr: |fd, termios_p| unsafe { libc::tcgetattr(fd, termios_p) },
+        tcsetattr: |fd, action, termios_p| unsafe { libc::tcsetattr(fd, action, termios_p) },
         getpwnam: |name| {
             let c_name = CString::new(name).ok()?;
             let pw = unsafe { libc::getpwnam(c_name.as_ptr()) };
@@ -417,6 +426,7 @@ pub(crate) mod test_support {
         Bytes(Vec<u8>),
         Err(c_int),
         Status(i32),
+        StoppedSig(i32),
         Fds(c_int, c_int),
         Void,
         CwdStr(String),
@@ -550,11 +560,20 @@ pub(crate) mod test_support {
             ],
         );
         if !status.is_null() {
-            if let TraceResult::Status(s) = entry.result {
-                unsafe {
-                    *status = s << 8;
+            match entry.result {
+                TraceResult::Status(s) => {
+                    unsafe {
+                        *status = s << 8;
+                    }
+                    return pid;
                 }
-                return pid;
+                TraceResult::StoppedSig(sig) => {
+                    unsafe {
+                        *status = (sig << 8) | 0x7f;
+                    }
+                    return pid;
+                }
+                _ => {}
             }
         }
         apply_trace_result_pid(&entry)
@@ -977,6 +996,17 @@ pub(crate) mod test_support {
             other => panic!("getpwnam trace: unexpected result {other:?}"),
         }
     }
+    fn trace_tcgetattr(_fd: c_int, _termios_p: *mut libc::termios) -> c_int {
+        let entry = trace_dispatch("tcgetattr", &[ArgMatcher::Fd(_fd)]);
+        apply_trace_result_int(&entry)
+    }
+    fn trace_tcsetattr(_fd: c_int, _action: c_int, _termios_p: *const libc::termios) -> c_int {
+        let entry = trace_dispatch(
+            "tcsetattr",
+            &[ArgMatcher::Fd(_fd), ArgMatcher::Int(_action as i64)],
+        );
+        apply_trace_result_int(&entry)
+    }
 
     #[allow(dead_code)]
     pub(crate) struct ChildExitPanic(pub i32);
@@ -1018,6 +1048,8 @@ pub(crate) mod test_support {
             unsetenv: trace_unsetenv,
             getenv: trace_getenv,
             get_environ: trace_get_environ,
+            tcgetattr: trace_tcgetattr,
+            tcsetattr: trace_tcsetattr,
             getpwnam: trace_getpwnam,
         }
     }
@@ -1128,6 +1160,12 @@ pub(crate) mod test_support {
         fn panic_get_environ() -> HashMap<String, String> {
             panic!("unexpected call 'get_environ' in pure-logic test")
         }
+        fn panic_tcgetattr(_: c_int, _: *mut libc::termios) -> c_int {
+            panic!("unexpected syscall 'tcgetattr' in pure-logic test")
+        }
+        fn panic_tcsetattr(_: c_int, _: c_int, _: *const libc::termios) -> c_int {
+            panic!("unexpected syscall 'tcsetattr' in pure-logic test")
+        }
         fn panic_getpwnam(_: &str) -> Option<String> {
             panic!("unexpected call 'getpwnam' in pure-logic test")
         }
@@ -1168,6 +1206,8 @@ pub(crate) mod test_support {
             unsetenv: panic_unsetenv,
             getenv: panic_getenv,
             get_environ: panic_get_environ,
+            tcgetattr: panic_tcgetattr,
+            tcsetattr: panic_tcsetattr,
             getpwnam: panic_getpwnam,
         }
     }
@@ -1414,6 +1454,25 @@ pub fn wait_pid(pid: Pid, nohang: bool) -> SysResult<Option<WaitStatus>> {
     }
 }
 
+pub fn wait_pid_untraced(pid: Pid, nohang: bool) -> SysResult<Option<WaitStatus>> {
+    let mut status = 0;
+    let mut options = WUNTRACED;
+    if nohang {
+        options |= WNOHANG;
+    }
+    let result = (sys_interface().waitpid)(pid, &mut status, options);
+    if result > 0 {
+        Ok(Some(WaitStatus {
+            pid: result,
+            status,
+        }))
+    } else if result == 0 {
+        Ok(None)
+    } else {
+        Err(last_error())
+    }
+}
+
 pub fn send_signal(pid: Pid, signal: c_int) -> SysResult<()> {
     let result = (sys_interface().kill)(pid, signal);
     if result == 0 {
@@ -1519,6 +1578,25 @@ pub fn set_foreground_pgrp(fd: c_int, pgrp: Pid) -> SysResult<()> {
 
 pub fn set_process_group(pid: Pid, pgid: Pid) -> SysResult<()> {
     let result = (sys_interface().setpgid)(pid, pgid);
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(last_error())
+    }
+}
+
+pub fn get_terminal_attrs(fd: c_int) -> SysResult<libc::termios> {
+    let mut termios = unsafe { std::mem::zeroed::<libc::termios>() };
+    let result = (sys_interface().tcgetattr)(fd, &mut termios);
+    if result == 0 {
+        Ok(termios)
+    } else {
+        Err(last_error())
+    }
+}
+
+pub fn set_terminal_attrs(fd: c_int, termios: &libc::termios) -> SysResult<()> {
+    let result = (sys_interface().tcsetattr)(fd, TCSADRAIN, termios);
     if result == 0 {
         Ok(())
     } else {
@@ -2044,6 +2122,57 @@ pub fn format_signal_exit(status: c_int) -> Option<String> {
     }
 }
 
+pub fn signal_name(sig: c_int) -> &'static str {
+    match sig {
+        SIGHUP => "SIGHUP",
+        SIGINT => "SIGINT",
+        SIGQUIT => "SIGQUIT",
+        SIGILL => "SIGILL",
+        SIGABRT => "SIGABRT",
+        SIGFPE => "SIGFPE",
+        SIGKILL => "SIGKILL",
+        SIGBUS => "SIGBUS",
+        SIGUSR1 => "SIGUSR1",
+        SIGSEGV => "SIGSEGV",
+        SIGUSR2 => "SIGUSR2",
+        SIGPIPE => "SIGPIPE",
+        SIGALRM => "SIGALRM",
+        SIGTERM => "SIGTERM",
+        SIGCHLD => "SIGCHLD",
+        SIGCONT => "SIGCONT",
+        SIGTSTP => "SIGTSTP",
+        SIGTTIN => "SIGTTIN",
+        SIGTTOU => "SIGTTOU",
+        SIGSYS => "SIGSYS",
+        _ => "UNKNOWN",
+    }
+}
+
+pub fn all_signal_names() -> &'static [(&'static str, c_int)] {
+    &[
+        ("HUP", SIGHUP),
+        ("INT", SIGINT),
+        ("QUIT", SIGQUIT),
+        ("ILL", SIGILL),
+        ("ABRT", SIGABRT),
+        ("FPE", SIGFPE),
+        ("KILL", SIGKILL),
+        ("BUS", SIGBUS),
+        ("USR1", SIGUSR1),
+        ("SEGV", SIGSEGV),
+        ("USR2", SIGUSR2),
+        ("PIPE", SIGPIPE),
+        ("ALRM", SIGALRM),
+        ("TERM", SIGTERM),
+        ("CHLD", SIGCHLD),
+        ("CONT", SIGCONT),
+        ("TSTP", SIGTSTP),
+        ("TTIN", SIGTTIN),
+        ("TTOU", SIGTTOU),
+        ("SYS", SIGSYS),
+    ]
+}
+
 fn signal_mask(signal: c_int) -> Option<usize> {
     let bit = match signal {
         SIGHUP => 0,
@@ -2083,6 +2212,14 @@ fn wifsignaled(status: c_int) -> bool {
 
 fn wtermsig(status: c_int) -> i32 {
     status & 0x7f
+}
+
+pub fn wifstopped(status: c_int) -> bool {
+    (status & 0xff) == 0x7f
+}
+
+pub fn wstopsig(status: c_int) -> i32 {
+    (status >> 8) & 0xff
 }
 
 pub fn shell_name_from_args(args: &[String]) -> &str {
