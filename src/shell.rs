@@ -984,6 +984,10 @@ impl expand::Context for Shell {
             message: err.message,
         })
     }
+
+    fn home_dir_for_user(&self, name: &str) -> Option<String> {
+        sys::home_dir_for_user(name)
+    }
 }
 
 fn parse_options(args: &[String]) -> Result<ShellOptions, ShellError> {

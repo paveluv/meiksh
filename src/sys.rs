@@ -154,6 +154,8 @@ pub(crate) struct SystemInterface {
     unsetenv: fn(&str) -> SysResult<()>,
     getenv: fn(&str) -> Option<String>,
     get_environ: fn() -> HashMap<String, String>,
+    // User database
+    getpwnam: fn(&str) -> Option<String>,
 }
 
 pub(crate) fn default_interface() -> SystemInterface {
@@ -241,6 +243,15 @@ pub(crate) fn default_interface() -> SystemInterface {
                 }
             }
             map
+        },
+        getpwnam: |name| {
+            let c_name = CString::new(name).ok()?;
+            let pw = unsafe { libc::getpwnam(c_name.as_ptr()) };
+            if pw.is_null() {
+                return None;
+            }
+            let dir = unsafe { CStr::from_ptr((*pw).pw_dir) };
+            Some(dir.to_string_lossy().into_owned())
         },
     }
 }
@@ -945,6 +956,15 @@ pub(crate) mod test_support {
         }
     }
 
+    fn trace_getpwnam(name: &str) -> Option<String> {
+        let entry = trace_dispatch("getpwnam", &[ArgMatcher::Str(name.to_string())]);
+        match entry.result {
+            TraceResult::Str(s) => Some(s),
+            TraceResult::NullStr => None,
+            other => panic!("getpwnam trace: unexpected result {other:?}"),
+        }
+    }
+
     #[allow(dead_code)]
     pub(crate) struct ChildExitPanic(pub i32);
 
@@ -985,6 +1005,7 @@ pub(crate) mod test_support {
             unsetenv: trace_unsetenv,
             getenv: trace_getenv,
             get_environ: trace_get_environ,
+            getpwnam: trace_getpwnam,
         }
     }
 
@@ -1094,6 +1115,9 @@ pub(crate) mod test_support {
         fn panic_get_environ() -> HashMap<String, String> {
             panic!("unexpected call 'get_environ' in pure-logic test")
         }
+        fn panic_getpwnam(_: &str) -> Option<String> {
+            panic!("unexpected call 'getpwnam' in pure-logic test")
+        }
 
         SystemInterface {
             getpid: panic_getpid,
@@ -1131,6 +1155,7 @@ pub(crate) mod test_support {
             unsetenv: panic_unsetenv,
             getenv: panic_getenv,
             get_environ: panic_get_environ,
+            getpwnam: panic_getpwnam,
         }
     }
 
@@ -2047,6 +2072,10 @@ pub fn env_var(key: &str) -> Option<String> {
 
 pub fn env_vars() -> HashMap<String, String> {
     (sys_interface().get_environ)()
+}
+
+pub fn home_dir_for_user(name: &str) -> Option<String> {
+    (sys_interface().getpwnam)(name)
 }
 
 #[allow(clippy::disallowed_methods)]

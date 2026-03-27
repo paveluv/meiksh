@@ -1591,3 +1591,179 @@ fn dollar_dash_includes_new_option_flags() {
         "expected 'e' in $- output, got: {stdout}"
     );
 }
+
+#[test]
+fn dquote_backslash_preserves_non_special() {
+    let output = Command::new(meiksh())
+        .args(["-c", r#"printf '%s\n' "\a\z""#])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), r"\a\z");
+}
+
+#[test]
+fn dquote_backslash_escapes_dollar_and_backslash() {
+    let output = Command::new(meiksh())
+        .args(["-c", r#"echo "\$HOME""#])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "$HOME");
+
+    let output = Command::new(meiksh())
+        .args(["-c", r#"echo "\\""#])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "\\");
+}
+
+#[test]
+fn arithmetic_expansion_full_operators() {
+    let cases: &[(&str, &str)] = &[
+        ("echo $((3 + 4))", "7"),
+        ("echo $((10 - 3))", "7"),
+        ("echo $((3 * 4))", "12"),
+        ("echo $((15 / 3))", "5"),
+        ("echo $((17 % 5))", "2"),
+        ("echo $((3 < 5))", "1"),
+        ("echo $((5 < 3))", "0"),
+        ("echo $((3 == 3))", "1"),
+        ("echo $((3 != 5))", "1"),
+        ("echo $((6 & 3))", "2"),
+        ("echo $((6 | 3))", "7"),
+        ("echo $((6 ^ 3))", "5"),
+        ("echo $((~0))", "-1"),
+        ("echo $((1 << 4))", "16"),
+        ("echo $((16 >> 2))", "4"),
+        ("echo $((1 && 1))", "1"),
+        ("echo $((0 || 1))", "1"),
+        ("echo $((!0))", "1"),
+        ("echo $((1 ? 10 : 20))", "10"),
+        ("echo $((0 ? 10 : 20))", "20"),
+    ];
+    for (cmd, expected) in cases {
+        let output = Command::new(meiksh())
+            .args(["-c", cmd])
+            .output()
+            .expect("run meiksh");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.trim(), *expected, "failed for: {cmd}");
+    }
+}
+
+#[test]
+fn arithmetic_variable_references() {
+    let output = Command::new(meiksh())
+        .args(["-c", "x=7; echo $((x + 3))"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "10");
+
+    let output = Command::new(meiksh())
+        .args(["-c", "x=5; echo $(($x * 2))"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "10");
+}
+
+#[test]
+fn arithmetic_hex_and_octal() {
+    let output = Command::new(meiksh())
+        .args(["-c", "echo $((0xff))"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "255");
+
+    let output = Command::new(meiksh())
+        .args(["-c", "echo $((010))"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "8");
+}
+
+#[test]
+fn arithmetic_assignment_persists() {
+    let output = Command::new(meiksh())
+        .args(["-c", "x=1; y=$((x += 5)); echo $x $y"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "6 6");
+}
+
+#[test]
+fn tilde_home_expansion() {
+    let output = Command::new(meiksh())
+        .args(["-c", "echo ~/test"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.trim().starts_with('~'),
+        "tilde should have been expanded, got: {stdout}"
+    );
+    assert!(
+        stdout.trim().ends_with("/test"),
+        "should end with /test, got: {stdout}"
+    );
+}
+
+#[test]
+fn tilde_user_expansion_via_getpwnam() {
+    let user = std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .unwrap();
+    let output = Command::new(meiksh())
+        .args(["-c", &format!("echo ~{user}")])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let trimmed = stdout.trim();
+    assert!(
+        !trimmed.starts_with('~'),
+        "~{user} should have been expanded, got: {trimmed}"
+    );
+    assert!(
+        trimmed.starts_with('/'),
+        "should be an absolute path, got: {trimmed}"
+    );
+}
+
+#[test]
+fn tilde_unknown_user_preserved() {
+    let output = Command::new(meiksh())
+        .args(["-c", "echo ~no_such_user_xyzzy_12345"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "~no_such_user_xyzzy_12345");
+}
+
+#[test]
+fn tilde_in_assignment_after_colon() {
+    let output = Command::new(meiksh())
+        .args(["-c", "MYPATH=~/bin:~/lib; echo $MYPATH"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let trimmed = stdout.trim();
+    assert!(
+        !trimmed.contains('~'),
+        "tildes should have been expanded, got: {trimmed}"
+    );
+    assert!(
+        trimmed.contains(':'),
+        "should have colon separator, got: {trimmed}"
+    );
+}

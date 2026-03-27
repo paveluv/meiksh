@@ -29,6 +29,7 @@ pub trait Context {
     }
     fn shell_name(&self) -> &str;
     fn command_substitute(&mut self, command: &str) -> Result<String, ExpandError>;
+    fn home_dir_for_user(&self, name: &str) -> Option<String>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -131,8 +132,94 @@ fn expand_word_with_at_fields(expanded: &ExpandedWord) -> Result<Vec<String>, Ex
 }
 
 pub fn expand_word_text<C: Context>(ctx: &mut C, word: &Word) -> Result<String, ExpandError> {
-    let expanded = expand_raw(ctx, &word.raw)?;
-    Ok(flatten_segments(&expanded.segments))
+    expand_word_text_assignment(ctx, word, false)
+}
+
+pub fn expand_assignment_value<C: Context>(
+    ctx: &mut C,
+    word: &Word,
+) -> Result<String, ExpandError> {
+    expand_word_text_assignment(ctx, word, true)
+}
+
+fn expand_word_text_assignment<C: Context>(
+    ctx: &mut C,
+    word: &Word,
+    assignment_rhs: bool,
+) -> Result<String, ExpandError> {
+    if !assignment_rhs {
+        let expanded = expand_raw(ctx, &word.raw)?;
+        return Ok(flatten_segments(&expanded.segments));
+    }
+    let raw = &word.raw;
+    let mut result = String::new();
+    let mut first = true;
+    for part in split_on_unquoted_colons(raw) {
+        if !first {
+            result.push(':');
+        }
+        first = false;
+        let expanded = expand_raw(ctx, &part)?;
+        result.push_str(&flatten_segments(&expanded.segments));
+    }
+    Ok(result)
+}
+
+fn split_on_unquoted_colons(raw: &str) -> Vec<String> {
+    let chars: Vec<char> = raw.chars().collect();
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '\'' => {
+                current.push(chars[i]);
+                i += 1;
+                while i < chars.len() && chars[i] != '\'' {
+                    current.push(chars[i]);
+                    i += 1;
+                }
+                if i < chars.len() {
+                    current.push(chars[i]);
+                    i += 1;
+                }
+            }
+            '"' => {
+                current.push(chars[i]);
+                i += 1;
+                while i < chars.len() && chars[i] != '"' {
+                    if chars[i] == '\\' && i + 1 < chars.len() {
+                        current.push(chars[i]);
+                        i += 1;
+                    }
+                    current.push(chars[i]);
+                    i += 1;
+                }
+                if i < chars.len() {
+                    current.push(chars[i]);
+                    i += 1;
+                }
+            }
+            '\\' => {
+                current.push(chars[i]);
+                i += 1;
+                if i < chars.len() {
+                    current.push(chars[i]);
+                    i += 1;
+                }
+            }
+            ':' => {
+                parts.push(std::mem::take(&mut current));
+                i += 1;
+            }
+            ch => {
+                current.push(ch);
+                i += 1;
+            }
+        }
+    }
+    parts.push(current);
+    parts
 }
 
 pub fn expand_parameter_text<C: Context>(ctx: &mut C, raw: &str) -> Result<String, ExpandError> {
@@ -216,9 +303,20 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
                 while index < chars.len() && chars[index] != '"' {
                     match chars[index] {
                         '\\' => {
-                            index += 1;
-                            if index < chars.len() {
-                                buffer.push(chars[index]);
+                            if index + 1 < chars.len() {
+                                let next = chars[index + 1];
+                                if matches!(next, '$' | '`' | '"' | '\\' | '\n' | '}') {
+                                    index += 1;
+                                    if next != '\n' {
+                                        buffer.push(next);
+                                    }
+                                    index += 1;
+                                } else {
+                                    buffer.push('\\');
+                                    index += 1;
+                                }
+                            } else {
+                                buffer.push('\\');
                                 index += 1;
                             }
                         }
@@ -285,9 +383,30 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
                 push_segment(&mut segments, trimmed, false);
             }
             '~' if index == 0 => {
-                let home = ctx.env_var("HOME").unwrap_or_else(|| "~".to_string());
-                push_segment(&mut segments, home, false);
                 index += 1;
+                let mut user = String::new();
+                while index < chars.len() && chars[index] != '/' {
+                    if chars[index] == '\''
+                        || chars[index] == '"'
+                        || chars[index] == '\\'
+                        || chars[index] == '$'
+                        || chars[index] == '`'
+                    {
+                        break;
+                    }
+                    user.push(chars[index]);
+                    index += 1;
+                }
+                if user.is_empty() {
+                    let home = ctx.env_var("HOME").unwrap_or_else(|| "~".to_string());
+                    push_segment(&mut segments, home, true);
+                } else if let Some(dir) = ctx.home_dir_for_user(&user) {
+                    push_segment(&mut segments, dir, true);
+                } else {
+                    let mut literal = String::from('~');
+                    literal.push_str(&user);
+                    push_segment(&mut segments, literal, false);
+                }
             }
             ch => {
                 push_segment(&mut segments, ch.to_string(), false);
@@ -410,7 +529,8 @@ fn expand_dollar<C: Context>(
                         depth += 1;
                     } else if ch == ')' {
                         if depth == 1 && chars.get(index + 1) == Some(&')') {
-                            let value = eval_arithmetic(&expression)?;
+                            let pre_expanded = expand_arithmetic_expression(ctx, &expression)?;
+                            let value = eval_arithmetic(ctx, &pre_expanded)?;
                             return Ok((Expansion::One(value.to_string()), index + 2));
                         }
                         depth = depth.saturating_sub(1);
@@ -1421,9 +1541,39 @@ fn is_name(name: &str) -> bool {
         && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
 }
 
-fn eval_arithmetic(expression: &str) -> Result<i64, ExpandError> {
-    let mut parser = ArithmeticParser::new(expression);
-    let value = parser.parse_expression()?;
+fn expand_arithmetic_expression<C: Context>(
+    ctx: &mut C,
+    expression: &str,
+) -> Result<String, ExpandError> {
+    let chars: Vec<char> = expression.chars().collect();
+    let mut result = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '$' {
+            let (expansion, consumed) = expand_dollar(ctx, &chars[i..], true)?;
+            match expansion {
+                Expansion::One(s) => result.push_str(&s),
+                Expansion::AtFields(fields) => {
+                    result.push_str(&fields.join(" "));
+                }
+            }
+            i += consumed;
+        } else if chars[i] == '`' {
+            i += 1;
+            let command = scan_backtick_command(&chars, &mut i, true)?;
+            let output = ctx.command_substitute(&command)?;
+            result.push_str(output.trim_end_matches('\n'));
+        } else {
+            result.push(chars[i]);
+            i += 1;
+        }
+    }
+    Ok(result)
+}
+
+fn eval_arithmetic<C: Context>(ctx: &mut C, expression: &str) -> Result<i64, ExpandError> {
+    let mut parser = ArithmeticParser::new(ctx, expression);
+    let value = parser.parse_assignment()?;
     parser.skip_ws();
     if !parser.is_eof() {
         return Err(ExpandError {
@@ -1433,33 +1583,229 @@ fn eval_arithmetic(expression: &str) -> Result<i64, ExpandError> {
     Ok(value)
 }
 
-struct ArithmeticParser<'a> {
+struct ArithmeticParser<'a, C> {
     chars: Vec<char>,
     index: usize,
-    _raw: &'a str,
+    ctx: &'a mut C,
 }
 
-impl<'a> ArithmeticParser<'a> {
-    fn new(raw: &'a str) -> Self {
+fn arith_err(msg: &str) -> ExpandError {
+    ExpandError {
+        message: msg.to_string(),
+    }
+}
+
+impl<'a, C: Context> ArithmeticParser<'a, C> {
+    fn new(ctx: &'a mut C, raw: &str) -> Self {
         Self {
             chars: raw.chars().collect(),
             index: 0,
-            _raw: raw,
+            ctx,
         }
     }
 
-    fn parse_expression(&mut self) -> Result<i64, ExpandError> {
-        self.parse_additive()
+    fn parse_assignment(&mut self) -> Result<i64, ExpandError> {
+        self.skip_ws();
+        let save = self.index;
+        if let Some(name) = self.try_scan_name() {
+            self.skip_ws();
+            if let Some(op) = self.try_consume_assign_op() {
+                let rhs = self.parse_assignment()?;
+                let value = if op == "=" {
+                    rhs
+                } else {
+                    let lhs = self.resolve_var(&name)?;
+                    apply_compound_assign(&op, lhs, rhs)?
+                };
+                self.ctx
+                    .set_var(&name, value.to_string())
+                    .map_err(|e| arith_err(&e.message))?;
+                return Ok(value);
+            }
+            self.index = save;
+        }
+        self.parse_ternary()
+    }
+
+    fn try_consume_assign_op(&mut self) -> Option<String> {
+        let remaining: String = self.chars[self.index..].iter().collect();
+        for op in &[
+            "<<=", ">>=", "&=", "^=", "|=", "*=", "/=", "%=", "+=", "-=", "=",
+        ] {
+            if remaining.starts_with(op) {
+                if *op == "=" && remaining.starts_with("==") {
+                    return None;
+                }
+                self.index += op.len();
+                return Some(op.to_string());
+            }
+        }
+        None
+    }
+
+    fn parse_ternary(&mut self) -> Result<i64, ExpandError> {
+        let cond = self.parse_logical_or()?;
+        self.skip_ws();
+        if self.consume('?') {
+            let then_val = self.parse_assignment()?;
+            self.skip_ws();
+            if !self.consume(':') {
+                return Err(arith_err("expected ':' in ternary expression"));
+            }
+            let else_val = self.parse_assignment()?;
+            Ok(if cond != 0 { then_val } else { else_val })
+        } else {
+            Ok(cond)
+        }
+    }
+
+    fn parse_logical_or(&mut self) -> Result<i64, ExpandError> {
+        let mut value = self.parse_logical_and()?;
+        loop {
+            self.skip_ws();
+            if self.consume_str("||") {
+                let rhs = self.parse_logical_and()?;
+                value = i64::from(value != 0 || rhs != 0);
+            } else {
+                break;
+            }
+        }
+        Ok(value)
+    }
+
+    fn parse_logical_and(&mut self) -> Result<i64, ExpandError> {
+        let mut value = self.parse_bitwise_or()?;
+        loop {
+            self.skip_ws();
+            if self.consume_str("&&") {
+                let rhs = self.parse_bitwise_or()?;
+                value = i64::from(value != 0 && rhs != 0);
+            } else {
+                break;
+            }
+        }
+        Ok(value)
+    }
+
+    fn parse_bitwise_or(&mut self) -> Result<i64, ExpandError> {
+        let mut value = self.parse_bitwise_xor()?;
+        loop {
+            self.skip_ws();
+            if self.peek() == Some('|')
+                && self.peek_at(1) != Some('|')
+                && self.peek_at(1) != Some('=')
+            {
+                self.index += 1;
+                value |= self.parse_bitwise_xor()?;
+            } else {
+                break;
+            }
+        }
+        Ok(value)
+    }
+
+    fn parse_bitwise_xor(&mut self) -> Result<i64, ExpandError> {
+        let mut value = self.parse_bitwise_and()?;
+        loop {
+            self.skip_ws();
+            if self.peek() == Some('^') && self.peek_at(1) != Some('=') {
+                self.index += 1;
+                value ^= self.parse_bitwise_and()?;
+            } else {
+                break;
+            }
+        }
+        Ok(value)
+    }
+
+    fn parse_bitwise_and(&mut self) -> Result<i64, ExpandError> {
+        let mut value = self.parse_equality()?;
+        loop {
+            self.skip_ws();
+            if self.peek() == Some('&')
+                && self.peek_at(1) != Some('&')
+                && self.peek_at(1) != Some('=')
+            {
+                self.index += 1;
+                value &= self.parse_equality()?;
+            } else {
+                break;
+            }
+        }
+        Ok(value)
+    }
+
+    fn parse_equality(&mut self) -> Result<i64, ExpandError> {
+        let mut value = self.parse_relational()?;
+        loop {
+            self.skip_ws();
+            if self.consume_str("==") {
+                value = i64::from(value == self.parse_relational()?);
+            } else if self.consume_str("!=") {
+                value = i64::from(value != self.parse_relational()?);
+            } else {
+                break;
+            }
+        }
+        Ok(value)
+    }
+
+    fn parse_relational(&mut self) -> Result<i64, ExpandError> {
+        let mut value = self.parse_shift()?;
+        loop {
+            self.skip_ws();
+            if self.consume_str("<=") {
+                value = i64::from(value <= self.parse_shift()?);
+            } else if self.consume_str(">=") {
+                value = i64::from(value >= self.parse_shift()?);
+            } else if self.peek() == Some('<') && self.peek_at(1) != Some('<') {
+                self.index += 1;
+                value = i64::from(value < self.parse_shift()?);
+            } else if self.peek() == Some('>') && self.peek_at(1) != Some('>') {
+                self.index += 1;
+                value = i64::from(value > self.parse_shift()?);
+            } else {
+                break;
+            }
+        }
+        Ok(value)
+    }
+
+    fn parse_shift(&mut self) -> Result<i64, ExpandError> {
+        let mut value = self.parse_additive()?;
+        loop {
+            self.skip_ws();
+            if self.peek() == Some('<')
+                && self.peek_at(1) == Some('<')
+                && self.peek_at(2) != Some('=')
+            {
+                self.index += 2;
+                let rhs = self.parse_additive()?;
+                value = value.wrapping_shl(rhs as u32);
+            } else if self.peek() == Some('>')
+                && self.peek_at(1) == Some('>')
+                && self.peek_at(2) != Some('=')
+            {
+                self.index += 2;
+                let rhs = self.parse_additive()?;
+                value = value.wrapping_shr(rhs as u32);
+            } else {
+                break;
+            }
+        }
+        Ok(value)
     }
 
     fn parse_additive(&mut self) -> Result<i64, ExpandError> {
         let mut value = self.parse_multiplicative()?;
         loop {
             self.skip_ws();
-            if self.consume('+') {
-                value += self.parse_multiplicative()?;
-            } else if self.consume('-') {
-                value -= self.parse_multiplicative()?;
+            if self.peek() == Some('+') && self.peek_at(1) != Some('=') {
+                self.index += 1;
+                value = value.wrapping_add(self.parse_multiplicative()?);
+            } else if self.peek() == Some('-') && self.peek_at(1) != Some('=') {
+                self.index += 1;
+                value = value.wrapping_sub(self.parse_multiplicative()?);
             } else {
                 break;
             }
@@ -1468,25 +1814,24 @@ impl<'a> ArithmeticParser<'a> {
     }
 
     fn parse_multiplicative(&mut self) -> Result<i64, ExpandError> {
-        let mut value = self.parse_primary()?;
+        let mut value = self.parse_unary()?;
         loop {
             self.skip_ws();
-            if self.consume('*') {
-                value *= self.parse_primary()?;
-            } else if self.consume('/') {
-                let rhs = self.parse_primary()?;
+            if self.peek() == Some('*') && self.peek_at(1) != Some('=') {
+                self.index += 1;
+                value = value.wrapping_mul(self.parse_unary()?);
+            } else if self.peek() == Some('/') && self.peek_at(1) != Some('=') {
+                self.index += 1;
+                let rhs = self.parse_unary()?;
                 if rhs == 0 {
-                    return Err(ExpandError {
-                        message: "division by zero".to_string(),
-                    });
+                    return Err(arith_err("division by zero"));
                 }
                 value /= rhs;
-            } else if self.consume('%') {
-                let rhs = self.parse_primary()?;
+            } else if self.peek() == Some('%') && self.peek_at(1) != Some('=') {
+                self.index += 1;
+                let rhs = self.parse_unary()?;
                 if rhs == 0 {
-                    return Err(ExpandError {
-                        message: "division by zero".to_string(),
-                    });
+                    return Err(arith_err("division by zero"));
                 }
                 value %= rhs;
             } else {
@@ -1496,39 +1841,122 @@ impl<'a> ArithmeticParser<'a> {
         Ok(value)
     }
 
+    fn parse_unary(&mut self) -> Result<i64, ExpandError> {
+        self.skip_ws();
+        if self.consume('+') {
+            return self.parse_unary();
+        }
+        if self.consume('-') {
+            return Ok(self.parse_unary()?.wrapping_neg());
+        }
+        if self.consume('~') {
+            return Ok(!self.parse_unary()?);
+        }
+        if self.peek() == Some('!') && self.peek_at(1) != Some('=') {
+            self.index += 1;
+            return Ok(i64::from(self.parse_unary()? == 0));
+        }
+        self.parse_primary()
+    }
+
     fn parse_primary(&mut self) -> Result<i64, ExpandError> {
         self.skip_ws();
         if self.consume('(') {
-            let value = self.parse_expression()?;
+            let value = self.parse_assignment()?;
             self.skip_ws();
             if !self.consume(')') {
-                return Err(ExpandError {
-                    message: "missing ')'".to_string(),
-                });
+                return Err(arith_err("missing ')'"));
             }
             return Ok(value);
         }
-        if self.consume('-') {
-            return Ok(-self.parse_primary()?);
+
+        if let Some(name) = self.try_scan_name() {
+            return self.resolve_var(&name);
         }
 
+        self.parse_number()
+    }
+
+    fn parse_number(&mut self) -> Result<i64, ExpandError> {
+        self.skip_ws();
         let start = self.index;
+        if self.peek() == Some('0') {
+            self.index += 1;
+            if self.peek() == Some('x') || self.peek() == Some('X') {
+                self.index += 1;
+                let hex_start = self.index;
+                while self.index < self.chars.len() && self.chars[self.index].is_ascii_hexdigit() {
+                    self.index += 1;
+                }
+                if self.index == hex_start {
+                    return Err(arith_err("invalid hex constant"));
+                }
+                let hex_str: String = self.chars[hex_start..self.index].iter().collect();
+                return i64::from_str_radix(&hex_str, 16)
+                    .map_err(|_| arith_err("invalid hex constant"));
+            }
+            if self.peek().map_or(false, |c| c.is_ascii_digit()) {
+                while self.index < self.chars.len() && self.chars[self.index].is_ascii_digit() {
+                    self.index += 1;
+                }
+                let oct_str: String = self.chars[start + 1..self.index].iter().collect();
+                return i64::from_str_radix(&oct_str, 8)
+                    .map_err(|_| arith_err("invalid octal constant"));
+            }
+            return Ok(0);
+        }
+
         while self.index < self.chars.len() && self.chars[self.index].is_ascii_digit() {
             self.index += 1;
         }
         if start == self.index {
-            return Err(ExpandError {
-                message: "expected arithmetic operand".to_string(),
-            });
+            return Err(arith_err("expected arithmetic operand"));
         }
-        let value = self.chars[start..self.index]
+        self.chars[start..self.index]
             .iter()
             .collect::<String>()
             .parse::<i64>()
-            .map_err(|_| ExpandError {
-                message: "invalid arithmetic operand".to_string(),
-            })?;
-        Ok(value)
+            .map_err(|_| arith_err("invalid arithmetic operand"))
+    }
+
+    fn try_scan_name(&mut self) -> Option<String> {
+        self.skip_ws();
+        let start = self.index;
+        if self.index < self.chars.len()
+            && (self.chars[self.index].is_ascii_alphabetic() || self.chars[self.index] == '_')
+        {
+            self.index += 1;
+            while self.index < self.chars.len()
+                && (self.chars[self.index].is_ascii_alphanumeric() || self.chars[self.index] == '_')
+            {
+                self.index += 1;
+            }
+            Some(self.chars[start..self.index].iter().collect())
+        } else {
+            None
+        }
+    }
+
+    fn resolve_var(&mut self, name: &str) -> Result<i64, ExpandError> {
+        let val_str = self.ctx.env_var(name).unwrap_or_default();
+        if val_str.is_empty() {
+            return Ok(0);
+        }
+        let trimmed = val_str.trim();
+        if trimmed.starts_with("0x") || trimmed.starts_with("0X") {
+            i64::from_str_radix(&trimmed[2..], 16)
+                .map_err(|_| arith_err(&format!("invalid variable value for '{name}'")))
+        } else if trimmed.starts_with('0')
+            && trimmed.len() > 1
+            && trimmed[1..].chars().all(|c| c.is_ascii_digit())
+        {
+            i64::from_str_radix(&trimmed[1..], 8)
+                .map_err(|_| arith_err(&format!("invalid variable value for '{name}'")))
+        } else {
+            trimmed
+                .parse::<i64>()
+                .map_err(|_| arith_err(&format!("invalid variable value for '{name}'")))
+        }
     }
 
     fn skip_ws(&mut self) {
@@ -1546,8 +1974,54 @@ impl<'a> ArithmeticParser<'a> {
         }
     }
 
+    fn consume_str(&mut self, s: &str) -> bool {
+        let s_chars: Vec<char> = s.chars().collect();
+        if self.index + s_chars.len() <= self.chars.len()
+            && self.chars[self.index..self.index + s_chars.len()] == s_chars[..]
+        {
+            self.index += s_chars.len();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn peek(&self) -> Option<char> {
+        self.chars.get(self.index).copied()
+    }
+
+    fn peek_at(&self, offset: usize) -> Option<char> {
+        self.chars.get(self.index + offset).copied()
+    }
+
     fn is_eof(&self) -> bool {
         self.index >= self.chars.len()
+    }
+}
+
+fn apply_compound_assign(op: &str, lhs: i64, rhs: i64) -> Result<i64, ExpandError> {
+    match op {
+        "+=" => Ok(lhs.wrapping_add(rhs)),
+        "-=" => Ok(lhs.wrapping_sub(rhs)),
+        "*=" => Ok(lhs.wrapping_mul(rhs)),
+        "/=" => {
+            if rhs == 0 {
+                return Err(arith_err("division by zero"));
+            }
+            Ok(lhs / rhs)
+        }
+        "%=" => {
+            if rhs == 0 {
+                return Err(arith_err("division by zero"));
+            }
+            Ok(lhs % rhs)
+        }
+        "<<=" => Ok(lhs.wrapping_shl(rhs as u32)),
+        ">>=" => Ok(lhs.wrapping_shr(rhs as u32)),
+        "&=" => Ok(lhs & rhs),
+        "^=" => Ok(lhs ^ rhs),
+        "|=" => Ok(lhs | rhs),
+        _ => Err(arith_err(&format!("unknown assignment operator '{op}'"))),
     }
 }
 
@@ -1629,6 +2103,13 @@ mod tests {
 
         fn command_substitute(&mut self, command: &str) -> Result<String, ExpandError> {
             Ok(format!("{command}\n"))
+        }
+
+        fn home_dir_for_user(&self, name: &str) -> Option<String> {
+            match name {
+                "testuser" => Some("/home/testuser".to_string()),
+                _ => None,
+            }
         }
     }
 
@@ -2210,10 +2691,11 @@ mod tests {
         assert_eq!(flatten_segments(&segs), "abc".to_string());
         assert!(pattern_matches("beta", "b*"));
         assert!(!pattern_matches("beta", "a*"));
-        assert_eq!(eval_arithmetic("42").expect("direct eval"), 42);
-        assert!(eval_arithmetic("(1 + 2").is_err());
+        let mut ctx2 = FakeContext::new();
+        assert_eq!(eval_arithmetic(&mut ctx2, "42").expect("direct eval"), 42);
+        assert!(eval_arithmetic(&mut ctx2, "(1 + 2").is_err());
 
-        let mut parser = ArithmeticParser::new("9");
+        let mut parser = ArithmeticParser::new(&mut ctx2, "9");
         parser.index = 99;
         assert!(parser.is_eof());
     }
@@ -2319,6 +2801,10 @@ mod tests {
 
         fn command_substitute(&mut self, command: &str) -> Result<String, ExpandError> {
             Ok(format!("{command}\n"))
+        }
+
+        fn home_dir_for_user(&self, _name: &str) -> Option<String> {
+            None
         }
     }
 
@@ -2807,17 +3293,18 @@ mod tests {
 
     #[test]
     fn arithmetic_parser_covers_more_operators() {
-        assert_eq!(eval_arithmetic("9 - 2 - 1").expect("subtract"), 6);
-        assert_eq!(eval_arithmetic("8 / 2").expect("divide"), 4);
-        assert_eq!(eval_arithmetic("9 % 4").expect("modulo"), 1);
-        assert_eq!(eval_arithmetic("(1 + 2)").expect("parens"), 3);
-        assert_eq!(eval_arithmetic("-5").expect("negation"), -5);
+        let mut ctx = FakeContext::new();
+        assert_eq!(eval_arithmetic(&mut ctx, "9 - 2 - 1").expect("subtract"), 6);
+        assert_eq!(eval_arithmetic(&mut ctx, "8 / 2").expect("divide"), 4);
+        assert_eq!(eval_arithmetic(&mut ctx, "9 % 4").expect("modulo"), 1);
+        assert_eq!(eval_arithmetic(&mut ctx, "(1 + 2)").expect("parens"), 3);
+        assert_eq!(eval_arithmetic(&mut ctx, "-5").expect("negation"), -5);
 
-        let error = eval_arithmetic("5 % 0").expect_err("mod zero");
+        let error = eval_arithmetic(&mut ctx, "5 % 0").expect_err("mod zero");
         assert_eq!(error.message, "division by zero");
 
-        let error =
-            eval_arithmetic("999999999999999999999999999999999999999").expect_err("overflow");
+        let error = eval_arithmetic(&mut ctx, "999999999999999999999999999999999999999")
+            .expect_err("overflow");
         assert_eq!(error.message, "invalid arithmetic operand");
     }
 
@@ -3529,5 +4016,825 @@ mod tests {
             .expect("? success"),
             "val"
         );
+    }
+
+    #[test]
+    fn dquote_backslash_preserves_literal_for_non_special_chars() {
+        let mut ctx = FakeContext::new();
+        let fields = expand_word(
+            &mut ctx,
+            &Word {
+                raw: r#""\a\b\c""#.to_string(),
+            },
+        )
+        .expect("dquote bs");
+        assert_eq!(fields, vec![r"\a\b\c"]);
+    }
+
+    #[test]
+    fn dquote_backslash_escapes_special_chars() {
+        let mut ctx = FakeContext::new();
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: r#""\$""#.into()
+                }
+            )
+            .expect("escape $"),
+            vec!["$"]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: r#""\\""#.into()
+                }
+            )
+            .expect("escape bs"),
+            vec!["\\"]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: r#""\"""#.into()
+                }
+            )
+            .expect("escape dq"),
+            vec!["\""]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "\"\\`\"".into()
+                }
+            )
+            .expect("escape bt"),
+            vec!["`"]
+        );
+    }
+
+    #[test]
+    fn dquote_backslash_newline_is_line_continuation() {
+        let mut ctx = FakeContext::new();
+        let fields = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "\"ab\\\ncd\"".to_string(),
+            },
+        )
+        .expect("line continuation");
+        assert_eq!(fields, vec!["abcd"]);
+    }
+
+    #[test]
+    fn tilde_user_expansion() {
+        let mut ctx = FakeContext::new();
+        let fields = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "~testuser/bin".into(),
+            },
+        )
+        .expect("tilde user");
+        assert_eq!(fields, vec!["/home/testuser/bin"]);
+    }
+
+    #[test]
+    fn tilde_unknown_user_preserved() {
+        let mut ctx = FakeContext::new();
+        let fields = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "~nosuchuser/dir".into(),
+            },
+        )
+        .expect("tilde unknown");
+        assert_eq!(fields, vec!["~nosuchuser/dir"]);
+    }
+
+    #[test]
+    fn tilde_user_without_slash() {
+        let mut ctx = FakeContext::new();
+        let fields = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "~testuser".into(),
+            },
+        )
+        .expect("tilde user no slash");
+        assert_eq!(fields, vec!["/home/testuser"]);
+    }
+
+    #[test]
+    fn tilde_after_colon_in_assignment() {
+        let mut ctx = FakeContext::new();
+        let result = expand_assignment_value(
+            &mut ctx,
+            &Word {
+                raw: "~/bin:~testuser/lib".into(),
+            },
+        )
+        .expect("tilde colon");
+        assert_eq!(result, "/tmp/home/bin:/home/testuser/lib");
+    }
+
+    #[test]
+    fn arith_variable_reference() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert("count".into(), "7".into());
+        let fields = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "$((count + 3))".into(),
+            },
+        )
+        .expect("arith var");
+        assert_eq!(fields, vec!["10"]);
+    }
+
+    #[test]
+    fn arith_dollar_variable_reference() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert("n".into(), "5".into());
+        let fields = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "$(($n * 2))".into(),
+            },
+        )
+        .expect("arith $var");
+        assert_eq!(fields, vec!["10"]);
+    }
+
+    #[test]
+    fn arith_comparison_operators() {
+        let mut ctx = FakeContext::new();
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((3 < 5))".into()
+                }
+            )
+            .unwrap(),
+            vec!["1"]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((5 < 3))".into()
+                }
+            )
+            .unwrap(),
+            vec!["0"]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((3 <= 3))".into()
+                }
+            )
+            .unwrap(),
+            vec!["1"]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((5 > 3))".into()
+                }
+            )
+            .unwrap(),
+            vec!["1"]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((3 >= 5))".into()
+                }
+            )
+            .unwrap(),
+            vec!["0"]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((3 == 3))".into()
+                }
+            )
+            .unwrap(),
+            vec!["1"]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((3 != 5))".into()
+                }
+            )
+            .unwrap(),
+            vec!["1"]
+        );
+    }
+
+    #[test]
+    fn arith_bitwise_operators() {
+        let mut ctx = FakeContext::new();
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((6 & 3))".into()
+                }
+            )
+            .unwrap(),
+            vec!["2"]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((6 | 3))".into()
+                }
+            )
+            .unwrap(),
+            vec!["7"]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((6 ^ 3))".into()
+                }
+            )
+            .unwrap(),
+            vec!["5"]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((~0))".into()
+                }
+            )
+            .unwrap(),
+            vec!["-1"]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((1 << 4))".into()
+                }
+            )
+            .unwrap(),
+            vec!["16"]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((16 >> 2))".into()
+                }
+            )
+            .unwrap(),
+            vec!["4"]
+        );
+    }
+
+    #[test]
+    fn arith_logical_operators() {
+        let mut ctx = FakeContext::new();
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((1 && 1))".into()
+                }
+            )
+            .unwrap(),
+            vec!["1"]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((1 && 0))".into()
+                }
+            )
+            .unwrap(),
+            vec!["0"]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((0 || 1))".into()
+                }
+            )
+            .unwrap(),
+            vec!["1"]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((0 || 0))".into()
+                }
+            )
+            .unwrap(),
+            vec!["0"]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((!0))".into()
+                }
+            )
+            .unwrap(),
+            vec!["1"]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((!5))".into()
+                }
+            )
+            .unwrap(),
+            vec!["0"]
+        );
+    }
+
+    #[test]
+    fn arith_ternary_operator() {
+        let mut ctx = FakeContext::new();
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((1 ? 10 : 20))".into()
+                }
+            )
+            .unwrap(),
+            vec!["10"]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((0 ? 10 : 20))".into()
+                }
+            )
+            .unwrap(),
+            vec!["20"]
+        );
+    }
+
+    #[test]
+    fn arith_assignment_operators() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert("x".into(), "10".into());
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((x = 5))".into()
+                }
+            )
+            .unwrap(),
+            vec!["5"]
+        );
+        assert_eq!(ctx.env.get("x").unwrap(), "5");
+
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((x += 3))".into()
+                }
+            )
+            .unwrap(),
+            vec!["8"]
+        );
+        assert_eq!(ctx.env.get("x").unwrap(), "8");
+
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((x -= 2))".into()
+                }
+            )
+            .unwrap(),
+            vec!["6"]
+        );
+
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((x *= 3))".into()
+                }
+            )
+            .unwrap(),
+            vec!["18"]
+        );
+
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((x /= 6))".into()
+                }
+            )
+            .unwrap(),
+            vec!["3"]
+        );
+
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((x %= 2))".into()
+                }
+            )
+            .unwrap(),
+            vec!["1"]
+        );
+
+        ctx.env.insert("x".into(), "4".into());
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((x <<= 2))".into()
+                }
+            )
+            .unwrap(),
+            vec!["16"]
+        );
+
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((x >>= 1))".into()
+                }
+            )
+            .unwrap(),
+            vec!["8"]
+        );
+
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((x &= 3))".into()
+                }
+            )
+            .unwrap(),
+            vec!["0"]
+        );
+
+        ctx.env.insert("x".into(), "5".into());
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((x |= 2))".into()
+                }
+            )
+            .unwrap(),
+            vec!["7"]
+        );
+
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((x ^= 3))".into()
+                }
+            )
+            .unwrap(),
+            vec!["4"]
+        );
+    }
+
+    #[test]
+    fn arith_hex_and_octal_constants() {
+        let mut ctx = FakeContext::new();
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((0xff))".into()
+                }
+            )
+            .unwrap(),
+            vec!["255"]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((0X1A))".into()
+                }
+            )
+            .unwrap(),
+            vec!["26"]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((010))".into()
+                }
+            )
+            .unwrap(),
+            vec!["8"]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((0))".into()
+                }
+            )
+            .unwrap(),
+            vec!["0"]
+        );
+    }
+
+    #[test]
+    fn arith_unary_plus() {
+        let mut ctx = FakeContext::new();
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((+5))".into()
+                }
+            )
+            .unwrap(),
+            vec!["5"]
+        );
+    }
+
+    #[test]
+    fn arith_unset_variable_is_zero() {
+        let mut ctx = FakeContext::new();
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((nosuch))".into()
+                }
+            )
+            .unwrap(),
+            vec!["0"]
+        );
+    }
+
+    #[test]
+    fn arith_nested_parens_and_precedence() {
+        let mut ctx = FakeContext::new();
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((2 + 3 * 4))".into()
+                }
+            )
+            .unwrap(),
+            vec!["14"]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$(((2 + 3) * 4))".into()
+                }
+            )
+            .unwrap(),
+            vec!["20"]
+        );
+    }
+
+    #[test]
+    fn arith_variable_in_hex_value() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert("h".into(), "0xff".into());
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((h))".into()
+                }
+            )
+            .unwrap(),
+            vec!["255"]
+        );
+    }
+
+    #[test]
+    fn arith_variable_in_octal_value() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert("o".into(), "010".into());
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((o))".into()
+                }
+            )
+            .unwrap(),
+            vec!["8"]
+        );
+    }
+
+    #[test]
+    fn split_colons_handles_quotes_and_backslash() {
+        let parts = split_on_unquoted_colons("'b:c':d");
+        assert_eq!(parts, vec!["'b:c'", "d"]);
+
+        let parts = split_on_unquoted_colons(r#""b:c":d"#);
+        assert_eq!(parts, vec![r#""b:c""#, "d"]);
+
+        let parts = split_on_unquoted_colons(r"a\:b:c");
+        assert_eq!(parts, vec![r"a\:b", "c"]);
+
+        let parts = split_on_unquoted_colons(r#""a\"b":c"#);
+        assert_eq!(parts, vec![r#""a\"b""#, "c"]);
+    }
+
+    #[test]
+    fn dquote_trailing_backslash_is_literal() {
+        let mut ctx = FakeContext::new();
+        let fields = expand_word(
+            &mut ctx,
+            &Word {
+                raw: r#""abc\"#.to_string(),
+            },
+        );
+        assert!(fields.is_err());
+    }
+
+    #[test]
+    fn tilde_with_quoted_char_breaks_tilde_prefix() {
+        let mut ctx = FakeContext::new();
+        let fields = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "~'user'".into(),
+            },
+        )
+        .expect("tilde quoted");
+        assert_eq!(fields, vec!["/tmp/homeuser"]);
+    }
+
+    #[test]
+    fn arith_backtick_in_expression() {
+        let mut ctx = FakeContext::new();
+        let fields = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "$((`7` + 3))".into(),
+            },
+        )
+        .expect("arith backtick");
+        assert_eq!(fields, vec!["10"]);
+    }
+
+    #[test]
+    fn arith_not_equal_via_parse_unary() {
+        let mut ctx = FakeContext::new();
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((3 != 3))".into()
+                }
+            )
+            .unwrap(),
+            vec!["0"]
+        );
+    }
+
+    #[test]
+    fn arith_compound_assign_div_by_zero() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert("x".into(), "5".into());
+        let err = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "$((x /= 0))".into(),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err.message, "division by zero");
+
+        ctx.env.insert("x".into(), "5".into());
+        let err = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "$((x %= 0))".into(),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err.message, "division by zero");
+    }
+
+    #[test]
+    fn tilde_colon_assignment_with_quotes() {
+        let mut ctx = FakeContext::new();
+        let result = expand_assignment_value(
+            &mut ctx,
+            &Word {
+                raw: "~/a:'literal:colon'".into(),
+            },
+        )
+        .expect("colon assign with quotes");
+        assert_eq!(result, "/tmp/home/a:literal:colon");
+    }
+
+    #[test]
+    fn arith_equality_not_confused_with_assignment() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert("x".into(), "5".into());
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((x == 5))".into()
+                }
+            )
+            .unwrap(),
+            vec!["1"]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$((x == 3))".into()
+                }
+            )
+            .unwrap(),
+            vec!["0"]
+        );
+    }
+
+    #[test]
+    fn arith_ternary_missing_colon_error() {
+        let mut ctx = FakeContext::new();
+        let err = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "$((1 ? 2 3))".into(),
+            },
+        )
+        .unwrap_err();
+        assert!(err.message.contains("':'"));
+    }
+
+    #[test]
+    fn arith_invalid_hex_constant() {
+        let mut ctx = FakeContext::new();
+        let err = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "$((0x))".into(),
+            },
+        )
+        .unwrap_err();
+        assert!(err.message.contains("hex"));
+    }
+
+    #[test]
+    fn arith_at_fields_in_expression() {
+        let mut ctx = FakeContext::new();
+        ctx.positional = vec!["3".into()];
+        let fields = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "$(($@ + 2))".into(),
+            },
+        )
+        .expect("at fields arith");
+        assert_eq!(fields, vec!["5"]);
+    }
+
+    #[test]
+    fn apply_compound_assign_unknown_op_returns_error() {
+        let err = apply_compound_assign("??=", 1, 2).unwrap_err();
+        assert!(err.message.contains("unknown"));
     }
 }
