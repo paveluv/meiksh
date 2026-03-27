@@ -1544,7 +1544,7 @@ fn search_path(name: &str, shell: &Shell, use_default_path: bool, predicate: fn(
     } else {
         shell
             .get_var("PATH")
-            .or_else(|| (sys::sys_interface().getenv)("PATH"))
+            .or_else(|| sys::env_var("PATH"))
             .unwrap_or_default()
     };
 

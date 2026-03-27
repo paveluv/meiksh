@@ -146,10 +146,10 @@ pub(crate) struct SystemInterface {
     fork: fn() -> Pid,
     exit_process: fn(c_int),
     // Environment
-    pub(crate) setenv: fn(&str, &str) -> SysResult<()>,
-    pub(crate) unsetenv: fn(&str) -> SysResult<()>,
-    pub(crate) getenv: fn(&str) -> Option<String>,
-    pub(crate) get_environ: fn() -> HashMap<String, String>,
+    setenv: fn(&str, &str) -> SysResult<()>,
+    unsetenv: fn(&str) -> SysResult<()>,
+    getenv: fn(&str) -> Option<String>,
+    get_environ: fn() -> HashMap<String, String>,
 }
 
 pub(crate) fn default_interface() -> SystemInterface {
@@ -235,7 +235,7 @@ extern "C" fn record_signal(sig: c_int) {
     }
 }
 
-pub(crate) fn sys_interface() -> SystemInterface {
+fn sys_interface() -> SystemInterface {
     #[cfg(test)]
     {
         return test_support::current_interface().unwrap_or_else(default_interface);
@@ -1612,7 +1612,7 @@ pub fn spawn_child(
         }
         if let Some(vars) = env_vars {
             for &(key, value) in vars {
-                let _ = (sys_interface().setenv)(key, value);
+                let _ = env_set_var(key, value);
             }
         }
         let rest: Vec<String> = argv.get(1..).unwrap_or(&[]).iter().map(|s| s.to_string()).collect();
@@ -1752,6 +1752,22 @@ pub fn cstr_lossy(bytes: &[u8]) -> String {
     CStr::from_bytes_until_nul(bytes)
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|_| String::from_utf8_lossy(bytes).into_owned())
+}
+
+pub fn env_set_var(key: &str, value: &str) -> SysResult<()> {
+    (sys_interface().setenv)(key, value)
+}
+
+pub fn env_unset_var(key: &str) -> SysResult<()> {
+    (sys_interface().unsetenv)(key)
+}
+
+pub fn env_var(key: &str) -> Option<String> {
+    (sys_interface().getenv)(key)
+}
+
+pub fn env_vars() -> HashMap<String, String> {
+    (sys_interface().get_environ)()
 }
 
 #[allow(clippy::disallowed_methods)]
