@@ -1,3 +1,3 @@
-fn main() -> std::process::ExitCode {
-    std::process::ExitCode::from(meiksh::run_from_env() as u8)
+fn main() {
+    meiksh::sys::exit_process(meiksh::run_from_env());
 }
