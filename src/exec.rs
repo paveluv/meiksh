@@ -683,6 +683,10 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
         })
     } else {
         let prepared = build_process_from_expanded(shell, &expanded)?;
+        if !prepared.path_verified && !prepared.exec_path.contains('/') {
+            sys_eprintln!("{}: not found", expanded.argv[0]);
+            return Ok(127);
+        }
         let handle = spawn_prepared(shell, &prepared, None, false, ProcessGroupPlan::NewGroup)?;
         let pgid = handle.pid;
         let _ = sys::set_process_group(pgid, pgid);
