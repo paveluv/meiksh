@@ -15,6 +15,10 @@
 # ==============================================================================
 # The Face of the Shell: Prompt Strings ($PS1)
 # ==============================================================================
+# REQUIREMENT: SHALL-Command History List-031: When the sh utility is being used
+# interactively, it shall maintain a list of commands previously ent...
+# REQUIREMENT: SHALL-RATIONALE-616: A user shall explicitly exit to leave the
+# interactive shell....
 # REQUIREMENT: SHALL-2-5-025: Parameters: PS1: Each time an interactive shell is
 # ready to read a command, the value of this variable shall be subjected to
 # parameter expansion...
@@ -52,5 +56,13 @@ case "$actual" in
         ;;
 esac
 
+
+# ==============================================================================
+# Terminal Erase and Kill
+# ==============================================================================
+# REQUIREMENT: SHALL-RATIONALE-144: \If followed by the erase or kill character,
+# that character shall be inserted into the input line.
+# REQUIREMENT: SHALL-RATIONALE-145: Otherwise, the <backslash> itself shall be
+# inserted into the input line.
 
 report
