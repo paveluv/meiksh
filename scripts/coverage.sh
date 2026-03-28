@@ -29,7 +29,7 @@ for pattern in ("target/debug/deps/meiksh-*", "target/debug/deps/spec_basic-*", 
         except FileNotFoundError:
             pass
 PY
-cargo test
+cargo test --lib --test integration_basic
 
 "$llvm_profdata" merge -sparse "$profile_dir"/*.profraw -o "$profdata"
 
