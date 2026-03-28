@@ -13,7 +13,7 @@ eval 'notdefined' >/dev/null 2>&1
 [ $? -ne 0 ] || { printf '%s\n' "FAIL: non-existent alias somehow succeeded" >&2; fail=1; }
 
 # Now define it and verify substitution occurs
-alias notdefined='printf defined\n'
+alias notdefined='printf "%s\n" defined'
 result=$(eval 'notdefined')
 [ "$result" = "defined" ] || { printf '%s\n' "FAIL: alias not expanded after definition: '$result'" >&2; fail=1; }
 

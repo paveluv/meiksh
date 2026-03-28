@@ -26,7 +26,7 @@ esac
 
 # [ inside bracket matches literal [
 case "[" in
-  [[]]) ;;
+  [[]) ;;
   *) printf '%s\n' "FAIL: [[] did not match '['" >&2; exit 1 ;;
 esac
 

@@ -5,7 +5,7 @@
 
 fail=0
 
-alias secret_alias='printf leaked\n'
+alias secret_alias='printf "%s\n" leaked'
 
 # Child shell should not have the alias
 result=$("${MEIKSH:-sh}" -c 'secret_alias' 2>&1)

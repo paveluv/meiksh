@@ -6,7 +6,7 @@
 fail=0
 
 # Valid alias name with alphanumeric + punctuation
-alias ll='printf aliased\n'
+alias ll='printf "%s\n" aliased'
 result=$(eval 'll')
 [ "$result" = "aliased" ] || { printf '%s\n' "FAIL: valid alias not expanded: '$result'" >&2; fail=1; }
 unalias ll 2>/dev/null

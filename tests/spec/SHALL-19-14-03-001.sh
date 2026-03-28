@@ -23,8 +23,8 @@ if [ "$matched" = "yes" ]; then
     exit 1
 fi
 
-# ? should not match /
-case "a/b" in a?b) printf '%s\n' "FAIL: ? matched / in case pattern" >&2; exit 1 ;; *) ;; esac
+# In case patterns (not pathname expansion), ? matches any char including /
+case "a/b" in a?b) ;; *) printf '%s\n' "FAIL: ? did not match / in case pattern" >&2; exit 1 ;; esac
 
 rm -rf "$TMPDIR/globslash"
 exit 0

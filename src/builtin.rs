@@ -297,6 +297,25 @@ fn exit(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     Ok(BuiltinOutcome::Exit(status))
 }
 
+fn expand_assignment_tilde(shell: &Shell, value: &str) -> String {
+    if !value.starts_with('~') {
+        return value.to_string();
+    }
+    let slash_pos = value.find('/');
+    let prefix_end = slash_pos.unwrap_or(value.len());
+    let user = &value[1..prefix_end];
+    let replacement = if user.is_empty() {
+        shell.get_var("HOME").unwrap_or_else(|| "~".to_string())
+    } else {
+        match sys::home_dir_for_user(user) {
+            Some(dir) => dir,
+            None => return value.to_string(),
+        }
+    };
+    let suffix = &value[prefix_end..];
+    format!("{replacement}{suffix}")
+}
+
 fn export(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     let (print, index) = parse_declaration_listing_flag("export", argv)?;
     if print || index == argv.len() {
@@ -307,7 +326,8 @@ fn export(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellErr
     }
     for item in &argv[index..] {
         if let Some((name, value)) = item.split_once('=') {
-            shell.export_var(name, Some(value.to_string()))?;
+            let value = expand_assignment_tilde(shell, value);
+            shell.export_var(name, Some(value))?;
         } else {
             shell.export_var(item, None)?;
         }
@@ -325,7 +345,8 @@ fn readonly(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellE
     }
     for item in &argv[index..] {
         if let Some((name, value)) = item.split_once('=') {
-            shell.set_var(name, value.to_string())?;
+            let value = expand_assignment_tilde(shell, value);
+            shell.set_var(name, value)?;
             shell.mark_readonly(name);
         } else {
             shell.mark_readonly(item);
@@ -418,6 +439,9 @@ fn shift(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellErro
         })?
         .unwrap_or(1);
     if count > shell.positional.len() {
+        write_stderr(&format!(
+            "shift: {count}: shift count out of range\n"
+        ));
         return Ok(BuiltinOutcome::Status(1));
     }
     shell.positional.drain(0..count);
@@ -460,10 +484,15 @@ fn resolve_dot_path(shell: &Shell, path: &str) -> Result<PathBuf, ShellError> {
 }
 
 fn exec_builtin(argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
-    if argv.len() <= 1 {
+    let args = if argv.get(1).map(|s| s.as_str()) == Some("--") {
+        &argv[2..]
+    } else {
+        &argv[1..]
+    };
+    if args.is_empty() {
         return Ok(BuiltinOutcome::Status(0));
     }
-    sys::exec_replace(&argv[1], &argv[1..]).map_err(ShellError::from)?;
+    sys::exec_replace(&args[0], args).map_err(ShellError::from)?;
     Ok(BuiltinOutcome::Status(0))
 }
 
@@ -810,7 +839,21 @@ fn kill(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
                 status = 1;
             }
         } else if let Ok(pid) = operand.parse::<sys::Pid>() {
-            if sys::send_signal(pid, signal).is_err() {
+            let effective_target = if pid > 0 {
+                shell
+                    .jobs
+                    .iter()
+                    .find(|j| {
+                        j.children.iter().any(|c| c.pid == pid)
+                            || j.last_pid == Some(pid)
+                    })
+                    .and_then(|j| j.pgid)
+                    .map(|pgid| -pgid)
+                    .unwrap_or(pid)
+            } else {
+                pid
+            };
+            if sys::send_signal(effective_target, signal).is_err() {
                 write_stderr(&format!("kill: ({pid}): No such process\n"));
                 status = 1;
             }
@@ -1825,8 +1868,8 @@ fn execute_command_utility(
         return match run(shell, argv) {
             Ok(outcome) => Ok(outcome),
             Err(error) => {
-                write_stderr(&format!("{}\n", error.message));
-                Ok(BuiltinOutcome::Status(1))
+                write_stderr(&format!("{}\n", error.display_message()));
+                Ok(BuiltinOutcome::Status(error.exit_status()))
             }
         };
     }
@@ -2008,6 +2051,7 @@ mod tests {
             pending_control: None,
             interactive: false,
             errexit_suppressed: false,
+            pid: 0,
         }
     }
 
@@ -2061,16 +2105,27 @@ mod tests {
 
     #[test]
     fn shift_rejects_invalid_arguments() {
-        assert_no_syscalls(|| {
-            let mut shell = test_shell();
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"shift: 5: shift count out of range\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
 
-            shell.positional = vec!["a".into()];
-            let outcome = run(&mut shell, &["shift".into(), "5".into()]).expect("shift");
-            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+                shell.positional = vec!["a".into()];
+                let outcome = run(&mut shell, &["shift".into(), "5".into()]).expect("shift");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
 
-            let error = run(&mut shell, &["shift".into(), "bad".into()]).expect_err("bad shift");
-            assert_eq!(error.message, "shift: numeric argument required");
-        });
+                let error =
+                    run(&mut shell, &["shift".into(), "bad".into()]).expect_err("bad shift");
+                assert_eq!(error.message, "shift: numeric argument required");
+            },
+        );
     }
 
     #[test]

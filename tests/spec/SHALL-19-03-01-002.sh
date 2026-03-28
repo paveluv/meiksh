@@ -5,7 +5,7 @@
 
 fail=0
 
-alias myls='printf aliased\n'
+alias myls='printf "%s\n" aliased'
 
 # Unquoted should expand
 result=$(eval 'myls')
