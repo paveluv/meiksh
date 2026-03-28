@@ -1,3 +1,4 @@
+# reviewed: GPT-5.4
 # SHALL-20-132-14-005
 # "The following exit values shall be returned:: An error occurred."
 # Verify umask exits non-zero on invalid input.

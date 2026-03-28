@@ -1,9 +1,10 @@
+# reviewed: GPT-5.4
 # SHALL-20-110-05-005
 # "The positional parameters ($1, $2, and so on) shall be set to arguments,
 #  if any."
 # Verifies: positional parameters are set from script arguments.
 
-SH="${MEIKSH:-sh}"
+SH="${MEIKSH:-${SHELL:-sh}}"
 tmpf="$TMPDIR/pos_test_$$.sh"
 printf 'printf "%%s %%s %%s\\n" "$1" "$2" "$3"\n' > "$tmpf"
 out=$("$SH" "$tmpf" aa bb cc)

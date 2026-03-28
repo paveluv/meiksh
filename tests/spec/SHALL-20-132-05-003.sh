@@ -1,3 +1,5 @@
+# reviewed: GPT-5.4
+# Also covers: SHALL-20-132-05-001, SHALL-20-132-05-002
 # SHALL-20-132-05-003
 # "A string specifying the new file mode creation mask... In a symbolic_mode
 #  value, the permissions op characters '+' and '-' shall be interpreted

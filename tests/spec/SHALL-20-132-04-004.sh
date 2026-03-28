@@ -1,3 +1,5 @@
+# reviewed: GPT-5.4
+# Also covers: SHALL-20-132-10-002
 # SHALL-20-132-04-004
 # "Produce symbolic output."
 # Verify umask -S produces symbolic format u=...,g=...,o=...

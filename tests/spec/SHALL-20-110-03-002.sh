@@ -1,8 +1,9 @@
+# reviewed: GPT-5.4
 # SHALL-20-110-03-002
 # "Pathname expansion shall not fail due to the size of a file."
 # Verifies: glob matching works regardless of file size.
 
-SH="${MEIKSH:-sh}"
+SH="${MEIKSH:-${SHELL:-sh}}"
 dir="$TMPDIR/glob_test_$$"
 mkdir -p "$dir"
 

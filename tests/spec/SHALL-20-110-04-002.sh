@@ -1,10 +1,11 @@
+# reviewed: GPT-5.4
 # SHALL-20-110-04-002
 # "The option letters derived from the set special built-in shall also be
 #  accepted with a leading <plus-sign> ('+') instead of a leading
 #  <hyphen-minus> (meaning the reverse case of the option)"
 # Verifies: sh accepts set-derived options with + prefix to reverse them.
 
-SH="${MEIKSH:-sh}"
+SH="${MEIKSH:-${SHELL:-sh}}"
 
 # -e enables errexit, +e disables it
 # With +e, a failing command should NOT abort the shell

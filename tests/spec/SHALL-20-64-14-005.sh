@@ -1,6 +1,9 @@
+# reviewed: GPT-5.4
+# Also covers: SHALL-20-64-14-001, SHALL-20-64-14-004
 # SHALL-20-64-14-005
-# "The following exit values shall be returned:: An error occurred."
-# Verify: kill returns >0 when targeting a nonexistent process.
+# "An error occurred."
+# Verifies docs/posix/utilities/kill.html#tag_20_64_14:
+# a concrete kill error path returns a non-zero exit status.
 
 kill -s TERM 2147483647 2>/dev/null
 _rc=$?

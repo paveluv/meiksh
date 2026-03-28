@@ -1,3 +1,5 @@
+# reviewed: GPT-5.4
+# Also covers: SHALL-20-132-10-001
 # SHALL-20-132-04-005
 # "The default output style is unspecified, but shall be recognized on a
 #  subsequent invocation of umask on the same system as a mask operand to

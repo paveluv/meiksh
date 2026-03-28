@@ -1,8 +1,9 @@
+# reviewed: GPT-5.4
 # SHALL-20-110-04-009
 # "Read commands from the standard input."
 # Verifies: -s reads commands from stdin.
 
-SH="${MEIKSH:-sh}"
+SH="${MEIKSH:-${SHELL:-sh}}"
 
 out=$(printf 'printf "%%s\\n" fromstdin\n' | "$SH" -s)
 if [ "$out" != "fromstdin" ]; then

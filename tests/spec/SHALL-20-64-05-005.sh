@@ -1,3 +1,5 @@
+# reviewed: GPT-5.4
+# Also covers: SHALL-20-64-05-001, SHALL-20-64-05-004
 # SHALL-20-64-05-005
 # "A decimal integer specifying a signal number or the exit status of a
 #  process terminated by a signal."
@@ -14,22 +16,14 @@ case "$_name" in
     ;;
 esac
 
-# Signal-based exit status: 128+2=130 -> INT
-_name=$(kill -l 130 2>/dev/null)
-case "$_name" in
-  *INT*) ;;
-  *)
-    printf '%s\n' "FAIL: kill -l 130 gave '$_name', expected INT" >&2
-    exit 1
-    ;;
-esac
-
-# Signal-based exit status: 128+1=129 -> HUP
-_name=$(kill -l 129 2>/dev/null)
+# Signal-based exit status: derive a real $? value from a signal-terminated child
+(sh -c 'kill -1 $$' >/dev/null 2>&1) 2>/dev/null
+_status=$?
+_name=$(kill -l "$_status" 2>/dev/null)
 case "$_name" in
   *HUP*) ;;
   *)
-    printf '%s\n' "FAIL: kill -l 129 gave '$_name', expected HUP" >&2
+    printf '%s\n' "FAIL: kill -l \$_status=$_status gave '$_name', expected HUP" >&2
     exit 1
     ;;
 esac

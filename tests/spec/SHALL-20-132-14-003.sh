@@ -1,3 +1,4 @@
+# reviewed: GPT-5.4
 # SHALL-20-132-14-003
 # "The following exit values shall be returned:: The file mode creation mask
 #  was successfully changed, or no mask operand was supplied."
