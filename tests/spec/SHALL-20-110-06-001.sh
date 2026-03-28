@@ -1,8 +1,9 @@
+# reviewed: GPT-5.4
 # SHALL-20-110-06-001
 # "The standard input shall be used only if one of the following is true:"
 # Verifies: sh does not read stdin when -c or command_file is given.
 
-SH="${MEIKSH:-sh}"
+SH="${MEIKSH:-${SHELL:-sh}}"
 
 # With -c, stdin should not be consumed for commands
 out=$(printf 'printf "%%s\\n" STDIN_CMD\n' | "$SH" -c 'printf "%s\n" from_c')

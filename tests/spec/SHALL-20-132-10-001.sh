@@ -1,3 +1,5 @@
+# reviewed: GPT-5.4
+# Also covers: SHALL-20-132-04-005
 # SHALL-20-132-10-001
 # "When the mask operand is not specified, the umask utility shall write a
 #  message to standard output that can later be used as a umask mask operand."

@@ -1,19 +1,24 @@
+# reviewed: GPT-5.4
+# Also covers: SHALL-20-64-04-002
 # SHALL-20-64-04-009
-# "The following options shall be supported:: -signal_number"
-# Verify: kill accepts -N numeric signal shorthand (XSI).
+# "[XSI] Specify a non-negative decimal integer, signal_number, representing
+#  the signal to be used instead of SIGTERM ..."
+# Verifies docs/posix/utilities/kill.html#tag_20_64_04:
+# kill accepts the XSI -signal_number form.
 
-sh -c 'sleep 60' &
-_pid=$!
-sleep 1
-
-kill -15 "$_pid" 2>/dev/null
-sleep 1
-
-if kill -0 "$_pid" 2>/dev/null; then
-  printf '%s\n' "FAIL: kill -15 did not terminate process (SIGTERM=15)" >&2
-  kill -9 "$_pid" 2>/dev/null
+_got=""
+trap '_got=TERM' TERM
+kill -15 $$ 2>/dev/null
+_rc=$?
+if [ "$_rc" -ne 0 ]; then
+  printf '%s\n' "FAIL: kill -15 returned $_rc, expected 0" >&2
   exit 1
 fi
 
-wait "$_pid" 2>/dev/null
+if [ "$_got" != "TERM" ]; then
+  printf '%s\n' "FAIL: kill -15 did not deliver SIGTERM" >&2
+  exit 1
+fi
+
+trap - TERM
 exit 0

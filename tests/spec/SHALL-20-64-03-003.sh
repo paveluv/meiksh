@@ -1,6 +1,9 @@
+# reviewed: GPT-5.4
+# Also covers: SHALL-20-64-03-002, SHALL-20-64-03-005
 # SHALL-20-64-03-003
 # "The value of the pid operand shall be used as the pid argument."
-# Verify: kill targets the exact process specified by the pid operand.
+# Verifies docs/posix/utilities/kill.html#tag_20_64_03:
+# the pid operand value is the pid argument to kill().
 
 sh -c 'trap "" TERM; sleep 60' &
 _pid1=$!

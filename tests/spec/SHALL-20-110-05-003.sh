@@ -1,9 +1,10 @@
+# reviewed: GPT-5.4
 # SHALL-20-110-05-003
 # "A single <hyphen-minus> shall be treated as the first operand and then
 #  ignored."
 # Verifies: sh - is accepted and the - operand is ignored.
 
-SH="${MEIKSH:-sh}"
+SH="${MEIKSH:-${SHELL:-sh}}"
 
 out=$(printf 'printf "%%s\\n" ok\n' | "$SH" -)
 if [ "$out" != "ok" ]; then

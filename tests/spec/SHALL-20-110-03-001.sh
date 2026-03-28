@@ -1,10 +1,11 @@
+# reviewed: GPT-5.4
 # SHALL-20-110-03-001
 # "The sh utility is a command language interpreter that shall execute
 #  commands read from a command line string, the standard input, or a
 #  specified file."
 # Verifies: sh executes commands from -c string, stdin, and a file.
 
-SH="${MEIKSH:-sh}"
+SH="${MEIKSH:-${SHELL:-sh}}"
 
 # From -c string
 out=$("$SH" -c 'printf "%s\n" hello')

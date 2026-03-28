@@ -1,3 +1,4 @@
+# reviewed: GPT-5.4
 # SHALL-20-64-10-003
 # "where the <signal_name> is in uppercase, without the SIG prefix, and
 #  the <separator> shall be either a <newline> or a <space>. For the last
@@ -6,18 +7,16 @@
 
 _out=$(kill -l 2>/dev/null)
 
+_bad=$(printf '%s' "$_out" | tr -d 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 \n')
+if [ -n "$_bad" ]; then
+  printf '%s\n' "FAIL: kill -l output contains characters other than uppercase letters, digits, space, or newline" >&2
+  exit 1
+fi
+
 # Check no SIG prefix appears
 case "$_out" in
-  *SIGHUP*|*SIGINT*|*SIGKILL*|*SIGTERM*)
+  *SIG*)
     printf '%s\n' "FAIL: kill -l output contains SIG prefix" >&2
-    exit 1
-    ;;
-esac
-
-# Check names are uppercase (HUP not hup)
-case "$_out" in
-  *hup*|*int*|*kill*|*term*)
-    printf '%s\n' "FAIL: kill -l output contains lowercase signal names" >&2
     exit 1
     ;;
 esac
