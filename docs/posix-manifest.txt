@@ -11,6 +11,8 @@ basedefs/V1_chap01.html|https://pubs.opengroup.org/onlinepubs/9799919799/basedef
 basedefs/V1_chap02.html|https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/V1_chap02.html|basedefs
 basedefs/V1_chap03.html|https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/V1_chap03.html|basedefs
 basedefs/V1_chap04.html|https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/V1_chap04.html|basedefs
+basedefs/V1_chap05.html|https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/V1_chap05.html|basedefs
+basedefs/V1_chap06.html|https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/V1_chap06.html|basedefs
 basedefs/V1_chap07.html|https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/V1_chap07.html|basedefs
 basedefs/V1_chap08.html|https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/V1_chap08.html|basedefs
 basedefs/V1_chap09.html|https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/V1_chap09.html|basedefs
@@ -18,6 +20,9 @@ basedefs/V1_chap10.html|https://pubs.opengroup.org/onlinepubs/9799919799/basedef
 basedefs/V1_chap11.html|https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/V1_chap11.html|basedefs
 basedefs/V1_chap12.html|https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/V1_chap12.html|basedefs
 basedefs/V1_chap13.html|https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/V1_chap13.html|basedefs
+basedefs/signal.h.html|https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/signal.h.html|basedefs
+basedefs/sys_times.h.html|https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/sys_times.h.html|basedefs
+basedefs/termios.h.html|https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/termios.h.html|basedefs
 
 # Issue 8 and Issue 7 shell baselines
 issue8/contents.html|https://pubs.opengroup.org/onlinepubs/9799919799/utilities/contents.html|issue8
