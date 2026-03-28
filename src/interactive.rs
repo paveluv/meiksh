@@ -137,7 +137,22 @@ mod tests {
     use crate::shell::{ShellOptions, TrapAction, TrapCondition};
     use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-    use crate::sys::test_support::{ArgMatcher, TraceResult, assert_no_syscalls, run_trace, t};
+    use crate::sys::test_support::{
+        ArgMatcher, TraceEntry, TraceResult, assert_no_syscalls, run_trace, t, t_fork,
+    };
+
+    fn read_line_trace(input: &[u8]) -> Vec<TraceEntry> {
+        input
+            .iter()
+            .map(|&b| {
+                t(
+                    "read",
+                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                    TraceResult::Bytes(vec![b]),
+                )
+            })
+            .collect()
+    }
 
     fn test_shell() -> Shell {
         Shell {
@@ -1074,5 +1089,87 @@ mod tests {
                 assert_eq!(status, 0);
             },
         );
+    }
+
+    #[test]
+    fn run_loop_command_not_found_sets_status_127_and_continues() {
+        let mut trace = vec![
+            // prompt
+            t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(sys::STDOUT_FILENO),
+                    ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
+                ],
+                TraceResult::Auto,
+            ),
+        ];
+        // read "gibberish\n"
+        trace.extend(read_line_trace(b"gibberish\n"));
+        trace.extend([
+            // history: open, write, close
+            t(
+                "open",
+                vec![
+                    ArgMatcher::Str("/tmp/hist".into()),
+                    ArgMatcher::Any,
+                    ArgMatcher::Any,
+                ],
+                TraceResult::Fd(10),
+            ),
+            t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(10),
+                    ArgMatcher::Bytes(b"gibberish\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            ),
+            t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
+            // resolve_command_path: stat "/usr/bin/gibberish" → not found
+            t(
+                "stat",
+                vec![
+                    ArgMatcher::Str("/usr/bin/gibberish".into()),
+                    ArgMatcher::Any,
+                ],
+                TraceResult::Err(sys::ENOENT),
+            ),
+            // "not found" diagnostic written to stderr (no fork!)
+            t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Bytes(b"gibberish: not found\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            ),
+            // shell continues: second prompt
+            t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(sys::STDOUT_FILENO),
+                    ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
+                ],
+                TraceResult::Auto,
+            ),
+            // read EOF
+            t(
+                "read",
+                vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Int(0),
+            ),
+        ]);
+
+        run_trace(trace, || {
+            let mut shell = test_shell();
+            shell.env.insert("PATH".into(), "/usr/bin".into());
+            shell.env.insert("HISTFILE".into(), "/tmp/hist".into());
+            let status = run_loop(&mut shell).expect("command not found handled");
+            assert_eq!(
+                status, 127,
+                "exit status should be 127 for command not found"
+            );
+        });
     }
 }
