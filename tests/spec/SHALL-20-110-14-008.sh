@@ -1,8 +1,11 @@
+# reviewed: GPT-5.4
 # SHALL-20-110-14-008
 # "The following exit values shall be returned:: 127"
 # Verify sh exits 127 when command_file is not found.
 
-"${SHELL}" "$TMPDIR/shall_20_110_14_008_nonexistent_$$" 2>/dev/null
+SH="${MEIKSH:-${SHELL:-sh}}"
+
+"$SH" "$TMPDIR/shall_20_110_14_008_nonexistent_$$" 2>/dev/null
 rc=$?
 
 if [ "$rc" -ne 127 ]; then

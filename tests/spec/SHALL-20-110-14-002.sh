@@ -1,3 +1,4 @@
+# reviewed: GPT-5.4
 # SHALL-20-110-14-002
 # "The following exit values shall be returned:: 0"
 # Verify sh exits 0 when given a script with only blank lines/comments.
@@ -11,7 +12,9 @@ cat > "$tmpf" <<'SCRIPT'
 # another comment
 SCRIPT
 
-"${SHELL}" "$tmpf"
+SH="${MEIKSH:-${SHELL:-sh}}"
+
+"$SH" "$tmpf"
 rc=$?
 rm -f "$tmpf"
 
