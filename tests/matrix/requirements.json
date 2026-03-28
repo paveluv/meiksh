@@ -6952,5 +6952,167 @@
     "section": "vi Line Editing Command Mode",
     "text": "If there is no previous / or ?, the terminal shall be alerted and the current command line shall remain unchanged.",
     "file": "Unknown"
+  },
+  {
+    "section": "9.3.5 RE Bracket Expression",
+    "text": "A bracket expression (an expression enclosed in square brackets, \"[]\" ) is an RE that shall match a specific set of single characters, and may match a specific set of multi-character collating elements, based on the non-empty set of list expressions contained in the bracket expression.",
+    "file": "V1_chap09",
+    "id": "SHALL-XBD-9-3-5-2000"
+  },
+  {
+    "section": "9.3.5 RE Bracket Expression",
+    "text": "The <right-square-bracket> ( ']' ) shall lose its special meaning and represent itself in a bracket expression if it occurs first in the list (after an initial <circumflex> ( '^' ), if any).",
+    "file": "V1_chap09",
+    "id": "SHALL-XBD-9-3-5-2001"
+  },
+  {
+    "section": "9.3.5 RE Bracket Expression",
+    "text": "Otherwise, it shall terminate the bracket expression, unless it appears in a collating symbol (such as \"[.].]\" ) or is the ending <right-square-bracket> for a collating symbol, equivalence class, or character class.",
+    "file": "V1_chap09",
+    "id": "SHALL-XBD-9-3-5-2002"
+  },
+  {
+    "section": "9.3.5 RE Bracket Expression",
+    "text": "When the bracket expression appears within a BRE, the special characters '.' , '*' , '[' , and '\\\\' (<period>, <asterisk>, <left-square-bracket>, and <backslash>, respectively) shall lose their special meaning within the bracket expression.",
+    "file": "V1_chap09",
+    "id": "SHALL-XBD-9-3-5-2003"
+  },
+  {
+    "section": "9.3.5 RE Bracket Expression",
+    "text": "When the bracket expression appears within an ERE, the special characters '.' , '(' , '*' , '+' , '?' , '{' , '|' , '$' , '[' , and '\\\\' (<period>, <left-parenthesis>, <asterisk>, <plus-sign>, <question-mark>, <left-brace>, <vertical-line>, <dollar-sign>, <left-square-bracket>, and <backslash>, respectively) shall lose their special meaning within the bracket expression; <circumflex> ( '^' ) shall lose its special meaning as an anchor.",
+    "file": "V1_chap09",
+    "id": "SHALL-XBD-9-3-5-2004"
+  },
+  {
+    "section": "9.3.5 RE Bracket Expression",
+    "text": "When the bracket expression appears within a shell pattern (see XCU 2.14 Pattern Matching Notation ), the special characters '?' , '*' , and '[' (<question-mark>, <asterisk>, and <left-square-bracket>, respectively) shall lose their special meaning within the bracket expression; whether or not <backslash> ( '\\\\' ) loses its special meaning as a pattern matching character is described in XCU 2.14.1 Patterns Matching a Single Character , but in contexts where a shell-quoting <backslash> can be used it shall retain its special meaning (see XCU 2.2 Quoting ).",
+    "file": "V1_chap09",
+    "id": "SHALL-XBD-9-3-5-2005"
+  },
+  {
+    "section": "9.3.5 RE Bracket Expression",
+    "text": "The character sequences \"[.\" , \"[=\" , and \"[:\" (<left-square-bracket> followed by a <period>, <equals-sign>, or <colon>) shall be special inside a bracket expression and are used to delimit collating symbols, equivalence class expressions, and character class expressions.",
+    "file": "V1_chap09",
+    "id": "SHALL-XBD-9-3-5-2006"
+  },
+  {
+    "section": "9.3.5 RE Bracket Expression",
+    "text": "These symbols shall be followed by a valid expression and the matching terminating sequence \".]\" , \"=]\" , or \":]\" , as described in the following items.",
+    "file": "V1_chap09",
+    "id": "SHALL-XBD-9-3-5-2007"
+  },
+  {
+    "section": "9.3.5 RE Bracket Expression",
+    "text": "A matching list expression specifies a list that shall match any single character that is matched by one of the expressions represented in the list.",
+    "file": "V1_chap09",
+    "id": "SHALL-XBD-9-3-5-2008"
+  },
+  {
+    "section": "9.3.5 RE Bracket Expression",
+    "text": "An ordinary character in the list shall only match that character; for example, \"[abc]\" is an RE that only matches one of the characters 'a' , 'b' , or 'c'.",
+    "file": "V1_chap09",
+    "id": "SHALL-XBD-9-3-5-2009"
+  },
+  {
+    "section": "9.3.5 RE Bracket Expression",
+    "text": "A non-matching list expression begins with a <circumflex> ( '^' ), and the matching behavior shall be the logical inverse of the corresponding matching list expression (the same bracket expression but without the leading <circumflex>).",
+    "file": "V1_chap09",
+    "id": "SHALL-XBD-9-3-5-2010"
+  },
+  {
+    "section": "9.3.5 RE Bracket Expression",
+    "text": "The <circumflex> shall have this special meaning only when it occurs first in the list, immediately following the <left-square-bracket>.",
+    "file": "V1_chap09",
+    "id": "SHALL-XBD-9-3-5-2011"
+  },
+  {
+    "section": "9.3.5 RE Bracket Expression",
+    "text": "Conforming applications shall represent multi-character collating elements as collating symbols when it is necessary to distinguish them from a list of the individual characters that make up the multi-character collating element.",
+    "file": "V1_chap09",
+    "id": "SHALL-XBD-9-3-5-2012"
+  },
+  {
+    "section": "9.3.5 RE Bracket Expression",
+    "text": "in the locale definition, the expression \"[[.ch.]]\" shall be treated as an RE containing the collating symbol 'ch' , while \"[ch]\" shall be treated as an RE matching 'c' or 'h'.",
+    "file": "V1_chap09",
+    "id": "SHALL-XBD-9-3-5-2013"
+  },
+  {
+    "section": "9.3.5 RE Bracket Expression",
+    "text": "An equivalence class expression shall represent the set of collating elements belonging to an equivalence class, as described in 7.3.2.4 Collation Order.",
+    "file": "V1_chap09",
+    "id": "SHALL-XBD-9-3-5-2014"
+  },
+  {
+    "section": "9.3.5 RE Bracket Expression",
+    "text": "Only primary equivalence classes shall be recognized.",
+    "file": "V1_chap09",
+    "id": "SHALL-XBD-9-3-5-2015"
+  },
+  {
+    "section": "9.3.5 RE Bracket Expression",
+    "text": "The class shall be expressed by enclosing any one of the collating elements in the equivalence class within bracket-equal ( \"[=\" and \"=]\" ) delimiters.",
+    "file": "V1_chap09",
+    "id": "SHALL-XBD-9-3-5-2016"
+  },
+  {
+    "section": "9.3.5 RE Bracket Expression",
+    "text": "If the collating element does not belong to an equivalence class, the equivalence class expression shall be treated as a collating symbol.",
+    "file": "V1_chap09",
+    "id": "SHALL-XBD-9-3-5-2017"
+  },
+  {
+    "section": "9.3.5 RE Bracket Expression",
+    "text": "A character class expression shall represent the union of two sets:.",
+    "file": "V1_chap09",
+    "id": "SHALL-XBD-9-3-5-2018"
+  },
+  {
+    "section": "9.3.5 RE Bracket Expression",
+    "text": "All character classes specified in the current locale shall be recognized.",
+    "file": "V1_chap09",
+    "id": "SHALL-XBD-9-3-5-2019"
+  },
+  {
+    "section": "9.3.5 RE Bracket Expression",
+    "text": "The following character class expressions shall be supported in all locales:.",
+    "file": "V1_chap09",
+    "id": "SHALL-XBD-9-3-5-2020"
+  },
+  {
+    "section": "9.3.5 RE Bracket Expression",
+    "text": "In other locales, a range expression has unspecified behavior: strictly conforming applications shall not rely on whether the range expression is valid, or on the set of collating elements matched.",
+    "file": "V1_chap09",
+    "id": "SHALL-XBD-9-3-5-2021"
+  },
+  {
+    "section": "9.3.5 RE Bracket Expression",
+    "text": "A range expression shall be expressed as the starting point and the ending point separated by a <hyphen-minus> ( '-' ).",
+    "file": "V1_chap09",
+    "id": "SHALL-XBD-9-3-5-2022"
+  },
+  {
+    "section": "9.3.5 RE Bracket Expression",
+    "text": "The starting range point and the ending range point shall be a collating element or collating symbol.",
+    "file": "V1_chap09",
+    "id": "SHALL-XBD-9-3-5-2023"
+  },
+  {
+    "section": "9.3.5 RE Bracket Expression",
+    "text": "The <hyphen-minus> character shall be treated as itself if it occurs first (after an initial '^' , if any) or last in the list, or as an ending range point in a range expression.",
+    "file": "V1_chap09",
+    "id": "SHALL-XBD-9-3-5-2024"
+  },
+  {
+    "section": "9.3.5 RE Bracket Expression",
+    "text": "To use a <hyphen-minus> as the starting range point, it shall either come first in the bracket expression or be specified as a collating symbol; for example, \"[][.-.]-0]\" , which matches either a <right-square-bracket> or any character or collating element that collates between <hyphen-minus> and 0, inclusive.",
+    "file": "V1_chap09",
+    "id": "SHALL-XBD-9-3-5-2025"
+  },
+  {
+    "section": "9.3.5 RE Bracket Expression",
+    "text": "If a bracket expression specifies both '-' and ']' , the ']' shall be placed first (after the '^' , if any) and the '-' last within the bracket expression.",
+    "file": "V1_chap09",
+    "id": "SHALL-XBD-9-3-5-2026"
   }
 ]
