@@ -1,0 +1,190 @@
+{
+  "extracted_files": [
+    {
+      "file": "utilities/V3_chap02.html",
+      "tier": 1,
+      "obligations": 588,
+      "extracted_at": "2026-03-28T01:52:21.298625+00:00"
+    },
+    {
+      "file": "utilities/sh.html",
+      "tier": 1,
+      "obligations": 276,
+      "extracted_at": "2026-03-28T01:52:21.349049+00:00"
+    },
+    {
+      "file": "basedefs/V1_chap03.html",
+      "tier": 2,
+      "obligations": 77,
+      "extracted_at": "2026-03-28T02:18:09.179341+00:00"
+    },
+    {
+      "file": "basedefs/V1_chap04.html",
+      "tier": 2,
+      "obligations": 100,
+      "extracted_at": "2026-03-28T02:18:09.200509+00:00"
+    },
+    {
+      "file": "basedefs/V1_chap06.html",
+      "tier": 2,
+      "obligations": 46,
+      "extracted_at": "2026-03-28T02:18:09.217483+00:00"
+    },
+    {
+      "file": "basedefs/V1_chap07.html",
+      "tier": 2,
+      "obligations": 263,
+      "extracted_at": "2026-03-28T02:18:09.277373+00:00"
+    },
+    {
+      "file": "basedefs/V1_chap08.html",
+      "tier": 2,
+      "obligations": 47,
+      "extracted_at": "2026-03-28T02:18:09.291099+00:00"
+    },
+    {
+      "file": "basedefs/V1_chap09.html",
+      "tier": 2,
+      "obligations": 125,
+      "extracted_at": "2026-03-28T02:18:09.315764+00:00"
+    },
+    {
+      "file": "basedefs/V1_chap12.html",
+      "tier": 2,
+      "obligations": 11,
+      "extracted_at": "2026-03-28T02:18:09.319890+00:00"
+    },
+    {
+      "file": "basedefs/signal.h.html",
+      "tier": 2,
+      "obligations": 72,
+      "extracted_at": "2026-03-28T02:18:09.336723+00:00"
+    },
+    {
+      "file": "basedefs/sys_times.h.html",
+      "tier": 2,
+      "obligations": 3,
+      "extracted_at": "2026-03-28T02:18:09.338466+00:00"
+    },
+    {
+      "file": "utilities/V3_chap01.html",
+      "tier": 2,
+      "obligations": 87,
+      "extracted_at": "2026-03-28T02:18:09.361145+00:00"
+    },
+    {
+      "file": "utilities/alias.html",
+      "tier": 2,
+      "obligations": 27,
+      "extracted_at": "2026-03-28T02:18:09.366733+00:00"
+    },
+    {
+      "file": "utilities/bg.html",
+      "tier": 2,
+      "obligations": 24,
+      "extracted_at": "2026-03-28T02:18:09.371254+00:00"
+    },
+    {
+      "file": "utilities/cd.html",
+      "tier": 2,
+      "obligations": 60,
+      "extracted_at": "2026-03-28T02:18:09.380633+00:00"
+    },
+    {
+      "file": "utilities/command.html",
+      "tier": 2,
+      "obligations": 46,
+      "extracted_at": "2026-03-28T02:18:09.389636+00:00"
+    },
+    {
+      "file": "utilities/dot.html",
+      "tier": 2,
+      "obligations": 0,
+      "extracted_at": "2026-03-28T02:18:09.390586+00:00"
+    },
+    {
+      "file": "utilities/fc.html",
+      "tier": 2,
+      "obligations": 53,
+      "extracted_at": "2026-03-28T02:18:09.406501+00:00"
+    },
+    {
+      "file": "utilities/fg.html",
+      "tier": 2,
+      "obligations": 23,
+      "extracted_at": "2026-03-28T02:18:09.410591+00:00"
+    },
+    {
+      "file": "utilities/getopts.html",
+      "tier": 2,
+      "obligations": 54,
+      "extracted_at": "2026-03-28T02:18:09.418597+00:00"
+    },
+    {
+      "file": "utilities/jobs.html",
+      "tier": 2,
+      "obligations": 47,
+      "extracted_at": "2026-03-28T02:18:09.426050+00:00"
+    },
+    {
+      "file": "utilities/read.html",
+      "tier": 2,
+      "obligations": 55,
+      "extracted_at": "2026-03-28T02:18:09.439055+00:00"
+    },
+    {
+      "file": "utilities/time.html",
+      "tier": 2,
+      "obligations": 45,
+      "extracted_at": "2026-03-28T02:18:09.466181+00:00"
+    },
+    {
+      "file": "utilities/umask.html",
+      "tier": 2,
+      "obligations": 33,
+      "extracted_at": "2026-03-28T02:18:09.471691+00:00"
+    },
+    {
+      "file": "utilities/unalias.html",
+      "tier": 2,
+      "obligations": 25,
+      "extracted_at": "2026-03-28T02:18:09.476700+00:00"
+    },
+    {
+      "file": "utilities/wait.html",
+      "tier": 2,
+      "obligations": 27,
+      "extracted_at": "2026-03-28T02:18:09.482804+00:00"
+    },
+    {
+      "file": "basedefs/V1_chap11.html",
+      "tier": 3,
+      "obligations": 105,
+      "extracted_at": "2026-03-28T02:44:11.857646+00:00"
+    },
+    {
+      "file": "basedefs/termios.h.html",
+      "tier": 3,
+      "obligations": 48,
+      "extracted_at": "2026-03-28T02:44:11.869458+00:00"
+    },
+    {
+      "file": "utilities/export.html",
+      "tier": 3,
+      "obligations": 0,
+      "extracted_at": "2026-03-28T02:44:11.870620+00:00"
+    },
+    {
+      "file": "utilities/kill.html",
+      "tier": 3,
+      "obligations": 45,
+      "extracted_at": "2026-03-28T02:44:11.878737+00:00"
+    },
+    {
+      "file": "utilities/readonly.html",
+      "tier": 3,
+      "obligations": 0,
+      "extracted_at": "2026-03-28T02:44:11.885766+00:00"
+    }
+  ]
+}
