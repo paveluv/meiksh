@@ -3,7 +3,7 @@
 #  displayed."
 # Verify jobs with no arguments lists all jobs.
 
-got=$("${MEIKSH:-meiksh}" -c '
+got=$("${SHELL}" -c '
   sleep 100 &
   sleep 100 &
   out=$(jobs)

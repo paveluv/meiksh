@@ -4,7 +4,7 @@
 #  be inserted before the <state> field."
 # Verify jobs -l shows PID field.
 
-got=$("${MEIKSH:-meiksh}" -c '
+got=$("${SHELL}" -c '
   sleep 100 &
   bgpid=$!
   out=$(jobs -l)

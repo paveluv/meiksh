@@ -5,7 +5,7 @@
 #   When -W is passed to a builtin that doesn't define it, it is rejected.
 
 # 'cd' should not accept -W as a standard option
-out=$(${MEIKSH:-meiksh} -c 'cd -W / 2>&1' 2>&1)
+out=$(${SHELL} -c 'cd -W / 2>&1' 2>&1)
 rc=$?
 if [ "$rc" -eq 0 ] && [ -z "$out" ]; then
     printf '%s\n' "FAIL: cd -W should either be rejected or be vendor extension, got silent success" >&2
@@ -13,7 +13,7 @@ if [ "$rc" -eq 0 ] && [ -z "$out" ]; then
 fi
 
 # 'read' should not accept -W as a standard option
-out=$(${MEIKSH:-meiksh} -c 'printf "hello\n" | read -W var 2>&1' 2>&1)
+out=$(${SHELL} -c 'printf "hello\n" | read -W var 2>&1' 2>&1)
 rc=$?
 if [ "$rc" -eq 0 ] && [ -z "$out" ]; then
     printf '%s\n' "FAIL: read -W should either be rejected or be vendor extension, got silent success" >&2

@@ -10,7 +10,7 @@ tmpl="$TMPDIR/shall_18_04_019_link_$$"
 rm -f "$tmpf" "$tmpl"
 ln -s "$tmpf" "$tmpl"
 
-"${MEIKSH:-meiksh}" -c 'printf "%s\n" "through_link" > "'"$tmpl"'"'
+"${SHELL}" -c 'printf "%s\n" "through_link" > "'"$tmpl"'"'
 if [ ! -f "$tmpf" ]; then
   printf '%s\n' "FAIL: target file not created via symlink" >&2
   rm -f "$tmpl"

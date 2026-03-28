@@ -9,7 +9,7 @@ tmpf="$TMPDIR/shall_20_122_14_005_$$"
 printf '%s\n' "not a valid script or binary" > "$tmpf"
 chmod +x "$tmpf"
 
-"${MEIKSH:-meiksh}" -c "time '$tmpf'" 2>/dev/null
+"${SHELL}" -c "time '$tmpf'" 2>/dev/null
 rc=$?
 rm -f "$tmpf"
 

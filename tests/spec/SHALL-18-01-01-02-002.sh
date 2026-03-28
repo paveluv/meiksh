@@ -4,7 +4,7 @@
 # Verify parent shell and background child both survive concurrently.
 
 tmpf="$TMPDIR/shall_18_02_002_$$"
-"${MEIKSH:-meiksh}" -c '
+"${SHELL}" -c '
   printf "%s\n" "bg" > "'"$tmpf"'" &
   bgpid=$!
   wait "$bgpid"

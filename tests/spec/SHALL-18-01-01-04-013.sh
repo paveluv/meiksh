@@ -8,7 +8,7 @@ tmpf="$TMPDIR/shall_18_04_013_$$"
 rm -f "$tmpf"
 
 before=$(date +%s)
-"${MEIKSH:-meiksh}" -c ': > "'"$tmpf"'"'
+"${SHELL}" -c ': > "'"$tmpf"'"'
 after=$(date +%s)
 
 if [ ! -f "$tmpf" ]; then

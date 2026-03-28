@@ -3,7 +3,7 @@
 #  are in effect, and an error occurred."
 # Verify cd -eP exits >1 when directory change fails.
 
-"${MEIKSH:-meiksh}" -c 'cd -eP /nonexistent_dir_20_14_14_011' 2>/dev/null
+"${SHELL}" -c 'cd -eP /nonexistent_dir_20_14_14_011' 2>/dev/null
 rc=$?
 if [ "$rc" -le 1 ]; then
   printf '%s\n' "FAIL: cd -eP to nonexistent dir should exit >1, got $rc" >&2

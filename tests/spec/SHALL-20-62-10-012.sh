@@ -7,7 +7,7 @@
 #  suspended job."
 # Verify + and - indicators with multiple background jobs.
 
-got=$("${MEIKSH:-meiksh}" -c '
+got=$("${SHELL}" -c '
   sleep 100 &
   sleep 100 &
   out=$(jobs)

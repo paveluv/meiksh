@@ -6,7 +6,7 @@
 tmpf="$TMPDIR/shall_18_04_001_$$"
 rm -f "$tmpf"
 
-"${MEIKSH:-meiksh}" -c 'printf "%s\n" "created" > "'"$tmpf"'"'
+"${SHELL}" -c 'printf "%s\n" "created" > "'"$tmpf"'"'
 if [ ! -f "$tmpf" ]; then
   printf '%s\n' "FAIL: file was not created by redirection" >&2
   exit 1

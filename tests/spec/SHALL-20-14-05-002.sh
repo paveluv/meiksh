@@ -6,7 +6,7 @@ subdir="$TMPDIR/shall_20_14_05_002_$$"
 mkdir -p "$subdir"
 
 # Absolute path
-got=$("${MEIKSH:-meiksh}" -c 'cd "'"$subdir"'" && pwd -P')
+got=$("${SHELL}" -c 'cd "'"$subdir"'" && pwd -P')
 real=$(cd "$subdir" && pwd -P)
 rm -rf "$subdir"
 
@@ -17,7 +17,7 @@ fi
 
 # Relative path
 mkdir -p "$TMPDIR/shall_20_14_05_002r_$$/child"
-got=$("${MEIKSH:-meiksh}" -c '
+got=$("${SHELL}" -c '
   cd "'"$TMPDIR/shall_20_14_05_002r_$$"'" || exit 1
   cd child || exit 1
   pwd -P

@@ -7,7 +7,7 @@
 # Verify getopts handles option-argument in same token and as separate token.
 
 # Separate argument form: -b value
-got=$("${MEIKSH:-meiksh}" -c '
+got=$("${SHELL}" -c '
   OPTIND=1
   getopts "ab:" opt -b hello
   printf "%s:%s\n" "$opt" "$OPTARG"
@@ -18,7 +18,7 @@ if [ "$got" != "b:hello" ]; then
 fi
 
 # Combined form: -bhello
-got2=$("${MEIKSH:-meiksh}" -c '
+got2=$("${SHELL}" -c '
   OPTIND=1
   getopts "ab:" opt -bhello
   printf "%s:%s\n" "$opt" "$OPTARG"

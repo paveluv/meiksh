@@ -2,7 +2,7 @@
 # "where the fields shall be as follows:: <state>"
 # Verify jobs output includes a state field (Running, Done, Stopped, etc.).
 
-got=$("${MEIKSH:-meiksh}" -c '
+got=$("${SHELL}" -c '
   sleep 100 &
   jobs
   kill %1 2>/dev/null

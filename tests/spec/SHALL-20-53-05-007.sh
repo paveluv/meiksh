@@ -3,7 +3,7 @@
 #  the option character that was found."
 # Verify getopts sets the named variable to the found option character.
 
-got=$("${MEIKSH:-meiksh}" -c '
+got=$("${SHELL}" -c '
   OPTIND=1
   getopts "abc" myvar -a
   printf "%s\n" "$myvar"
@@ -13,7 +13,7 @@ if [ "$got" != "a" ]; then
   exit 1
 fi
 
-got2=$("${MEIKSH:-meiksh}" -c '
+got2=$("${SHELL}" -c '
   OPTIND=1
   getopts "abc" result -c
   printf "%s\n" "$result"

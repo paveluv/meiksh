@@ -11,7 +11,7 @@ mkfifo "$tmpfifo"
 cat "$tmpfifo" > "$TMPDIR/shall_18_04_025_out_$$" &
 reader_pid=$!
 
-"${MEIKSH:-meiksh}" -c 'printf "%s\n" "fifo_ok" > "'"$tmpfifo"'"'
+"${SHELL}" -c 'printf "%s\n" "fifo_ok" > "'"$tmpfifo"'"'
 wait "$reader_pid"
 
 content=$(cat "$TMPDIR/shall_18_04_025_out_$$")

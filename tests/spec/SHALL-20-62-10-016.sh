@@ -3,7 +3,7 @@
 #  shall be inserted before the <state> field."
 # Verify jobs -l shows PGID for job-control background jobs.
 
-got=$("${MEIKSH:-meiksh}" -mc '
+got=$("${SHELL}" -mc '
   sleep 100 &
   bgpid=$!
   out=$(jobs -l)

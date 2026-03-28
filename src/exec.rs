@@ -1298,6 +1298,24 @@ fn match_pattern(text: &[char], ti: usize, pattern: &[char], pi: usize) -> bool 
     }
 }
 
+fn match_charclass(class: &str, ch: char) -> bool {
+    match class {
+        "alnum" => ch.is_ascii_alphanumeric(),
+        "alpha" => ch.is_ascii_alphabetic(),
+        "blank" => ch == ' ' || ch == '\t',
+        "cntrl" => ch.is_ascii_control(),
+        "digit" => ch.is_ascii_digit(),
+        "graph" => ch.is_ascii_graphic(),
+        "lower" => ch.is_ascii_lowercase(),
+        "print" => ch.is_ascii_graphic() || ch == ' ',
+        "punct" => ch.is_ascii_punctuation(),
+        "space" => ch.is_ascii_whitespace(),
+        "upper" => ch.is_ascii_uppercase(),
+        "xdigit" => ch.is_ascii_hexdigit(),
+        _ => false,
+    }
+}
+
 fn match_bracket(current: Option<char>, pattern: &[char], start: usize) -> Option<(bool, usize)> {
     let current = current?;
     let mut index = start + 1;
@@ -1311,13 +1329,30 @@ fn match_bracket(current: Option<char>, pattern: &[char], start: usize) -> Optio
         index += 1;
     }
 
+    let first_elem = true;
     let mut matched = false;
     let mut saw_closer = false;
+    let mut first_elem = first_elem;
     while index < pattern.len() {
-        if pattern[index] == ']' {
+        if pattern[index] == ']' && !first_elem {
             saw_closer = true;
             index += 1;
             break;
+        }
+
+        first_elem = false;
+
+        if pattern[index] == '[' && index + 1 < pattern.len() && pattern[index + 1] == ':' {
+            if let Some(end) = pattern[index + 2..]
+                .iter()
+                .zip(pattern[index + 3..].iter())
+                .position(|(&a, &b)| a == ':' && b == ']')
+            {
+                let class_name: String = pattern[index + 2..index + 2 + end].iter().collect();
+                matched |= match_charclass(&class_name, current);
+                index = index + 2 + end + 2;
+                continue;
+            }
         }
 
         let first = if pattern[index] == '\\' && index + 1 < pattern.len() {

@@ -4,7 +4,7 @@
 #  character shall be identified in the message."
 # Verify getopts error for missing option-argument identifies the option.
 
-err=$("${MEIKSH:-meiksh}" -c '
+err=$("${SHELL}" -c '
   OPTIND=1
   getopts "a:b" opt -a
 ' 2>&1 >/dev/null)

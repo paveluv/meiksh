@@ -8,7 +8,7 @@ hdir="$TMPDIR/shall_20_44_08_019_$$"
 mkdir -p "$hdir"
 hfile="$hdir/test_history"
 
-"${MEIKSH:-meiksh}" -ic '
+"${SHELL}" -ic '
   HISTFILE="'"$hfile"'"
   export HISTFILE
   true

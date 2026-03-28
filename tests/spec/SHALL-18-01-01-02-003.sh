@@ -9,7 +9,7 @@ tmpf="$TMPDIR/shall_18_02_003_$$"
 TEST_INHERIT_VAR=inherited_value
 export TEST_INHERIT_VAR
 
-"${MEIKSH:-meiksh}" -c '
+"${SHELL}" -c '
   printf "%s\n" "$TEST_INHERIT_VAR"
   pwd
   umask

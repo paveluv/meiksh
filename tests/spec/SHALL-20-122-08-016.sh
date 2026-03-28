@@ -11,7 +11,7 @@ printf "found\n"
 CMD
 chmod +x "$bindir/testcmd"
 
-got=$("${MEIKSH:-meiksh}" -c "PATH='$bindir' time testcmd" 2>/dev/null)
+got=$("${SHELL}" -c "PATH='$bindir' time testcmd" 2>/dev/null)
 rm -rf "$bindir"
 
 case "$got" in

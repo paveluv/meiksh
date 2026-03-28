@@ -3,7 +3,7 @@
 #  file type."
 # (Duplicate of 04-021) Verify device file redirection works.
 
-result=$("${MEIKSH:-meiksh}" -c 'printf "%s\n" "gone" > /dev/null; printf "%s\n" "ok"')
+result=$("${SHELL}" -c 'printf "%s\n" "gone" > /dev/null; printf "%s\n" "ok"')
 if [ "$result" != "ok" ]; then
   printf '%s\n' "FAIL: redirect to /dev/null failed" >&2
   exit 1

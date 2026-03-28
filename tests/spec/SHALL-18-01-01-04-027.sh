@@ -8,7 +8,7 @@ tmpf="$TMPDIR/shall_18_04_027_$$"
 printf '%s\n' "original content here" > "$tmpf"
 chmod 600 "$tmpf"
 
-"${MEIKSH:-meiksh}" -c 'printf "%s\n" "replaced" > "'"$tmpf"'"'
+"${SHELL}" -c 'printf "%s\n" "replaced" > "'"$tmpf"'"'
 
 perms=$(ls -l "$tmpf" | cut -c2-10)
 content=$(cat "$tmpf")

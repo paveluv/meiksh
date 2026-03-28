@@ -10,7 +10,7 @@ OPTIND=1
 getopts "ab" opt -z
 SCRIPT
 
-err=$("${MEIKSH:-meiksh}" "$tmpf" 2>&1 >/dev/null)
+err=$("${SHELL}" "$tmpf" 2>&1 >/dev/null)
 rm -f "$tmpf"
 
 # The error message should contain the script name (the value of $0)

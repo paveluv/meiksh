@@ -3,7 +3,7 @@
 #  name of the directory, used when no directory operand is specified."
 # Verify HOME is used as default directory when no operand is given.
 
-got=$("${MEIKSH:-meiksh}" -c '
+got=$("${SHELL}" -c '
   HOME=/
   export HOME
   cd

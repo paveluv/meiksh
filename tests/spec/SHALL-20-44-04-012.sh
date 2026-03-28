@@ -12,7 +12,7 @@ export HISTSIZE
 outfile="$TMPDIR/fc_s_noeditor_$$"
 
 # Set FCEDIT to something that would fail if invoked
-${MEIKSH:-meiksh} -c '
+${SHELL} -c '
   HISTFILE="'"$HISTFILE"'"
   HISTSIZE=100
   FCEDIT=/nonexistent_editor_$$

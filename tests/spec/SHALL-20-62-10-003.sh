@@ -3,7 +3,7 @@
 # Verify jobs output contains the required fields (current, job-number, state,
 # command).
 
-got=$("${MEIKSH:-meiksh}" -c '
+got=$("${SHELL}" -c '
   sleep 100 &
   jobs
   kill %1 2>/dev/null

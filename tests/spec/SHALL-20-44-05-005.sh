@@ -11,7 +11,7 @@ export HISTSIZE
 
 outfile="$TMPDIR/fc_firstonly_$$"
 
-${MEIKSH:-meiksh} -c '
+${SHELL} -c '
   HISTFILE="'"$HISTFILE"'"
   HISTSIZE=100
   echo foo foo foo

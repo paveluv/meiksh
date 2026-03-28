@@ -6,7 +6,7 @@
 # Verify cd "" fails and cd - uses OLDPWD.
 
 # cd "" must fail
-"${MEIKSH:-meiksh}" -c 'cd ""' 2>/dev/null
+"${SHELL}" -c 'cd ""' 2>/dev/null
 rc=$?
 if [ "$rc" -eq 0 ]; then
   printf '%s\n' "FAIL: cd '' should exit non-zero" >&2
@@ -14,14 +14,14 @@ if [ "$rc" -eq 0 ]; then
 fi
 
 # cd "" must write to stderr
-err=$("${MEIKSH:-meiksh}" -c 'cd ""' 2>&1 >/dev/null)
+err=$("${SHELL}" -c 'cd ""' 2>&1 >/dev/null)
 if [ -z "$err" ]; then
   printf '%s\n' "FAIL: cd '' should write diagnostic to stderr" >&2
   exit 1
 fi
 
 # cd - must use OLDPWD and print new directory to stdout
-got=$("${MEIKSH:-meiksh}" -c '
+got=$("${SHELL}" -c '
   cd / 2>/dev/null
   cd /tmp 2>/dev/null
   cd - 2>/dev/null

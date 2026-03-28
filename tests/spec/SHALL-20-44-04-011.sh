@@ -10,7 +10,7 @@ export HISTSIZE
 
 outfile="$TMPDIR/fc_s_out_$$"
 
-${MEIKSH:-meiksh} -c '
+${SHELL} -c '
   HISTFILE="'"$HISTFILE"'"
   HISTSIZE=100
   echo hello_reexec

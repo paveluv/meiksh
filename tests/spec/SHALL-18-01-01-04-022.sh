@@ -8,7 +8,7 @@ tmpf="$TMPDIR/shall_18_04_022_$$"
 printf '%s\n' "old data that is long" > "$tmpf"
 chmod 640 "$tmpf"
 
-"${MEIKSH:-meiksh}" -c 'printf "%s\n" "new" > "'"$tmpf"'"'
+"${SHELL}" -c 'printf "%s\n" "new" > "'"$tmpf"'"'
 
 perms=$(ls -l "$tmpf" | cut -c2-10)
 content=$(cat "$tmpf")

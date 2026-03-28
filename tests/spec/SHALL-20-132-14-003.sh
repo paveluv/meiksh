@@ -4,7 +4,7 @@
 # Verify umask exits 0 on success (both set and query).
 
 # Query mode (no operand)
-"${MEIKSH:-meiksh}" -c 'umask'
+"${SHELL}" -c 'umask'
 rc=$?
 if [ "$rc" -ne 0 ]; then
   printf '%s\n' "FAIL: umask query exited $rc, expected 0" >&2
@@ -12,7 +12,7 @@ if [ "$rc" -ne 0 ]; then
 fi
 
 # Set mode
-"${MEIKSH:-meiksh}" -c 'umask 022'
+"${SHELL}" -c 'umask 022'
 rc=$?
 if [ "$rc" -ne 0 ]; then
   printf '%s\n' "FAIL: umask 022 exited $rc, expected 0" >&2
@@ -20,7 +20,7 @@ if [ "$rc" -ne 0 ]; then
 fi
 
 # Symbolic mode
-"${MEIKSH:-meiksh}" -c 'umask u=rwx,go=rx'
+"${SHELL}" -c 'umask u=rwx,go=rx'
 rc=$?
 if [ "$rc" -ne 0 ]; then
   printf '%s\n' "FAIL: umask symbolic exited $rc, expected 0" >&2

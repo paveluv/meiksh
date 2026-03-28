@@ -10,7 +10,7 @@ base="$TMPDIR/shall_20_14_08_020_$$"
 mkdir -p "$base/dir1/sub" "$base/dir2/sub"
 
 # CDPATH with multiple entries; first match wins
-got=$("${MEIKSH:-meiksh}" -c '
+got=$("${SHELL}" -c '
   CDPATH="'"$base/dir1:$base/dir2"'"
   export CDPATH
   cd sub 2>/dev/null
@@ -25,7 +25,7 @@ if [ "$got" != "$expected" ]; then
 fi
 
 # Unset CDPATH = empty string = search cwd only
-got2=$("${MEIKSH:-meiksh}" -c '
+got2=$("${SHELL}" -c '
   unset CDPATH
   mkdir -p "'"$TMPDIR"'/shall_20_14_08_020b_$$/child"
   cd "'"$TMPDIR"'/shall_20_14_08_020b_$$" 2>/dev/null

@@ -14,7 +14,7 @@ export HISTSIZE
 # Remove any pre-existing file
 rm -f "$HISTFILE"
 
-${MEIKSH:-meiksh} -c '
+${SHELL} -c '
   HISTFILE="'"$HISTFILE"'"
   HISTSIZE=100
   echo histfile_path_verify

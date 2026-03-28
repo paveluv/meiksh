@@ -4,7 +4,7 @@
 #  conforming to this volume of POSIX.1-2024"
 # Verify the shell can fork child processes for external commands.
 
-result=$("${MEIKSH:-meiksh}" -c 'printf "%s\n" hello')
+result=$("${SHELL}" -c 'printf "%s\n" hello')
 if [ "$result" != "hello" ]; then
   printf '%s\n' "FAIL: fork/exec for subshell command failed" >&2
   exit 1

@@ -8,7 +8,7 @@ tmpl="$TMPDIR/shall_18_04_024_link_$$"
 rm -f "$tmpf" "$tmpl"
 ln -s "$tmpf" "$tmpl"
 
-"${MEIKSH:-meiksh}" -c 'printf "%s\n" "linked" > "'"$tmpl"'"'
+"${SHELL}" -c 'printf "%s\n" "linked" > "'"$tmpl"'"'
 if [ ! -f "$tmpf" ]; then
   printf '%s\n' "FAIL: target not created via symlink" >&2
   rm -f "$tmpl"

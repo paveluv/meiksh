@@ -7,7 +7,7 @@
 tmpf="$TMPDIR/shall_18_04_017_$$"
 printf '%s\n' "old content" > "$tmpf"
 
-"${MEIKSH:-meiksh}" -c 'printf "%s\n" "new" > "'"$tmpf"'"'
+"${SHELL}" -c 'printf "%s\n" "new" > "'"$tmpf"'"'
 content=$(cat "$tmpf")
 rm -f "$tmpf"
 

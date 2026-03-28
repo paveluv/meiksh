@@ -2,7 +2,7 @@
 # "where the fields shall be as follows:: <job-number>"
 # Verify jobs output includes a numeric job number in brackets.
 
-got=$("${MEIKSH:-meiksh}" -c '
+got=$("${SHELL}" -c '
   sleep 100 &
   jobs
   kill %1 2>/dev/null

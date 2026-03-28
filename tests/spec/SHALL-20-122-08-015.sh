@@ -12,7 +12,7 @@ exit 0
 UTIL
 chmod +x "$bindir/myutil"
 
-got=$("${MEIKSH:-meiksh}" -c "PATH='$bindir' time myutil" 2>&1) || true
+got=$("${SHELL}" -c "PATH='$bindir' time myutil" 2>&1) || true
 rc=$?
 rm -rf "$bindir"
 

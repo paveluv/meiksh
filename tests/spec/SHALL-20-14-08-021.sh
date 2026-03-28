@@ -4,7 +4,7 @@
 #  unspecified."
 # Verify cd sets PWD after successful directory change.
 
-got=$("${MEIKSH:-meiksh}" -c '
+got=$("${SHELL}" -c '
   cd /tmp 2>/dev/null
   printf "%s\n" "$PWD"
 ')
@@ -16,7 +16,7 @@ if [ "$got" != "$expected" ]; then
 fi
 
 # With -P, PWD should be physical
-got2=$("${MEIKSH:-meiksh}" -c '
+got2=$("${SHELL}" -c '
   cd -P /tmp 2>/dev/null
   printf "%s\n" "$PWD"
 ')

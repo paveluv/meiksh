@@ -3,7 +3,7 @@
 #  of LC_ALL shall be used."
 # Verify LC_ALL overrides LC_CTYPE for locale category determination.
 
-got=$("${MEIKSH:-meiksh}" -c '
+got=$("${SHELL}" -c '
   LC_CTYPE=C
   LC_ALL=POSIX
   export LC_CTYPE LC_ALL
@@ -15,7 +15,7 @@ case "$got" in
   *) printf '%s\n' "FAIL: LC_ALL did not override LC_CTYPE, got: $got" >&2; exit 1 ;;
 esac
 
-got2=$("${MEIKSH:-meiksh}" -c '
+got2=$("${SHELL}" -c '
   LC_ALL=POSIX
   export LC_ALL
   printf "%s\n" "${LC_ALL}"

@@ -3,7 +3,7 @@
 #  either process terminating."
 # Verify pipeline components run concurrently without either terminating the other.
 
-result=$("${MEIKSH:-meiksh}" -c 'printf "%s\n" "abc" | cat')
+result=$("${SHELL}" -c 'printf "%s\n" "abc" | cat')
 if [ "$result" != "abc" ]; then
   printf '%s\n' "FAIL: pipeline failed, got '$result'" >&2
   exit 1

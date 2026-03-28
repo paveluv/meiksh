@@ -4,14 +4,14 @@
 #  set correctly."
 # Verify cd exits 0 on successful directory change.
 
-"${MEIKSH:-meiksh}" -c 'cd / && exit 0'
+"${SHELL}" -c 'cd / && exit 0'
 rc=$?
 if [ "$rc" -ne 0 ]; then
   printf '%s\n' "FAIL: cd / should exit 0, got $rc" >&2
   exit 1
 fi
 
-"${MEIKSH:-meiksh}" -c 'cd /tmp && exit 0'
+"${SHELL}" -c 'cd /tmp && exit 0'
 rc=$?
 if [ "$rc" -ne 0 ]; then
   printf '%s\n' "FAIL: cd /tmp should exit 0, got $rc" >&2
