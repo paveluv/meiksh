@@ -6,7 +6,7 @@
 
 fail=0
 
-alias myecho='printf %s\n'
+alias myecho='printf "%s\n"'
 result=$(eval 'myecho hello')
 [ "$result" = "hello" ] || { printf '%s\n' "FAIL: alias substitution did not occur: '$result'" >&2; fail=1; }
 

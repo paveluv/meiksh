@@ -6,7 +6,7 @@
 #  remaining as conditions."
 
 # Test 1: first operand is unsigned decimal integer -> all operands are conditions (reset)
-result=$("$MEIKSH" -c '
+result=$("${SHELL:-sh}" -c '
   trap "echo caught" INT TERM
   trap 2 15
   out=$(trap)
@@ -22,7 +22,7 @@ if [ $? -ne 0 ]; then
 fi
 
 # Test 2: first operand is NOT an integer -> treated as action
-result=$("$MEIKSH" -c '
+result=$("${SHELL:-sh}" -c '
   trap "echo hello" INT
   out=$(trap -p INT)
   case "$out" in

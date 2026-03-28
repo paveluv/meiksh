@@ -7,12 +7,12 @@
 fail=0
 
 # Define alias in one complete_command, use in the next
-eval 'alias testcmd="printf aliased\n"'
+eval 'alias testcmd="printf \"%s\n\" aliased"'
 result=$(eval 'testcmd')
 [ "$result" = "aliased" ] || { printf '%s\n' "FAIL: alias not effective by next command: '$result'" >&2; fail=1; }
 
 # Verify ordering: define A then B, B should see A's effect
-eval 'alias ordA="printf A\n"; alias ordB="printf B\n"'
+eval 'alias ordA="printf \"%s\n\" A"; alias ordB="printf \"%s\n\" B"'
 rA=$(eval 'ordA')
 rB=$(eval 'ordB')
 [ "$rA" = "A" ] && [ "$rB" = "B" ] || { printf '%s\n' "FAIL: alias ordering wrong: A='$rA' B='$rB'" >&2; fail=1; }

@@ -158,7 +158,7 @@ impl From<sys::SysError> for ShellError {
 
 impl From<syntax::ParseError> for ShellError {
     fn from(value: syntax::ParseError) -> Self {
-        Self::new(value.to_string())
+        Self::with_status(2, value.to_string())
     }
 }
 
@@ -191,6 +191,7 @@ pub struct Shell {
     pub pending_control: Option<PendingControl>,
     pub(crate) interactive: bool,
     pub(crate) errexit_suppressed: bool,
+    pub(crate) pid: sys::Pid,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -276,6 +277,8 @@ impl Shell {
             || (sys::is_interactive_fd(sys::STDIN_FILENO)
                 && sys::is_interactive_fd(sys::STDERR_FILENO));
         let ignored_on_entry = Self::probe_ignored_signals();
+        let mut env = env;
+        env.insert("IFS".into(), " \t\n".into());
         Ok(Self {
             positional: options.positional.clone(),
             options,
@@ -298,6 +301,7 @@ impl Shell {
             pending_control: None,
             interactive,
             errexit_suppressed: false,
+            pid: sys::current_pid(),
         })
     }
 
@@ -342,6 +346,7 @@ impl Shell {
             function_depth: 0,
             pending_control: None,
             errexit_suppressed: false,
+            pid: sys::current_pid(),
         })
     }
 
@@ -1152,7 +1157,7 @@ impl expand::Context for Shell {
     fn special_param(&self, name: char) -> Option<String> {
         match name {
             '?' => Some(self.last_status.to_string()),
-            '$' => Some(sys::current_pid().to_string()),
+            '$' => Some(self.pid.to_string()),
             '!' => self.last_background.map(|pid| pid.to_string()),
             '#' => Some(self.positional.len().to_string()),
             '-' => Some(self.active_option_flags()),
@@ -1450,6 +1455,7 @@ mod tests {
             pending_control: None,
             interactive: false,
             errexit_suppressed: false,
+            pid: 0,
         }
     }
 
@@ -1561,8 +1567,9 @@ mod tests {
 
     #[test]
     fn special_parameters_reflect_shell_state() {
-        run_trace(vec![t("getpid", vec![], TraceResult::Pid(12345))], || {
+        assert_no_syscalls(|| {
             let mut shell = test_shell();
+            shell.pid = 12345;
             shell.positional = vec!["first".into(), "second".into()];
             shell.last_status = 17;
             shell.last_background = Some(42);
@@ -1858,7 +1865,8 @@ mod tests {
             }
             .into();
             assert_eq!(expand_err.message, "expand");
-            assert_eq!(format!("{}", shell_err), shell_err.message);
+            assert_eq!(shell_err.exit_status(), 2);
+            assert_eq!(format!("{}", shell_err), shell_err.display_message());
         });
     }
 

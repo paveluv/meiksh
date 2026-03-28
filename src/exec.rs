@@ -535,7 +535,7 @@ fn execute_case(shell: &mut Shell, case_command: &CaseCommand) -> Result<i32, Sh
     let word = expand::expand_word_text(shell, &case_command.word)?;
     for arm in &case_command.arms {
         for pattern in &arm.patterns {
-            let pattern = expand::expand_word_text(shell, pattern)?;
+            let pattern = expand::expand_word_pattern(shell, pattern)?;
             if case_pattern_matches(&word, &pattern) {
                 return execute_nested_program(shell, &arm.body);
             }
@@ -616,6 +616,15 @@ fn write_xtrace(shell: &mut Shell, expanded: &ExpandedSimpleCommand) {
     let _ = sys::write_all_fd(sys::STDERR_FILENO, line.as_bytes());
 }
 
+fn has_command_substitution(simple: &SimpleCommand) -> bool {
+    simple.assignments.iter().any(|a| {
+        let raw = &a.value.raw;
+        raw.contains("$(") || raw.contains('`')
+    }) || simple.words.iter().any(|w| {
+        w.raw.contains("$(") || w.raw.contains('`')
+    })
+}
+
 fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, ShellError> {
     let expanded = expand_simple(shell, simple)?;
 
@@ -624,17 +633,31 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
     }
 
     if expanded.argv.is_empty() {
+        let cmd_sub_status = if has_command_substitution(simple) {
+            shell.last_status
+        } else {
+            0
+        };
         return with_shell_redirections(&expanded.redirections, shell.options.noclobber, || {
             for (name, value) in expanded.assignments {
                 shell.set_var(&name, value)?;
             }
-            Ok(0)
+            Ok(cmd_sub_status)
         });
     }
 
     if builtin::is_builtin(&expanded.argv[0]) {
         let is_special_builtin = builtin::is_special_builtin(&expanded.argv[0]);
-        let result = if is_special_builtin {
+        let is_exec_no_cmd = expanded.argv[0] == "exec" && {
+            let has_utility = expanded.argv.iter().skip(1).any(|a| a != "--");
+            !has_utility
+        };
+        let result = if is_exec_no_cmd {
+            for redir in &expanded.redirections {
+                apply_shell_redirection(redir, shell.options.noclobber)?;
+            }
+            run_builtin_flow(shell, &expanded.argv, &expanded.assignments)
+        } else if is_special_builtin {
             with_shell_redirections(&expanded.redirections, shell.options.noclobber, || {
                 run_builtin_flow(shell, &expanded.argv, &expanded.assignments)
             })
@@ -682,12 +705,25 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
             }
         })
     } else {
-        let prepared = build_process_from_expanded(shell, &expanded)?;
+        let prepared = match build_process_from_expanded(shell, &expanded) {
+            Ok(p) => p,
+            Err(error) => {
+                sys_eprintln!("{}", error.display_message());
+                return Ok(error.exit_status());
+            }
+        };
         if !prepared.path_verified && !prepared.exec_path.contains('/') {
             sys_eprintln!("{}: not found", expanded.argv[0]);
             return Ok(127);
         }
-        let handle = spawn_prepared(shell, &prepared, None, false, ProcessGroupPlan::NewGroup)?;
+        let handle = match spawn_prepared(shell, &prepared, None, false, ProcessGroupPlan::NewGroup)
+        {
+            Ok(h) => h,
+            Err(error) => {
+                sys_eprintln!("{}", error.display_message());
+                return Ok(error.exit_status());
+            }
+        };
         let pgid = handle.pid;
         let _ = sys::set_process_group(pgid, pgid);
         let desc = expanded.argv.join(" ");
@@ -1652,6 +1688,7 @@ mod tests {
             pending_control: None,
             interactive: false,
             errexit_suppressed: false,
+            pid: 0,
         }
     }
 

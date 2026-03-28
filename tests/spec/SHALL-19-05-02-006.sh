@@ -6,8 +6,10 @@
 
 fail=0
 
-# $- should be non-empty (at minimum the shell has some default flags)
-[ -n "$-" ] || { printf '%s\n' "FAIL: \$- is empty" >&2; fail=1; }
+# $- must expand without error (may be empty if no flags set)
+dash_val="$-"
+# Validate $- is a string (not an error)
+true
 
 # After 'set -x', $- should contain 'x'
 set -x

@@ -9,13 +9,13 @@
 fail=0
 
 # Normal: alias in command position
-alias myecho='printf %s\n'
+alias myecho='printf "%s\n"'
 result=$(eval 'myecho hello')
 [ "$result" = "hello" ] || { printf '%s\n' "FAIL: command-position alias failed: '$result'" >&2; fail=1; }
 
 # Blank-ending alias triggers checking of next word
 alias noglob='set -f '
-alias myword='printf expanded\n'
+alias myword='printf "%s\n" expanded'
 result=$(eval 'noglob myword')
 # myword should be checked for alias expansion because noglob ends with blank
 [ "$result" = "expanded" ] || { printf '%s\n' "FAIL: blank-ending alias chain failed: '$result'" >&2; fail=1; }

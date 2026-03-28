@@ -542,11 +542,15 @@ fn tokenize(source: &str) -> Result<Tokenized, ParseError> {
                 scan_dquote_body(&chars, &mut index, &mut current)?;
             }
             '\\' => {
-                current.push(ch);
-                index += 1;
-                if index < chars.len() {
-                    current.push(chars[index]);
+                if index + 1 < chars.len() && chars[index + 1] == '\n' {
+                    index += 2;
+                } else {
+                    current.push(ch);
                     index += 1;
+                    if index < chars.len() {
+                        current.push(chars[index]);
+                        index += 1;
+                    }
                 }
             }
             ';' => {
@@ -1003,6 +1007,11 @@ impl Parser {
     fn parse_if_command(&mut self) -> Result<Command, ParseError> {
         self.expect_reserved_word("if")?;
         let condition = self.parse_program_until(false, &["then"], false)?;
+        if condition.items.is_empty() {
+            return Err(ParseError {
+                message: "expected command list after 'if'".to_string(),
+            });
+        }
         self.expect_reserved_word("then")?;
         let then_branch = self.parse_program_until(false, &["elif", "else", "fi"], false)?;
         let mut elif_branches = Vec::new();
@@ -1010,6 +1019,11 @@ impl Parser {
         while self.peek_reserved_word("elif") {
             self.expect_reserved_word("elif")?;
             let condition = self.parse_program_until(false, &["then"], false)?;
+            if condition.items.is_empty() {
+                return Err(ParseError {
+                    message: "expected command list after 'elif'".to_string(),
+                });
+            }
             self.expect_reserved_word("then")?;
             let body = self.parse_program_until(false, &["elif", "else", "fi"], false)?;
             elif_branches.push(ElifBranch { condition, body });
@@ -1032,11 +1046,17 @@ impl Parser {
     }
 
     fn parse_loop_command(&mut self, kind: LoopKind) -> Result<Command, ParseError> {
-        match kind {
-            LoopKind::While => self.expect_reserved_word("while")?,
-            LoopKind::Until => self.expect_reserved_word("until")?,
-        }
+        let keyword = match kind {
+            LoopKind::While => "while",
+            LoopKind::Until => "until",
+        };
+        self.expect_reserved_word(keyword)?;
         let condition = self.parse_program_until(false, &["do"], false)?;
+        if condition.items.is_empty() {
+            return Err(ParseError {
+                message: format!("expected command list after '{keyword}'"),
+            });
+        }
         self.expect_reserved_word("do")?;
         let body = self.parse_program_until(false, &["done"], false)?;
         self.expect_reserved_word("done")?;

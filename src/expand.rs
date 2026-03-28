@@ -135,6 +135,11 @@ pub fn expand_word_text<C: Context>(ctx: &mut C, word: &Word) -> Result<String, 
     expand_word_text_assignment(ctx, word, false)
 }
 
+pub fn expand_word_pattern<C: Context>(ctx: &mut C, word: &Word) -> Result<String, ExpandError> {
+    let expanded = expand_raw(ctx, &word.raw)?;
+    Ok(render_pattern_from_segments(&expanded.segments))
+}
+
 pub fn expand_assignment_value<C: Context>(
     ctx: &mut C,
     word: &Word,
@@ -170,9 +175,11 @@ fn split_on_unquoted_colons(raw: &str) -> Vec<String> {
     let mut parts = Vec::new();
     let mut current = String::new();
     let mut i = 0;
+    let mut brace_depth = 0usize;
+    let mut paren_depth = 0usize;
     while i < chars.len() {
         match chars[i] {
-            '\'' => {
+            '\'' if brace_depth == 0 && paren_depth == 0 => {
                 current.push(chars[i]);
                 i += 1;
                 while i < chars.len() && chars[i] != '\'' {
@@ -184,7 +191,7 @@ fn split_on_unquoted_colons(raw: &str) -> Vec<String> {
                     i += 1;
                 }
             }
-            '"' => {
+            '"' if brace_depth == 0 && paren_depth == 0 => {
                 current.push(chars[i]);
                 i += 1;
                 while i < chars.len() && chars[i] != '"' {
@@ -208,7 +215,29 @@ fn split_on_unquoted_colons(raw: &str) -> Vec<String> {
                     i += 1;
                 }
             }
-            ':' => {
+            '$' if i + 1 < chars.len() && chars[i + 1] == '{' => {
+                current.push(chars[i]);
+                current.push(chars[i + 1]);
+                brace_depth += 1;
+                i += 2;
+            }
+            '}' if brace_depth > 0 => {
+                brace_depth -= 1;
+                current.push(chars[i]);
+                i += 1;
+            }
+            '$' if i + 1 < chars.len() && chars[i + 1] == '(' => {
+                current.push(chars[i]);
+                current.push(chars[i + 1]);
+                paren_depth += 1;
+                i += 2;
+            }
+            ')' if paren_depth > 0 => {
+                paren_depth -= 1;
+                current.push(chars[i]);
+                i += 1;
+            }
+            ':' if brace_depth == 0 && paren_depth == 0 => {
                 parts.push(std::mem::take(&mut current));
                 i += 1;
             }

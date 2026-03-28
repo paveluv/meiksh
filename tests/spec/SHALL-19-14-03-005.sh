@@ -3,6 +3,7 @@
 # (Duplicate of SHALL-19-14-03-001)
 # Verifies: glob * and ? do not match / in pathnames.
 
-case "a/b" in a?b) printf '%s\n' "FAIL: ? matched /" >&2; exit 1 ;; *) ;; esac
-case "a/b" in a*b) printf '%s\n' "FAIL: * matched /" >&2; exit 1 ;; *) ;; esac
+# In case patterns (not pathname expansion), ? and * match any chars including /
+case "a/b" in a?b) ;; *) printf '%s\n' "FAIL: ? should match / in case pattern" >&2; exit 1 ;; esac
+case "a/b" in a*b) ;; *) printf '%s\n' "FAIL: * should match / in case pattern" >&2; exit 1 ;; esac
 exit 0

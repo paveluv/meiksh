@@ -49,9 +49,9 @@ fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
         match shell.execute_string(&line) {
             Ok(status) => shell.last_status = status,
             Err(error) => {
-                let msg = format!("meiksh: {}\n", error.message);
+                let msg = format!("meiksh: {}\n", error.display_message());
                 let _ = sys::write_all_fd(sys::STDERR_FILENO, msg.as_bytes());
-                shell.last_status = 1;
+                shell.last_status = error.exit_status();
                 continue;
             }
         }
@@ -177,6 +177,7 @@ mod tests {
             pending_control: None,
             interactive: false,
             errexit_suppressed: false,
+            pid: 0,
         }
     }
 
@@ -731,7 +732,7 @@ mod tests {
                     .env
                     .insert("HISTFILE".into(), "/tmp/bad-history.txt".into());
                 let status = run_loop(&mut shell).expect("parse handled");
-                assert_eq!(status, 1);
+                assert_eq!(status, 2);
             },
         );
     }
