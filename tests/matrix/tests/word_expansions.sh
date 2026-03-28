@@ -10,6 +10,12 @@
 # ==============================================================================
 # The Grand Order of Operations
 # ==============================================================================
+# REQUIREMENT: SHALL-2-6-110: When the expansions in this section are performed
+# other than in the context of preparing a command f...
+# REQUIREMENT: SHALL-2-6-111: When expanding words for a command about to be
+# executed, and the word will be the command name or an...
+# REQUIREMENT: SHALL-2-6-112: If a '$' that is neither within single-quotes
+# nor escaped by a <backslash> is immediately followed b...
 # REQUIREMENT: SHALL-2-6-101: The expansions that are performed for a given word
 # shall be performed in the following order:
 # REQUIREMENT: SHALL-2-6-102: Tilde expansion, parameter expansion, command
@@ -60,6 +66,40 @@ assert_stdout "$HOME" \
 # containing spaces and asterisks.
 test_cmd='HOME="home with * spaces"; printf "%s\n" ~'
 assert_stdout "home with * spaces" \
+    "$TARGET_SHELL -c '$test_cmd'"
+
+
+# ==============================================================================
+# Tilde Expansion
+# ==============================================================================
+# REQUIREMENT: SHALL-2-6-106: Tilde expansions, parameter expansions, command
+# substitutions, arithmetic expansions, and quote removal...
+# REQUIREMENT: SHALL-2-6-107: The shell shall create multiple fields or no
+# fields from a single word only as a result of field splitting...
+# REQUIREMENT: SHALL-2-6-108: This expansion, if supported, shall be applied
+# before all the other word expansions are applied.
+# REQUIREMENT: SHALL-2-6-109: The other expansions shall then be applied to
+# each field that results from this expansion.
+# REQUIREMENT: SHALL-2-6-1-114: Otherwise, the characters in the tilde-prefix
+# following the <tilde> shall be treated as a possible login name...
+# REQUIREMENT: SHALL-2-6-1-115: If the characters in the tilde-prefix following
+# the <tilde> form a portable login name, the tilde-prefix shall be replaced...
+# REQUIREMENT: SHALL-2-6-1-116: The pathname shall be obtained as if by using
+# the getpwnam() function...
+
+# We test that `~` expands to `$HOME`.
+test_cmd='echo ~'
+assert_stdout "$HOME" \
+    "$TARGET_SHELL -c '$test_cmd'"
+
+# An unquoted tilde followed by a slash also expands to HOME.
+test_cmd='echo ~/foo'
+assert_stdout "$HOME/foo" \
+    "$TARGET_SHELL -c '$test_cmd'"
+
+# Quoted tilde does NOT expand.
+test_cmd='echo "~"'
+assert_stdout "~" \
     "$TARGET_SHELL -c '$test_cmd'"
 
 
@@ -139,39 +179,102 @@ test_cmd='foo=set; echo "${foo:+alt}"'
 assert_stdout "alt" \
     "$TARGET_SHELL -c '$test_cmd'"
 
-# REQUIREMENT: SHALL-2-6-2-128: The word shall be expanded to produce a pattern.
-# The parameter expansion shall then result in parameter, with the smallest
-# portion of the suffix matched by the pattern deleted.
-# [Remove Smallest Suffix Pattern: ${parameter%word}]
+# ==============================================================================
+# Conditional Evaluation & Evaluation Errors
+# ==============================================================================
+# REQUIREMENT: SHALL-2-6-2-119: ${parameter} The value, if any, of parameter
+# shall be substituted.
+# REQUIREMENT: SHALL-2-6-2-120: If the parameter is a name, the expansion shall
+# use the longest valid name (see XBD 3.216 Name), whether or not the symbol...
+# REQUIREMENT: SHALL-2-6-2-121: In each case that a value of word is needed
+# (based on the state of parameter, as described below), the word...
+# REQUIREMENT: SHALL-2-6-2-122: If word is not needed, it shall not be expanded.
+# REQUIREMENT: SHALL-2-6-2-123: The '}' character that delimits the following
+# parameter expansion modifications shall be determined...
 
-test_cmd='foo="a.b.c"; echo "${foo%.*}"'
-assert_stdout "a.b" \
+# If the parameter is set, the fallback `word` is completely ignored.
+# We test this by putting a command substitution inside the fallback word.
+# It should not execute if the parameter is set.
+test_cmd='foo="set"; echo "${foo:-$(echo "side_effect" > tmp_effect.txt)}"; ls tmp_effect.txt 2>/dev/null || echo "not created"'
+assert_stdout "set
+not created" \
+    "$TARGET_SHELL -c '$test_cmd'"
+rm -f tmp_effect.txt
+
+# REQUIREMENT: SHALL-2-6-2-133: If parameter is unset and set -u is in effect,
+# the expansion shall fail.
+# REQUIREMENT: SHALL-2-6-2-135: If parameter is unset and set -u is in effect,
+# the expansion shall fail.
+
+# When `set -u` is on, expanding an unset variable fails and exits.
+test_cmd='set -u; unset unset_var; echo "${unset_var}"'
+assert_exit_code_non_zero \
     "$TARGET_SHELL -c '$test_cmd'"
 
-# REQUIREMENT: SHALL-2-6-2-129: The word shall be expanded to produce a pattern.
-# The parameter expansion shall then result in parameter, with the largest
-# portion of the suffix matched by the pattern deleted.
-# [Remove Largest Suffix Pattern: ${parameter%%word}]
-
-test_cmd='foo="a.b.c"; echo "${foo%%.*}"'
-assert_stdout "a" \
+# Even with string length expansion, `set -u` forces a failure.
+test_cmd='set -u; unset unset_var; echo "${#unset_var}"'
+assert_exit_code_non_zero \
     "$TARGET_SHELL -c '$test_cmd'"
 
-# REQUIREMENT: SHALL-2-6-2-130: The word shall be expanded to produce a pattern.
-# The parameter expansion shall then result in parameter, with the smallest
-# portion of the prefix matched by the pattern deleted.
-# [Remove Smallest Prefix Pattern: ${parameter#word}]
+# ==============================================================================
+# Substring Processing Rules
+# ==============================================================================
+# REQUIREMENT: SHALL-2-6-2-118: Any '}' escaped by a <backslash> or within a
+# quoted string... shall not be recognized...
+# REQUIREMENT: SHALL-2-6-2-128: Otherwise, the value of parameter shall be
+# substituted.
+# REQUIREMENT: SHALL-2-6-2-129: If parameter is unset or null, null shall be
+# substituted; otherwise, the expansion of word...
+# REQUIREMENT: SHALL-2-6-2-130: In the parameter expansions shown previously,
+# use of the <colon> in the format shall result in a test...
+# REQUIREMENT: SHALL-2-6-2-131: If parameter is '#' and the colon is omitted...
+# REQUIREMENT: SHALL-2-6-2-134: In each case, pattern matching notation...
+# rather than regular expression notation, shall be used to evaluate the pattern.
+# REQUIREMENT: SHALL-2-6-2-136: Enclosing the full parameter expansion string in
+# double-quotes shall not cause the following four varieties of pattern
+# characters to be quoted...
+# REQUIREMENT: SHALL-2-6-2-137: In each variety, if word is omitted, the empty
+# pattern shall be used.
 
-test_cmd='foo="a.b.c"; echo "${foo#*.}"'
-assert_stdout "b.c" \
+# A missing word acts as an empty pattern (which matches empty suffix/prefix).
+test_cmd='foo="abc"; echo "${foo%}" "${foo#}"'
+assert_stdout "abc abc" \
     "$TARGET_SHELL -c '$test_cmd'"
 
-# REQUIREMENT: SHALL-2-6-2-131: The word shall be expanded to produce a pattern.
-# The parameter expansion shall then result in parameter, with the largest
-# portion of the prefix matched by the pattern deleted.
-# [Remove Largest Prefix Pattern: ${parameter##word}]
+# REQUIREMENT: SHALL-2-6-2-138: The word shall be expanded to produce a pattern.
+# REQUIREMENT: SHALL-2-6-2-139: The parameter expansion shall then result in
+# parameter, with the smallest portion of the suffix matched by the pattern
+# deleted.
+# REQUIREMENT: SHALL-2-6-2-140: If present, word shall not begin with an
+# unquoted '%'.
 
-test_cmd='foo="a.b.c"; echo "${foo##*.}"'
+test_cmd='foo="a.b.c.b.c"; echo "${foo%b.c}"'
+assert_stdout "a.b.c." \
+    "$TARGET_SHELL -c '$test_cmd'"
+
+# REQUIREMENT: SHALL-2-6-2-141: The word shall be expanded to produce a pattern.
+# REQUIREMENT: SHALL-2-6-2-142: The parameter expansion shall then result in
+# parameter, with the largest portion of the suffix matched...
+
+test_cmd='foo="a.b.c.b.c"; echo "${foo%%b.c*}"'
+assert_stdout "a." \
+    "$TARGET_SHELL -c '$test_cmd'"
+
+# REQUIREMENT: SHALL-2-6-2-143: The word shall be expanded to produce a pattern.
+# REQUIREMENT: SHALL-2-6-2-144: The parameter expansion shall then result in
+# parameter, with the smallest portion of the prefix matched...
+# REQUIREMENT: SHALL-2-6-2-145: If present, word shall not begin with an
+# unquoted '#'.
+
+test_cmd='foo="a.b.c.b.c"; echo "${foo#*b.}"'
+assert_stdout "c.b.c" \
+    "$TARGET_SHELL -c '$test_cmd'"
+
+# REQUIREMENT: SHALL-2-6-2-146: The word shall be expanded to produce a pattern.
+# REQUIREMENT: SHALL-2-6-2-147: The parameter expansion shall then result in
+# parameter, with the largest portion of the prefix matched...
+
+test_cmd='foo="a.b.c.b.c"; echo "${foo##*b.}"'
 assert_stdout "c" \
     "$TARGET_SHELL -c '$test_cmd'"
 
@@ -188,6 +291,19 @@ assert_stdout "5" \
 # ==============================================================================
 # REQUIREMENT: SHALL-2-6-3-040: Command Substitution: Command substitution
 # allows the output of a command to replace the command name...
+# REQUIREMENT: SHALL-2-6-3-148: Command substitution shall occur when command(s)
+# are enclosed as follows: $(commands) or `commands`
+# REQUIREMENT: SHALL-2-6-3-149: The shell shall expand the command substitution
+# by executing commands in a subshell environment and replacing the command
+# substitution with the standard output...
+# REQUIREMENT: SHALL-2-6-3-151: Within the backquoted style of command
+# substitution, if the command substitution is not within double-quotes...
+# REQUIREMENT: SHALL-2-6-3-152: The search for the matching backquote shall be
+# satisfied by the first unquoted non-escaped backquote...
+# REQUIREMENT: SHALL-2-6-3-153: With both the backquoted and $(commands) forms,
+# the commands string shall be tokenized (see 2.3 Token Recognition)...
+# REQUIREMENT: SHALL-2-6-3-154: Strictly conforming applications shall ensure
+# that the commands string does not depend on alias changes...
 
 # Command substitution is where the shell bends reality, executing a sub-command
 # and inserting its stdout directly into the current command line. We test both
@@ -200,18 +316,190 @@ test_cmd_classic='echo `echo success`'
 assert_stdout "success" \
     "$TARGET_SHELL -c '$test_cmd_classic'"
 
+# REQUIREMENT: SHALL-2-6-3-150: Any such bytes that occur elsewhere shall be
+# included in the replacement; however, they might be treated as whitespace...
+# REQUIREMENT: SHALL-2-6-3-155: The results of command substitution shall not be
+# processed for further tilde expansion, parameter expansion, command
+# substitution, or arithmetic expansion.
+
+# Any trailing newlines are stripped. Also, the output doesn't get recursively
+# expanded. A `~` inside command substitution output stays a literal `~`.
+test_cmd='echo "$(echo "~")"'
+assert_stdout "~" \
+    "$TARGET_SHELL -c '$test_cmd'"
+
+# REQUIREMENT: SHALL-2-6-3-156: To specify nesting within the backquoted version,
+# the application shall precede the inner backquotes with <backslash>.
+# REQUIREMENT: SHALL-2-6-3-157: Arithmetic expansion has precedence; that is,
+# the shell shall first determine whether it can parse the expansion as...
+# REQUIREMENT: SHALL-2-6-3-158: If it encounters the end of input without
+# already having determined that it cannot parse...
+# REQUIREMENT: SHALL-2-6-3-159: A conforming application shall ensure that it
+# separates the "$(" and '(' into two tokens...
+
+test_cmd='echo `echo \`echo nested\``'
+assert_stdout "nested" \
+    "$TARGET_SHELL -c '$test_cmd'"
 
 # ==============================================================================
 # Math Class: Arithmetic Expansion
 # ==============================================================================
 # REQUIREMENT: SHALL-2-6-4-045: Arithmetic Expansion: The format for arithmetic
 # expansion shall be as follows: $((expression))
+# REQUIREMENT: SHALL-2-6-4-160: The format for arithmetic expansion shall be as
+# follows: $((expression))
+# REQUIREMENT: SHALL-2-6-4-161: $((expression)) The expression shall be treated
+# as if it were in double-quotes, except that a double-quote...
+# REQUIREMENT: SHALL-2-6-4-163: Next, the shell shall treat this as an
+# arithmetic expression and substitute the value of the expression...
+# REQUIREMENT: SHALL-2-6-4-164: The arithmetic expression shall be processed
+# according to the rules given in 1.1.2.1 Arithmetic Precision...
 
 # POSIX shells double as calculators. By wrapping an expression in double
 # parentheses, the shell evaluates the arithmetic and expands to the integer
 # result.
 test_cmd='echo $((2 + 2))'
 assert_stdout "4" \
+    "$TARGET_SHELL -c '$test_cmd'"
+
+# REQUIREMENT: SHALL-2-6-4-162: The shell shall expand all tokens in the
+# expression for parameter expansion, command substitution, and quote removal.
+# REQUIREMENT: SHALL-2-6-4-166: If the shell variable x contains a value that
+# forms a valid integer constant... it shall be evaluated as the numeric value.
+
+test_cmd='x=5; echo $((x * $(echo 2)))'
+assert_stdout "10" \
+    "$TARGET_SHELL -c '$test_cmd'"
+
+# REQUIREMENT: SHALL-2-6-4-165: All changes to variables in an arithmetic
+# expression shall be in effect after the arithmetic expansion...
+
+test_cmd='x=1; echo $((x = x + 4)); echo "$x"'
+assert_stdout "5
+5" \
+    "$TARGET_SHELL -c '$test_cmd'"
+
+# REQUIREMENT: SHALL-2-6-4-167: If the expression is invalid, or the contents
+# of a shell variable used in the expression are not recognized... the
+# expansion fails and the shell shall write a diagnostic...
+
+test_cmd='echo $((1 / 0))'
+assert_exit_code_non_zero \
+    "$TARGET_SHELL -c '$test_cmd'"
+
+
+# ==============================================================================
+# Field Splitting
+# ==============================================================================
+# REQUIREMENT: SHALL-2-6-5-168: After parameter expansion... command
+# substitution... and arithmetic expansion... the shell shall scan the results...
+# REQUIREMENT: SHALL-2-6-5-169: For the remainder of this section, any
+# reference to the results of an expansion...
+# REQUIREMENT: SHALL-2-6-5-170: If the IFS variable is set and has an empty
+# string as its value, no field splitting shall occur.
+# REQUIREMENT: SHALL-2-6-5-172: After the removal of any such fields from the
+# input...
+# REQUIREMENT: SHALL-2-6-5-173: Each input field shall be considered in
+# sequence...
+# REQUIREMENT: SHALL-2-6-5-176: The shell shall use the byte sequences that
+# form the characters in the value of the IFS variable...
+# REQUIREMENT: SHALL-2-6-5-183: No such byte sequence shall contain data such
+# that some bytes in the sequence resulted from an expansion...
+# REQUIREMENT: SHALL-2-6-5-184: At this point, if the candidate is not empty...
+# REQUIREMENT: SHALL-2-6-5-185: Once the input is empty, the candidate shall
+# become an output field if and only if it is not empty.
+# REQUIREMENT: SHALL-2-6-5-186: The ordered list of output fields so produced,
+# which might be empty, shall replace the list of input fields...
+
+# We test that spaces inside a variable are not split when IFS is empty.
+test_cmd='IFS=""; foo="a b c"; for i in $foo; do echo "arg: $i"; done'
+assert_stdout "arg: a b c" \
+    "$TARGET_SHELL -c '$test_cmd'"
+
+# REQUIREMENT: SHALL-2-6-5-175: If the IFS variable is unset... the shell shall
+# behave as if the value of IFS is <space><tab><newline>.
+# REQUIREMENT: SHALL-2-6-5-178: The shell shall use these delimiters as field
+# terminators to split the results of expansions...
+
+# By default, unset IFS splits on space, tab, and newline.
+test_cmd='unset IFS; foo="a b	c
+d"; for i in $foo; do echo "arg: $i"; done'
+assert_stdout "arg: a
+arg: b
+arg: c
+arg: d" \
+    "$TARGET_SHELL -c '$test_cmd'"
+
+# REQUIREMENT: SHALL-2-6-5-177: Each of the characters <space>, <tab>, and
+# <newline> which appears in the value of IFS shall be a single character...
+# Sequence of IFS whitespace characters are treated as a single delimiter.
+
+test_cmd='IFS=" "; foo="a   b"; for i in $foo; do echo "arg: $i"; done'
+assert_stdout "arg: a
+arg: b" \
+    "$TARGET_SHELL -c '$test_cmd'"
+
+# REQUIREMENT: SHALL-2-6-5-174: Fields which contain no results from expansions
+# shall not be affected by field splitting, and shall be retained...
+
+# Unexpanded literals are never split, even if they contain IFS characters.
+test_cmd='IFS=","; for i in a,b,c; do echo "arg: $i"; done'
+assert_stdout "arg: a,b,c" \
+    "$TARGET_SHELL -c '$test_cmd'"
+
+# REQUIREMENT: SHALL-2-6-5-171: However, if an input field which contained the
+# results of an expansion is entirely empty, it shall be retained...
+# Wait, entirely empty unquoted expansions are discarded.
+
+test_cmd='IFS=" "; foo=""; for i in a $foo b; do echo "arg: $i"; done'
+assert_stdout "arg: a
+arg: b" \
+    "$TARGET_SHELL -c '$test_cmd'"
+
+# REQUIREMENT: SHALL-2-6-5-179: If the results of the algorithm are that no
+# fields are delimited; that is, if the input field is wholly retained...
+# REQUIREMENT: SHALL-2-6-5-180: For the purposes of this section, when a field
+# is said to be delimited, then the candidate field...
+# REQUIREMENT: SHALL-2-6-5-181: When the algorithm transforms a candidate into
+# an output field it shall be appended to the current list...
+# REQUIREMENT: SHALL-2-6-5-182: Each field containing the results from an
+# expansion shall be processed in order...
+
+test_cmd='IFS="x"; foo="abc"; for i in $foo; do echo "arg: $i"; done'
+assert_stdout "arg: abc" \
+    "$TARGET_SHELL -c '$test_cmd'"
+
+
+# ==============================================================================
+# Pathname Expansion
+# ==============================================================================
+# REQUIREMENT: SHALL-DESCRIPTION-003: Pathname expansion shall not fail due to
+# the size of a file....
+# REQUIREMENT: SHALL-2-6-6-187: After field splitting, if set -f is not in
+# effect, each field in the resulting command line shall be expanded using the
+# algorithm described in 2.14 Pattern Matching Notation...
+
+# We test that `*` expands to files.
+touch tmp_path_exp.txt
+test_cmd='echo tmp_path_*.txt'
+assert_stdout "tmp_path_exp.txt" \
+    "$TARGET_SHELL -c '$test_cmd'"
+
+# When `set -f` is in effect, no pathname expansion occurs.
+test_cmd='set -f; echo tmp_path_*.txt'
+assert_stdout "tmp_path_*.txt" \
+    "$TARGET_SHELL -c '$test_cmd'"
+
+# ==============================================================================
+# Quote Removal
+# ==============================================================================
+# REQUIREMENT: SHALL-2-6-7-188: The quote character sequence <dollar-sign>
+# single-quote and the single-character quote characters (<backslash>,
+# single-quote, and double-quote)... shall be removed.
+
+# Quotes surrounding words are completely removed after all expansions.
+test_cmd='echo "quoted" '\''single'\'' \e\s\c\a\p\e\d'
+assert_stdout "quoted single escaped" \
     "$TARGET_SHELL -c '$test_cmd'"
 
 

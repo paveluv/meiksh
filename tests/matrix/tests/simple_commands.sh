@@ -10,10 +10,18 @@
 # ==============================================================================
 # Order of Processing
 # ==============================================================================
+# REQUIREMENT: SHALL-2-9-1-1-266: When a given simple command is required to be
+# executed (that is, when any conditional construct such...
 # REQUIREMENT: SHALL-2-9-1-1-267: The first word (if any) that is not a variable
 # assignment or redirection shall be expanded.
 # REQUIREMENT: SHALL-2-9-1-1-268: If any fields remain following its expansion,
 # the first field shall be considered the command name.
+# REQUIREMENT: SHALL-2-9-1-1-271: For all other command names, words after the
+# word that produced the command name shall be subject on...
+# REQUIREMENT: SHALL-2-9-1-1-272: All fields resulting from the expansion of
+# the word that produced the command name and the subsequen...
+# REQUIREMENT: SHALL-2-9-1-1-273: Redirections shall be performed as described
+# in 2.7 Redirection.
 
 # We test that a variable expands into the command name and its first argument.
 test_cmd='cmd="printf %s\n"; $cmd "hello"'

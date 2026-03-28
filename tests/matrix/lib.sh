@@ -61,6 +61,19 @@ assert_stdout() {
     fi
 }
 
+assert_stderr_empty() {
+    cmd="$1"
+
+    # We redirect stdout to /dev/null so only stderr is captured
+    actual_err=$(eval "$cmd" 2>&1 >/dev/null)
+
+    if [ -z "$actual_err" ]; then
+        pass
+    else
+        fail "Expected empty stderr for '$cmd', got: $actual_err"
+    fi
+}
+
 assert_stderr_contains() {
     expected_substr="$1"
     cmd="$2"

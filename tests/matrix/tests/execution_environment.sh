@@ -9,6 +9,26 @@
 
 
 # ==============================================================================
+# Script Input Evaluation
+# ==============================================================================
+# REQUIREMENT: SHALL-INPUT FILES-020: The input file can be of any type, but
+# the initial portion... shall be parseable.
+# REQUIREMENT: SHALL-INPUT FILES-021: The shell shall not enforce any line
+# length limits.
+# REQUIREMENT: SHALL-INPUT FILES-022: If the input file consists solely of zero
+# or more blank lines and comments, sh shall exit with a zero exit status.
+
+test_cmd='
+
+# just a comment
+
+
+'
+echo "$test_cmd" > tmp_empty.sh
+assert_exit_code 0 \
+    "$TARGET_SHELL tmp_empty.sh"
+
+# ==============================================================================
 # The Context: Shell Execution Environment
 # ==============================================================================
 # REQUIREMENT: SHALL-2-8-1-070: Shell Execution Environment: The shell execution
