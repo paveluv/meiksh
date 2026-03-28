@@ -2,7 +2,7 @@
 # "where the fields shall be as follows:: <current>"
 # Verify jobs output includes the current-job indicator field (+, -, or space).
 
-got=$("${MEIKSH:-meiksh}" -c '
+got=$("${SHELL}" -c '
   sleep 100 &
   jobs
   kill %1 2>/dev/null

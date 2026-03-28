@@ -4,7 +4,7 @@
 #  the following values:: The utility specified by utility could not be found."
 # Verify time exits 127 when utility is not found.
 
-"${MEIKSH:-meiksh}" -c 'time nonexistent_cmd_20_122_14_007' 2>/dev/null
+"${SHELL}" -c 'time nonexistent_cmd_20_122_14_007' 2>/dev/null
 rc=$?
 
 if [ "$rc" -ne 127 ]; then

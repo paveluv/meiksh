@@ -4,7 +4,7 @@
 #  message."
 # Verify getopts error message contains the invalid option character.
 
-err=$("${MEIKSH:-meiksh}" -c '
+err=$("${SHELL}" -c '
   OPTIND=1
   getopts "ab" opt -z
 ' 2>&1 >/dev/null)

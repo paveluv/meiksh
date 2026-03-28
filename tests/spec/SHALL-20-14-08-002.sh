@@ -5,7 +5,7 @@
 base="$TMPDIR/shall_20_14_08_002_$$"
 mkdir -p "$base/target"
 
-got=$("${MEIKSH:-meiksh}" -c '
+got=$("${SHELL}" -c '
   CDPATH="'"$base"'"
   export CDPATH
   cd target 2>/dev/null

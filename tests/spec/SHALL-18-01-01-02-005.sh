@@ -6,7 +6,7 @@
 # Verify child process inherits file descriptors for redirection.
 
 tmpf="$TMPDIR/shall_18_02_005_$$"
-"${MEIKSH:-meiksh}" -c 'printf "%s\n" "fd_test"' > "$tmpf"
+"${SHELL}" -c 'printf "%s\n" "fd_test"' > "$tmpf"
 content=$(cat "$tmpf")
 rm -f "$tmpf"
 if [ "$content" != "fd_test" ]; then

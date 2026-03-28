@@ -13,7 +13,7 @@ printf '%s\n' 'true' > "$1"
 ED
 chmod +x "$bindir/fakeed"
 
-got=$("${MEIKSH:-meiksh}" -ic '
+got=$("${SHELL}" -ic '
   FCEDIT="'"$bindir/fakeed"'"
   export FCEDIT
   true

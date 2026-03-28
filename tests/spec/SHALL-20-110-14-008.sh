@@ -2,7 +2,7 @@
 # "The following exit values shall be returned:: 127"
 # Verify sh exits 127 when command_file is not found.
 
-"${MEIKSH:-meiksh}" "$TMPDIR/shall_20_110_14_008_nonexistent_$$" 2>/dev/null
+"${SHELL}" "$TMPDIR/shall_20_110_14_008_nonexistent_$$" 2>/dev/null
 rc=$?
 
 if [ "$rc" -ne 127 ]; then

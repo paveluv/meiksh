@@ -3,7 +3,7 @@
 #  the LANG environment variable shall be used."
 # Verify LANG serves as fallback when LC_ALL and LC_* are unset.
 
-got=$("${MEIKSH:-meiksh}" -c '
+got=$("${SHELL}" -c '
   unset LC_ALL LC_CTYPE LC_COLLATE LC_MESSAGES LC_MONETARY LC_NUMERIC LC_TIME
   LANG=POSIX
   export LANG

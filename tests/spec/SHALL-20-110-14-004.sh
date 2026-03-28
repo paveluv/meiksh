@@ -5,7 +5,7 @@
 tmpf="$TMPDIR/shall_20_110_14_004_$$"
 printf '%s\n' 'if then fi fi fi' > "$tmpf"
 
-"${MEIKSH:-meiksh}" "$tmpf" 2>/dev/null
+"${SHELL}" "$tmpf" 2>/dev/null
 rc=$?
 rm -f "$tmpf"
 

@@ -7,7 +7,7 @@
 tmpd="$TMPDIR/shall_18_04_023_$$"
 mkdir -p "$tmpd"
 
-"${MEIKSH:-meiksh}" -c ': > "'"$tmpd"'"' 2>/dev/null
+"${SHELL}" -c ': > "'"$tmpd"'"' 2>/dev/null
 rc=$?
 rmdir "$tmpd" 2>/dev/null
 rm -rf "$tmpd"

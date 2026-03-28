@@ -2,7 +2,7 @@
 # "where the fields shall be as follows:: <command>"
 # Verify jobs output includes the command text.
 
-got=$("${MEIKSH:-meiksh}" -c '
+got=$("${SHELL}" -c '
   sleep 100 &
   jobs
   kill %1 2>/dev/null

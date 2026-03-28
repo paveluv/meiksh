@@ -5,7 +5,7 @@
 # Verify HISTSIZE is respected and default is >= 128.
 
 # Set HISTSIZE to a small value and confirm it's accepted
-got=$("${MEIKSH:-meiksh}" -ic '
+got=$("${SHELL}" -ic '
   HISTSIZE=5
   export HISTSIZE
   printf "%s\n" "$HISTSIZE"

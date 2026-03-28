@@ -3,7 +3,7 @@
 #  Done(code) ... Stopped ..."
 # Verify jobs shows "Done" state for completed jobs and "Running" for active.
 
-got=$("${MEIKSH:-meiksh}" -c '
+got=$("${SHELL}" -c '
   sleep 100 &
   pid=$!
   jobs
@@ -17,7 +17,7 @@ case "$got" in
 esac
 
 # Check Done state after job completes
-got2=$("${MEIKSH:-meiksh}" -c '
+got2=$("${SHELL}" -c '
   true &
   wait
   jobs

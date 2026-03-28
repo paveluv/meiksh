@@ -6,7 +6,7 @@
 tmpf="$TMPDIR/shall_18_04_003_$$"
 rm -f "$tmpf"
 
-"${MEIKSH:-meiksh}" -c ': > "'"$tmpf"'"'
+"${SHELL}" -c ': > "'"$tmpf"'"'
 if [ ! -f "$tmpf" ]; then
   printf '%s\n' "FAIL: file not created" >&2
   exit 1

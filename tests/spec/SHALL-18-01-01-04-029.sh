@@ -8,11 +8,11 @@ tmpf="$TMPDIR/shall_18_04_029_$$"
 printf '%s\n' "secret" > "$tmpf"
 chmod 000 "$tmpf"
 
-"${MEIKSH:-meiksh}" -c 'cat < "'"$tmpf"'"' >/dev/null 2>&1
+"${SHELL}" -c 'cat < "'"$tmpf"'"' >/dev/null 2>&1
 rc_read=$?
 
 chmod 444 "$tmpf"
-"${MEIKSH:-meiksh}" -c 'printf "%s\n" "x" > "'"$tmpf"'"' 2>/dev/null
+"${SHELL}" -c 'printf "%s\n" "x" > "'"$tmpf"'"' 2>/dev/null
 rc_write=$?
 
 chmod 644 "$tmpf"

@@ -3,7 +3,7 @@
 # Verify cd is affected by the key environment variables (CDPATH, HOME, etc.).
 
 # HOME affects cd with no arguments
-got=$("${MEIKSH:-meiksh}" -c '
+got=$("${SHELL}" -c '
   HOME=/tmp
   export HOME
   cd

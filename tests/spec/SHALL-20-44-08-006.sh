@@ -8,7 +8,7 @@ export HISTFILE
 HISTSIZE=5
 export HISTSIZE
 
-${MEIKSH:-meiksh} -c '
+${SHELL} -c '
   HISTFILE="'"$HISTFILE"'"
   HISTSIZE=5
   echo hs_1

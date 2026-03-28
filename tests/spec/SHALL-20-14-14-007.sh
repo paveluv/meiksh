@@ -3,7 +3,7 @@
 #  -P option is not in effect, and an error occurred."
 # Verify cd exits >0 when directory change fails (without -eP).
 
-"${MEIKSH:-meiksh}" -c 'cd /nonexistent_dir_20_14_14_007' 2>/dev/null
+"${SHELL}" -c 'cd /nonexistent_dir_20_14_14_007' 2>/dev/null
 rc=$?
 if [ "$rc" -eq 0 ]; then
   printf '%s\n' "FAIL: cd to nonexistent dir should exit >0" >&2
@@ -11,7 +11,7 @@ if [ "$rc" -eq 0 ]; then
 fi
 
 # cd "" also errors
-"${MEIKSH:-meiksh}" -c 'cd ""' 2>/dev/null
+"${SHELL}" -c 'cd ""' 2>/dev/null
 rc=$?
 if [ "$rc" -eq 0 ]; then
   printf '%s\n' "FAIL: cd '' should exit >0" >&2

@@ -16,7 +16,7 @@ printf '#!/bin/sh\ntouch "%s"\nexit 0\n' "$marker" > "$fake_editor"
 chmod +x "$fake_editor"
 
 # Test that -e overrides FCEDIT
-${MEIKSH:-meiksh} -c '
+${SHELL} -c '
   HISTFILE="'"$HISTFILE"'"
   HISTSIZE=100
   FCEDIT=/nonexistent_should_not_be_used

@@ -9,7 +9,7 @@ HISTSIZE=100
 export HISTSIZE
 
 # Seed the history with some commands
-${MEIKSH:-meiksh} -c '
+${SHELL} -c '
   HISTFILE="'"$HISTFILE"'"
   HISTSIZE=100
   echo cmd_one

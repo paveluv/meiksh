@@ -8,7 +8,7 @@ link="$TMPDIR/shall_20_14_04_010_link_$$"
 mkdir -p "$real/sub"
 ln -s "$real/sub" "$link"
 
-got=$("${MEIKSH:-meiksh}" -c '
+got=$("${SHELL}" -c '
   cd -P "'"$link"'" 2>/dev/null || exit 1
   cd -P .. 2>/dev/null || exit 1
   pwd -P

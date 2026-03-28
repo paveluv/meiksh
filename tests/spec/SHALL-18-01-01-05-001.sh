@@ -9,7 +9,7 @@ mkdir -p "$tmpd"
 printf '%s\n' "protected" > "$tmpd/file"
 chmod 555 "$tmpd"
 
-"${MEIKSH:-meiksh}" -c 'rm "'"$tmpd/file"'"' 2>/dev/null
+"${SHELL}" -c 'rm "'"$tmpd/file"'"' 2>/dev/null
 rc=$?
 
 chmod 755 "$tmpd"

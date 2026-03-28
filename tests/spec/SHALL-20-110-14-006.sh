@@ -6,7 +6,7 @@ tmpf="$TMPDIR/shall_20_110_14_006_$$"
 printf '\x7fBAD' > "$tmpf"
 chmod +x "$tmpf"
 
-"${MEIKSH:-meiksh}" -c '"'"$tmpf"'"' 2>/dev/null
+"${SHELL}" -c '"'"$tmpf"'"' 2>/dev/null
 rc=$?
 rm -f "$tmpf"
 

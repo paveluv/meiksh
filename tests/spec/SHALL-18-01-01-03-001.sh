@@ -8,7 +8,7 @@ tmpf="$TMPDIR/shall_18_03_001_$$"
 printf '%s\n' "readonly" > "$tmpf"
 chmod 000 "$tmpf"
 
-"${MEIKSH:-meiksh}" -c 'cat "'"$tmpf"'"' >/dev/null 2>&1
+"${SHELL}" -c 'cat "'"$tmpf"'"' >/dev/null 2>&1
 rc=$?
 chmod 644 "$tmpf"
 rm -f "$tmpf"

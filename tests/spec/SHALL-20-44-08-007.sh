@@ -8,7 +8,7 @@ set -e
 HISTFILE="$TMPDIR/hist_default_$$"
 export HISTFILE
 
-${MEIKSH:-meiksh} -c '
+${SHELL} -c '
   HISTFILE="'"$HISTFILE"'"
   unset HISTSIZE
   i=1

@@ -5,7 +5,7 @@
 #  corresponds to the environment variable."
 # Verify individual LC_* variables are used when LC_ALL is unset.
 
-got=$("${MEIKSH:-meiksh}" -c '
+got=$("${SHELL}" -c '
   unset LC_ALL
   LC_CTYPE=POSIX
   export LC_CTYPE
@@ -16,7 +16,7 @@ if [ "$got" != "POSIX" ]; then
   exit 1
 fi
 
-got2=$("${MEIKSH:-meiksh}" -c '
+got2=$("${SHELL}" -c '
   unset LC_ALL
   LC_MESSAGES=POSIX
   export LC_MESSAGES

@@ -13,7 +13,7 @@ fake_editor="$TMPDIR/fcedit_editor_$$"
 printf '#!/bin/sh\ntouch "%s"\nexit 0\n' "$marker" > "$fake_editor"
 chmod +x "$fake_editor"
 
-${MEIKSH:-meiksh} -c '
+${SHELL} -c '
   HISTFILE="'"$HISTFILE"'"
   HISTSIZE=100
   FCEDIT="'"$fake_editor"'"

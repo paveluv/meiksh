@@ -8,7 +8,7 @@ export HISTFILE
 HISTSIZE=50
 export HISTSIZE
 
-${MEIKSH:-meiksh} -c '
+${SHELL} -c '
   HISTFILE="'"$HISTFILE"'"
   HISTSIZE=50
   FCEDIT=cat

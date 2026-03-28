@@ -3,7 +3,7 @@
 #  argument to be processed."
 # Verify OPTIND is used and updated by getopts.
 
-got=$("${MEIKSH:-meiksh}" -c '
+got=$("${SHELL}" -c '
   OPTIND=1
   getopts "ab" opt -a -b
   printf "%s\n" "$OPTIND"
@@ -13,7 +13,7 @@ if [ "$got" != "2" ]; then
   exit 1
 fi
 
-got2=$("${MEIKSH:-meiksh}" -c '
+got2=$("${SHELL}" -c '
   OPTIND=1
   getopts "ab" opt -a -b
   getopts "ab" opt -a -b

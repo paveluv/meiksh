@@ -8,7 +8,7 @@
 tmpf="$TMPDIR/shall_18_04_012_$$"
 rm -f "$tmpf"
 
-"${MEIKSH:-meiksh}" -c 'umask 077; : > "'"$tmpf"'"'
+"${SHELL}" -c 'umask 077; : > "'"$tmpf"'"'
 if [ ! -f "$tmpf" ]; then
   printf '%s\n' "FAIL: file not created" >&2
   exit 1

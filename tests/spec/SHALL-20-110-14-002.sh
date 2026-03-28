@@ -11,7 +11,7 @@ cat > "$tmpf" <<'SCRIPT'
 # another comment
 SCRIPT
 
-"${MEIKSH:-meiksh}" "$tmpf"
+"${SHELL}" "$tmpf"
 rc=$?
 rm -f "$tmpf"
 

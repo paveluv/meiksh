@@ -4,7 +4,7 @@
 #  field."
 # Verify jobs -l shows PID for non-job-control background jobs.
 
-got=$("${MEIKSH:-meiksh}" +m -c '
+got=$("${SHELL}" +m -c '
   sleep 100 &
   bgpid=$!
   out=$(jobs -l)

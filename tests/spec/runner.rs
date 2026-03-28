@@ -1,10 +1,13 @@
 use std::fs;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn meiksh() -> &'static str {
     env!("CARGO_BIN_EXE_meiksh")
@@ -37,7 +40,13 @@ impl Drop for TempDir {
     }
 }
 
-fn run_spec_test(script_path: &Path) -> Result<(), String> {
+enum TestResult {
+    Pass,
+    Fail(String),
+    Timeout,
+}
+
+fn run_spec_test(script_path: &Path) -> TestResult {
     let test_name = script_path
         .file_stem()
         .unwrap()
@@ -45,20 +54,60 @@ fn run_spec_test(script_path: &Path) -> Result<(), String> {
         .to_string();
     let tmp = TempDir::new(&test_name);
     let meiksh_path = meiksh();
+    let meiksh_dir = Path::new(meiksh_path).parent().unwrap();
+    let path_env = match std::env::var("PATH") {
+        Ok(p) => format!("{}:{p}", meiksh_dir.display()),
+        Err(_) => meiksh_dir.display().to_string(),
+    };
 
-    let output = Command::new(meiksh_path)
-        .arg(script_path)
+    let mut cmd = Command::new(meiksh_path);
+    cmd.arg(script_path)
         .env("TMPDIR", &tmp.path)
         .env("SHELL", meiksh_path)
-        .output()
-        .map_err(|e| format!("failed to spawn meiksh: {e}"))?;
+        .env("PATH", &path_env)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setpgid(0, 0);
+            Ok(())
+        });
+    }
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => return TestResult::Fail(format!("failed to spawn meiksh: {e}")),
+    };
+
+    let pid = child.id() as libc::pid_t;
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if start.elapsed() > TEST_TIMEOUT {
+                    unsafe { libc::kill(-pid, libc::SIGKILL); }
+                    let _ = child.wait();
+                    return TestResult::Timeout;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => return TestResult::Fail(format!("wait error: {e}")),
+        }
+    }
+
+    let output = match child.wait_with_output() {
+        Ok(o) => o,
+        Err(e) => return TestResult::Fail(format!("output error: {e}")),
+    };
 
     if output.status.success() {
-        Ok(())
+        TestResult::Pass
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let code = output.status.code().unwrap_or(-1);
-        Err(format!("exit code {code}: {stderr}"))
+        TestResult::Fail(format!("exit code {code}: {stderr}"))
     }
 }
 
@@ -103,10 +152,20 @@ fn spec_compliance() {
             }
         }
 
+        eprint!("spec {name} ... ");
+
         match run_spec_test(test_path) {
-            Ok(()) => passed += 1,
-            Err(msg) => {
-                eprintln!("FAIL {name}: {msg}");
+            TestResult::Pass => {
+                eprintln!("ok");
+                passed += 1;
+            }
+            TestResult::Fail(msg) => {
+                eprintln!("FAIL");
+                eprintln!("  {msg}");
+                failed.push(name);
+            }
+            TestResult::Timeout => {
+                eprintln!("TIMEOUT ({}s)", TEST_TIMEOUT.as_secs());
                 failed.push(name);
             }
         }

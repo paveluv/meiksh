@@ -3,7 +3,7 @@
 #  file type."
 # Verify redirection to /dev/null works (device file opened normally).
 
-result=$("${MEIKSH:-meiksh}" -c 'printf "%s\n" "discarded" > /dev/null; printf "%s\n" "ok"')
+result=$("${SHELL}" -c 'printf "%s\n" "discarded" > /dev/null; printf "%s\n" "ok"')
 if [ "$result" != "ok" ]; then
   printf '%s\n' "FAIL: redirect to /dev/null failed, got '$result'" >&2
   exit 1
