@@ -16,3 +16,10 @@ path = "tests/integration/basic.rs"
 [[test]]
 name = "spec_compliance"
 path = "tests/spec/runner.rs"
+test = false
+
+[[test]]
+name = "pty"
+path = "tests/pty.rs"
+harness = false
+test = false
