@@ -1,12 +1,14 @@
+# reviewed: GPT-5.4
 # SHALL-20-110-14-006
 # "The following exit values shall be returned:: 126"
-# Verify sh exits 126 when command_file exists but is not executable format.
+# Verify sh exits 126 when command_file is rejected as not being a script.
 
 tmpf="$TMPDIR/shall_20_110_14_006_$$"
-printf '\x7fBAD' > "$tmpf"
-chmod +x "$tmpf"
+printf '\000bad\n' > "$tmpf"
 
-"${SHELL}" -c '"'"$tmpf"'"' 2>/dev/null
+SH="${MEIKSH:-${SHELL:-sh}}"
+
+"$SH" "$tmpf" 2>/dev/null
 rc=$?
 rm -f "$tmpf"
 

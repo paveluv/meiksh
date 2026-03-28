@@ -765,8 +765,15 @@ impl Shell {
         let resolved = resolve_script_path(self, script).ok_or_else(|| {
             ShellError::with_status(127, format!("{}: not found", script.display()))
         })?;
-        let contents = sys::read_file(&resolved.display().to_string())
+        let bytes = sys::read_file_bytes(&resolved.display().to_string())
             .map_err(|error| classify_script_read_error(&resolved, error))?;
+        if script_prefix_cannot_be_shell_input(&bytes) {
+            return Err(ShellError::with_status(
+                126,
+                format!("{}: cannot execute", resolved.display()),
+            ));
+        }
+        let contents = String::from_utf8_lossy(&bytes).into_owned();
         Ok((resolved, contents))
     }
 
@@ -1414,6 +1421,14 @@ fn classify_script_read_error(path: &Path, error: sys::SysError) -> ShellError {
     } else {
         ShellError::with_status(128, format!("{}: {}", path.display(), error))
     }
+}
+
+fn script_prefix_cannot_be_shell_input(bytes: &[u8]) -> bool {
+    const PREFIX_LEN: usize = 4096;
+    let prefix = &bytes[..bytes.len().min(PREFIX_LEN)];
+    let newline = prefix.iter().position(|&byte| byte == b'\n');
+    let scan_end = newline.unwrap_or(prefix.len());
+    prefix[..scan_end].contains(&b'\0')
 }
 
 #[cfg(test)]
@@ -2140,6 +2155,16 @@ mod tests {
             let classified =
                 classify_script_read_error(Path::new("bad"), sys::SysError::Errno(sys::EIO));
             assert_eq!(classified.exit_status(), 128);
+        });
+    }
+
+    #[test]
+    fn script_prefix_heuristic_rejects_nul_before_newline() {
+        assert_no_syscalls(|| {
+            assert!(script_prefix_cannot_be_shell_input(b"\0echo hi\n"));
+            assert!(script_prefix_cannot_be_shell_input(b"abc\0def"));
+            assert!(!script_prefix_cannot_be_shell_input(b"echo hi\n\0tail"));
+            assert!(!script_prefix_cannot_be_shell_input(b"echo hi\n"));
         });
     }
 

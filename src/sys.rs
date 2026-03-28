@@ -1922,7 +1922,7 @@ pub fn canonicalize(path: &str) -> SysResult<String> {
     }
 }
 
-pub fn read_file(path: &str) -> SysResult<String> {
+pub fn read_file_bytes(path: &str) -> SysResult<Vec<u8>> {
     let fd = open_file(path, O_RDONLY | O_CLOEXEC, 0)?;
     let mut contents = Vec::new();
     let mut buf = [0u8; 8192];
@@ -1934,6 +1934,11 @@ pub fn read_file(path: &str) -> SysResult<String> {
         contents.extend_from_slice(&buf[..n]);
     }
     close_fd(fd)?;
+    Ok(contents)
+}
+
+pub fn read_file(path: &str) -> SysResult<String> {
+    let contents = read_file_bytes(path)?;
     Ok(String::from_utf8_lossy(&contents).into_owned())
 }
 
