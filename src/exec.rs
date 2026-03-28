@@ -354,7 +354,14 @@ fn execute_command(shell: &mut Shell, command: &Command) -> Result<i32, ShellErr
                 let status = execute_nested_program(&mut child_shell, program).unwrap_or(1);
                 sys::exit_process(status as sys::RawFd);
             }
-            let ws = sys::wait_pid(pid, false)?.expect("child status");
+            let ws = loop {
+                match sys::wait_pid(pid, false) {
+                    Ok(Some(ws)) => break ws,
+                    Ok(None) => continue,
+                    Err(e) if e.is_eintr() => continue,
+                    Err(e) => return Err(e.into()),
+                }
+            };
             Ok(sys::decode_wait_status(ws.status))
         }
         Command::Group(program) => execute_nested_program(shell, program),
@@ -4889,6 +4896,48 @@ mod tests {
                 };
                 let spawned = spawn_and_or(&mut shell, &node, None).expect("spawn");
                 assert_eq!(spawned.children.len(), 1);
+            },
+        );
+    }
+
+    #[test]
+    fn subshell_wait_retries_on_eintr() {
+        let program = Program {
+            items: vec![ListItem {
+                and_or: AndOr {
+                    first: Pipeline {
+                        negated: false,
+                        commands: vec![Command::Simple(SimpleCommand {
+                            words: vec![Word { raw: "true".into() }],
+                            ..SimpleCommand::default()
+                        })],
+                    },
+                    rest: vec![],
+                },
+                asynchronous: false,
+            }],
+        };
+        run_trace(
+            vec![
+                t_fork(TraceResult::Pid(5000), vec![]),
+                // first waitpid interrupted
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(5000), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    TraceResult::Interrupt(sys::SIGINT),
+                ),
+                // retry succeeds
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(5000), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    TraceResult::Status(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let status = execute_command(&mut shell, &Command::Subshell(program.clone()))
+                    .expect("subshell");
+                assert_eq!(status, 0);
             },
         );
     }

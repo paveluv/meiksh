@@ -727,8 +727,12 @@ pub(crate) mod test_support {
                 super::set_errno(*errno);
                 -1
             }
+            TraceResult::Interrupt(signal) => {
+                apply_interrupt(*signal);
+                -1
+            }
             other => panic!(
-                "trace result type mismatch for 'read': expected Bytes/Int/Err, got {other:?}"
+                "trace result type mismatch for 'read': expected Bytes/Int/Err/Interrupt, got {other:?}"
             ),
         }
     }
