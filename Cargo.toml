@@ -12,3 +12,7 @@ libc = "0.2.183"
 [[test]]
 name = "integration_basic"
 path = "tests/integration/basic.rs"
+
+[[test]]
+name = "spec_compliance"
+path = "tests/spec/runner.rs"
