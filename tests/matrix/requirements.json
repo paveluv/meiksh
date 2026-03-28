@@ -7114,5 +7114,143 @@
     "text": "If a bracket expression specifies both '-' and ']' , the ']' shall be placed first (after the '^' , if any) and the '-' last within the bracket expression.",
     "file": "V1_chap09",
     "id": "SHALL-XBD-9-3-5-2026"
+  },
+  {
+    "section": "8. Environment Variables",
+    "text": "LANG This variable shall determine the locale category for native language, local customs, and coded character set in the absence of the LC_ALL and other LC_* ( LC_COLLATE , LC_CTYPE , LC_MESSAGES , LC_MONETARY , LC_NUMERIC , LC_TIME ) environment variables.",
+    "file": "V1_chap08",
+    "id": "SHALL-XBD-8-3000"
+  },
+  {
+    "section": "8. Environment Variables",
+    "text": "LANGUAGE The LANGUAGE environment variable shall be examined to determine the messages object to be used for the gettext family of functions or the gettext and ngettext utilities [ XSI ] if NLSPATH is not set or the evaluation of NLSPATH did not lead to a suitable messages object being found.",
+    "file": "V1_chap08",
+    "id": "SHALL-XBD-8-3001"
+  },
+  {
+    "section": "8. Environment Variables",
+    "text": "LC_ALL This variable shall determine the values for all locale categories.",
+    "file": "V1_chap08",
+    "id": "SHALL-XBD-8-3002"
+  },
+  {
+    "section": "8. Environment Variables",
+    "text": "LC_COLLATE This variable shall determine the locale category for character collation.",
+    "file": "V1_chap08",
+    "id": "SHALL-XBD-8-3003"
+  },
+  {
+    "section": "8. Environment Variables",
+    "text": "LC_CTYPE This variable shall determine the locale category for character handling functions, such as tolower () , toupper () , and isalpha ().",
+    "file": "V1_chap08",
+    "id": "SHALL-XBD-8-3004"
+  },
+  {
+    "section": "8. Environment Variables",
+    "text": "LC_MESSAGES This variable shall determine the locale category for processing affirmative and negative responses and the language and cultural conventions in which messages should be written.",
+    "file": "V1_chap08",
+    "id": "SHALL-XBD-8-3005"
+  },
+  {
+    "section": "8. Environment Variables",
+    "text": "NLSPATH [ XSI ] This variable shall contain a sequence of templates to be used by catopen () when attempting to locate message catalogs, and by the gettext family of functions when locating messages objects.",
+    "file": "V1_chap08",
+    "id": "SHALL-XBD-8-3006"
+  },
+  {
+    "section": "8. Environment Variables",
+    "text": "If the LC_ALL environment variable is defined and is not null, the value of LC_ALL shall be used.",
+    "file": "V1_chap08",
+    "id": "SHALL-XBD-8-3007"
+  },
+  {
+    "section": "8. Environment Variables",
+    "text": "If the LC_* environment variable ( LC_COLLATE , LC_CTYPE , LC_MESSAGES , LC_MONETARY , LC_NUMERIC , LC_TIME ) is defined and is not null, the value of the environment variable shall be used to initialize the category that corresponds to the environment variable.",
+    "file": "V1_chap08",
+    "id": "SHALL-XBD-8-3008"
+  },
+  {
+    "section": "8. Environment Variables",
+    "text": "If the LANG environment variable is defined and is not null, the value of the LANG environment variable shall be used.",
+    "file": "V1_chap08",
+    "id": "SHALL-XBD-8-3009"
+  },
+  {
+    "section": "8. Environment Variables",
+    "text": "HOME The system shall initialize this variable at the time of login to be a pathname of the user's home directory.",
+    "file": "V1_chap08",
+    "id": "SHALL-XBD-8-3010"
+  },
+  {
+    "section": "8. Environment Variables",
+    "text": "PATH This variable shall represent the sequence of path prefixes that certain functions and utilities apply in searching for an executable file.",
+    "file": "V1_chap08",
+    "id": "SHALL-XBD-8-3011"
+  },
+  {
+    "section": "8. Environment Variables",
+    "text": "PWD This variable shall represent an absolute pathname of the current working directory.",
+    "file": "V1_chap08",
+    "id": "SHALL-XBD-8-3012"
+  },
+  {
+    "section": "12. Utility Conventions",
+    "text": "If the SYNOPSIS of a standard utility shows an option with a mandatory option-argument (as with [ -c option_argument ] in the example), a conforming application shall use separate arguments for that option and its option-argument.",
+    "file": "V1_chap12",
+    "id": "SHALL-XBD-12-4000"
+  },
+  {
+    "section": "12. Utility Conventions",
+    "text": "However, a conforming implementation shall also permit applications to specify the option and option-argument in the same argument string without intervening <blank> characters.",
+    "file": "V1_chap12",
+    "id": "SHALL-XBD-12-4001"
+  },
+  {
+    "section": "12. Utility Conventions",
+    "text": "If the SYNOPSIS shows an optional option-argument (as with [ -f [ option_argument ]] in the example), a conforming application shall place any option-argument for that option directly adjacent to the option in the same argument string, without intervening <blank> characters.",
+    "file": "V1_chap12",
+    "id": "SHALL-XBD-12-4002"
+  },
+  {
+    "section": "12. Utility Conventions",
+    "text": "If the utility receives an argument containing only the option, it shall behave as specified in its description for an omitted option-argument; it shall not treat the next argument (if any) as the option-argument for that option.",
+    "file": "V1_chap12",
+    "id": "SHALL-XBD-12-4003"
+  },
+  {
+    "section": "12. Utility Conventions",
+    "text": "The angle brackets are used for the symbolic grouping of a phrase representing a single parameter and conforming applications shall not include them in data submitted to the utility.",
+    "file": "V1_chap12",
+    "id": "SHALL-XBD-12-4004"
+  },
+  {
+    "section": "12. Utility Conventions",
+    "text": "If an error is generated, the utility's diagnostic message shall indicate that the value is out of the supported range, not that it is syntactically incorrect.",
+    "file": "V1_chap12",
+    "id": "SHALL-XBD-12-4005"
+  },
+  {
+    "section": "12. Utility Conventions",
+    "text": "Conforming applications shall not include the '[' and ']' symbols in data submitted to the utility.",
+    "file": "V1_chap12",
+    "id": "SHALL-XBD-12-4006"
+  },
+  {
+    "section": "12. Utility Conventions",
+    "text": "Conforming applications shall not include the '|' symbol in data submitted to the utility.",
+    "file": "V1_chap12",
+    "id": "SHALL-XBD-12-4007"
+  },
+  {
+    "section": "12. Utility Conventions",
+    "text": "The -W (capital-W) option shall be reserved for vendor options.",
+    "file": "V1_chap12",
+    "id": "SHALL-XBD-12-4008"
+  },
+  {
+    "section": "12. Utility Conventions",
+    "text": "The utilities in the Shell and Utilities volume of POSIX.1-2024 that claim conformance to these guidelines shall conform completely to these guidelines as if these guidelines contained the term \"shall\" instead of \"should\".",
+    "file": "V1_chap12",
+    "id": "SHALL-XBD-12-4009"
   }
 ]
