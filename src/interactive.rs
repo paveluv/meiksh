@@ -24,8 +24,19 @@ fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
             let _ = sys::write_all_fd(sys::STDERR_FILENO, msg.as_bytes());
         }
 
+        shell.run_pending_traps()?;
+        if !shell.running {
+            break;
+        }
+
         let prompt_str = prompt(shell);
-        sys::write_all_fd(sys::STDOUT_FILENO, prompt_str.as_bytes())?;
+        loop {
+            match sys::write_all_fd(sys::STDOUT_FILENO, prompt_str.as_bytes()) {
+                Ok(()) => break,
+                Err(e) if e.is_eintr() => continue,
+                Err(e) => return Err(e.into()),
+            }
+        }
 
         let line = match read_line()? {
             Some(line) => line,
@@ -123,7 +134,7 @@ fn history_path(shell: &Shell) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shell::ShellOptions;
+    use crate::shell::{ShellOptions, TrapAction, TrapCondition};
     use std::collections::{BTreeMap, BTreeSet, HashMap};
 
     use crate::sys::test_support::{ArgMatcher, TraceResult, assert_no_syscalls, run_trace, t};
@@ -906,6 +917,160 @@ mod tests {
                 };
                 shell.register_background_job("sleep 999".into(), None, vec![handle_running]);
                 let status = run_loop(&mut shell).expect("run loop");
+                assert_eq!(status, 0);
+            },
+        );
+    }
+
+    #[test]
+    fn run_loop_fires_trap_on_sigint_at_prompt() {
+        run_trace(
+            vec![
+                // set_trap installs signal handler
+                t(
+                    "signal",
+                    vec![ArgMatcher::Int(sys::SIGINT as i64), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+                // first iteration: no pending traps, prompt
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDOUT_FILENO),
+                        ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                // read interrupted by SIGINT
+                t(
+                    "read",
+                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                    TraceResult::Interrupt(sys::SIGINT),
+                ),
+                // read_line writes newline to stderr on EINTR
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                // second iteration: run_pending_traps drains SIGINT, runs "TRAPPED=yes" (no syscalls)
+                // then prompt again
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDOUT_FILENO),
+                        ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                // read EOF
+                t(
+                    "read",
+                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell
+                    .set_trap(
+                        TrapCondition::Signal(sys::SIGINT),
+                        Some(TrapAction::Command("TRAPPED=yes".into())),
+                    )
+                    .expect("trap");
+                let status = run_loop(&mut shell).expect("trap at prompt");
+                assert_eq!(status, 0);
+                assert_eq!(shell.get_var("TRAPPED").as_deref(), Some("yes"));
+            },
+        );
+    }
+
+    #[test]
+    fn run_loop_exit_trap_on_sigint_stops_shell() {
+        run_trace(
+            vec![
+                // set_trap installs signal handler
+                t(
+                    "signal",
+                    vec![ArgMatcher::Int(sys::SIGINT as i64), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+                // first iteration: prompt
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDOUT_FILENO),
+                        ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                // read interrupted by SIGINT
+                t(
+                    "read",
+                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                    TraceResult::Interrupt(sys::SIGINT),
+                ),
+                // read_line writes newline to stderr
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                // second iteration: run_pending_traps runs "exit 42", shell.running = false → break
+            ],
+            || {
+                let mut shell = test_shell();
+                shell
+                    .set_trap(
+                        TrapCondition::Signal(sys::SIGINT),
+                        Some(TrapAction::Command("exit 42".into())),
+                    )
+                    .expect("trap");
+                let status = run_loop(&mut shell).expect("exit trap at prompt");
+                assert_eq!(status, 42);
+                assert!(!shell.running);
+            },
+        );
+    }
+
+    #[test]
+    fn run_loop_retries_prompt_write_on_eintr() {
+        run_trace(
+            vec![
+                // prompt write fails with EINTR
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDOUT_FILENO),
+                        ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
+                    ],
+                    TraceResult::Err(sys::EINTR),
+                ),
+                // retry succeeds
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDOUT_FILENO),
+                        ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                // read EOF
+                t(
+                    "read",
+                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let status = run_loop(&mut shell).expect("prompt eintr retry");
                 assert_eq!(status, 0);
             },
         );

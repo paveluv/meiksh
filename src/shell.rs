@@ -424,7 +424,13 @@ impl Shell {
         let mut byte = [0u8; 1];
 
         loop {
-            let count = sys::read_fd(sys::STDIN_FILENO, &mut byte)?;
+            let count = loop {
+                match sys::read_fd(sys::STDIN_FILENO, &mut byte) {
+                    Ok(n) => break n,
+                    Err(e) if e.is_eintr() => continue,
+                    Err(e) => return Err(e.into()),
+                }
+            };
             if count == 0 {
                 if !line_bytes.is_empty() {
                     let chunk = decode_stdin_chunk(std::mem::take(&mut line_bytes))?;
@@ -2912,6 +2918,55 @@ mod tests {
             || {
                 let result = try_wait_child(2222).expect("try_wait_child");
                 assert_eq!(result, Some(ChildWaitResult::Stopped(sys::SIGTSTP)));
+            },
+        );
+    }
+
+    #[test]
+    fn run_standard_input_retries_read_on_eintr() {
+        run_trace(
+            vec![
+                // ensure_blocking_read_fd: isatty → not a tty
+                t(
+                    "isatty",
+                    vec![ArgMatcher::Fd(sys::STDIN_FILENO)],
+                    TraceResult::Int(0),
+                ),
+                // ensure_blocking_read_fd: fstat → regular file (not FIFO)
+                t(
+                    "fstat",
+                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                    TraceResult::StatFile(0o644),
+                ),
+                // first read: interrupted
+                t(
+                    "read",
+                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                    TraceResult::Interrupt(sys::SIGINT),
+                ),
+                // retry: read ':'
+                t(
+                    "read",
+                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                    TraceResult::Bytes(b":".to_vec()),
+                ),
+                // read newline
+                t(
+                    "read",
+                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                    TraceResult::Bytes(b"\n".to_vec()),
+                ),
+                // read EOF
+                t(
+                    "read",
+                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let status = shell.run_standard_input().expect("stdin eintr retry");
+                assert_eq!(status, 0);
             },
         );
     }
