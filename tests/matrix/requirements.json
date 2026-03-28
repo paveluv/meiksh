@@ -1,0 +1,4012 @@
+[
+  {
+    "id": "SHALL-2-2-001",
+    "section": "2.2",
+    "text": "The application shall quote the following characters if they are to represent themselves:"
+  },
+  {
+    "id": "SHALL-2-2-1-002",
+    "section": "2.2.1",
+    "text": "A <backslash> that is not quoted shall preserve the literal value of the following character, with the exception of a <newline>."
+  },
+  {
+    "id": "SHALL-2-2-1-003",
+    "section": "2.2.1",
+    "text": "If a <newline> immediately follows the <backslash>, the shell shall interpret this as line continuation."
+  },
+  {
+    "id": "SHALL-2-2-1-004",
+    "section": "2.2.1",
+    "text": "The <backslash> and <newline> shall be removed before splitting the input into tokens."
+  },
+  {
+    "id": "SHALL-2-2-2-005",
+    "section": "2.2.2",
+    "text": "Enclosing characters in single-quotes ('') shall preserve the literal value of each character within the single-quotes."
+  },
+  {
+    "id": "SHALL-2-2-3-006",
+    "section": "2.2.3",
+    "text": "Enclosing characters in double-quotes (\"\") shall preserve the literal value of all characters within the double-quotes, with the exception of the characters backquote, <dollar-sign>, and <backslash>, as follows:"
+  },
+  {
+    "id": "SHALL-2-2-3-007",
+    "section": "2.2.3",
+    "text": "The <dollar-sign> shall retain its special meaning introducing parameter expansion (see 2.6.2 Parameter Expansion), a form of command substitution (see 2.6.3 Command Substitution), and arithmetic expansion (see 2.6.4 Arithmetic Expansion), but shall not retain its special meaning introducing the dollar-single-quotes form of quoting (see 2.2.4 Dollar-Single-Quotes)."
+  },
+  {
+    "id": "SHALL-2-2-3-008",
+    "section": "2.2.3",
+    "text": "The input characters within the quoted string that are also enclosed between \"$(\" and the matching ')' shall not be affected by the double-quotes, but rather shall define the command(s) whose output replaces the \"$(...)\" when the word is expanded."
+  },
+  {
+    "id": "SHALL-2-2-3-009",
+    "section": "2.2.3",
+    "text": "The tokenizing rules in 2.3 Token Recognition shall be applied recursively to find the matching ')'."
+  },
+  {
+    "id": "SHALL-2-2-3-010",
+    "section": "2.2.3",
+    "text": "For the four varieties of parameter expansion that provide for substring processing (see 2.6.2 Parameter Expansion), within the string of characters from an enclosed \"${\" to the matching '}', the double-quotes within which the expansion occurs shall have no effect on the handling of any special characters."
+  },
+  {
+    "id": "SHALL-2-2-3-011",
+    "section": "2.2.3",
+    "text": "For parameter expansions other than the four varieties that provide for substring processing, within the string of characters from an enclosed \"${\" to the matching '}', the double-quotes within which the expansion occurs shall preserve the literal value of all characters, with the exception of the characters double-quote, backquote, <dollar-sign>, and <backslash>."
+  },
+  {
+    "id": "SHALL-2-2-3-012",
+    "section": "2.2.3",
+    "text": "The backquote and <dollar-sign> characters shall follow the same rules as for characters in double-quotes described in this section."
+  },
+  {
+    "id": "SHALL-2-2-3-013",
+    "section": "2.2.3",
+    "text": "The <backslash> character shall follow the same rules as for characters in double-quotes described in this section except that it shall additionally retain its special meaning as an escape character when followed by '}' and this shall prevent the escaped '}' from being considered when determining the matching '}' (using the rule in 2.6.2 Parameter Expansion)."
+  },
+  {
+    "id": "SHALL-2-2-3-014",
+    "section": "2.2.3",
+    "text": "The backquote shall retain its special meaning introducing the other form of command substitution (see 2.6.3 Command Substitution)."
+  },
+  {
+    "id": "SHALL-2-2-3-015",
+    "section": "2.2.3",
+    "text": "Outside of \"$(...)\" and \"${...}\" the <backslash> shall retain its special meaning as an escape character (see 2.2.1 Escape Character (Backslash)) only when immediately followed by one of the following characters: $ ` \\ <newline> or by a double-quote character that would otherwise be considered special (see 2.6.4 Arithmetic Expansion and 2.7.4 Here-Document)."
+  },
+  {
+    "id": "SHALL-2-2-3-016",
+    "section": "2.2.3",
+    "text": "When double-quotes are used to quote a parameter expansion, command substitution, or arithmetic expansion, the literal value of all characters within the result of the expansion shall be preserved."
+  },
+  {
+    "id": "SHALL-2-2-3-017",
+    "section": "2.2.3",
+    "text": "The application shall ensure that a double-quote that is not within \"$(...)\" nor within \"${...}\" is immediately preceded by a <backslash> in order to be included within double-quotes."
+  },
+  {
+    "id": "SHALL-2-2-4-018",
+    "section": "2.2.4",
+    "text": "A sequence of characters starting with a <dollar-sign> immediately followed by a single-quote ($') shall preserve the literal value of all characters up to an unescaped terminating single-quote ('), with the exception of certain <backslash>-escape sequences, as follows:"
+  },
+  {
+    "id": "SHALL-2-2-4-019",
+    "section": "2.2.4",
+    "text": "In cases where a variable number of characters can be used to specify an escape sequence (\\xXX and \\ddd), the escape sequence shall be terminated by the first character that is not of the expected type or, for \\ddd sequences, when the maximum number of characters specified has been found, whichever occurs first."
+  },
+  {
+    "id": "SHALL-2-2-4-020",
+    "section": "2.2.4",
+    "text": "These <backslash>-escape sequences shall be processed (replaced with the bytes or characters they yield) immediately prior to word expansion (see 2.6 Word Expansions) of the word in which the dollar-single-quotes sequence occurs."
+  },
+  {
+    "id": "SHALL-2-2-4-021",
+    "section": "2.2.4",
+    "text": "However, implementations shall not replace an unsupported character with bytes that do not form valid characters in that locale's character set."
+  },
+  {
+    "id": "SHALL-2-2-4-022",
+    "section": "2.2.4",
+    "text": "If a <backslash>-escape sequence represents a single-quote character (for example \\'), that sequence shall not terminate the dollar-single-quote sequence."
+  },
+  {
+    "id": "SHALL-2-3-023",
+    "section": "2.3",
+    "text": "The shell shall read its input in terms of lines."
+  },
+  {
+    "id": "SHALL-2-3-024",
+    "section": "2.3",
+    "text": "These lines shall be parsed using two major modes: ordinary token recognition and processing of here-documents."
+  },
+  {
+    "id": "SHALL-2-3-025",
+    "section": "2.3",
+    "text": "When an io_here token has been recognized by the grammar (see 2.10 Shell Grammar), one or more of the subsequent lines immediately following the next NEWLINE token form the body of a here-document and shall be parsed according to the rules of 2.7.4 Here-Document."
+  },
+  {
+    "id": "SHALL-2-3-026",
+    "section": "2.3",
+    "text": "Any non-NEWLINE tokens (including more io_here tokens) that are recognized while searching for the next NEWLINE token shall be saved for processing after the here-document has been parsed."
+  },
+  {
+    "id": "SHALL-2-3-027",
+    "section": "2.3",
+    "text": "If a saved token is an io_here token, the corresponding here-document shall start on the line immediately following the line containing the trailing delimiter of the previous here-document."
+  },
+  {
+    "id": "SHALL-2-3-028",
+    "section": "2.3",
+    "text": "When it is not processing an io_here, the shell shall break its input into tokens by applying the first applicable rule below to each character in turn in its input."
+  },
+  {
+    "id": "SHALL-2-3-029",
+    "section": "2.3",
+    "text": "At the start of input or after a previous token has just been delimited, the first or next token, respectively, shall start with the first character that has not already been included in a token and is not discarded according to the rules below."
+  },
+  {
+    "id": "SHALL-2-3-030",
+    "section": "2.3",
+    "text": "Once a token has started, zero or more characters from the input shall be appended to the token until the end of the token is delimited according to one of the rules below."
+  },
+  {
+    "id": "SHALL-2-3-031",
+    "section": "2.3",
+    "text": "When both the start and end of a token have been delimited, the characters forming the token shall be exactly those in the input between the two delimiters, including any quoting characters."
+  },
+  {
+    "id": "SHALL-2-3-032",
+    "section": "2.3",
+    "text": "If a rule below indicates that a token is delimited, and no characters have been included in the token, that empty token shall be discarded."
+  },
+  {
+    "id": "SHALL-2-3-033",
+    "section": "2.3",
+    "text": "If the end of input is recognized, the current token (if any) shall be delimited."
+  },
+  {
+    "id": "SHALL-2-3-034",
+    "section": "2.3",
+    "text": "If the previous character was used as part of an operator and the current character is not quoted and can be used with the previous characters to form an operator, it shall be used as part of that (operator) token."
+  },
+  {
+    "id": "SHALL-2-3-035",
+    "section": "2.3",
+    "text": "If the previous character was used as part of an operator and the current character cannot be used with the previous characters to form an operator, the operator containing the previous character shall be delimited."
+  },
+  {
+    "id": "SHALL-2-3-036",
+    "section": "2.3",
+    "text": "If the current character is an unquoted <backslash>, single-quote, or double-quote or is the first character of an unquoted <dollar-sign> single-quote sequence, it shall affect quoting for subsequent characters up to the end of the quoted text."
+  },
+  {
+    "id": "SHALL-2-3-037",
+    "section": "2.3",
+    "text": "During token recognition no substitutions shall be actually performed, and the result token shall contain exactly the characters that appear in the input unmodified, including any embedded or enclosing quotes or substitution operators, between the start and the end of the quoted text."
+  },
+  {
+    "id": "SHALL-2-3-038",
+    "section": "2.3",
+    "text": "The token shall not be delimited by the end of the quoted field."
+  },
+  {
+    "id": "SHALL-2-3-039",
+    "section": "2.3",
+    "text": "If the current character is an unquoted '$' or '`', the shell shall identify the start of any candidates for parameter expansion ( 2.6.2 Parameter Expansion), command substitution ( 2.6.3 Command Substitution), or arithmetic expansion ( 2.6.4 Arithmetic Expansion) from their introductory unquoted character sequences: '$' or \"${\", \"$(\" or '`', and \"$((\", respectively."
+  },
+  {
+    "id": "SHALL-2-3-040",
+    "section": "2.3",
+    "text": "The shell shall read sufficient input to determine the end of the unit to be expanded (as explained in the cited sections)."
+  },
+  {
+    "id": "SHALL-2-3-041",
+    "section": "2.3",
+    "text": "While processing the characters, if instances of expansions or quoting are found nested within the substitution, the shell shall recursively process them in the manner specified for the construct that is found."
+  },
+  {
+    "id": "SHALL-2-3-042",
+    "section": "2.3",
+    "text": "For \"$(\" and '`' only, if instances of io_here tokens are found nested within the substitution, they shall be parsed according to the rules of 2.7.4 Here-Document; if the terminating ')' or '`' of the substitution occurs before the NEWLINE token marking the start of the here-document, the behavior is unspecified."
+  },
+  {
+    "id": "SHALL-2-3-043",
+    "section": "2.3",
+    "text": "The characters found from the beginning of the substitution to its end, allowing for any recursion necessary to recognize embedded constructs, shall be included unmodified in the result token, including any embedded or enclosing substitution operators or quotes."
+  },
+  {
+    "id": "SHALL-2-3-044",
+    "section": "2.3",
+    "text": "The token shall not be delimited by the end of the substitution."
+  },
+  {
+    "id": "SHALL-2-3-045",
+    "section": "2.3",
+    "text": "If the current character is not quoted and can be used as the first character of a new operator, the current token (if any) shall be delimited."
+  },
+  {
+    "id": "SHALL-2-3-046",
+    "section": "2.3",
+    "text": "The current character shall be used as the beginning of the next (operator) token."
+  },
+  {
+    "id": "SHALL-2-3-047",
+    "section": "2.3",
+    "text": "If the current character is an unquoted <blank>, any token containing the previous character is delimited and the current character shall be discarded."
+  },
+  {
+    "id": "SHALL-2-3-048",
+    "section": "2.3",
+    "text": "If the previous character was part of a word, the current character shall be appended to that word."
+  },
+  {
+    "id": "SHALL-2-3-049",
+    "section": "2.3",
+    "text": "If the current character is a '#', it and all subsequent characters up to, but excluding, the next <newline> shall be discarded as a comment."
+  },
+  {
+    "id": "SHALL-2-3-050",
+    "section": "2.3",
+    "text": "In situations where the shell parses its input as a program, once a complete_command has been recognized by the grammar (see 2.10 Shell Grammar), the complete_command shall be executed before the next complete_command is tokenized and parsed."
+  },
+  {
+    "id": "SHALL-2-3-1-051",
+    "section": "2.3.1",
+    "text": "After a token has been categorized as type TOKEN (see 2.10.1 Shell Grammar Lexical Conventions), including (recursively) any token resulting from an alias substitution, the TOKEN shall be subject to alias substitution if all of the following conditions are true:"
+  },
+  {
+    "id": "SHALL-2-3-1-052",
+    "section": "2.3.1",
+    "text": "When a TOKEN is subject to alias substitution, the value of the alias shall be processed as if it had been read from the input instead of the TOKEN, with token recognition (see 2.3 Token Recognition) resuming at the start of the alias value."
+  },
+  {
+    "id": "SHALL-2-3-1-053",
+    "section": "2.3.1",
+    "text": "TOKENTOKENTOKENAn implementation may defer the effect of a change to an alias but the change shall take effect no later than the completion of the currently executing complete_command (see 2.10 Shell Grammar)."
+  },
+  {
+    "id": "SHALL-2-3-1-054",
+    "section": "2.3.1",
+    "text": "Changes to aliases shall not take effect out of order."
+  },
+  {
+    "id": "SHALL-2-3-1-055",
+    "section": "2.3.1",
+    "text": "When used as specified by this volume of POSIX.1-2024, alias definitions shall not be inherited by separate invocations of the shell or by the utility execution environments invoked by the shell; see 2.13 Shell Execution Environment ."
+  },
+  {
+    "id": "SHALL-2-4-056",
+    "section": "2.4",
+    "text": "The following words shall be recognized as reserved words:"
+  },
+  {
+    "id": "SHALL-2-4-057",
+    "section": "2.4",
+    "text": "This recognition shall only occur when none of the characters is quoted and when the word is used as:"
+  },
+  {
+    "id": "SHALL-2-4-058",
+    "section": "2.4",
+    "text": "When the word time is recognized as a reserved word in circumstances where it would, if it were not a reserved word, be the command name (see 2.9.1.1 Order of Processing) of a simple command that would execute the time utility in a manner other than one for which time states that the results are unspecified, the behavior shall be as specified for the time utility."
+  },
+  {
+    "id": "SHALL-2-5-059",
+    "section": "2.5",
+    "text": "The shell shall process their values as characters only when performing operations that are described in this standard in terms of characters."
+  },
+  {
+    "id": "SHALL-2-5-1-060",
+    "section": "2.5.1",
+    "text": "The digits denoting the positional parameters shall always be interpreted as a decimal value, even if there is a leading zero."
+  },
+  {
+    "id": "SHALL-2-5-1-061",
+    "section": "2.5.1",
+    "text": "When a positional parameter with more than one digit is specified, the application shall enclose the digits in braces (see 2.6.2 Parameter Expansion)."
+  },
+  {
+    "id": "SHALL-2-5-2-062",
+    "section": "2.5.2",
+    "text": "Listed below are the special parameters and the values to which they shall expand."
+  },
+  {
+    "id": "SHALL-2-5-2-063",
+    "section": "2.5.2",
+    "text": "When the expansion occurs in a context where field splitting will be performed, any empty fields may be discarded and each of the non-empty fields shall be further split as described in 2.6.5 Field Splitting."
+  },
+  {
+    "id": "SHALL-2-5-2-064",
+    "section": "2.5.2",
+    "text": "If one of these conditions is true, the initial fields shall be retained as separate fields, except that if the parameter being expanded was embedded within a word, the first field shall be joined with the beginning part of the original word and the last field shall be joined with the end part of the original word."
+  },
+  {
+    "id": "SHALL-2-5-2-065",
+    "section": "2.5.2",
+    "text": "If there are no positional parameters, the expansion of '@' shall generate zero fields, even when '@' is within double-quotes; however, if the expansion is embedded within a word which contains one or more other parts that expand to a quoted null string, these null string(s) shall still produce an empty field, except that if the other parts are all within the same double-quotes as the '@', it is unspecified whether the result is zero fields or one empty field."
+  },
+  {
+    "id": "SHALL-2-5-2-066",
+    "section": "2.5.2",
+    "text": "When the expansion occurs in a context where field splitting will be performed, any empty fields may be discarded and each of the non-empty fields shall be further split as described in 2.6.5 Field Splitting."
+  },
+  {
+    "id": "SHALL-2-5-2-067",
+    "section": "2.5.2",
+    "text": "When the expansion occurs in a context where field splitting will not be performed, the initial fields shall be joined to form a single field with the value of each parameter separated by the first character of the IFS variable if IFS contains at least one character, or separated by a <space> if IFS is unset, or with no separation if IFS is set to a null string."
+  },
+  {
+    "id": "SHALL-2-5-2-068",
+    "section": "2.5.2",
+    "text": "The command name (parameter 0) shall not be counted in the number given by '#' because it is a special parameter, not a positional parameter."
+  },
+  {
+    "id": "SHALL-2-5-2-069",
+    "section": "2.5.2",
+    "text": "If this pipeline terminated, the status value shall be its exit status; otherwise, the status value shall be the same as the exit status that would have resulted if the pipeline had been terminated by a signal with the same number as the signal that stopped it."
+  },
+  {
+    "id": "SHALL-2-5-2-070",
+    "section": "2.5.2",
+    "text": "The value of the special parameter '?' shall be set to 0 during initialization of the shell."
+  },
+  {
+    "id": "SHALL-2-5-2-071",
+    "section": "2.5.2",
+    "text": "When a subshell environment is created, the value of the special parameter '?' from the invoking shell environment shall be preserved in the subshell."
+  },
+  {
+    "id": "SHALL-2-5-2-072",
+    "section": "2.5.2",
+    "text": "The -i option shall be included in \"$-\" if the shell is interactive, regardless of whether it was specified on invocation."
+  },
+  {
+    "id": "SHALL-2-5-2-073",
+    "section": "2.5.2",
+    "text": "In a subshell (see 2.13 Shell Execution Environment), '$' shall expand to the same value as that of the current shell."
+  },
+  {
+    "id": "SHALL-2-5-3-074",
+    "section": "2.5.3",
+    "text": "Variables shall be initialized from the environment (as defined by XBD 8."
+  },
+  {
+    "id": "SHALL-2-5-3-075",
+    "section": "2.5.3",
+    "text": "Shell variables shall be initialized only from environment variables that have valid names."
+  },
+  {
+    "id": "SHALL-2-5-3-076",
+    "section": "2.5.3",
+    "text": "If a variable is initialized from the environment, it shall be marked for export immediately; see the export special built-in."
+  },
+  {
+    "id": "SHALL-2-5-3-077",
+    "section": "2.5.3",
+    "text": "The following variables shall affect the execution of the shell:"
+  },
+  {
+    "id": "SHALL-2-5-3-078",
+    "section": "2.5.3",
+    "text": "ENVUP ENVThis variable, when and only when an interactive shell is invoked, shall be subjected to parameter expansion (see 2.6.2 Parameter Expansion) by the shell and the resulting value shall be used as a pathname of a file."
+  },
+  {
+    "id": "SHALL-2-5-3-079",
+    "section": "2.5.3",
+    "text": "Before any interactive commands are read, the shell shall tokenize (see 2.3 Token Recognition) the contents of the file, parse the tokens as a program (see 2.10 Shell Grammar), and execute the resulting commands in the current environment."
+  },
+  {
+    "id": "SHALL-2-5-3-080",
+    "section": "2.5.3",
+    "text": "ENV shall be ignored if the user's real and effective user IDs or real and effective group IDs are different."
+  },
+  {
+    "id": "SHALL-2-5-3-081",
+    "section": "2.5.3",
+    "text": "If IFS is not set, it shall behave as normal for an unset variable, except that field splitting by the shell and line splitting by the read utility shall be performed as if the value of IFS is <space><tab><newline>; see 2.6.5 Field Splitting."
+  },
+  {
+    "id": "SHALL-2-5-3-082",
+    "section": "2.5.3",
+    "text": "The shell shall set IFS to <space><tab><newline> when it is invoked."
+  },
+  {
+    "id": "SHALL-2-5-3-083",
+    "section": "2.5.3",
+    "text": "Changing the value of LC_CTYPE after the shell has started shall not affect the lexical processing of shell commands in the current shell execution environment or its subshells."
+  },
+  {
+    "id": "SHALL-2-5-3-084",
+    "section": "2.5.3",
+    "text": "In a subshell (see 2.13 Shell Execution Environment), PPID shall be set to the same value as that of the parent of the current shell."
+  },
+  {
+    "id": "SHALL-2-5-3-085",
+    "section": "2.5.3",
+    "text": "PS1UP PS1Each time an interactive shell is ready to read a command, the value of this variable shall be subjected to parameter expansion (see 2.6.2 Parameter Expansion) and exclamation-mark expansion (see below)."
+  },
+  {
+    "id": "SHALL-2-5-3-086",
+    "section": "2.5.3",
+    "text": "After expansion, the value shall be written to standard error."
+  },
+  {
+    "id": "SHALL-2-5-3-087",
+    "section": "2.5.3",
+    "text": "The expansions shall be performed in two passes, where the result of the first pass is input to the second pass."
+  },
+  {
+    "id": "SHALL-2-5-3-088",
+    "section": "2.5.3",
+    "text": "One of the passes shall perform only the exclamation-mark expansion described below."
+  },
+  {
+    "id": "SHALL-2-5-3-089",
+    "section": "2.5.3",
+    "text": "The other pass shall perform the other expansion(s) according to the rules in 2.6 Word Expansions."
+  },
+  {
+    "id": "SHALL-2-5-3-090",
+    "section": "2.5.3",
+    "text": "The default value shall be \"$ \"."
+  },
+  {
+    "id": "SHALL-2-5-3-091",
+    "section": "2.5.3",
+    "text": "Exclamation-mark expansion: The shell shall replace each instance of the <exclamation-mark> character ('!') with the history file number (see Command History List) of the next command to be typed."
+  },
+  {
+    "id": "SHALL-2-5-3-092",
+    "section": "2.5.3",
+    "text": "An <exclamation-mark> character escaped by another <exclamation-mark> character (that is, \"!!\") shall expand to a single <exclamation-mark> character."
+  },
+  {
+    "id": "SHALL-2-5-3-093",
+    "section": "2.5.3",
+    "text": "PS2UP PS2Each time the user enters a <newline> prior to completing a command line in an interactive shell, the value of this variable shall be subjected to parameter expansion (see 2.6.2 Parameter Expansion)."
+  },
+  {
+    "id": "SHALL-2-5-3-094",
+    "section": "2.5.3",
+    "text": "After expansion, the value shall be written to standard error."
+  },
+  {
+    "id": "SHALL-2-5-3-095",
+    "section": "2.5.3",
+    "text": "The default value shall be \"> \"."
+  },
+  {
+    "id": "SHALL-2-5-3-096",
+    "section": "2.5.3",
+    "text": "PS4UP PS4When an execution trace (set -x) is being performed, before each line in the execution trace, the value of this variable shall be subjected to parameter expansion (see 2.6.2 Parameter Expansion)."
+  },
+  {
+    "id": "SHALL-2-5-3-097",
+    "section": "2.5.3",
+    "text": "After expansion, the value shall be written to standard error."
+  },
+  {
+    "id": "SHALL-2-5-3-098",
+    "section": "2.5.3",
+    "text": "The default value shall be \"+ \"."
+  },
+  {
+    "id": "SHALL-2-5-3-099",
+    "section": "2.5.3",
+    "text": "In the shell the value shall be initialized from the environment as follows."
+  },
+  {
+    "id": "SHALL-2-5-3-100",
+    "section": "2.5.3",
+    "text": "If a value for PWD is passed to the shell in the environment when it is executed, the value is an absolute pathname of the current working directory that is no longer than {PATH_MAX} bytes including the terminating null byte, and the value does not contain any components that are dot or dot-dot, then the shell shall set PWD to the value from the environment."
+  },
+  {
+    "id": "SHALL-2-6-101",
+    "section": "2.6",
+    "text": "The expansions that are performed for a given word shall be performed in the following order:"
+  },
+  {
+    "id": "SHALL-2-6-102",
+    "section": "2.6",
+    "text": "Tilde expansion (see 2.6.1 Tilde Expansion), parameter expansion (see 2.6.2 Parameter Expansion), command substitution (see 2.6.3 Command Substitution ), and arithmetic expansion (see 2.6.4 Arithmetic Expansion) shall be performed, beginning to end."
+  },
+  {
+    "id": "SHALL-2-6-103",
+    "section": "2.6",
+    "text": "Field splitting (see 2.6.5 Field Splitting) shall be performed on the portions of the fields generated by step 1."
+  },
+  {
+    "id": "SHALL-2-6-104",
+    "section": "2.6",
+    "text": "Pathname expansion (see 2.6.6 Pathname Expansion) shall be performed, unless set -f is in effect."
+  },
+  {
+    "id": "SHALL-2-6-105",
+    "section": "2.6",
+    "text": "Quote removal (see 2.6.7 Quote Removal), if performed, shall always be performed last."
+  },
+  {
+    "id": "SHALL-2-6-106",
+    "section": "2.6",
+    "text": "Tilde expansions, parameter expansions, command substitutions, arithmetic expansions, and quote removals that occur within a single word shall expand to a single field, except as described below."
+  },
+  {
+    "id": "SHALL-2-6-107",
+    "section": "2.6",
+    "text": "The shell shall create multiple fields or no fields from a single word only as a result of field splitting, pathname expansion, or the following cases:"
+  },
+  {
+    "id": "SHALL-2-6-108",
+    "section": "2.6",
+    "text": "This expansion, if supported, shall be applied before all the other word expansions are applied."
+  },
+  {
+    "id": "SHALL-2-6-109",
+    "section": "2.6",
+    "text": "The other expansions shall then be applied to each field that results from this expansion."
+  },
+  {
+    "id": "SHALL-2-6-110",
+    "section": "2.6",
+    "text": "When the expansions in this section are performed other than in the context of preparing a command for execution, they shall be carried out in the current shell execution environment."
+  },
+  {
+    "id": "SHALL-2-6-111",
+    "section": "2.6",
+    "text": "When expanding words for a command about to be executed, and the word will be the command name or an argument to the command, the expansions shall be carried out in the current shell execution environment."
+  },
+  {
+    "id": "SHALL-2-6-112",
+    "section": "2.6",
+    "text": "If a '$' that is neither within single-quotes nor escaped by a <backslash> is immediately followed by a <space>, <tab>, or a <newline>, or is not followed by any character, the '$' shall be treated as a literal character."
+  },
+  {
+    "id": "SHALL-2-6-1-113",
+    "section": "2.6.1",
+    "text": "If the tilde-prefix consists of only the <tilde> character, it shall be replaced by the value of the variable HOME ."
+  },
+  {
+    "id": "SHALL-2-6-1-114",
+    "section": "2.6.1",
+    "text": "Otherwise, the characters in the tilde-prefix following the <tilde> shall be treated as a possible login name from the user database."
+  },
+  {
+    "id": "SHALL-2-6-1-115",
+    "section": "2.6.1",
+    "text": "If the characters in the tilde-prefix following the <tilde> form a portable login name, the tilde-prefix shall be replaced by a pathname of the initial working directory associated with the login name."
+  },
+  {
+    "id": "SHALL-2-6-1-116",
+    "section": "2.6.1",
+    "text": "The pathname shall be obtained as if by using the getpwnam() function as defined in the System Interfaces volume of POSIX.1-2024."
+  },
+  {
+    "id": "SHALL-2-6-1-117",
+    "section": "2.6.1",
+    "text": "The pathname that replaces the tilde-prefix shall be treated as if quoted to prevent it being altered by field splitting and pathname expansion; if a <slash> follows the tilde-prefix and the pathname ends with a <slash>, the trailing <slash> from the pathname should be omitted from the replacement."
+  },
+  {
+    "id": "SHALL-2-6-2-118",
+    "section": "2.6.2",
+    "text": "Any '}' escaped by a <backslash> or within a quoted string, and characters in embedded arithmetic expansions, command substitutions, and variable expansions, shall not be examined in determining the matching '}'."
+  },
+  {
+    "id": "SHALL-2-6-2-119",
+    "section": "2.6.2",
+    "text": "${parameter} The value, if any, of parameter shall be substituted."
+  },
+  {
+    "id": "SHALL-2-6-2-120",
+    "section": "2.6.2",
+    "text": "If the parameter is a name, the expansion shall use the longest valid name (see XBD 3.216 Name), whether or not the variable denoted by that name exists."
+  },
+  {
+    "id": "SHALL-2-6-2-121",
+    "section": "2.6.2",
+    "text": "In each case that a value of word is needed (based on the state of parameter, as described below), word shall be subjected to tilde expansion, parameter expansion, command substitution, arithmetic expansion, and quote removal."
+  },
+  {
+    "id": "SHALL-2-6-2-122",
+    "section": "2.6.2",
+    "text": "If word is not needed, it shall not be expanded."
+  },
+  {
+    "id": "SHALL-2-6-2-123",
+    "section": "2.6.2",
+    "text": "The '}' character that delimits the following parameter expansion modifications shall be determined as described previously in this section and in 2.2.3 Double-Quotes."
+  },
+  {
+    "id": "SHALL-2-6-2-124",
+    "section": "2.6.2",
+    "text": "If parameter is unset or null, the expansion of word (or an empty string if word is omitted) shall be substituted; otherwise, the value of parameter shall be substituted."
+  },
+  {
+    "id": "SHALL-2-6-2-125",
+    "section": "2.6.2",
+    "text": "If parameter is unset or null, quote removal shall be performed on the expansion of word and the result (or an empty string if word is omitted) shall be assigned to parameter."
+  },
+  {
+    "id": "SHALL-2-6-2-126",
+    "section": "2.6.2",
+    "text": "In all cases, the final value of parameter shall be substituted."
+  },
+  {
+    "id": "SHALL-2-6-2-127",
+    "section": "2.6.2",
+    "text": "If parameter is unset or null, the expansion of word (or a message indicating it is unset if word is omitted) shall be written to standard error and the shell exits with a non-zero exit status."
+  },
+  {
+    "id": "SHALL-2-6-2-128",
+    "section": "2.6.2",
+    "text": "Otherwise, the value of parameter shall be substituted."
+  },
+  {
+    "id": "SHALL-2-6-2-129",
+    "section": "2.6.2",
+    "text": "If parameter is unset or null, null shall be substituted; otherwise, the expansion of word (or an empty string if word is omitted) shall be substituted."
+  },
+  {
+    "id": "SHALL-2-6-2-130",
+    "section": "2.6.2",
+    "text": "In the parameter expansions shown previously, use of the <colon> in the format shall result in a test for a parameter that is unset or null; omission of the <colon> shall result in a test for a parameter that is only unset."
+  },
+  {
+    "id": "SHALL-2-6-2-131",
+    "section": "2.6.2",
+    "text": "If parameter is '#' and the colon is omitted, the application shall ensure that word is specified (this is necessary to avoid ambiguity with the string length expansion)."
+  },
+  {
+    "id": "SHALL-2-6-2-132",
+    "section": "2.6.2",
+    "text": "The shortest decimal representation of the length in characters of the value of parameter shall be substituted."
+  },
+  {
+    "id": "SHALL-2-6-2-133",
+    "section": "2.6.2",
+    "text": "If parameter is unset and set -u is in effect, the expansion shall fail."
+  },
+  {
+    "id": "SHALL-2-6-2-134",
+    "section": "2.6.2",
+    "text": "In each case, pattern matching notation (see 2.14 Pattern Matching Notation), rather than regular expression notation, shall be used to evaluate the patterns."
+  },
+  {
+    "id": "SHALL-2-6-2-135",
+    "section": "2.6.2",
+    "text": "If parameter is unset and set -u is in effect, the expansion shall fail."
+  },
+  {
+    "id": "SHALL-2-6-2-136",
+    "section": "2.6.2",
+    "text": "Enclosing the full parameter expansion string in double-quotes shall not cause the following four varieties of pattern characters to be quoted, whereas quoting characters within the braces shall have this effect."
+  },
+  {
+    "id": "SHALL-2-6-2-137",
+    "section": "2.6.2",
+    "text": "In each variety, if word is omitted, the empty pattern shall be used."
+  },
+  {
+    "id": "SHALL-2-6-2-138",
+    "section": "2.6.2",
+    "text": "The word shall be expanded to produce a pattern."
+  },
+  {
+    "id": "SHALL-2-6-2-139",
+    "section": "2.6.2",
+    "text": "The parameter expansion shall then result in parameter, with the smallest portion of the suffix matched by the pattern deleted."
+  },
+  {
+    "id": "SHALL-2-6-2-140",
+    "section": "2.6.2",
+    "text": "If present, word shall not begin with an unquoted '%'."
+  },
+  {
+    "id": "SHALL-2-6-2-141",
+    "section": "2.6.2",
+    "text": "The word shall be expanded to produce a pattern."
+  },
+  {
+    "id": "SHALL-2-6-2-142",
+    "section": "2.6.2",
+    "text": "The parameter expansion shall then result in parameter, with the largest portion of the suffix matched by the pattern deleted."
+  },
+  {
+    "id": "SHALL-2-6-2-143",
+    "section": "2.6.2",
+    "text": "The word shall be expanded to produce a pattern."
+  },
+  {
+    "id": "SHALL-2-6-2-144",
+    "section": "2.6.2",
+    "text": "The parameter expansion shall then result in parameter, with the smallest portion of the prefix matched by the pattern deleted."
+  },
+  {
+    "id": "SHALL-2-6-2-145",
+    "section": "2.6.2",
+    "text": "If present, word shall not begin with an unquoted '#'."
+  },
+  {
+    "id": "SHALL-2-6-2-146",
+    "section": "2.6.2",
+    "text": "The word shall be expanded to produce a pattern."
+  },
+  {
+    "id": "SHALL-2-6-2-147",
+    "section": "2.6.2",
+    "text": "The parameter expansion shall then result in parameter, with the largest portion of the prefix matched by the pattern deleted."
+  },
+  {
+    "id": "SHALL-2-6-3-148",
+    "section": "2.6.3",
+    "text": "Command substitution shall occur when command(s) are enclosed as follows:"
+  },
+  {
+    "id": "SHALL-2-6-3-149",
+    "section": "2.6.3",
+    "text": "`commands` The shell shall expand the command substitution by executing commands in a subshell environment (see 2.13 Shell Execution Environment) and replacing the command substitution (the text of the commands string plus the enclosing \"$()\" or backquotes) with the standard output of the command(s); if the output ends with one or more bytes that have the encoded value of a <newline> character, they shall not be included in the replacement."
+  },
+  {
+    "id": "SHALL-2-6-3-150",
+    "section": "2.6.3",
+    "text": "Any such bytes that occur elsewhere shall be included in the replacement; however, they might be treated as field delimiters and eliminated during field splitting, depending on the value of IFS and quoting that is in effect."
+  },
+  {
+    "id": "SHALL-2-6-3-151",
+    "section": "2.6.3",
+    "text": "Within the backquoted style of command substitution, if the command substitution is not within double-quotes, <backslash> shall retain its literal meaning, except when followed by: '$', '`', or <backslash>."
+  },
+  {
+    "id": "SHALL-2-6-3-152",
+    "section": "2.6.3",
+    "text": "The search for the matching backquote shall be satisfied by the first unquoted non-escaped backquote; during this search, if a non-escaped backquote is encountered within a shell comment, a here-document, an embedded command substitution of the $(commands) form, or a quoted string, undefined results occur."
+  },
+  {
+    "id": "SHALL-2-6-3-153",
+    "section": "2.6.3",
+    "text": "With both the backquoted and $(commands) forms, the commands string shall be tokenized (see 2.3 Token Recognition) and parsed (see 2.10 Shell Grammar)."
+  },
+  {
+    "id": "SHALL-2-6-3-154",
+    "section": "2.6.3",
+    "text": "Strictly conforming applications shall ensure that the commands string does not depend on alias changes taking effect incrementally as would be the case if parsed and executed as a program."
+  },
+  {
+    "id": "SHALL-2-6-3-155",
+    "section": "2.6.3",
+    "text": "The results of command substitution shall not be processed for further tilde expansion, parameter expansion, command substitution, or arithmetic expansion."
+  },
+  {
+    "id": "SHALL-2-6-3-156",
+    "section": "2.6.3",
+    "text": "To specify nesting within the backquoted version, the application shall precede the inner backquotes with <backslash> characters; for example:"
+  },
+  {
+    "id": "SHALL-2-6-3-157",
+    "section": "2.6.3",
+    "text": "Arithmetic expansion has precedence; that is, the shell shall first determine whether it can parse the expansion as an arithmetic expansion and shall only parse the expansion as a command substitution if it determines that it cannot parse the expansion as an arithmetic expansion."
+  },
+  {
+    "id": "SHALL-2-6-3-158",
+    "section": "2.6.3",
+    "text": "If it encounters the end of input without already having determined that it cannot parse the expansion as an arithmetic expansion, the shell shall treat the expansion as an incomplete arithmetic expansion and report a syntax error."
+  },
+  {
+    "id": "SHALL-2-6-3-159",
+    "section": "2.6.3",
+    "text": "A conforming application shall ensure that it separates the \"$(\" and '(' into two tokens (that is, separate them with white space) in a command substitution that starts with a subshell."
+  },
+  {
+    "id": "SHALL-2-6-4-160",
+    "section": "2.6.4",
+    "text": "The format for arithmetic expansion shall be as follows:"
+  },
+  {
+    "id": "SHALL-2-6-4-161",
+    "section": "2.6.4",
+    "text": "$((expression)) The expression shall be treated as if it were in double-quotes, except that a double-quote inside the expression is not treated specially."
+  },
+  {
+    "id": "SHALL-2-6-4-162",
+    "section": "2.6.4",
+    "text": "The shell shall expand all tokens in the expression for parameter expansion, command substitution, and quote removal."
+  },
+  {
+    "id": "SHALL-2-6-4-163",
+    "section": "2.6.4",
+    "text": "Next, the shell shall treat this as an arithmetic expression and substitute the value of the expression."
+  },
+  {
+    "id": "SHALL-2-6-4-164",
+    "section": "2.6.4",
+    "text": "The arithmetic expression shall be processed according to the rules given in 1.1.2.1 Arithmetic Precision and Operations, with the following exceptions:"
+  },
+  {
+    "id": "SHALL-2-6-4-165",
+    "section": "2.6.4",
+    "text": "All changes to variables in an arithmetic expression shall be in effect after the arithmetic expansion, as in the parameter expansion \"${x=value}\"."
+  },
+  {
+    "id": "SHALL-2-6-4-166",
+    "section": "2.6.4",
+    "text": "If the shell variable x contains a value that forms a valid integer constant, optionally including a leading <plus-sign> or <hyphen-minus>, then the arithmetic expansions \"$((x))\" and \"$(($x))\" shall return the same value."
+  },
+  {
+    "id": "SHALL-2-6-4-167",
+    "section": "2.6.4",
+    "text": "If the expression is invalid, or the contents of a shell variable used in the expression are not recognized by the shell, the expansion fails and the shell shall write a diagnostic message to standard error indicating the failure."
+  },
+  {
+    "id": "SHALL-2-6-5-168",
+    "section": "2.6.5",
+    "text": "After parameter expansion ( 2.6.2 Parameter Expansion), command substitution ( 2.6.3 Command Substitution), and arithmetic expansion ( 2.6.4 Arithmetic Expansion), if the shell variable IFS (see 2.5.3 Shell Variables) is set and its value is not empty, or if IFS is unset, the shell shall scan each field containing results of expansions and substitutions that did not occur in double-quotes for field splitting; zero, one or multiple fields can result."
+  },
+  {
+    "id": "SHALL-2-6-5-169",
+    "section": "2.6.5",
+    "text": "For the remainder of this section, any reference to the results of an expansion, or results of expansions, shall be interpreted to mean the results from one or more unquoted variable or arithmetic expansions, or unquoted command substitutions."
+  },
+  {
+    "id": "SHALL-2-6-5-170",
+    "section": "2.6.5",
+    "text": "If the IFS variable is set and has an empty string as its value, no field splitting shall occur."
+  },
+  {
+    "id": "SHALL-2-6-5-171",
+    "section": "2.6.5",
+    "text": "However, if an input field which contained the results of an expansion is entirely empty, it shall be removed."
+  },
+  {
+    "id": "SHALL-2-6-5-172",
+    "section": "2.6.5",
+    "text": "After the removal of any such fields from the input, the possibly modified input field list shall become the output."
+  },
+  {
+    "id": "SHALL-2-6-5-173",
+    "section": "2.6.5",
+    "text": "Each input field shall be considered in sequence, first to last, with the results of the algorithm described in this section causing output fields to be generated, which shall remain in the same order as the input fields from which they originated."
+  },
+  {
+    "id": "SHALL-2-6-5-174",
+    "section": "2.6.5",
+    "text": "Fields which contain no results from expansions shall not be affected by field splitting, and shall remain unaltered, simply moving from the list of input fields to be next in the list of output fields."
+  },
+  {
+    "id": "SHALL-2-6-5-175",
+    "section": "2.6.5",
+    "text": "If the IFS variable is unset, then for the purposes of this section, but without altering the value of the variable, its value shall be considered to contain the three single-byte characters <space>, <tab>, and <newline> from the portable character set, all of which are IFS white-space characters."
+  },
+  {
+    "id": "SHALL-2-6-5-176",
+    "section": "2.6.5",
+    "text": "The shell shall use the byte sequences that form the characters in the value of the IFS variable as delimiters."
+  },
+  {
+    "id": "SHALL-2-6-5-177",
+    "section": "2.6.5",
+    "text": "Each of the characters <space>, <tab>, and <newline> which appears in the value of IFS shall be a single-byte delimiter."
+  },
+  {
+    "id": "SHALL-2-6-5-178",
+    "section": "2.6.5",
+    "text": "The shell shall use these delimiters as field terminators to split the results of expansions, along with other adjacent bytes, into separate fields, as described below."
+  },
+  {
+    "id": "SHALL-2-6-5-179",
+    "section": "2.6.5",
+    "text": "If the results of the algorithm are that no fields are delimited; that is, if the input field is wholly empty or consists entirely of IFS white space, the result shall be zero fields (rather than an empty field)."
+  },
+  {
+    "id": "SHALL-2-6-5-180",
+    "section": "2.6.5",
+    "text": "For the purposes of this section, when a field is said to be delimited, then the candidate field, as generated below shall become an output field."
+  },
+  {
+    "id": "SHALL-2-6-5-181",
+    "section": "2.6.5",
+    "text": "When the algorithm transforms a candidate into an output field it shall be appended to the current list of output fields."
+  },
+  {
+    "id": "SHALL-2-6-5-182",
+    "section": "2.6.5",
+    "text": "Each field containing the results from an expansion shall be processed in order, intermixed with fields not containing the results of expansions, processed as described above, as if by using the following algorithm, examining bytes in the input field, from beginning to end:"
+  },
+  {
+    "id": "SHALL-2-6-5-183",
+    "section": "2.6.5",
+    "text": "No such byte sequence shall contain data such that some bytes in the sequence resulted from an expansion, and others did not, nor which contains bytes resulting from the results of more than one expansion."
+  },
+  {
+    "id": "SHALL-2-6-5-184",
+    "section": "2.6.5",
+    "text": "At this point, if the candidate is not empty, or if a sequence of bytes representing an IFS character that is not IFS white space was seen at step 4, then a field is said to have been delimited, and the candidate shall become an output field."
+  },
+  {
+    "id": "SHALL-2-6-5-185",
+    "section": "2.6.5",
+    "text": "Once the input is empty, the candidate shall become an output field if and only if it is not empty."
+  },
+  {
+    "id": "SHALL-2-6-5-186",
+    "section": "2.6.5",
+    "text": "The ordered list of output fields so produced, which might be empty, shall replace the list of input fields."
+  },
+  {
+    "id": "SHALL-2-6-6-187",
+    "section": "2.6.6",
+    "text": "After field splitting, if set -f is not in effect, each field in the resulting command line shall be expanded using the algorithm described in 2.14 Pattern Matching Notation, qualified by the rules in 2.14.3 Patterns Used for Filename Expansion."
+  },
+  {
+    "id": "SHALL-2-6-7-188",
+    "section": "2.6.7",
+    "text": "The quote character sequence <dollar-sign> single-quote and the single-character quote characters (<backslash>, single-quote, and double-quote) that were present in the original word shall be removed unless they have themselves been quoted."
+  },
+  {
+    "id": "SHALL-2-7-189",
+    "section": "2.7",
+    "text": "[n]redir-op word The number n is an optional one or more digit decimal number designating the file descriptor number; the application shall ensure it is delimited from any preceding text and immediately precedes the redirection operator redir-op (with no intervening <blank> characters allowed)."
+  },
+  {
+    "id": "SHALL-2-7-190",
+    "section": "2.7",
+    "text": "If n is quoted, the number shall not be recognized as part of the redirection expression."
+  },
+  {
+    "id": "SHALL-2-7-191",
+    "section": "2.7",
+    "text": "The optional number, redirection operator, and word shall not appear in the arguments provided to the command to be executed (if any)."
+  },
+  {
+    "id": "SHALL-2-7-192",
+    "section": "2.7",
+    "text": "The largest file descriptor number supported in shell redirections is implementation-defined; however, all implementations shall support at least 0 to 9, inclusive, for use by the application."
+  },
+  {
+    "id": "SHALL-2-7-193",
+    "section": "2.7",
+    "text": "If the redirection operator is \"<<\" or \"<<-\", the word that follows the redirection operator shall be subjected to quote removal; it is unspecified whether any of the other expansions occur."
+  },
+  {
+    "id": "SHALL-2-7-194",
+    "section": "2.7",
+    "text": "For the other redirection operators, the word that follows the redirection operator shall be subjected to tilde expansion, parameter expansion, command substitution, arithmetic expansion, and quote removal."
+  },
+  {
+    "id": "SHALL-2-7-195",
+    "section": "2.7",
+    "text": "Pathname expansion shall not be performed on the word by a non-interactive shell; an interactive shell may perform it, but if the expansion would result in more than one word it is unspecified whether the redirection proceeds without pathname expansion being performed or the redirection fails."
+  },
+  {
+    "id": "SHALL-2-7-196",
+    "section": "2.7",
+    "text": "A failure to open or create a file shall cause a redirection to fail."
+  },
+  {
+    "id": "SHALL-2-7-1-197",
+    "section": "2.7.1",
+    "text": "Input redirection shall cause the file whose name results from the expansion of word to be opened for reading on the designated file descriptor, or standard input if the file descriptor is not specified."
+  },
+  {
+    "id": "SHALL-2-7-1-198",
+    "section": "2.7.1",
+    "text": "If the number is omitted, the redirection shall refer to standard input (file descriptor 0)."
+  },
+  {
+    "id": "SHALL-2-7-2-199",
+    "section": "2.7.2",
+    "text": "If the number is omitted, the redirection shall refer to standard output (file descriptor 1)."
+  },
+  {
+    "id": "SHALL-2-7-2-200",
+    "section": "2.7.2",
+    "text": "Output redirection using the '>' format shall fail if the noclobber option is set (see the description of set -C) and the file named by the expansion of word exists and is either a regular file or a symbolic link that resolves to a regular file; it may also fail if the file is a symbolic link that does not resolve to an existing file."
+  },
+  {
+    "id": "SHALL-2-7-2-201",
+    "section": "2.7.2",
+    "text": "The check for existence, file creation, and open operations shall be performed atomically as is done by the open() function as defined in System Interfaces volume of POSIX.1-2024 when the O_CREAT and O_EXCL flags are set, except that if the file exists and is a symbolic link, the open operation need not fail with [EEXIST] unless the symbolic link resolves to an existing regular file."
+  },
+  {
+    "id": "SHALL-2-7-2-202",
+    "section": "2.7.2",
+    "text": "In all other cases (noclobber not set, redirection using '>' does not fail for the reasons stated above, or redirection using the \">|\" format), output redirection shall cause the file whose name results from the expansion of word to be opened for output on the designated file descriptor, or standard output if none is specified."
+  },
+  {
+    "id": "SHALL-2-7-2-203",
+    "section": "2.7.2",
+    "text": "If the file does not exist, it shall be created as an empty file; otherwise, it shall be opened as if the open() function was called with the O_TRUNC flag set."
+  },
+  {
+    "id": "SHALL-2-7-3-204",
+    "section": "2.7.3",
+    "text": "Appended output redirection shall cause the file whose name results from the expansion of word to be opened for output on the designated file descriptor."
+  },
+  {
+    "id": "SHALL-2-7-3-205",
+    "section": "2.7.3",
+    "text": "The file shall be opened as if the open() function as defined in the System Interfaces volume of POSIX.1-2024 was called with the O_APPEND flag set."
+  },
+  {
+    "id": "SHALL-2-7-3-206",
+    "section": "2.7.3",
+    "text": "If the file does not exist, it shall be created."
+  },
+  {
+    "id": "SHALL-2-7-4-207",
+    "section": "2.7.4",
+    "text": "The here-document shall be treated as a single word that begins after the next NEWLINE token and continues until there is a line containing only the delimiter and a <newline>, with no <blank> characters in between."
+  },
+  {
+    "id": "SHALL-2-7-4-208",
+    "section": "2.7.4",
+    "text": "For the purposes of locating this terminating line, the end of a command_string operand (see sh) shall be treated as a <newline> character, and the end of the commands string in $(commands) and `commands` may be treated as a <newline>."
+  },
+  {
+    "id": "SHALL-2-7-4-209",
+    "section": "2.7.4",
+    "text": "If any part of word is quoted, not counting double-quotes outside a command substitution if the here-document is inside one, the delimiter shall be formed by performing quote removal on word, and the here-document lines shall not be expanded."
+  },
+  {
+    "id": "SHALL-2-7-4-210",
+    "section": "2.7.4",
+    "text": "The delimiter shall be the word itself."
+  },
+  {
+    "id": "SHALL-2-7-4-211",
+    "section": "2.7.4",
+    "text": "The removal of <backslash><newline> for line continuation (see 2.2.1 Escape Character (Backslash)) shall be performed during the search for the trailing delimiter."
+  },
+  {
+    "id": "SHALL-2-7-4-212",
+    "section": "2.7.4",
+    "text": "All lines of the here-document shall be expanded, when the redirection operator is evaluated but after the trailing delimiter for the here-document has been located, for parameter expansion, command substitution, and arithmetic expansion."
+  },
+  {
+    "id": "SHALL-2-7-4-213",
+    "section": "2.7.4",
+    "text": "If the redirection operator is never evaluated (because the command it is part of is not executed), the here-document shall be read without performing any expansions."
+  },
+  {
+    "id": "SHALL-2-7-4-214",
+    "section": "2.7.4",
+    "text": "Any <backslash> characters in the input shall behave as the <backslash> inside double-quotes (see 2.2.3 Double-Quotes)."
+  },
+  {
+    "id": "SHALL-2-7-4-215",
+    "section": "2.7.4",
+    "text": "However, the double-quote character ('\"') shall not be treated specially within a here-document, except when the double-quote appears within \"$()\", \"``\", or \"${}\"."
+  },
+  {
+    "id": "SHALL-2-7-4-216",
+    "section": "2.7.4",
+    "text": "If the redirection operator is \"<<-\", all leading <tab> characters shall be stripped from input lines after <backslash><newline> line continuation (when it applies) has been performed, and from the line containing the trailing delimiter."
+  },
+  {
+    "id": "SHALL-2-7-4-217",
+    "section": "2.7.4",
+    "text": "Stripping of leading <tab> characters shall occur as the here-document is read from the shell input (and consequently does not affect any <tab> characters that result from expansions)."
+  },
+  {
+    "id": "SHALL-2-7-4-218",
+    "section": "2.7.4",
+    "text": "If more than one \"<<\" or \"<<-\" operator is specified on a line, the here-document associated with the first operator shall be supplied first by the application and shall be read first by the shell."
+  },
+  {
+    "id": "SHALL-2-7-4-219",
+    "section": "2.7.4",
+    "text": "When a here-document is read from a terminal device and the shell is interactive, it shall write the contents of the variable PS2, processed as described in 2.5.3 Shell Variables, to standard error before reading each line of input until the delimiter has been recognized."
+  },
+  {
+    "id": "SHALL-2-7-5-220",
+    "section": "2.7.5",
+    "text": "[n]<&word shall duplicate one input file descriptor from another, or shall close one."
+  },
+  {
+    "id": "SHALL-2-7-5-221",
+    "section": "2.7.5",
+    "text": "If word evaluates to one or more digits, the file descriptor denoted by n, or standard input if n is not specified, shall be made to be a copy of the file descriptor denoted by word; if the digits in word do not represent an already open file descriptor, a redirection error shall result (see 2.8.1 Consequences of Shell Errors); if the file descriptor denoted by word represents an open file descriptor that is not open for input, a redirection error may result."
+  },
+  {
+    "id": "SHALL-2-7-5-222",
+    "section": "2.7.5",
+    "text": "If word evaluates to '-', file descriptor n, or standard input if n is not specified, shall be closed."
+  },
+  {
+    "id": "SHALL-2-7-5-223",
+    "section": "2.7.5",
+    "text": "Attempts to close a file descriptor that is not open shall not constitute an error."
+  },
+  {
+    "id": "SHALL-2-7-6-224",
+    "section": "2.7.6",
+    "text": "[n]>&word shall duplicate one output file descriptor from another, or shall close one."
+  },
+  {
+    "id": "SHALL-2-7-6-225",
+    "section": "2.7.6",
+    "text": "If word evaluates to one or more digits, the file descriptor denoted by n, or standard output if n is not specified, shall be made to be a copy of the file descriptor denoted by word; if the digits in word do not represent an already open file descriptor, a redirection error shall result (see 2.8.1 Consequences of Shell Errors); if the file descriptor denoted by word represents an open file descriptor that is not open for output, a redirection error may result."
+  },
+  {
+    "id": "SHALL-2-7-6-226",
+    "section": "2.7.6",
+    "text": "Attempts to close a file descriptor that is not open shall not constitute an error."
+  },
+  {
+    "id": "SHALL-2-7-7-227",
+    "section": "2.7.7",
+    "text": "[n]<>word shall cause the file whose name is the expansion of word to be opened for both reading and writing on the file descriptor denoted by n, or standard input if n is not specified."
+  },
+  {
+    "id": "SHALL-2-7-7-228",
+    "section": "2.7.7",
+    "text": "If the file does not exist, it shall be created."
+  },
+  {
+    "id": "SHALL-2-8-1-229",
+    "section": "2.8.1",
+    "text": "Certain errors shall cause the shell to write a diagnostic message to standard error and exit as shown in the following table:"
+  },
+  {
+    "id": "SHALL-2-8-1-230",
+    "section": "2.8.1",
+    "text": "shall exit"
+  },
+  {
+    "id": "SHALL-2-8-1-231",
+    "section": "2.8.1",
+    "text": "shall not exit"
+  },
+  {
+    "id": "SHALL-2-8-1-232",
+    "section": "2.8.1",
+    "text": "shall exit"
+  },
+  {
+    "id": "SHALL-2-8-1-233",
+    "section": "2.8.1",
+    "text": "shall not exit"
+  },
+  {
+    "id": "SHALL-2-8-1-234",
+    "section": "2.8.1",
+    "text": "shall not exit"
+  },
+  {
+    "id": "SHALL-2-8-1-235",
+    "section": "2.8.1",
+    "text": "shall not exit"
+  },
+  {
+    "id": "SHALL-2-8-1-236",
+    "section": "2.8.1",
+    "text": "shall exit"
+  },
+  {
+    "id": "SHALL-2-8-1-237",
+    "section": "2.8.1",
+    "text": "shall not exit"
+  },
+  {
+    "id": "SHALL-2-8-1-238",
+    "section": "2.8.1",
+    "text": "shall not exit"
+  },
+  {
+    "id": "SHALL-2-8-1-239",
+    "section": "2.8.1",
+    "text": "shall not exit"
+  },
+  {
+    "id": "SHALL-2-8-1-240",
+    "section": "2.8.1",
+    "text": "shall not exit"
+  },
+  {
+    "id": "SHALL-2-8-1-241",
+    "section": "2.8.1",
+    "text": "shall not exit"
+  },
+  {
+    "id": "SHALL-2-8-1-242",
+    "section": "2.8.1",
+    "text": "shall not exit"
+  },
+  {
+    "id": "SHALL-2-8-1-243",
+    "section": "2.8.1",
+    "text": "shall not exit"
+  },
+  {
+    "id": "SHALL-2-8-1-244",
+    "section": "2.8.1",
+    "text": "shall exit"
+  },
+  {
+    "id": "SHALL-2-8-1-245",
+    "section": "2.8.1",
+    "text": "shall not exit"
+  },
+  {
+    "id": "SHALL-2-8-1-246",
+    "section": "2.8.1",
+    "text": "shall exit"
+  },
+  {
+    "id": "SHALL-2-8-1-247",
+    "section": "2.8.1",
+    "text": "shall not exit"
+  },
+  {
+    "id": "SHALL-2-8-1-248",
+    "section": "2.8.1",
+    "text": "shall not exit"
+  },
+  {
+    "id": "SHALL-2-8-1-249",
+    "section": "2.8.1",
+    "text": "shall exit"
+  },
+  {
+    "id": "SHALL-2-8-1-250",
+    "section": "2.8.1",
+    "text": "shall exit"
+  },
+  {
+    "id": "SHALL-2-8-1-251",
+    "section": "2.8.1",
+    "text": "The shell shall exit only if the special built-in utility is executed directly."
+  },
+  {
+    "id": "SHALL-2-8-1-252",
+    "section": "2.8.1",
+    "text": "If it is executed via the command utility, the shell shall not exit."
+  },
+  {
+    "id": "SHALL-2-8-1-253",
+    "section": "2.8.1",
+    "text": "The shell is not required to write a diagnostic message, but the utility itself shall write a diagnostic message if required to do so."
+  },
+  {
+    "id": "SHALL-2-8-1-254",
+    "section": "2.8.1",
+    "text": "If an unrecoverable read error occurs when reading commands, other than from the file operand of the dot special built-in, the shell shall execute no further commands (including any already successfully read but not yet executed) other than any specified in a previously defined EXIT trap action."
+  },
+  {
+    "id": "SHALL-2-8-1-255",
+    "section": "2.8.1",
+    "text": "An unrecoverable read error while reading from the file operand of the dot special built-in shall be treated as a special built-in utility error."
+  },
+  {
+    "id": "SHALL-2-8-1-256",
+    "section": "2.8.1",
+    "text": "If any of the errors shown as \"shall exit\" or \"may exit\" occur in a subshell environment, the shell shall (respectively, may) exit from the subshell environment with a non-zero status and continue in the environment from which that subshell environment was invoked."
+  },
+  {
+    "id": "SHALL-2-8-1-257",
+    "section": "2.8.1",
+    "text": "In all of the cases shown in the table where an interactive shell is required not to exit and a non-interactive shell is required to exit, an interactive shell shall not perform any further processing of the command in which the error occurred."
+  },
+  {
+    "id": "SHALL-2-8-2-258",
+    "section": "2.8.2",
+    "text": "The exit status of a command shall be determined as follows:"
+  },
+  {
+    "id": "SHALL-2-8-2-259",
+    "section": "2.8.2",
+    "text": "If the command is not found, the exit status shall be 127."
+  },
+  {
+    "id": "SHALL-2-8-2-260",
+    "section": "2.8.2",
+    "text": "Otherwise, if the command name is found, but it is not an executable utility, the exit status shall be 126."
+  },
+  {
+    "id": "SHALL-2-8-2-261",
+    "section": "2.8.2",
+    "text": "Otherwise, if the command terminated due to the receipt of a signal, the shell shall assign it an exit status greater than 128."
+  },
+  {
+    "id": "SHALL-2-8-2-262",
+    "section": "2.8.2",
+    "text": "The exit status shall identify, in an implementation-defined manner, which signal terminated the command."
+  },
+  {
+    "id": "SHALL-2-8-2-263",
+    "section": "2.8.2",
+    "text": "Otherwise, the exit status shall be the value obtained by the equivalent of the WEXITSTATUS macro applied to the status obtained by the wait() function (as defined in the System Interfaces volume of POSIX.1-2024)."
+  },
+  {
+    "id": "SHALL-2-9-264",
+    "section": "2.9",
+    "text": "Unless otherwise stated, the exit status of a command shall be that of the last simple command executed by the command."
+  },
+  {
+    "id": "SHALL-2-9-265",
+    "section": "2.9",
+    "text": "There shall be no limit on the size of any shell command other than that imposed by the underlying system (memory constraints, {ARG_MAX}, and so on)."
+  },
+  {
+    "id": "SHALL-2-9-1-1-266",
+    "section": "2.9.1.1",
+    "text": "When a given simple command is required to be executed (that is, when any conditional construct such as an AND-OR list or a case statement has not bypassed the simple command), the following expansions, assignments, and redirections shall all be performed from the beginning of the command text to the end:"
+  },
+  {
+    "id": "SHALL-2-9-1-1-267",
+    "section": "2.9.1.1",
+    "text": "The first word (if any) that is not a variable assignment or redirection shall be expanded."
+  },
+  {
+    "id": "SHALL-2-9-1-1-268",
+    "section": "2.9.1.1",
+    "text": "If any fields remain following its expansion, the first field shall be considered the command name."
+  },
+  {
+    "id": "SHALL-2-9-1-1-269",
+    "section": "2.9.1.1",
+    "text": "If no fields remain, the next word (if any) shall be expanded, and so on, until a command name is found or no words remain."
+  },
+  {
+    "id": "SHALL-2-9-1-1-270",
+    "section": "2.9.1.1",
+    "text": "If there is a command name and it is recognized as a declaration utility, then any remaining words after the word that expanded to produce the command name, that would be recognized as a variable assignment in isolation, shall be expanded as a variable assignment (tilde expansion after the first <equals-sign> and after any unquoted <colon>, parameter expansion, command substitution, arithmetic expansion, and quote removal, but no field splitting or pathname expansion); while remaining words that would not be a variable assignment in isolation shall be subject to regular expansion (tilde expansion for only a leading <tilde>, parameter expansion, command substitution, arithmetic expansion, field splitting, pathname expansion, and quote removal)."
+  },
+  {
+    "id": "SHALL-2-9-1-1-271",
+    "section": "2.9.1.1",
+    "text": "For all other command names, words after the word that produced the command name shall be subject only to regular expansion."
+  },
+  {
+    "id": "SHALL-2-9-1-1-272",
+    "section": "2.9.1.1",
+    "text": "All fields resulting from the expansion of the word that produced the command name and the subsequent words, except for the field containing the command name, shall be the arguments for the command."
+  },
+  {
+    "id": "SHALL-2-9-1-1-273",
+    "section": "2.9.1.1",
+    "text": "Redirections shall be performed as described in 2.7 Redirection."
+  },
+  {
+    "id": "SHALL-2-9-1-1-274",
+    "section": "2.9.1.1",
+    "text": "Each variable assignment shall be expanded for tilde expansion, parameter expansion, command substitution, arithmetic expansion, and quote removal prior to assigning the value."
+  },
+  {
+    "id": "SHALL-2-9-1-2-275",
+    "section": "2.9.1.2",
+    "text": "Variable assignments shall be performed as follows:"
+  },
+  {
+    "id": "SHALL-2-9-1-2-276",
+    "section": "2.9.1.2",
+    "text": "If no command name results, variable assignments shall affect the current execution environment."
+  },
+  {
+    "id": "SHALL-2-9-1-2-277",
+    "section": "2.9.1.2",
+    "text": "If the command name is not a special built-in utility or function, the variable assignments shall be exported for the execution environment of the command and shall not affect the current execution environment except as a side-effect of the expansions performed in step 4."
+  },
+  {
+    "id": "SHALL-2-9-1-2-278",
+    "section": "2.9.1.2",
+    "text": "If the command name is a standard utility implemented as a function (see XBD 4.25 Utility), the effect of variable assignments shall be as if the utility was not implemented as a function."
+  },
+  {
+    "id": "SHALL-2-9-1-2-279",
+    "section": "2.9.1.2",
+    "text": "If the command name is a special built-in utility, variable assignments shall affect the current execution environment before the utility is executed and remain in effect when the command completes; if an assigned variable is further modified by the utility, the modifications made by the utility shall persist."
+  },
+  {
+    "id": "SHALL-2-9-1-2-280",
+    "section": "2.9.1.2",
+    "text": "If the command name is a function that is not a standard utility implemented as a function, variable assignments shall affect the current execution environment during the execution of the function."
+  },
+  {
+    "id": "SHALL-2-9-1-2-281",
+    "section": "2.9.1.2",
+    "text": "If any of the variable assignments attempt to assign a value to a variable for which the readonly attribute is set in the current shell environment (regardless of whether the assignment is made in that environment), a variable assignment error shall occur."
+  },
+  {
+    "id": "SHALL-2-9-1-3-282",
+    "section": "2.9.1.3",
+    "text": "If a simple command has no command name after word expansion (see 2.9.1.1 Order of Processing), any redirections shall be performed in a subshell environment; it is unspecified whether this subshell environment is the same one as that used for a command substitution within the command."
+  },
+  {
+    "id": "SHALL-2-9-1-3-283",
+    "section": "2.9.1.3",
+    "text": "(To affect the current execution environment, see the exec special built-in.) If any of the redirections performed in the current shell execution environment fail, the command shall immediately fail with an exit status greater than zero, and the shell shall write an error message indicating the failure."
+  },
+  {
+    "id": "SHALL-2-9-1-3-284",
+    "section": "2.9.1.3",
+    "text": "Additionally, if there is no command name but the command contains a command substitution, the command shall complete with the exit status of the command substitution whose exit status was the last to be obtained."
+  },
+  {
+    "id": "SHALL-2-9-1-3-285",
+    "section": "2.9.1.3",
+    "text": "Otherwise, the command shall complete with a zero exit status."
+  },
+  {
+    "id": "SHALL-2-9-1-4-286",
+    "section": "2.9.1.4",
+    "text": "If a simple command has a command name and an optional list of arguments after word expansion (see 2.9.1.1 Order of Processing), the following actions shall be performed:"
+  },
+  {
+    "id": "SHALL-2-9-1-4-287",
+    "section": "2.9.1.4",
+    "text": "If the command name does not contain any <slash> characters, the first successful step in the following sequence shall occur: If the command name matches the name of a special built-in utility, that special built-in utility shall be invoked."
+  },
+  {
+    "id": "SHALL-2-9-1-4-288",
+    "section": "2.9.1.4",
+    "text": "If the command name matches the name of a function known to this shell, the function shall be invoked as described in 2.9.5 Function Definition Command."
+  },
+  {
+    "id": "SHALL-2-9-1-4-289",
+    "section": "2.9.1.4",
+    "text": "has not been removed using unset -f or replaced via another function definition with the same name), it shall not be recognized at this point."
+  },
+  {
+    "id": "SHALL-2-9-1-4-290",
+    "section": "2.9.1.4",
+    "text": "It shall be invoked in conjunction with the path search in step 1e."
+  },
+  {
+    "id": "SHALL-2-9-1-4-291",
+    "section": "2.9.1.4",
+    "text": "If the command name matches the name of an intrinsic utility (see 1.7 Intrinsic Utilities), that utility shall be invoked."
+  },
+  {
+    "id": "SHALL-2-9-1-4-292",
+    "section": "2.9.1.4",
+    "text": "Otherwise, the command shall be searched for using the PATH environment variable as described in XBD 8."
+  },
+  {
+    "id": "SHALL-2-9-1-4-293",
+    "section": "2.9.1.4",
+    "text": "Environment Variables: If the search is successful: If the system has implemented the utility as a built-in or as a shell function, and the built-in or function is associated with the directory that was most recently tested during the successful PATH search, that built-in or function shall be invoked."
+  },
+  {
+    "id": "SHALL-2-9-1-4-294",
+    "section": "2.9.1.4",
+    "text": "Otherwise, the shell shall execute a non-built-in utility as described in 2.9.1.6 Non-built-in Utility Execution."
+  },
+  {
+    "id": "SHALL-2-9-1-4-295",
+    "section": "2.9.1.4",
+    "text": "If the remembered location fails for a subsequent invocation, the shell shall repeat the search to find the new location for the utility, if any."
+  },
+  {
+    "id": "SHALL-2-9-1-4-296",
+    "section": "2.9.1.4",
+    "text": "If the search is unsuccessful, the command shall fail with an exit status of 127 and the shell shall write an error message."
+  },
+  {
+    "id": "SHALL-2-9-1-4-297",
+    "section": "2.9.1.4",
+    "text": "If the command name contains at least one <slash>, the shell shall execute a non-built-in utility as described in 2.9.1.6 Non-built-in Utility Execution."
+  },
+  {
+    "id": "SHALL-2-9-1-5-298",
+    "section": "2.9.1.5",
+    "text": "If a standard utility or a conforming application is executed with file descriptor 0 not open for reading or with file descriptor 1 or 2 not open for writing, the environment in which the utility or application is executed shall be deemed non-conforming, and consequently the utility or application might not behave as described in this standard."
+  },
+  {
+    "id": "SHALL-2-9-1-6-299",
+    "section": "2.9.1.6",
+    "text": "exec2.13 Shell Execution EnvironmentIf the execution is being made via the exec special built-in utility, the shell shall not create a separate utility environment for this execution; the new process image shall replace the current shell execution environment."
+  },
+  {
+    "id": "SHALL-2-9-1-6-300",
+    "section": "2.9.1.6",
+    "text": "If the current shell environment is a subshell environment, the new process image shall replace the subshell environment and the shell shall continue in the environment from which that subshell environment was invoked."
+  },
+  {
+    "id": "SHALL-2-9-1-6-301",
+    "section": "2.9.1.6",
+    "text": "In either case, execution of the utility in the specified environment shall be performed as follows:"
+  },
+  {
+    "id": "SHALL-2-9-1-6-302",
+    "section": "2.9.1.6",
+    "text": "If the command name does not contain any <slash> characters, the command name shall be searched for using the PATH environment variable as described in XBD 8."
+  },
+  {
+    "id": "SHALL-2-9-1-6-303",
+    "section": "2.9.1.6",
+    "text": "Environment Variables: If the search is successful, the shell shall execute the utility with actions equivalent to calling the execl() function as defined in the System Interfaces volume of POSIX.1-2024 with the path argument set to the pathname resulting from the search, arg0 set to the command name, and the remaining execl() arguments set to the command arguments (if any) and the null terminator."
+  },
+  {
+    "id": "SHALL-2-9-1-6-304",
+    "section": "2.9.1.6",
+    "text": "If the execl() function fails due to an error equivalent to the [ENOEXEC] error defined in the System Interfaces volume of POSIX.1-2024, the shell shall execute a command equivalent to having a shell invoked with the pathname resulting from the search as its first operand, with any remaining arguments passed to the new shell, except that the value of \"$0\" in the new shell may be set to the command name."
+  },
+  {
+    "id": "SHALL-2-9-1-6-305",
+    "section": "2.9.1.6",
+    "text": "In this case, it shall write an error message, and the command shall fail with an exit status of 126."
+  },
+  {
+    "id": "SHALL-2-9-1-6-306",
+    "section": "2.9.1.6",
+    "text": "If the search is unsuccessful, the command shall fail with an exit status of 127 and the shell shall write an error message."
+  },
+  {
+    "id": "SHALL-2-9-1-6-307",
+    "section": "2.9.1.6",
+    "text": "If the command name contains at least one <slash>: If the named utility exists, the shell shall execute the utility with actions equivalent to calling the execl() function defined in the System Interfaces volume of POSIX.1-2024 with the path and arg0 arguments set to the command name, and the remaining execl() arguments set to the command arguments (if any) and the null terminator."
+  },
+  {
+    "id": "SHALL-2-9-1-6-308",
+    "section": "2.9.1.6",
+    "text": "If the execl() function fails due to an error equivalent to the [ENOEXEC] error, the shell shall execute a command equivalent to having a shell invoked with the command name as its first operand, with any remaining arguments passed to the new shell."
+  },
+  {
+    "id": "SHALL-2-9-1-6-309",
+    "section": "2.9.1.6",
+    "text": "In this case, it shall write an error message, and the command shall fail with an exit status of 126."
+  },
+  {
+    "id": "SHALL-2-9-1-6-310",
+    "section": "2.9.1.6",
+    "text": "If the named utility does not exist, the command shall fail with an exit status of 127 and the shell shall write an error message."
+  },
+  {
+    "id": "SHALL-2-9-2-311",
+    "section": "2.9.2",
+    "text": "For each command but the last, the shell shall connect the standard output of the command to the standard input of the next command as if by creating a pipe and passing the write end of the pipe as the standard output of the command and the read end of the pipe as the standard input of the next command."
+  },
+  {
+    "id": "SHALL-2-9-2-312",
+    "section": "2.9.2",
+    "text": "and command1 is a subshell command, the application shall ensure that the ( operator at the beginning of command1 is separated from the !"
+  },
+  {
+    "id": "SHALL-2-9-2-313",
+    "section": "2.9.2",
+    "text": "The standard output of command1 shall be connected to the standard input of command2."
+  },
+  {
+    "id": "SHALL-2-9-2-314",
+    "section": "2.9.2",
+    "text": "The standard input, standard output, or both of a command shall be considered to be assigned by the pipeline before any redirection specified by redirection operators that are part of the command (see 2.7 Redirection)."
+  },
+  {
+    "id": "SHALL-2-9-2-315",
+    "section": "2.9.2",
+    "text": "If the pipeline is not in the background (see 2.9.3.1 Asynchronous AND-OR Lists and 2.11 Job Control), the shell shall wait for the last command specified in the pipeline to complete, and may also wait for all commands to complete."
+  },
+  {
+    "id": "SHALL-Exit Status-316",
+    "section": "Exit Status",
+    "text": "The exit status of a pipeline shall depend on whether or not the pipefail option (see set) is enabled and whether or not the pipeline begins with the !"
+  },
+  {
+    "id": "SHALL-Exit Status-317",
+    "section": "Exit Status",
+    "text": "The shell shall use the pipefail setting at the time it begins execution of the pipeline, not the setting at the time it sets the exit status of the pipeline."
+  },
+  {
+    "id": "SHALL-2-9-3-318",
+    "section": "2.9.3",
+    "text": "The operators \"&&\" and \"||\" shall have equal precedence and shall be evaluated with left associativity."
+  },
+  {
+    "id": "SHALL-2-9-3-319",
+    "section": "2.9.3",
+    "text": "false && echo foo || echo bar true || echo foo && echo bar A ';' separator or a ';' or <newline> terminator shall cause the preceding AND-OR list to be executed sequentially; an '&' separator or terminator shall cause asynchronous execution of the preceding AND-OR list."
+  },
+  {
+    "id": "SHALL-2-9-3-1-320",
+    "section": "2.9.3.1",
+    "text": "If an AND-OR list is terminated by the control operator <ampersand> ('&'), the shell shall execute the AND-OR list asynchronously in a subshell environment."
+  },
+  {
+    "id": "SHALL-2-9-3-1-321",
+    "section": "2.9.3.1",
+    "text": "This subshell shall execute in the background; that is, the shell shall not wait for the subshell to terminate before executing the next command (if any); if there are no further commands to execute, the shell shall not wait for the subshell to terminate before exiting."
+  },
+  {
+    "id": "SHALL-2-9-3-1-322",
+    "section": "2.9.3.1",
+    "text": "If job control is enabled (see set, -m), the AND-OR list shall become a job-control background job and a job number shall be assigned to it."
+  },
+  {
+    "id": "SHALL-2-9-3-1-323",
+    "section": "2.9.3.1",
+    "text": "If job control is disabled, the AND-OR list may become a non-job-control background job, in which case a job number shall be assigned to it; if no job number is assigned it shall become a background command but not a background job."
+  },
+  {
+    "id": "SHALL-2-9-3-1-324",
+    "section": "2.9.3.1",
+    "text": "The process ID associated with the asynchronous AND-OR list shall become known in the current shell execution environment; see 2.13 Shell Execution Environment."
+  },
+  {
+    "id": "SHALL-2-9-3-1-325",
+    "section": "2.9.3.1",
+    "text": "This process ID shall remain known until any one of the following occurs (and, unless otherwise specified, may continue to remain known after it occurs)."
+  },
+  {
+    "id": "SHALL-2-9-3-1-326",
+    "section": "2.9.3.1",
+    "text": "If, and only if, job control is disabled, the standard input for the subshell in which an asynchronous AND-OR list is executed shall initially be assigned to an open file description that behaves as if /dev/null had been opened for reading only."
+  },
+  {
+    "id": "SHALL-2-9-3-1-327",
+    "section": "2.9.3.1",
+    "text": "This initial assignment shall be overridden by any explicit redirection of standard input within the AND-OR list."
+  },
+  {
+    "id": "SHALL-2-9-3-1-328",
+    "section": "2.9.3.1",
+    "text": "If the shell is interactive and the asynchronous AND-OR list became a background job, the job number and the process ID associated with the job shall be written to standard error using the format:"
+  },
+  {
+    "id": "SHALL-2-9-3-1-329",
+    "section": "2.9.3.1",
+    "text": "\"[%d] %d\\n\", <job-number>, <process-id> If the shell is interactive and the asynchronous AND-OR list did not become a background job, the process ID associated with the asynchronous AND-OR list shall be written to standard error in an unspecified format."
+  },
+  {
+    "id": "SHALL-Exit Status-330",
+    "section": "Exit Status",
+    "text": "The exit status of an asynchronous AND-OR list shall be zero."
+  },
+  {
+    "id": "SHALL-2-9-3-2-331",
+    "section": "2.9.3.2",
+    "text": "AND-OR lists that are separated by a <semicolon> (';') shall be executed sequentially."
+  },
+  {
+    "id": "SHALL-2-9-3-2-332",
+    "section": "2.9.3.2",
+    "text": "The format for executing AND-OR lists sequentially shall be:"
+  },
+  {
+    "id": "SHALL-2-9-3-2-333",
+    "section": "2.9.3.2",
+    "text": "Each AND-OR list shall be expanded and executed in the order specified."
+  },
+  {
+    "id": "SHALL-2-9-3-2-334",
+    "section": "2.9.3.2",
+    "text": "If job control is enabled, the AND-OR lists shall form all or part of a foreground job that can be controlled as described in 2.11 Job Control."
+  },
+  {
+    "id": "SHALL-Exit Status-335",
+    "section": "Exit Status",
+    "text": "The exit status of a sequential AND-OR list shall be the exit status of the last pipeline in the AND-OR list that is executed."
+  },
+  {
+    "id": "SHALL-2-9-3-3-336",
+    "section": "2.9.3.3",
+    "text": "The format shall be:"
+  },
+  {
+    "id": "SHALL-2-9-3-3-337",
+    "section": "2.9.3.3",
+    "text": "First command1 shall be executed."
+  },
+  {
+    "id": "SHALL-2-9-3-3-338",
+    "section": "2.9.3.3",
+    "text": "If its exit status is zero, command2 shall be executed, and so on, until a command has a non-zero exit status or there are no more commands left to execute."
+  },
+  {
+    "id": "SHALL-Exit Status-339",
+    "section": "Exit Status",
+    "text": "The exit status of an AND list shall be the exit status of the last command that is executed in the list."
+  },
+  {
+    "id": "SHALL-2-9-3-4-340",
+    "section": "2.9.3.4",
+    "text": "The format shall be:"
+  },
+  {
+    "id": "SHALL-2-9-3-4-341",
+    "section": "2.9.3.4",
+    "text": "First, command1 shall be executed."
+  },
+  {
+    "id": "SHALL-2-9-3-4-342",
+    "section": "2.9.3.4",
+    "text": "If its exit status is non-zero, command2 shall be executed, and so on, until a command has a zero exit status or there are no more commands left to execute."
+  },
+  {
+    "id": "SHALL-Exit Status-343",
+    "section": "Exit Status",
+    "text": "The exit status of an OR list shall be the exit status of the last command that is executed in the list."
+  },
+  {
+    "id": "SHALL-2-9-4-344",
+    "section": "2.9.4",
+    "text": "Each redirection shall apply to all the commands within the compound command that do not explicitly override that redirection."
+  },
+  {
+    "id": "SHALL-2-9-4-345",
+    "section": "2.9.4",
+    "text": "The exit status of a compound-list shall be the value that the special parameter '?' (see 2.5.2 Special Parameters) would have immediately after execution of the compound-list."
+  },
+  {
+    "id": "SHALL-2-9-4-1-346",
+    "section": "2.9.4.1",
+    "text": "Variable assignments and built-in commands that affect the environment shall not remain in effect after the list finishes."
+  },
+  {
+    "id": "SHALL-2-9-4-1-347",
+    "section": "2.9.4.1",
+    "text": "A conforming application shall ensure that it separates the two leading '(' characters with white space to prevent the shell from performing an arithmetic evaluation."
+  },
+  {
+    "id": "SHALL-Exit Status-348",
+    "section": "Exit Status",
+    "text": "The exit status of a grouping command shall be the exit status of compound-list."
+  },
+  {
+    "id": "SHALL-2-9-4-2-349",
+    "section": "2.9.4.2",
+    "text": "The for loop shall execute a sequence of commands for each member in a list of items."
+  },
+  {
+    "id": "SHALL-2-9-4-2-350",
+    "section": "2.9.4.2",
+    "text": "]] do compound-list done First, the list of words following in shall be expanded to generate a list of items."
+  },
+  {
+    "id": "SHALL-2-9-4-2-351",
+    "section": "2.9.4.2",
+    "text": "Then, the variable name shall be set to each item, in turn, and the compound-list executed each time."
+  },
+  {
+    "id": "SHALL-2-9-4-2-352",
+    "section": "2.9.4.2",
+    "text": "If no items result from the expansion, the compound-list shall not be executed."
+  },
+  {
+    "id": "SHALL-Exit Status-353",
+    "section": "Exit Status",
+    "text": "If there is at least one item in the list of items, the exit status of a for command shall be the exit status of the last compound-list executed."
+  },
+  {
+    "id": "SHALL-Exit Status-354",
+    "section": "Exit Status",
+    "text": "If there are no items, the exit status shall be zero."
+  },
+  {
+    "id": "SHALL-2-9-4-3-355",
+    "section": "2.9.4.3",
+    "text": "The conditional construct case shall execute the compound-list corresponding to the first pattern (see 2.14 Pattern Matching Notation), if any are present, that is matched by the string resulting from the tilde expansion, parameter expansion, command substitution, arithmetic expansion, and quote removal of the given word."
+  },
+  {
+    "id": "SHALL-2-9-4-3-356",
+    "section": "2.9.4.3",
+    "text": "The reserved word in shall denote the beginning of the patterns to be matched."
+  },
+  {
+    "id": "SHALL-2-9-4-3-357",
+    "section": "2.9.4.3",
+    "text": "Multiple patterns with the same compound-list shall be delimited by the '|' symbol."
+  },
+  {
+    "id": "SHALL-2-9-4-3-358",
+    "section": "2.9.4.3",
+    "text": "Each case statement clause, with the possible exception of the last, shall be terminated with either \";;\" or \";&\"."
+  },
+  {
+    "id": "SHALL-2-9-4-3-359",
+    "section": "2.9.4.3",
+    "text": "In order from the beginning to the end of the case statement, each pattern that labels a compound-list shall be subjected to tilde expansion, parameter expansion, command substitution, and arithmetic expansion, and the result of these expansions shall be compared against the expansion of word, according to the rules described in 2.14 Pattern Matching Notation (which also describes the effect of quoting parts of the pattern)."
+  },
+  {
+    "id": "SHALL-2-9-4-3-360",
+    "section": "2.9.4.3",
+    "text": "After the first match, no more patterns in the case statement shall be expanded, and the compound-list of the matching clause shall be executed."
+  },
+  {
+    "id": "SHALL-2-9-4-3-361",
+    "section": "2.9.4.3",
+    "text": "If the case statement clause is terminated by \";;\", no further clauses shall be examined."
+  },
+  {
+    "id": "SHALL-2-9-4-3-362",
+    "section": "2.9.4.3",
+    "text": "If the case statement clause is terminated by \";&\", then the compound-list (if any) of each subsequent clause shall be executed, in order, until either a clause terminated by \";;\" is reached and its compound-list (if any) executed or there are no further clauses in the case statement."
+  },
+  {
+    "id": "SHALL-Exit Status-363",
+    "section": "Exit Status",
+    "text": "The exit status of case shall be zero if no patterns are matched."
+  },
+  {
+    "id": "SHALL-Exit Status-364",
+    "section": "Exit Status",
+    "text": "Otherwise, the exit status shall be the exit status of the compound-list of the last clause to be executed."
+  },
+  {
+    "id": "SHALL-2-9-4-4-365",
+    "section": "2.9.4.4",
+    "text": "The if command shall execute a compound-list and use its exit status to determine whether to execute another compound-list."
+  },
+  {
+    "id": "SHALL-2-9-4-4-366",
+    "section": "2.9.4.4",
+    "text": "[else compound-list] fi The if compound-list shall be executed; if its exit status is zero, the then compound-list shall be executed and the command shall complete."
+  },
+  {
+    "id": "SHALL-2-9-4-4-367",
+    "section": "2.9.4.4",
+    "text": "Otherwise, each elif compound-list shall be executed, in turn, and if its exit status is zero, the then compound-list shall be executed and the command shall complete."
+  },
+  {
+    "id": "SHALL-2-9-4-4-368",
+    "section": "2.9.4.4",
+    "text": "Otherwise, the else compound-list shall be executed."
+  },
+  {
+    "id": "SHALL-Exit Status-369",
+    "section": "Exit Status",
+    "text": "The exit status of the if command shall be the exit status of the then or else compound-list that was executed, or zero, if none was executed."
+  },
+  {
+    "id": "SHALL-2-9-4-5-370",
+    "section": "2.9.4.5",
+    "text": "The while loop shall continuously execute one compound-list as long as another compound-list has a zero exit status."
+  },
+  {
+    "id": "SHALL-2-9-4-5-371",
+    "section": "2.9.4.5",
+    "text": "while compound-list-1 do compound-list-2 done The compound-list-1 shall be executed, and if it has a non-zero exit status, the while command shall complete."
+  },
+  {
+    "id": "SHALL-2-9-4-5-372",
+    "section": "2.9.4.5",
+    "text": "Otherwise, the compound-list-2 shall be executed, and the process shall repeat."
+  },
+  {
+    "id": "SHALL-Exit Status-373",
+    "section": "Exit Status",
+    "text": "The exit status of the while loop shall be the exit status of the last compound-list-2 executed, or zero if none was executed."
+  },
+  {
+    "id": "SHALL-2-9-4-6-374",
+    "section": "2.9.4.6",
+    "text": "The until loop shall continuously execute one compound-list as long as another compound-list has a non-zero exit status."
+  },
+  {
+    "id": "SHALL-2-9-4-6-375",
+    "section": "2.9.4.6",
+    "text": "until compound-list-1 do compound-list-2 done The compound-list-1 shall be executed, and if it has a zero exit status, the until command completes."
+  },
+  {
+    "id": "SHALL-2-9-4-6-376",
+    "section": "2.9.4.6",
+    "text": "Otherwise, the compound-list-2 shall be executed, and the process repeats."
+  },
+  {
+    "id": "SHALL-Exit Status-377",
+    "section": "Exit Status",
+    "text": "The exit status of the until loop shall be the exit status of the last compound-list-2 executed, or zero if none was executed."
+  },
+  {
+    "id": "SHALL-2-9-5-378",
+    "section": "2.9.5",
+    "text": "fname ( ) compound-command [io-redirect ...] The function is named fname; the application shall ensure that it is a name (see XBD 3.216 Name) and that it is not the name of a special built-in utility."
+  },
+  {
+    "id": "SHALL-2-9-5-379",
+    "section": "2.9.5",
+    "text": "The implementation shall maintain separate name spaces for functions and variables."
+  },
+  {
+    "id": "SHALL-2-9-5-380",
+    "section": "2.9.5",
+    "text": "When the function is declared, none of the expansions in 2.6 Word Expansions shall be performed on the text in compound-command or io-redirect; all expansions shall be performed as normal each time the function is called."
+  },
+  {
+    "id": "SHALL-2-9-5-381",
+    "section": "2.9.5",
+    "text": "Similarly, the optional io-redirect redirections and any variable assignments within compound-command shall be performed during the execution of the function itself, not the function definition."
+  },
+  {
+    "id": "SHALL-2-9-5-382",
+    "section": "2.9.5",
+    "text": "When a function is executed, it shall have the syntax-error properties described for special built-in utilities in the first item in the enumerated list at the beginning of 2.15 Special Built-In Utilities."
+  },
+  {
+    "id": "SHALL-2-9-5-383",
+    "section": "2.9.5",
+    "text": "The compound-command shall be executed whenever the function name is specified as the name of a simple command (see 2.9.1.4 Command Search and Execution)."
+  },
+  {
+    "id": "SHALL-2-9-5-384",
+    "section": "2.9.5",
+    "text": "The operands to the command temporarily shall become the positional parameters during the execution of the compound-command; the special parameter '#' also shall be changed to reflect the number of operands."
+  },
+  {
+    "id": "SHALL-2-9-5-385",
+    "section": "2.9.5",
+    "text": "The special parameter 0 shall be unchanged."
+  },
+  {
+    "id": "SHALL-2-9-5-386",
+    "section": "2.9.5",
+    "text": "When the function completes, the values of the positional parameters and the special parameter '#' shall be restored to the values they had before the function was executed."
+  },
+  {
+    "id": "SHALL-2-9-5-387",
+    "section": "2.9.5",
+    "text": "If the special built-in return (see return) is executed in the compound-command, the function completes and execution shall resume with the next command after the function call."
+  },
+  {
+    "id": "SHALL-Exit Status-388",
+    "section": "Exit Status",
+    "text": "The exit status of a function definition shall be zero if the function was declared successfully; otherwise, it shall be greater than zero."
+  },
+  {
+    "id": "SHALL-Exit Status-389",
+    "section": "Exit Status",
+    "text": "The exit status of a function invocation shall be the exit status of the last command executed by the function."
+  },
+  {
+    "id": "SHALL-2-10-390",
+    "section": "2.10",
+    "text": "This formal syntax shall take precedence over the preceding text syntax description."
+  },
+  {
+    "id": "SHALL-2-10-1-391",
+    "section": "2.10.1",
+    "text": "The input language to the shell shall be first recognized at the character level."
+  },
+  {
+    "id": "SHALL-2-10-1-392",
+    "section": "2.10.1",
+    "text": "The resulting tokens shall be classified by their immediate context according to the following rules (applied in order)."
+  },
+  {
+    "id": "SHALL-2-10-1-393",
+    "section": "2.10.1",
+    "text": "These rules shall be used to determine what a \"token\" is that is subject to parsing at the token level."
+  },
+  {
+    "id": "SHALL-2-10-1-394",
+    "section": "2.10.1",
+    "text": "The rules for token recognition in 2.3 Token Recognition shall apply."
+  },
+  {
+    "id": "SHALL-2-10-1-395",
+    "section": "2.10.1",
+    "text": "If the token is an operator, the token identifier for that operator shall result."
+  },
+  {
+    "id": "SHALL-2-10-1-396",
+    "section": "2.10.1",
+    "text": "If the string consists solely of digits and the delimiter character is one of '<' or '>', the token identifier IO_NUMBER shall result."
+  },
+  {
+    "id": "SHALL-2-10-1-397",
+    "section": "2.10.1",
+    "text": "If the string contains at least three characters, begins with a <left-curly-bracket> ('{') and ends with a <right-curly-bracket> ('}'), and the delimiter character is one of '<' or '>', the token identifier IO_LOCATION may result; if the result is not IO_LOCATION, the token identifier TOKEN shall result."
+  },
+  {
+    "id": "SHALL-2-10-1-398",
+    "section": "2.10.1",
+    "text": "Otherwise, the token identifier TOKEN shall result."
+  },
+  {
+    "id": "SHALL-2-10-1-399",
+    "section": "2.10.1",
+    "text": "When a TOKEN is seen where one of those annotated productions could be used to reduce the symbol, the applicable rule shall be applied to convert the token identifier type of the TOKEN to:"
+  },
+  {
+    "id": "SHALL-2-10-1-400",
+    "section": "2.10.1",
+    "text": "The reduction shall then proceed based upon the token identifier type yielded by the rule applied."
+  },
+  {
+    "id": "SHALL-2-10-1-401",
+    "section": "2.10.1",
+    "text": "When more than one rule applies, the highest numbered rule shall apply (which in turn may refer to another rule)."
+  },
+  {
+    "id": "SHALL-2-10-1-402",
+    "section": "2.10.1",
+    "text": "The WORD tokens shall have the word expansion rules applied to them immediately before the associated command is executed, not at the time the command is parsed."
+  },
+  {
+    "id": "SHALL-2-10-2-403",
+    "section": "2.10.2",
+    "text": "[Command Name] When the TOKEN is exactly a reserved word, the token identifier for that reserved word shall result."
+  },
+  {
+    "id": "SHALL-2-10-2-404",
+    "section": "2.10.2",
+    "text": "Otherwise, the token WORD shall be returned."
+  },
+  {
+    "id": "SHALL-2-10-2-405",
+    "section": "2.10.2",
+    "text": "[Redirection to or from filename] The expansions specified in 2.7 Redirection shall occur."
+  },
+  {
+    "id": "SHALL-2-10-2-406",
+    "section": "2.10.2",
+    "text": "[Redirection from here-document] Quote removal shall be applied to the word to determine the delimiter that is used to find the end of the here-document that begins after the next <newline>."
+  },
+  {
+    "id": "SHALL-2-10-2-407",
+    "section": "2.10.2",
+    "text": "[Case statement termination] When the TOKEN is exactly the reserved word esac, the token identifier for esac shall result."
+  },
+  {
+    "id": "SHALL-2-10-2-408",
+    "section": "2.10.2",
+    "text": "Otherwise, the token WORD shall be returned."
+  },
+  {
+    "id": "SHALL-2-10-2-409",
+    "section": "2.10.2",
+    "text": "[NAME in for] When the TOKEN meets the requirements for a name (see XBD 3.216 Name), the token identifier NAME shall result."
+  },
+  {
+    "id": "SHALL-2-10-2-410",
+    "section": "2.10.2",
+    "text": "Otherwise, the token WORD shall be returned."
+  },
+  {
+    "id": "SHALL-2-10-2-411",
+    "section": "2.10.2",
+    "text": "[Third word of for and case] [case only] When the TOKEN is exactly the reserved word in, the token identifier for in shall result."
+  },
+  {
+    "id": "SHALL-2-10-2-412",
+    "section": "2.10.2",
+    "text": "Otherwise, the token WORD shall be returned."
+  },
+  {
+    "id": "SHALL-2-10-2-413",
+    "section": "2.10.2",
+    "text": "[for only] When the TOKEN is exactly the reserved word in or do, the token identifier for in or do shall result, respectively."
+  },
+  {
+    "id": "SHALL-2-10-2-414",
+    "section": "2.10.2",
+    "text": "Otherwise, the token WORD shall be returned."
+  },
+  {
+    "id": "SHALL-2-10-2-415",
+    "section": "2.10.2",
+    "text": "[Assignment preceding command name] [When the first word] If the TOKEN is exactly a reserved word, the token identifier for that reserved word shall result."
+  },
+  {
+    "id": "SHALL-2-10-2-416",
+    "section": "2.10.2",
+    "text": "Otherwise, 7b shall be applied."
+  },
+  {
+    "id": "SHALL-2-10-2-417",
+    "section": "2.10.2",
+    "text": "If the TOKEN begins with '=', then the token WORD shall be returned."
+  },
+  {
+    "id": "SHALL-2-10-2-418",
+    "section": "2.10.2",
+    "text": "If all the characters in the TOKEN preceding the first such <equals-sign> form a valid name (see XBD 3.216 Name), the token ASSIGNMENT_WORD shall be returned."
+  },
+  {
+    "id": "SHALL-2-10-2-419",
+    "section": "2.10.2",
+    "text": "Otherwise, the token WORD shall be returned."
+  },
+  {
+    "id": "SHALL-2-10-2-420",
+    "section": "2.10.2",
+    "text": "If a returned ASSIGNMENT_WORD token begins with a valid name, assignment of the value after the first <equals-sign> to the name shall occur as specified in 2.9.1 Simple Commands."
+  },
+  {
+    "id": "SHALL-2-10-2-421",
+    "section": "2.10.2",
+    "text": "[NAME in function] When the TOKEN is exactly a reserved word, the token identifier for that reserved word shall result."
+  },
+  {
+    "id": "SHALL-2-10-2-422",
+    "section": "2.10.2",
+    "text": "Otherwise, when the TOKEN meets the requirements for a name, the token identifier NAME shall result."
+  },
+  {
+    "id": "SHALL-2-10-2-423",
+    "section": "2.10.2",
+    "text": "[Body of function] Word expansion and assignment shall never occur, even when required by the rules above, when this rule is being parsed."
+  },
+  {
+    "id": "SHALL-2-10-2-424",
+    "section": "2.10.2",
+    "text": "Each TOKEN that might either be expanded or have assignment applied to it shall instead be returned as a single WORD consisting only of characters that are exactly the token described in 2.3 Token Recognition ."
+  },
+  {
+    "id": "SHALL-2-11-425",
+    "section": "2.11",
+    "text": "If the shell has a controlling terminal and it is the controlling process for the terminal session, it shall initially set the foreground process group ID associated with the terminal to its own process group ID."
+  },
+  {
+    "id": "SHALL-2-11-426",
+    "section": "2.11",
+    "text": "Otherwise, if it has a controlling terminal, it shall initially perform the following steps if interactive and may perform them if non-interactive:"
+  },
+  {
+    "id": "SHALL-2-11-427",
+    "section": "2.11",
+    "text": "If its process group is the foreground process group associated with the terminal, the shell shall set its process group ID to its process ID (if they are not already equal) and set the foreground process group ID associated with the terminal to its process group ID."
+  },
+  {
+    "id": "SHALL-2-11-428",
+    "section": "2.11",
+    "text": "If its process group is not the foreground process group associated with the terminal (which would result from it being started by a job-control shell as a background job), the shell shall either stop itself by sending itself a SIGTTIN signal or, if interactive, attempt to read from standard input (which generates a SIGTTIN signal if standard input is the controlling terminal)."
+  },
+  {
+    "id": "SHALL-2-11-429",
+    "section": "2.11",
+    "text": "If it is stopped, then when it continues execution (after receiving a SIGCONT signal) it shall repeat these steps."
+  },
+  {
+    "id": "SHALL-2-11-430",
+    "section": "2.11",
+    "text": "Subsequently, the shell shall change the foreground process group associated with its controlling terminal when a foreground job is running as noted in the description below."
+  },
+  {
+    "id": "SHALL-2-11-431",
+    "section": "2.11",
+    "text": "When job control is enabled, the shell shall create one or more jobs when it executes a list (see 2.9.3 Lists) that has one of the following forms:"
+  },
+  {
+    "id": "SHALL-2-11-432",
+    "section": "2.11",
+    "text": "For the purposes of job control, a list that includes more than one asynchronous AND-OR list shall be treated as if it were split into multiple separate lists, each ending with an asynchronous AND-OR list."
+  },
+  {
+    "id": "SHALL-2-11-433",
+    "section": "2.11",
+    "text": "When a job consisting of a single asynchronous AND-OR list is created, it shall form a background job and the associated process ID shall be that of a child process that is made a process group leader, with all other processes (if any) that the shell creates to execute the AND-OR list initially having this process ID as their process group ID."
+  },
+  {
+    "id": "SHALL-2-11-434",
+    "section": "2.11",
+    "text": "For a list consisting of one or more sequentially executed AND-OR lists followed by at most one asynchronous AND-OR list, the whole list shall form a single foreground job up until the sequentially executed AND-OR lists have all completed execution, at which point the asynchronous AND-OR list (if any) shall form a background job as described above."
+  },
+  {
+    "id": "SHALL-2-11-435",
+    "section": "2.11",
+    "text": "For each pipeline in a foreground job, if the pipeline is executed while the list is still a foreground job, the set of processes comprising the pipeline, and any processes descended from it, shall all be in the same process group, unless the shell executes some of the commands in the pipeline in the current shell execution environment and others in a subshell environment; in this case the process group ID of the current shell need not change (or cannot change if it is the session leader), and consequently the process group ID that the other processes all share may differ from the process group ID of the current shell (which means that a SIGSTOP, SIGTSTP, SIGTTIN, or SIGTTOU signal sent to one of those process groups does not cause the whole pipeline to stop)."
+  },
+  {
+    "id": "SHALL-2-11-436",
+    "section": "2.11",
+    "text": "A background job that was created on execution of an asynchronous AND-OR list can be brought into the foreground by means of the fg utility (if supported); in this case the entire job shall become a single foreground job."
+  },
+  {
+    "id": "SHALL-2-11-437",
+    "section": "2.11",
+    "text": "If a process that the shell subsequently waits for is part of this foreground job and is stopped by a signal, the entire job shall become a suspended job and the behavior shall be as if the process had been stopped while the job was running in the background."
+  },
+  {
+    "id": "SHALL-2-11-438",
+    "section": "2.11",
+    "text": "When a foreground job is created, or a background job is brought into the foreground by the fg utility, if the shell has a controlling terminal it shall set the foreground process group ID associated with the terminal as follows:"
+  },
+  {
+    "id": "SHALL-2-11-439",
+    "section": "2.11",
+    "text": "If the job was originally created as a background job, the foreground process group ID shall be set to the process ID of the process that the shell made a process group leader when it executed the asynchronous AND-OR list."
+  },
+  {
+    "id": "SHALL-2-11-440",
+    "section": "2.11",
+    "text": "If the job was originally created as a foreground job, the foreground process group ID shall be set as follows when each pipeline in the job is executed: If the shell is not itself executing, in the current shell execution environment, all of the commands in the pipeline, the foreground process group ID shall be set to the process group ID that is shared by the other processes executing the pipeline (see above)."
+  },
+  {
+    "id": "SHALL-2-11-441",
+    "section": "2.11",
+    "text": "If all of the commands in the pipeline are being executed by the shell itself in the current shell execution environment, the foreground process group ID shall be set to the process group ID of the shell."
+  },
+  {
+    "id": "SHALL-2-11-442",
+    "section": "2.11",
+    "text": "When a foreground job terminates, or becomes a suspended job (see below), if the shell has a controlling terminal it shall set the foreground process group ID associated with the terminal to the process group ID of the shell."
+  },
+  {
+    "id": "SHALL-2-11-443",
+    "section": "2.11",
+    "text": "Each background job (whether suspended or not) shall have associated with it a job number and a process ID that is known in the current shell execution environment."
+  },
+  {
+    "id": "SHALL-2-11-444",
+    "section": "2.11",
+    "text": "When a background job is brought into the foreground by means of the fg utility, the associated job number shall be removed from the shell's background jobs list and the associated process ID shall be removed from the list of process IDs known in the current shell execution environment."
+  },
+  {
+    "id": "SHALL-2-11-445",
+    "section": "2.11",
+    "text": "If the currently executing AND-OR list within the list comprising the foreground job consists of a single pipeline in which all of the commands are simple commands, the shell shall either create a suspended job consisting of at least that AND-OR list and the remaining (if any) AND-OR lists in the same list, or create a suspended job consisting of just that AND-OR list and discard the remaining (if any) AND-OR lists in the same list."
+  },
+  {
+    "id": "SHALL-2-11-446",
+    "section": "2.11",
+    "text": "Otherwise, the shell shall create a suspended job consisting of a set of commands, from within the list comprising the foreground job, that is unspecified except that the set shall include at least the pipeline to which the stopped process belongs."
+  },
+  {
+    "id": "SHALL-2-11-447",
+    "section": "2.11",
+    "text": "Commands in the foreground job that have not already completed and are not included in the suspended job shall be discarded."
+  },
+  {
+    "id": "SHALL-2-11-448",
+    "section": "2.11",
+    "text": "If a process that the shell is waiting for is part of a foreground job that was started as a foreground job and is stopped by a SIGSTOP signal, the behavior shall be as described above for a catchable signal unless the shell was executing a built-in utility in the current shell execution environment when the SIGSTOP was delivered, resulting in the shell itself being stopped by the signal, in which case if the shell subsequently receives a SIGCONT signal and has one or more child processes that remain stopped, the shell shall create a suspended job as if only those child processes had been stopped."
+  },
+  {
+    "id": "SHALL-2-11-449",
+    "section": "2.11",
+    "text": "When a suspended job is created as a result of a foreground job being stopped, it shall be assigned a job number, and an interactive shell shall write, and a non-interactive shell may write, a message to standard error, formatted as described by the jobs utility (without the -l option) for a suspended job."
+  },
+  {
+    "id": "SHALL-2-11-450",
+    "section": "2.11",
+    "text": "The message may indicate that the commands comprising the job include commands that have already completed; in this case the completed commands shall not be repeated if execution of the job is subsequently continued."
+  },
+  {
+    "id": "SHALL-2-11-451",
+    "section": "2.11",
+    "text": "If the shell is interactive, it shall save the terminal settings before changing them to the settings it needs to read further commands."
+  },
+  {
+    "id": "SHALL-2-11-452",
+    "section": "2.11",
+    "text": "When a process associated with a background job is stopped by a SIGSTOP, SIGTSTP, SIGTTIN, or SIGTTOU signal, the shell shall convert the (non-suspended) background job into a suspended job and an interactive shell shall write a message to standard error, formatted as described by the jobs utility (without the -l option) for a suspended job, at the following time:"
+  },
+  {
+    "id": "SHALL-2-11-453",
+    "section": "2.11",
+    "text": "If set -b is enabled, the message shall be written either immediately after the job became suspended or immediately prior to writing the next prompt for input."
+  },
+  {
+    "id": "SHALL-2-11-454",
+    "section": "2.11",
+    "text": "If set -b is disabled, the message shall be written immediately prior to writing the next prompt for input."
+  },
+  {
+    "id": "SHALL-2-11-455",
+    "section": "2.11",
+    "text": "The fg and bg utilities shall send a SIGCONT signal to the process group of the process(es) whose stopped wait status caused the shell to suspend the job."
+  },
+  {
+    "id": "SHALL-2-11-456",
+    "section": "2.11",
+    "text": "If the shell has a controlling terminal, the fg utility shall send the SIGCONT signal after it has set the foreground process group ID associated with the terminal (see above)."
+  },
+  {
+    "id": "SHALL-2-11-457",
+    "section": "2.11",
+    "text": "If the fg utility is used from an interactive shell to bring into the foreground a suspended job that was created from a foreground job, before it sends the SIGCONT signal the fg utility shall restore the terminal settings to the ones that the shell saved when the job was suspended."
+  },
+  {
+    "id": "SHALL-2-11-458",
+    "section": "2.11",
+    "text": "When a background job completes or is terminated by a signal, an interactive shell shall write a message to standard error, formatted as described by the jobs utility (without the -l option) for a job that completed or was terminated by a signal, respectively, at the following time:"
+  },
+  {
+    "id": "SHALL-2-11-459",
+    "section": "2.11",
+    "text": "If set -b is enabled, the message shall be written immediately after the job completes or is terminated."
+  },
+  {
+    "id": "SHALL-2-11-460",
+    "section": "2.11",
+    "text": "If set -b is disabled, the message shall be written immediately prior to writing the next prompt for input."
+  },
+  {
+    "id": "SHALL-2-12-461",
+    "section": "2.12",
+    "text": "If job control is disabled (see the description of set -m) when the shell executes an asynchronous AND-OR list, the commands in the list shall inherit from the shell a signal action of ignored (SIG_IGN) for the SIGINT and SIGQUIT signals."
+  },
+  {
+    "id": "SHALL-2-12-462",
+    "section": "2.12",
+    "text": "In all other cases, commands executed by the shell shall inherit the same signal actions as those inherited by the shell from its parent unless a signal action is modified by the trap special built-in (see trap)"
+  },
+  {
+    "id": "SHALL-2-12-463",
+    "section": "2.12",
+    "text": "When a signal for which a trap has been set is received while the shell is waiting for the completion of a utility executing a foreground command, the trap associated with that signal shall not be executed until after the foreground command has completed."
+  },
+  {
+    "id": "SHALL-2-12-464",
+    "section": "2.12",
+    "text": "When the shell is waiting, by means of the wait utility, for asynchronous commands to complete, the reception of a signal for which a trap has been set shall cause the wait utility to return immediately with an exit status >128, immediately after which the trap associated with that signal shall be taken."
+  },
+  {
+    "id": "SHALL-2-13-465",
+    "section": "2.13",
+    "text": "Utilities other than the special built-ins (see 2.15 Special Built-In Utilities) shall be invoked in a separate environment that consists of the following."
+  },
+  {
+    "id": "SHALL-2-13-466",
+    "section": "2.13",
+    "text": "The initial value of these objects shall be the same as that for the parent shell, except as noted below."
+  },
+  {
+    "id": "SHALL-2-13-467",
+    "section": "2.13",
+    "text": "If the utility is a shell script, traps caught by the shell shall be set to the default values and traps ignored by the shell shall be set to be ignored by the utility; if the utility is not a shell script, the trap actions (default or ignore) shall be mapped into the appropriate signal handling actions for the utility"
+  },
+  {
+    "id": "SHALL-2-13-468",
+    "section": "2.13",
+    "text": "Variables with the export attribute, along with those explicitly exported for the duration of the command, shall be passed to the utility environment variables"
+  },
+  {
+    "id": "SHALL-2-13-469",
+    "section": "2.13",
+    "text": "The environment of the shell process shall not be changed by the utility unless explicitly specified by the utility description (for example, cd and umask)."
+  },
+  {
+    "id": "SHALL-2-13-470",
+    "section": "2.13",
+    "text": "A subshell environment shall be created as a duplicate of the shell environment, except that:"
+  },
+  {
+    "id": "SHALL-2-13-471",
+    "section": "2.13",
+    "text": "Unless specified otherwise (see trap), traps that are not being ignored shall be set to the default action."
+  },
+  {
+    "id": "SHALL-2-13-472",
+    "section": "2.13",
+    "text": "If the shell is interactive, the subshell shall behave as a non-interactive shell in all respects except: The expansion of the special parameter '-' may continue to indicate that it is interactive."
+  },
+  {
+    "id": "SHALL-2-13-473",
+    "section": "2.13",
+    "text": "Changes made to the subshell environment shall not affect the shell environment."
+  },
+  {
+    "id": "SHALL-2-13-474",
+    "section": "2.13",
+    "text": "Command substitution, commands that are grouped with parentheses, and asynchronous AND-OR lists shall be executed in a subshell environment."
+  },
+  {
+    "id": "SHALL-2-13-475",
+    "section": "2.13",
+    "text": "Except where otherwise stated, all other commands shall be executed in the current shell environment."
+  },
+  {
+    "id": "SHALL-2-14-1-476",
+    "section": "2.14.1",
+    "text": "The following patterns shall match a single character: ordinary characters, special pattern characters, and pattern bracket expressions."
+  },
+  {
+    "id": "SHALL-2-14-1-477",
+    "section": "2.14.1",
+    "text": "The pattern bracket expression also shall match a single collating element."
+  },
+  {
+    "id": "SHALL-2-14-1-478",
+    "section": "2.14.1",
+    "text": "In a pattern, or part of one, where a shell-quoting <backslash> can be used, a <backslash> character shall escape the following character as described in 2.2.1 Escape Character (Backslash), regardless of whether or not the <backslash> is inside a bracket expression."
+  },
+  {
+    "id": "SHALL-2-14-1-479",
+    "section": "2.14.1",
+    "text": "A <backslash> character that is not inside a bracket expression shall preserve the literal value of the following character, unless the following character is in a part of the pattern where shell quoting can be used and is a shell quoting character, in which case the behavior is unspecified."
+  },
+  {
+    "id": "SHALL-2-14-1-480",
+    "section": "2.14.1",
+    "text": "All of the requirements and effects of quoting on ordinary, shell special, and special pattern characters shall apply to escaping in this context, except where specified otherwise."
+  },
+  {
+    "id": "SHALL-2-14-1-481",
+    "section": "2.14.1",
+    "text": "An ordinary character is a pattern that shall match itself."
+  },
+  {
+    "id": "SHALL-2-14-1-482",
+    "section": "2.14.1",
+    "text": "Matching shall be based on the bit pattern used for encoding the character, not on the graphic representation of the character."
+  },
+  {
+    "id": "SHALL-2-14-1-483",
+    "section": "2.14.1",
+    "text": "If any character (ordinary, shell special, or pattern special) is quoted, or escaped with a <backslash>, that pattern shall match the character itself."
+  },
+  {
+    "id": "SHALL-2-14-1-484",
+    "section": "2.14.1",
+    "text": "The application shall ensure that it quotes or escapes any character that would otherwise be treated as special, in order for it to be matched as an ordinary character."
+  },
+  {
+    "id": "SHALL-2-14-1-485",
+    "section": "2.14.1",
+    "text": "When unquoted, unescaped, and not inside a bracket expression, the following three characters shall have special meaning in the specification of patterns:"
+  },
+  {
+    "id": "SHALL-2-14-1-486",
+    "section": "2.14.1",
+    "text": "?A <question-mark> is a pattern that shall match any character."
+  },
+  {
+    "id": "SHALL-2-14-1-487",
+    "section": "2.14.1",
+    "text": "*An <asterisk> is a pattern that shall match multiple characters, as described in 2.14.2 Patterns Matching Multiple Characters."
+  },
+  {
+    "id": "SHALL-2-14-1-488",
+    "section": "2.14.1",
+    "text": "[A <left-square-bracket> shall introduce a bracket expression if the characters following it meet the requirements for bracket expressions stated in XBD 9.3.5 RE Bracket Expression, except that the <exclamation-mark> character ('!') shall replace the <circumflex> character ('^') in its role in a non-matching list in the regular expression notation."
+  },
+  {
+    "id": "SHALL-2-14-1-489",
+    "section": "2.14.1",
+    "text": "A <left-square-bracket> that does not introduce a valid bracket expression shall match the character itself."
+  },
+  {
+    "id": "SHALL-2-14-2-490",
+    "section": "2.14.2",
+    "text": "The <asterisk> ('*') is a pattern that shall match any string, including the null string."
+  },
+  {
+    "id": "SHALL-2-14-2-491",
+    "section": "2.14.2",
+    "text": "The concatenation of patterns matching a single character is a valid pattern that shall match the concatenation of the single characters or collating elements matched by each of the concatenated patterns."
+  },
+  {
+    "id": "SHALL-2-14-2-492",
+    "section": "2.14.2",
+    "text": "In such patterns, each <asterisk> shall match a string of zero or more characters, matching the greatest possible number of characters that still allows the remainder of the pattern to match the string."
+  },
+  {
+    "id": "SHALL-2-14-3-493",
+    "section": "2.14.3",
+    "text": "The <slash> character in a pathname shall be explicitly matched by using one or more <slash> characters in the pattern; it shall neither be matched by the <asterisk> or <question-mark> special characters nor by a bracket expression."
+  },
+  {
+    "id": "SHALL-2-14-3-494",
+    "section": "2.14.3",
+    "text": "<slash> characters in the pattern shall be identified before bracket expressions; thus, a <slash> cannot be included in a pattern bracket expression used for filename expansion."
+  },
+  {
+    "id": "SHALL-2-14-3-495",
+    "section": "2.14.3",
+    "text": "If a <slash> character is found following an unescaped <left-square-bracket> character before a corresponding <right-square-bracket> is found, the open bracket shall be treated as an ordinary character."
+  },
+  {
+    "id": "SHALL-2-14-3-496",
+    "section": "2.14.3",
+    "text": "If a filename begins with a <period> ('.'), the <period> shall be explicitly matched by using a <period> as the first character of the pattern or immediately following a <slash> character."
+  },
+  {
+    "id": "SHALL-2-14-3-497",
+    "section": "2.14.3",
+    "text": "The leading <period> shall not be matched by: The <asterisk> or <question-mark> special characters"
+  },
+  {
+    "id": "SHALL-2-14-3-498",
+    "section": "2.14.3",
+    "text": "If a specified pattern contains any '*', '?' or '[' characters that will be treated as special (see 2.14.1 Patterns Matching a Single Character), it shall be matched against existing filenames and pathnames, as appropriate; if directory entries for dot and dot-dot exist, they may be ignored."
+  },
+  {
+    "id": "SHALL-2-14-3-499",
+    "section": "2.14.3",
+    "text": "Each component that contains any such characters shall require read permission in the directory containing that component."
+  },
+  {
+    "id": "SHALL-2-14-3-500",
+    "section": "2.14.3",
+    "text": "Any component, except the last, that does not contain any '*', '?' or '[' characters that will be treated as special shall require search permission."
+  },
+  {
+    "id": "SHALL-2-14-3-501",
+    "section": "2.14.3",
+    "text": "If these permissions are denied, or if an attempt to open or search a pathname as a directory, or an attempt to read an opened directory, fails because of an error condition that is related to file system contents, this shall not be considered an error and pathname expansion shall continue as if the pathname had named an existing directory which had been successfully opened and read, or searched, and no matching directory entries had been found in it."
+  },
+  {
+    "id": "SHALL-2-14-3-502",
+    "section": "2.14.3",
+    "text": "If the pattern matches any existing filenames or pathnames, the pattern shall be replaced with those filenames and pathnames, sorted according to the collating sequence in effect in the current locale."
+  },
+  {
+    "id": "SHALL-2-14-3-503",
+    "section": "2.14.3",
+    "text": "If this collating sequence does not have a total ordering of all characters (see XBD 7.3.2 LC_COLLATE), any filenames or pathnames that collate equally shall be further compared byte-by-byte using the collating sequence for the POSIX locale."
+  },
+  {
+    "id": "SHALL-2-14-3-504",
+    "section": "2.14.3",
+    "text": "If the pattern does not match any existing filenames or pathnames, the pattern string shall be left unchanged."
+  },
+  {
+    "id": "SHALL-2-14-3-505",
+    "section": "2.14.3",
+    "text": "If a specified pattern does not contain any '*', '?' or '[' characters that will be treated as special, the pattern string shall be left unchanged."
+  },
+  {
+    "id": "SHALL-2-15-506",
+    "section": "2.15",
+    "text": "The following \"special built-in\" utilities shall be supported in the shell command language."
+  },
+  {
+    "id": "SHALL-2-15-507",
+    "section": "2.15",
+    "text": "The output of each command, if any, shall be written to standard output, subject to the normal redirection and piping possible with all commands."
+  },
+  {
+    "id": "SHALL-2-15-508",
+    "section": "2.15",
+    "text": "An error in a special built-in utility may cause a shell executing that utility to abort, while an error in a regular built-in utility shall not cause a shell executing that utility to abort."
+  },
+  {
+    "id": "SHALL-2-15-509",
+    "section": "2.15",
+    "text": "(See 2.8.1 Consequences of Shell Errors for the consequences of errors on interactive and non-interactive shells.) If a special built-in utility encountering an error does not abort the shell, its exit value shall be non-zero."
+  },
+  {
+    "id": "SHALL-2-15-510",
+    "section": "2.15",
+    "text": "As described in 2.9.1 Simple Commands, variable assignments preceding the invocation of a special built-in utility affect the current execution environment; this shall not be the case with a regular built-in or other utility."
+  },
+  {
+    "id": "SHALL-2-15-511",
+    "section": "2.15",
+    "text": "For those that are not, the requirement in 1.4 Utility Description Defaults that \"--\" be recognized as a first argument to be discarded does not apply and a conforming application shall not use that argument."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-512",
+    "section": "DESCRIPTION",
+    "text": "If n is specified, the break utility shall exit from the nth enclosing for, while, or until loop."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-513",
+    "section": "DESCRIPTION",
+    "text": "If n is not specified, break shall behave as if n was specified as 1."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-514",
+    "section": "DESCRIPTION",
+    "text": "Execution shall continue with the command immediately following the exited loop."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-515",
+    "section": "DESCRIPTION",
+    "text": "The application shall ensure that the value of n is a positive decimal integer."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-516",
+    "section": "DESCRIPTION",
+    "text": "If n is greater than the number of enclosing loops, the outermost enclosing loop shall be exited."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-517",
+    "section": "DESCRIPTION",
+    "text": "A loop shall enclose a break or continue command if the loop lexically encloses the command."
+  },
+  {
+    "id": "SHALL-STDERR-518",
+    "section": "STDERR",
+    "text": "The standard error shall be used only for diagnostic messages."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-519",
+    "section": "DESCRIPTION",
+    "text": "This utility shall do nothing except return a 0 exit status."
+  },
+  {
+    "id": "SHALL-OPTIONS-520",
+    "section": "OPTIONS",
+    "text": "This utility shall not recognize the \"--\" argument in the manner specified by Guideline 10 of XBD 12.2 Utility Syntax Guidelines."
+  },
+  {
+    "id": "SHALL-OPTIONS-521",
+    "section": "OPTIONS",
+    "text": "Implementations shall not support any options."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-522",
+    "section": "DESCRIPTION",
+    "text": "If n is specified, the continue utility shall return to the top of the nth enclosing for, while, or until loop."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-523",
+    "section": "DESCRIPTION",
+    "text": "If n is not specified, continue shall behave as if n was specified as 1."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-524",
+    "section": "DESCRIPTION",
+    "text": "The application shall ensure that the value of n is a positive decimal integer."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-525",
+    "section": "DESCRIPTION",
+    "text": "If n is greater than the number of enclosing loops, the outermost enclosing loop shall be used."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-526",
+    "section": "DESCRIPTION",
+    "text": "The meaning of \"enclosing\" shall be as specified in the description of the break utility."
+  },
+  {
+    "id": "SHALL-STDERR-527",
+    "section": "STDERR",
+    "text": "The standard error shall be used only for diagnostic messages."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-528",
+    "section": "DESCRIPTION",
+    "text": "The shell shall tokenize (see 2.3 Token Recognition) the contents of the file, parse the tokens (see 2.10 Shell Grammar), and execute the resulting commands in the current environment."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-529",
+    "section": "DESCRIPTION",
+    "text": "If file does not contain a <slash>, the shell shall use the search path specified by PATH to find the directory containing file."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-530",
+    "section": "DESCRIPTION",
+    "text": "If no readable file is found, a non-interactive shell shall abort; an interactive shell shall write a diagnostic message to standard error."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-531",
+    "section": "DESCRIPTION",
+    "text": "The dot special built-in shall support XBD 12.2 Utility Syntax Guidelines, except for Guidelines 1 and 2."
+  },
+  {
+    "id": "SHALL-STDERR-532",
+    "section": "STDERR",
+    "text": "The standard error shall be used only for diagnostic messages."
+  },
+  {
+    "id": "SHALL-EXIT STATUS-533",
+    "section": "EXIT STATUS",
+    "text": "If no readable file was found or if the commands in the file could not be parsed, and the shell is interactive (and therefore does not abort; see 2.8.1 Consequences of Shell Errors), the exit status shall be non-zero."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-534",
+    "section": "DESCRIPTION",
+    "text": "The eval utility shall construct a command string by concatenating arguments together, separating each with a <space> character."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-535",
+    "section": "DESCRIPTION",
+    "text": "The constructed command string shall be tokenized (see 2.3 Token Recognition), parsed (see 2.10 Shell Grammar), and executed by the shell in the current environment."
+  },
+  {
+    "id": "SHALL-STDERR-536",
+    "section": "STDERR",
+    "text": "The standard error shall be used only for diagnostic messages."
+  },
+  {
+    "id": "SHALL-EXIT STATUS-537",
+    "section": "EXIT STATUS",
+    "text": "If there are no arguments, or only null arguments, eval shall return a zero exit status; otherwise, it shall return the exit status of the command defined by the string of concatenated arguments separated by <space> characters, or a non-zero exit status if the concatenation could not be parsed as a command and the shell is interactive (and therefore did not abort)."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-538",
+    "section": "DESCRIPTION",
+    "text": "If exec is specified with no operands, any redirections associated with the exec command shall be made in the current shell execution environment."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-539",
+    "section": "DESCRIPTION",
+    "text": "If exec is specified with a utility operand, the shell shall execute a non-built-in utility as described in 2.9.1.6 Non-built-in Utility Execution with utility as the command name and the argument operands (if any) as the command arguments."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-540",
+    "section": "DESCRIPTION",
+    "text": "If the exec command fails, a non-interactive shell shall exit from the current shell execution environment; UP"
+  },
+  {
+    "id": "SHALL-DESCRIPTION-541",
+    "section": "DESCRIPTION",
+    "text": "If the exec command fails and the shell does not exit, any redirections associated with the exec command that were successfully made shall take effect in the current shell execution environment."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-542",
+    "section": "DESCRIPTION",
+    "text": "The exec special built-in shall support XBD 12.2 Utility Syntax Guidelines."
+  },
+  {
+    "id": "SHALL-ENVIRONMENT VARIABLES-543",
+    "section": "ENVIRONMENT VARIABLES",
+    "text": "The following environment variable shall affect the execution of exec:"
+  },
+  {
+    "id": "SHALL-STDERR-544",
+    "section": "STDERR",
+    "text": "The standard error shall be used only for diagnostic messages."
+  },
+  {
+    "id": "SHALL-EXIT STATUS-545",
+    "section": "EXIT STATUS",
+    "text": "If utility is specified and is executed, exec shall not return to the shell; rather, the exit status of the current shell execution environment shall be the exit status of utility."
+  },
+  {
+    "id": "SHALL-EXIT STATUS-546",
+    "section": "EXIT STATUS",
+    "text": "If utility is specified and an attempt to execute it as a non-built-in utility fails, the exit status shall be as described in 2.9.1.6 Non-built-in Utility Execution."
+  },
+  {
+    "id": "SHALL-EXIT STATUS-547",
+    "section": "EXIT STATUS",
+    "text": "If a redirection error occurs (see 2.8.1 Consequences of Shell Errors), the exit status shall be a value in the range 1-125."
+  },
+  {
+    "id": "SHALL-EXIT STATUS-548",
+    "section": "EXIT STATUS",
+    "text": "Otherwise, exec shall return a zero exit status."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-549",
+    "section": "DESCRIPTION",
+    "text": "The exit utility shall cause the shell to exit from its current execution environment."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-550",
+    "section": "DESCRIPTION",
+    "text": "If the current execution environment is a subshell environment, the shell shall exit from the subshell environment and continue in the environment from which that subshell environment was invoked; otherwise, the shell utility shall terminate."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-551",
+    "section": "DESCRIPTION",
+    "text": "The wait status of the shell or subshell shall be determined by the unsigned decimal integer n, if specified."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-552",
+    "section": "DESCRIPTION",
+    "text": "If n is specified and has a value between 0 and 255 inclusive, the wait status of the shell or subshell shall indicate that it exited with exit status n."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-553",
+    "section": "DESCRIPTION",
+    "text": "If n is specified and has a value greater than 256 that corresponds to an exit status the shell assigns to commands terminated by a valid signal (see 2.8.2 Exit Status for Commands), the wait status of the shell or subshell shall indicate that it was terminated by that signal."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-554",
+    "section": "DESCRIPTION",
+    "text": "No other actions associated with the signal, such as execution of trap actions or creation of a core image, shall be performed by the shell."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-555",
+    "section": "DESCRIPTION",
+    "text": "If n is not specified, the result shall be as if n were specified with the current value of the special parameter '?' (see 2.5.2 Special Parameters), except that if the exit command would cause the end of execution of a trap action, the value for the special parameter '?' that is considered \"current\" shall be the value it had immediately preceding the trap action."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-556",
+    "section": "DESCRIPTION",
+    "text": "A trap action on EXIT shall be executed before the shell terminates, except when the exit utility is invoked in that trap action itself, in which case the shell shall exit immediately."
+  },
+  {
+    "id": "SHALL-STDERR-557",
+    "section": "STDERR",
+    "text": "The standard error shall be used only for diagnostic messages."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-558",
+    "section": "DESCRIPTION",
+    "text": "The shell shall give the export attribute to the variables corresponding to the specified names, which shall cause them to be in the environment of subsequently executed commands."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-559",
+    "section": "DESCRIPTION",
+    "text": "If the name of a variable is followed by =word, then the value of that variable shall be set to word."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-560",
+    "section": "DESCRIPTION",
+    "text": "The export special built-in shall be a declaration utility."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-561",
+    "section": "DESCRIPTION",
+    "text": "Therefore, if export is recognized as the command name of a simple command, then subsequent words of the form name=word shall be expanded in an assignment context."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-562",
+    "section": "DESCRIPTION",
+    "text": "The export special built-in shall support XBD 12.2 Utility Syntax Guidelines."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-563",
+    "section": "DESCRIPTION",
+    "text": "When -p is specified, export shall write to the standard output the names and values of all exported variables, in the following format:"
+  },
+  {
+    "id": "SHALL-DESCRIPTION-564",
+    "section": "DESCRIPTION",
+    "text": "The shell shall format the output, including the proper use of quoting, so that it is suitable for reinput to the shell as commands that achieve the same exporting results, except:"
+  },
+  {
+    "id": "SHALL-STDERR-565",
+    "section": "STDERR",
+    "text": "The standard error shall be used only for diagnostic messages."
+  },
+  {
+    "id": "SHALL-Issue 6-566",
+    "section": "Issue 6",
+    "text": "IEEE Std 1003.1-2001/Cor 1-2002, item XCU/TC1/D6/6 is applied, adding the following text to the end of the first paragraph of the DESCRIPTION: \"If the name of a variable is followed by =word, then the value of that variable shall be set to word.\"."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-567",
+    "section": "DESCRIPTION",
+    "text": "The variables whose names are specified shall be given the readonly attribute."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-568",
+    "section": "DESCRIPTION",
+    "text": "As described in XBD 8.1 Environment Variable Definition, conforming applications shall not request to mark a variable as readonly if it is documented as being manipulated by a shell built-in utility, as it may render those utilities unable to complete successfully."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-569",
+    "section": "DESCRIPTION",
+    "text": "If the name of a variable is followed by =word, then the value of that variable shall be set to word."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-570",
+    "section": "DESCRIPTION",
+    "text": "The readonly special built-in shall be a declaration utility."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-571",
+    "section": "DESCRIPTION",
+    "text": "Therefore, if readonly is recognized as the command name of a simple command, then subsequent words of the form name=word shall be expanded in an assignment context."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-572",
+    "section": "DESCRIPTION",
+    "text": "The readonly special built-in shall support XBD 12.2 Utility Syntax Guidelines."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-573",
+    "section": "DESCRIPTION",
+    "text": "The shell shall format the output, including the proper use of quoting, so that it is suitable for reinput to the shell as commands that achieve the same value and readonly attribute-setting results in a shell execution environment in which:"
+  },
+  {
+    "id": "SHALL-STDERR-574",
+    "section": "STDERR",
+    "text": "The standard error shall be used only for diagnostic messages."
+  },
+  {
+    "id": "SHALL-Issue 6-575",
+    "section": "Issue 6",
+    "text": "IEEE Std 1003.1-2001/Cor 1-2002, item XCU/TC1/D6/7 is applied, adding the following text to the end of the first paragraph of the DESCRIPTION: \"If the name of a variable is followed by =word, then the value of that variable shall be set to word.\"."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-576",
+    "section": "DESCRIPTION",
+    "text": "The return utility shall cause the shell to stop executing the current function or dot script."
+  },
+  {
+    "id": "SHALL-STDERR-577",
+    "section": "STDERR",
+    "text": "The standard error shall be used only for diagnostic messages."
+  },
+  {
+    "id": "SHALL-EXIT STATUS-578",
+    "section": "EXIT STATUS",
+    "text": "The exit status shall be n, if specified, except that the behavior is unspecified if n is not an unsigned decimal integer or is greater than 255."
+  },
+  {
+    "id": "SHALL-EXIT STATUS-579",
+    "section": "EXIT STATUS",
+    "text": "If n is not specified, the result shall be as if n were specified with the current value of the special parameter '?' (see 2.5.2 Special Parameters), except that if the return command would cause the end of execution of a trap action, the value for the special parameter '?' that is considered \"current\" shall be the value it had immediately preceding the trap action."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-580",
+    "section": "DESCRIPTION",
+    "text": "If no options or arguments are specified, set shall write the names and values of all shell variables in the collation sequence of the current locale."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-581",
+    "section": "DESCRIPTION",
+    "text": "Each name shall start on a separate line, using the format:"
+  },
+  {
+    "id": "SHALL-DESCRIPTION-582",
+    "section": "DESCRIPTION",
+    "text": "\"%s=%s\\n\", <name>, <value> The value string shall be written with appropriate quoting; see the description of shell quoting in 2.2 Quoting."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-583",
+    "section": "DESCRIPTION",
+    "text": "The output shall be suitable for reinput to the shell, setting or resetting, as far as possible, the variables that are currently set; read-only variables cannot be reset."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-584",
+    "section": "DESCRIPTION",
+    "text": "When options are specified, they shall set or unset attributes of the shell, as described below."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-585",
+    "section": "DESCRIPTION",
+    "text": "The set special built-in shall support XBD 12.2 Utility Syntax Guidelines except that options can be specified with either a leading <hyphen-minus> (meaning enable the option) or <plus-sign> (meaning disable it) unless otherwise specified."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-586",
+    "section": "DESCRIPTION",
+    "text": "Implementations shall support the options in the following list in both their <hyphen-minus> and <plus-sign> forms."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-587",
+    "section": "DESCRIPTION",
+    "text": "When this option is on, whenever a value is assigned to a variable in the current shell execution environment, the export attribute shall be set for the variable."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-588",
+    "section": "DESCRIPTION",
+    "text": "-bThis option shall be supported if the implementation supports the User Portability Utilities option."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-589",
+    "section": "DESCRIPTION",
+    "text": "When job control and -b are both enabled, the shell shall write asynchronous notifications of background job completions (including termination by a signal), and may write asynchronous notifications of background job suspensions."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-590",
+    "section": "DESCRIPTION",
+    "text": "When job control is disabled, the -b option shall have no effect."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-591",
+    "section": "DESCRIPTION",
+    "text": "Asynchronous notification shall not be enabled by default."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-592",
+    "section": "DESCRIPTION",
+    "text": "-C(Uppercase C.) Prevent existing regular files from being overwritten by the shell's '>' redirection operator (see 2.7.2 Redirecting Output); the \">|\" redirection operator shall override this noclobber option for an individual file."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-593",
+    "section": "DESCRIPTION",
+    "text": "-eWhen this option is on, when any command fails (for any of the reasons listed in 2.8.1 Consequences of Shell Errors or by returning an exit status greater than zero), the shell immediately shall exit, as if by executing the exit special built-in utility with no arguments, with the following exceptions: The failure of any individual command in a multi-command pipeline, or of any subshell environments in which command substitution was performed during word expansion, shall not cause the shell to exit."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-594",
+    "section": "DESCRIPTION",
+    "text": "Only the failure of the pipeline itself shall be considered."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-595",
+    "section": "DESCRIPTION",
+    "text": "The -e setting shall be ignored when executing the compound list following the while, until, if, or elif reserved word, a pipeline beginning with the !"
+  },
+  {
+    "id": "SHALL-DESCRIPTION-596",
+    "section": "DESCRIPTION",
+    "text": "If the exit status of a compound command other than a subshell command was the result of a failure while -e was being ignored, then -e shall not apply to this command."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-597",
+    "section": "DESCRIPTION",
+    "text": "-fThe shell shall disable pathname expansion."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-598",
+    "section": "DESCRIPTION",
+    "text": "-mThis option shall be supported if the implementation supports the User Portability Utilities option."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-599",
+    "section": "DESCRIPTION",
+    "text": "When this option is enabled, the shell shall perform job control actions as described in 2.11 Job Control."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-600",
+    "section": "DESCRIPTION",
+    "text": "This option shall be enabled by default for interactive shells."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-601",
+    "section": "DESCRIPTION",
+    "text": "-nThe shell shall read commands but does not execute them; this can be used to check for shell script syntax errors."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-602",
+    "section": "DESCRIPTION",
+    "text": "A user shall explicitly exit to leave the interactive shell."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-603",
+    "section": "DESCRIPTION",
+    "text": "This option shall be supported if the system supports the User Portability Utilities option."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-604",
+    "section": "DESCRIPTION",
+    "text": "This option shall be supported if the system supports the User Portability Utilities option."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-605",
+    "section": "DESCRIPTION",
+    "text": "Enabling vi mode shall disable any other command line editing mode provided as an implementation extension."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-606",
+    "section": "DESCRIPTION",
+    "text": "This option shall be supported if the system supports the User Portability Utilities option."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-607",
+    "section": "DESCRIPTION",
+    "text": "-uWhen the shell tries to expand, in a parameter expansion or an arithmetic expansion, an unset parameter other than the '@' and '*' special parameters, it shall write a message to standard error and the expansion shall fail with the consequences specified in 2.8.1 Consequences of Shell Errors."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-608",
+    "section": "DESCRIPTION",
+    "text": "-vThe shell shall write its input to standard error as it is read."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-609",
+    "section": "DESCRIPTION",
+    "text": "-xThe shell shall write to standard error a trace for each command after it expands the command and before it executes it."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-610",
+    "section": "DESCRIPTION",
+    "text": "The default for all these options shall be off (unset) unless stated otherwise in the description of the option or unless the shell was invoked with them on; see sh."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-611",
+    "section": "DESCRIPTION",
+    "text": "The remaining arguments shall be assigned in order to the positional parameters."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-612",
+    "section": "DESCRIPTION",
+    "text": "The special parameter '#' shall be set to reflect the number of positional parameters."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-613",
+    "section": "DESCRIPTION",
+    "text": "All positional parameters shall be unset before any new values are assigned."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-614",
+    "section": "DESCRIPTION",
+    "text": "The command set -- without argument shall unset all positional parameters and set the special parameter '#' to zero."
+  },
+  {
+    "id": "SHALL-STDERR-615",
+    "section": "STDERR",
+    "text": "The standard error shall be used only for diagnostic messages."
+  },
+  {
+    "id": "SHALL-RATIONALE-616",
+    "section": "RATIONALE",
+    "text": "A user shall explicitly exit to leave the interactive shell."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-617",
+    "section": "DESCRIPTION",
+    "text": "The positional parameters shall be shifted."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-618",
+    "section": "DESCRIPTION",
+    "text": "Positional parameter 1 shall be assigned the value of parameter (1+n), parameter 2 shall be assigned the value of parameter (2+n), and so on."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-619",
+    "section": "DESCRIPTION",
+    "text": "The parameters represented by the numbers \"$#\" down to \"$#-n+1\" shall be unset, and the parameter '#' is updated to reflect the new number of positional parameters."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-620",
+    "section": "DESCRIPTION",
+    "text": "The value n shall be an unsigned decimal integer less than or equal to the value of the special parameter '#'."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-621",
+    "section": "DESCRIPTION",
+    "text": "If n is not given, it shall be assumed to be 1."
+  },
+  {
+    "id": "SHALL-STDERR-622",
+    "section": "STDERR",
+    "text": "The standard error shall be used only for diagnostic messages and the warning message specified in EXIT STATUS."
+  },
+  {
+    "id": "SHALL-EXIT STATUS-623",
+    "section": "EXIT STATUS",
+    "text": "If the n operand is invalid or is greater than \"$#\", this may be treated as an error and a non-interactive shell may exit; if the shell does not exit in this case, a non-zero exit status shall be returned and a warning message shall be written to standard error."
+  },
+  {
+    "id": "SHALL-EXIT STATUS-624",
+    "section": "EXIT STATUS",
+    "text": "Otherwise, zero shall be returned."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-625",
+    "section": "DESCRIPTION",
+    "text": "The times utility shall write the accumulated user and system times for the shell and for all of its child processes, in the following POSIX locale format:"
+  },
+  {
+    "id": "SHALL-DESCRIPTION-626",
+    "section": "DESCRIPTION",
+    "text": "\"%dm%fs %dm%fs\\n%dm%fs %dm%fs\\n\", <shell user minutes>, <shell user seconds>, <shell system minutes>, <shell system seconds>, <children user minutes>, <children user seconds>, <children system minutes>, <children system seconds> The four pairs of times shall correspond to the members of the <sys/times.h> tms structure (defined in XBD 14."
+  },
+  {
+    "id": "SHALL-STDERR-627",
+    "section": "STDERR",
+    "text": "The standard error shall be used only for diagnostic messages."
+  },
+  {
+    "id": "SHALL-Issue 6-628",
+    "section": "Issue 6",
+    "text": "IEEE Std 1003.1-2001/Cor 1-2002, item XCU/TC1/D6/9 is applied, changing text in the DESCRIPTION from: \"Write the accumulated user and system times for the shell and for all of its child processes ...\" to: \"The times utility shall write the accumulated user and system times for the shell and for all of its child processes ...\"."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-629",
+    "section": "DESCRIPTION",
+    "text": "If the -p option is not specified and the first operand is an unsigned decimal integer, the shell shall treat all operands as conditions, and shall reset each condition to the default value."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-630",
+    "section": "DESCRIPTION",
+    "text": "Otherwise, if the -p option is not specified and there are operands, the first operand shall be treated as an action and the remaining as conditions."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-631",
+    "section": "DESCRIPTION",
+    "text": "If action is '-', the shell shall reset each condition to the default value."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-632",
+    "section": "DESCRIPTION",
+    "text": "If action is null (\"\"), the shell shall ignore each specified condition if it arises."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-633",
+    "section": "DESCRIPTION",
+    "text": "Otherwise, the argument action shall be read and executed by the shell when one of the corresponding conditions arises."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-634",
+    "section": "DESCRIPTION",
+    "text": "The action of trap shall override a previous action (either default action or one explicitly set)."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-635",
+    "section": "DESCRIPTION",
+    "text": "The value of \"$?\" after the trap action completes shall be the value it had before the trap action was executed."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-636",
+    "section": "DESCRIPTION",
+    "text": "The EXIT condition shall occur when the shell terminates normally (exits), and may occur when the shell terminates abnormally as a result of delivery of a signal (other than SIGKILL) whose trap action is the default."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-637",
+    "section": "DESCRIPTION",
+    "text": "The environment in which the shell executes a trap action on EXIT shall be identical to the environment immediately after the last command executed before the trap action on EXIT was executed."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-638",
+    "section": "DESCRIPTION",
+    "text": "If action is neither '-' nor the empty string, then each time a matching condition arises, the action shall be executed in a manner equivalent to:"
+  },
+  {
+    "id": "SHALL-DESCRIPTION-639",
+    "section": "DESCRIPTION",
+    "text": "Traps shall remain in place for a given shell until explicitly changed with another trap command."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-640",
+    "section": "DESCRIPTION",
+    "text": "When a subshell is entered, traps that are not being ignored shall be set to the default actions, except in the case of a command substitution containing only a single trap command, when the traps need not be altered."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-641",
+    "section": "DESCRIPTION",
+    "text": "The trap command with no operands shall write to standard output a list of commands associated with each of a set of conditions; if the -p option is not specified, this set shall contain only the conditions that are not in the default state (including signals that were ignored on entry to a non-interactive shell); if the -p option is specified, the set shall contain all conditions, except that it is unspecified whether conditions corresponding to the SIGKILL and SIGSTOP signals are included in the set."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-642",
+    "section": "DESCRIPTION",
+    "text": "If the command is executed in a subshell, the implementation does not perform the optional check described above for a command substitution containing only a single trap command, and no trap commands with operands have been executed since entry to the subshell, the list shall contain the commands that were associated with each condition immediately before the subshell environment was entered."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-643",
+    "section": "DESCRIPTION",
+    "text": "Otherwise, the list shall contain the commands currently associated with each condition."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-644",
+    "section": "DESCRIPTION",
+    "text": "The format shall be:"
+  },
+  {
+    "id": "SHALL-DESCRIPTION-645",
+    "section": "DESCRIPTION",
+    "text": "The shell shall format the output, including the proper use of quoting, so that it is suitable for reinput to the shell as commands that achieve the same trapping results for the set of conditions included in the output, except for signals that were ignored on entry to the shell as described above."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-646",
+    "section": "DESCRIPTION",
+    "text": "If this set includes conditions corresponding to the SIGKILL and SIGSTOP signals, the shell shall accept them when the output is reinput to the shell (where accepting them means they do not cause a non-zero exit status, a diagnostic message, or undefined behavior)."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-647",
+    "section": "DESCRIPTION",
+    "text": "The trap special built-in shall conform to XBD 12.2 Utility Syntax Guidelines."
+  },
+  {
+    "id": "SHALL-OPTIONS-648",
+    "section": "OPTIONS",
+    "text": "The following option shall be supported:"
+  },
+  {
+    "id": "SHALL-OPTIONS-649",
+    "section": "OPTIONS",
+    "text": "The shell shall format the output, including the proper use of quoting, so that it is suitable for reinput to the shell as commands that achieve the same trapping results for the specified set of conditions."
+  },
+  {
+    "id": "SHALL-STDERR-650",
+    "section": "STDERR",
+    "text": "The standard error shall be used only for diagnostic messages and warning messages about invalid signal names XSI"
+  },
+  {
+    "id": "SHALL-DESCRIPTION-651",
+    "section": "DESCRIPTION",
+    "text": "The unset utility shall unset each variable or function definition specified by name that does not have the readonly attribute and remove any attributes other than readonly that have been given to name (see 2.15 Special Built-In Utilities export and readonly)."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-652",
+    "section": "DESCRIPTION",
+    "text": "If -v is specified, name refers to a variable name and the shell shall unset it and remove it from the environment."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-653",
+    "section": "DESCRIPTION",
+    "text": "If -f is specified, name refers to a function and the shell shall unset the function definition."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-654",
+    "section": "DESCRIPTION",
+    "text": "If neither -f nor -v is specified, name refers to a variable; if a variable by that name does not exist, it is unspecified whether a function by that name, if any, shall be unset."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-655",
+    "section": "DESCRIPTION",
+    "text": "Unsetting a variable or function that was not previously set shall not be considered an error and does not cause the shell to abort."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-656",
+    "section": "DESCRIPTION",
+    "text": "The unset special built-in shall support XBD 12.2 Utility Syntax Guidelines."
+  },
+  {
+    "id": "SHALL-STDERR-657",
+    "section": "STDERR",
+    "text": "The standard error shall be used only for diagnostic messages."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-001",
+    "section": "DESCRIPTION",
+    "text": "The sh utility is a command language interpreter that shall execute commands read from a command line string, the standard input, or a specified file."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-002",
+    "section": "DESCRIPTION",
+    "text": "The application shall ensure that the commands to be executed are expressed in the language described in 2."
+  },
+  {
+    "id": "SHALL-DESCRIPTION-003",
+    "section": "DESCRIPTION",
+    "text": "Pathname expansion shall not fail due to the size of a file."
+  },
+  {
+    "id": "SHALL-OPTIONS-004",
+    "section": "OPTIONS",
+    "text": "The sh utility shall conform to XBD 12.2 Utility Syntax Guidelines, with an extension for support of a leading <plus-sign> ('+') as noted below."
+  },
+  {
+    "id": "SHALL-OPTIONS-005",
+    "section": "OPTIONS",
+    "text": "The option letters derived from the set special built-in shall also be accepted with a leading <plus-sign> ('+') instead of a leading <hyphen-minus> (meaning the reverse case of the option as described in this volume of POSIX.1-2024)."
+  },
+  {
+    "id": "SHALL-OPTIONS-006",
+    "section": "OPTIONS",
+    "text": "The following additional options shall be supported:"
+  },
+  {
+    "id": "SHALL-OPTIONS-007",
+    "section": "OPTIONS",
+    "text": "No commands shall be read from the standard input."
+  },
+  {
+    "id": "SHALL-OPTIONS-008",
+    "section": "OPTIONS",
+    "text": "If there are no operands and the -c option is not specified, the -s option shall be assumed."
+  },
+  {
+    "id": "SHALL-OPERANDS-009",
+    "section": "OPERANDS",
+    "text": "The following operands shall be supported:"
+  },
+  {
+    "id": "SHALL-OPERANDS-010",
+    "section": "OPERANDS",
+    "text": "-A single <hyphen-minus> shall be treated as the first operand and then ignored."
+  },
+  {
+    "id": "SHALL-OPERANDS-011",
+    "section": "OPERANDS",
+    "text": "argumentThe positional parameters ($1, $2, and so on) shall be set to arguments, if any."
+  },
+  {
+    "id": "SHALL-OPERANDS-012",
+    "section": "OPERANDS",
+    "text": "If the pathname does not contain a <slash> character: The implementation shall attempt to read that file from the current working directory; the file need not be executable."
+  },
+  {
+    "id": "SHALL-OPERANDS-013",
+    "section": "OPERANDS",
+    "text": "Special parameter 0 (see 2.5.2 Special Parameters) shall be set to the value of command_file."
+  },
+  {
+    "id": "SHALL-OPERANDS-014",
+    "section": "OPERANDS",
+    "text": "If sh is called using a synopsis form that omits command_file, special parameter 0 shall be set to the value of the first argument passed to sh from its parent (for example, argv[0] for a C program), which is normally a pathname used to execute the sh utility."
+  },
+  {
+    "id": "SHALL-STDIN-015",
+    "section": "STDIN",
+    "text": "The standard input shall be used only if one of the following is true:"
+  },
+  {
+    "id": "SHALL-STDIN-016",
+    "section": "STDIN",
+    "text": "When the shell is using standard input and it invokes a command that also uses standard input, the shell shall ensure that the standard input file pointer points directly after the command it has read when the command begins execution."
+  },
+  {
+    "id": "SHALL-STDIN-017",
+    "section": "STDIN",
+    "text": "It shall not read ahead in such a manner that any characters intended to be read by the invoked command are consumed by the shell (whether interpreted by the shell or not) or that characters that are not read by the invoked command are not seen by the shell."
+  },
+  {
+    "id": "SHALL-STDIN-018",
+    "section": "STDIN",
+    "text": "If the standard input to sh is a FIFO or terminal device and is set to non-blocking reads, then sh shall enable blocking reads on standard input."
+  },
+  {
+    "id": "SHALL-STDIN-019",
+    "section": "STDIN",
+    "text": "This shall remain in effect when the command completes."
+  },
+  {
+    "id": "SHALL-INPUT FILES-020",
+    "section": "INPUT FILES",
+    "text": "The input file can be of any type, but the initial portion of the file intended to be parsed according to the shell grammar (see 2.10.2 Shell Grammar Rules) shall consist of characters and shall not contain the NUL character."
+  },
+  {
+    "id": "SHALL-INPUT FILES-021",
+    "section": "INPUT FILES",
+    "text": "The shell shall not enforce any line length limits."
+  },
+  {
+    "id": "SHALL-INPUT FILES-022",
+    "section": "INPUT FILES",
+    "text": "If the input file consists solely of zero or more blank lines and comments, sh shall exit with a zero exit status."
+  },
+  {
+    "id": "SHALL-ENVIRONMENT VARIABLES-023",
+    "section": "ENVIRONMENT VARIABLES",
+    "text": "The following environment variables shall affect the execution of sh:"
+  },
+  {
+    "id": "SHALL-ENVIRONMENT VARIABLES-024",
+    "section": "ENVIRONMENT VARIABLES",
+    "text": "PWDThis variable shall represent an absolute pathname of the current working directory."
+  },
+  {
+    "id": "SHALL-ASYNCHRONOUS EVENTS-025",
+    "section": "ASYNCHRONOUS EVENTS",
+    "text": "The sh utility shall take the standard action for all signals (see 1.4 Utility Description Defaults) with the following exceptions."
+  },
+  {
+    "id": "SHALL-ASYNCHRONOUS EVENTS-026",
+    "section": "ASYNCHRONOUS EVENTS",
+    "text": "If the shell is interactive, SIGINT signals received during command line editing shall be handled as described in the EXTENDED DESCRIPTION, and SIGINT signals received at other times shall be caught but no action performed."
+  },
+  {
+    "id": "SHALL-ASYNCHRONOUS EVENTS-027",
+    "section": "ASYNCHRONOUS EVENTS",
+    "text": "SIGQUIT and SIGTERM signals shall be ignored."
+  },
+  {
+    "id": "SHALL-ASYNCHRONOUS EVENTS-028",
+    "section": "ASYNCHRONOUS EVENTS",
+    "text": "If the -m option is in effect, SIGTTIN, SIGTTOU, and SIGTSTP signals shall be ignored."
+  },
+  {
+    "id": "SHALL-ASYNCHRONOUS EVENTS-029",
+    "section": "ASYNCHRONOUS EVENTS",
+    "text": "If they are caught, the shell shall, in the signal-catching function, set the signal to the default action and raise the signal (after taking any appropriate steps, such as restoring terminal settings)."
+  },
+  {
+    "id": "SHALL-STDERR-030",
+    "section": "STDERR",
+    "text": "Except as otherwise stated (by the descriptions of any invoked utilities or in interactive mode), standard error shall be used only for diagnostic messages."
+  },
+  {
+    "id": "SHALL-Command History List-031",
+    "section": "Command History List",
+    "text": "When the sh utility is being used interactively, it shall maintain a list of commands previously entered from the terminal in the file named by the HISTFILE environment variable."
+  },
+  {
+    "id": "SHALL-Command Line Editing-032",
+    "section": "Command Line Editing",
+    "text": "The command set -o vi shall enable vi-mode editing and place sh into vi insert mode (see Command Line Editing (vi-mode))."
+  },
+  {
+    "id": "SHALL-Command Line Editing-033",
+    "section": "Command Line Editing",
+    "text": "This command also shall disable any other editing mode that the implementation may provide."
+  },
+  {
+    "id": "SHALL-Command Line Editing (vi-mode)-034",
+    "section": "Command Line Editing (vi-mode)",
+    "text": "In vi editing mode, there shall be a distinguished line, the edit line."
+  },
+  {
+    "id": "SHALL-Command Line Editing (vi-mode)-035",
+    "section": "Command Line Editing (vi-mode)",
+    "text": "When in insert mode, an entered character shall be inserted into the command line, except as noted in vi Line Editing Insert Mode."
+  },
+  {
+    "id": "SHALL-Command Line Editing (vi-mode)-036",
+    "section": "Command Line Editing (vi-mode)",
+    "text": "Upon entering sh and after termination of the previous command, sh shall be in insert mode."
+  },
+  {
+    "id": "SHALL-Command Line Editing (vi-mode)-037",
+    "section": "Command Line Editing (vi-mode)",
+    "text": "Typing an escape character shall switch sh into command mode (see vi Line Editing Command Mode)."
+  },
+  {
+    "id": "SHALL-Command Line Editing (vi-mode)-038",
+    "section": "Command Line Editing (vi-mode)",
+    "text": "In command mode, an entered character shall either invoke a defined operation, be used as part of a multi-character operation, or be treated as an error."
+  },
+  {
+    "id": "SHALL-Command Line Editing (vi-mode)-039",
+    "section": "Command Line Editing (vi-mode)",
+    "text": "A character that is not recognized as part of an editing command shall terminate any specific editing command and shall alert the terminal."
+  },
+  {
+    "id": "SHALL-Command Line Editing (vi-mode)-040",
+    "section": "Command Line Editing (vi-mode)",
+    "text": "If sh receives a SIGINT signal in command mode (whether generated by typing the interrupt character or by other means), it shall terminate command line editing on the current command line, reissue the prompt on the next line of the terminal, and reset the command history (see fc) so that the most recently executed command is the previous command (that is, the command that was being edited when it was interrupted is not re-entered into the history)."
+  },
+  {
+    "id": "SHALL-Command Line Editing (vi-mode)-041",
+    "section": "Command Line Editing (vi-mode)",
+    "text": "In the following sections, the phrase \"move the cursor to the beginning of the word\" shall mean \"move the cursor to the first character of the current word\" and the phrase \"move the cursor to the end of the word\" shall mean \"move the cursor to the last character of the current word\"."
+  },
+  {
+    "id": "SHALL-vi Line Editing Insert Mode-042",
+    "section": "vi Line Editing Insert Mode",
+    "text": "While in insert mode, any character typed shall be inserted in the current command line, unless it is from the following set."
+  },
+  {
+    "id": "SHALL-vi Line Editing Insert Mode-043",
+    "section": "vi Line Editing Insert Mode",
+    "text": "If the current command line is not empty, this line shall be entered into the command history (see fc)."
+  },
+  {
+    "id": "SHALL-vi Line Editing Insert Mode-044",
+    "section": "vi Line Editing Insert Mode",
+    "text": "In insert mode, characters shall be erased from both the screen and the buffer when backspacing."
+  },
+  {
+    "id": "SHALL-vi Line Editing Insert Mode-045",
+    "section": "vi Line Editing Insert Mode",
+    "text": "interruptIf sh receives a SIGINT signal in insert mode (whether generated by typing the interrupt character or by other means), it shall terminate command line editing with the same effects as described for interrupting command mode; see Command Line Editing (vi-mode)."
+  },
+  {
+    "id": "SHALL-vi Line Editing Insert Mode-046",
+    "section": "vi Line Editing Insert Mode",
+    "text": "This interpretation shall occur only at the beginning of an input line."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-047",
+    "section": "vi Line Editing Command Mode",
+    "text": "In command mode for the command line editing feature, decimal digits not beginning with 0 that precede a command letter shall be remembered."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-048",
+    "section": "vi Line Editing Command Mode",
+    "text": "<space> 0 b F l W ^ $ ; E f T w | , B e h t If the current line is not the edit line, any command that modifies the current line shall cause the content of the current line to replace the content of the edit line, and the current line shall become the edit line."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-049",
+    "section": "vi Line Editing Command Mode",
+    "text": "The modification requested shall then be performed to the edit line."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-050",
+    "section": "vi Line Editing Command Mode",
+    "text": "When the current line is the edit line, the modification shall be done directly to the edit line."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-051",
+    "section": "vi Line Editing Command Mode",
+    "text": "Any command that is preceded by count shall take a count (the numeric value of any preceding decimal digits)."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-052",
+    "section": "vi Line Editing Command Mode",
+    "text": "Unless otherwise noted, this count shall cause the specified operation to repeat by the number of times specified by the count."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-053",
+    "section": "vi Line Editing Command Mode",
+    "text": "Also unless otherwise noted, a count that is out of range is considered an error condition and shall alert the terminal, but neither the cursor position, nor the command line, shall change."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-054",
+    "section": "vi Line Editing Command Mode",
+    "text": "The following commands shall be recognized in command mode:"
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-055",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the current command line is not empty, this line shall be entered into the command history (see fc)."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-056",
+    "section": "vi Line Editing Command Mode",
+    "text": "This line shall be entered into the command history; see fc."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-057",
+    "section": "vi Line Editing Command Mode",
+    "text": "These expansions shall be displayed on subsequent terminal lines."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-058",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the bigword contains none of the characters '?', '*', or '[', an <asterisk> ('*') shall be implicitly assumed at the end."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-059",
+    "section": "vi Line Editing Command Mode",
+    "text": "If any directories are matched, these expansions shall have a '/' character appended."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-060",
+    "section": "vi Line Editing Command Mode",
+    "text": "After the expansion, the line shall be redrawn, the cursor repositioned at the current cursor position, and sh shall be placed in command mode."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-061",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the bigword contains none of the characters '?', '*', or '[', an <asterisk> ('*') shall be implicitly assumed at the end."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-062",
+    "section": "vi Line Editing Command Mode",
+    "text": "This maximal expansion then shall replace the original bigword in the command line, and the cursor shall be placed after this expansion."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-063",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the resulting bigword completely and uniquely matches a directory, a '/' character shall be inserted directly after the bigword."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-064",
+    "section": "vi Line Editing Command Mode",
+    "text": "If some other file is completely matched, a single <space> shall be inserted after the bigword."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-065",
+    "section": "vi Line Editing Command Mode",
+    "text": "After this operation, sh shall be placed in insert mode."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-066",
+    "section": "vi Line Editing Command Mode",
+    "text": "If at the end of the line, the current cursor position shall be moved to the first column position following the expansions and sh shall be placed in insert mode."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-067",
+    "section": "vi Line Editing Command Mode",
+    "text": "Otherwise, the current cursor position shall be the last column position of the first character after the expansions and sh shall be placed in insert mode."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-068",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the current bigword contains none of the characters '?', '*', or '[', before the operation, an <asterisk> ('*') shall be implicitly assumed at the end."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-069",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the alias _letter contains other editing commands, these commands shall be performed as part of the insertion."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-070",
+    "section": "vi Line Editing Command Mode",
+    "text": "If no alias _letter is enabled, this command shall have no effect."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-071",
+    "section": "vi Line Editing Command Mode",
+    "text": "The current cursor position then shall be advanced by one character."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-072",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the cursor was positioned on the last character of the line, the case conversion shall occur, but the cursor shall not advance."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-073",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the '~' command is preceded by a count, that number of characters shall be converted, and the cursor shall be advanced to the character position after the last character converted."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-074",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the count is larger than the number of characters after the cursor, this shall not be considered an error; the cursor shall advance to the last character on the line."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-075",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the previous command was preceded by a count, and no count is given on the '.' command, the count from the previous command shall be included as part of the repeated command."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-076",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the '.' command is preceded by a count, this shall override any count argument to the previous command."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-077",
+    "section": "vi Line Editing Command Mode",
+    "text": "The count specified in the '.' command shall become the count for subsequent '.' commands issued without a count."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-078",
+    "section": "vi Line Editing Command Mode",
+    "text": "When the editor exits, the commands in the temporary file shall be executed and placed in the command history."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-079",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the cursor was positioned on the first character of the line, the terminal shall be alerted and the cursor shall not be moved."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-080",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the count is larger than the number of characters before the cursor, this shall not be considered an error; the cursor shall move to the first character on the line."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-081",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the cursor was positioned on the last character of the line, the terminal shall be alerted and the cursor shall not be advanced."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-082",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the count is larger than the number of words after the cursor, this shall not be considered an error; the cursor shall advance to the last character on the line."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-083",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the cursor was positioned on the last character of the line, the terminal shall be alerted and the cursor shall not be advanced."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-084",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the count is larger than the number of bigwords after the cursor, this shall not be considered an error; the cursor shall advance to the last character on the line."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-085",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the cursor was positioned on the last character of the line, the terminal shall be alerted and the cursor shall not be advanced."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-086",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the count is larger than the number of words after the cursor, this shall not be considered an error; the cursor shall advance to the last character on the line."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-087",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the cursor was positioned on the last character of the line, the terminal shall be alerted and the cursor shall not be advanced."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-088",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the count is larger than the number of bigwords after the cursor, this shall not be considered an error; the cursor shall advance to the last character on the line."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-089",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the cursor was positioned on the first character of the line, the terminal shall be alerted and the cursor shall not be moved."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-090",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the count is larger than the number of words preceding the cursor, this shall not be considered an error; the cursor shall return to the first character on the line."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-091",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the cursor was positioned on the first character of the line, the terminal shall be alerted and the cursor shall not be moved."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-092",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the count is larger than the number of bigwords preceding the cursor, this shall not be considered an error; the cursor shall return to the first character on the line."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-093",
+    "section": "vi Line Editing Command Mode",
+    "text": "The first character position shall be numbered 1."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-094",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the count is larger than the number of characters on the line, this shall not be considered an error; the cursor shall be placed on the last character on the line."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-095",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the cursor was positioned on the last character of the line, the terminal shall be alerted and the cursor shall not be advanced."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-096",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the character 'c' does not occur in the line after the current cursor position, the terminal shall be alerted and the cursor shall not be moved."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-097",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the cursor was positioned on the first character of the line, the terminal shall be alerted and the cursor shall not be moved."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-098",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the character 'c' does not occur in the line before the current cursor position, the terminal shall be alerted and the cursor shall not be moved."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-099",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the cursor was positioned on the last character of the line, the terminal shall be alerted and the cursor shall not be advanced."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-100",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the character 'c' does not occur in the line after the current cursor position, the terminal shall be alerted and the cursor shall not be moved."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-101",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the cursor was positioned on the first character of the line, the terminal shall be alerted and the cursor shall not be moved."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-102",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the character 'c' does not occur in the line before the current cursor position, the terminal shall be alerted and the cursor shall not be moved."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-103",
+    "section": "vi Line Editing Command Mode",
+    "text": "Any number argument on that previous command shall be ignored."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-104",
+    "section": "vi Line Editing Command Mode",
+    "text": "Any number argument on that previous command shall be ignored."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-105",
+    "section": "vi Line Editing Command Mode",
+    "text": "Characters that are entered shall be inserted before the next character."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-106",
+    "section": "vi Line Editing Command Mode",
+    "text": "Characters that are entered shall be inserted before the current character."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-107",
+    "section": "vi Line Editing Command Mode",
+    "text": "[count]cmotion countcount0 ^ $ c If the motion command is the character 'c', the current command line shall be cleared and insert mode shall be entered."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-108",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the motion command would move the current cursor position toward the beginning of the command line, the character under the current cursor position shall not be deleted."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-109",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the motion command would move the current cursor position toward the end of the command line, the character under the current cursor position shall be deleted."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-110",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the count is larger than the number of characters between the current cursor position and the end of the command line toward which the motion command would move the cursor, this shall not be considered an error; all of the remaining characters in the aforementioned range shall be deleted and insert mode shall be entered."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-111",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the motion command is invalid, the terminal shall be alerted, the cursor shall not be moved, and no text shall be deleted."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-112",
+    "section": "vi Line Editing Command Mode",
+    "text": "After this command, the current cursor position shall be on the last character that was changed."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-113",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the count is larger than the number of characters after the cursor, this shall not be considered an error; all of the remaining characters shall be changed."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-114",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the cursor was positioned on the last character of the line, the character shall be deleted and the cursor position shall be moved to the previous character (the new last character)."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-115",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the count is larger than the number of characters after the cursor, this shall not be considered an error; all the characters from the cursor to the end of the line shall be deleted."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-116",
+    "section": "vi Line Editing Command Mode",
+    "text": "The character under the current cursor position shall not change."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-117",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the cursor was positioned on the first character of the line, the terminal shall be alerted, and the X command shall have no effect."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-118",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the line contained a single character, the X command shall have no effect."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-119",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the line contained no characters, the terminal shall be alerted and the cursor shall not be moved."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-120",
+    "section": "vi Line Editing Command Mode",
+    "text": "If the count is larger than the number of characters before the cursor, this shall not be considered an error; all the characters from before the cursor to the beginning of the line shall be deleted."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-121",
+    "section": "vi Line Editing Command Mode",
+    "text": "The deleted characters shall be placed in the save buffer."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-122",
+    "section": "vi Line Editing Command Mode",
+    "text": "The current character position shall be unchanged."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-123",
+    "section": "vi Line Editing Command Mode",
+    "text": "The current cursor position shall be advanced to the last character put from the save buffer."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-124",
+    "section": "vi Line Editing Command Mode",
+    "text": "A count shall indicate how many copies of the save buffer shall be put."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-125",
+    "section": "vi Line Editing Command Mode",
+    "text": "The current cursor position shall be moved to the last character put from the save buffer."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-126",
+    "section": "vi Line Editing Command Mode",
+    "text": "A count shall indicate how many copies of the save buffer shall be put."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-127",
+    "section": "vi Line Editing Command Mode",
+    "text": "This operation shall not undo the copy of any command line to the edit line."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-128",
+    "section": "vi Line Editing Command Mode",
+    "text": "This operation shall not undo the copy of any command line to the edit line."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-129",
+    "section": "vi Line Editing Command Mode",
+    "text": "If count is not specified, it shall default to 1."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-130",
+    "section": "vi Line Editing Command Mode",
+    "text": "The cursor shall be positioned on the first character of the new command."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-131",
+    "section": "vi Line Editing Command Mode",
+    "text": "If a k or - command would retreat past the maximum number of commands in effect for this shell (affected by the HISTSIZE environment variable), the terminal shall be alerted, and the command shall have no effect."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-132",
+    "section": "vi Line Editing Command Mode",
+    "text": "If count is not specified, it shall default to 1."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-133",
+    "section": "vi Line Editing Command Mode",
+    "text": "The cursor shall be positioned on the first character of the new command."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-134",
+    "section": "vi Line Editing Command Mode",
+    "text": "If a j or + command advances past the edit line, the current command line shall be restored to the edit line and the terminal shall be alerted."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-135",
+    "section": "vi Line Editing Command Mode",
+    "text": "If command line number does not exist, the terminal shall be alerted and the command line shall not be changed."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-136",
+    "section": "vi Line Editing Command Mode",
+    "text": "shall be used."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-137",
+    "section": "vi Line Editing Command Mode",
+    "text": "If there is no previous non-empty pattern, the terminal shall be alerted and the current command line shall remain unchanged."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-138",
+    "section": "vi Line Editing Command Mode",
+    "text": "shall be used."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-139",
+    "section": "vi Line Editing Command Mode",
+    "text": "If there is no previous non-empty pattern, the terminal shall be alerted and the current command line shall remain unchanged."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-140",
+    "section": "vi Line Editing Command Mode",
+    "text": "If there is no previous / or ?, the terminal shall be alerted and the current command line shall remain unchanged."
+  },
+  {
+    "id": "SHALL-vi Line Editing Command Mode-141",
+    "section": "vi Line Editing Command Mode",
+    "text": "If there is no previous / or ?, the terminal shall be alerted and the current command line shall remain unchanged."
+  },
+  {
+    "id": "SHALL-EXIT STATUS-142",
+    "section": "EXIT STATUS",
+    "text": "The following exit values shall be returned:"
+  },
+  {
+    "id": "SHALL-EXIT STATUS-143",
+    "section": "EXIT STATUS",
+    "text": "Otherwise, the shell shall terminate in the same manner as for an exit command with no operands, unless the last command the shell invoked was executed without forking, in which case the wait status seen by the parent process of the shell shall be the wait status of the last command the shell invoked."
+  },
+  {
+    "id": "SHALL-RATIONALE-144",
+    "section": "RATIONALE",
+    "text": "\\If followed by the erase or kill character, that character shall be inserted into the input line."
+  },
+  {
+    "id": "SHALL-RATIONALE-145",
+    "section": "RATIONALE",
+    "text": "Otherwise, the <backslash> itself shall be inserted into the input line."
+  }
+]
