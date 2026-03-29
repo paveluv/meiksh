@@ -1,8 +1,12 @@
-# Test: echo — Write Arguments to Standard Output
-# Target: tests/matrix/tests/echo_extended.sh
+# Test: Maybe-Builtin — echo (Write Arguments to Standard Output)
+# Target: tests/matrix/tests/maybe_builtins_echo.sh
 #
-# POSIX compliance tests for the echo utility covering operand handling,
-# XSI escape sequences, output format, and option restrictions.
+# echo is a standalone POSIX utility that shells commonly implement as a
+# regular built-in. POSIX Section 1.6 permits this. It is NOT a special
+# built-in (2.15) or intrinsic utility (1.7).
+#
+# Tests cover operand handling, XSI escape sequences, output format,
+# and option restrictions.
 
 . "$MATRIX_DIR/lib.sh"
 

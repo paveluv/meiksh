@@ -1,8 +1,12 @@
-# Test: Miscellaneous Builtin Utilities
-# Target: tests/matrix/tests/builtins_misc.sh
+# Test: Maybe-Builtin Utilities (true, false, test, pwd, printf, env)
+# Target: tests/matrix/tests/maybe_builtins.sh
 #
-# Tests POSIX requirements for true, false, test, pwd, printf, env
-# utility behaviors.
+# These are standalone POSIX utilities that shells commonly implement as
+# regular built-ins for performance. POSIX Section 1.6 explicitly permits
+# any standard utility to be implemented as a regular built-in. They are
+# NOT special built-ins (2.15) or intrinsic utilities (1.7), but a
+# conformant shell that provides built-in versions must still satisfy
+# the requirements from their respective POSIX utility pages.
 
 . "$MATRIX_DIR/lib.sh"
 

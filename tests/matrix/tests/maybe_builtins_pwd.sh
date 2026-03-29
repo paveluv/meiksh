@@ -1,8 +1,12 @@
-# Test: pwd — Print Working Directory
-# Target: tests/matrix/tests/pwd_extended.sh
+# Test: Maybe-Builtin — pwd (Print Working Directory)
+# Target: tests/matrix/tests/maybe_builtins_pwd.sh
 #
-# POSIX compliance tests for the pwd utility covering -L and -P options,
-# pathname format, symlink handling, and error behavior.
+# pwd is a standalone POSIX utility that shells commonly implement as a
+# regular built-in. POSIX Section 1.6 permits this. It is NOT a special
+# built-in (2.15) or intrinsic utility (1.7).
+#
+# Tests cover -L and -P options, pathname format, symlink handling, and
+# error behavior.
 
 . "$MATRIX_DIR/lib.sh"
 
