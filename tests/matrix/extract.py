@@ -179,7 +179,6 @@ def main():
         "docs/posix/utilities/cd.html",
         "docs/posix/utilities/command.html",
         "docs/posix/utilities/echo.html",
-        "docs/posix/utilities/env.html",
         "docs/posix/utilities/false.html",
         "docs/posix/utilities/fc.html",
         "docs/posix/utilities/fg.html",

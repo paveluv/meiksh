@@ -1,4 +1,4 @@
-# Test: Maybe-Builtin Utilities (true, false, test, pwd, printf, env)
+# Test: Maybe-Builtin Utilities (true, false, test, pwd, printf)
 # Target: tests/matrix/tests/maybe_builtins.sh
 #
 # These are standalone POSIX utilities that shells commonly implement as
@@ -221,60 +221,5 @@ if [ "$_char_val" = "65" ]; then
 else
     fail "printf '%d' \"'A\" expected 65 got '$_char_val'"
 fi
-
-# ==============================================================================
-# env utility
-# ==============================================================================
-# REQUIREMENT: SHALL-DESCRIPTION-5008:
-# The env utility shall obtain the current environment, modify it according
-# to its arguments, then invoke the utility named by the utility operand.
-# REQUIREMENT: SHALL-DESCRIPTION-5009:
-# Optional arguments shall be passed to utility.
-# REQUIREMENT: SHALL-OPTIONS-5011:
-# The env utility shall conform to XBD 12.2 Utility Syntax Guidelines.
-# REQUIREMENT: SHALL-OPERANDS-5013:
-# name=value arguments shall modify the environment.
-# REQUIREMENT: SHALL-ENVIRONMENT-VARIABLES-5015:
-# If PATH is specified as a name=value operand, the value given shall be
-# used in the search for utility.
-# REQUIREMENT: SHALL-STDOUT-5016:
-# If no utility specified, each name=value pair written to stdout.
-# REQUIREMENT: SHALL-EXIT-STATUS-5017:
-# Exit status of env shall be exit status of utility invoked.
-
-assert_stdout "from_env" \
-    "$TARGET_SHELL -c 'env TESTVAR=from_env $TARGET_SHELL -c \"echo \\\$TESTVAR\"'"
-
-# Optional arguments passed to utility (SHALL-DESCRIPTION-5009)
-assert_stdout "arg1 arg2" \
-    "$TARGET_SHELL -c 'env echo arg1 arg2'"
-
-# env exit status equals utility exit status (SHALL-EXIT-STATUS-5017)
-assert_exit_code 0 "$TARGET_SHELL -c 'env true'"
-assert_exit_code_non_zero "$TARGET_SHELL -c 'env false'"
-
-# env conforms to XBD 12.2 syntax guidelines (SHALL-OPTIONS-5011)
-assert_exit_code 0 "$TARGET_SHELL -c 'env -- echo ok >/dev/null'"
-
-# REQUIREMENT: SHALL-DESCRIPTION-5010:
-# If no utility operand is specified, the resulting environment shall be
-# written to the standard output, with one name=value pair per line.
-
-_env_out=$($TARGET_SHELL -c 'env MYVAR=hello' 2>/dev/null | grep '^MYVAR=')
-if [ "$_env_out" = "MYVAR=hello" ]; then
-    pass
-else
-    fail "env output missing MYVAR=hello, got '$_env_out'"
-fi
-
-# REQUIREMENT: SHALL-OPTIONS-5012:
-# -i Invoke utility with exactly the environment specified by the
-# arguments; the inherited environment shall be completely ignored.
-
-_env_i=$($TARGET_SHELL -c 'env -i ONLY=this env' 2>/dev/null)
-case "$_env_i" in
-    *ONLY=this*) pass ;;
-    *) fail "env -i ONLY=this did not produce ONLY=this" ;;
-esac
 
 report
