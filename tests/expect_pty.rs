@@ -7,6 +7,7 @@
 //!   spawn <cmd> [args...]      — fork a PTY child and exec the command
 //!   expect "literal"           — wait for exact substring in PTY output (timeout: 5s)
 //!   expect timeout=N "literal" — wait with custom timeout in seconds
+//!   expect_glob "pattern"      — wait for glob pattern match (*, ?, {a,b})
 //!   not_expect "literal"       — assert substring is NOT in the current output buffer
 //!   send "text"                — write text + newline to the PTY
 //!   sendraw <hex> [<hex>...]   — write raw bytes (hex-encoded) to the PTY
@@ -16,7 +17,7 @@
 //!   sleep <ms>                 — sleep for N milliseconds
 //!
 //! Lines starting with '#' and empty lines are ignored.
-//! All matching is exact substring — no regex.
+//! expect uses exact substring matching; expect_glob supports *, ?, and {a,b}.
 
 use std::env;
 use std::fs;
@@ -231,6 +232,37 @@ impl PtySession {
         }
     }
 
+    /// Wait for a glob pattern match in the output buffer.
+    /// The pattern supports `*`, `?`, and `{a,b}` brace expansion.
+    /// On match, consumes all output up to and including the match.
+    fn expect_glob(&self, pattern: &str, timeout: Duration) -> Result<String, String> {
+        let alternatives = expand_braces(pattern);
+        let start = Instant::now();
+        loop {
+            {
+                let mut lock = self.buf.lock().unwrap();
+                let haystack = String::from_utf8_lossy(&lock).to_string();
+                if let Some((_start, end)) = find_glob_match(&alternatives, &haystack) {
+                    let consumed = haystack[..end].to_string();
+                    let byte_end = consumed.len();
+                    lock.drain(..byte_end);
+                    return Ok(consumed);
+                }
+                if start.elapsed() >= timeout {
+                    return Err(format!(
+                        "expect_glob: timed out after {:.1}s waiting for pattern {:?}\nExpanded to: {:?}\nOutput so far ({} bytes):\n{}",
+                        timeout.as_secs_f64(),
+                        pattern,
+                        alternatives,
+                        haystack.len(),
+                        haystack
+                    ));
+                }
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     /// Assert that a substring is NOT in the current buffer.
     fn not_expect(&self, needle: &str) -> Result<(), String> {
         let lock = self.buf.lock().unwrap();
@@ -365,6 +397,79 @@ fn parse_expect_args(rest: &str) -> Result<(Duration, &str), String> {
     }
 }
 
+// ── Glob pattern matching ────────────────────────────────────────────────────
+
+/// Expand `{a,b,c}` brace groups into multiple alternative strings.
+/// Supports multiple brace groups via recursion (e.g., `{a,b}{1,2}` → 4 strings).
+/// Characters other than braces/commas are literal. Unmatched `{` is kept as-is.
+fn expand_braces(pattern: &str) -> Vec<String> {
+    if let Some(open) = pattern.find('{') {
+        if let Some(rel_close) = pattern[open..].find('}') {
+            let close = open + rel_close;
+            let prefix = &pattern[..open];
+            let suffix = &pattern[close + 1..];
+            let alts: Vec<&str> = pattern[open + 1..close].split(',').collect();
+            return alts
+                .iter()
+                .flat_map(|alt| expand_braces(&format!("{prefix}{alt}{suffix}")))
+                .collect();
+        }
+    }
+    vec![pattern.to_string()]
+}
+
+/// Match `pattern` against `text` using glob rules:
+///   `*` matches zero or more characters, `?` matches exactly one character,
+///   all other characters (including `[`, `]`) are literal.
+fn glob_match(pattern: &str, text: &str) -> bool {
+    let pat: Vec<char> = pattern.chars().collect();
+    let txt: Vec<char> = text.chars().collect();
+    let (mut pi, mut ti) = (0usize, 0usize);
+    let (mut star_pi, mut star_ti) = (usize::MAX, 0usize);
+
+    while ti < txt.len() {
+        if pi < pat.len() && (pat[pi] == '?' || pat[pi] == txt[ti]) {
+            pi += 1;
+            ti += 1;
+        } else if pi < pat.len() && pat[pi] == '*' {
+            star_pi = pi;
+            star_ti = ti;
+            pi += 1;
+        } else if star_pi != usize::MAX {
+            pi = star_pi + 1;
+            star_ti += 1;
+            ti = star_ti;
+        } else {
+            return false;
+        }
+    }
+    while pi < pat.len() && pat[pi] == '*' {
+        pi += 1;
+    }
+    pi == pat.len()
+}
+
+/// Search `haystack` for the leftmost, shortest substring that matches any of
+/// `patterns`. Returns `Some((start, end))` byte offsets, or `None`.
+fn find_glob_match(patterns: &[String], haystack: &str) -> Option<(usize, usize)> {
+    let chars: Vec<(usize, char)> = haystack.char_indices().collect();
+    let n = chars.len();
+
+    for si in 0..=n {
+        let start_byte = if si < n { chars[si].0 } else { haystack.len() };
+        for ei in si..=n {
+            let end_byte = if ei < n { chars[ei].0 } else { haystack.len() };
+            let candidate = &haystack[start_byte..end_byte];
+            for pat in patterns {
+                if glob_match(pat, candidate) {
+                    return Some((start_byte, end_byte));
+                }
+            }
+        }
+    }
+    None
+}
+
 fn run_script(script_lines: &[String]) -> Result<(), String> {
     let mut session: Option<PtySession> = None;
     let mut log = Vec::<String>::new();
@@ -450,6 +555,29 @@ fn run_script(script_lines: &[String]) -> Result<(), String> {
                     }
                     Err(e) => {
                         // Print the full conversation log before failing
+                        eprintln!("--- expect_pty conversation log ---");
+                        for entry in &log {
+                            eprintln!("{entry}");
+                        }
+                        eprintln!("--- end log ---");
+                        return Err(format!("line {line_num}: {e}"));
+                    }
+                }
+            }
+
+            "expect_glob" => {
+                let sess = session
+                    .as_ref()
+                    .ok_or_else(|| format!("line {line_num}: expect_glob before spawn"))?;
+                let (timeout, quoted_part) = parse_expect_args(rest)?;
+                let pattern = extract_quoted(quoted_part)
+                    .map_err(|e| format!("line {line_num}: {e}"))?;
+                log.push(format!(">>> expect_glob {:?} (timeout={}s)", pattern, timeout.as_secs()));
+                match sess.expect_glob(pattern, timeout) {
+                    Ok(consumed) => {
+                        log.push(format!("<<< glob matched (consumed {} bytes)", consumed.len()));
+                    }
+                    Err(e) => {
                         eprintln!("--- expect_pty conversation log ---");
                         for entry in &log {
                             eprintln!("{entry}");
@@ -606,5 +734,147 @@ fn main() {
             eprintln!("expect_pty: FAIL: {e}");
             std::process::exit(1);
         }
+    }
+}
+
+// ── Unit tests ───────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -- glob_match --
+
+    #[test]
+    fn glob_literal_match() {
+        assert!(glob_match("hello", "hello"));
+    }
+
+    #[test]
+    fn glob_literal_mismatch() {
+        assert!(!glob_match("hello", "world"));
+    }
+
+    #[test]
+    fn glob_star_middle() {
+        assert!(glob_match("he*lo", "hello"));
+        assert!(glob_match("he*lo", "helo"));
+        assert!(glob_match("he*lo", "he---lo"));
+    }
+
+    #[test]
+    fn glob_star_everything() {
+        assert!(glob_match("*", "anything"));
+        assert!(glob_match("*", ""));
+    }
+
+    #[test]
+    fn glob_multi_star() {
+        assert!(glob_match("a*b*c", "aXbYc"));
+        assert!(glob_match("a*b*c", "abc"));
+        assert!(glob_match("a*b*c", "aXXbYYc"));
+    }
+
+    #[test]
+    fn glob_question_mark() {
+        assert!(glob_match("h?llo", "hello"));
+        assert!(!glob_match("h?llo", "hllo"));
+        assert!(glob_match("?", "x"));
+        assert!(!glob_match("?", ""));
+    }
+
+    #[test]
+    fn glob_mixed() {
+        assert!(glob_match("*foo?", "bazfooX"));
+        assert!(glob_match("[1]*sleep", "[1]+ Running sleep"));
+    }
+
+    #[test]
+    fn glob_literal_brackets() {
+        assert!(glob_match("[1]", "[1]"));
+        assert!(glob_match("[*]+*sleep*", "[1]+  Stopped  sleep 60"));
+    }
+
+    #[test]
+    fn glob_empty() {
+        assert!(glob_match("", ""));
+        assert!(!glob_match("", "x"));
+    }
+
+    #[test]
+    fn glob_only_stars() {
+        assert!(glob_match("***", "anything"));
+        assert!(glob_match("***", ""));
+    }
+
+    // -- expand_braces --
+
+    #[test]
+    fn braces_none() {
+        assert_eq!(expand_braces("hello"), vec!["hello"]);
+    }
+
+    #[test]
+    fn braces_simple() {
+        assert_eq!(expand_braces("{a,b}"), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn braces_prefix_suffix() {
+        assert_eq!(expand_braces("pre{X,Y}suf"), vec!["preXsuf", "preYsuf"]);
+    }
+
+    #[test]
+    fn braces_three_alts() {
+        assert_eq!(expand_braces("{a,b,c}"), vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn braces_multiple_groups() {
+        assert_eq!(
+            expand_braces("{a,b}{1,2}"),
+            vec!["a1", "a2", "b1", "b2"]
+        );
+    }
+
+    #[test]
+    fn braces_with_globs() {
+        assert_eq!(
+            expand_braces("*{Stopped,Suspended}*"),
+            vec!["*Stopped*", "*Suspended*"]
+        );
+    }
+
+    #[test]
+    fn braces_unclosed() {
+        assert_eq!(expand_braces("{broken"), vec!["{broken"]);
+    }
+
+    // -- find_glob_match --
+
+    #[test]
+    fn find_glob_basic() {
+        let pats = expand_braces("{Stopped,Suspended}");
+        assert!(find_glob_match(&pats, "job Stopped here").is_some());
+        assert!(find_glob_match(&pats, "job Suspended here").is_some());
+        assert!(find_glob_match(&pats, "job Running here").is_none());
+    }
+
+    #[test]
+    fn find_glob_with_wildcards() {
+        let pats = expand_braces("[*]*{Stopped,Suspended}*sleep 60*");
+        let line = "[1]+  Stopped  sleep 60";
+        let result = find_glob_match(&pats, line);
+        assert!(result.is_some());
+        let (s, e) = result.unwrap();
+        assert_eq!(s, 0);
+        assert_eq!(e, line.len());
+    }
+
+    #[test]
+    fn find_glob_leftmost() {
+        let pats = vec!["foo".to_string()];
+        let result = find_glob_match(&pats, "xxfooyyfoozz");
+        assert_eq!(result, Some((2, 5)));
     }
 }

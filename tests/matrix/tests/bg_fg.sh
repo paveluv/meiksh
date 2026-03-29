@@ -26,7 +26,7 @@ expect "$ "
 send "sleep 60"
 sleep 500
 sendraw 1a
-expect "Stopped"
+expect_glob "{Stopped,Suspended}"
 send "bg"
 expect "sleep 60"
 expect "$ "
@@ -68,7 +68,7 @@ expect "$ "
 send "sleep 60"
 sleep 500
 sendraw 1a
-expect "Stopped"
+expect_glob "{Stopped,Suspended}"
 send "bg %1"
 expect "sleep 60"
 expect "$ "
@@ -163,7 +163,7 @@ expect "$ "
 send "sleep 60"
 sleep 500
 sendraw 1a
-expect "Stopped"
+expect_glob "{Stopped,Suspended}"
 send "bg"
 expect "sleep 60"
 expect "$ "
