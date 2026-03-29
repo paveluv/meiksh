@@ -222,7 +222,10 @@ assert_stdout "parent" \
 # Readonly Variable Error
 # ==============================================================================
 # REQUIREMENT: SHALL-READ-1278:
+# REQUIREMENT: SHALL-READ-1279:
 # Error in setting any variable (readonly) results in return >1.
+# SHALL-READ-1279: it is unspecified whether variables named after the
+# error-generating one are set; we only assert the exit code here.
 
 assert_exit_code_non_zero \
     "echo 'val' | $TARGET_SHELL -c 'readonly rovar=locked; read rovar'"

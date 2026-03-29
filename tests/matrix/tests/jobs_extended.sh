@@ -122,8 +122,9 @@ wait'
 # Job state display: Stopped / Suspended
 # ==============================================================================
 # REQUIREMENT: SHALL-JOBS-1232:
+# REQUIREMENT: SHALL-JOBS-1237:
 # A job that has been suspended shall be reported with the state "Stopped".
-# POSIX also permits "Suspended" as an alternative to "Stopped".
+# POSIX also permits "Suspended" as an alternative to "Stopped" (SHALL-JOBS-1237).
 
 assert_pty_script 'spawn $TARGET_SHELL -i
 expect "$ "
@@ -210,8 +211,9 @@ wait'
 # jobs -l with stopped job shows PID and state
 # ==============================================================================
 # REQUIREMENT: SHALL-JOBS-1236:
+# REQUIREMENT: SHALL-JOBS-1237:
 # jobs -l on a stopped job shall show the PID and the state.
-# POSIX permits "Suspended" as an alternative to "Stopped".
+# POSIX permits "Suspended" as an alternative to "Stopped" (SHALL-JOBS-1237).
 
 assert_pty_script 'spawn $TARGET_SHELL -i
 expect "$ "

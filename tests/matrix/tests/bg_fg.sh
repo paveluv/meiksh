@@ -17,6 +17,8 @@
 # "[%d] %s\n", <job-number>, <command>
 # REQUIREMENT: SHALL-BG-1065:
 # If no job_id operand is given, the most recently suspended job shall be used.
+# REQUIREMENT: SHALL-JOBS-1237:
+# The implementation may substitute the string Suspended in place of Stopped.
 
 # Start a sleep, suspend it with Ctrl-Z, then bg it
 assert_pty_script 'spawn $TARGET_SHELL -i
