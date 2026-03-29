@@ -2,6 +2,7 @@
 name = "meiksh"
 version = "0.1.0"
 edition = "2024"
+autotests = false
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
@@ -23,3 +24,7 @@ name = "pty"
 path = "tests/pty.rs"
 harness = false
 test = false
+
+[[bin]]
+name = "expect_pty"
+path = "tests/expect_pty.rs"
