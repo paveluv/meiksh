@@ -7322,7 +7322,15 @@
   {
     "id": "SHALL-JOBS-1039",
     "section": "JOBS",
-    "text": "Otherwise, if the -l option is not specified, the output shall be a series of lines of the form: \"[%d] %c %s %s\\n\", < job-number >, < current >, < state >, < command > where the fields shall be as follows: < current > The character '+' identifies the job that would be used as a default for the fg or bg utilities; this job can also be specified using the job_id %+ or \"%%\" .",
+    "text": "Otherwise, if the -l option is not specified, the output shall be a series of lines of the form: \"[%d] %c %s %s\\n\", < job-number >, < current >, < state >, < command > where the fields shall be as follows: < current > The character '+' identifies the job that would be used as a default for the fg or bg utilities; this job can also be specified using the job_id %+ or \"%%\" . The character '-' identifies the job that would become the default if the current default job were to exit; this job can also be specified using the job_id %- . For other jobs, this field is a <space>. At most one job can be identified with '+' and at most one job can be identified with '-'. < job-number > A number that can be used to identify the job to the wait, fg, bg, and kill utilities. Using these utilities, the job can be identified by prefixing the job number with '%'. < state > One of the following strings (in the POSIX locale): Running (job has not been suspended by a signal and has not exited), Done (job completed and returned exit status zero), Done(code) (job completed normally with non-zero exit status), Stopped (job was suspended by the SIGTSTP signal), Stopped (SIGTSTP), Stopped (SIGSTOP), Stopped (SIGTTIN), Stopped (SIGTTOU). The implementation may substitute the string Suspended in place of Stopped. < command > The associated command that was given to the shell.",
+    "file": "jobs",
+    "testable": true,
+    "untestable_reason": null
+  },
+  {
+    "id": "SHALL-JOBS-1237",
+    "section": "JOBS",
+    "text": "The implementation may substitute the string Suspended in place of Stopped.",
     "file": "jobs",
     "testable": true,
     "untestable_reason": null

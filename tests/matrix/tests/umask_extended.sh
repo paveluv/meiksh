@@ -15,8 +15,13 @@
 
 assert_exit_code 0 "$TARGET_SHELL -c 'umask 0022'"
 
-# Verify the mask is applied
-assert_stdout "0022" "$TARGET_SHELL -c 'umask 0022; umask'"
+# Verify the mask is applied (default output format is unspecified per
+# SHALL-UMASK-1322, so accept both 3-digit and 4-digit octal)
+_out=$($TARGET_SHELL -c 'umask 0022; umask')
+case "$_out" in
+    0022|022) pass ;;
+    *) fail "umask 0022 reported unexpected value: '$_out'" ;;
+esac
 
 # ==============================================================================
 # Mask affects initial permission bits of new files
@@ -57,7 +62,11 @@ else
 fi
 
 # Verify it reflects what was set
-assert_stdout "0027" "$TARGET_SHELL -c 'umask 0027; umask'"
+_out=$($TARGET_SHELL -c 'umask 0027; umask')
+case "$_out" in
+    0027|027) pass ;;
+    *) fail "umask 0027 reported unexpected value: '$_out'" ;;
+esac
 
 # ==============================================================================
 # Exit 0 on success or no mask operand
@@ -76,7 +85,11 @@ assert_exit_code 0 "$TARGET_SHELL -c 'umask'"
 # The mask operand shall specify the new file mode creation mask value.
 
 # Octal form
-assert_stdout "0037" "$TARGET_SHELL -c 'umask 0037; umask'"
+_out=$($TARGET_SHELL -c 'umask 0037; umask')
+case "$_out" in
+    0037|037) pass ;;
+    *) fail "umask 0037 reported unexpected value: '$_out'" ;;
+esac
 
 # Symbolic form
 _out2=$($TARGET_SHELL -c 'umask u=rwx,g=rx,o=; umask')
@@ -118,13 +131,16 @@ esac
 # The file mode creation mask set in a subshell shall not affect the
 # parent (caller) shell execution environment.
 
-assert_stdout "0022" \
-    "$TARGET_SHELL -c 'umask 0022; (umask 0077); umask'"
+_sub_out=$($TARGET_SHELL -c 'umask 0022; (umask 0077); umask')
+case "$_sub_out" in
+    0022|022) pass ;;
+    *) fail "subshell umask affected parent mask: '$_sub_out'" ;;
+esac
 
 # Verify the subshell actually ran a different mask
 _both=$($TARGET_SHELL -c 'umask 0022; (umask 0077; echo inner=$(umask)); echo outer=$(umask)')
 case "$_both" in
-    *inner=0077*outer=0022*) pass ;;
+    *inner=*077*outer=*022*) pass ;;
     *) fail "subshell umask affected parent: '$_both'" ;;
 esac
 
@@ -140,13 +156,13 @@ _roundtrip=$($TARGET_SHELL -c '
     _saved=$(umask)
     umask 0000
     umask "$_saved"
-    umask
+    _restored=$(umask)
+    [ "$_saved" = "$_restored" ] && echo roundtrip_ok || echo "MISMATCH saved=$_saved restored=$_restored"
 ')
-if [ "$_roundtrip" = "0037" ]; then
-    pass
-else
-    fail "Default output round-trip failed: expected '0037', got '$_roundtrip'"
-fi
+case "$_roundtrip" in
+    roundtrip_ok) pass ;;
+    *) fail "Default output round-trip failed: $_roundtrip" ;;
+esac
 
 # ==============================================================================
 # Default output recognized as mask operand
@@ -157,16 +173,16 @@ fi
 # Another round-trip with a different mask
 _roundtrip2=$($TARGET_SHELL -c '
     umask 0055
-    _m=$(umask)
+    _saved=$(umask)
     umask 0000
-    umask "$_m"
-    umask
+    umask "$_saved"
+    _restored=$(umask)
+    [ "$_saved" = "$_restored" ] && echo roundtrip_ok || echo "MISMATCH saved=$_saved restored=$_restored"
 ')
-if [ "$_roundtrip2" = "0055" ]; then
-    pass
-else
-    fail "Default output as mask operand failed: expected '0055', got '$_roundtrip2'"
-fi
+case "$_roundtrip2" in
+    roundtrip_ok) pass ;;
+    *) fail "Default output as mask operand failed: $_roundtrip2" ;;
+esac
 
 # ==============================================================================
 # If mask operand specified, no output to stdout
