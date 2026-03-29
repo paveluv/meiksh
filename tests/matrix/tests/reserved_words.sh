@@ -10,10 +10,12 @@
 # ==============================================================================
 # Unquoted Recognition
 # ==============================================================================
-# REQUIREMENT: SHALL-2-4-056: The following words shall be recognized as
+# REQUIREMENT: SHALL-2-4-056:
+# The following words shall be recognized as
 # reserved words: case, do, done, elif, else, esac, fi, for, if, in, then,
 # until, while...
-# REQUIREMENT: SHALL-2-4-057: This recognition shall only occur when none of the
+# REQUIREMENT: SHALL-2-4-057:
+# This recognition shall only occur when none of the
 # characters is quoted and when the word is used as: The first word of a
 # command... The third word in a case or for command.
 
@@ -37,15 +39,16 @@ assert_stdout "if while for done" \
 # ==============================================================================
 # The 'time' Reserved Word
 # ==============================================================================
-# REQUIREMENT: SHALL-2-4-058: When used in circumstances where reserved words
-# are recognized (described above), the following words may be recognized as
-# reserved words, in which case the results are unspecified except as described
-# below for time : [[ ]] function namespace select time When the word time is
-# recognized as a reserved word in circumstances where it would, if it were not
-# a reserved word, be the command name (see 2.9.1.1 Order of Processing ) of a
-# simple command that would execute the time utility in a manner other than one
-# for which time states that the results are unspecified, the behavior shall be
-# as specified for the time utility.
+# REQUIREMENT: SHALL-2-4-058:
+# When used in circumstances where reserved words are recognized (described
+# above), the following words may be recognized as reserved words, in which case
+# the results are unspecified except as described below for time : [[ ]]
+# function namespace select time When the word time is recognized as a reserved
+# word in circumstances where it would, if it were not a reserved word, be the
+# command name (see 2.9.1.1 Order of Processing ) of a simple command that would
+# execute the time utility in a manner other than one for which time states that
+# the results are unspecified, the behavior shall be as specified for the time
+# utility.
 
 # The `time` command is special because it measures execution, but it's treated
 # as a reserved word or executed transparently.

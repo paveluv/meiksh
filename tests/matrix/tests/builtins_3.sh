@@ -10,13 +10,16 @@
 # ==============================================================================
 # The 'export' Utility
 # ==============================================================================
-# REQUIREMENT: SHALL-DESCRIPTION-558: The shell shall give the export attribute
-# to the variables corresponding to the specified name s, which shall cause them
-# to be in the environment of subsequently executed commands.
-# REQUIREMENT: SHALL-DESCRIPTION-559: If the name of a variable is followed by =
-# word , then the value of that variable shall be set to word .
-# REQUIREMENT: SHALL-DESCRIPTION-562: The export special built-in shall support
-# XBD 12.2 Utility Syntax Guidelines .
+# REQUIREMENT: SHALL-DESCRIPTION-558:
+# The shell shall give the export attribute to the variables corresponding to
+# the specified name s, which shall cause them to be in the environment of
+# subsequently executed commands.
+# REQUIREMENT: SHALL-DESCRIPTION-559:
+# If the name of a variable is followed by = word , then the value of that
+# variable shall be set to word .
+# REQUIREMENT: SHALL-DESCRIPTION-562:
+# The export special built-in shall support XBD 12.2 Utility Syntax Guidelines
+# .
 
 # Exporting a variable makes it available to child processes. We test both
 # exporting an existing variable and exporting while assigning.
@@ -29,9 +32,11 @@ assert_stdout "baz=qux
 foo=bar" \
     "$TARGET_SHELL -c '$test_cmd'"
 
-# REQUIREMENT: SHALL-DESCRIPTION-563: When -p is specified, export shall write
+# REQUIREMENT: SHALL-DESCRIPTION-563:
+# When -p is specified, export shall write
 # to the standard output the names and values of all exported variables...
-# REQUIREMENT: SHALL-DESCRIPTION-564: The shell shall format the output,
+# REQUIREMENT: SHALL-DESCRIPTION-564:
+# The shell shall format the output,
 # including the proper use of quoting, so that it is suitable for reinput...
 
 # `export -p` must generate valid shell commands. We test this by eval-ing it.
@@ -50,37 +55,44 @@ assert_stdout "val with spaces" \
 # ==============================================================================
 # The 'readonly' Utility
 # ==============================================================================
-# REQUIREMENT: SHALL-Issue 6-566: IEEE Std 1003.1-2001/Cor 1-2002, item
-# XCU/TC1/D6/6 is applied, adding the following text to the end of the first
-# paragraph of the DESCRIPTION: "If the name of a variable is followed by = word
-# , then the value of that variable shall be set to word .".
-# REQUIREMENT: SHALL-Issue 6-575: IEEE Std 1003.1-2001/Cor 1-2002, item
-# XCU/TC1/D6/7 is applied, adding the following text to the end of the first
-# paragraph of the DESCRIPTION: "If the name of a variable is followed by = word
-# , then the value of that variable shall be set to word .".
-# REQUIREMENT: SHALL-Issue 6-628: IEEE Std 1003.1-2001/Cor 1-2002, item
-# XCU/TC1/D6/9 is applied, changing text in the DESCRIPTION from: "Write the
-# accumulated user and system times for the shell and for all of its child
-# processes ..." to: "The times utility shall write the accumulated user and
-# system times for the shell and for all of its child processes ...".
-# REQUIREMENT: SHALL-DESCRIPTION-567: The variables whose name s are specified
-# shall be given the readonly attribute.
-# REQUIREMENT: SHALL-DESCRIPTION-568: As described in XBD 8.1 Environment
-# Variable Definition , conforming applications shall not request to mark a
-# variable as readonly if it is documented as being manipulated by a shell
-# built-in utility, as it may render those utilities unable to complete
-# successfully.
-# REQUIREMENT: SHALL-DESCRIPTION-559: If the name of a variable is followed by =
-# word , then the value of that variable shall be set to word .
-# REQUIREMENT: SHALL-DESCRIPTION-572: The readonly special built-in shall
-# support XBD 12.2 Utility Syntax Guidelines .
+# REQUIREMENT: SHALL-Issue 6-566:
+# IEEE Std 1003.1-2001/Cor 1-2002, item XCU/TC1/D6/6 is applied, adding the
+# following text to the end of the first paragraph of the DESCRIPTION: "If the
+# name of a variable is followed by = word , then the value of that variable
+# shall be set to word .".
+# REQUIREMENT: SHALL-Issue 6-575:
+# IEEE Std 1003.1-2001/Cor 1-2002, item XCU/TC1/D6/7 is applied, adding the
+# following text to the end of the first paragraph of the DESCRIPTION: "If the
+# name of a variable is followed by = word , then the value of that variable
+# shall be set to word .".
+# REQUIREMENT: SHALL-Issue 6-628:
+# IEEE Std 1003.1-2001/Cor 1-2002, item XCU/TC1/D6/9 is applied, changing text
+# in the DESCRIPTION from: "Write the accumulated user and system times for the
+# shell and for all of its child processes ..." to: "The times utility shall
+# write the accumulated user and system times for the shell and for all of its
+# child processes ...".
+# REQUIREMENT: SHALL-DESCRIPTION-567:
+# The variables whose name s are specified shall be given the readonly
+# attribute.
+# REQUIREMENT: SHALL-DESCRIPTION-568:
+# As described in XBD 8.1 Environment Variable Definition , conforming
+# applications shall not request to mark a variable as readonly if it is
+# documented as being manipulated by a shell built-in utility, as it may render
+# those utilities unable to complete successfully.
+# REQUIREMENT: SHALL-DESCRIPTION-559:
+# If the name of a variable is followed by = word , then the value of that
+# variable shall be set to word .
+# REQUIREMENT: SHALL-DESCRIPTION-572:
+# The readonly special built-in shall support XBD 12.2 Utility Syntax
+# Guidelines .
 
 # Attempting to assign to a readonly variable fails.
 test_cmd='readonly RO_VAR="protected"; RO_VAR="mutated"'
 assert_exit_code_non_zero \
     "$TARGET_SHELL -c '$test_cmd'"
 
-# REQUIREMENT: SHALL-DESCRIPTION-573: The shell shall format the output [of -p],
+# REQUIREMENT: SHALL-DESCRIPTION-573:
+# The shell shall format the output [of -p],
 # including the proper use of quoting, so that it is suitable for reinput...
 
 test_cmd='
@@ -97,9 +109,9 @@ assert_stdout "protected" \
 # ==============================================================================
 # The 'set' Utility
 # ==============================================================================
-# REQUIREMENT: SHALL-DESCRIPTION-580: If no option s or argument s are
-# specified, set shall write the names and values of all shell variables in the
-# collation sequence of the current locale.
+# REQUIREMENT: SHALL-DESCRIPTION-580:
+# If no option s or argument s are specified, set shall write the names and
+# values of all shell variables in the collation sequence of the current locale.
 
 test_cmd='
 MY_TEST_VAR="hello_set"
@@ -111,27 +123,31 @@ assert_stdout "found" \
 # ==============================================================================
 # The 'unset' Utility
 # ==============================================================================
-# REQUIREMENT: SHALL-DESCRIPTION-617: The positional parameters shall be
-# shifted.
-# REQUIREMENT: SHALL-DESCRIPTION-618: Positional parameter 1 shall be assigned
-# the value of parameter (1+ n ), parameter 2 shall be assigned the value of
-# parameter (2+ n ), and so on.
-# REQUIREMENT: SHALL-DESCRIPTION-651: The unset utility shall unset each
-# variable or function definition specified by name that does not have the
-# readonly attribute and remove any attributes other than readonly that have
-# been given to name (see 2.15 Special Built-In Utilities export and readonly ).
-# REQUIREMENT: SHALL-DESCRIPTION-652: If -v is specified, name refers to a
-# variable name and the shell shall unset it and remove it from the environment.
-# REQUIREMENT: SHALL-DESCRIPTION-653: If -f is specified, name refers to a
-# function and the shell shall unset the function definition.
-# REQUIREMENT: SHALL-DESCRIPTION-654: If neither -f nor -v is specified, name
-# refers to a variable; if a variable by that name does not exist, it is
-# unspecified whether a function by that name, if any, shall be unset.
-# REQUIREMENT: SHALL-DESCRIPTION-655: Unsetting a variable or function that was
-# not previously set shall not be considered an error and does not cause the
-# shell to abort.
-# REQUIREMENT: SHALL-DESCRIPTION-656: The unset special built-in shall support
-# XBD 12.2 Utility Syntax Guidelines .
+# REQUIREMENT: SHALL-DESCRIPTION-617:
+# The positional parameters shall be shifted.
+# REQUIREMENT: SHALL-DESCRIPTION-618:
+# Positional parameter 1 shall be assigned the value of parameter (1+ n ),
+# parameter 2 shall be assigned the value of parameter (2+ n ), and so on.
+# REQUIREMENT: SHALL-DESCRIPTION-651:
+# The unset utility shall unset each variable or function definition specified
+# by name that does not have the readonly attribute and remove any attributes
+# other than readonly that have been given to name (see 2.15 Special Built-In
+# Utilities export and readonly ).
+# REQUIREMENT: SHALL-DESCRIPTION-652:
+# If -v is specified, name refers to a variable name and the shell shall unset
+# it and remove it from the environment.
+# REQUIREMENT: SHALL-DESCRIPTION-653:
+# If -f is specified, name refers to a function and the shell shall unset the
+# function definition.
+# REQUIREMENT: SHALL-DESCRIPTION-654:
+# If neither -f nor -v is specified, name refers to a variable; if a variable
+# by that name does not exist, it is unspecified whether a function by that
+# name, if any, shall be unset.
+# REQUIREMENT: SHALL-DESCRIPTION-655:
+# Unsetting a variable or function that was not previously set shall not be
+# considered an error and does not cause the shell to abort.
+# REQUIREMENT: SHALL-DESCRIPTION-656:
+# The unset special built-in shall support XBD 12.2 Utility Syntax Guidelines .
 
 test_cmd='
 my_var="value"
@@ -142,8 +158,9 @@ assert_stdout "is_unset" \
     "$TARGET_SHELL -c '$test_cmd'"
 
 # Unsetting a function using `-f`.
-# REQUIREMENT: SHALL-DESCRIPTION-620: The value n shall be an unsigned decimal
-# integer less than or equal to the value of the special parameter '#' .
+# REQUIREMENT: SHALL-DESCRIPTION-620:
+# The value n shall be an unsigned decimal integer less than or equal to the
+# value of the special parameter '#' .
 
 test_cmd='
 my_func() { echo "running"; }

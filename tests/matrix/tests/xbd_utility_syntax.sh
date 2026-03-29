@@ -10,11 +10,13 @@
 
 . "$MATRIX_DIR/lib.sh"
 
-# REQUIREMENT: SHALL-XBD-12-4022: If an option that has option-arguments is
-# repeated, the option and option-argument combinations should be interpreted in
-# the order specified on the command line.
-# REQUIREMENT: SHALL-XBD-12-4023: The order of operands may matter and position-
-# related interpretations should be determined on a utility-specific basis.
+# REQUIREMENT: SHALL-XBD-12-4022:
+# If an option that has option-arguments is repeated, the option and
+# option-argument combinations should be interpreted in the order specified on
+# the command line.
+# REQUIREMENT: SHALL-XBD-12-4023:
+# The order of operands may matter and position-related interpretations should
+# be determined on a utility-specific basis.
 
 # Test that `cd` accepts `--` and correctly processes a directory starting with
 # `-`.
@@ -42,11 +44,13 @@ test_cmd='
 '
 assert_stdout "empty" "$TARGET_SHELL -c '$test_cmd'"
 
-# REQUIREMENT: SHALL-XBD-12-4015: Each option and option-argument should be a
-# separate argument, except as noted in 12.1 Utility Argument Syntax , item (2).
-# REQUIREMENT: SHALL-XBD-12-4011: The -W (capital-W) option shall be reserved
-# for vendor options.
-# REQUIREMENT: SHALL-XBD-12-4012: Multi-digit options should not be allowed.
+# REQUIREMENT: SHALL-XBD-12-4015:
+# Each option and option-argument should be a separate argument, except as
+# noted in 12.1 Utility Argument Syntax , item (2).
+# REQUIREMENT: SHALL-XBD-12-4011:
+# The -W (capital-W) option shall be reserved for vendor options.
+# REQUIREMENT: SHALL-XBD-12-4012:
+# Multi-digit options should not be allowed.
 
 # Test `read -r` works as `-r` and `getopts` accepts options according to
 # standard.

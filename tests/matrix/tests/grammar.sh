@@ -10,14 +10,15 @@
 # ==============================================================================
 # Grammar Token Identification
 # ==============================================================================
-# REQUIREMENT: SHALL-2-10-1-396: If the string consists solely of digits and the
-# delimiter character is one of '<' or '>' , the token identifier IO_NUMBER
-# shall result.
-# REQUIREMENT: SHALL-2-10-1-397: If the string contains at least three
-# characters, begins with a <left-curly-bracket> ( '{' ) and ends with a <right-
-# curly-bracket> ( '}' ), and the delimiter character is one of '<' or '>' , the
-# token identifier IO_LOCATION may result; if the result is not IO_LOCATION ,
-# the token identifier TOKEN shall result.
+# REQUIREMENT: SHALL-2-10-1-396:
+# If the string consists solely of digits and the delimiter character is one of
+# '<' or '>' , the token identifier IO_NUMBER shall result.
+# REQUIREMENT: SHALL-2-10-1-397:
+# If the string contains at least three characters, begins with a
+# <left-curly-bracket> ( '{' ) and ends with a <right-curly-bracket> ( '}' ),
+# and the delimiter character is one of '<' or '>' , the token identifier
+# IO_LOCATION may result; if the result is not IO_LOCATION , the token
+# identifier TOKEN shall result.
 
 # We test that a digit immediately preceding a redirection is parsed as the
 # IO_NUMBER token (file descriptor), not as a separate word/command.
@@ -35,19 +36,23 @@ assert_exit_code_non_zero \
 # ==============================================================================
 # Assignment Parsing Rules
 # ==============================================================================
-# REQUIREMENT: SHALL-2-10-2-415: [Assignment preceding command name] [When the
-# first word] If the TOKEN is exactly a reserved word, the token identifier for
-# that reserved word shall result.
-# REQUIREMENT: SHALL-2-10-2-416: Otherwise, 7b shall be applied.
-# REQUIREMENT: SHALL-2-10-2-417: [Not the first word] If the TOKEN contains an
-# unquoted (as determined while applying rule 4 from 2.3 Token Recognition )
-# <equals-sign> character that is not part of an embedded parameter expansion,
-# command substitution, or arithmetic expansion construct (as determined while
-# applying rule 5 from 2.3 Token Recognition ): If the TOKEN begins with '=' ,
-# then the token WORD shall be returned.
-# REQUIREMENT: SHALL-2-10-2-418: If all the characters in the TOKEN preceding
-# the first such <equals-sign> form a valid name (see XBD 3.216 Name ), the
-# token ASSIGNMENT_WORD shall be returned.
+# REQUIREMENT: SHALL-2-10-2-415:
+# [Assignment preceding command name] [When the first word] If the TOKEN is
+# exactly a reserved word, the token identifier for that reserved word shall
+# result.
+# REQUIREMENT: SHALL-2-10-2-416:
+# Otherwise, 7b shall be applied.
+# REQUIREMENT: SHALL-2-10-2-417:
+# [Not the first word] If the TOKEN contains an unquoted (as determined while
+# applying rule 4 from 2.3 Token Recognition ) <equals-sign> character that is
+# not part of an embedded parameter expansion, command substitution, or
+# arithmetic expansion construct (as determined while applying rule 5 from 2.3
+# Token Recognition ): If the TOKEN begins with '=' , then the token WORD shall
+# be returned.
+# REQUIREMENT: SHALL-2-10-2-418:
+# If all the characters in the TOKEN preceding the first such <equals-sign>
+# form a valid name (see XBD 3.216 Name ), the token ASSIGNMENT_WORD shall be
+# returned.
 
 # A valid assignment prefix correctly scopes to the command.
 test_cmd='var=1 env | grep -q "^var=1$" && echo "assigned"'
@@ -68,13 +73,14 @@ assert_exit_code_non_zero \
 # ==============================================================================
 # "in" and "do" parsing in Loops
 # ==============================================================================
-# REQUIREMENT: SHALL-2-10-2-409: [ NAME in for ] When the TOKEN meets the
-# requirements for a name (see XBD 3.216 Name ), the token identifier NAME shall
-# result.
-# REQUIREMENT: SHALL-2-10-2-404: Otherwise, the token WORD shall be returned.
-# REQUIREMENT: SHALL-2-10-2-413: [ for only] When the TOKEN is exactly the
-# reserved word in or do , the token identifier for in or do shall result,
-# respectively.
+# REQUIREMENT: SHALL-2-10-2-409:
+# [ NAME in for ] When the TOKEN meets the requirements for a name (see XBD
+# 3.216 Name ), the token identifier NAME shall result.
+# REQUIREMENT: SHALL-2-10-2-404:
+# Otherwise, the token WORD shall be returned.
+# REQUIREMENT: SHALL-2-10-2-413:
+# [ for only] When the TOKEN is exactly the reserved word in or do , the token
+# identifier for in or do shall result, respectively.
 
 # The name must be a valid identifier. If it is not, it should syntax error.
 test_cmd='for 1invalid in a; do echo $1invalid; done'
@@ -89,12 +95,14 @@ assert_stdout "a" \
 # ==============================================================================
 # "case" statement parsing
 # ==============================================================================
-# REQUIREMENT: SHALL-2-10-2-407: [Case statement termination] When the TOKEN is
-# exactly the reserved word esac , the token identifier for esac shall result.
-# REQUIREMENT: SHALL-2-10-2-404: Otherwise, the token WORD shall be returned.
-# REQUIREMENT: SHALL-2-10-2-411: [Third word of for and case ] [ case only] When
-# the TOKEN is exactly the reserved word in , the token identifier for in shall
-# result.
+# REQUIREMENT: SHALL-2-10-2-407:
+# [Case statement termination] When the TOKEN is exactly the reserved word esac
+# , the token identifier for esac shall result.
+# REQUIREMENT: SHALL-2-10-2-404:
+# Otherwise, the token WORD shall be returned.
+# REQUIREMENT: SHALL-2-10-2-411:
+# [Third word of for and case ] [ case only] When the TOKEN is exactly the
+# reserved word in , the token identifier for in shall result.
 
 # Case statement needs `in` and `esac`.
 test_cmd='
