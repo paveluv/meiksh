@@ -46,25 +46,72 @@ c" \
 # clause terminated by ";;" is reached and its compound-list (if any) executed
 # or there are no further clauses in the case statement.
 
+# Test ;; termination (SHALL-2-9-4-3-358)
 test_cmd='
 case "xyz" in
     abc) echo no ;;
     xyz) echo yes ;;
-    *) echo default
+    *) echo default ;;
 esac
 '
-# Fallthrough ;& is not supported in basic POSIX shell! Wait, wait, is it?
-# Actually ;& is Bash/Zsh only? Let's check POSIX. Wait, ;& WAS ADDED IN POSIX
-# 2024?
-# Wait, let's just assert that it fails if it's not supported, or assert
-# something else.
-# No, let's just make it a comment and not test its success since `/bin/sh`
-# fails it on macOS (bash 3.2).
-# Wait, /bin/sh -c 'case x in x) echo a ;& *) echo b esac' -> syntax error: `&'
-# unexpected.
-# I'll just check if it exits non-zero (if not supported) OR prints yes (if
-# supported).
-# Actually, I'll just remove the test and leave the comment.
+assert_stdout "yes" \
+    "$TARGET_SHELL -c '$test_cmd'"
+
+# Test pattern expansion in case labels (SHALL-2-9-4-3-359)
+test_cmd='
+X=hello
+case "hello" in
+    $X) echo matched ;;
+    *) echo nomatch ;;
+esac
+'
+assert_stdout "matched" \
+    "$TARGET_SHELL -c '$test_cmd'"
+
+# Pattern with command substitution in case label
+test_cmd='
+case "3" in
+    $(echo 3)) echo three ;;
+    *) echo other ;;
+esac
+'
+assert_stdout "three" \
+    "$TARGET_SHELL -c '$test_cmd'"
+
+# Pattern with arithmetic expansion in case label
+test_cmd='
+case "6" in
+    $((2+4))) echo six ;;
+    *) echo other ;;
+esac
+'
+assert_stdout "six" \
+    "$TARGET_SHELL -c '$test_cmd'"
+
+# Test ;& fallthrough (SHALL-2-9-4-3-362) — POSIX.1-2024 feature
+# Note: ;& was added in POSIX Issue 8 (2024). Shells that don't support it
+# will fail this test, which is correct — they are non-conformant to Issue 8.
+_out=$($TARGET_SHELL -c 'case a in a) echo first ;& b) echo second ;; c) echo third ;; esac' 2>/dev/null)
+case "$_out" in
+    "first
+second")
+        pass ;;
+    "first")
+        fail "case ;& fallthrough did not execute subsequent clause" ;;
+    *)
+        fail "case ;& test produced unexpected output: $(echo "$_out" | head -1)" ;;
+esac
+
+# ;& should fall through multiple clauses until ;;
+_out=$($TARGET_SHELL -c 'case x in x) echo one ;& y) echo two ;& z) echo three ;; w) echo four ;; esac' 2>/dev/null)
+case "$_out" in
+    "one
+two
+three")
+        pass ;;
+    *)
+        fail "case ;& multi-fallthrough expected one/two/three, got: $(echo "$_out" | tr '\n' '/')" ;;
+esac
 
 # ==============================================================================
 # Syntax Spacing

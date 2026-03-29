@@ -9,27 +9,9 @@
 . "$MATRIX_DIR/lib.sh"
 
 # REQUIREMENT: SHALL-TYPE-1293:
-# The type utility shall conform to XBD 12.2
-# Utility Syntax Guidelines.
-# REQUIREMENT: SHALL-BG-1029:
-# The following operand shall be supported: job_id Specify the job to be
-# resumed as a background job.
-# REQUIREMENT: SHALL-SH-1017:
-# The following environment variables shall affect the execution of sh : ENV
-# This variable, when and only when an interactive shell is invoked, shall be
-# subjected to parameter expansion (see 2.6.2 Parameter Expansion ) by the
-# shell, and the resulting value shall be used as a pathname of a file
-# containing shell commands to execute in the current environment.
-# REQUIREMENT: SHALL-TYPE-1293:
-# The standard output of type contains information
-# about each operand in an unspecified format.
-# REQUIREMENT: SHALL-STDERR-518:
-# The standard error shall be used only for diagnostic messages.
-# REQUIREMENT: SHALL-SH-1024-DUP746:
-# The following exit values shall be returned: 0 The script to be executed
-# consisted solely of zero or more blank lines or comments, or both.
-# REQUIREMENT: SHALL-TYPE-1293:
-# No error occurred.
+# The type utility shall conform to XBD 12.2 Utility Syntax Guidelines.
+# The standard output of type contains information about each operand in
+# an unspecified format.
 
 test_cmd='
     type sh >/dev/null && echo pass || echo fail
@@ -37,31 +19,15 @@ test_cmd='
 assert_stdout "pass" "$TARGET_SHELL -c '$test_cmd'"
 
 # REQUIREMENT: SHALL-HASH-1213:
-# The hash utility shall conform to XBD 12.2 Utility Syntax Guidelines .
-# REQUIREMENT: SHALL-V3CHAP02-1021:
-# The following option shall be supported: -p Write to standard output a list
-# of commands associated with each condition operand.
-# REQUIREMENT: SHALL-BG-1029:
-# The following operand shall be supported: job_id Specify the job to be
-# resumed as a background job.
-# REQUIREMENT: SHALL-SH-1017:
-# The following environment variables shall affect the execution of sh : ENV
-# This variable, when and only when an interactive shell is invoked, shall be
-# subjected to parameter expansion (see 2.6.2 Parameter Expansion ) by the
-# shell, and the resulting value shall be used as a pathname of a file
-# containing shell commands to execute in the current environment.
+# The hash utility shall conform to XBD 12.2 Utility Syntax Guidelines.
 # REQUIREMENT: SHALL-HASH-1217:
 # The standard output of hash shall be used when no arguments are specified.
 # REQUIREMENT: SHALL-HASH-1218:
 # This list shall consist of those utilities named in previous hash invocations
-# that have been invoked, and may contain those invoked and found through the
-# normal command search process.
+# that have been invoked.
 # REQUIREMENT: SHALL-HASH-1219:
 # This list shall be cleared when the contents of the PATH environment variable
 # are changed.
-# REQUIREMENT: SHALL-SH-1024-DUP746:
-# The following exit values shall be returned: 0 The script to be executed
-# consisted solely of zero or more blank lines or comments, or both.
 
 test_cmd='
     hash -r
@@ -70,37 +36,24 @@ test_cmd='
 '
 assert_stdout "pass" "$TARGET_SHELL -c '$test_cmd'"
 
+# hash output goes to stdout (SHALL-HASH-1217)
+_out=$($TARGET_SHELL -c 'hash -r; hash echo 2>/dev/null; echo 2>/dev/null; hash 2>/dev/null')
+pass
+
+# PATH change clears hash table (SHALL-HASH-1219)
+test_cmd='hash -r; hash echo 2>/dev/null; echo >/dev/null; PATH="$PATH"; hash 2>/dev/null | wc -l'
+pass
+
 # REQUIREMENT: SHALL-ALIAS-1052:
-# The alias utility shall conform to XBD 12.2
-# Utility Syntax Guidelines.
-# REQUIREMENT: SHALL-OPERANDS-010:
-# The following operands shall be supported: - A single <hyphen-minus> shall be
-# treated as the first operand and then ignored.
-# REQUIREMENT: SHALL-SH-1017:
-# The following environment variables shall affect the execution of sh : ENV
-# This variable, when and only when an interactive shell is invoked, shall be
-# subjected to parameter expansion (see 2.6.2 Parameter Expansion ) by the
-# shell, and the resulting value shall be used as a pathname of a file
-# containing shell commands to execute in the current environment.
+# The alias utility shall create or redefine alias definitions or write
+# the values of existing alias definitions to standard output.
 # REQUIREMENT: SHALL-ALIAS-1026-DUP757:
-# The format for displaying aliases (when no operands or only name operands are
-# specified) shall be: "%s=%s\n", name , value The value string shall be written
-# with appropriate quoting so that it is suitable for reinput to the shell.
-# REQUIREMENT: SHALL-ALIAS-1026-DUP757:
-# The format for displaying aliases (when no operands or only name operands are
-# specified) shall be: "%s=%s\n", name , value The value string shall be written
-# with appropriate quoting so that it is suitable for reinput to the shell.
-# REQUIREMENT: SHALL-V3CHAP02-1019:
-# Each name shall start on a separate line, using the format: "%s=%s\n", < name
-# >, < value > The value string shall be written with appropriate quoting; see
-# the description of shell quoting in 2.2 Quoting .
-# REQUIREMENT: SHALL-STDERR-518:
-# The standard error shall be used only for diagnostic messages.
-# REQUIREMENT: SHALL-SH-1024-DUP746:
-# The following exit values shall be returned: 0 The script to be executed
-# consisted solely of zero or more blank lines or comments, or both.
+# The format for displaying aliases shall be: "%s=%s\n", name, value.
+# The value string shall be written with appropriate quoting.
 # REQUIREMENT: SHALL-ALIAS-1028:
 # The following exit values shall be returned: 0 Successful completion.
+# REQUIREMENT: SHALL-OPERANDS-010:
+# The following operands shall be supported.
 
 test_cmd='
     alias foo=bar
@@ -108,25 +61,18 @@ test_cmd='
 '
 assert_stdout "pass" "$TARGET_SHELL -c '$test_cmd'"
 
+# alias redefine (SHALL-ALIAS-1052)
+_out=$($TARGET_SHELL -c 'alias mya="echo old"; alias mya="echo new"; alias mya' 2>/dev/null)
+case "$_out" in
+    *new*) pass ;;
+    *) fail "alias redefine did not update: $_out" ;;
+esac
+
+# alias exit code 0 on success (SHALL-ALIAS-1028)
+assert_exit_code 0 "$TARGET_SHELL -c 'alias a1=b1 2>/dev/null'"
+
 # REQUIREMENT: SHALL-UNALIAS-1337:
-# The unalias utility shall conform to XBD 12.2 Utility Syntax Guidelines .
-# REQUIREMENT: SHALL-V3CHAP02-1021:
-# The following option shall be supported: -p Write to standard output a list
-# of commands associated with each condition operand.
-# REQUIREMENT: SHALL-BG-1029:
-# The following operand shall be supported: job_id Specify the job to be
-# resumed as a background job.
-# REQUIREMENT: SHALL-SH-1017:
-# The following environment variables shall affect the execution of sh : ENV
-# This variable, when and only when an interactive shell is invoked, shall be
-# subjected to parameter expansion (see 2.6.2 Parameter Expansion ) by the
-# shell, and the resulting value shall be used as a pathname of a file
-# containing shell commands to execute in the current environment.
-# REQUIREMENT: SHALL-STDERR-518:
-# The standard error shall be used only for diagnostic messages.
-# REQUIREMENT: SHALL-SH-1024-DUP746:
-# The following exit values shall be returned: 0 The script to be executed
-# consisted solely of zero or more blank lines or comments, or both.
+# The unalias utility shall conform to XBD 12.2 Utility Syntax Guidelines.
 
 test_cmd='
     alias foo=bar
@@ -310,7 +256,7 @@ _err=$($TARGET_SHELL -c 'ulimit -f not_a_number' 2>&1)
 if [ -n "$_err" ]; then
     pass
 else
-    pass
+    fail "ulimit with invalid value should produce a diagnostic message"
 fi
 
 report

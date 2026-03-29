@@ -9,6 +9,9 @@
 # ==============================================================================
 # trap -p output format
 # ==============================================================================
+# REQUIREMENT: SHALL-V3CHAP02-1021:
+# The following option shall be supported: -p Write to standard output a list
+# of commands associated with each condition operand.
 # REQUIREMENT: SHALL-V3CHAP02-1020-DUP577:
 # trap -p output format: "trap -- %s %s ...\n", <action>, <condition>
 

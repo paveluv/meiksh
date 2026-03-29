@@ -307,25 +307,58 @@ case "$actual" in
         ;;
 esac
 
-report
-
 # ==============================================================================
-# Additional Parameters
+# ENV Processing (interactive shell)
 # ==============================================================================
 # REQUIREMENT: SHALL-2-5-3-078:
 # This variable, when and only when an interactive shell is invoked, shall be
-# subjected to parameter expansion (see 2.6.2 Parameter Expansion ) by the shell
-# and the resulting value shall be used as a pathname of a file.
+# subjected to parameter expansion by the shell and the resulting value shall
+# be used as a pathname of a file.
 # REQUIREMENT: SHALL-2-5-3-079:
-# Before any interactive commands are read, the shell shall tokenize (see 2.3
-# Token Recognition ) the contents of the file, parse the tokens as a program
-# (see 2.10 Shell Grammar ), and execute the resulting commands in the current
-# environment. (In other words, the contents of the ENV file are not parsed as a
-# single compound_list .
+# Before any interactive commands are read, the shell shall tokenize the
+# contents of the file, parse the tokens as a program, and execute the
+# resulting commands in the current environment.
+
+# Create an ENV file that sets a marker variable
+_env_file="${TMPDIR:-/tmp}/_test_env_$$"
+echo 'ENVMARKER=loaded' > "$_env_file"
+
+# ENV is subjected to parameter expansion: use a variable to set the path
+_out=$($TARGET_SHELL -c "
+    EFILE=$_env_file; export EFILE
+    ENV=\$EFILE; export ENV
+    $TARGET_SHELL -i -c 'echo \$ENVMARKER' 2>/dev/null
+")
+case "$_out" in
+    *loaded*) pass ;;
+    *) fail "ENV file not processed for interactive shell: got '$_out'" ;;
+esac
+rm -f "$_env_file"
+
 # REQUIREMENT: SHALL-2-5-3-080:
 # ENV shall be ignored if the user's real and effective user IDs or real and
 # effective group IDs are different.
+# Cannot test SUID behavior in this test environment — just verify it doesn't
+# crash when ENV is set to a valid file with normal permissions
+_env_file2="${TMPDIR:-/tmp}/_test_env2_$$"
+echo 'echo env_ran' > "$_env_file2"
+assert_exit_code 0 "$TARGET_SHELL -c 'ENV=$_env_file2 $TARGET_SHELL -c true 2>/dev/null'"
+rm -f "$_env_file2"
+
 # REQUIREMENT: SHALL-2-5-3-083:
 # Changing the value of LC_CTYPE after the shell has started shall not affect
 # the lexical processing of shell commands in the current shell execution
 # environment or its subshells.
+
+# Setting LC_CTYPE mid-script should not break lexical processing
+test_cmd='
+LC_CTYPE=C; export LC_CTYPE
+echo "hello world"
+LC_CTYPE=POSIX; export LC_CTYPE
+echo "still works"
+'
+assert_stdout "hello world
+still works" \
+    "$TARGET_SHELL -c '$test_cmd'"
+
+report

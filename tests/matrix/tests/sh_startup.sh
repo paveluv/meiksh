@@ -53,11 +53,10 @@ assert_stdout "from_stdin" \
 _env_file="$TEST_TMP/env_startup.sh"
 echo 'ENV_LOADED=yes' > "$_env_file"
 _result=$($TARGET_SHELL -c "ENV=$_env_file; export ENV; $TARGET_SHELL -i -c 'echo \$ENV_LOADED'" 2>/dev/null)
-if [ "$_result" = "yes" ]; then
-    pass
-else
-    pass
-fi
+case "$_result" in
+    *yes*) pass ;;
+    *) fail "ENV file not processed for interactive shell: got '$_result'" ;;
+esac
 
 # ==============================================================================
 # Empty command_string exits zero
