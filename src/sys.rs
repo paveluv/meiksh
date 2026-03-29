@@ -214,7 +214,7 @@ pub(crate) fn default_interface() -> SystemInterface {
         umask: |cmask| unsafe { libc::umask(cmask) },
         times: |buffer| unsafe { libc::times(buffer) },
         sysconf: |name| unsafe { libc::sysconf(name) },
-        execvp: |file, argv| unsafe { libc::execvp(file, argv) },
+        execvp: |file, argv| unsafe { libc::execvp(file, argv) }, // LCOV_EXCL_LINE: replaces process
         open: |path, flags, mode| unsafe { libc::open(path, flags, mode as c_int) },
         write: |fd, data| unsafe { libc::write(fd, data.as_ptr().cast(), data.len()) },
         stat: |path, buf| unsafe { libc::stat(path, buf) },
@@ -281,8 +281,8 @@ pub(crate) fn default_interface() -> SystemInterface {
             }
             map
         },
-        tcgetattr: |fd, termios_p| unsafe { libc::tcgetattr(fd, termios_p) },
-        tcsetattr: |fd, action, termios_p| unsafe { libc::tcsetattr(fd, action, termios_p) },
+        tcgetattr: |fd, termios_p| unsafe { libc::tcgetattr(fd, termios_p) }, // LCOV_EXCL_LINE: requires terminal
+        tcsetattr: |fd, action, termios_p| unsafe { libc::tcsetattr(fd, action, termios_p) }, // LCOV_EXCL_LINE: requires terminal
         getpwnam: |name| {
             let c_name = CString::new(name).ok()?;
             let pw = unsafe { libc::getpwnam(c_name.as_ptr()) };
@@ -2158,6 +2158,8 @@ pub fn exec_replace(file: &str, argv: &[String]) -> SysResult<()> {
     let mut pointers: Vec<*const c_char> = owned.iter().map(|arg| arg.as_ptr()).collect();
     pointers.push(std::ptr::null());
 
+    #[cfg(coverage)]
+    flush_coverage();
     let result = (sys_interface().execvp)(c_file.as_ptr(), pointers.as_ptr());
     if result == -1 {
         Err(last_error())

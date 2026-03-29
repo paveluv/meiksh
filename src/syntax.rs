@@ -2406,4 +2406,38 @@ mod tests {
         let error = parse("echo ${VAR:-`unterminated}").expect_err("unterminated bt in brace");
         assert_eq!(error.message, "unterminated backquote");
     }
+
+    #[test]
+    fn backslash_newline_continuation() {
+        let program = parse("echo hel\\\nlo").expect("parse continuation");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.words.len() == 2 && cmd.words[1].raw == "hello"
+        ));
+    }
+
+    #[test]
+    fn if_empty_condition_is_parse_error() {
+        let error = parse("if then fi").expect_err("empty if condition");
+        assert!(error.message.contains("expected command list after 'if'"));
+    }
+
+    #[test]
+    fn elif_empty_condition_is_parse_error() {
+        let error =
+            parse("if true; then true; elif then true; fi").expect_err("empty elif condition");
+        assert!(error.message.contains("expected command list after 'elif'"));
+    }
+
+    #[test]
+    fn while_empty_condition_is_parse_error() {
+        let error = parse("while do true; done").expect_err("empty while condition");
+        assert!(error.message.contains("expected command list after 'while'"));
+    }
+
+    #[test]
+    fn until_empty_condition_is_parse_error() {
+        let error = parse("until do true; done").expect_err("empty until condition");
+        assert!(error.message.contains("expected command list after 'until'"));
+    }
 }
