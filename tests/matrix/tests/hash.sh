@@ -52,11 +52,11 @@ assert_exit_code_non_zero \
 
 # After hashing, the shell should be able to find the utility via its
 # remembered path rather than re-searching PATH.
-test_cmd='hash -r; hash echo 2>/dev/null; hash 2>&1'
+test_cmd='hash -r; hash ls 2>/dev/null; hash 2>&1'
 _out=$($TARGET_SHELL -c "$test_cmd" 2>&1)
 case "$_out" in
-    *echo*) pass ;;
-    *) fail "Expected 'echo' in hash output after 'hash echo', got: $_out" ;;
+    *ls*) pass ;;
+    *) fail "Expected 'ls' in hash output after 'hash ls', got: $_out" ;;
 esac
 
 # ==============================================================================

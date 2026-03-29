@@ -160,13 +160,13 @@ fi
 # except that the limit value format is as specified.
 
 # ulimit -a output lines should each contain a limit value (numeric or unlimited)
-_bad_lines=$($TARGET_SHELL -c 'ulimit -a' | while IFS= read -r line; do
+_bad_lines=`$TARGET_SHELL -c 'ulimit -a' | while IFS= read -r line; do
     case "$line" in
         *unlimited*|*[0-9]*) ;;
         "") ;;
         *) echo "bad: $line" ;;
     esac
-done)
+done`
 if [ -z "$_bad_lines" ]; then
     pass
 else

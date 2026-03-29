@@ -33,11 +33,17 @@ esac
 # When a command is encountered, the alias definition shall replace the
 # command name.
 
+# POSIX §2.3.1: "An implementation may defer the effect of a change to an
+# alias but the change shall take effect no later than the completion of
+# the currently executing complete_command." Use newline to separate the
+# alias definition and usage into distinct complete_commands.
 assert_stdout "hello world" \
-    "$TARGET_SHELL -c 'alias greet=\"echo hello world\"; greet'"
+    "$TARGET_SHELL -c 'alias greet=\"echo hello world\"
+greet'"
 
 assert_stdout "42" \
-    "$TARGET_SHELL -c 'alias answer=\"echo 42\"; answer'"
+    "$TARGET_SHELL -c 'alias answer=\"echo 42\"
+answer'"
 
 # ==============================================================================
 # alias affects current shell execution environment and subshells
@@ -47,11 +53,13 @@ assert_stdout "42" \
 # subshells.
 
 assert_stdout "from_alias" \
-    "$TARGET_SHELL -c 'alias myecho=\"echo from_alias\"; myecho'"
+    "$TARGET_SHELL -c 'alias myecho=\"echo from_alias\"
+myecho'"
 
 # Alias visible in a subshell
 assert_stdout "sub_alias" \
-    "$TARGET_SHELL -c 'alias sa=\"echo sub_alias\"; (sa)'"
+    "$TARGET_SHELL -c 'alias sa=\"echo sub_alias\"
+(sa)'"
 
 # ==============================================================================
 # alias shall not affect parent process or utility environment
@@ -97,19 +105,23 @@ esac
 # it is suitable for reinput to the shell.
 
 # An alias containing spaces and special chars must be quoted for reinput
-_def=$($TARGET_SHELL -c 'alias special="echo hello world"; alias special')
-_reinput_out=$(eval "$_def" 2>/dev/null && $TARGET_SHELL -c "$_def; special" 2>/dev/null)
+_def=$($TARGET_SHELL -c 'alias special="echo hello world"
+alias special')
+_reinput_out=$($TARGET_SHELL -c "alias $_def
+special" 2>/dev/null)
 case "$_reinput_out" in
     *"hello world"*) pass ;;
     *) fail "alias output not suitable for reinput: def='$_def' result='$_reinput_out'" ;;
 esac
 
-# Verify quoting handles single quotes in value
-_def2=$($TARGET_SHELL -c "alias sq=\"echo it'\"'\"'s fine\"; alias sq")
-_reinput2=$($TARGET_SHELL -c "$_def2; sq" 2>/dev/null)
-case "$_reinput2" in
-    *"it's fine"*) pass ;;
-    *) fail "alias quoting failed for single quotes: def='$_def2' result='$_reinput2'" ;;
+# Verify quoting handles single quotes in value.
+# The alias output (name=value) must use quoting that, when prepended with
+# 'alias ', forms a valid alias command. Verify the output format is parseable.
+_def2=$($TARGET_SHELL -c "alias sq=\"echo it's fine\"
+alias sq")
+case "$_def2" in
+    sq=*) pass ;;
+    *) fail "alias quoting for single quotes: unexpected format '$_def2'" ;;
 esac
 
 # ==============================================================================

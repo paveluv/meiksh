@@ -40,12 +40,16 @@ assert_stdout "hello world" \
     "printf 'hello\\ world\n' | $TARGET_SHELL -c 'read var; echo \"\$var\"'"
 
 # Backslash-backslash produces a single backslash.
-assert_stdout 'a\b' \
-    "printf 'a\\\\\\\\b\n' | $TARGET_SHELL -c 'read var; echo \"\$var\"'"
+# Input: a\\b (a + backslash + backslash + b). read without -r: \\ → \, result: a\b.
+# Use printf for both input and output to avoid bash echo interpreting backslashes.
+_out=$($TARGET_SHELL -c 'printf "%s\n" "a\\\\b" | { read var; printf "%s" "$var"; }' 2>/dev/null)
+_exp=$(printf '%s' 'a\b')
+if [ "$_out" = "$_exp" ]; then pass; else fail "read backslash-backslash: expected 'a\\b', got '$_out'"; fi
 
 # Backslash before a regular character removes the backslash.
-assert_stdout "ab" \
-    "printf 'a\\\\b\n' | $TARGET_SHELL -c 'read var; echo \"\$var\"'"
+# Input: a\b (a + backslash + b). read without -r removes backslash, result: ab.
+_out=$($TARGET_SHELL -c 'printf "%s\n" "a\\b" | { read var; printf "%s" "$var"; }' 2>/dev/null)
+if [ "$_out" = "ab" ]; then pass; else fail "read backslash-char: expected 'ab', got '$_out'"; fi
 
 # REQUIREMENT: SHALL-READ-1262:
 # If excepted character follows backslash, read interprets as line continuation.
@@ -63,16 +67,18 @@ assert_stdout "helloworld" \
 # read shall conform to XBD 12.2 Utility Syntax Guidelines.
 
 # With -r, backslashes are treated literally.
-assert_stdout 'hello\world' \
-    "printf 'hello\\\\world\n' | $TARGET_SHELL -c 'read -r var; echo \"\$var\"'"
+_out=$($TARGET_SHELL -c 'printf "%s\n" "hello\\world" | { read -r var; printf "%s" "$var"; }' 2>/dev/null)
+_exp=$(printf '%s' 'hello\world')
+if [ "$_out" = "$_exp" ]; then pass; else fail "read -r backslash: expected 'hello\\world', got '$_out'"; fi
 
 # With -r, backslash-newline does NOT join lines.
 assert_stdout 'hello\' \
     "printf 'hello\\\\\nworld\n' | $TARGET_SHELL -c 'read -r var; echo \"\$var\"'"
 
 # With -r, backslash-backslash is preserved as two backslashes.
-assert_stdout 'a\\b' \
-    "printf 'a\\\\\\\\b\n' | $TARGET_SHELL -c 'read -r var; echo \"\$var\"'"
+_out=$($TARGET_SHELL -c 'printf "%s\n" "a\\\\b" | { read -r var; printf "%s" "$var"; }' 2>/dev/null)
+_exp=$(printf '%s' 'a\\b')
+if [ "$_out" = "$_exp" ]; then pass; else fail "read -r backslash-backslash: expected 'a\\\\b', got '$_out'"; fi
 
 # ==============================================================================
 # Field Splitting with Default IFS
@@ -190,7 +196,7 @@ assert_stdout "hello:world" \
     "$TARGET_SHELL -c 'echo \"hello world\" | { read a b; echo \"\$a:\$b\"; }'"
 
 # read in a while loop affects the current shell (when not in a pipeline subshell).
-assert_stdout "done:last" \
+assert_stdout "done:" \
     "$TARGET_SHELL -c '
         val=init
         while read val; do :; done <<EOF
@@ -280,8 +286,9 @@ assert_stdout "entire line" \
 # read shall conform to XBD 12.2 Utility Syntax Guidelines.
 
 # -r with custom IFS: backslashes are literal AND splitting occurs on IFS.
-assert_stdout 'a\b:c' \
-    "printf 'a\\\\b:c\n' | $TARGET_SHELL -c 'IFS=: read -r x y; echo \"\$x:\$y\"'"
+_out=$($TARGET_SHELL -c 'printf "%s\n" "a\\b:c" | { IFS=: read -r x y; printf "%s:%s" "$x" "$y"; }' 2>/dev/null)
+_exp=$(printf '%s:%s' 'a\b' 'c')
+if [ "$_out" = "$_exp" ]; then pass; else fail "read -r IFS backslash: expected 'a\\b:c', got '$_out'"; fi
 
 # -r with multiple fields.
 assert_stdout 'one:two:three four' \

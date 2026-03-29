@@ -79,9 +79,13 @@ assert_stdout "real" \
 # to exit. With 'command' prefix, the shell should not exit.
 # 'export' is a special built-in. An invalid assignment should not abort
 # the shell when prefixed with 'command'.
-test_cmd='command export 2>/dev/null; echo survived'
-assert_stdout "survived" \
-    "$TARGET_SHELL -c '$test_cmd'"
+# Note: 'command export' with no args may write all exports to stdout,
+# so we check that the output contains 'survived' rather than exact match.
+_out=$($TARGET_SHELL -c 'command export 2>/dev/null; echo survived' 2>/dev/null)
+case "$_out" in
+    *survived*) pass ;;
+    *) fail "Expected output to contain 'survived' after 'command export', got: $_out" ;;
+esac
 
 # 'command break' outside a loop: without command, break is a special built-in
 # error that may exit the shell. With command, the shell should survive.

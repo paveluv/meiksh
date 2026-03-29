@@ -62,7 +62,14 @@ assert_exit_code 0 "$TARGET_SHELL -c 'trap \"\" INT'"
 # Invalid signal names/numbers shall not be considered a syntax error and
 # shall not cause the shell to abort.
 
-assert_exit_code_non_zero "$TARGET_SHELL -c 'trap \"\" INVALID_SIGNAL_NAME_XYZ; echo still_running'"
+# trap with invalid signal shall return non-zero, but the shell must continue.
+# Check that trap itself fails (exit >0) while the shell still runs.
+_out_trap=$($TARGET_SHELL -c 'trap "" INVALID_SIGNAL_NAME_XYZ 2>/dev/null; echo "rc=$?"')
+case "$_out_trap" in
+    *rc=0*) fail "trap with invalid signal returned 0, expected non-zero" ;;
+    *rc=*) pass ;;
+    *) fail "trap with invalid signal: unexpected output '$_out_trap'" ;;
+esac
 
 # Verify shell doesn't abort on invalid signal
 _out5=$($TARGET_SHELL -c 'trap "" INVALID_SIGNAL_NAME_XYZ 2>/dev/null; echo survived')
