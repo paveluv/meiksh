@@ -1,8 +1,11 @@
-# Test: printf — Write Formatted Output
-# Target: tests/matrix/tests/printf_extended.sh
+# Test: Maybe-Builtin — printf (Write Formatted Output)
+# Target: tests/matrix/tests/maybe_builtins_printf.sh
 #
-# Tests the printf utility for formatted output per POSIX specification.
-# Covers format operands, escape sequences, conversion specifiers,
+# printf is a standalone POSIX utility that shells commonly implement as
+# a regular built-in. POSIX Section 1.6 permits this. It is NOT a special
+# built-in (2.15) or intrinsic utility (1.7).
+#
+# Tests cover format operands, escape sequences, conversion specifiers,
 # argument processing, and error handling.
 
 . "$MATRIX_DIR/lib.sh"

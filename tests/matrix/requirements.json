@@ -9093,7 +9093,8 @@
     "text": "The echo utility shall not recognize the \"--\" argument in the manner specified by Guideline 10 of XBD 12.2 Utility Syntax Guidelines ; \"--\" shall be recognized as a string operand.",
     "file": "echo",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-OPERANDS-5001",
@@ -9101,7 +9102,8 @@
     "text": "The following operands shall be supported: string A string to be written to standard output.",
     "file": "echo",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-OPERANDS-5002",
@@ -9109,7 +9111,8 @@
     "text": "If the first operand consists of a '-' followed by one or more characters from the set { 'e' , 'E' , 'n' }, or if any of the operands contain a <backslash> character, the results are implementation-defined. [ XSI ] On XSI-conformant systems, if the first operand consists of a '-' followed by one or more characters from the set { 'e' , 'E' , 'n' }, it shall be treated as a string to be written.",
     "file": "echo",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-OPERANDS-5003",
@@ -9117,7 +9120,8 @@
     "text": "The following character sequences shall be recognized on XSI-conformant systems within any of the arguments: \\a Write an <alert>.",
     "file": "echo",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-OPERANDS-5004",
@@ -9125,7 +9129,8 @@
     "text": "All characters following the '\\c' in the arguments shall be ignored.",
     "file": "echo",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-ENVIRONMENT-VARIABLES-5005",
@@ -9133,7 +9138,8 @@
     "text": "The following environment variables shall affect the execution of echo : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables.",
     "file": "echo",
     "testable": false,
-    "untestable_reason": "locale: boilerplate locale environment variables"
+    "untestable_reason": "locale: boilerplate locale environment variables",
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-STDOUT-5006",
@@ -9141,7 +9147,8 @@
     "text": "The echo utility arguments shall be separated by single <space> characters and a <newline> character shall follow the last argument. [ XSI ] Output transformations shall occur based on the escape sequences in the input.",
     "file": "echo",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-ISSUE-6-5007",
@@ -9149,7 +9156,8 @@
     "text": "In the OPTIONS section, implementations shall not support any options.",
     "file": "echo",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-DESCRIPTION-5008",
@@ -9157,7 +9165,8 @@
     "text": "The env utility shall obtain the current environment, modify it according to its arguments, then invoke the utility named by the utility operand with the modified environment.",
     "file": "env",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-DESCRIPTION-5009",
@@ -9165,7 +9174,8 @@
     "text": "Optional arguments shall be passed to utility .",
     "file": "env",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-DESCRIPTION-5010",
@@ -9173,7 +9183,8 @@
     "text": "If no utility operand is specified, the resulting environment shall be written to the standard output, with one name = value pair per line.",
     "file": "env",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-OPTIONS-5011",
@@ -9181,7 +9192,8 @@
     "text": "The env utility shall conform to XBD 12.2 Utility Syntax Guidelines , except for the unspecified usage of '-' .",
     "file": "env",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-OPTIONS-5012",
@@ -9189,7 +9201,8 @@
     "text": "The following options shall be supported: -i Invoke utility with exactly the environment specified by the arguments; the inherited environment shall be ignored completely.",
     "file": "env",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-OPERANDS-5013",
@@ -9197,7 +9210,8 @@
     "text": "The following operands shall be supported: name = value Arguments of the form name = value shall modify the execution environment, and shall be placed into the inherited environment before the utility is invoked.",
     "file": "env",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-ENVIRONMENT-VARIABLES-5014",
@@ -9205,7 +9219,8 @@
     "text": "The following environment variables shall affect the execution of env : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables.",
     "file": "env",
     "testable": false,
-    "untestable_reason": "locale: boilerplate locale environment variables"
+    "untestable_reason": "locale: boilerplate locale environment variables",
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-ENVIRONMENT-VARIABLES-5015",
@@ -9213,7 +9228,8 @@
     "text": "If PATH is specified as a name = value operand to env , the value given shall be used in the search for utility .",
     "file": "env",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-STDOUT-5016",
@@ -9221,7 +9237,8 @@
     "text": "If no utility operand is specified, each name = value pair in the resulting environment shall be written in the form: \"%s=%s\\n\", < name >, < value > If the utility operand is specified, the env utility shall not write to standard output.",
     "file": "env",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXIT-STATUS-5017",
@@ -9229,7 +9246,8 @@
     "text": "If utility is invoked, the exit status of env shall be the exit status of utility ; otherwise, the env utility shall exit with one of the following values: 0 The env utility completed successfully.",
     "file": "env",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-DESCRIPTION-5018",
@@ -9237,7 +9255,8 @@
     "text": "The false utility shall return with a non-zero exit code.",
     "file": "false",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXIT-STATUS-5019",
@@ -9245,7 +9264,8 @@
     "text": "The false utility shall always exit with a value between 1 and 125, inclusive.",
     "file": "false",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-DESCRIPTION-5020",
@@ -9253,7 +9273,8 @@
     "text": "The printf utility shall write formatted operands to the standard output.",
     "file": "printf",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-DESCRIPTION-5021",
@@ -9261,7 +9282,8 @@
     "text": "The argument operands shall be formatted under control of the format operand.",
     "file": "printf",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-OPERANDS-5022",
@@ -9269,7 +9291,8 @@
     "text": "The following operands shall be supported: format A character string describing the format to use to write the remaining operands.",
     "file": "printf",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-ENVIRONMENT-VARIABLES-5023",
@@ -9277,7 +9300,8 @@
     "text": "The following environment variables shall affect the execution of printf : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables.",
     "file": "printf",
     "testable": false,
-    "untestable_reason": "locale: boilerplate locale environment variables"
+    "untestable_reason": "locale: boilerplate locale environment variables",
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-ENVIRONMENT-VARIABLES-5024",
@@ -9285,7 +9309,8 @@
     "text": "It shall affect the format of numbers written using the e , E , f , g , and G conversion specifier characters (if supported).",
     "file": "printf",
     "testable": false,
-    "untestable_reason": "locale: boilerplate locale environment variables"
+    "untestable_reason": "locale: boilerplate locale environment variables",
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXTENDED-DESCRIPTION-5025",
@@ -9293,7 +9318,8 @@
     "text": "The application shall ensure that the format operand is a character string, beginning and ending in its initial shift state, if any.",
     "file": "printf",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXTENDED-DESCRIPTION-5026",
@@ -9301,7 +9327,8 @@
     "text": "The format operand shall be used as the format string described in XBD 5.",
     "file": "printf",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXTENDED-DESCRIPTION-5027",
@@ -9309,15 +9336,17 @@
     "text": "File Format Notation with the following exceptions: A <space> in the format string, in any context other than a flag of a conversion specification, shall be treated as an ordinary character that is copied to the output.",
     "file": "printf",
     "testable": false,
-    "untestable_reason": "format-notation: describes XBD 5 File Format Notation exceptions, meta-requirement"
+    "untestable_reason": "format-notation: describes XBD 5 File Format Notation exceptions, meta-requirement",
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXTENDED-DESCRIPTION-5028",
     "section": "EXTENDED-DESCRIPTION",
-    "text": "A 'Δ' character in the format string shall be treated as a 'Δ' character, not as a <space>.",
+    "text": "A '\u0394' character in the format string shall be treated as a '\u0394' character, not as a <space>.",
     "file": "printf",
     "testable": false,
-    "untestable_reason": "format-notation: delta character handling, implementation-specific"
+    "untestable_reason": "format-notation: delta character handling, implementation-specific",
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXTENDED-DESCRIPTION-5029",
@@ -9325,7 +9354,8 @@
     "text": "File Format Notation ( '\\\\' , '\\a' , '\\b' , '\\f' , '\\n' , '\\r' , '\\t' , '\\v' ), \"\\ddd\" , where ddd is a one, two, or three-digit octal number, shall be written as a byte with the numeric value specified by the octal number.",
     "file": "printf",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXTENDED-DESCRIPTION-5030",
@@ -9333,7 +9363,8 @@
     "text": "The implementation shall not precede or follow output from the d or u conversion specifiers with <blank> characters not specified by the format operand.",
     "file": "printf",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXTENDED-DESCRIPTION-5031",
@@ -9341,7 +9372,8 @@
     "text": "The implementation shall not precede output from the o conversion specifier with zeros not specified by the format operand.",
     "file": "printf",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXTENDED-DESCRIPTION-5032",
@@ -9349,7 +9381,8 @@
     "text": "An additional conversion specifier character, b , shall be supported as follows.",
     "file": "printf",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXTENDED-DESCRIPTION-5033",
@@ -9357,7 +9390,8 @@
     "text": "The argument shall be taken to be a string that can contain <backslash>-escape sequences.",
     "file": "printf",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXTENDED-DESCRIPTION-5034",
@@ -9365,7 +9399,8 @@
     "text": "The following <backslash>-escape sequences shall be supported: The escape sequences listed in XBD 5.",
     "file": "printf",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXTENDED-DESCRIPTION-5035",
@@ -9373,7 +9408,8 @@
     "text": "File Format Notation ( '\\\\' , '\\a' , '\\b' , '\\f' , '\\n' , '\\r' , '\\t' , '\\v' ), which shall be converted to the characters they represent.",
     "file": "printf",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXTENDED-DESCRIPTION-5036",
@@ -9381,7 +9417,8 @@
     "text": "\"\\0ddd\" , where ddd is a zero, one, two, or three-digit octal number that shall be converted to a byte with the numeric value specified by the octal number.",
     "file": "printf",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXTENDED-DESCRIPTION-5037",
@@ -9389,7 +9426,8 @@
     "text": "'\\c' , which shall not be written and shall cause printf to ignore any remaining characters in the string operand containing it, any remaining string operands, and any additional characters in the format operand.",
     "file": "printf",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXTENDED-DESCRIPTION-5038",
@@ -9397,7 +9435,8 @@
     "text": "Bytes from the converted string shall be written until the end of the string or the number of bytes indicated by the precision specification is reached.",
     "file": "printf",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXTENDED-DESCRIPTION-5039",
@@ -9405,7 +9444,8 @@
     "text": "If the precision is omitted, it shall be taken to be infinite, so all bytes up to the end of the converted string shall be written.",
     "file": "printf",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXTENDED-DESCRIPTION-5040",
@@ -9413,7 +9453,8 @@
     "text": "For each conversion specification that consumes an argument, an argument operand shall be evaluated and converted to the appropriate type for the conversion as specified below.",
     "file": "printf",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXTENDED-DESCRIPTION-5041",
@@ -9421,7 +9462,8 @@
     "text": "The operand to be evaluated shall be determined as follows: If the conversion specification begins with a \"% n $\" sequence, the n th argument operand shall be evaluated.",
     "file": "printf",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXTENDED-DESCRIPTION-5042",
@@ -9429,7 +9471,8 @@
     "text": "Otherwise, the evaluated operand shall be the next argument operand after the one evaluated by the previous conversion specification that consumed an argument; if there is no such previous conversion specification the first argument operand shall be evaluated.",
     "file": "printf",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXTENDED-DESCRIPTION-5043",
@@ -9437,7 +9480,8 @@
     "text": "The format operand shall be reused as often as necessary to satisfy the argument operands.",
     "file": "printf",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXTENDED-DESCRIPTION-5044",
@@ -9445,7 +9489,8 @@
     "text": "If conversion specifications beginning with a \"% n $\" sequence are used, on format reuse the value of n shall refer to the n th argument operand following the highest numbered argument operand consumed by the previous use of the format operand.",
     "file": "printf",
     "testable": false,
-    "untestable_reason": "optional-feature"
+    "untestable_reason": "optional-feature",
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXTENDED-DESCRIPTION-5045",
@@ -9453,7 +9498,8 @@
     "text": "If it is an unnumbered argument conversion specification, any extra b , c , or s conversion specifiers shall be evaluated as if a null string argument were supplied and any other extra conversion specifiers shall be evaluated as if a zero argument were supplied.",
     "file": "printf",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXTENDED-DESCRIPTION-5046",
@@ -9461,7 +9507,8 @@
     "text": "If it contains one or more bytes, the first byte shall be written and any additional bytes shall be ignored.",
     "file": "printf",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXTENDED-DESCRIPTION-5047",
@@ -9469,7 +9516,8 @@
     "text": "The argument operands shall be treated as strings if the corresponding conversion specifier is b , c , or s , and shall be evaluated as if by the strtod () function if the corresponding conversion specifier is a , A , e , E , f , F , g , or G .",
     "file": "printf",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXTENDED-DESCRIPTION-5048",
@@ -9477,7 +9525,8 @@
     "text": "Otherwise, they shall be evaluated as unsuffixed C integer constants, as described by the ISO C standard, with the following extensions: A leading <plus-sign> or <hyphen-minus> shall be allowed.",
     "file": "printf",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXTENDED-DESCRIPTION-5049",
@@ -9485,7 +9534,8 @@
     "text": "If the leading character is a single-quote or double-quote, the value shall be the numeric value in the underlying codeset of the character following the single-quote or double-quote.",
     "file": "printf",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXTENDED-DESCRIPTION-5050",
@@ -9493,7 +9543,8 @@
     "text": "If an argument operand cannot be completely converted into an internal value appropriate to the corresponding conversion specification, a diagnostic message shall be written to standard error and the utility shall not exit with a zero exit status, but shall continue processing any remaining operands and shall write the value accumulated at the time the error was detected to standard output.",
     "file": "printf",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXTENDED-DESCRIPTION-5051",
@@ -9501,7 +9552,8 @@
     "text": "It shall not be considered an error if an argument operand is not completely used for a b , c , or s conversion.",
     "file": "printf",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-APPLICATION-USAGE-5052",
@@ -9509,7 +9561,8 @@
     "text": "Thus, overflow and extraneous characters at the end of an argument being used for a numeric conversion shall be reported as errors.",
     "file": "printf",
     "testable": false,
-    "untestable_reason": "application-usage: informational note about overflow behavior, not a normative shall"
+    "untestable_reason": "application-usage: informational note about overflow behavior, not a normative shall",
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-DESCRIPTION-5053",
@@ -9517,7 +9570,8 @@
     "text": "The pwd utility shall write to standard output an absolute pathname of the current working directory, which does not contain the filenames dot or dot-dot.",
     "file": "pwd",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-OPTIONS-5054",
@@ -9525,7 +9579,8 @@
     "text": "The pwd utility shall conform to XBD 12.2 Utility Syntax Guidelines .",
     "file": "pwd",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-OPTIONS-5055",
@@ -9533,7 +9588,8 @@
     "text": "The following options shall be supported by the implementation: -L If the PWD environment variable contains an absolute pathname of the current directory and the pathname does not contain any components that are dot or dot-dot, pwd shall write this pathname to standard output, except that if the PWD environment variable is longer than {PATH_MAX} bytes including the terminating null, it is unspecified whether pwd writes this pathname to standard output or behaves as if the -P option had been specified.",
     "file": "pwd",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-OPTIONS-5056",
@@ -9541,7 +9597,8 @@
     "text": "Otherwise, the -L option shall behave as the -P option.",
     "file": "pwd",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-OPTIONS-5057",
@@ -9549,7 +9606,8 @@
     "text": "-P The pathname written to standard output shall not contain any components that refer to files of type symbolic link.",
     "file": "pwd",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-OPTIONS-5058",
@@ -9557,7 +9615,8 @@
     "text": "If there are multiple pathnames that the pwd utility could write to standard output, one beginning with a single <slash> character and one or more beginning with two <slash> characters, then it shall write the pathname beginning with a single <slash> character.",
     "file": "pwd",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-OPTIONS-5059",
@@ -9565,7 +9624,8 @@
     "text": "The pathname shall not contain any unnecessary <slash> characters after the leading one or two <slash> characters.",
     "file": "pwd",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-OPTIONS-5060",
@@ -9573,7 +9633,8 @@
     "text": "If both -L and -P are specified, the last one shall apply.",
     "file": "pwd",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-OPTIONS-5061",
@@ -9581,7 +9642,8 @@
     "text": "If neither -L nor -P is specified, the pwd utility shall behave as if -L had been specified.",
     "file": "pwd",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-ENVIRONMENT-VARIABLES-5062",
@@ -9589,7 +9651,8 @@
     "text": "The following environment variables shall affect the execution of pwd : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables.",
     "file": "pwd",
     "testable": false,
-    "untestable_reason": "locale: boilerplate locale environment variables"
+    "untestable_reason": "locale: boilerplate locale environment variables",
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-STDERR-5063",
@@ -9597,7 +9660,8 @@
     "text": "The pwd utility output is an absolute pathname of the current working directory: \"%s\\n\", < directory pathname > STDERR  The standard error shall be used only for diagnostic messages.",
     "file": "pwd",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-CONSEQUENCES-OF-ERRORS-5064",
@@ -9605,7 +9669,8 @@
     "text": "If an error is detected other than a write error when writing to standard output, no output shall be written to standard output, a diagnostic message shall be written to standard error, and the exit status shall be non-zero.",
     "file": "pwd",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-DESCRIPTION-5065",
@@ -9613,7 +9678,8 @@
     "text": "The test utility shall evaluate the expression and indicate the result of the evaluation by its exit status.",
     "file": "test",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-DESCRIPTION-5066",
@@ -9621,7 +9687,8 @@
     "text": "In the second form of the utility, where the utility name used is [ rather than test , the application shall ensure that the closing square bracket is a separate argument.",
     "file": "test",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-DESCRIPTION-5067",
@@ -9629,7 +9696,8 @@
     "text": "Applications using the exec family of functions to execute these utilities shall ensure that the argument passed in arg0 or argv [0] is '[' when executing the [ utility and has a basename of \"test\" when executing the test utility.",
     "file": "test",
     "testable": false,
-    "untestable_reason": "application-usage"
+    "untestable_reason": "application-usage",
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-OPTIONS-5068",
@@ -9637,7 +9705,8 @@
     "text": "The test utility shall not recognize the \"--\" argument in the manner specified by Guideline 10 in XBD 12.2 Utility Syntax Guidelines .",
     "file": "test",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-OPTIONS-5069",
@@ -9645,7 +9714,8 @@
     "text": "No options shall be supported.",
     "file": "test",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-OPERANDS-5070",
@@ -9653,7 +9723,8 @@
     "text": "The application shall ensure that all operators and elements of primaries are presented as separate arguments to the test utility.",
     "file": "test",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-OPERANDS-5071",
@@ -9661,7 +9732,8 @@
     "text": "With the exception of the -h pathname and -L pathname primaries, if a pathname , pathname1 , or pathname2 argument is a symbolic link, test shall evaluate the expression by resolving the symbolic link and using the file referenced by the link.",
     "file": "test",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-OPERANDS-5072",
@@ -9669,7 +9741,8 @@
     "text": "They shall be of the form - operator where the first character of operator is not a digit.",
     "file": "test",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-OPERANDS-5073",
@@ -9677,7 +9750,8 @@
     "text": "The algorithm for determining the precedence of the operators and the return value that shall be generated is based on the number of arguments presented to test . (However, when using the \"[...]\" form, the <right-square-bracket> final argument shall not be counted in this algorithm.)",
     "file": "test",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-ENVIRONMENT-VARIABLES-5074",
@@ -9685,7 +9759,8 @@
     "text": "The following environment variables shall affect the execution of test : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables.",
     "file": "test",
     "testable": false,
-    "untestable_reason": "locale-boilerplate"
+    "untestable_reason": "locale-boilerplate",
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-EXIT-STATUS-5075",
@@ -9693,7 +9768,8 @@
     "text": "The following exit values shall be returned: 0 expression evaluated to true.",
     "file": "test",
     "testable": true,
-    "untestable_reason": null
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   },
   {
     "id": "SHALL-DESCRIPTION-5076",
@@ -9701,750 +9777,7 @@
     "text": "The true utility shall return with exit code zero.",
     "file": "true",
     "testable": true,
-    "untestable_reason": null
-  },
-  {
-    "id": "SHALL-DESCRIPTION-5077",
-    "section": "DESCRIPTION",
-    "text": "The stty utility shall set or report on terminal I/O characteristics for the device that is its standard input.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-DESCRIPTION-5078",
-    "section": "DESCRIPTION",
-    "text": "Without options or operands specified, it shall report the settings of certain characteristics, usually those that differ from implementation-defined defaults.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-DESCRIPTION-5079",
-    "section": "DESCRIPTION",
-    "text": "Otherwise, it shall modify the terminal state according to the specified operands.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-OPTIONS-5080",
-    "section": "OPTIONS",
-    "text": "The stty utility shall conform to XBD 12.2 Utility Syntax Guidelines .",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-OPTIONS-5081",
-    "section": "OPTIONS",
-    "text": "The following options shall be supported: -a Write to standard output all the current settings for the terminal.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-OPTIONS-5082",
-    "section": "OPTIONS",
-    "text": "The form used shall not contain any sequence that would form an Informational Query, and shall consist of one line of text consisting of only printable characters from the portable character set, excluding white-space characters (other than the terminating <newline>) and these characters that could be altered by pathname expansion performed by the shell: '*' , '?' , and '[' .",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-OPERANDS-5083",
-    "section": "OPERANDS",
-    "text": "The following operands shall be supported.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-CONTROL-MODES-5084",
-    "section": "Control-Modes",
-    "text": "This shall have the effect of setting (not setting) PARENB in the termios c_cflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-CONTROL-MODES-5085",
-    "section": "Control-Modes",
-    "text": "This shall have the effect of setting (not setting) PARODD in the termios c_cflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-CONTROL-MODES-5086",
-    "section": "Control-Modes",
-    "text": "This shall have the effect of setting CS5, CS6, CS7, and CS8, respectively, in the termios c_cflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-CONTROL-MODES-5087",
-    "section": "Control-Modes",
-    "text": "If the baud rate is set to zero, the modem control lines shall no longer be asserted.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-CONTROL-MODES-5088",
-    "section": "Control-Modes",
-    "text": "This shall have the effect of setting the input and output termios baud rate values as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-CONTROL-MODES-5089",
-    "section": "Control-Modes",
-    "text": "If the input baud rate is set to zero, the input baud rate shall be specified by the value of the output baud rate.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-CONTROL-MODES-5090",
-    "section": "Control-Modes",
-    "text": "This shall have the effect of setting the input termios baud rate value as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-CONTROL-MODES-5091",
-    "section": "Control-Modes",
-    "text": "If the output baud rate is set to zero, the modem control lines shall no longer be asserted.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-CONTROL-MODES-5092",
-    "section": "Control-Modes",
-    "text": "This shall have the effect of setting the output termios baud rate value as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-CONTROL-MODES-5093",
-    "section": "Control-Modes",
-    "text": "This shall have the effect of setting (not setting) HUPCL in the termios c_cflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-CONTROL-MODES-5094",
-    "section": "Control-Modes",
-    "text": "This shall have the effect of setting (not setting) CSTOPB in the termios c_cflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-CONTROL-MODES-5095",
-    "section": "Control-Modes",
-    "text": "This shall have the effect of setting (not setting) CREAD in the termios c_cflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-CONTROL-MODES-5096",
-    "section": "Control-Modes",
-    "text": "This shall have the effect of setting (not setting) CLOCAL in the termios c_cflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-CONTROL-MODES-5097",
-    "section": "Control-Modes",
-    "text": "It is unspecified whether stty shall report an error if an attempt to set a Control Mode fails.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-INPUT-MODES-5098",
-    "section": "Input-Modes",
-    "text": "This shall have the effect of setting (not setting) IGNBRK in the termios c_iflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-INPUT-MODES-5099",
-    "section": "Input-Modes",
-    "text": "This shall have the effect of setting (not setting) BRKINT in the termios c_iflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-INPUT-MODES-5100",
-    "section": "Input-Modes",
-    "text": "This shall have the effect of setting (not setting) IGNPAR in the termios c_iflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-INPUT-MODES-5101",
-    "section": "Input-Modes",
-    "text": "This shall have the effect of setting (not setting) PARMRK in the termios c_iflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-INPUT-MODES-5102",
-    "section": "Input-Modes",
-    "text": "This shall have the effect of setting (not setting) INPCK in the termios c_iflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-INPUT-MODES-5103",
-    "section": "Input-Modes",
-    "text": "This shall have the effect of setting (not setting) ISTRIP in the termios c_iflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-INPUT-MODES-5104",
-    "section": "Input-Modes",
-    "text": "This shall have the effect of setting (not setting) INLCR in the termios c_iflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-INPUT-MODES-5105",
-    "section": "Input-Modes",
-    "text": "This shall have the effect of setting (not setting) IGNCR in the termios c_iflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-INPUT-MODES-5106",
-    "section": "Input-Modes",
-    "text": "This shall have the effect of setting (not setting) ICRNL in the termios c_iflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-INPUT-MODES-5107",
-    "section": "Input-Modes",
-    "text": "This shall have the effect of setting (not setting) IXON in the termios c_iflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-INPUT-MODES-5108",
-    "section": "Input-Modes",
-    "text": "This shall have the effect of setting (not setting) IXANY in the termios c_iflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-INPUT-MODES-5109",
-    "section": "Input-Modes",
-    "text": "This shall have the effect of setting (not setting) IXOFF in the termios c_iflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-OUTPUT-MODES-5110",
-    "section": "Output-Modes",
-    "text": "This shall have the effect of setting (not setting) OPOST in the termios c_oflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-OUTPUT-MODES-5111",
-    "section": "Output-Modes",
-    "text": "This shall have the effect of setting (not setting) ONLCR in the termios c_oflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-OUTPUT-MODES-5112",
-    "section": "Output-Modes",
-    "text": "This shall have the effect of setting (not setting) OCRNL in the termios c_oflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-OUTPUT-MODES-5113",
-    "section": "Output-Modes",
-    "text": "This shall have the effect of setting (not setting) ONOCR in the termios c_oflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-OUTPUT-MODES-5114",
-    "section": "Output-Modes",
-    "text": "This shall have the effect of setting (not setting) ONLRET in the termios c_oflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-OUTPUT-MODES-5115",
-    "section": "Output-Modes",
-    "text": "This shall have the effect of setting (not setting) OFILL in the termios c_oflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-OUTPUT-MODES-5116",
-    "section": "Output-Modes",
-    "text": "This shall have the effect of setting (not setting) OFDEL in the termios c_oflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-OUTPUT-MODES-5117",
-    "section": "Output-Modes",
-    "text": "This shall have the effect of setting CRDLY to CR0, CR1, CR2, or CR3, respectively, in the termios c_oflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-OUTPUT-MODES-5118",
-    "section": "Output-Modes",
-    "text": "This shall have the effect of setting NLDLY to NL0 or NL1, respectively, in the termios c_oflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-OUTPUT-MODES-5119",
-    "section": "Output-Modes",
-    "text": "This shall have the effect of setting TABDLY to TAB0, TAB1, TAB2, or TAB3, respectively, in the termios c_oflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-OUTPUT-MODES-5120",
-    "section": "Output-Modes",
-    "text": "This shall have the effect of setting BSDLY to BS0 or BS1, respectively, in the termios c_oflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-OUTPUT-MODES-5121",
-    "section": "Output-Modes",
-    "text": "This shall have the effect of setting FFDLY to FF0 or FF1, respectively, in the termios c_oflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-OUTPUT-MODES-5122",
-    "section": "Output-Modes",
-    "text": "This shall have the effect of setting VTDLY to VT0 or VT1, respectively, in the termios c_oflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-LOCAL-MODES-5123",
-    "section": "Local-Modes",
-    "text": "This shall have the effect of setting (not setting) ISIG in the termios c_lflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-LOCAL-MODES-5124",
-    "section": "Local-Modes",
-    "text": "This shall have the effect of setting (not setting) ICANON in the termios c_lflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-LOCAL-MODES-5125",
-    "section": "Local-Modes",
-    "text": "This shall have the effect of setting (not setting) IEXTEN in the termios c_lflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-LOCAL-MODES-5126",
-    "section": "Local-Modes",
-    "text": "This shall have the effect of setting (not setting) ECHO in the termios c_lflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-LOCAL-MODES-5127",
-    "section": "Local-Modes",
-    "text": "This shall have the effect of setting (not setting) ECHOE in the termios c_lflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-LOCAL-MODES-5128",
-    "section": "Local-Modes",
-    "text": "This shall have the effect of setting (not setting) ECHOK in the termios c_lflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-LOCAL-MODES-5129",
-    "section": "Local-Modes",
-    "text": "This shall have the effect of setting (not setting) ECHONL in the termios c_lflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-LOCAL-MODES-5130",
-    "section": "Local-Modes",
-    "text": "This shall have the effect of setting (not setting) NOFLSH in the termios c_lflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-LOCAL-MODES-5131",
-    "section": "Local-Modes",
-    "text": "This shall have the effect of setting (not setting) TOSTOP in the termios c_lflag field, as defined in XBD 11.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-SPECIAL-CONTROL-CHARACTER-ASSIGNMENTS-5132",
-    "section": "Special-Control-Character-Assignments",
-    "text": "General Terminal Interface control character from the second column shall be recognized.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-SPECIAL-CONTROL-CHARACTER-ASSIGNMENTS-5133",
-    "section": "Special-Control-Character-Assignments",
-    "text": "If string is a single character, the control character shall be set to that character.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-SPECIAL-CONTROL-CHARACTER-ASSIGNMENTS-5134",
-    "section": "Special-Control-Character-Assignments",
-    "text": "If string is the two-character sequence \"^-\" or the string undef , the control character shall be set to _POSIX_VDISABLE , if it is in effect for the device; if _POSIX_VDISABLE is not in effect for the device, it shall be treated as an error.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-SPECIAL-CONTROL-CHARACTER-ASSIGNMENTS-5135",
-    "section": "Special-Control-Character-Assignments",
-    "text": "In the POSIX locale, if string is a two-character sequence beginning with <circumflex> ( '^' ), and the second character is one of those listed in the \"^c\" column of the following table, the control character shall be set to the corresponding character value in the Value column of the table.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-COMBINATION-MODES-5136",
-    "section": "Combination-Modes",
-    "text": "Raw mode shall be equivalent to setting: stty cs8 erase ^- kill ^- intr ^- \\ quit ^- eof ^- eol ^- -post -inpck",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-TERMINAL-WINDOW-SIZE-5137",
-    "section": "Terminal-Window-Size",
-    "text": "The terminal window size shall be updated as if the stty utility calls tcgetwinsize () to populate a winsize structure, updates one or both of the ws_row and ws_col members according to the rows and cols numbers specified, and then calls tcsetwinsize () with the updated structure (see XSH tcgetwinsize () and tcsetwinsize () ).",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-STDIN-5138",
-    "section": "STDIN",
-    "text": "Although no input is read from standard input, standard input shall be used to get the current terminal I/O characteristics and to set new terminal I/O characteristics.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-ENVIRONMENT-VARIABLES-5139",
-    "section": "ENVIRONMENT-VARIABLES",
-    "text": "The following environment variables shall affect the execution of stty : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-STDOUT-5140",
-    "section": "STDOUT",
-    "text": "If operands are specified and they do not include any Informational Queries, no output shall be produced.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-STDOUT-5141",
-    "section": "STDOUT",
-    "text": "If the size operand is specified, stty shall write to standard output the terminal window size as follows: \"%1dΔ%1d\\n\", < rows >, < columns > where < rows > and < columns > are the number of rows and columns in the terminal window size, respectively.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-STDOUT-5142",
-    "section": "STDOUT",
-    "text": "If the -g option is specified, stty shall write to standard output the current settings in a form that can be used as arguments to another instance of stty on the same system.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-STDOUT-5143",
-    "section": "STDOUT",
-    "text": "If the -a option is specified, all of the information as described in the OPERANDS section shall be written to standard output.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-STDOUT-5144",
-    "section": "STDOUT",
-    "text": "Unless otherwise specified, this information shall be written as <space>-separated tokens in an unspecified format, on one or more lines, with an unspecified number of tokens per line.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-STDOUT-5145",
-    "section": "STDOUT",
-    "text": "If no options or operands are specified, an unspecified subset of the information written for the -a option shall be written.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-STDOUT-5146",
-    "section": "STDOUT",
-    "text": "If speed information is written as part of the default output, or if the -a option is specified and if the terminal input speed and output speed are the same, the speed information shall be written as follows: \"speed %d baud;\", < speed >",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-STDOUT-5147",
-    "section": "STDOUT",
-    "text": "Otherwise, speeds shall be written as: \"ispeed %d baud; ospeed %d baud;\", < ispeed >, < ospeed > In locales other than the POSIX locale, the word baud may be changed to something more appropriate in those locales.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-STDOUT-5148",
-    "section": "STDOUT",
-    "text": "If control characters are written as part of the default output, or if the -a option is specified, control characters shall be written as: \"%s = %s;\", < control-character name >, < value > where < value > is either the character, or some visual representation of the character if it is non-printable, or the string \"<undef>\" if the character is disabled.",
-    "file": "stty",
-    "testable": false,
-    "untestable_reason": "external-utility: stty is not a shell builtin"
-  },
-  {
-    "id": "SHALL-DESCRIPTION-5149",
-    "section": "DESCRIPTION",
-    "text": "The newgrp utility shall create a new shell execution environment with a new real and effective group identification.",
-    "file": "newgrp",
-    "testable": false,
-    "untestable_reason": "external-utility: newgrp is not a shell builtin"
-  },
-  {
-    "id": "SHALL-DESCRIPTION-5150",
-    "section": "DESCRIPTION",
-    "text": "Of the attributes listed in 2.13 Shell Execution Environment , the new shell execution environment shall retain the working directory, file creation mask, and exported variables from the previous environment (that is, open files, traps, unexported variables, alias definitions, shell functions, and set options may be lost).",
-    "file": "newgrp",
-    "testable": false,
-    "untestable_reason": "external-utility: newgrp is not a shell builtin"
-  },
-  {
-    "id": "SHALL-DESCRIPTION-5151",
-    "section": "DESCRIPTION",
-    "text": "All other aspects of the process environment that are preserved by the exec family of functions defined in the System Interfaces volume of POSIX.1-2024 shall also be preserved by newgrp ; whether other aspects are preserved is unspecified.",
-    "file": "newgrp",
-    "testable": false,
-    "untestable_reason": "external-utility: newgrp is not a shell builtin"
-  },
-  {
-    "id": "SHALL-DESCRIPTION-5152",
-    "section": "DESCRIPTION",
-    "text": "A failure to assign the new group identifications (for example, for security or password-related reasons) shall not prevent the new shell execution environment from being created.",
-    "file": "newgrp",
-    "testable": false,
-    "untestable_reason": "external-utility: newgrp is not a shell builtin"
-  },
-  {
-    "id": "SHALL-DESCRIPTION-5153",
-    "section": "DESCRIPTION",
-    "text": "The newgrp utility shall affect the supplemental groups for the process as follows: On systems where the effective group ID is normally in the supplementary group list (or whenever the old effective group ID actually is in the supplementary group list): If the new effective group ID is also in the supplementary group list, newgrp shall change the effective group ID.",
-    "file": "newgrp",
-    "testable": false,
-    "untestable_reason": "external-utility: newgrp is not a shell builtin"
-  },
-  {
-    "id": "SHALL-DESCRIPTION-5154",
-    "section": "DESCRIPTION",
-    "text": "If the new effective group ID is not in the supplementary group list, newgrp shall add the new effective group ID to the list, if there is room to add it.",
-    "file": "newgrp",
-    "testable": false,
-    "untestable_reason": "external-utility: newgrp is not a shell builtin"
-  },
-  {
-    "id": "SHALL-DESCRIPTION-5155",
-    "section": "DESCRIPTION",
-    "text": "On systems where the effective group ID is not normally in the supplementary group list (or whenever the old effective group ID is not in the supplementary group list): If the new effective group ID is in the supplementary group list, newgrp shall delete it.",
-    "file": "newgrp",
-    "testable": false,
-    "untestable_reason": "external-utility: newgrp is not a shell builtin"
-  },
-  {
-    "id": "SHALL-DESCRIPTION-5156",
-    "section": "DESCRIPTION",
-    "text": "If the old effective group ID is not in the supplementary list, newgrp shall add it if there is room.",
-    "file": "newgrp",
-    "testable": false,
-    "untestable_reason": "external-utility: newgrp is not a shell builtin"
-  },
-  {
-    "id": "SHALL-DESCRIPTION-5157",
-    "section": "DESCRIPTION",
-    "text": "With no operands, newgrp shall change the effective group back to the groups identified in the user's user entry, and shall set the list of supplementary groups to that set in the user's group database entries.",
-    "file": "newgrp",
-    "testable": false,
-    "untestable_reason": "external-utility: newgrp is not a shell builtin"
-  },
-  {
-    "id": "SHALL-DESCRIPTION-5158",
-    "section": "DESCRIPTION",
-    "text": "If a password is required for the specified group, and the user is not listed as a member of that group in the group database, the user shall be prompted to enter the correct password for that group.",
-    "file": "newgrp",
-    "testable": false,
-    "untestable_reason": "external-utility: newgrp is not a shell builtin"
-  },
-  {
-    "id": "SHALL-DESCRIPTION-5159",
-    "section": "DESCRIPTION",
-    "text": "If the user is listed as a member of that group, no password shall be requested.",
-    "file": "newgrp",
-    "testable": false,
-    "untestable_reason": "external-utility: newgrp is not a shell builtin"
-  },
-  {
-    "id": "SHALL-OPTIONS-5160",
-    "section": "OPTIONS",
-    "text": "The newgrp utility shall conform to XBD 12.2 Utility Syntax Guidelines , except for the unspecified usage of '-' .",
-    "file": "newgrp",
-    "testable": false,
-    "untestable_reason": "external-utility: newgrp is not a shell builtin"
-  },
-  {
-    "id": "SHALL-OPTIONS-5161",
-    "section": "OPTIONS",
-    "text": "The following option shall be supported: -l (The letter ell.) Change the environment to what would be expected if the user actually logged in again.",
-    "file": "newgrp",
-    "testable": false,
-    "untestable_reason": "external-utility: newgrp is not a shell builtin"
-  },
-  {
-    "id": "SHALL-OPERANDS-5162",
-    "section": "OPERANDS",
-    "text": "The following operand shall be supported: group A group name from the group database or a non-negative numeric group ID.",
-    "file": "newgrp",
-    "testable": false,
-    "untestable_reason": "external-utility: newgrp is not a shell builtin"
-  },
-  {
-    "id": "SHALL-OPERANDS-5163",
-    "section": "OPERANDS",
-    "text": "Specifies the group ID to which the real and effective group IDs shall be set.",
-    "file": "newgrp",
-    "testable": false,
-    "untestable_reason": "external-utility: newgrp is not a shell builtin"
-  },
-  {
-    "id": "SHALL-OPERANDS-5164",
-    "section": "OPERANDS",
-    "text": "If group is a non-negative numeric string and exists in the group database as a group name (see getgrnam () ), the numeric group ID associated with that group name shall be used as the group ID.",
-    "file": "newgrp",
-    "testable": false,
-    "untestable_reason": "external-utility: newgrp is not a shell builtin"
-  },
-  {
-    "id": "SHALL-INPUT-FILES-5165",
-    "section": "INPUT-FILES",
-    "text": "The file /dev/tty shall be used to read a single line of text for password checking, when one is required.",
-    "file": "newgrp",
-    "testable": false,
-    "untestable_reason": "external-utility: newgrp is not a shell builtin"
-  },
-  {
-    "id": "SHALL-ENVIRONMENT-VARIABLES-5166",
-    "section": "ENVIRONMENT-VARIABLES",
-    "text": "The following environment variables shall affect the execution of newgrp : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables.",
-    "file": "newgrp",
-    "testable": false,
-    "untestable_reason": "external-utility: newgrp is not a shell builtin"
-  },
-  {
-    "id": "SHALL-STDERR-5167",
-    "section": "STDERR",
-    "text": "The standard error shall be used for diagnostic messages and a prompt string for a password, if one is required.",
-    "file": "newgrp",
-    "testable": false,
-    "untestable_reason": "external-utility: newgrp is not a shell builtin"
-  },
-  {
-    "id": "SHALL-EXIT-STATUS-5168",
-    "section": "EXIT-STATUS",
-    "text": "If newgrp succeeds in creating a new shell execution environment, whether or not the group identification was changed successfully, the exit status shall be the exit status of the shell.",
-    "file": "newgrp",
-    "testable": false,
-    "untestable_reason": "external-utility: newgrp is not a shell builtin"
-  },
-  {
-    "id": "SHALL-EXIT-STATUS-5169",
-    "section": "EXIT-STATUS",
-    "text": "Otherwise, the following exit value shall be returned: >0 An error occurred.",
-    "file": "newgrp",
-    "testable": false,
-    "untestable_reason": "external-utility: newgrp is not a shell builtin"
+    "untestable_reason": null,
+    "category": "maybe-builtin"
   }
 ]
