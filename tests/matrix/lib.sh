@@ -92,7 +92,7 @@ assert_stderr_contains() {
 
 assert_pty_script() {
     _script="$1"
-    _expanded=$(printf '%s\n' "$_script" | sed "s|\$TARGET_SHELL|$TARGET_SHELL|g")
+    _expanded=$(printf '%s\n' "$_script" | sed "s|\$TARGET_SHELL|$TARGET_SHELL|g; s|^spawn |spawn PS1=\$\\\\s |")
     _output=$(printf '%s\n' "$_expanded" | "$MATRIX_DIR/expect_pty" 2>&1)
     _rc=$?
     if [ "$_rc" -eq 0 ]; then

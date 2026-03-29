@@ -68,7 +68,7 @@ struct PtySession {
 }
 
 impl PtySession {
-    fn spawn(argv: &[String]) -> io::Result<Self> {
+    fn spawn(argv: &[String], env_vars: &[(String, String)]) -> io::Result<Self> {
         if argv.is_empty() {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty argv"));
         }
@@ -113,8 +113,13 @@ impl PtySession {
             }
 
             if pid == 0 {
-                // Child — exec the command
-                let err = Command::new(&argv[0]).args(&argv[1..]).exec();
+                // Child — set env vars and exec the command
+                let mut cmd = Command::new(&argv[0]);
+                cmd.args(&argv[1..]);
+                for (k, v) in env_vars {
+                    cmd.env(k, v);
+                }
+                let err = cmd.exec();
                 eprintln!("expect_pty: exec failed: {err}");
                 std::process::exit(127);
             }
@@ -406,13 +411,27 @@ fn run_script(script_lines: &[String]) -> Result<(), String> {
                     return Err(format!("line {line_num}: spawn called twice"));
                 }
                 let expanded = expand_env(rest);
-                let argv: Vec<String> = expanded
+                let words: Vec<String> = expanded
                     .split_whitespace()
                     .map(String::from)
                     .collect();
+                let mut env_vars: Vec<(String, String)> = Vec::new();
+                let mut cmd_start = 0;
+                for (i, w) in words.iter().enumerate() {
+                    if let Some(eq) = w.find('=') {
+                        let key = w[..eq].to_string();
+                        let raw_val = &w[eq + 1..];
+                        let val = raw_val.replace("\\s", " ").replace("\\\\", "\\");
+                        env_vars.push((key, val));
+                        cmd_start = i + 1;
+                    } else {
+                        break;
+                    }
+                }
+                let argv = &words[cmd_start..];
                 log.push(format!(">>> spawn {}", expanded));
                 session = Some(
-                    PtySession::spawn(&argv)
+                    PtySession::spawn(argv, &env_vars)
                         .map_err(|e| format!("line {line_num}: spawn failed: {e}"))?,
                 );
             }

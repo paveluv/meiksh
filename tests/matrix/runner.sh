@@ -1,13 +1,21 @@
 #!/bin/sh
 
 # Test runner for POSIX compliance suite
-# Usage: ./tests/matrix/runner.sh [test-dir]
+# Usage: TARGET_SHELL=/path/to/sh ./tests/matrix/runner.sh [test-dir]
+#
+# Every test runs inside a clean environment (via env -i) so that host
+# settings—PS1, LANG, aliases, shell rc files—cannot affect results.
 
-# Get the absolute path of the matrix directory
 MATRIX_DIR="$(cd "$(dirname "$0")" && pwd)"
 TEST_DIR="${1:-$MATRIX_DIR/tests}"
 FAILED_TESTS=0
 PASSED_TESTS=0
+
+TARGET_SHELL="${TARGET_SHELL:-/bin/sh}"
+
+# Resolve the POSIX shell that is running this script.  We reuse it
+# (via env -i) to execute each test in a pristine environment.
+RUNNER_SHELL="$(command -v sh)"
 
 echo "Running POSIX Compliance Test Suite..."
 
@@ -17,44 +25,39 @@ if [ ! -d "$TEST_DIR" ]; then
 fi
 
 for test_script in "$TEST_DIR"/*.sh; do
-    if [ ! -f "$test_script" ]; then
-        continue
-    fi
-    
-    # test_script could be relative if passed as $1. Make it absolute:
+    [ -f "$test_script" ] || continue
+
     test_script_abs="$(cd "$(dirname "$test_script")" && pwd)/$(basename "$test_script")"
-    
+
     echo "--- Running $test_script ---"
-    
-    # Create isolated temporary directory
+
     TEST_TMP=$(mktemp -d)
-    
-    # Run test script in isolated subshell
-    (
-        cd "$TEST_TMP" || exit 1
-        
-        # Clear environment mostly
-        export PATH="/bin:/usr/bin"
-        
-        # We can pass the target shell to the test scripts
-        export TARGET_SHELL="${TARGET_SHELL:-/bin/sh}"
-        export MATRIX_DIR="$MATRIX_DIR"
-        
-        # Source library
-        . "$MATRIX_DIR/lib.sh"
-        
-        # Run test
-        . "$test_script_abs"
-        
-        # Call report if test script forgot to
-        report
-    )
-    
+
+    env -i \
+        PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin" \
+        HOME="$TEST_TMP" \
+        TMPDIR="$TEST_TMP" \
+        TERM="xterm" \
+        LANG="C" \
+        LC_ALL="C" \
+        PS1='$ ' \
+        PS2='> ' \
+        ENV="" \
+        HISTFILE="/dev/null" \
+        TARGET_SHELL="$TARGET_SHELL" \
+        MATRIX_DIR="$MATRIX_DIR" \
+        TEST_TMP="$TEST_TMP" \
+        "$RUNNER_SHELL" -c '
+            cd "$TEST_TMP" || exit 1
+            . "$MATRIX_DIR/lib.sh"
+            . "$1"
+            report
+        ' runner "$test_script_abs"
+
     EXIT_CODE=$?
-    
-    # Clean up isolated environment
+
     rm -rf "$TEST_TMP"
-    
+
     if [ $EXIT_CODE -eq 0 ]; then
         PASSED_TESTS=$((PASSED_TESTS + 1))
     else
