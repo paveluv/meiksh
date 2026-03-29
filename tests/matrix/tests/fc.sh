@@ -15,6 +15,24 @@
 # entered to an interactive sh.
 # REQUIREMENT: SHALL-FC-1129:
 # The command history list shall reference commands by number.
+# REQUIREMENT: SHALL-FC-1134:
+# The fc command itself shall not be entered into the history when listing.
+# REQUIREMENT: SHALL-FC-1043:
+# -e editor option.
+# REQUIREMENT: SHALL-FC-1044:
+# first/last operand description.
+# REQUIREMENT: SHALL-FC-1045:
+# Positive number as command number.
+# REQUIREMENT: SHALL-FC-1139:
+# FCEDIT default for -e.
+# REQUIREMENT: SHALL-FC-1149:
+# Editing multiple commands: all presented at once to the editor.
+# REQUIREMENT: SHALL-FC-1154:
+# FCEDIT environment variable.
+# REQUIREMENT: SHALL-FC-1164:
+# Exit status otherwise = that of re-executed commands.
+# REQUIREMENT: SHALL-FC-1135:
+# Non-zero editor exit shall suppress re-execution.
 # REQUIREMENT: SHALL-FC-1031:
 # When the -l option is used to list commands, the format of each command
 # in the list shall be as follows: "%d\t%s\n", <line number>, <command>
