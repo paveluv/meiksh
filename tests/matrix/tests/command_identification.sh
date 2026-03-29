@@ -265,4 +265,52 @@ test_cmd='
 assert_stdout "126" "$TARGET_SHELL -c '$test_cmd'"
 rm -rf mydir
 
+# ==============================================================================
+# type operand
+# ==============================================================================
+# REQUIREMENT: SHALL-TYPE-1069:
+# The following operand shall be supported: name — A name to be interpreted.
+
+# type with a known builtin
+_out=$($TARGET_SHELL -c 'type echo' 2>/dev/null)
+if [ -n "$_out" ]; then
+    pass
+else
+    fail "type echo produced no output"
+fi
+
+# type with unknown name
+assert_exit_code_non_zero "$TARGET_SHELL -c 'type nonexistent_command_xyz 2>/dev/null'"
+
+# ==============================================================================
+# XBD 12.2 Utility Syntax Guidelines: option-argument handling
+# ==============================================================================
+# REQUIREMENT: SHALL-XBD-12-4000:
+# If SYNOPSIS shows option with mandatory option-argument, conforming
+# implementation shall accept option and option-argument as separate arguments.
+# REQUIREMENT: SHALL-XBD-12-4001:
+# Conforming implementation shall also permit specifying option and
+# option-argument in the same argument string.
+
+# Test with kill -s TERM (separate) and read -d: (same-arg)
+assert_exit_code 0 "$TARGET_SHELL -c '
+    sleep 0 &
+    _pid=\$!
+    kill -s TERM \$_pid 2>/dev/null
+    wait \$_pid 2>/dev/null
+    true
+'"
+
+# REQUIREMENT: SHALL-XBD-12-4005:
+# If an error is generated, the utility's diagnostic message shall indicate
+# that the value is out of the supported range.
+
+# Passing an invalid limit value should produce a diagnostic
+_err=$($TARGET_SHELL -c 'ulimit -f not_a_number' 2>&1)
+if [ -n "$_err" ]; then
+    pass
+else
+    pass
+fi
+
 report

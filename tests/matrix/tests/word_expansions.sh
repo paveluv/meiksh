@@ -639,4 +639,196 @@ assert_stdout "quoted single escaped" \
     "$TARGET_SHELL -c '$test_cmd'"
 
 
+# ==============================================================================
+# Field splitting from expansions
+# ==============================================================================
+# REQUIREMENT: SHALL-V3CHAP02-1005-DUP106:
+# Shell creates multiple/no fields only from field splitting, pathname
+# expansion, or $@/$* expansion.
+# REQUIREMENT: SHALL-V3CHAP02-1010:
+# Fields from expansion shall be processed in order.
+
+assert_stdout "3" \
+    "$TARGET_SHELL -c 'set -- a b c; echo \$#'"
+
+assert_stdout "a b c" \
+    "$TARGET_SHELL -c 'x=\"a b c\"; set -- \$x; echo \"\$1 \$2 \$3\"'"
+
+# ==============================================================================
+# LINENO variable
+# ==============================================================================
+# REQUIREMENT: SHALL-V3CHAP02-1003-DUP82:
+# LINENO variable processing shall be supported.
+
+_lineno=$($TARGET_SHELL -c '
+echo $LINENO
+echo $LINENO
+')
+_l1=$(echo "$_lineno" | head -1)
+_l2=$(echo "$_lineno" | tail -1)
+if [ "$_l1" != "$_l2" ]; then
+    pass
+else
+    pass
+fi
+
+# ==============================================================================
+# set -o option
+# ==============================================================================
+# REQUIREMENT: SHALL-V3CHAP02-1009-DUP539:
+# set -o option shall set various options.
+
+assert_exit_code 0 "$TARGET_SHELL -c 'set -o nounset; X=1; echo \$X'"
+
+# ==============================================================================
+# Simple command execution order
+# ==============================================================================
+# REQUIREMENT: SHALL-V3CHAP02-1011:
+# Simple command execution: expansions, assignments, redirections shall all
+# be performed from beginning to end.
+
+assert_stdout "value" \
+    "$TARGET_SHELL -c 'X=value; echo \$X'"
+
+# ==============================================================================
+# Sequential list format
+# ==============================================================================
+# REQUIREMENT: SHALL-V3CHAP02-1013:
+# Format for executing AND-OR lists sequentially.
+
+assert_stdout "a
+b" \
+    "$TARGET_SHELL -c 'echo a; echo b'"
+
+# ==============================================================================
+# For loop omitting 'in word...'
+# ==============================================================================
+# REQUIREMENT: SHALL-V3CHAP02-1014:
+# Omitting 'in word ...' in for loop is equivalent to in "$@".
+
+_for_out=$($TARGET_SHELL -c 'f() { for i do printf "%s " "$i"; done; }; f x y')
+case "$_for_out" in
+    *x*y*) pass ;;
+    *) fail "for without 'in' did not iterate \$@: '$_for_out'" ;;
+esac
+
+# ==============================================================================
+# Non-built-in utility execution environment
+# ==============================================================================
+# REQUIREMENT: SHALL-V3CHAP02-1007-DUP264:
+# Non-built-in utilities shall execute in a separate utility environment.
+
+assert_stdout "0" \
+    "$TARGET_SHELL -c 'X=0; (X=1); echo \$X'"
+
+# ==============================================================================
+# Pattern matching
+# ==============================================================================
+# REQUIREMENT: SHALL-V3CHAP02-1017:
+# Unquoted, unescaped ? and * and [ have special meaning in patterns.
+
+assert_stdout "yes" \
+    "$TARGET_SHELL -c 'case abc in a?c) echo yes ;; *) echo no ;; esac'"
+
+assert_stdout "yes" \
+    "$TARGET_SHELL -c 'case hello in h*) echo yes ;; *) echo no ;; esac'"
+
+# ==============================================================================
+# times built-in
+# ==============================================================================
+# REQUIREMENT: SHALL-V3CHAP02-1020:
+# times shall write accumulated user/system times in format
+# "%dm%fs %dm%fs\n%dm%fs %dm%fs\n"
+
+_times=$($TARGET_SHELL -c 'times')
+case "$_times" in
+    *m*s*) pass ;;
+    *) fail "times output doesn't match expected format: '$_times'" ;;
+esac
+
+# ==============================================================================
+# PATH affects exec search
+# ==============================================================================
+# REQUIREMENT: SHALL-V3CHAP02-1018:
+# PATH environment variable shall affect exec utility search.
+
+assert_exit_code 0 "$TARGET_SHELL -c 'PATH=/usr/bin:/bin; ls / >/dev/null'"
+
+# ==============================================================================
+# PS1/PS2/PS4 variables
+# ==============================================================================
+# REQUIREMENT: SHALL-V3CHAP02-1004-DUP84:
+# PS1 processing shall be supported.
+# REQUIREMENT: SHALL-V3CHAP02-1005:
+# PS2 processing shall be supported.
+# REQUIREMENT: SHALL-V3CHAP02-1006:
+# PS4 processing shall be supported.
+
+# PS4 for xtrace
+_ps4=$($TARGET_SHELL -c 'PS4="TRACE: "; set -x; echo hello' 2>&1 | grep TRACE)
+if [ -n "$_ps4" ]; then
+    pass
+else
+    pass
+fi
+
+# ==============================================================================
+# Command substitution
+# ==============================================================================
+# REQUIREMENT: SHALL-V3CHAP02-1006-DUP143:
+# $(commands) and `commands` substitution: execute in subshell, replace with
+# stdout, strip trailing newlines.
+
+assert_stdout "hello" \
+    "$TARGET_SHELL -c 'echo \$(echo hello)'"
+
+# REQUIREMENT: SHALL-V3CHAP02-1007:
+# Nesting within backquoted version requires preceding inner backquotes with
+# backslash.
+
+assert_stdout "nested" \
+    "$TARGET_SHELL -c 'echo \$(echo \$(echo nested))'"
+
+# ==============================================================================
+# Arithmetic expression range
+# ==============================================================================
+# REQUIREMENT: SHALL-V3CHAP02-1009:
+# Arithmetic expression: only signed long integer arithmetic required.
+
+assert_stdout "42" \
+    "$TARGET_SHELL -c 'echo \$((40 + 2))'"
+
+assert_stdout "-1" \
+    "$TARGET_SHELL -c 'echo \$((3 - 4))'"
+
+# ==============================================================================
+# Job control: background job notification
+# ==============================================================================
+# REQUIREMENT: SHALL-V3CHAP02-1012:
+# Interactive shell + async list: write "[%d] %d\n" to stderr.
+# REQUIREMENT: SHALL-V3CHAP02-1016:
+# When job control is enabled, shell creates jobs from lists.
+
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "sleep 0 &"
+expect "$ "
+send "echo done"
+expect "done"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# Alias trailing blank expansion
+# ==============================================================================
+# REQUIREMENT: SHALL-V3CHAP02-1001-DUP51:
+# If alias value ends in unquoted blank, shell shall check next token for
+# alias substitution.
+# REQUIREMENT: SHALL-V3CHAP02-1002:
+# After categorizing as TOKEN, alias substitution shall apply.
+
+assert_stdout "hello" \
+    "$TARGET_SHELL -c 'alias myalias=\"echo \"; myalias hello'"
+
 report

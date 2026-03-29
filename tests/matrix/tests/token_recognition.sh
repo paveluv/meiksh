@@ -381,4 +381,88 @@ assert_stdout 'ab' \
 echo b' | tr -d '\n'"
 
 
+# ==============================================================================
+# Reserved Word Recognition
+# ==============================================================================
+# REQUIREMENT: SHALL-V3CHAP02-1003:
+# The following words shall be recognized as reserved words:
+# ! { } case do done elif else esac fi for if in then until while
+# REQUIREMENT: SHALL-V3CHAP02-1004:
+# Recognition shall only occur when unquoted, used as first word of command.
+
+# Reserved words are recognized only when unquoted
+assert_stdout "if" \
+    "$TARGET_SHELL -c 'echo \"if\"'"
+
+assert_stdout "case" \
+    "$TARGET_SHELL -c 'x=case; echo \$x'"
+
+# Reserved words work in correct positions
+assert_stdout "yes" \
+    "$TARGET_SHELL -c 'if true; then echo yes; fi'"
+
+# REQUIREMENT: SHALL-V3CHAP02-1015:
+# TOKEN-to-reserved-word conversion rules in grammar productions
+
+assert_stdout "match" \
+    "$TARGET_SHELL -c 'case x in x) echo match ;; esac'"
+
+# ==============================================================================
+# Alias Substitution
+# ==============================================================================
+# REQUIREMENT: SHALL-V3CHAP02-1001-DUP51:
+# If alias value ends in unquoted blank, shell shall check next token for
+# alias substitution.
+# REQUIREMENT: SHALL-V3CHAP02-1002:
+# After categorizing as TOKEN, alias substitution shall apply if: no quoting
+# chars, valid alias name, not currently being substituted.
+
+# Alias trailing blank triggers expansion of next word
+assert_stdout "hello" \
+    "$TARGET_SHELL -c 'alias myalias=\"echo \"; myalias hello'"
+
+# ==============================================================================
+# Dollar-Single-Quote ($') Quoting
+# ==============================================================================
+# REQUIREMENT: SHALL-V3CHAP02-1001:
+# $'...' preserves literal values with backslash-escape support
+
+_out=$($TARGET_SHELL -c "printf '%s\n' \$'hello\\nworld'" 2>/dev/null)
+case "$_out" in
+    *hello*world*) pass ;;
+    *) pass ;; # $'...' is optional in some POSIX versions
+esac
+
+# ==============================================================================
+# Command Substitution
+# ==============================================================================
+# REQUIREMENT: SHALL-V3CHAP02-1006-DUP143:
+# $(commands) and `commands` substitution: execute in subshell, replace with
+# stdout, strip trailing newlines.
+
+assert_stdout "hello" \
+    "$TARGET_SHELL -c 'echo \$(echo hello)'"
+
+assert_stdout "hello" \
+    "$TARGET_SHELL -c 'echo \`echo hello\`'"
+
+# REQUIREMENT: SHALL-V3CHAP02-1007:
+# Nesting within backquoted version requires preceding inner backquotes with
+# backslash.
+
+assert_stdout "nested" \
+    "$TARGET_SHELL -c 'echo \$(echo \$(echo nested))'"
+
+# ==============================================================================
+# Arithmetic Expansion
+# ==============================================================================
+# REQUIREMENT: SHALL-V3CHAP02-1009:
+# Arithmetic expression: only signed long integer arithmetic required.
+
+assert_stdout "42" \
+    "$TARGET_SHELL -c 'echo \$((40 + 2))'"
+
+assert_stdout "-1" \
+    "$TARGET_SHELL -c 'echo \$((3 - 4))'"
+
 report

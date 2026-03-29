@@ -44,6 +44,9 @@ wait'
 # REQUIREMENT: SHALL-Command-Line-Editing-vi-mode-038:
 # In command mode, an entered character shall either invoke a defined operation,
 # be used as part of a multi-character operation, or be treated as an error.
+# REQUIREMENT: SHALL-SH-1023-DUP665:
+# The following commands shall be recognized in command mode: <newline>
+# Execute the current command line.
 
 # Type "echo hellox", ESC to command mode, "x" deletes last char, Enter executes
 assert_pty_script 'spawn $TARGET_SHELL -i
@@ -256,6 +259,19 @@ wait'
 # ==============================================================================
 # Delete with motion (d + motion)
 # ==============================================================================
+# REQUIREMENT: SHALL-SH-1036:
+# If count is specified, it shall be applied to the motion command.
+# REQUIREMENT: SHALL-SH-1037:
+# A count shall be ignored for the following motion commands: 0 ^ $ c
+# REQUIREMENT: SHALL-SH-1038:
+# If the motion command would move toward the beginning of the command line,
+# the character under the current cursor position shall not be deleted.
+# REQUIREMENT: SHALL-SH-1039:
+# If the motion command is d, the entire current command line shall be cleared.
+# REQUIREMENT: SHALL-SH-1040:
+# If the count is larger than the number of characters between the current
+# cursor position and the end of the command line, all remaining characters
+# shall be deleted.
 # REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-108:
 # If the motion command would move the current cursor position toward the
 # beginning of the command line, the character under the cursor and all
@@ -506,6 +522,794 @@ sendraw 6b
 sleep 100
 sendraw 0a
 expect "history_test_entry"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# Unrecognized command alerts terminal
+# ==============================================================================
+# REQUIREMENT: SHALL-Command-Line-Editing-vi-mode-039:
+# A character that is not recognized as part of an editing command shall
+# terminate any specific editing command and shall alert the terminal.
+
+# Type "echo ok", ESC, Z (not a vi command) should alert but not modify line
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 6f 6b
+sendraw 1b
+sleep 100
+sendraw 5a
+sleep 100
+sendraw 0a
+expect "ok"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# Insert mode: backspace erases from screen and buffer
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Insert-Mode-044:
+# In insert mode, characters shall be erased from both the screen and the
+# buffer when backspacing.
+
+# Type "echo abX", backspace (removes X), Enter -> "ab"
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 62 58 7f
+sendraw 0a
+expect "ab"
+not_expect "abX"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# EOF interpretation at beginning of line
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Insert-Mode-046:
+# This interpretation shall occur only at the beginning of an input line.
+# (Ctrl-D as EOF only at the beginning of line)
+
+# Type some text, Ctrl-D in the middle of a line should NOT exit
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 04 62
+sendraw 0a
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# Edit line semantics: modify from history replaces edit line
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-048:
+# If the current line is not the edit line, any command that modifies the
+# current line shall cause the content of the current line to replace the
+# content of the edit line.
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-049:
+# The modification requested shall then be performed to the edit line.
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-050:
+# When the current line is the edit line, the modification shall be done
+# directly to the edit line.
+
+# Run "echo from_hist", then recall with k, modify with rx, execute
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+send "echo from_hist"
+expect "from_hist"
+expect "$ "
+sendraw 1b
+sleep 100
+sendraw 6b
+sleep 100
+sendraw 24
+sleep 50
+sendraw 72 58
+sleep 100
+sendraw 0a
+expect "from_hisX"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# Count out of range alerts terminal
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-053:
+# A count that is out of range is considered an error condition and shall
+# alert the terminal, but neither the cursor position, nor the command line,
+# shall change.
+
+# Type "echo ab", ESC, 9l (9 right — more than available) should alert but
+# the line should remain unchanged; execute anyway
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 62
+sendraw 1b
+sleep 100
+sendraw 39 6c
+sleep 100
+sendraw 0a
+expect "ab"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# Tilde count overflow
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-074:
+# If the count is larger than the number of characters after the cursor,
+# this shall not be considered an error; the cursor shall advance to the
+# last character on the line.
+
+# Type "echo aB", ESC, 0w (to 'a'), 9~ (toggle 9 — only 2 chars) -> "Ab"
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 42
+sendraw 1b
+sleep 100
+sendraw 30 77
+sleep 50
+sendraw 39 7e
+sleep 100
+sendraw 0a
+expect "Ab"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# Dot repeat count propagation
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-077:
+# The count specified in the '.' command shall become the count for
+# subsequent '.' commands issued without a count.
+
+# Type "echo abcdef", ESC, 2x (delete 2: 'e','f'->gone), . (repeat 2x: 'c','d'->gone) -> "ab"
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 62 63 64 65 66
+sendraw 1b
+sleep 100
+sendraw 32 78
+sleep 100
+sendraw 2e
+sleep 100
+sendraw 0a
+expect "ab"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# h count overflow
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-080:
+# If the count is larger than the number of characters before the cursor,
+# this shall not be considered an error; the cursor shall move to the first
+# character on the line.
+
+# Type "echo ab", ESC, 0w (to 'a'), l (to 'b'), 99h (overflow back), rZ -> "Zcho ab"
+# actually 0 goes to 'e', w goes to 'a', l to 'b', 99h to 'e', rZ->"Zcho ab"
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 62
+sendraw 1b
+sleep 100
+sendraw 30 77 6c
+sleep 50
+sendraw 39 39 68
+sleep 50
+sendraw 72 5a
+sleep 100
+sendraw 0a
+expect "Zcho ab"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# Bigword forward (W) and backward (B) and end (E)
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-084:
+# If the count is larger than the number of bigwords after the cursor,
+# this shall not be considered an error; the cursor shall advance to the
+# last character on the line.
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-092:
+# If the count is larger than the number of bigwords preceding the cursor,
+# this shall not be considered an error; the cursor shall return to the
+# first character on the line.
+
+# Type "echo a.b c.d", ESC, 0 (start), W (bigword forward to 'c'), rZ -> "echo a.b Z.d"
+# 0 -> 'e', W -> 'a', W -> 'c', rZ -> 'Z'
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 2e 62 20 63 2e 64
+sendraw 1b
+sleep 100
+sendraw 30
+sleep 50
+sendraw 57 57
+sleep 50
+sendraw 72 5a
+sleep 100
+sendraw 0a
+expect "a.b Z.d"
+expect "$ "
+sendeof
+wait'
+
+# B: bigword backward
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 2e 62 20 63 2e 64
+sendraw 1b
+sleep 100
+sendraw 42
+sleep 50
+sendraw 72 5a
+sleep 100
+sendraw 0a
+expect "a.b Z.d"
+not_expect "c.d"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# Pipe column movement (|)
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-094:
+# If the count is larger than the number of characters on the line,
+# this shall not be considered an error; the cursor shall be placed
+# on the last character on the line.
+
+# Type "echo abcde", ESC, 3| (move to column 3), rZ -> "ecZo abcde"
+# column 3 is 'h' in "echo abcde", rZ->"ecZo abcde"
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 62 63 64 65
+sendraw 1b
+sleep 100
+sendraw 33 7c
+sleep 50
+sendraw 72 5a
+sleep 100
+sendraw 0a
+expect "ecZo abcde"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# Find character: f, F, t, T
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-098:
+# If the character 'c' does not occur in the line before the current cursor
+# position, the terminal shall be alerted and the cursor shall not be moved.
+
+# f: find forward — type "echo abcb", ESC, 0 (start), fb (find 'b'), rZ -> "echo Zbcb"
+# Actually: 0->'e', fb finds first 'b' after cursor which is at index 5 ('b')
+# "echo abcb", cursor at 'e', fb->'b'(index 5), rZ->"echo Zbcb"
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 62 63 62
+sendraw 1b
+sleep 100
+sendraw 30
+sleep 50
+sendraw 66 62
+sleep 50
+sendraw 72 5a
+sleep 100
+sendraw 0a
+expect "Zcb"
+expect "$ "
+sendeof
+wait'
+
+# F: find backward
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 62 63
+sendraw 1b
+sleep 100
+sendraw 46 61
+sleep 50
+sendraw 72 5a
+sleep 100
+sendraw 0a
+expect "Zbc"
+expect "$ "
+sendeof
+wait'
+
+# t: find forward, stop before
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 62 63
+sendraw 1b
+sleep 100
+sendraw 30
+sleep 50
+sendraw 74 63
+sleep 50
+sendraw 72 5a
+sleep 100
+sendraw 0a
+expect "echo aZc"
+expect "$ "
+sendeof
+wait'
+
+# T: find backward, stop after
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 62 63
+sendraw 1b
+sleep 100
+sendraw 54 61
+sleep 50
+sendraw 72 5a
+sleep 100
+sendraw 0a
+expect "echo aZc"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# Repeat find (;) and reverse repeat (,)
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-103:
+# Any number argument on that previous command shall be ignored.
+
+# Type "echo abab", ESC, 0, fa (find 'a'), ; (repeat find) -> second 'a'
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 62 61 62
+sendraw 1b
+sleep 100
+sendraw 30
+sleep 50
+sendraw 66 61
+sleep 50
+sendraw 3b
+sleep 50
+sendraw 72 5a
+sleep 100
+sendraw 0a
+expect "abZb"
+expect "$ "
+sendeof
+wait'
+
+# , (reverse repeat): find forward then reverse
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 62 61 62
+sendraw 1b
+sleep 100
+sendraw 30
+sleep 50
+sendraw 66 61
+sleep 50
+sendraw 3b
+sleep 50
+sendraw 2c
+sleep 50
+sendraw 72 5a
+sleep 100
+sendraw 0a
+expect "Zbab"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# Change motion toward end / count overflow
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-109:
+# If the motion command would move the current cursor position toward the
+# end of the command line, the character under the current cursor position
+# shall be deleted.
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-110:
+# If the count is larger than the number of characters between the current
+# cursor position and the end of the command line toward which the motion
+# command would move the cursor, this shall not be considered an error;
+# all of the remaining characters in the aforementioned range shall be
+# deleted and insert mode shall be entered.
+
+# Type "echo abcd", ESC, 0w (to 'a'), cw (change word), type "XY", ESC -> "echo XYcd"
+# Actually cw changes from cursor to end of word: 0->'e', w->'a', cw deletes "abcd", type "XY"
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 62 63 64
+sendraw 1b
+sleep 100
+sendraw 30 77
+sleep 50
+sendraw 63 77
+sleep 50
+sendraw 58 59
+sendraw 1b
+sleep 100
+sendraw 0a
+expect "XY"
+expect "$ "
+sendeof
+wait'
+
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-113:
+# If the count is larger than the number of characters after the cursor,
+# this shall not be considered an error; all of the remaining characters
+# shall be changed.
+
+# Type "echo ab", ESC, 0w (to 'a'), 9cw (change 9 words — overflow), type "Z", ESC
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 62
+sendraw 1b
+sleep 100
+sendraw 30 77
+sleep 50
+sendraw 39 63 77
+sleep 50
+sendraw 5a
+sendraw 1b
+sleep 100
+sendraw 0a
+expect "Z"
+not_expect "ab"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# Delete x count overflow
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-115:
+# If the count is larger than the number of characters after the cursor,
+# this shall not be considered an error; all the characters from the cursor
+# to the end of the line shall be deleted.
+
+# Type "echo ab", ESC, 0w (to 'a'), 9x (delete 9 — only 2 avail), Enter -> ""
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 62
+sendraw 1b
+sleep 100
+sendraw 30 77
+sleep 50
+sendraw 39 78
+sleep 100
+sendraw 0a
+expect "$ "
+sendeof
+wait'
+
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-116:
+# The character under the current cursor position shall not change.
+# (X deletes before cursor; char under cursor stays)
+
+# Type "echo abc", ESC, $ (to 'c'), X (delete 'b'), verify 'c' stays -> "ac"
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 62 63
+sendraw 1b
+sleep 100
+sendraw 58
+sleep 100
+sendraw 0a
+expect "ac"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# X edge cases
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-119:
+# If the line contained no characters, the terminal shall be alerted and the
+# cursor shall not be moved.
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-118:
+# If the line contained a single character, the X command shall have no effect.
+
+# Type "echo a", ESC, 0w (to 'a'), X (no effect — cursor on first char of 'a'), Enter
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61
+sendraw 1b
+sleep 100
+sendraw 30 77
+sleep 50
+sendraw 58
+sleep 100
+sendraw 0a
+expect "a"
+expect "$ "
+sendeof
+wait'
+
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-120:
+# If the count is larger than the number of characters before the cursor,
+# this shall not be considered an error; all the characters from before
+# the cursor to the beginning of the line shall be deleted.
+
+# Type "echo abcd", ESC, 99X (delete everything before cursor) -> leaves just last char
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 62 63 64
+sendraw 1b
+sleep 100
+sendraw 39 39 58
+sleep 100
+sendraw 0a
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# Yank (y + motion): cursor position unchanged
+# ==============================================================================
+# REQUIREMENT: SHALL-SH-1041:
+# A number count shall be applied to the motion command.
+# REQUIREMENT: SHALL-SH-1042:
+# If the motion command would move toward the beginning of the command line,
+# the character under the current cursor position shall not be included in
+# the set of yanked characters.
+# REQUIREMENT: SHALL-SH-1043:
+# If the motion command is y, the entire current command line shall be yanked
+# into the save buffer.
+# REQUIREMENT: SHALL-SH-1044:
+# The current cursor position shall be unchanged.
+# REQUIREMENT: SHALL-SH-1045:
+# If the count is larger than the number of characters between the cursor
+# and the end of the line, all remaining characters shall be yanked.
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-122:
+# The current character position shall be unchanged.
+
+# Type "echo abc", ESC, 0 (to 'e'), yw (yank word), cursor stays at 'e',
+# rZ -> "Zcho abc"
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 62 63
+sendraw 1b
+sleep 100
+sendraw 30
+sleep 50
+sendraw 79 77
+sleep 50
+sendraw 72 5a
+sleep 100
+sendraw 0a
+expect "Zcho abc"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# History k/- past HISTSIZE boundary
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-131:
+# If a k or - command would retreat past the maximum number of commands in
+# effect for this shell, the terminal shall be alerted, and the command
+# shall have no effect.
+
+# Run a single command, then try k twice (second should alert but not change)
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+send "echo only_cmd"
+expect "only_cmd"
+expect "$ "
+sendraw 1b
+sleep 100
+sendraw 6b
+sleep 100
+sendraw 6b
+sleep 100
+sendraw 0a
+expect "only_cmd"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# History j/+ past edit line
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-134:
+# If a j or + command advances past the edit line, the current command line
+# shall be restored to the edit line and the terminal shall be alerted.
+
+# Run "echo hist_a", recall with k, then j should restore empty edit line
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+send "echo hist_a"
+expect "hist_a"
+expect "$ "
+sendraw 1b
+sleep 100
+sendraw 6b
+sleep 100
+sendraw 6a
+sleep 100
+sendraw 0a
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# History G with nonexistent line number
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-135:
+# If command line number does not exist, the terminal shall be alerted
+# and the command line shall not be changed.
+
+# Type some text, ESC, 99999G (nonexistent line), line should not change
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+send "echo baseline"
+expect "baseline"
+expect "$ "
+sendraw 1b
+sleep 100
+sendraw 39 39 39 39 39 47
+sleep 100
+sendraw 0a
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# HISTSIZE unset default
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-136:
+# If this variable is unset, an unspecified default greater than or equal
+# to 128 shall be used.
+
+# Unset HISTSIZE, run >1 command, recall with k — should work
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+send "unset HISTSIZE"
+expect "$ "
+send "echo histtest1"
+expect "histtest1"
+expect "$ "
+sendraw 1b
+sleep 100
+sendraw 6b
+sleep 100
+sendraw 0a
+expect "histtest1"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# History search / and ?
+# ==============================================================================
+# REQUIREMENT: SHALL-SH-1046:
+# Patterns use pattern matching notation, except that ^ shall have special
+# meaning when it appears as the first character of pattern.
+# REQUIREMENT: SHALL-SH-1047:
+# The ^ is discarded and the characters after the ^ shall be matched only
+# at the beginning of a line.
+# REQUIREMENT: SHALL-SH-1049:
+# If the pattern is not found, the current command line shall be unchanged
+# and the terminal shall be alerted.
+# REQUIREMENT: SHALL-SH-1050:
+# If it is found in a previous line, the current command line shall be set
+# to that line and the cursor set to the first character.
+# REQUIREMENT: SHALL-SH-1051:
+# If it is found in a following line, the current command line shall be set
+# to that line and the cursor set to the first character.
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-137:
+# If there is no previous non-empty pattern, the terminal shall be alerted
+# and the current command line shall remain unchanged.
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-138:
+# If pattern is empty, the last non-empty pattern provided to / or ?
+# shall be used.
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-140:
+# If there is no previous / or ?, the terminal shall be alerted and the
+# current command line shall remain unchanged.
+
+# Run commands, then /pattern to search backward
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+send "echo searchme"
+expect "searchme"
+expect "$ "
+send "echo other"
+expect "other"
+expect "$ "
+sendraw 1b
+sleep 100
+sendraw 2f 73 65 61 72 63 68 0a
+sleep 200
+sendraw 0a
+expect "searchme"
+expect "$ "
+sendeof
+wait'
+
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-139:
+# If no matching command line is found, the terminal shall be alerted
+# and the current command line shall remain unchanged.
+
+# Search for nonexistent pattern
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+send "echo first"
+expect "first"
+expect "$ "
+sendraw 1b
+sleep 100
+sendraw 2f 7a 7a 7a 7a 7a 7a 0a
+sleep 200
+sendraw 0a
 expect "$ "
 sendeof
 wait'
