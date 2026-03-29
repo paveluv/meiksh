@@ -28,7 +28,7 @@
 # result.
 # REQUIREMENT: SHALL-2-10-1-398:
 # Otherwise, the token identifier TOKEN shall result.
-# REQUIREMENT: SHALL-2-10-1-399:
+# REQUIREMENT: SHALL-2-10-1-401:
 # When a TOKEN is seen where one of those
 # annotated productions could be used...
 # REQUIREMENT: SHALL-2-10-1-400:

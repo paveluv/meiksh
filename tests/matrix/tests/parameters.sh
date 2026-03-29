@@ -49,7 +49,7 @@ assert_stdout "$TARGET_SHELL"'1
 # When the expansion occurs in a context where field splitting will be
 # performed, any empty fields may be discarded and each of the non-empty fields
 # shall be further split as described in 2.6.5 Field Splitting .
-# REQUIREMENT: SHALL-2-5-2-066:
+# REQUIREMENT: SHALL-2-5-2-063:
 # When the expansion occurs in a context where
 # field splitting will be performed, any empty fields may be discarded...
 
@@ -242,10 +242,10 @@ assert_stderr_contains "TRACE:" \
 # that is no longer than {PATH_MAX} bytes including the terminating null byte,
 # and the value does not contain any components that are dot or dot-dot, then
 # the shell shall set PWD to the value from the environment.
-# REQUIREMENT: SHALL-ENVIRONMENT VARIABLES-023:
+# REQUIREMENT: SHALL-SH-1017:
 # The following environment
 # variables shall affect the execution of sh:...
-# REQUIREMENT: SHALL-ENVIRONMENT VARIABLES-024:
+# REQUIREMENT: SHALL-ENVIRONMENT-VARIABLES-024:
 # This variable shall represent an absolute pathname of the current working
 # directory.
 

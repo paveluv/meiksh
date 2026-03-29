@@ -26,10 +26,10 @@ assert_stdout "a b c " \
 # REQUIREMENT: SHALL-2-9-4-2-352:
 # If no items result from the expansion, the compound-list shall not be
 # executed.
-# REQUIREMENT: SHALL-Exit Status-353:
+# REQUIREMENT: SHALL-2-9-4-2-1-353:
 # If there is at least one item in the list of items, the exit status of a for
 # command shall be the exit status of the last compound-list executed.
-# REQUIREMENT: SHALL-Exit Status-354:
+# REQUIREMENT: SHALL-2-9-4-2-1-354:
 # If there are no items, the exit status shall be zero.
 
 test_cmd='
@@ -66,9 +66,9 @@ assert_stdout "1" \
 # REQUIREMENT: SHALL-2-9-4-3-360:
 # After the first match, no more patterns in the case statement shall be
 # expanded, and the compound-list of the matching clause shall be executed.
-# REQUIREMENT: SHALL-Exit Status-363:
+# REQUIREMENT: SHALL-2-9-4-3-1-363:
 # The exit status of case shall be zero if no patterns are matched.
-# REQUIREMENT: SHALL-Exit Status-364:
+# REQUIREMENT: SHALL-2-9-4-3-1-364:
 # Otherwise, the exit status shall be the exit status of the compound-list of
 # the last clause to be executed.
 
@@ -132,7 +132,7 @@ assert_stdout "default" \
 # shall complete.
 # REQUIREMENT: SHALL-2-9-4-4-368:
 # Otherwise, the else compound-list shall be executed.
-# REQUIREMENT: SHALL-Exit Status-369:
+# REQUIREMENT: SHALL-2-9-4-4-1-369:
 # The exit status of the if command shall be the exit status of the then or
 # else compound-list that was executed, or zero, if none was executed.
 
@@ -174,7 +174,7 @@ assert_stdout "else" \
 # REQUIREMENT: SHALL-2-9-4-5-372:
 # Otherwise, the compound-list-2 shall be executed, and the process shall
 # repeat.
-# REQUIREMENT: SHALL-Exit Status-373:
+# REQUIREMENT: SHALL-2-9-4-5-1-373:
 # The exit status of the while loop shall be the exit status of the last
 # compound-list-2 executed, or zero if none was executed.
 
@@ -220,7 +220,7 @@ assert_stdout "0" \
 # zero exit status, the until command completes.
 # REQUIREMENT: SHALL-2-9-4-6-376:
 # Otherwise, the compound-list-2 shall be executed, and the process repeats.
-# REQUIREMENT: SHALL-Exit Status-377:
+# REQUIREMENT: SHALL-2-9-4-6-1-377:
 # The exit status of the until loop shall be the exit status of the last
 # compound-list-2 executed, or zero if none was executed.
 

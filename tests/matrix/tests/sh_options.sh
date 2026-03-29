@@ -36,12 +36,12 @@ assert_stdout "args: zero one two" \
 # ==============================================================================
 # The '-s' Option and Standard Input
 # ==============================================================================
-# REQUIREMENT: SHALL-OPERANDS-009:
+# REQUIREMENT: SHALL-OPERANDS-010:
 # The following operands shall be supported:...
 # REQUIREMENT: SHALL-OPTIONS-008:
 # If there are no operands and the -c option is not specified, the -s option
 # shall be assumed.
-# REQUIREMENT: SHALL-STDIN-015:
+# REQUIREMENT: SHALL-STDIN-016:
 # The standard input shall be used only if one of
 # the following is true:...
 # REQUIREMENT: SHALL-STDIN-016:

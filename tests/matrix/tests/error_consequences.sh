@@ -9,7 +9,7 @@
 # ==============================================================================
 # Non-Interactive Shell Exits
 # ==============================================================================
-# REQUIREMENT: SHALL-2-8-1-229:
+# REQUIREMENT: SHALL-2-8-1-233:
 # Certain errors shall cause the shell to write a
 # diagnostic message to standard error and exit...
 # REQUIREMENT: SHALL-2-8-1-230:
@@ -106,7 +106,7 @@ assert_stdout "parent survived" \
 # ==============================================================================
 # Non-Exiting Errors
 # ==============================================================================
-# REQUIREMENT: SHALL-2-8-2-258:
+# REQUIREMENT: SHALL-2-8-2-259:
 # The exit status of a command shall be determined
 # as follows:...
 # REQUIREMENT: SHALL-2-8-2-263:

@@ -136,12 +136,12 @@ match \\" "$TARGET_SHELL -c '$test_cmd'"
 
 # REQUIREMENT: SHALL-XBD-9-3-5-2019:
 # All character classes specified in the current locale shall be recognized.
-# REQUIREMENT: SHALL-XBD-9-3-5-2020:
+# REQUIREMENT: SHALL-XBD-9-3-5-2006:
 # The following character class expressions
 # shall be supported in all locales: [:alnum:] [:cntrl:] [:lower:] [:space:]
 # [:alpha:] [:digit:] [:print:] [:upper:] [:blank:] [:graph:] [:punct:]
 # [:xdigit:]
-# REQUIREMENT: SHALL-XBD-9-3-5-2018:
+# REQUIREMENT: SHALL-XBD-9-3-5-2002:
 # A character class expression shall
 # represent the union of two sets:
 test_cmd='

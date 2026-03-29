@@ -81,7 +81,7 @@ assert_stdout 'a#b' \
 # ==============================================================================
 # Alias Substitution
 # ==============================================================================
-# REQUIREMENT: SHALL-2-3-1-051:
+# REQUIREMENT: SHALL-2-3-1-052:
 # After a token has been categorized as type
 # TOKEN... if it is a valid name... the token shall be replaced.
 # REQUIREMENT: SHALL-2-3-1-052:

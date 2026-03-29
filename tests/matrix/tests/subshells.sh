@@ -13,7 +13,7 @@
 # REQUIREMENT: SHALL-2-9-4-1-346:
 # Variable assignments and built-in commands that affect the environment shall
 # not remain in effect after the list finishes.
-# REQUIREMENT: SHALL-Exit Status-348:
+# REQUIREMENT: SHALL-2-9-4-1-1-348:
 # The exit status of a grouping command shall be the exit status of
 # compound-list .
 
@@ -27,7 +27,7 @@ assert_exit_code 1 \
 # ==============================================================================
 # Subshell Isolation
 # ==============================================================================
-# REQUIREMENT: SHALL-2-13-470:
+# REQUIREMENT: SHALL-2-13-471:
 # A subshell environment shall be created as a
 # duplicate of the shell environment, except that:...
 # REQUIREMENT: SHALL-2-13-473:
