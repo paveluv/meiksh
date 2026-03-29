@@ -134,12 +134,12 @@ test_cmd='myfn() { :; }; command -v myfn'
 assert_stdout "myfn" \
     "$TARGET_SHELL -c '$test_cmd'"
 
-# command -v for an alias should print the alias definition
-test_cmd='alias greet="echo hi" 2>/dev/null; command -v greet'
+# command -v for an alias (aliases may not be active in non-interactive mode)
+test_cmd='alias greet="echo hi" 2>/dev/null; command -v greet 2>/dev/null || echo NO_ALIAS'
 _out=$($TARGET_SHELL -c "$test_cmd" 2>&1)
 case "$_out" in
-    *greet*|*"echo hi"*) pass ;;
-    *) pass ;; # alias support in non-interactive varies
+    *greet*|*"echo hi"*|*NO_ALIAS*) pass ;;
+    *) fail "Unexpected command -v alias output: $_out" ;;
 esac
 
 # command -v for a nonexistent command should fail
@@ -176,7 +176,7 @@ test_cmd='f() { command local LV=hello 2>/dev/null && echo $LV || echo $LV; }; f
 _out=$($TARGET_SHELL -c "$test_cmd" 2>&1)
 case "$_out" in
     *hello*) pass ;;
-    *) pass ;; # local not required by POSIX
+    *) pass ;; # 'local' is not required by POSIX; failure is acceptable
 esac
 
 # ==============================================================================

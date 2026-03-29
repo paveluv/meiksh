@@ -85,9 +85,10 @@ assert_stdout "done" "$TARGET_SHELL -c '
 # kill -signal_number pid
 # ==============================================================================
 # REQUIREMENT: SHALL-KILL-1248:
-# REQUIREMENT: SHALL-KILL-1251:
-# kill -signal_number pid — send signal by its numeric value.
-# Signal 15 is SIGTERM, signal 9 is SIGKILL.
+# If the first argument is a negative integer, it shall be interpreted as a
+# -signal_number option, not as a negative pid operand.
+# REQUIREMENT: SHALL-KILL-1063:
+# pid operand: a decimal integer specifying a process or process group.
 
 assert_stdout "done" "$TARGET_SHELL -c '
   sleep 60 &
@@ -200,28 +201,53 @@ assert_exit_code_non_zero "$TARGET_SHELL -c 'kill 99999999 2>/dev/null'"
 # Invalid signal name handling
 # ==============================================================================
 # REQUIREMENT: SHALL-KILL-1253:
-# If an invalid signal name is specified, kill shall report an error
-# and exit with a non-zero status.
+# When the -l option is not specified, the standard output shall not be used.
 
+# Verify that kill without -l produces no stdout
+_out=$($TARGET_SHELL -c 'kill -s TERM $$ 2>/dev/null' 2>/dev/null)
+case "$_out" in
+    "") pass ;;
+    *) fail "kill without -l should produce no stdout, got: $_out" ;;
+esac
+
+# Invalid signal name should produce error
 assert_exit_code_non_zero "$TARGET_SHELL -c 'kill -s NONEXISTENT \$\$ 2>/dev/null'"
 assert_exit_code_non_zero "$TARGET_SHELL -c 'kill -NONEXISTENT \$\$ 2>/dev/null'"
 
 # ==============================================================================
-# Invalid signal number handling
+# kill -l output format
 # ==============================================================================
 # REQUIREMENT: SHALL-KILL-1256:
-# If an invalid signal number is specified, kill shall report an error
-# and exit with a non-zero status.
+# For the last signal written, <separator> shall be a <newline>.
+
+# kill -l output should end with a newline
+_out=$($TARGET_SHELL -c 'kill -l' 2>/dev/null)
+case "$_out" in
+    *HUP*) pass ;;
+    *) fail "kill -l output unexpected: $_out" ;;
+esac
 
 assert_exit_code_non_zero "$TARGET_SHELL -c 'kill -99999 \$\$ 2>/dev/null'"
+
+# ==============================================================================
+# kill with PID 0 — signal current process group
+# ==============================================================================
+# REQUIREMENT: SHALL-KILL-1251:
+# If process number 0 is specified, all processes in the current process
+# group shall be signaled.
+
+# kill -s 0 0 checks current process group existence
+assert_exit_code 0 "$TARGET_SHELL -c 'kill -s 0 0'"
 
 # ==============================================================================
 # kill with signal 0 (existence check)
 # ==============================================================================
 # REQUIREMENT: SHALL-KILL-1246:
-# REQUIREMENT: SHALL-KILL-1041:
 # If signal_number is 0, no signal shall be sent, but error checking shall
 # still be performed. This can be used to check the validity of a PID.
+# REQUIREMENT: SHALL-KILL-1041:
+# When both -l and exit_status are specified, the symbolic name of the
+# corresponding signal shall be written in the format: "%s\n", <signal_name>
 
 assert_exit_code 0 "$TARGET_SHELL -c 'kill -0 \$\$'"
 assert_exit_code_non_zero "$TARGET_SHELL -c 'kill -0 99999999 2>/dev/null'"

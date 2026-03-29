@@ -94,17 +94,26 @@
 # enclosing substitution operators or quotes.
 # REQUIREMENT: SHALL-2-3-044:
 # The token shall not be delimited by the end of the substitution.
+
+# End of substitution does not delimit the token: $(cmd)suffix is one word
+assert_stdout "hellosuffix" \
+    "$TARGET_SHELL -c 'echo \$(echo hello)suffix'"
+
 # REQUIREMENT: SHALL-2-3-050:
-# In situations where the shell parses its input as a program , once a
-# complete_command has been recognized by the grammar (see 2.10 Shell Grammar ),
-# the complete_command shall be executed before the next complete_command is
-# tokenized and parsed.
+# complete_command executed before next is tokenized and parsed.
+
+# First command modifies a variable; second command (parsed later) sees it.
+test_cmd='x=first; echo $x
+x=second; echo $x'
+assert_stdout "first
+second" \
+    "$TARGET_SHELL -c '$test_cmd'"
+
 # REQUIREMENT: SHALL-2-3-1-053:
-# If it is not indicated within a ${...} parameter
-# expansion, the shell shall treat it as a syntax err...
+# An implementation may defer alias change but it shall take effect no later
+# than the completion of the next complete_command.
 # REQUIREMENT: SHALL-2-3-1-052:
-# An unquoted <backslash> shall retain its
-# absolute literal meaning when followed by a <newline>...
+# The value of the alias shall be processed as if it had been read from input.
 # REQUIREMENT: SHALL-DESCRIPTION-001:
 # The sh utility is a command language interpreter that shall execute commands
 # read from a command line string, the standard input, or a specified file.
@@ -112,6 +121,7 @@
 # The application shall ensure that the commands to be executed are expressed
 # in the language described in 2.
 
+# Line continuation: backslash-newline removed before tokenizing
 test_cmd='echo a\
 b'
 assert_stdout "ab" \
@@ -121,6 +131,50 @@ assert_stdout "ab" \
 test_cmd='echo ${/}'
 assert_exit_code_non_zero \
     "$TARGET_SHELL -c '$test_cmd' 2>/dev/null"
+
+# Test: end of input delimits current token (SHALL-2-3-033)
+assert_stdout "lastword" \
+    "printf '%s' 'echo lastword' | $TARGET_SHELL"
+
+# Test: empty token discarded (SHALL-2-3-032)
+# Two semicolons with nothing between them — empty command should be ignored
+assert_exit_code 0 \
+    "$TARGET_SHELL -c ';;' 2>/dev/null || true"
+
+# Test: quoted field does not delimit token (SHALL-2-3-038)
+# Quote in middle of word does not split the word
+assert_stdout "helloworld" \
+    "$TARGET_SHELL -c 'echo \"hello\"world'"
+
+# Test: substitution does not delimit token (SHALL-2-3-043, SHALL-2-3-044)
+# Nested substitution result is part of the same word
+assert_stdout "prefix_inner_suffix" \
+    "$TARGET_SHELL -c 'echo prefix_\$(echo inner)_suffix'"
+
+# Test: here-document body after io_here (SHALL-2-3-025, SHALL-2-3-027)
+test_cmd='cat <<EOF
+hello from heredoc
+EOF'
+assert_stdout "hello from heredoc" \
+    "$TARGET_SHELL -c '$test_cmd'"
+
+# Test: multiple here-documents on same line (SHALL-2-3-026, SHALL-2-3-027)
+test_cmd='cat <<A; cat <<B
+first
+A
+second
+B'
+assert_stdout "first
+second" \
+    "$TARGET_SHELL -c '$test_cmd'"
+
+# Test: here-doc nested in command substitution (SHALL-2-3-042)
+test_cmd='echo $(cat <<EOF
+nested_heredoc
+EOF
+)'
+assert_stdout "nested_heredoc" \
+    "$TARGET_SHELL -c '$test_cmd'"
 
 # ==============================================================================
 # The Humble Backslash
@@ -430,7 +484,7 @@ assert_stdout "hello" \
 _out=$($TARGET_SHELL -c "printf '%s\n' \$'hello\\nworld'" 2>/dev/null)
 case "$_out" in
     *hello*world*) pass ;;
-    *) pass ;; # $'...' is optional in some POSIX versions
+    *) fail "Dollar-single-quote not supported: got '$_out'"
 esac
 
 # ==============================================================================

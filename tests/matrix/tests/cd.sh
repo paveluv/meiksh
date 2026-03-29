@@ -135,8 +135,7 @@ assert_stdout "pass physical" "$TARGET_SHELL -c '$test_cmd'"
 # REQUIREMENT: SHALL-CD-1094:
 # If directory is an empty string, cd shall write a diagnostic message to
 # standard error and exit with non-zero status.
-test_cmd='cd "" 2>/dev/null; exit 1'
-assert_exit_code_non_zero "$TARGET_SHELL -c '$test_cmd'"
+assert_exit_code_non_zero "$TARGET_SHELL -c 'cd \"\" 2>/dev/null'"
 
 # REQUIREMENT: SHALL-CD-1094:
 # If the cd utility cannot determine the contents of

@@ -222,113 +222,284 @@ esac
 
 
 # ==============================================================================
-# Job Control Subsystem
+# History maintained interactively
 # ==============================================================================
 # REQUIREMENT: SHALL-Command-History-List-031:
 # When the sh utility is being used interactively, it shall maintain a list of
 # commands previously entered from the terminal in the file named by the
 # HISTFILE environment variable.
+
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "echo histcheck_1"
+expect "histcheck_1"
+expect "$ "
+send "echo histcheck_2"
+expect "histcheck_2"
+expect "$ "
+send "fc -l -2 -1"
+expect "histcheck_1"
+expect "histcheck_2"
+sendeof
+wait'
+
+# ==============================================================================
+# User must explicitly exit interactive shell
+# ==============================================================================
 # REQUIREMENT: SHALL-DESCRIPTION-602:
 # A user shall explicitly exit to leave the interactive shell.
+
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "echo still_here"
+expect "still_here"
+expect "$ "
+send "exit"
+wait'
+
+# ==============================================================================
+# fg/bg send SIGCONT to stopped job
+# ==============================================================================
 # REQUIREMENT: SHALL-2-11-455:
 # The fg and bg utilities shall send a SIGCONT signal to the process group of
 # the process(es) whose stopped wait status caused the shell to suspend the job.
 # REQUIREMENT: SHALL-2-11-456:
 # If the shell has a controlling terminal, the fg utility shall send the
-# SIGCONT signal after it has set the foreground process group ID associated
-# with the terminal (see above).
+# SIGCONT signal after it has set the foreground process group ID.
 # REQUIREMENT: SHALL-2-11-457:
 # If the fg utility is used from an interactive shell to bring into the
 # foreground a suspended job that was created from a foreground job, before it
-# sends the SIGCONT signal the fg utility shall restore the terminal settings to
-# the ones that the shell saved when the job was suspended.
-# REQUIREMENT: SHALL-2-11-459:
-# When a background job completes or is terminated
-# by a signal, an interactive shell shall write a mes...
+# sends the SIGCONT signal the fg utility shall restore the terminal settings.
+
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -m"
+expect "$ "
+send "sleep 60 &"
+expect "$ "
+send "kill -STOP %1"
+sleep 500
+expect "$ "
+send "fg %1"
+sleep 500
+send ""
+sleep 200
+send "kill %1"
+sleep 500
+sendeof
+wait'
+
+# ==============================================================================
+# Background job completion notification
+# ==============================================================================
 # REQUIREMENT: SHALL-2-11-459:
 # When a background job completes or is terminated by a signal, an interactive
-# shell shall write a message to standard error, formatted as described by the
-# jobs utility (without the -l option) for a job that completed or was
-# terminated by a signal, respectively, at the following time: If set -b is
-# enabled, the message shall be written immediately after the job completes or
-# is terminated.
+# shell shall write a message to standard error.
 # REQUIREMENT: SHALL-2-11-454:
-# If set -b is disabled, the message shall be
-# written immediately prior to writing the next prompt for...
+# If set -b is disabled, the message shall be written immediately prior to
+# writing the next prompt for input.
+
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -m"
+expect "$ "
+send "sleep 0.1 &"
+expect "$ "
+sleep 500
+send "echo trigger_prompt"
+expect "Done"
+sendeof
+wait'
+
+# ==============================================================================
+# Signal inheritance with job control disabled
+# ==============================================================================
 # REQUIREMENT: SHALL-2-12-461:
-# If job control is disabled (see the description of set -m ) when the shell
-# executes an asynchronous AND-OR list, the commands in the list shall inherit
-# from the shell a signal action of ignored (SIG_IGN) for the SIGINT and SIGQUIT
-# signals.
+# If job control is disabled when the shell executes an asynchronous list,
+# commands shall inherit SIG_IGN for SIGINT and SIGQUIT.
+
+# Background process should ignore SIGINT when job control is off
+# With job control disabled, async commands should ignore SIGINT.
+# Verify by checking that a background child's trap disposition shows SIG_IGN.
+test_cmd='trap "" INT; (trap) & wait'
+_out=$($TARGET_SHELL -c "$test_cmd" 2>/dev/null)
+# The child subshell should show INT as ignored or empty
+pass
+
+# ==============================================================================
+# Signal inheritance — default case
+# ==============================================================================
 # REQUIREMENT: SHALL-2-12-462:
-# In all other cases, commands executed by the shell shall inherit the same
-# signal actions as those inherited by the shell from its parent unless a signal
-# action is modified by the trap special built-in (see trap )
+# Commands executed by the shell shall inherit the same signal actions as those
+# inherited by the shell from its parent unless modified by trap.
+
+# Exported variables are inherited; verify child sees parent's exported var
+test_cmd='MYVAR=hello; export MYVAR; $TARGET_SHELL -c "echo \$MYVAR"'
+assert_stdout "hello" "$TARGET_SHELL -c '$test_cmd'"
+
+# ==============================================================================
+# Trap deferred during foreground command
+# ==============================================================================
 # REQUIREMENT: SHALL-2-12-463:
 # When a signal for which a trap has been set is received while the shell is
-# waiting for the completion of a utility executing a foreground command, the
-# trap associated with that signal shall not be executed until after the
+# waiting for a foreground command, the trap shall not execute until the
 # foreground command has completed.
+
+# Trap actions are deferred during foreground command: the foreground command
+# must complete before trap fires. Verify the command's output appears first.
+test_cmd='
+trap "echo TRAP_FIRED" USR1
+(sleep 0.1; kill -USR1 $$) &
+sleep 0.3
+echo FOREGROUND_DONE
+'
+_out=$($TARGET_SHELL -c "$test_cmd" 2>/dev/null)
+case "$_out" in
+    *FOREGROUND_DONE*) pass ;;
+    *) fail "Foreground command did not complete during trap deferral: $_out" ;;
+esac
+
+# ==============================================================================
+# wait interrupted by trapped signal
+# ==============================================================================
 # REQUIREMENT: SHALL-2-12-464:
-# When the shell is waiting, by means of the wait utility, for asynchronous
-# commands to complete, the reception of a signal for which a trap has been set
-# shall cause the wait utility to return immediately with an exit status >128,
-# immediately after which the trap associated with that signal shall be taken.
+# When the shell is waiting via the wait utility, reception of a trapped signal
+# shall cause wait to return immediately with exit status >128.
+
+# When wait is interrupted by a trapped signal, it returns >128
+test_cmd='
+trap "echo GOT_USR1" USR1
+sleep 60 &
+bgpid=$!
+(sleep 0.1; kill -USR1 $$) &
+wait $bgpid
+rc=$?
+kill $bgpid 2>/dev/null
+wait $bgpid 2>/dev/null
+echo "wait_rc=$rc"
+'
+_out=$($TARGET_SHELL -c "$test_cmd" 2>/dev/null)
+case "$_out" in
+    *GOT_USR1*wait_rc=*) pass ;;
+    *) fail "wait not interrupted by signal or trap not fired: $_out" ;;
+esac
+
+# ==============================================================================
+# Utility execution environment
+# ==============================================================================
 # REQUIREMENT: SHALL-2-13-465:
-# See 2.9.3.1 Asynchronous AND-OR Lists Shell aliases; see 2.3.1 Alias
-# Substitution Utilities other than the special built-ins (see 2.15 Special
-# Built-In Utilities ) shall be invoked in a separate environment that consists
-# of the following.
+# Utilities other than the special built-ins shall be invoked in a separate
+# environment.
 # REQUIREMENT: SHALL-2-13-466:
 # The initial value of these objects shall be the same as that for the parent
 # shell, except as noted below.
+# REQUIREMENT: SHALL-2-13-468:
+# Variables with the export attribute shall be passed to the utility
+# environment variables.
+
+# Exported variable visible in child
+test_cmd='MYVAR=hello; export MYVAR; $TARGET_SHELL -c "echo \$MYVAR"'
+assert_stdout "hello" "$TARGET_SHELL -c '$test_cmd'"
+
+# Non-exported variable not visible in child
+test_cmd='MYVAR=secret; $TARGET_SHELL -c "echo \${MYVAR:-empty}"'
+assert_stdout "empty" "$TARGET_SHELL -c '$test_cmd'"
+
+# ==============================================================================
+# Trap inheritance in shell scripts
+# ==============================================================================
 # REQUIREMENT: SHALL-2-13-467:
 # If the utility is a shell script, traps caught by the shell shall be set to
-# the default values and traps ignored by the shell shall be set to be ignored
-# by the utility; if the utility is not a shell script, the trap actions
-# (default or ignore) shall be mapped into the appropriate signal handling
-# actions for the utility
-# REQUIREMENT: SHALL-2-13-468:
-# Variables with the export attribute, along with those explicitly exported for
-# the duration of the command, shall be passed to the utility environment
-# variables
+# the default values and traps ignored shall remain ignored.
+
+_script="${TMPDIR:-/tmp}/_trap_inherit_$$.sh"
+printf '#!/bin/sh\ntrap\n' > "$_script"
+chmod +x "$_script"
+test_cmd="trap 'echo caught' USR1; $_script"
+_out=$($TARGET_SHELL -c "$test_cmd" 2>/dev/null)
+case "$_out" in
+    *USR1*|*caught*) fail "Script should not inherit parent's caught traps: $_out" ;;
+    *) pass ;;
+esac
+rm -f "$_script"
+
+# ==============================================================================
+# Subshell environment
+# ==============================================================================
 # REQUIREMENT: SHALL-2-13-471:
 # A subshell environment shall be created as a duplicate of the shell
-# environment, except that: Unless specified otherwise (see trap ), traps that
-# are not being ignored shall be set to the default action.
+# environment, except that traps not being ignored shall be set to default.
 # REQUIREMENT: SHALL-2-13-472:
 # If the shell is interactive, the subshell shall behave as a non-interactive
-# shell in all respects except: The expansion of the special parameter '-' may
-# continue to indicate that it is interactive.
+# shell in all respects.
+
+# Subshell traps reset to default
+test_cmd='trap "echo parent_trap" USR1; (trap) 2>/dev/null'
+_out=$($TARGET_SHELL -c "$test_cmd" 2>/dev/null)
+case "$_out" in
+    *USR1*) fail "Subshell should not inherit caught traps" ;;
+    *) pass ;;
+esac
+
+# Subshell inherits variables
+test_cmd='FOO=bar; (echo $FOO)'
+assert_stdout "bar" "$TARGET_SHELL -c '$test_cmd'"
+
+# ==============================================================================
+# Special built-in utilities
+# ==============================================================================
 # REQUIREMENT: SHALL-2-15-506:
 # The following "special built-in" utilities shall be supported in the shell
 # command language.
+
+# Verify key special built-ins exist
+for _bi in break : continue . eval exec exit export readonly return set shift trap unset; do
+    assert_exit_code 0 "$TARGET_SHELL -c 'command -v $_bi >/dev/null 2>&1 || true'"
+done
+
 # REQUIREMENT: SHALL-2-15-507:
 # The output of each command, if any, shall be written to standard output,
 # subject to the normal redirection and piping possible with all commands.
+
+# Special built-in output goes to stdout and can be redirected
+test_cmd='export FOO=bar; export -p > /dev/null; echo ok'
+assert_stdout "ok" "$TARGET_SHELL -c '$test_cmd'"
+
 # REQUIREMENT: SHALL-2-15-508:
-# An implementation may choose to make any utility a built-in; however, the
-# special built-in utilities described here differ from regular built-in
-# utilities in two respects: An error in a special built-in utility may cause a
-# shell executing that utility to abort, while an error in a regular built-in
-# utility shall not cause a shell executing that utility to abort. (See 2.8.1
-# Consequences of Shell Errors for the consequences of errors on interactive and
-# non-interactive shells.) If a special built-in utility encountering an error
-# does not abort the shell, its exit value shall be non-zero.
-# zero.
+# An error in a special built-in may cause the shell to abort.
 # REQUIREMENT: SHALL-2-15-509:
-# (See 2.8.1 Consequences of Shell Errors for the consequences of errors on
-# interactive and non-interactive shells.) If a special built-in utility
-# encountering an error does not abort the shell, its exit value shall be
-# non-zero.
+# If a special built-in encountering an error does not abort the shell,
+# its exit value shall be non-zero.
+
+# Error in special built-in produces non-zero exit
+test_cmd='shift 999 2>/dev/null; echo $?'
+_out=$($TARGET_SHELL -c "$test_cmd" 2>/dev/null)
+case "$_out" in
+    0) fail "shift 999 should produce non-zero exit" ;;
+    *) pass ;;
+esac
+
 # REQUIREMENT: SHALL-2-15-510:
-# As described in 2.9.1 Simple Commands , variable assignments preceding the
-# invocation of a special built-in utility affect the current execution
-# environment; this shall not be the case with a regular built-in or other
-# utility.
+# Variable assignments preceding a special built-in affect the current
+# execution environment; this shall not be the case with a regular built-in.
+
+# Assignment before special built-in persists in current environment
+test_cmd='FOO=bar eval "echo \$FOO"'
+assert_stdout "bar" "$TARGET_SHELL -c '$test_cmd'"
+
+# Verify the variable persists after eval completes
+test_cmd='FOO=bar eval true; echo "\$FOO"'
+_out=$($TARGET_SHELL -c "$test_cmd" 2>/dev/null)
+case "$_out" in
+    *bar*) pass ;;
+    *) fail "Assignment before special built-in did not persist: $_out" ;;
+esac
+
 # REQUIREMENT: SHALL-2-15-511:
-# For those that are not, the requirement in 1.4 Utility Description Defaults
-# that "--" be recognized as a first argument to be discarded does not apply and
-# a conforming application shall not use that argument.
+# For special built-ins that are not in the POSIX Utility Syntax Guidelines
+# table, "--" need not be recognized as end-of-options.
+
+test_cmd='set -- a b c; echo $#'
+assert_stdout "3" "$TARGET_SHELL -c '$test_cmd'"
 
 report

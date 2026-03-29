@@ -387,7 +387,10 @@ assert_stdout "pass_pwd_unchanged" "$TARGET_SHELL -c '$test_cmd'"
 # REQUIREMENT: SHALL-CD-1094:
 # If directory is an empty string, cd shall write a diagnostic message to
 # standard error and exit with non-zero status.
-test_cmd='cd "" 2>/dev/null; exit 1'
-assert_exit_code_non_zero "$TARGET_SHELL -c '$test_cmd'"
+test_cmd='cd "" 2>/dev/null; echo survived'
+_out=$($TARGET_SHELL -c "$test_cmd" 2>/dev/null)
+# cd "" should fail; if it doesn't fail, the test should still detect it
+# by checking that the exit code of cd was non-zero
+assert_exit_code_non_zero "$TARGET_SHELL -c 'cd \"\" 2>/dev/null'"
 
 report

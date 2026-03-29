@@ -6,8 +6,23 @@
 # with and without arguments, silent error reporting, OPTIND/OPTARG tracking,
 # and proper termination when all options have been consumed.
 # REQUIREMENT: SHALL-GETOPTS-1174:
+# The getopts utility shall retrieve options and option-arguments from a list
+# of parameters.
 
 . "$MATRIX_DIR/lib.sh"
+
+# Test that getopts retrieves options from parameter list (SHALL-GETOPTS-1174)
+test_cmd='
+OPTIND=1
+result=""
+set -- -a -b -c
+while getopts abc name; do
+    result="${result}${name}"
+done
+echo "$result"
+'
+assert_stdout "abc" \
+    "$TARGET_SHELL -c '$test_cmd'"
 
 # ==============================================================================
 # Basic Option Character Assignment

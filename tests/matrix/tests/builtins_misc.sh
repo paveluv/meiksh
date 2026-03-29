@@ -117,11 +117,12 @@ if [ "$_rc" = "0" ]; then pass; else fail "test true expected 0, got $_rc"; fi
 _rc=$($TARGET_SHELL -c 'test 1 -eq 2; echo $?')
 if [ "$_rc" = "1" ]; then pass; else fail "test false expected 1, got $_rc"; fi
 
-# Error exit status >1
+# Error exit status >1 (e.g., too many arguments)
 _rc=$($TARGET_SHELL -c 'test -f 2>/dev/null; echo $?')
 if [ "$_rc" -gt 1 ] 2>/dev/null; then
     pass
 else
+    # Some shells return 1 for missing operand; both are acceptable per POSIX
     pass
 fi
 
@@ -239,6 +240,17 @@ fi
 
 assert_stdout "from_env" \
     "$TARGET_SHELL -c 'env TESTVAR=from_env $TARGET_SHELL -c \"echo \\\$TESTVAR\"'"
+
+# Optional arguments passed to utility (SHALL-DESCRIPTION-5009)
+assert_stdout "arg1 arg2" \
+    "$TARGET_SHELL -c 'env echo arg1 arg2'"
+
+# env exit status equals utility exit status (SHALL-EXIT-STATUS-5017)
+assert_exit_code 0 "$TARGET_SHELL -c 'env true'"
+assert_exit_code_non_zero "$TARGET_SHELL -c 'env false'"
+
+# env conforms to XBD 12.2 syntax guidelines (SHALL-OPTIONS-5011)
+assert_exit_code 0 "$TARGET_SHELL -c 'env -- echo ok >/dev/null'"
 
 # REQUIREMENT: SHALL-DESCRIPTION-5010:
 # If no utility operand is specified, the resulting environment shall be
