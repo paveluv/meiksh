@@ -12,7 +12,7 @@
 # The 'for' Loop
 # ==============================================================================
 # REQUIREMENT: SHALL-2-9-4-2-349: The for loop shall execute a sequence of
-# commands for each member in a list of items.
+# commands for each member in a list of items .
 # REQUIREMENT: SHALL-2-9-4-2-351: Then, the variable name shall be set to each
 # item, in turn, and the compound-list executed each time.
 
@@ -24,9 +24,10 @@ assert_stdout "a b c " \
 # REQUIREMENT: SHALL-2-9-4-2-352: If no items result from the expansion, the
 # compound-list shall not be executed.
 # REQUIREMENT: SHALL-Exit Status-353: If there is at least one item in the list
-# of items, the exit status of a for command shall be the exit status...
+# of items, the exit status of a for command shall be the exit status of the
+# last compound-list executed.
 # REQUIREMENT: SHALL-Exit Status-354: If there are no items, the exit status
-# shall be zero....
+# shall be zero.
 
 test_cmd='
 for i in 1 2; do
@@ -49,17 +50,20 @@ assert_stdout "1" \
 # ==============================================================================
 # REQUIREMENT: SHALL-2-9-4-3-355: The conditional construct case shall execute
 # the compound-list corresponding to the first pattern (see 2.14 Pattern
-# Matching Notation) that matches...
+# Matching Notation ), if any are present, that is matched by the string
+# resulting from the tilde expansion, parameter expansion, command substitution,
+# arithmetic expansion, and quote removal of the given word.
 # REQUIREMENT: SHALL-2-9-4-3-356: The reserved word in shall denote the
 # beginning of the patterns to be matched.
 # REQUIREMENT: SHALL-2-9-4-3-357: Multiple patterns with the same compound-list
 # shall be delimited by the '|' symbol.
 # REQUIREMENT: SHALL-2-9-4-3-360: After the first match, no more patterns in the
-# case statement shall be expanded, and the compound-list (if any) is executed.
+# case statement shall be expanded, and the compound-list of the matching clause
+# shall be executed.
 # REQUIREMENT: SHALL-Exit Status-363: The exit status of case shall be zero if
 # no patterns are matched.
 # REQUIREMENT: SHALL-Exit Status-364: Otherwise, the exit status shall be the
-# exit status of the compound-list of the last clause to be ex...
+# exit status of the compound-list of the last clause to be executed.
 
 test_cmd='
 case "xyz" in
@@ -80,7 +84,7 @@ exit $?
 assert_exit_code 0 \
     "$TARGET_SHELL -c '$test_cmd'"
 # REQUIREMENT: SHALL-2-9-4-3-361: If the case statement clause is terminated by
-# ";;", no further clauses shall be examined.
+# ";;" , no further clauses shall be examined.
 
 # Testing matching with | and early exit via ;;.
 test_cmd='
@@ -106,15 +110,21 @@ assert_stdout "default" \
 # The 'if' Construct
 # ==============================================================================
 # REQUIREMENT: SHALL-2-9-4-4-365: The if command shall execute a compound-list
-# and use its exit status to determine whether to execute...
-# REQUIREMENT: SHALL-2-9-4-4-366: [else compound-list] fi The if compound-list
-# shall be executed; if its exit status is zero, the then compound-list shall...
+# and use its exit status to determine whether to execute another compound-list
+# .
+# REQUIREMENT: SHALL-2-9-4-4-366: The format for the if construct is as follows:
+# if compound-list then compound-list [ elif compound-list then compound-list ]
+# ... [ else compound-list ] fi The if compound-list shall be executed; if its
+# exit status is zero, the then compound-list shall be executed and the command
+# shall complete.
 # REQUIREMENT: SHALL-2-9-4-4-367: Otherwise, each elif compound-list shall be
-# executed, in turn, and if its exit status is zero, the then compound-list...
+# executed, in turn, and if its exit status is zero, the then compound-list
+# shall be executed and the command shall complete.
 # REQUIREMENT: SHALL-2-9-4-4-368: Otherwise, the else compound-list shall be
 # executed.
-# REQUIREMENT: SHALL-Exit Status-369: The exit status of the if command shall
-# be the exit status of the then or else compound-list that was...
+# REQUIREMENT: SHALL-Exit Status-369: The exit status of the if command shall be
+# the exit status of the then or else compound-list that was executed, or zero,
+# if none was executed.
 
 test_cmd='
 if true; then
@@ -146,12 +156,15 @@ assert_stdout "else" \
 # ==============================================================================
 # REQUIREMENT: SHALL-2-9-4-5-370: The while loop shall continuously execute one
 # compound-list as long as another compound-list has a zero exit status.
-# REQUIREMENT: SHALL-2-9-4-5-371: while compound-list-1 do compound-list-2 done
-# The compound-list-1 shall be executed, and if it has a non-zero exit status...
+# REQUIREMENT: SHALL-2-9-4-5-371: The format of the while loop is as follows:
+# while compound-list-1 do compound-list-2 done The compound-list-1 shall be
+# executed, and if it has a non-zero exit status, the while command shall
+# complete.
 # REQUIREMENT: SHALL-2-9-4-5-372: Otherwise, the compound-list-2 shall be
 # executed, and the process shall repeat.
-# REQUIREMENT: SHALL-Exit Status-373: The exit status of the while loop shall
-# be the exit status of the last compound-list
+# REQUIREMENT: SHALL-Exit Status-373: The exit status of the while loop shall be
+# the exit status of the last compound-list-2 executed, or zero if none was
+# executed.
 
 test_cmd='
 while false; do
@@ -188,12 +201,14 @@ assert_stdout "0" \
 # ==============================================================================
 # REQUIREMENT: SHALL-2-9-4-6-374: The until loop shall continuously execute one
 # compound-list as long as another compound-list has a non-zero exit status.
-# REQUIREMENT: SHALL-2-9-4-6-375: until compound-list-1 do compound-list-2 done
-# The compound-list-1 shall be executed, and if it has a zero exit status...
+# REQUIREMENT: SHALL-2-9-4-6-375: The format of the until loop is as follows:
+# until compound-list-1 do compound-list-2 done The compound-list-1 shall be
+# executed, and if it has a zero exit status, the until command completes.
 # REQUIREMENT: SHALL-2-9-4-6-376: Otherwise, the compound-list-2 shall be
 # executed, and the process repeats.
-# REQUIREMENT: SHALL-Exit Status-377: The exit status of the until loop shall
-# be the exit status of the last compound-list...
+# REQUIREMENT: SHALL-Exit Status-377: The exit status of the until loop shall be
+# the exit status of the last compound-list-2 executed, or zero if none was
+# executed.
 
 test_cmd='x=0; until [ $x -eq 3 ]; do x=$((x+1)); printf "%s " "$x"; done'
 assert_stdout "1 2 3 " \
@@ -221,7 +236,7 @@ assert_stdout "parent" \
 # Redirections on Compound Commands
 # ==============================================================================
 # REQUIREMENT: SHALL-2-9-4-344: Each redirection shall apply to all the commands
-# within the compound command that do not explicitly override...
+# within the compound command that do not explicitly override that redirection.
 
 test_cmd='{ echo a; echo b; } > tmp_group.txt; cat tmp_group.txt'
 assert_stdout "a

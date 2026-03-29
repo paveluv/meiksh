@@ -37,9 +37,15 @@ assert_stdout "if while for done" \
 # ==============================================================================
 # The 'time' Reserved Word
 # ==============================================================================
-# REQUIREMENT: SHALL-2-4-058: When the word time is recognized as a reserved
-# word in circumstances where it would, if it were not a reserved word, be the
-# command name... the utility time shall be executed.
+# REQUIREMENT: SHALL-2-4-058: When used in circumstances where reserved words
+# are recognized (described above), the following words may be recognized as
+# reserved words, in which case the results are unspecified except as described
+# below for time : [[ ]] function namespace select time When the word time is
+# recognized as a reserved word in circumstances where it would, if it were not
+# a reserved word, be the command name (see 2.9.1.1 Order of Processing ) of a
+# simple command that would execute the time utility in a manner other than one
+# for which time states that the results are unspecified, the behavior shall be
+# as specified for the time utility.
 
 # The `time` command is special because it measures execution, but it's treated
 # as a reserved word or executed transparently.
