@@ -473,7 +473,8 @@ assert_stdout "match" \
 
 # Alias trailing blank triggers expansion of next word
 assert_stdout "hello" \
-    "$TARGET_SHELL -c 'alias myalias=\"echo \"; myalias hello'"
+    "$TARGET_SHELL -c 'alias myalias=\"echo \"
+myalias hello'"
 
 # ==============================================================================
 # Dollar-Single-Quote ($') Quoting

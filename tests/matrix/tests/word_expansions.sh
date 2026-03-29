@@ -829,6 +829,7 @@ wait'
 # After categorizing as TOKEN, alias substitution shall apply.
 
 assert_stdout "hello" \
-    "$TARGET_SHELL -c 'alias myalias=\"echo \"; myalias hello'"
+    "$TARGET_SHELL -c 'alias myalias=\"echo \"
+myalias hello'"
 
 report

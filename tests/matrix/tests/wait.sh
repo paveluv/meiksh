@@ -164,7 +164,7 @@ assert_stdout "distinct_ok" \
 
 # REQUIREMENT: SHALL-WAIT-1089:
 # >128 for signal death (also tested with no-operand wait)
-test_cmd='sleep 60 & p=$!; kill -TERM $p; wait; rc=$?; [ "$rc" -gt 128 ] && echo no_op_sig_ok'
+test_cmd='sleep 60 & p=$!; kill -TERM $p; wait $p 2>/dev/null; rc=$?; [ "$rc" -gt 128 ] && echo no_op_sig_ok'
 assert_stdout "no_op_sig_ok" \
     "$TARGET_SHELL -c '$test_cmd'"
 

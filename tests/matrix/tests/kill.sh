@@ -174,19 +174,31 @@ esac
 # If at least one matching process is found for each pid operand and the
 # specified signal is successfully sent, the exit status shall be 0.
 
-assert_exit_code 0 "$TARGET_SHELL -c '
+# kill itself exits 0 on success; the overall script exit is from 'wait $p'
+# which returns 128+signum, so we only verify kill's own exit code.
+_out=$($TARGET_SHELL -c '
   sleep 60 &
-  p=\$!
-  kill \$p
-  wait \$p 2>/dev/null
-'"
+  p=$!
+  kill $p
+  echo $?
+  wait $p 2>/dev/null
+' 2>/dev/null)
+case "$_out" in
+    0*) pass ;;
+    *) fail "kill exit code should be 0 on success, got: $_out" ;;
+esac
 
-assert_exit_code 0 "$TARGET_SHELL -c '
+_out=$($TARGET_SHELL -c '
   sleep 60 &
-  p=\$!
-  kill -s KILL \$p
-  wait \$p 2>/dev/null
-'"
+  p=$!
+  kill -s KILL $p
+  echo $?
+  wait $p 2>/dev/null
+' 2>/dev/null)
+case "$_out" in
+    0*) pass ;;
+    *) fail "kill -s KILL exit code should be 0 on success, got: $_out" ;;
+esac
 
 # ==============================================================================
 # Exit status of kill: >0 on failure
@@ -298,7 +310,7 @@ send "set -m"
 expect "$ "
 send "sleep 60 &"
 expect "$ "
-send "kill -s 0 %1; echo check_\$?"
+send "kill -s 0 %1; echo check_$?"
 expect "check_0"
 send "kill %1; wait 2>/dev/null"
 expect "$ "

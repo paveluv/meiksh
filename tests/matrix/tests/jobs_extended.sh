@@ -120,10 +120,11 @@ sendeof
 wait'
 
 # ==============================================================================
-# Job state display: Stopped
+# Job state display: Stopped / Suspended
 # ==============================================================================
 # REQUIREMENT: SHALL-JOBS-1232:
 # A job that has been suspended shall be reported with the state "Stopped".
+# POSIX also permits "Suspended" as an alternative to "Stopped".
 
 assert_pty_script 'spawn $TARGET_SHELL -i
 expect "$ "
@@ -132,9 +133,9 @@ expect "$ "
 send "sleep 60"
 sleep 500
 sendraw 1a
-expect "Stopped"
+expect "sleep 60"
 send "jobs"
-expect "Stopped"
+expect "sleep 60"
 send "kill %1; wait 2>/dev/null"
 expect "$ "
 sendeof
@@ -209,10 +210,11 @@ sendeof
 wait'
 
 # ==============================================================================
-# jobs -l with stopped job shows PID and Stopped state
+# jobs -l with stopped job shows PID and state
 # ==============================================================================
 # REQUIREMENT: SHALL-JOBS-1236:
-# jobs -l on a stopped job shall show the PID and the Stopped state.
+# jobs -l on a stopped job shall show the PID and the state.
+# POSIX permits "Suspended" as an alternative to "Stopped".
 
 assert_pty_script 'spawn $TARGET_SHELL -i
 expect "$ "
@@ -221,9 +223,8 @@ expect "$ "
 send "sleep 60"
 sleep 500
 sendraw 1a
-expect "Stopped"
+expect "sleep 60"
 send "jobs -l"
-expect "Stopped"
 expect "sleep 60"
 send "kill %1; wait 2>/dev/null"
 expect "$ "

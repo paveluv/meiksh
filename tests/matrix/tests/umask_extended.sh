@@ -81,7 +81,7 @@ assert_stdout "0037" "$TARGET_SHELL -c 'umask 0037; umask'"
 # Symbolic form
 _out2=$($TARGET_SHELL -c 'umask u=rwx,g=rx,o=; umask')
 case "$_out2" in
-    0007|007) pass ;;
+    0027|027) pass ;;
     *) fail "umask symbolic assignment produced unexpected mask: '$_out2'" ;;
 esac
 

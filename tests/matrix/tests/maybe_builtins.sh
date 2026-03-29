@@ -68,7 +68,11 @@ assert_exit_code_non_zero "$TARGET_SHELL -c '[ 1 -eq 2 ]'"
 # REQUIREMENT: SHALL-OPTIONS-5069:
 # No options shall be supported.
 
-assert_exit_code 0 "$TARGET_SHELL -c 'test -- -eq --'"
+# Since test does not recognize --, "test -- = --" has three operands where
+# $2 is binary primary =. This evaluates string equality "--" = "--" → true.
+# If -- were consumed as end-of-options, = would be treated as a unary -n
+# test, which could produce a different result.
+assert_exit_code 0 "$TARGET_SHELL -c 'test -- = --'"
 
 # REQUIREMENT: SHALL-OPERANDS-5070:
 # The application shall ensure that all operators and elements of

@@ -488,7 +488,7 @@ test_cmd='FOO=bar eval "echo \$FOO"'
 assert_stdout "bar" "$TARGET_SHELL -c '$test_cmd'"
 
 # Verify the variable persists after eval completes
-test_cmd='FOO=bar eval true; echo "\$FOO"'
+test_cmd='FOO=bar eval true; echo "$FOO"'
 _out=$($TARGET_SHELL -c "$test_cmd" 2>/dev/null)
 case "$_out" in
     *bar*) pass ;;

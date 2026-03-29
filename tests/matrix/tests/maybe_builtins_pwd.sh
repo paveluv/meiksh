@@ -14,6 +14,14 @@ _tmpdir="${TMPDIR:-/tmp}/pwd_test_$$"
 mkdir -p "$_tmpdir/real/deep"
 ln -sfn "$_tmpdir/real/deep" "$_tmpdir/link"
 
+# On macOS, /var is a firmlink to /private/var. Normalize for comparison.
+_normalize_path() {
+    case "$1" in
+        /private/*) echo "${1#/private}" ;;
+        *) echo "$1" ;;
+    esac
+}
+
 # ==============================================================================
 # -L option: use PWD if it is an absolute pathname with no dot/dot-dot/symlink
 # ==============================================================================
@@ -25,7 +33,7 @@ ln -sfn "$_tmpdir/real/deep" "$_tmpdir/link"
 # When PWD is set to the real path (no symlinks), -L should use it.
 _real=$($TARGET_SHELL -c "cd '$_tmpdir/real/deep' && pwd -P" 2>/dev/null)
 _out=$($TARGET_SHELL -c "cd '$_tmpdir/real/deep' && PWD='$_real' pwd -L" 2>/dev/null)
-if [ "$_out" = "$_real" ]; then
+if [ "$(_normalize_path "$_out")" = "$(_normalize_path "$_real")" ]; then
     pass
 else
     fail "pwd -L with clean PWD expected '$_real', got '$_out'"
@@ -48,7 +56,7 @@ esac
 # If PWD is set to a bogus value, -L should fall back to physical path.
 _physical=$($TARGET_SHELL -c "cd '$_tmpdir/real/deep' && pwd -P" 2>/dev/null)
 _out=$($TARGET_SHELL -c "cd '$_tmpdir/real/deep' && PWD=/nonexistent/bogus pwd -L" 2>/dev/null)
-if [ "$_out" = "$_physical" ]; then
+if [ "$(_normalize_path "$_out")" = "$(_normalize_path "$_physical")" ]; then
     pass
 else
     fail "pwd -L with bogus PWD expected physical '$_physical', got '$_out'"
