@@ -82,7 +82,7 @@ done" \
 # ==============================================================================
 # The '.' Utility and Errors
 # ==============================================================================
-# REQUIREMENT: SHALL-EXIT STATUS-533:
+# REQUIREMENT: SHALL-EXIT-STATUS-533:
 # If no readable file was found or if the commands in the file could not be
 # parsed, and the shell is interactive (and therefore does not abort; see 2.8.1
 # Consequences of Shell Errors ), the exit status shall be non-zero.

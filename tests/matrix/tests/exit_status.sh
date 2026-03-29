@@ -13,7 +13,7 @@
 # REQUIREMENT: SHALL-2-9-1-4-296:
 # If the search is unsuccessful, the command shall fail with an exit status of
 # 127 and the shell shall write an error message.
-# REQUIREMENT: SHALL-2-9-1-6-306:
+# REQUIREMENT: SHALL-2-9-1-6-310:
 # If the search is unsuccessful, the command
 # shall fail with an exit status of 127 and the shell shall write an error...
 # REQUIREMENT: SHALL-2-8-2-259:
@@ -50,7 +50,7 @@ assert_stdout "126" \
 # ==============================================================================
 # Built-in Utility Exit Statuses
 # ==============================================================================
-# REQUIREMENT: SHALL-EXIT STATUS-537:
+# REQUIREMENT: SHALL-EXIT-STATUS-537:
 # If there are no argument s, or only null argument s, eval shall return a zero
 # exit status; otherwise, it shall return the exit status of the command defined
 # by the string of concatenated argument s separated by <space> characters, or a
@@ -65,7 +65,7 @@ test_cmd='eval ""'
 assert_exit_code 0 \
     "$TARGET_SHELL -c '$test_cmd'"
 
-# REQUIREMENT: SHALL-EXIT STATUS-548:
+# REQUIREMENT: SHALL-EXIT-STATUS-548:
 # Otherwise, exec shall return a zero exit status.
 
 # `exec` with no utility argument (just redirections or nothing) returns 0.
@@ -73,10 +73,10 @@ test_cmd='exec'
 assert_exit_code 0 \
     "$TARGET_SHELL -c '$test_cmd'"
 
-# REQUIREMENT: SHALL-EXIT STATUS-578:
+# REQUIREMENT: SHALL-EXIT-STATUS-578:
 # The exit status shall be n , if specified, except that the behavior is
 # unspecified if n is not an unsigned decimal integer or is greater than 255.
-# REQUIREMENT: SHALL-EXIT STATUS-579:
+# REQUIREMENT: SHALL-EXIT-STATUS-579:
 # If n is not specified, the result shall be as if n were specified with the
 # current value of the special parameter '?' (see 2.5.2 Special Parameters ),
 # except that if the return command would cause the end of execution of a trap
@@ -100,12 +100,12 @@ test_cmd='myfunc() { return 5; }; myfunc; echo "$?"'
 assert_stdout "5" \
     "$TARGET_SHELL -c '$test_cmd'"
 
-# REQUIREMENT: SHALL-EXIT STATUS-623:
+# REQUIREMENT: SHALL-EXIT-STATUS-623:
 # If the n operand is invalid or is greater than "$#" , this may be treated as
 # an error and a non-interactive shell may exit; if the shell does not exit in
 # this case, a non-zero exit status shall be returned and a warning message
 # shall be written to standard error.
-# REQUIREMENT: SHALL-EXIT STATUS-624:
+# REQUIREMENT: SHALL-EXIT-STATUS-624:
 # Otherwise, zero shall be returned.
 
 # `shift` with valid bounds returns 0.
@@ -116,10 +116,10 @@ assert_stdout "0" \
 # ==============================================================================
 # The 'sh' Utility Exit Status
 # ==============================================================================
-# REQUIREMENT: SHALL-EXIT STATUS-142:
+# REQUIREMENT: SHALL-EXIT-STATUS-623:
 # The following exit values shall be
 # returned...
-# REQUIREMENT: SHALL-EXIT STATUS-143:
+# REQUIREMENT: SHALL-EXIT-STATUS-143:
 # Otherwise, the shell shall terminate in the same manner as for an exit
 # command with no operands, unless the last command the shell invoked was
 # executed without forking, in which case the wait status seen by the parent

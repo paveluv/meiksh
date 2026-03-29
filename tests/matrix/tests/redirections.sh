@@ -12,7 +12,7 @@
 # ==============================================================================
 # The Gateway: Basic Redirections
 # ==============================================================================
-# REQUIREMENT: SHALL-2-7-0-050:
+# REQUIREMENT: SHALL-2-7-5-221:
 # Redirection operators: Redirection is used to
 # open and close files for the current shell execution environment
 
@@ -26,7 +26,7 @@ assert_stdout "hello" \
 # ==============================================================================
 # Reading Files: Input Redirection
 # ==============================================================================
-# REQUIREMENT: SHALL-2-7-1-055:
+# REQUIREMENT: SHALL-2-7-1-197:
 # Input Redirection: The general format for
 # redirecting input is: [n]<word
 # REQUIREMENT: SHALL-2-7-1-198:
@@ -57,7 +57,7 @@ assert_exit_code_non_zero \
 # ==============================================================================
 # Writing Files: Output Redirection
 # ==============================================================================
-# REQUIREMENT: SHALL-2-7-2-060:
+# REQUIREMENT: SHALL-2-7-2-200:
 # Output Redirection: The general format for
 # redirecting output is: [n]>word
 # REQUIREMENT: SHALL-2-7-2-199:
@@ -108,7 +108,7 @@ b" \
 # ==============================================================================
 # In-Band Data: Here-Documents
 # ==============================================================================
-# REQUIREMENT: SHALL-2-7-4-065:
+# REQUIREMENT: SHALL-2-7-4-213:
 # Here-Document: The redirection operator << is
 # used to read input from the current source file...
 # REQUIREMENT: SHALL-2-7-4-210:

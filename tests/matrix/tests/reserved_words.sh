@@ -10,11 +10,11 @@
 # ==============================================================================
 # Unquoted Recognition
 # ==============================================================================
-# REQUIREMENT: SHALL-2-4-056:
+# REQUIREMENT: SHALL-2-4-058:
 # The following words shall be recognized as
 # reserved words: case, do, done, elif, else, esac, fi, for, if, in, then,
 # until, while...
-# REQUIREMENT: SHALL-2-4-057:
+# REQUIREMENT: SHALL-2-4-058:
 # This recognition shall only occur when none of the
 # characters is quoted and when the word is used as: The first word of a
 # command... The third word in a case or for command.

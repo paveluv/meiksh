@@ -64,7 +64,7 @@ rm file1 file2
 # ==============================================================================
 # The Magic of the Tilde
 # ==============================================================================
-# REQUIREMENT: SHALL-2-6-1-030:
+# REQUIREMENT: SHALL-2-6-1-113:
 # Tilde Expansion: A <tilde> ('~') character shall
 # be subject to tilde expansion if it is the first character...
 # REQUIREMENT: SHALL-2-6-1-113:
@@ -99,7 +99,7 @@ assert_stdout "home with * spaces" \
 # Tilde expansions, parameter expansions, command substitutions, arithmetic
 # expansions, and quote removals that occur within a single word shall expand to
 # a single field, except as described below.
-# REQUIREMENT: SHALL-2-6-107:
+# REQUIREMENT: SHALL-2-6-5-168:
 # The shell shall create multiple fields or no
 # fields from a single word only as a result of field splitting...
 # REQUIREMENT: SHALL-2-6-108:
@@ -138,7 +138,7 @@ assert_stdout "~" \
 # ==============================================================================
 # The Core Feature: Parameter Expansion
 # ==============================================================================
-# REQUIREMENT: SHALL-2-6-2-035:
+# REQUIREMENT: SHALL-2-6-2-119:
 # Parameter Expansion: The format for parameter
 # expansion is as follows: ${expression}
 
@@ -148,7 +148,7 @@ test_cmd='foo=hello; echo ${foo}'
 assert_stdout "hello" \
     "$TARGET_SHELL -c '$test_cmd'"
 
-# REQUIREMENT: SHALL-2-6-2-036:
+# REQUIREMENT: SHALL-2-6-2-119:
 # Parameter Expansion: The <lbrace> and <rbrace>
 # are required except when...
 
@@ -350,10 +350,10 @@ assert_stdout "5" \
 # ==============================================================================
 # Inception: Command Substitution
 # ==============================================================================
-# REQUIREMENT: SHALL-2-6-3-040:
+# REQUIREMENT: SHALL-2-6-3-149:
 # Command Substitution: Command substitution
 # allows the output of a command to replace the command name...
-# REQUIREMENT: SHALL-2-6-3-148:
+# REQUIREMENT: SHALL-2-6-3-152:
 # Command substitution shall occur when command(s)
 # are enclosed as follows: $(commands) or `commands`
 # REQUIREMENT: SHALL-2-6-3-149:
@@ -407,7 +407,7 @@ test_cmd='echo "$(echo "~")"'
 assert_stdout "~" \
     "$TARGET_SHELL -c '$test_cmd'"
 
-# REQUIREMENT: SHALL-2-6-3-156:
+# REQUIREMENT: SHALL-2-6-3-151:
 # To specify nesting within the backquoted
 # version, the application shall precede the inner backquotes with <backslash>.
 # REQUIREMENT: SHALL-2-6-3-157:
@@ -431,7 +431,7 @@ assert_stdout "nested" \
 # ==============================================================================
 # Math Class: Arithmetic Expansion
 # ==============================================================================
-# REQUIREMENT: SHALL-2-6-4-045:
+# REQUIREMENT: SHALL-2-6-4-165:
 # Arithmetic Expansion: The format for arithmetic
 # expansion shall be as follows: $((expression))
 # REQUIREMENT: SHALL-V3CHAP02-1008:
@@ -444,7 +444,7 @@ assert_stdout "nested" \
 # REQUIREMENT: SHALL-2-6-4-163:
 # Next, the shell shall treat this as an arithmetic expression and substitute
 # the value of the expression.
-# REQUIREMENT: SHALL-2-6-4-164:
+# REQUIREMENT: SHALL-2-6-4-163:
 # The arithmetic expression shall be processed
 # according to the rules given in 1.1.2.1 Arithmetic Precision...
 
@@ -593,7 +593,7 @@ arg: b" \
 # REQUIREMENT: SHALL-2-6-5-181:
 # When the algorithm transforms a candidate into an output field it shall be
 # appended to the current list of output fields.
-# REQUIREMENT: SHALL-2-6-5-182:
+# REQUIREMENT: SHALL-2-6-5-168:
 # Each field containing the results from an
 # expansion shall be processed in order...
 

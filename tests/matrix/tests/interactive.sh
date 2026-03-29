@@ -15,13 +15,13 @@
 # ==============================================================================
 # The Face of the Shell: Prompt Strings ($PS1)
 # ==============================================================================
-# REQUIREMENT: SHALL-Command History List-031:
+# REQUIREMENT: SHALL-Command-History-List-031:
 # When the sh utility is being used interactively, it shall maintain a list of
 # commands previously entered from the terminal in the file named by the
 # HISTFILE environment variable.
 # REQUIREMENT: SHALL-DESCRIPTION-602:
 # A user shall explicitly exit to leave the interactive shell.
-# REQUIREMENT: SHALL-2-5-025:
+# REQUIREMENT: SHALL-2-5-3-085:
 # Parameters: PS1: Each time an interactive shell is
 # ready to read a command, the value of this variable shall be subjected to
 # parameter expansion...

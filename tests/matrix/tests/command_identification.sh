@@ -8,7 +8,7 @@
 
 . "$MATRIX_DIR/lib.sh"
 
-# REQUIREMENT: SHALL-TYPE-1294:
+# REQUIREMENT: SHALL-TYPE-1293:
 # The type utility shall conform to XBD 12.2
 # Utility Syntax Guidelines.
 # REQUIREMENT: SHALL-BG-1029:
@@ -20,7 +20,7 @@
 # subjected to parameter expansion (see 2.6.2 Parameter Expansion ) by the
 # shell, and the resulting value shall be used as a pathname of a file
 # containing shell commands to execute in the current environment.
-# REQUIREMENT: SHALL-TYPE-1297:
+# REQUIREMENT: SHALL-TYPE-1293:
 # The standard output of type contains information
 # about each operand in an unspecified format.
 # REQUIREMENT: SHALL-STDERR-518:
@@ -28,7 +28,7 @@
 # REQUIREMENT: SHALL-SH-1024-DUP746:
 # The following exit values shall be returned: 0 The script to be executed
 # consisted solely of zero or more blank lines or comments, or both.
-# REQUIREMENT: SHALL-TYPE-1300:
+# REQUIREMENT: SHALL-TYPE-1293:
 # No error occurred.
 
 test_cmd='
@@ -70,7 +70,7 @@ test_cmd='
 '
 assert_stdout "pass" "$TARGET_SHELL -c '$test_cmd'"
 
-# REQUIREMENT: SHALL-ALIAS-1076:
+# REQUIREMENT: SHALL-ALIAS-1052:
 # The alias utility shall conform to XBD 12.2
 # Utility Syntax Guidelines.
 # REQUIREMENT: SHALL-OPERANDS-010:
@@ -199,10 +199,10 @@ assert_stdout "pass" "$TARGET_SHELL -c '$test_cmd'"
 # subjected to parameter expansion (see 2.6.2 Parameter Expansion ) by the
 # shell, and the resulting value shall be used as a pathname of a file
 # containing shell commands to execute in the current environment.
-# REQUIREMENT: SHALL-COMMAND-1123:
+# REQUIREMENT: SHALL-COMMAND-1029:
 # The standard output shall be the same as that
 # of the invoked utility.
-# REQUIREMENT: SHALL-COMMAND-1124:
+# REQUIREMENT: SHALL-COMMAND-1041:
 # The standard error shall be the same as that
 # of the invoked utility.
 # REQUIREMENT: SHALL-COMMAND-1040:
@@ -216,10 +216,10 @@ assert_stdout "pass" "$TARGET_SHELL -c '$test_cmd'"
 # REQUIREMENT: SHALL-COMMAND-1041:
 # Otherwise, the following exit values shall be returned: 126 The utility
 # specified by command_name was found but could not be invoked.
-# REQUIREMENT: SHALL-COMMAND-1129:
+# REQUIREMENT: SHALL-COMMAND-1041:
 # The utility specified by the command_name
 # operand could not be found.
-# REQUIREMENT: SHALL-COMMAND-1130:
+# REQUIREMENT: SHALL-COMMAND-1041:
 # The utility specified by the command_name
 # operand could be found, but could not be invoked.
 # REQUIREMENT: SHALL-COMMAND-1127:

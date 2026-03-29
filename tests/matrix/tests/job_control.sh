@@ -12,17 +12,17 @@
 # ==============================================================================
 # The Maestro: Managing Processes
 # ==============================================================================
-# REQUIREMENT: SHALL-2-11-090:
+# REQUIREMENT: SHALL-2-11-435:
 # Job Control: Job control is a facility that
 # allows users to selectively stop (suspend) the execution of processes...
-# REQUIREMENT: SHALL-ASYNCHRONOUS EVENTS-025:
+# REQUIREMENT: SHALL-ASYNCHRONOUS-EVENTS-025:
 # The sh utility shall take the standard action for all signals (see 1.4
 # Utility Description Defaults ) with the following exceptions.
 # REQUIREMENT: SHALL-2-11-425:
 # If the shell has a controlling terminal and it is the controlling process for
 # the terminal session, it shall initially set the foreground process group ID
 # associated with the terminal to its own process group ID.
-# REQUIREMENT: SHALL-2-11-426:
+# REQUIREMENT: SHALL-2-11-427:
 # Otherwise, if it has a controlling terminal, it
 # shall initially perform the following steps if inter...
 # REQUIREMENT: SHALL-2-11-427:
@@ -45,7 +45,7 @@
 # Subsequently, the shell shall change the foreground process group associated
 # with its controlling terminal when a foreground job is running as noted in the
 # description below.
-# REQUIREMENT: SHALL-2-11-431:
+# REQUIREMENT: SHALL-2-11-448:
 # When job control is enabled, the shell shall
 # create one or more jobs when it executes a list...
 # REQUIREMENT: SHALL-2-11-432:
@@ -84,7 +84,7 @@
 # job and is stopped by a signal, the entire job shall become a suspended job
 # and the behavior shall be as if the process had been stopped while the job was
 # running in the background.
-# REQUIREMENT: SHALL-2-11-438:
+# REQUIREMENT: SHALL-2-11-439:
 # When a foreground job is created, or a background
 # job is brought into the foreground by the fg utili...
 # REQUIREMENT: SHALL-2-11-439:
@@ -157,7 +157,7 @@
 # REQUIREMENT: SHALL-2-11-451:
 # If the shell is interactive, it shall save the terminal settings before
 # changing them to the settings it needs to read further commands.
-# REQUIREMENT: SHALL-2-11-452:
+# REQUIREMENT: SHALL-2-11-453:
 # When a process associated with a background job
 # is stopped by a SIGSTOP, SIGTSTP, SIGTTIN, or SIGTTO...
 # REQUIREMENT: SHALL-2-11-453:
@@ -172,16 +172,16 @@
 # REQUIREMENT: SHALL-2-11-454:
 # If set -b is disabled, the message shall be written immediately prior to
 # writing the next prompt for input.
-# REQUIREMENT: SHALL-ASYNCHRONOUS EVENTS-026:
+# REQUIREMENT: SHALL-ASYNCHRONOUS-EVENTS-026:
 # If the shell is interactive, SIGINT signals received during command line
 # editing shall be handled as described in the EXTENDED DESCRIPTION, and SIGINT
 # signals received at other times shall be caught but no action performed.
-# REQUIREMENT: SHALL-ASYNCHRONOUS EVENTS-027:
+# REQUIREMENT: SHALL-ASYNCHRONOUS-EVENTS-027:
 # If the shell is interactive: SIGQUIT and SIGTERM signals shall be ignored.
-# REQUIREMENT: SHALL-ASYNCHRONOUS EVENTS-028:
+# REQUIREMENT: SHALL-ASYNCHRONOUS-EVENTS-028:
 # If the -m option is in effect, SIGTTIN, SIGTTOU, and SIGTSTP signals shall be
 # ignored.
-# REQUIREMENT: SHALL-ASYNCHRONOUS EVENTS-029:
+# REQUIREMENT: SHALL-ASYNCHRONOUS-EVENTS-029:
 # If they are caught, the shell shall, in the signal-catching function, set the
 # signal to the default action and raise the signal (after taking any
 # appropriate steps, such as restoring terminal settings).
@@ -224,7 +224,7 @@ esac
 # ==============================================================================
 # Job Control Subsystem
 # ==============================================================================
-# REQUIREMENT: SHALL-Command History List-031:
+# REQUIREMENT: SHALL-Command-History-List-031:
 # When the sh utility is being used interactively, it shall maintain a list of
 # commands previously entered from the terminal in the file named by the
 # HISTFILE environment variable.
@@ -242,7 +242,7 @@ esac
 # foreground a suspended job that was created from a foreground job, before it
 # sends the SIGCONT signal the fg utility shall restore the terminal settings to
 # the ones that the shell saved when the job was suspended.
-# REQUIREMENT: SHALL-2-11-458:
+# REQUIREMENT: SHALL-2-11-459:
 # When a background job completes or is terminated
 # by a signal, an interactive shell shall write a mes...
 # REQUIREMENT: SHALL-2-11-459:
@@ -252,7 +252,7 @@ esac
 # terminated by a signal, respectively, at the following time: If set -b is
 # enabled, the message shall be written immediately after the job completes or
 # is terminated.
-# REQUIREMENT: SHALL-2-11-460:
+# REQUIREMENT: SHALL-2-11-454:
 # If set -b is disabled, the message shall be
 # written immediately prior to writing the next prompt for...
 # REQUIREMENT: SHALL-2-12-461:

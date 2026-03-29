@@ -18,7 +18,7 @@
 # REQUIREMENT: SHALL-DESCRIPTION-603:
 # This option shall be supported if the system supports the User Portability
 # Utilities option.
-# REQUIREMENT: SHALL-DESCRIPTION-604:
+# REQUIREMENT: SHALL-DESCRIPTION-620:
 # The value n shall be an unsigned decimal
 # integer less than or equal to the current value of the special parameter '#'.
 # REQUIREMENT: SHALL-DESCRIPTION-605:
@@ -53,7 +53,7 @@ assert_stdout "3
 c 1" \
     "$TARGET_SHELL -c '$test_cmd' sh a b c"
 
-# REQUIREMENT: SHALL-DESCRIPTION-606:
+# REQUIREMENT: SHALL-DESCRIPTION-516:
 # If n is greater than "$#", the positional
 # parameters shall not be changed...
 # REQUIREMENT: SHALL-DESCRIPTION-607:
@@ -76,7 +76,7 @@ assert_stdout "1 a" \
 # ==============================================================================
 # REQUIREMENT: SHALL-DESCRIPTION-608:
 # -v The shell shall write its input to standard error as it is read.
-# REQUIREMENT: SHALL-DESCRIPTION-625:
+# REQUIREMENT: SHALL-DESCRIPTION-549:
 # The times utility shall write the
 # accumulated user and system times for the shell and for all of its...
 # REQUIREMENT: SHALL-DESCRIPTION-626:
@@ -125,7 +125,7 @@ assert_stdout "times reported" \
 # The environment in which the shell executes a trap action on EXIT shall be
 # identical to the environment immediately after the last command executed
 # before the trap action on EXIT was executed.
-# REQUIREMENT: SHALL-DESCRIPTION-638:
+# REQUIREMENT: SHALL-DESCRIPTION-632:
 # If action is neither '-' nor the empty
 # string, then each time a matching condition arises...
 # REQUIREMENT: SHALL-DESCRIPTION-639:
@@ -161,7 +161,7 @@ assert_stdout "times reported" \
 # REQUIREMENT: SHALL-DESCRIPTION-647:
 # The trap special built-in shall conform to XBD 12.2 Utility Syntax Guidelines
 # .
-# REQUIREMENT: SHALL-OPTIONS-648:
+# REQUIREMENT: SHALL-OPTIONS-005:
 # The following option shall be supported:...
 # REQUIREMENT: SHALL-OPTIONS-649:
 # The shell shall format the output, including the proper use of quoting, so

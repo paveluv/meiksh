@@ -32,10 +32,10 @@ assert_stdout "baz=qux
 foo=bar" \
     "$TARGET_SHELL -c '$test_cmd'"
 
-# REQUIREMENT: SHALL-DESCRIPTION-563:
+# REQUIREMENT: SHALL-DESCRIPTION-580:
 # When -p is specified, export shall write
 # to the standard output the names and values of all exported variables...
-# REQUIREMENT: SHALL-DESCRIPTION-564:
+# REQUIREMENT: SHALL-DESCRIPTION-645:
 # The shell shall format the output,
 # including the proper use of quoting, so that it is suitable for reinput...
 
@@ -55,17 +55,17 @@ assert_stdout "val with spaces" \
 # ==============================================================================
 # The 'readonly' Utility
 # ==============================================================================
-# REQUIREMENT: SHALL-Issue 6-566:
+# REQUIREMENT: SHALL-Issue-6-566:
 # IEEE Std 1003.1-2001/Cor 1-2002, item XCU/TC1/D6/6 is applied, adding the
 # following text to the end of the first paragraph of the DESCRIPTION: "If the
 # name of a variable is followed by = word , then the value of that variable
 # shall be set to word .".
-# REQUIREMENT: SHALL-Issue 6-575:
+# REQUIREMENT: SHALL-Issue-6-575:
 # IEEE Std 1003.1-2001/Cor 1-2002, item XCU/TC1/D6/7 is applied, adding the
 # following text to the end of the first paragraph of the DESCRIPTION: "If the
 # name of a variable is followed by = word , then the value of that variable
 # shall be set to word .".
-# REQUIREMENT: SHALL-Issue 6-628:
+# REQUIREMENT: SHALL-Issue-6-628:
 # IEEE Std 1003.1-2001/Cor 1-2002, item XCU/TC1/D6/9 is applied, changing text
 # in the DESCRIPTION from: "Write the accumulated user and system times for the
 # shell and for all of its child processes ..." to: "The times utility shall
@@ -91,7 +91,7 @@ test_cmd='readonly RO_VAR="protected"; RO_VAR="mutated"'
 assert_exit_code_non_zero \
     "$TARGET_SHELL -c '$test_cmd'"
 
-# REQUIREMENT: SHALL-DESCRIPTION-573:
+# REQUIREMENT: SHALL-DESCRIPTION-645:
 # The shell shall format the output [of -p],
 # including the proper use of quoting, so that it is suitable for reinput...
 

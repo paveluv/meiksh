@@ -51,7 +51,7 @@ assert_stdout "expanded" \
 # writing, the environment in which the utility or application is executed shall
 # be deemed non-conforming, and consequently the utility or application might
 # not behave as described in this standard.
-# REQUIREMENT: SHALL-2-9-1-4-286:
+# REQUIREMENT: SHALL-2-9-1-4-287:
 # If a simple command has a command name and an
 # optional list of arguments after word expansion...
 # REQUIREMENT: SHALL-2-9-1-4-290:
@@ -144,7 +144,7 @@ assert_stdout "found_in_path" \
 # If the current shell environment is a subshell environment, the new process
 # image shall replace the subshell environment and the shell shall continue in
 # the environment from which that subshell environment was invoked.
-# REQUIREMENT: SHALL-2-9-1-6-301:
+# REQUIREMENT: SHALL-2-9-1-6-302:
 # In either case, execution of the utility in
 # the specified environment shall be performed as follows:...
 # REQUIREMENT: SHALL-2-9-1-6-302:

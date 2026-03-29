@@ -108,11 +108,11 @@ assert_stdout "" \
 # ==============================================================================
 # Pipeline Exit Statuses
 # ==============================================================================
-# REQUIREMENT: SHALL-Exit Status-316:
+# REQUIREMENT: SHALL-2-9-2-1-316:
 # The exit status of a pipeline shall depend on whether or not the pipefail
 # option (see set ) is enabled and whether or not the pipeline begins with the !
 # reserved word, as described in the following table.
-# REQUIREMENT: SHALL-Exit Status-317:
+# REQUIREMENT: SHALL-2-9-2-1-317:
 # The shell shall use the pipefail setting at the time it begins execution of
 # the pipeline, not the setting at the time it sets the exit status of the
 # pipeline. (For example, in command1 | set -o pipefail the exit status of
@@ -126,11 +126,11 @@ assert_exit_code 0 \
 # ==============================================================================
 # Sequential Lists
 # ==============================================================================
-# REQUIREMENT: SHALL-Exit Status-316:
+# REQUIREMENT: SHALL-2-9-2-1-316:
 # The exit status of a pipeline shall depend on whether or not the pipefail
 # option (see set ) is enabled and whether or not the pipeline begins with the !
 # reserved word, as described in the following table.
-# REQUIREMENT: SHALL-Exit Status-317:
+# REQUIREMENT: SHALL-2-9-2-1-317:
 # The shell shall use the pipefail setting at the time it begins execution of
 # the pipeline, not the setting at the time it sets the exit status of the
 # pipeline. (For example, in command1 | set -o pipefail the exit status of
@@ -144,7 +144,7 @@ assert_exit_code 0 \
 # REQUIREMENT: SHALL-2-9-3-2-331:
 # AND-OR lists that are separated by a <semicolon> ( ';' ) shall be executed
 # sequentially.
-# REQUIREMENT: SHALL-2-9-3-2-332:
+# REQUIREMENT: SHALL-2-9-3-2-331:
 # The format for executing AND-OR lists
 # sequentially shall be: AND-OR list [; AND-OR list]...
 # REQUIREMENT: SHALL-2-9-3-2-333:
@@ -152,7 +152,7 @@ assert_exit_code 0 \
 # REQUIREMENT: SHALL-2-9-3-2-334:
 # If job control is enabled, the AND-OR lists shall form all or part of a
 # foreground job that can be controlled as described in 2.11 Job Control .
-# REQUIREMENT: SHALL-Exit Status-335:
+# REQUIREMENT: SHALL-2-9-3-2-1-335:
 # The exit status of a sequential AND-OR list shall be the exit status of the
 # last pipeline in the AND-OR list that is executed.
 
@@ -176,9 +176,9 @@ bar" \
 # ==============================================================================
 # AND Lists
 # ==============================================================================
-# REQUIREMENT: SHALL-2-9-3-3-336:
+# REQUIREMENT: SHALL-2-9-3-3-337:
 # The format shall be: command1 && command2
-# REQUIREMENT: SHALL-Exit Status-339:
+# REQUIREMENT: SHALL-2-9-3-3-1-339:
 # The exit status of an AND list shall be the exit status of the last command
 # that is executed in the list.
 
@@ -191,7 +191,7 @@ assert_exit_code 1 \
 # ==============================================================================
 # REQUIREMENT: SHALL-2-9-3-4-340:
 # The format shall be: command1 [ && command2 ] ...
-# REQUIREMENT: SHALL-Exit Status-343:
+# REQUIREMENT: SHALL-2-9-3-4-1-343:
 # The exit status of an OR list shall be the exit status of the last command
 # that is executed in the list.
 
@@ -223,7 +223,7 @@ assert_exit_code 0 \
 # ==============================================================================
 # Async AND-OR lists
 # ==============================================================================
-# REQUIREMENT: SHALL-Exit Status-330:
+# REQUIREMENT: SHALL-2-9-3-1-1-330:
 # The exit status of an asynchronous AND-OR list shall be zero.
 
 test_cmd='

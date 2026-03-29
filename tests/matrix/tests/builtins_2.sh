@@ -17,18 +17,18 @@
 # If the exec command fails and the shell does not exit, any redirections
 # associated with the exec command that were successfully made shall take effect
 # in the current shell execution environment.
-# REQUIREMENT: SHALL-EXIT STATUS-545:
+# REQUIREMENT: SHALL-EXIT-STATUS-545:
 # If utility is specified and is executed, exec shall not return to the shell;
 # rather, the exit status of the current shell execution environment shall be
 # the exit status of utility .
-# REQUIREMENT: SHALL-EXIT STATUS-546:
+# REQUIREMENT: SHALL-EXIT-STATUS-546:
 # If utility is specified and an attempt to execute it as a non-built-in
 # utility fails, the exit status shall be as described in 2.9.1.6 Non-built-in
 # Utility Execution .
-# REQUIREMENT: SHALL-EXIT STATUS-547:
+# REQUIREMENT: SHALL-EXIT-STATUS-547:
 # If a redirection error occurs (see 2.8.1 Consequences of Shell Errors ), the
 # exit status shall be a value in the range 1-125.
-# REQUIREMENT: SHALL-ENVIRONMENT VARIABLES-543:
+# REQUIREMENT: SHALL-ENVIRONMENT-VARIABLES-024:
 # The following environment
 # variable shall affect the execution of exec:...
 

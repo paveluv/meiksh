@@ -99,10 +99,10 @@
 # complete_command has been recognized by the grammar (see 2.10 Shell Grammar ),
 # the complete_command shall be executed before the next complete_command is
 # tokenized and parsed.
-# REQUIREMENT: SHALL-2-3-1-118:
+# REQUIREMENT: SHALL-2-3-1-053:
 # If it is not indicated within a ${...} parameter
 # expansion, the shell shall treat it as a syntax err...
-# REQUIREMENT: SHALL-2-3-1-119:
+# REQUIREMENT: SHALL-2-3-1-052:
 # An unquoted <backslash> shall retain its
 # absolute literal meaning when followed by a <newline>...
 # REQUIREMENT: SHALL-DESCRIPTION-001:
@@ -125,7 +125,7 @@ assert_exit_code_non_zero \
 # ==============================================================================
 # The Humble Backslash
 # ==============================================================================
-# REQUIREMENT: SHALL-2-2-001:
+# REQUIREMENT: SHALL-V3CHAP02-1000:
 # The application shall quote the following
 # characters if they are to represent themselves:...
 
@@ -323,7 +323,7 @@ assert_stdout '"' \
 # ==============================================================================
 # Dollar-Single-Quotes: The C-Style Strings
 # ==============================================================================
-# REQUIREMENT: SHALL-2-2-4-018:
+# REQUIREMENT: SHALL-2-2-4-020:
 # A sequence of characters starting with a
 # <dollar-sign> immediately followed by a single-quote ($') shall preserve the
 # literal value of all characters within the single-quotes, with the exception
@@ -369,7 +369,7 @@ assert_stdout "quote: ', done" \
 # ==============================================================================
 # The Newline Token Delimiter
 # ==============================================================================
-# REQUIREMENT: SHALL-2-3-010:
+# REQUIREMENT: SHALL-2-3-034:
 # If the current character is a <newline>, it shall
 # delimit the current token.
 

@@ -21,7 +21,7 @@
 # REQUIREMENT: SHALL-2-14-1-482:
 # Matching shall be based on the bit pattern used for encoding the character,
 # not on the graphic representation of the character.
-# REQUIREMENT: SHALL-2-14-1-485:
+# REQUIREMENT: SHALL-2-14-1-478:
 # When unquoted, unescaped, and not inside a
 # bracket expression, the following three characters shall...
 

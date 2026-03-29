@@ -23,10 +23,10 @@
 # When a function is executed, it shall have the syntax-error properties
 # described for special built-in utilities in the first item in the enumerated
 # list at the beginning of 2.15 Special Built-In Utilities .
-# REQUIREMENT: SHALL-Exit Status-388:
+# REQUIREMENT: SHALL-2-9-5-1-388:
 # The exit status of a function definition shall be zero if the function was
 # declared successfully; otherwise, it shall be greater than zero.
-# REQUIREMENT: SHALL-Exit Status-389:
+# REQUIREMENT: SHALL-2-9-5-1-389:
 # The exit status of a function invocation shall be the exit status of the last
 # command executed by the function.
 

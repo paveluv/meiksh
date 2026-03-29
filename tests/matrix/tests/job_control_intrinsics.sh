@@ -27,7 +27,7 @@
 # If the wait utility is invoked with no operands, it shall wait until all
 # process IDs known to the invoking shell have terminated and exit with a zero
 # exit status.
-# REQUIREMENT: SHALL-WAIT-1121:
+# REQUIREMENT: SHALL-WAIT-1347:
 # If the wait utility detects that the value of
 # the pid operand is not a known process ID or job control job ID, the wait
 # utility shall return exit status 127.

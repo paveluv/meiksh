@@ -36,7 +36,7 @@
 # described in the DESCRIPTION.
 # REQUIREMENT: SHALL-CD-1098:
 # If CDPATH is not set, it shall be treated as if it were an empty string.
-# REQUIREMENT: SHALL-CD-1100:
+# REQUIREMENT: SHALL-CD-1094:
 # If the cd utility cannot determine the contents of
 # OLDPWD , it shall write a diagnostic message to standard error and exit with a
 # non-zero status.
@@ -48,17 +48,17 @@
 # described in the DESCRIPTION.
 # REQUIREMENT: SHALL-CD-1099:
 # PWD This variable shall be set as specified in the DESCRIPTION.
-# REQUIREMENT: SHALL-CD-1105:
+# REQUIREMENT: SHALL-CD-1033:
 # If the -L option is in effect, the PWD environment
 # variable shall be updated to point to the logical name of the current working
 # directory.
 # REQUIREMENT: SHALL-CD-1083:
 # If the -P option is in effect, the PWD environment variable shall be set to
 # the string that would be output by pwd -P .
-# REQUIREMENT: SHALL-CD-1107:
+# REQUIREMENT: SHALL-CD-1035:
 # If the new directory cannot be determined or if an
 # error occurred, it shall remain unchanged.
-# REQUIREMENT: SHALL-CD-1108:
+# REQUIREMENT: SHALL-CD-1035:
 # If a - operand is used and the change is
 # successful, the absolute pathname of the new working directory shall be
 # written to the standard output as follows: "%s\n" , < new directory >
@@ -67,7 +67,7 @@
 # REQUIREMENT: SHALL-SH-1024-DUP746:
 # The following exit values shall be returned: 0 The script to be executed
 # consisted solely of zero or more blank lines or comments, or both.
-# REQUIREMENT: SHALL-CD-1111:
+# REQUIREMENT: SHALL-CD-1033:
 # The directory was successfully changed.
 
 test_cmd='
@@ -138,7 +138,7 @@ assert_stdout "pass physical" "$TARGET_SHELL -c '$test_cmd'"
 test_cmd='cd "" 2>/dev/null; exit 1'
 assert_exit_code_non_zero "$TARGET_SHELL -c '$test_cmd'"
 
-# REQUIREMENT: SHALL-CD-1100:
+# REQUIREMENT: SHALL-CD-1094:
 # If the cd utility cannot determine the contents of
 # OLDPWD , it shall write a diagnostic message to standard error and exit with a
 # non-zero status.

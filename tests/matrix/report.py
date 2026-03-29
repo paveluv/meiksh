@@ -15,7 +15,7 @@ def main():
         with open(tf, 'r', encoding='utf-8') as file:
             content = file.read()
             # Look for: # REQUIREMENT: SHALL-ID
-            matches = re.findall(r'# REQUIREMENT:\s*(SHALL-[-0-9a-zA-Z\s()]+):', content)
+            matches = re.findall(r'# REQUIREMENT:\s*(SHALL-[-0-9a-zA-Z.]+):', content)
             covered_ids.update(matches)
 
     total_reqs = len(requirements)
@@ -48,7 +48,7 @@ if __name__ == "__main__":
         for tf in test_files:
             with open(tf, 'r', encoding='utf-8') as file:
                 content = file.read()
-                matches = re.findall(r'# REQUIREMENT:\s*(SHALL-[-0-9a-zA-Z\s()]+):', content)
+                matches = re.findall(r'# REQUIREMENT:\s*(SHALL-[-0-9a-zA-Z.]+):', content)
                 covered_ids.update(matches)
                 
         print("\nMissing Requirements:")
