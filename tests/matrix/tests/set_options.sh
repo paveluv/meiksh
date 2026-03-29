@@ -11,24 +11,32 @@
 # ==============================================================================
 # The 'set' Utility Formatting
 # ==============================================================================
-# REQUIREMENT: SHALL-DESCRIPTION-581: Each name shall start on a separate line,
-# using the format:
-# REQUIREMENT: SHALL-DESCRIPTION-585: The set special built-in shall support
-# XBD 12.2 Utility Syntax Guidelines except that options can be...
-# REQUIREMENT: SHALL-DESCRIPTION-588: -bThis option shall be supported if the
-# implementation supports the User Portability Utilities optio...
+# REQUIREMENT: SHALL-V3CHAP02-1019: Each name shall start on a separate line,
+# using the format: "%s=%s\n", < name >, < value > The value string shall be
+# written with appropriate quoting; see the description of shell quoting in 2.2
+# Quoting .
+# REQUIREMENT: SHALL-DESCRIPTION-585: The set special built-in shall support XBD
+# 12.2 Utility Syntax Guidelines except that options can be specified with
+# either a leading <hyphen-minus> (meaning enable the option) or <plus-sign>
+# (meaning disable it) unless otherwise specified.
+# REQUIREMENT: SHALL-DESCRIPTION-588: -b This option shall be supported if the
+# implementation supports the User Portability Utilities option.
 # REQUIREMENT: SHALL-DESCRIPTION-589: When job control and -b are both enabled,
-# the shell shall write asynchronous notifications of backgr...
+# the shell shall write asynchronous notifications of background job completions
+# (including termination by a signal), and may write asynchronous notifications
+# of background job suspensions.
 # REQUIREMENT: SHALL-DESCRIPTION-594: Only the failure of the pipeline itself
-# shall be considered....
+# shall be considered.
 # REQUIREMENT: SHALL-DESCRIPTION-596: If the exit status of a compound command
-# other than a subshell command was the result of a failure w...
-# REQUIREMENT: SHALL-DESCRIPTION-612: The special parameter '#' shall be set
-# to reflect the number of positional parameters....
-# REQUIREMENT: SHALL-DESCRIPTION-582: "%s=%s\n", <name>, <value> The value
-# string shall be written with appropriate quoting...
+# other than a subshell command was the result of a failure while -e was being
+# ignored, then -e shall not apply to this command.
+# REQUIREMENT: SHALL-DESCRIPTION-612: The special parameter '#' shall be set to
+# reflect the number of positional parameters.
+# REQUIREMENT: SHALL-DESCRIPTION-582: The value string shall be written with
+# appropriate quoting; see the description of shell quoting in 2.2 Quoting .
 # REQUIREMENT: SHALL-DESCRIPTION-583: The output shall be suitable for reinput
-# to the shell...
+# to the shell, setting or resetting, as far as possible, the variables that are
+# currently set; read-only variables cannot be reset.
 
 test_cmd='
 my_weird_var="space and literal and \"quotes\""
@@ -45,8 +53,8 @@ assert_stdout "space and literal and \"quotes\"" \
 # The '-a' Option (allexport)
 # ==============================================================================
 # REQUIREMENT: SHALL-DESCRIPTION-587: When this option is on, whenever a value
-# is assigned to a variable in the current shell execution environment... it
-# shall be marked for export.
+# is assigned to a variable in the current shell execution environment, the
+# export attribute shall be set for the variable.
 
 test_cmd='
 set -a
@@ -60,8 +68,8 @@ assert_stdout "exported" \
 # ==============================================================================
 # The '-e' Option (errexit)
 # ==============================================================================
-# REQUIREMENT: SHALL-DESCRIPTION-590: -eWhen this option is on, when any
-# command fails... the shell shall immediately exit...
+# REQUIREMENT: SHALL-DESCRIPTION-590: When job control is disabled, the -b
+# option shall have no effect.
 
 test_cmd='
 set -e
@@ -74,11 +82,20 @@ assert_stdout "start" \
 assert_exit_code_non_zero \
     "$TARGET_SHELL -c '$test_cmd'"
 
-# REQUIREMENT: SHALL-DESCRIPTION-591: The shell shall not exit if the command
-# that fails is part of the command list immediately following a while or until...
-# REQUIREMENT: SHALL-DESCRIPTION-592: part of the test following the if or elif
-# reserved words...
-# REQUIREMENT: SHALL-DESCRIPTION-593: part of an AND or OR list...
+# REQUIREMENT: SHALL-DESCRIPTION-591: Asynchronous notification shall not be
+# enabled by default.
+# REQUIREMENT: SHALL-DESCRIPTION-592: -C (Uppercase C.) Prevent existing regular
+# files from being overwritten by the shell's '>' redirection operator (see
+# 2.7.2 Redirecting Output ); the ">|" redirection operator shall override this
+# noclobber option for an individual file.
+# REQUIREMENT: SHALL-DESCRIPTION-593: -e When this option is on, when any
+# command fails (for any of the reasons listed in 2.8.1 Consequences of Shell
+# Errors or by returning an exit status greater than zero), the shell
+# immediately shall exit, as if by executing the exit special built-in utility
+# with no arguments, with the following exceptions: The failure of any
+# individual command in a multi-command pipeline, or of any subshell
+# environments in which command substitution was performed during word
+# expansion, shall not cause the shell to exit.
 
 test_cmd='
 set -e
@@ -95,8 +112,10 @@ assert_stdout "survived" \
 # ==============================================================================
 # The '-f' Option (noglob)
 # ==============================================================================
-# REQUIREMENT: SHALL-DESCRIPTION-595: -fThe shell shall disable pathname
-# expansion.
+# REQUIREMENT: SHALL-DESCRIPTION-595: The -e setting shall be ignored when
+# executing the compound list following the while , until , if , or elif
+# reserved word, a pipeline beginning with the ! reserved word, or any command
+# of an AND-OR list other than the last.
 
 test_cmd='
 set -f
@@ -110,8 +129,8 @@ assert_stdout "tmp_set_*.txt" \
 # ==============================================================================
 # The '-n' Option (noexec)
 # ==============================================================================
-# REQUIREMENT: SHALL-DESCRIPTION-598: -nThe shell shall read commands but does
-# not execute them.
+# REQUIREMENT: SHALL-DESCRIPTION-598: -m This option shall be supported if the
+# implementation supports the User Portability Utilities option.
 
 test_cmd='
 set -n
@@ -124,9 +143,8 @@ assert_stdout "" \
 # ==============================================================================
 # The '-u' Option (nounset)
 # ==============================================================================
-# REQUIREMENT: SHALL-DESCRIPTION-599: -uWhen the shell tries to expand an unset
-# parameter other than the '@' and '*' special parameters, it shall write a
-# message to standard error...
+# REQUIREMENT: SHALL-DESCRIPTION-599: When this option is enabled, the shell
+# shall perform job control actions as described in 2.11 Job Control .
 
 test_cmd='
 set -u
@@ -152,8 +170,8 @@ assert_stdout "survived" \
 # ==============================================================================
 # The '-v' Option (verbose)
 # ==============================================================================
-# REQUIREMENT: SHALL-DESCRIPTION-600: -vThe shell shall write its input to
-# standard error as it is read.
+# REQUIREMENT: SHALL-DESCRIPTION-600: This option shall be enabled by default
+# for interactive shells.
 
 test_cmd='
 set -v
@@ -166,7 +184,7 @@ assert_stderr_contains "echo \"testing_verbose\"" \
 # ==============================================================================
 # The '-x' Option (xtrace)
 # ==============================================================================
-# REQUIREMENT: SHALL-DESCRIPTION-622: -xThe shell shall write to standard error
+# REQUIREMENT: SHALL-DESCRIPTION-609: -x The shell shall write to standard error
 # a trace for each command after it expands the command and before it executes
 # it.
 

@@ -12,34 +12,41 @@
 # ==============================================================================
 # REQUIREMENT: SHALL-STDERR-518: The standard error shall be used only for
 # diagnostic messages.
-# REQUIREMENT: SHALL-STDERR-527: The standard error shall be used only for
+# REQUIREMENT: SHALL-STDERR-518: The standard error shall be used only for
 # diagnostic messages.
-# REQUIREMENT: SHALL-STDERR-532: The standard error shall be used only for
+# REQUIREMENT: SHALL-STDERR-518: The standard error shall be used only for
 # diagnostic messages.
-# REQUIREMENT: SHALL-STDERR-536: The standard error shall be used only for
+# REQUIREMENT: SHALL-STDERR-518: The standard error shall be used only for
 # diagnostic messages.
-# REQUIREMENT: SHALL-STDERR-544: The standard error shall be used only for
+# REQUIREMENT: SHALL-STDERR-518: The standard error shall be used only for
 # diagnostic messages.
-# REQUIREMENT: SHALL-STDERR-557: The standard error shall be used only for
+# REQUIREMENT: SHALL-STDERR-557: If the resource being reported does not have a
+# numeric limit, in the POSIX locale the following format shall be used:
+# "unlimited\n" STDERR The standard error shall be used only for diagnostic
+# messages.
+# REQUIREMENT: SHALL-STDERR-518: The standard error shall be used only for
 # diagnostic messages.
-# REQUIREMENT: SHALL-STDERR-565: The standard error shall be used only for
-# diagnostic messages.
-# REQUIREMENT: SHALL-STDERR-574: The standard error shall be used only for
-# diagnostic messages.
-# REQUIREMENT: SHALL-STDERR-577: The standard error shall be used only for
-# diagnostic messages.
-# REQUIREMENT: SHALL-STDERR-615: The standard error shall be used only for
+# REQUIREMENT: SHALL-STDERR-574: When the -V option is specified, standard
+# output shall be formatted as: "%s\n", < unspecified > STDERR The standard
+# error shall be used only for diagnostic messages.
+# REQUIREMENT: SHALL-STDERR-577: If the < command > consists of more than one
+# line, the lines after the first shall be displayed as: "\t%s\n", < continued-
+# command > STDERR The standard error shall be used only for diagnostic
+# messages.
+# REQUIREMENT: SHALL-STDERR-518: The standard error shall be used only for
 # diagnostic messages.
 # REQUIREMENT: SHALL-STDERR-622: The standard error shall be used only for
-# diagnostic messages...
-# REQUIREMENT: SHALL-STDERR-627: The standard error shall be used only for
-# diagnostic messages.
+# diagnostic messages and the warning message specified in EXIT STATUS.
+# REQUIREMENT: SHALL-STDERR-627: The fg utility shall write the command line of
+# the job to standard output in the following format: "%s\n", < command > STDERR
+# The standard error shall be used only for diagnostic messages.
 # REQUIREMENT: SHALL-STDERR-650: The standard error shall be used only for
-# diagnostic messages and warning messages about invalid signals...
-# REQUIREMENT: SHALL-STDERR-657: The standard error shall be used only for
+# diagnostic messages and warning messages about invalid signal names XSI
+# REQUIREMENT: SHALL-STDERR-518: The standard error shall be used only for
 # diagnostic messages.
-# REQUIREMENT: SHALL-STDERR-030: Except as otherwise stated... standard error
-# shall be used only for diagnostic messages.
+# REQUIREMENT: SHALL-STDERR-030: Except as otherwise stated (by the descriptions
+# of any invoked utilities or in interactive mode), standard error shall be used
+# only for diagnostic messages.
 
 # We test that all these builtins, when running successfully, produce NO
 # standard error output.

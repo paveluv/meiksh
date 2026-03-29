@@ -65,9 +65,15 @@ assert_stdout "foo" \
     "$TARGET_SHELL -c '$test_cmd'"
 
 # REQUIREMENT: SHALL-2-7-2-200: Output redirection using the '>' format shall
-# fail if the noclobber option is set.
-# REQUIREMENT: SHALL-2-7-2-202: In all other cases (noclobber not set),
-# redirection using '>' does not fail for the reasons stated above.
+# fail if the noclobber option is set (see the description of set -C ) and the
+# file named by the expansion of word exists and is either a regular file or a
+# symbolic link that resolves to a regular file; it may also fail if the file is
+# a symbolic link that does not resolve to an existing file.
+# REQUIREMENT: SHALL-2-7-2-202: In all other cases ( noclobber not set,
+# redirection using '>' does not fail for the reasons stated above, or
+# redirection using the ">|" format), output redirection shall cause the file
+# whose name results from the expansion of word to be opened for output on the
+# designated file descriptor, or standard output if none is specified.
 
 # When `set -C` (noclobber) is enabled, the shell must refuse to overwrite an
 # existing file.
@@ -79,7 +85,8 @@ assert_exit_code_non_zero \
 # Appending Output
 # ==============================================================================
 # REQUIREMENT: SHALL-2-7-3-204: Appended output redirection shall cause the file
-# whose name results from the expansion of word to be opened for appending...
+# whose name results from the expansion of word to be opened for output on the
+# designated file descriptor.
 # REQUIREMENT: SHALL-2-7-3-206: If the file does not exist, it shall be created.
 
 # We test appending to a new file, and then appending to the existing file.
@@ -94,7 +101,8 @@ b" \
 # ==============================================================================
 # REQUIREMENT: SHALL-2-7-4-065: Here-Document: The redirection operator << is
 # used to read input from the current source file...
-# REQUIREMENT: SHALL-2-7-4-210: The delimiter shall be the word itself.
+# REQUIREMENT: SHALL-2-7-4-210: Otherwise: The delimiter shall be the word
+# itself.
 
 # A here-document feeds a multiline string directly into a command's stdin.
 # We ensure the shell successfully captures the delimiter `EOF` and processes
@@ -110,10 +118,12 @@ line2"
 assert_stdout "$expected_output" \
     "$TARGET_SHELL -c \"\$test_cmd\""
 
-# REQUIREMENT: SHALL-2-7-4-209: If any part of word is quoted... the delimiter
-# shall be the word formed by quote removal...
-# REQUIREMENT: SHALL-2-7-4-214: If no part of word is quoted, all lines of the
-# here-document shall be expanded for parameter expansion...
+# REQUIREMENT: SHALL-2-7-4-209: If any part of word is quoted, not counting
+# double-quotes outside a command substitution if the here-document is inside
+# one, the delimiter shall be formed by performing quote removal on word , and
+# the here-document lines shall not be expanded.
+# REQUIREMENT: SHALL-2-7-4-214: Any <backslash> characters in the input shall
+# behave as the <backslash> inside double-quotes (see 2.2.3 Double-Quotes ).
 
 # Testing expansions in here-documents.
 test_cmd="var=hello

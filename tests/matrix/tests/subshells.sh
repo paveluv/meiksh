@@ -10,10 +10,11 @@
 # ==============================================================================
 # Subshell Parsing and Status
 # ==============================================================================
-# REQUIREMENT: SHALL-2-9-4-1-346: The format for grouping commands is as
-# follows: (compound-list)
+# REQUIREMENT: SHALL-2-9-4-1-346: Variable assignments and built-in commands
+# that affect the environment shall not remain in effect after the list
+# finishes.
 # REQUIREMENT: SHALL-Exit Status-348: The exit status of a grouping command
-# shall be the exit status of compound-list....
+# shall be the exit status of compound-list .
 
 test_cmd='
 ( false )
@@ -73,7 +74,8 @@ assert_stdout "child" \
 # Utility Invocations
 # ==============================================================================
 # REQUIREMENT: SHALL-2-13-469: The environment of the shell process shall not be
-# changed by the utility unless explicitly specified...
+# changed by the utility unless explicitly specified by the utility description
+# (for example, cd and umask ).
 
 # Invoking `cd` via `env` or an external utility does not change the parent's
 # working directory, but the built-in `cd` does.

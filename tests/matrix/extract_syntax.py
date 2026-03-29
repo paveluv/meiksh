@@ -23,7 +23,18 @@ def process_syntax():
     seen_texts = set()
                      
     for sentence in sentences:
-        if re.search(r'\bshall\b', sentence, re.IGNORECASE):
+        if re.search(r'\bshall\b', sentence, re.IGNORECASE) or re.search(r'\bGuideline\s+\d+[:\.]?.*\bshould\b', sentence, re.IGNORECASE) or re.search(r'\bshould\b', sentence, re.IGNORECASE):
+            # For chapter 12, the text says "The utilities ... shall conform ... as if these guidelines contained the term 'shall' instead of 'should'".
+            # So if it contains 'should' and is in Chapter 12, it is basically a 'shall' for utilities that claim conformance.
+            if 'should' in sentence.lower() and 'Guideline' not in text:
+                pass # it's risky to take ALL shoulds, let's just take those that are guidelines.
+            
+            # actually let's just extract sentences containing 'shall' or 'should' in this specific file
+            # But only those from the guidelines section? Just 'shall' and 'should' is fine, we'll review manually
+            if not (re.search(r'\bshall\b', sentence, re.IGNORECASE) or re.search(r'\bshould\b', sentence, re.IGNORECASE)):
+                continue
+
+            # Let's be more specific: if it says "Guideline N: ... should", extract it.
             sentence = re.sub(r'\s+\.\s*$', '.', sentence).strip()
             
             nt = re.sub(r'<[^>]+>', '', sentence)
@@ -47,7 +58,6 @@ def main():
     reqs = [r for r in reqs if r.get('file') != 'V1_chap12']
     
     new_reqs = process_syntax()
-    print(f"Adding {len(new_reqs)} new requirements from XBD Chapter 12 Utility Conventions")
     
     new_counter = 4000
     for nr in new_reqs:
