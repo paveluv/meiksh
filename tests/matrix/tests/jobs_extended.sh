@@ -24,7 +24,7 @@ expect "$ "
 send "sleep 60 &"
 expect "$ "
 send "jobs -l"
-expect_glob "[1]*sleep 60*"
+expect_glob "[[]1]*sleep 60*"
 send "kill %1; wait 2>/dev/null"
 expect "$ "
 sendeof
@@ -92,7 +92,7 @@ expect "$ "
 send "sleep 60 &"
 expect "$ "
 send "jobs"
-expect_glob "[*]*Running*sleep 60*"
+expect_glob "[[]?]*Running*sleep 60*"
 send "kill %1; wait 2>/dev/null"
 expect "$ "
 sendeof
@@ -113,7 +113,7 @@ expect "$ "
 send "sleep 0.1 &"
 sleep 500
 send "jobs"
-expect_glob "[*]*Done*sleep*"
+expect_glob "[[]?]*Done*sleep*"
 expect "$ "
 sendeof
 wait'
@@ -134,7 +134,7 @@ sleep 500
 sendraw 1a
 expect_glob "{Stopped,Suspended}*sleep 60"
 send "jobs"
-expect_glob "[*]*{Stopped,Suspended}*sleep 60*"
+expect_glob "[[]?]*{Stopped,Suspended}*sleep 60*"
 send "kill %1; wait 2>/dev/null"
 expect "$ "
 sendeof
@@ -153,7 +153,7 @@ expect "$ "
 send "sleep 60 &"
 expect "$ "
 send "jobs"
-expect_glob "[1]*Running*sleep 60*"
+expect_glob "[[]1]*Running*sleep 60*"
 send "kill %1; wait 2>/dev/null"
 expect "$ "
 sendeof
@@ -222,7 +222,7 @@ sleep 500
 sendraw 1a
 expect_glob "{Stopped,Suspended}*sleep 60"
 send "jobs -l"
-expect_glob "[*]*{Stopped,Suspended}*sleep 60*"
+expect_glob "[[]?]*{Stopped,Suspended}*sleep 60*"
 send "kill %1; wait 2>/dev/null"
 expect "$ "
 sendeof
@@ -244,7 +244,7 @@ expect "$ "
 send "sleep 61 &"
 expect "$ "
 send "jobs"
-expect_glob "[*]+*sleep*"
+expect_glob "[[]?]+*sleep*"
 send "kill %1 %2; wait 2>/dev/null"
 expect "$ "
 sendeof
@@ -265,7 +265,7 @@ expect "$ "
 send "sleep 61 &"
 expect "$ "
 send "jobs"
-expect_glob "[*]-*sleep*"
+expect_glob "[[]?]-*sleep*"
 send "kill %1 %2; wait 2>/dev/null"
 expect "$ "
 sendeof

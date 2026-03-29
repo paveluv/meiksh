@@ -307,7 +307,7 @@ send "sleep 0.1 &"
 expect "$ "
 sleep 500
 send "echo trigger_prompt"
-expect_glob "[*]*Done*sleep*"
+expect_glob "[[]?]*Done*sleep*"
 sendeof
 wait'
 

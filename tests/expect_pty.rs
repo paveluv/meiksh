@@ -7,7 +7,7 @@
 //!   spawn <cmd> [args...]      — fork a PTY child and exec the command
 //!   expect "literal"           — wait for exact substring in PTY output (timeout: 5s)
 //!   expect timeout=N "literal" — wait with custom timeout in seconds
-//!   expect_glob "pattern"      — wait for glob pattern match (*, ?, {a,b})
+//!   expect_glob "pattern"      — wait for POSIX glob match (*, ?, [...], {a,b})
 //!   not_expect "literal"       — assert substring is NOT in the current output buffer
 //!   send "text"                — write text + newline to the PTY
 //!   sendraw <hex> [<hex>...]   — write raw bytes (hex-encoded) to the PTY
@@ -17,7 +17,8 @@
 //!   sleep <ms>                 — sleep for N milliseconds
 //!
 //! Lines starting with '#' and empty lines are ignored.
-//! expect uses exact substring matching; expect_glob supports *, ?, and {a,b}.
+//! expect uses exact substring matching; expect_glob supports POSIX pattern
+//! matching notation (*, ?, [...] bracket expressions) plus {a,b} brace expansion.
 
 use std::env;
 use std::fs;
@@ -232,8 +233,8 @@ impl PtySession {
         }
     }
 
-    /// Wait for a glob pattern match in the output buffer.
-    /// The pattern supports `*`, `?`, and `{a,b}` brace expansion.
+    /// Wait for a POSIX glob pattern match in the output buffer.
+    /// Supports `*`, `?`, `[...]` bracket expressions, and `{a,b}` brace expansion.
     /// On match, consumes all output up to and including the match.
     fn expect_glob(&self, pattern: &str, timeout: Duration) -> Result<String, String> {
         let alternatives = expand_braces(pattern);
@@ -418,9 +419,155 @@ fn expand_braces(pattern: &str) -> Vec<String> {
     vec![pattern.to_string()]
 }
 
-/// Match `pattern` against `text` using glob rules:
-///   `*` matches zero or more characters, `?` matches exactly one character,
-///   all other characters (including `[`, `]`) are literal.
+/// Test whether character `c` belongs to a POSIX named character class.
+fn is_char_class(name: &str, c: char) -> bool {
+    match name {
+        "alnum" => c.is_alphanumeric(),
+        "alpha" => c.is_alphabetic(),
+        "blank" => c == ' ' || c == '\t',
+        "cntrl" => c.is_control(),
+        "digit" => c.is_ascii_digit(),
+        "graph" => !c.is_control() && c != ' ',
+        "lower" => c.is_lowercase(),
+        "print" => !c.is_control(),
+        "punct" => c.is_ascii_punctuation(),
+        "space" => c.is_whitespace(),
+        "upper" => c.is_uppercase(),
+        "xdigit" => c.is_ascii_hexdigit(),
+        _ => false,
+    }
+}
+
+/// Try to parse a POSIX bracket expression starting at `pat[start]` where
+/// `pat[start] == '['`. Returns `Some((matched, end))` where `matched` is
+/// true if `ch` is in the set, and `end` is the index past the closing `]`.
+/// Returns `None` if the brackets don't form a valid bracket expression
+/// (unmatched `[`), in which case `[` should be treated as literal.
+fn match_bracket_expr(pat: &[char], start: usize, ch: char) -> Option<(bool, usize)> {
+    let len = pat.len();
+    let mut i = start + 1; // skip opening '['
+    if i >= len {
+        return None;
+    }
+
+    // Check for negation: [!...] or [^...]
+    let negate = if pat[i] == '!' || pat[i] == '^' {
+        i += 1;
+        true
+    } else {
+        false
+    };
+
+    let mut matched = false;
+    let mut prev_char: Option<char> = None;
+
+    // ']' immediately after '[' (or '[!' / '[^') is literal
+    if i < len && pat[i] == ']' {
+        if ch == ']' {
+            matched = true;
+        }
+        prev_char = Some(']');
+        i += 1;
+    }
+
+    while i < len && pat[i] != ']' {
+        // Named character class: [[:name:]]
+        if i + 1 < len && pat[i] == '[' && pat[i + 1] == ':' {
+            if let Some(end_colon) = find_seq(pat, i + 2, ':') {
+                if end_colon + 1 < len && pat[end_colon + 1] == ']' {
+                    let name: String = pat[i + 2..end_colon].iter().collect();
+                    if is_char_class(&name, ch) {
+                        matched = true;
+                    }
+                    i = end_colon + 2;
+                    prev_char = None;
+                    continue;
+                }
+            }
+        }
+
+        // Collating symbol: [.x.] — treat as the character x
+        if i + 1 < len && pat[i] == '[' && pat[i + 1] == '.' {
+            if let Some(end_dot) = find_seq(pat, i + 2, '.') {
+                if end_dot + 1 < len && pat[end_dot + 1] == ']' {
+                    let sym: String = pat[i + 2..end_dot].iter().collect();
+                    if sym.len() == 1 {
+                        let sc = sym.chars().next().unwrap();
+                        if ch == sc {
+                            matched = true;
+                        }
+                        prev_char = Some(sc);
+                    }
+                    i = end_dot + 2;
+                    continue;
+                }
+            }
+        }
+
+        // Equivalence class: [=x=] — treat as matching character x
+        if i + 1 < len && pat[i] == '[' && pat[i + 1] == '=' {
+            if let Some(end_eq) = find_seq(pat, i + 2, '=') {
+                if end_eq + 1 < len && pat[end_eq + 1] == ']' {
+                    let sym: String = pat[i + 2..end_eq].iter().collect();
+                    if sym.len() == 1 {
+                        let sc = sym.chars().next().unwrap();
+                        if ch == sc {
+                            matched = true;
+                        }
+                        prev_char = Some(sc);
+                    }
+                    i = end_eq + 2;
+                    continue;
+                }
+            }
+        }
+
+        let c = pat[i];
+
+        // Range expression: prev-c
+        if c == '-' && prev_char.is_some() && i + 1 < len && pat[i + 1] != ']' {
+            let range_start = prev_char.unwrap();
+            let range_end = pat[i + 1];
+            if ch >= range_start && ch <= range_end {
+                matched = true;
+            }
+            i += 2;
+            prev_char = Some(range_end);
+            continue;
+        }
+
+        // Ordinary character in the list
+        if ch == c {
+            matched = true;
+        }
+        prev_char = Some(c);
+        i += 1;
+    }
+
+    if i >= len {
+        return None; // no closing ']' found — not a valid bracket expression
+    }
+
+    // i is at the closing ']'
+    let result = if negate { !matched } else { matched };
+    Some((result, i + 1))
+}
+
+/// Find the position of `target` char in `pat` starting from `from`.
+fn find_seq(pat: &[char], from: usize, target: char) -> Option<usize> {
+    for j in from..pat.len() {
+        if pat[j] == target {
+            return Some(j);
+        }
+    }
+    None
+}
+
+/// Match `pattern` against `text` using POSIX shell pattern matching (2.14):
+///   `*`  — matches zero or more characters
+///   `?`  — matches exactly one character
+///   `[…]` — bracket expression (character classes, ranges, named classes)
+///   All other characters are literal.
 fn glob_match(pattern: &str, text: &str) -> bool {
     let pat: Vec<char> = pattern.chars().collect();
     let txt: Vec<char> = text.chars().collect();
@@ -428,13 +575,44 @@ fn glob_match(pattern: &str, text: &str) -> bool {
     let (mut star_pi, mut star_ti) = (usize::MAX, 0usize);
 
     while ti < txt.len() {
-        if pi < pat.len() && (pat[pi] == '?' || pat[pi] == txt[ti]) {
+        if pi < pat.len() && pat[pi] == '[' {
+            if let Some((matched, next_pi)) = match_bracket_expr(&pat, pi, txt[ti]) {
+                if matched {
+                    pi = next_pi;
+                    ti += 1;
+                    continue;
+                } else {
+                    // bracket didn't match this char — try star backtrack
+                    if star_pi != usize::MAX {
+                        pi = star_pi + 1;
+                        star_ti += 1;
+                        ti = star_ti;
+                        continue;
+                    }
+                    return false;
+                }
+            }
+            // '[' didn't form a valid bracket expr — treat as literal
+            if pat[pi] == txt[ti] {
+                pi += 1;
+                ti += 1;
+            } else if star_pi != usize::MAX {
+                pi = star_pi + 1;
+                star_ti += 1;
+                ti = star_ti;
+            } else {
+                return false;
+            }
+        } else if pi < pat.len() && pat[pi] == '?' {
             pi += 1;
             ti += 1;
         } else if pi < pat.len() && pat[pi] == '*' {
             star_pi = pi;
             star_ti = ti;
             pi += 1;
+        } else if pi < pat.len() && pat[pi] == txt[ti] {
+            pi += 1;
+            ti += 1;
         } else if star_pi != usize::MAX {
             pi = star_pi + 1;
             star_ti += 1;
@@ -443,6 +621,7 @@ fn glob_match(pattern: &str, text: &str) -> bool {
             return false;
         }
     }
+    // Consume trailing * in pattern
     while pi < pat.len() && pat[pi] == '*' {
         pi += 1;
     }
@@ -786,13 +965,6 @@ mod tests {
     #[test]
     fn glob_mixed() {
         assert!(glob_match("*foo?", "bazfooX"));
-        assert!(glob_match("[1]*sleep", "[1]+ Running sleep"));
-    }
-
-    #[test]
-    fn glob_literal_brackets() {
-        assert!(glob_match("[1]", "[1]"));
-        assert!(glob_match("[*]+*sleep*", "[1]+  Stopped  sleep 60"));
     }
 
     #[test]
@@ -805,6 +977,185 @@ mod tests {
     fn glob_only_stars() {
         assert!(glob_match("***", "anything"));
         assert!(glob_match("***", ""));
+    }
+
+    // -- bracket expressions --
+
+    #[test]
+    fn bracket_simple_list() {
+        assert!(glob_match("[abc]", "a"));
+        assert!(glob_match("[abc]", "b"));
+        assert!(glob_match("[abc]", "c"));
+        assert!(!glob_match("[abc]", "d"));
+        assert!(!glob_match("[abc]", ""));
+    }
+
+    #[test]
+    fn bracket_negation_bang() {
+        assert!(!glob_match("[!abc]", "a"));
+        assert!(glob_match("[!abc]", "d"));
+        assert!(glob_match("[!abc]", "z"));
+    }
+
+    #[test]
+    fn bracket_negation_caret() {
+        assert!(!glob_match("[^abc]", "a"));
+        assert!(glob_match("[^abc]", "d"));
+    }
+
+    #[test]
+    fn bracket_range() {
+        assert!(glob_match("[a-z]", "m"));
+        assert!(glob_match("[a-z]", "a"));
+        assert!(glob_match("[a-z]", "z"));
+        assert!(!glob_match("[a-z]", "A"));
+        assert!(!glob_match("[a-z]", "0"));
+    }
+
+    #[test]
+    fn bracket_range_digit() {
+        assert!(glob_match("[0-9]", "5"));
+        assert!(!glob_match("[0-9]", "a"));
+    }
+
+    #[test]
+    fn bracket_negated_range() {
+        assert!(!glob_match("[!0-9]", "5"));
+        assert!(glob_match("[!0-9]", "a"));
+    }
+
+    #[test]
+    fn bracket_named_class_digit() {
+        assert!(glob_match("[[:digit:]]", "5"));
+        assert!(!glob_match("[[:digit:]]", "a"));
+    }
+
+    #[test]
+    fn bracket_named_class_alpha() {
+        assert!(glob_match("[[:alpha:]]", "z"));
+        assert!(glob_match("[[:alpha:]]", "Z"));
+        assert!(!glob_match("[[:alpha:]]", "9"));
+    }
+
+    #[test]
+    fn bracket_named_class_alnum() {
+        assert!(glob_match("[[:alnum:]]", "a"));
+        assert!(glob_match("[[:alnum:]]", "9"));
+        assert!(!glob_match("[[:alnum:]]", "."));
+    }
+
+    #[test]
+    fn bracket_named_class_space() {
+        assert!(glob_match("[[:space:]]", " "));
+        assert!(glob_match("[[:space:]]", "\t"));
+        assert!(!glob_match("[[:space:]]", "a"));
+    }
+
+    #[test]
+    fn bracket_named_class_upper_lower() {
+        assert!(glob_match("[[:upper:]]", "A"));
+        assert!(!glob_match("[[:upper:]]", "a"));
+        assert!(glob_match("[[:lower:]]", "a"));
+        assert!(!glob_match("[[:lower:]]", "A"));
+    }
+
+    #[test]
+    fn bracket_named_class_xdigit() {
+        assert!(glob_match("[[:xdigit:]]", "f"));
+        assert!(glob_match("[[:xdigit:]]", "F"));
+        assert!(glob_match("[[:xdigit:]]", "9"));
+        assert!(!glob_match("[[:xdigit:]]", "g"));
+    }
+
+    #[test]
+    fn bracket_named_class_blank() {
+        assert!(glob_match("[[:blank:]]", " "));
+        assert!(glob_match("[[:blank:]]", "\t"));
+        assert!(!glob_match("[[:blank:]]", "\n"));
+    }
+
+    #[test]
+    fn bracket_named_class_punct() {
+        assert!(glob_match("[[:punct:]]", "."));
+        assert!(glob_match("[[:punct:]]", "!"));
+        assert!(!glob_match("[[:punct:]]", "a"));
+    }
+
+    #[test]
+    fn bracket_named_class_negated() {
+        assert!(!glob_match("[![:digit:]]", "5"));
+        assert!(glob_match("[![:digit:]]", "a"));
+    }
+
+    #[test]
+    fn bracket_literal_close_bracket_first() {
+        // ']' right after '[' is literal
+        assert!(glob_match("[]abc]", "]"));
+        assert!(glob_match("[]abc]", "a"));
+        assert!(!glob_match("[]abc]", "x"));
+    }
+
+    #[test]
+    fn bracket_literal_hyphen_edges() {
+        // '-' at start is literal
+        assert!(glob_match("[-abc]", "-"));
+        assert!(glob_match("[-abc]", "a"));
+        // '-' before ']' is literal
+        assert!(glob_match("[abc-]", "-"));
+    }
+
+    #[test]
+    fn bracket_in_pattern() {
+        // Match literal '[' using [[] bracket expression
+        assert!(glob_match("[[]", "["));
+        assert!(!glob_match("[[]", "a"));
+    }
+
+    #[test]
+    fn bracket_with_glob() {
+        // Pattern: literal '[', any char, literal ']', then *, then sleep
+        assert!(glob_match("[[]?]*sleep", "[1]+  Running  sleep"));
+        assert!(glob_match("[[]1]*sleep 60*", "[1]+  Running  sleep 60"));
+    }
+
+    #[test]
+    fn bracket_star_is_literal() {
+        // Inside bracket expression, '*' is literal
+        assert!(glob_match("[*]", "*"));
+        assert!(!glob_match("[*]", "a"));
+    }
+
+    #[test]
+    fn bracket_question_is_literal() {
+        // Inside bracket expression, '?' is literal
+        assert!(glob_match("[?]", "?"));
+        assert!(!glob_match("[?]", "a"));
+    }
+
+    #[test]
+    fn bracket_unmatched_is_literal() {
+        // '[' without closing ']' is treated as literal
+        assert!(glob_match("[", "["));
+        assert!(!glob_match("[", "a"));
+    }
+
+    #[test]
+    fn bracket_combined_class_and_range() {
+        assert!(glob_match("[[:digit:]a-f]", "5"));
+        assert!(glob_match("[[:digit:]a-f]", "c"));
+        assert!(!glob_match("[[:digit:]a-f]", "g"));
+    }
+
+    #[test]
+    fn bracket_collating_symbol() {
+        assert!(glob_match("[[.a.]]", "a"));
+        assert!(!glob_match("[[.a.]]", "b"));
+    }
+
+    #[test]
+    fn bracket_equivalence_class() {
+        assert!(glob_match("[[=a=]]", "a"));
+        assert!(!glob_match("[[=a=]]", "b"));
     }
 
     // -- expand_braces --
@@ -862,7 +1213,7 @@ mod tests {
 
     #[test]
     fn find_glob_with_wildcards() {
-        let pats = expand_braces("[*]*{Stopped,Suspended}*sleep 60*");
+        let pats = expand_braces("[[]?]*{Stopped,Suspended}*sleep 60*");
         let line = "[1]+  Stopped  sleep 60";
         let result = find_glob_match(&pats, line);
         assert!(result.is_some());
