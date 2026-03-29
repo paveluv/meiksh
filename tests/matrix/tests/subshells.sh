@@ -10,11 +10,12 @@
 # ==============================================================================
 # Subshell Parsing and Status
 # ==============================================================================
-# REQUIREMENT: SHALL-2-9-4-1-346: Variable assignments and built-in commands
-# that affect the environment shall not remain in effect after the list
-# finishes.
-# REQUIREMENT: SHALL-Exit Status-348: The exit status of a grouping command
-# shall be the exit status of compound-list .
+# REQUIREMENT: SHALL-2-9-4-1-346:
+# Variable assignments and built-in commands that affect the environment shall
+# not remain in effect after the list finishes.
+# REQUIREMENT: SHALL-Exit Status-348:
+# The exit status of a grouping command shall be the exit status of
+# compound-list .
 
 test_cmd='
 ( false )
@@ -26,13 +27,15 @@ assert_exit_code 1 \
 # ==============================================================================
 # Subshell Isolation
 # ==============================================================================
-# REQUIREMENT: SHALL-2-13-470: A subshell environment shall be created as a
+# REQUIREMENT: SHALL-2-13-470:
+# A subshell environment shall be created as a
 # duplicate of the shell environment, except that:...
-# REQUIREMENT: SHALL-2-13-473: Changes made to the subshell environment shall
-# not affect the shell environment.
-# REQUIREMENT: SHALL-2-13-474: Command substitution, commands that are grouped
-# with parentheses, and asynchronous AND-OR lists shall be executed in a
-# subshell environment.
+# REQUIREMENT: SHALL-2-13-473:
+# Changes made to the subshell environment shall not affect the shell
+# environment.
+# REQUIREMENT: SHALL-2-13-474:
+# Command substitution, commands that are grouped with parentheses, and
+# asynchronous AND-OR lists shall be executed in a subshell environment.
 
 # Parent variable is visible in subshell, but subshell changes do not propagate.
 test_cmd='var="parent"; (echo "$var"; var="child"; echo "$var"); echo "$var"'
@@ -55,8 +58,9 @@ child" \
 # ==============================================================================
 # Current Environment Execution
 # ==============================================================================
-# REQUIREMENT: SHALL-2-13-475: Except where otherwise stated, all other commands
-# shall be executed in the current shell environment.
+# REQUIREMENT: SHALL-2-13-475:
+# Except where otherwise stated, all other commands shall be executed in the
+# current shell environment.
 
 # Group commands with `{ ...; }` execute in the current environment.
 test_cmd='var="parent"; { var="child"; echo "$var"; }; echo "$var"'
@@ -73,9 +77,10 @@ assert_stdout "child" \
 # ==============================================================================
 # Utility Invocations
 # ==============================================================================
-# REQUIREMENT: SHALL-2-13-469: The environment of the shell process shall not be
-# changed by the utility unless explicitly specified by the utility description
-# (for example, cd and umask ).
+# REQUIREMENT: SHALL-2-13-469:
+# The environment of the shell process shall not be changed by the utility
+# unless explicitly specified by the utility description (for example, cd and
+# umask ).
 
 # Invoking `cd` via `env` or an external utility does not change the parent's
 # working directory, but the built-in `cd` does.

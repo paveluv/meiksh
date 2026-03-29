@@ -10,12 +10,13 @@
 # ==============================================================================
 # Positional Parameters
 # ==============================================================================
-# REQUIREMENT: SHALL-2-5-1-060: The digits denoting the positional parameters
-# shall always be interpreted as a decimal value, even if there is a leading
-# zero.
-# REQUIREMENT: SHALL-2-5-1-061: When a positional parameter with more than one
-# digit is specified, the application shall enclose the digits in braces (see
-# 2.6.2 Parameter Expansion ).
+# REQUIREMENT: SHALL-2-5-1-060:
+# The digits denoting the positional parameters shall always be interpreted as
+# a decimal value, even if there is a leading zero.
+# REQUIREMENT: SHALL-2-5-1-061:
+# When a positional parameter with more than one digit is specified, the
+# application shall enclose the digits in braces (see 2.6.2 Parameter Expansion
+# ).
 
 test_cmd='
 myfunc() {
@@ -35,18 +36,21 @@ assert_stdout "$TARGET_SHELL"'1
 # ==============================================================================
 # Special Parameters
 # ==============================================================================
-# REQUIREMENT: SHALL-2-5-059: The shell shall process their values as characters
-# only when performing operations that are described in this standard in terms
-# of characters.
-# REQUIREMENT: SHALL-2-5-2-062: Listed below are the special parameters and the
-# values to which they shall expand.
-# REQUIREMENT: SHALL-2-5-2-072: The -i option shall be included in "$-" if the
-# shell is interactive, regardless of whether it was specified on invocation.
-# REQUIREMENT: SHALL-2-5-2-063: When the expansion occurs in a context where
-# field splitting will be performed, any empty fields may be discarded and each
-# of the non-empty fields shall be further split as described in 2.6.5 Field
-# Splitting .
-# REQUIREMENT: SHALL-2-5-2-066: When the expansion occurs in a context where
+# REQUIREMENT: SHALL-2-5-059:
+# The shell shall process their values as characters only when performing
+# operations that are described in this standard in terms of characters.
+# REQUIREMENT: SHALL-2-5-2-062:
+# Listed below are the special parameters and the values to which they shall
+# expand.
+# REQUIREMENT: SHALL-2-5-2-072:
+# The -i option shall be included in "$-" if the shell is interactive,
+# regardless of whether it was specified on invocation.
+# REQUIREMENT: SHALL-2-5-2-063:
+# When the expansion occurs in a context where field splitting will be
+# performed, any empty fields may be discarded and each of the non-empty fields
+# shall be further split as described in 2.6.5 Field Splitting .
+# REQUIREMENT: SHALL-2-5-2-066:
+# When the expansion occurs in a context where
 # field splitting will be performed, any empty fields may be discarded...
 
 test_cmd='
@@ -61,17 +65,18 @@ b
 c" \
     "$TARGET_SHELL -c '$test_cmd' sh a b c"
 
-# REQUIREMENT: SHALL-2-5-2-064: If one of these conditions is true, the initial
-# fields shall be retained as separate fields, except that if the parameter
-# being expanded was embedded within a word, the first field shall be joined
-# with the beginning part of the original word and the last field shall be
-# joined with the end part of the original word.
-# REQUIREMENT: SHALL-2-5-2-067: When the expansion occurs in a context where
-# field splitting will not be performed, the initial fields shall be joined to
-# form a single field with the value of each parameter separated by the first
-# character of the IFS variable if IFS contains at least one character, or
-# separated by a <space> if IFS is unset, or with no separation if IFS is set to
-# a null string.
+# REQUIREMENT: SHALL-2-5-2-064:
+# If one of these conditions is true, the initial fields shall be retained as
+# separate fields, except that if the parameter being expanded was embedded
+# within a word, the first field shall be joined with the beginning part of the
+# original word and the last field shall be joined with the end part of the
+# original word.
+# REQUIREMENT: SHALL-2-5-2-067:
+# When the expansion occurs in a context where field splitting will not be
+# performed, the initial fields shall be joined to form a single field with the
+# value of each parameter separated by the first character of the IFS variable
+# if IFS contains at least one character, or separated by a <space> if IFS is
+# unset, or with no separation if IFS is set to a null string.
 
 test_cmd='
 for i in "$*"; do echo "$i"; done
@@ -84,13 +89,14 @@ b
 c" \
     "$TARGET_SHELL -c '$test_cmd' sh a b c"
 
-# REQUIREMENT: SHALL-2-5-2-065: If there are no positional parameters, the
-# expansion of '@' shall generate zero fields, even when '@' is within double-
-# quotes; however, if the expansion is embedded within a word which contains one
-# or more other parts that expand to a quoted null string, these null string(s)
-# shall still produce an empty field, except that if the other parts are all
-# within the same double-quotes as the '@' , it is unspecified whether the
-# result is zero fields or one empty field.
+# REQUIREMENT: SHALL-2-5-2-065:
+# If there are no positional parameters, the expansion of '@' shall generate
+# zero fields, even when '@' is within double-quotes; however, if the expansion
+# is embedded within a word which contains one or more other parts that expand
+# to a quoted null string, these null string(s) shall still produce an empty
+# field, except that if the other parts are all within the same double-quotes as
+# the '@' , it is unspecified whether the result is zero fields or one empty
+# field.
 
 test_cmd='
 for i in "$@"; do echo "found: $i"; done
@@ -98,36 +104,38 @@ for i in "$@"; do echo "found: $i"; done
 assert_stdout "" \
     "$TARGET_SHELL -c '$test_cmd' sh"
 
-# REQUIREMENT: SHALL-2-5-2-068: The command name (parameter 0) shall not be
-# counted in the number given by '#' because it is a special parameter, not a
-# positional parameter.
+# REQUIREMENT: SHALL-2-5-2-068:
+# The command name (parameter 0) shall not be counted in the number given by
+# '#' because it is a special parameter, not a positional parameter.
 
 test_cmd='echo "$#"'
 assert_stdout "3" \
     "$TARGET_SHELL -c '$test_cmd' sh a b c"
 
-# REQUIREMENT: SHALL-2-5-2-069: If this pipeline terminated, the status value
-# shall be its exit status; otherwise, the status value shall be the same as the
-# exit status that would have resulted if the pipeline had been terminated by a
-# signal with the same number as the signal that stopped it.
-# REQUIREMENT: SHALL-2-5-2-070: The value of the special parameter '?' shall be
-# set to 0 during initialization of the shell.
+# REQUIREMENT: SHALL-2-5-2-069:
+# If this pipeline terminated, the status value shall be its exit status;
+# otherwise, the status value shall be the same as the exit status that would
+# have resulted if the pipeline had been terminated by a signal with the same
+# number as the signal that stopped it.
+# REQUIREMENT: SHALL-2-5-2-070:
+# The value of the special parameter '?' shall be set to 0 during
+# initialization of the shell.
 
 test_cmd='echo "$?"'
 assert_stdout "0" \
     "$TARGET_SHELL -c '$test_cmd'"
 
-# REQUIREMENT: SHALL-2-5-2-071: When a subshell environment is created, the
-# value of the special parameter '?' from the invoking shell environment shall
-# be preserved in the subshell.
+# REQUIREMENT: SHALL-2-5-2-071:
+# When a subshell environment is created, the value of the special parameter
+# '?' from the invoking shell environment shall be preserved in the subshell.
 
 test_cmd='false; (echo "$?")'
 assert_stdout "1" \
     "$TARGET_SHELL -c '$test_cmd'"
 
-# REQUIREMENT: SHALL-2-5-2-073: In a subshell (see 2.13 Shell Execution
-# Environment ), '$' shall expand to the same value as that of the current
-# shell.
+# REQUIREMENT: SHALL-2-5-2-073:
+# In a subshell (see 2.13 Shell Execution Environment ), '$' shall expand to
+# the same value as that of the current shell.
 
 test_cmd='parent="$$"; sub="$(echo "$$")"; [ "$parent" = "$sub" ] && echo "same"'
 assert_stdout "same" \
@@ -136,42 +144,48 @@ assert_stdout "same" \
 # ==============================================================================
 # Environment Variables
 # ==============================================================================
-# REQUIREMENT: SHALL-2-5-3-074: Variables shall be initialized from the
-# environment (as defined by XBD 8.
-# REQUIREMENT: SHALL-2-5-3-075: Shell variables shall be initialized only from
-# environment variables that have valid names.
-# REQUIREMENT: SHALL-2-5-3-076: If a variable is initialized from the
-# environment, it shall be marked for export immediately; see the export special
-# built-in.
-# REQUIREMENT: SHALL-V3CHAP02-1002-DUP75: The following variables shall affect
-# the execution of the shell: ENV The processing of the ENV shell variable shall
-# be supported if the system supports the User Portability Utilities option.
+# REQUIREMENT: SHALL-2-5-3-074:
+# Variables shall be initialized from the environment (as defined by XBD 8.
+# REQUIREMENT: SHALL-2-5-3-075:
+# Shell variables shall be initialized only from environment variables that
+# have valid names.
+# REQUIREMENT: SHALL-2-5-3-076:
+# If a variable is initialized from the environment, it shall be marked for
+# export immediately; see the export special built-in.
+# REQUIREMENT: SHALL-V3CHAP02-1002-DUP75:
+# The following variables shall affect the execution of the shell: ENV The
+# processing of the ENV shell variable shall be supported if the system supports
+# the User Portability Utilities option.
 
 test_cmd='env | grep -q "^TEST_ENV_VAR=" && echo "exported"'
 assert_stdout "exported" \
     "TEST_ENV_VAR=value $TARGET_SHELL -c '$test_cmd'"
 
-# REQUIREMENT: SHALL-2-5-3-085: Each time an interactive shell is ready to read
-# a command, the value of this variable shall be subjected to parameter
-# expansion (see 2.6.2 Parameter Expansion ) and exclamation-mark expansion (see
-# below).
-# REQUIREMENT: SHALL-2-5-3-086: After expansion, the value shall be written to
-# standard error.
-# REQUIREMENT: SHALL-2-5-3-090: The default value shall be "$ " .
-# REQUIREMENT: SHALL-2-5-3-093: Each time the user enters a <newline> prior to
-# completing a command line in an interactive shell, the value of this variable
-# shall be subjected to parameter expansion (see 2.6.2 Parameter Expansion ).
-# REQUIREMENT: SHALL-2-5-3-086: After expansion, the value shall be written to
-# standard error.
-# REQUIREMENT: SHALL-2-5-3-095: The default value shall be "> " .
+# REQUIREMENT: SHALL-2-5-3-085:
+# Each time an interactive shell is ready to read a command, the value of this
+# variable shall be subjected to parameter expansion (see 2.6.2 Parameter
+# Expansion ) and exclamation-mark expansion (see below).
+# REQUIREMENT: SHALL-2-5-3-086:
+# After expansion, the value shall be written to standard error.
+# REQUIREMENT: SHALL-2-5-3-090:
+# The default value shall be "$ " .
+# REQUIREMENT: SHALL-2-5-3-093:
+# Each time the user enters a <newline> prior to completing a command line in
+# an interactive shell, the value of this variable shall be subjected to
+# parameter expansion (see 2.6.2 Parameter Expansion ).
+# REQUIREMENT: SHALL-2-5-3-086:
+# After expansion, the value shall be written to standard error.
+# REQUIREMENT: SHALL-2-5-3-095:
+# The default value shall be "> " .
 
 
-# REQUIREMENT: SHALL-2-5-3-081: If IFS is not set, it shall behave as normal for
-# an unset variable, except that field splitting by the shell and line splitting
-# by the read utility shall be performed as if the value of IFS is
-# <space><tab><newline>; see 2.6.5 Field Splitting .
-# REQUIREMENT: SHALL-2-5-3-082: The shell shall set IFS to <space><tab><newline>
-# when it is invoked.
+# REQUIREMENT: SHALL-2-5-3-081:
+# If IFS is not set, it shall behave as normal for an unset variable, except
+# that field splitting by the shell and line splitting by the read utility shall
+# be performed as if the value of IFS is <space><tab><newline>; see 2.6.5 Field
+# Splitting .
+# REQUIREMENT: SHALL-2-5-3-082:
+# The shell shall set IFS to <space><tab><newline> when it is invoked.
 
 test_cmd='
 foo="a b	c
@@ -181,9 +195,9 @@ for i in $foo; do echo "split"; done | wc -l | tr -d " "
 assert_stdout "4" \
     "$TARGET_SHELL -c '$test_cmd'"
 
-# REQUIREMENT: SHALL-2-5-3-084: In a subshell (see 2.13 Shell Execution
-# Environment ), PPID shall be set to the same value as that of the parent of
-# the current shell.
+# REQUIREMENT: SHALL-2-5-3-084:
+# In a subshell (see 2.13 Shell Execution Environment ), PPID shall be set to
+# the same value as that of the parent of the current shell.
 
 test_cmd='parent="$PPID"; sub="$(echo "$PPID")"; [ "$parent" = "$sub" ] && echo "same"'
 assert_stdout "same" \
@@ -193,12 +207,14 @@ assert_stdout "same" \
 # ==============================================================================
 # Environment Variables (PS4, PWD, etc.)
 # ==============================================================================
-# REQUIREMENT: SHALL-2-5-3-096: When an execution trace ( set -x ) is being
-# performed, before each line in the execution trace, the value of this variable
-# shall be subjected to parameter expansion (see 2.6.2 Parameter Expansion ).
-# REQUIREMENT: SHALL-2-5-3-086: After expansion, the value shall be written to
-# standard error.
-# REQUIREMENT: SHALL-2-5-3-098: The default value shall be "+ " .
+# REQUIREMENT: SHALL-2-5-3-096:
+# When an execution trace ( set -x ) is being performed, before each line in
+# the execution trace, the value of this variable shall be subjected to
+# parameter expansion (see 2.6.2 Parameter Expansion ).
+# REQUIREMENT: SHALL-2-5-3-086:
+# After expansion, the value shall be written to standard error.
+# REQUIREMENT: SHALL-2-5-3-098:
+# The default value shall be "+ " .
 
 test_cmd='
 set -x
@@ -218,18 +234,20 @@ set +x
 assert_stderr_contains "TRACE:" \
     "$TARGET_SHELL -c '$test_cmd'"
 
-# REQUIREMENT: SHALL-2-5-3-099: In the shell the value shall be initialized from
-# the environment as follows.
-# REQUIREMENT: SHALL-2-5-3-100: If a value for PWD is passed to the shell in the
-# environment when it is executed, the value is an absolute pathname of the
-# current working directory that is no longer than {PATH_MAX} bytes including
-# the terminating null byte, and the value does not contain any components that
-# are dot or dot-dot, then the shell shall set PWD to the value from the
-# environment.
-# REQUIREMENT: SHALL-ENVIRONMENT VARIABLES-023: The following environment
+# REQUIREMENT: SHALL-2-5-3-099:
+# In the shell the value shall be initialized from the environment as follows.
+# REQUIREMENT: SHALL-2-5-3-100:
+# If a value for PWD is passed to the shell in the environment when it is
+# executed, the value is an absolute pathname of the current working directory
+# that is no longer than {PATH_MAX} bytes including the terminating null byte,
+# and the value does not contain any components that are dot or dot-dot, then
+# the shell shall set PWD to the value from the environment.
+# REQUIREMENT: SHALL-ENVIRONMENT VARIABLES-023:
+# The following environment
 # variables shall affect the execution of sh:...
-# REQUIREMENT: SHALL-ENVIRONMENT VARIABLES-024: This variable shall represent an
-# absolute pathname of the current working directory.
+# REQUIREMENT: SHALL-ENVIRONMENT VARIABLES-024:
+# This variable shall represent an absolute pathname of the current working
+# directory.
 
 test_cmd='echo "$PWD"'
 # We pass an explicit PWD via env and see if it's respected (if it matches
@@ -241,23 +259,27 @@ assert_stdout "$PWD" \
 # ==============================================================================
 # PS1 and Exclamation-mark Expansion
 # ==============================================================================
-# REQUIREMENT: SHALL-2-5-3-085: Each time an interactive shell is ready to read
-# a command, the value of this variable shall be subjected to parameter
-# expansion (see 2.6.2 Parameter Expansion ) and exclamation-mark expansion (see
-# below).
-# REQUIREMENT: SHALL-2-5-3-087: The expansions shall be performed in two passes,
-# where the result of the first pass is input to the second pass.
-# REQUIREMENT: SHALL-2-5-3-088: One of the passes shall perform only the
-# exclamation-mark expansion described below.
-# REQUIREMENT: SHALL-2-5-3-089: The other pass shall perform the other
-# expansion(s) according to the rules in 2.6 Word Expansions .
-# REQUIREMENT: SHALL-2-5-3-091: Exclamation-mark expansion: The shell shall
-# replace each instance of the <exclamation-mark> character ( '!' ) with the
-# history file number (see Command History List ) of the next command to be
-# typed.
-# REQUIREMENT: SHALL-2-5-3-092: An <exclamation-mark> character escaped by
-# another <exclamation-mark> character (that is, "!!" ) shall expand to a single
-# <exclamation-mark> character.
+# REQUIREMENT: SHALL-2-5-3-085:
+# Each time an interactive shell is ready to read a command, the value of this
+# variable shall be subjected to parameter expansion (see 2.6.2 Parameter
+# Expansion ) and exclamation-mark expansion (see below).
+# REQUIREMENT: SHALL-2-5-3-087:
+# The expansions shall be performed in two passes, where the result of the
+# first pass is input to the second pass.
+# REQUIREMENT: SHALL-2-5-3-088:
+# One of the passes shall perform only the exclamation-mark expansion described
+# below.
+# REQUIREMENT: SHALL-2-5-3-089:
+# The other pass shall perform the other expansion(s) according to the rules in
+# 2.6 Word Expansions .
+# REQUIREMENT: SHALL-2-5-3-091:
+# Exclamation-mark expansion: The shell shall replace each instance of the
+# <exclamation-mark> character ( '!' ) with the history file number (see Command
+# History List ) of the next command to be typed.
+# REQUIREMENT: SHALL-2-5-3-092:
+# An <exclamation-mark> character escaped by another <exclamation-mark>
+# character (that is, "!!" ) shall expand to a single <exclamation-mark>
+# character.
 
 interactive_script=$(cat << 'EOF'
 sleep 0.5
@@ -290,17 +312,20 @@ report
 # ==============================================================================
 # Additional Parameters
 # ==============================================================================
-# REQUIREMENT: SHALL-2-5-3-078: This variable, when and only when an interactive
-# shell is invoked, shall be subjected to parameter expansion (see 2.6.2
-# Parameter Expansion ) by the shell and the resulting value shall be used as a
-# pathname of a file.
-# REQUIREMENT: SHALL-2-5-3-079: Before any interactive commands are read, the
-# shell shall tokenize (see 2.3 Token Recognition ) the contents of the file,
-# parse the tokens as a program (see 2.10 Shell Grammar ), and execute the
-# resulting commands in the current environment. (In other words, the contents
-# of the ENV file are not parsed as a single compound_list .
-# REQUIREMENT: SHALL-2-5-3-080: ENV shall be ignored if the user's real and
-# effective user IDs or real and effective group IDs are different.
-# REQUIREMENT: SHALL-2-5-3-083: Changing the value of LC_CTYPE after the shell
-# has started shall not affect the lexical processing of shell commands in the
-# current shell execution environment or its subshells.
+# REQUIREMENT: SHALL-2-5-3-078:
+# This variable, when and only when an interactive shell is invoked, shall be
+# subjected to parameter expansion (see 2.6.2 Parameter Expansion ) by the shell
+# and the resulting value shall be used as a pathname of a file.
+# REQUIREMENT: SHALL-2-5-3-079:
+# Before any interactive commands are read, the shell shall tokenize (see 2.3
+# Token Recognition ) the contents of the file, parse the tokens as a program
+# (see 2.10 Shell Grammar ), and execute the resulting commands in the current
+# environment. (In other words, the contents of the ENV file are not parsed as a
+# single compound_list .
+# REQUIREMENT: SHALL-2-5-3-080:
+# ENV shall be ignored if the user's real and effective user IDs or real and
+# effective group IDs are different.
+# REQUIREMENT: SHALL-2-5-3-083:
+# Changing the value of LC_CTYPE after the shell has started shall not affect
+# the lexical processing of shell commands in the current shell execution
+# environment or its subshells.

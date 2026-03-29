@@ -10,16 +10,18 @@
 # ==============================================================================
 # The 'export' and 'readonly' Utilities
 # ==============================================================================
-# REQUIREMENT: SHALL-DESCRIPTION-560: The export special built-in shall be a
-# declaration utility.
-# REQUIREMENT: SHALL-DESCRIPTION-561: Therefore, if export is recognized as the
-# command name of a simple command, then subsequent words of the form name =
-# word shall be expanded in an assignment context.
-# REQUIREMENT: SHALL-DESCRIPTION-570: The readonly special built-in shall be a
-# declaration utility.
-# REQUIREMENT: SHALL-DESCRIPTION-571: Therefore, if readonly is recognized as
-# the command name of a simple command, then subsequent words of the form name =
-# word shall be expanded in an assignment context.
+# REQUIREMENT: SHALL-DESCRIPTION-560:
+# The export special built-in shall be a declaration utility.
+# REQUIREMENT: SHALL-DESCRIPTION-561:
+# Therefore, if export is recognized as the command name of a simple command,
+# then subsequent words of the form name = word shall be expanded in an
+# assignment context.
+# REQUIREMENT: SHALL-DESCRIPTION-570:
+# The readonly special built-in shall be a declaration utility.
+# REQUIREMENT: SHALL-DESCRIPTION-571:
+# Therefore, if readonly is recognized as the command name of a simple command,
+# then subsequent words of the form name = word shall be expanded in an
+# assignment context.
 
 test_cmd='
 # Since export/readonly are declaration utilities, assignments like `foo=1`
@@ -37,22 +39,24 @@ assert_exit_code 0 \
 # ==============================================================================
 # The 'exit' and 'wait' Utilities
 # ==============================================================================
-# REQUIREMENT: SHALL-DESCRIPTION-552: If n is specified and has a value between
-# 0 and 255 inclusive, the wait status of the shell or subshell shall indicate
-# that it exited with exit status n .
-# REQUIREMENT: SHALL-DESCRIPTION-553: If n is specified and has a value greater
-# than 256 that corresponds to an exit status the shell assigns to commands
-# terminated by a valid signal (see 2.8.2 Exit Status for Commands ), the wait
-# status of the shell or subshell shall indicate that it was terminated by that
-# signal.
+# REQUIREMENT: SHALL-DESCRIPTION-552:
+# If n is specified and has a value between 0 and 255 inclusive, the wait
+# status of the shell or subshell shall indicate that it exited with exit status
+# n .
+# REQUIREMENT: SHALL-DESCRIPTION-553:
+# If n is specified and has a value greater than 256 that corresponds to an
+# exit status the shell assigns to commands terminated by a valid signal (see
+# 2.8.2 Exit Status for Commands ), the wait status of the shell or subshell
+# shall indicate that it was terminated by that signal.
 
 test_cmd='(exit 200); echo $?'
 assert_stdout "200" \
     "$TARGET_SHELL -c '$test_cmd'"
 
-# REQUIREMENT: SHALL-DESCRIPTION-556: A trap action on EXIT shall be executed
-# before the shell terminates, except when the exit utility is invoked in that
-# trap action itself, in which case the shell shall exit immediately.
+# REQUIREMENT: SHALL-DESCRIPTION-556:
+# A trap action on EXIT shall be executed before the shell terminates, except
+# when the exit utility is invoked in that trap action itself, in which case the
+# shell shall exit immediately.
 
 test_cmd='
 trap "echo exit_action" EXIT
@@ -64,12 +68,14 @@ assert_stdout "exit_action" \
 # ==============================================================================
 # The 'set' Utility
 # ==============================================================================
-# REQUIREMENT: SHALL-DESCRIPTION-584: When options are specified, they shall set
-# or unset attributes of the shell, as described below.
-# REQUIREMENT: SHALL-DESCRIPTION-586: Implementations shall support the options
-# in the following list in both their <hyphen-minus> and <plus-sign> forms.
-# REQUIREMENT: SHALL-DESCRIPTION-597: -f The shell shall disable pathname
-# expansion.
+# REQUIREMENT: SHALL-DESCRIPTION-584:
+# When options are specified, they shall set or unset attributes of the shell,
+# as described below.
+# REQUIREMENT: SHALL-DESCRIPTION-586:
+# Implementations shall support the options in the following list in both their
+# <hyphen-minus> and <plus-sign> forms.
+# REQUIREMENT: SHALL-DESCRIPTION-597:
+# -f The shell shall disable pathname expansion.
 
 test_cmd='
 set -f
@@ -79,8 +85,9 @@ echo tmp_builtins_5*.txt
 assert_stdout "tmp_builtins_5*.txt" \
     "$TARGET_SHELL -c '$test_cmd'"
 
-# REQUIREMENT: SHALL-DESCRIPTION-611: The remaining arguments shall be assigned
-# in order to the positional parameters.
+# REQUIREMENT: SHALL-DESCRIPTION-611:
+# The remaining arguments shall be assigned in order to the positional
+# parameters.
 
 test_cmd='
 set -- a b c
