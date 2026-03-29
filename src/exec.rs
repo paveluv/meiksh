@@ -707,10 +707,10 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
     } else {
         let prepared = match build_process_from_expanded(shell, &expanded) {
             Ok(p) => p,
-            Err(error) => {
-                sys_eprintln!("{}", error.display_message());
-                return Ok(error.exit_status());
-            }
+            Err(error) => { // LCOV_EXCL_LINE: argv is non-empty here
+                sys_eprintln!("{}", error.display_message()); // LCOV_EXCL_LINE
+                return Ok(error.exit_status()); // LCOV_EXCL_LINE
+            } // LCOV_EXCL_LINE
         };
         if !prepared.path_verified && !prepared.exec_path.contains('/') {
             sys_eprintln!("{}: not found", expanded.argv[0]);
@@ -2973,6 +2973,36 @@ mod tests {
             assert!(!case_pattern_matches("x", "["));
             assert!(!case_pattern_matches("beta", "a*"));
             assert!(!case_pattern_matches("a", "[!ab]"));
+
+            assert!(case_pattern_matches("a", "[[:alpha:]]"));
+            assert!(case_pattern_matches("Z", "[[:alpha:]]"));
+            assert!(!case_pattern_matches("5", "[[:alpha:]]"));
+            assert!(case_pattern_matches("3", "[[:alnum:]]"));
+            assert!(!case_pattern_matches("!", "[[:alnum:]]"));
+            assert!(case_pattern_matches(" ", "[[:blank:]]"));
+            assert!(case_pattern_matches("\t", "[[:blank:]]"));
+            assert!(!case_pattern_matches("a", "[[:blank:]]"));
+            assert!(case_pattern_matches("\x01", "[[:cntrl:]]"));
+            assert!(!case_pattern_matches("a", "[[:cntrl:]]"));
+            assert!(case_pattern_matches("9", "[[:digit:]]"));
+            assert!(!case_pattern_matches("a", "[[:digit:]]"));
+            assert!(case_pattern_matches("!", "[[:graph:]]"));
+            assert!(!case_pattern_matches(" ", "[[:graph:]]"));
+            assert!(case_pattern_matches("a", "[[:lower:]]"));
+            assert!(!case_pattern_matches("A", "[[:lower:]]"));
+            assert!(case_pattern_matches(" ", "[[:print:]]"));
+            assert!(case_pattern_matches("a", "[[:print:]]"));
+            assert!(!case_pattern_matches("\x01", "[[:print:]]"));
+            assert!(case_pattern_matches(".", "[[:punct:]]"));
+            assert!(!case_pattern_matches("a", "[[:punct:]]"));
+            assert!(case_pattern_matches("\n", "[[:space:]]"));
+            assert!(!case_pattern_matches("a", "[[:space:]]"));
+            assert!(case_pattern_matches("A", "[[:upper:]]"));
+            assert!(!case_pattern_matches("a", "[[:upper:]]"));
+            assert!(case_pattern_matches("f", "[[:xdigit:]]"));
+            assert!(!case_pattern_matches("g", "[[:xdigit:]]"));
+            assert!(!case_pattern_matches("a", "[[:bogus:]]"));
+            assert!(case_pattern_matches("x", "[[:x]"));
         });
     }
 
@@ -5014,6 +5044,101 @@ mod tests {
                 let status = execute_command(&mut shell, &Command::Subshell(program.clone()))
                     .expect("subshell");
                 assert_eq!(status, 0);
+            },
+        );
+    }
+
+    #[test]
+    fn has_command_substitution_detects_backtick_in_words() {
+        assert_no_syscalls(|| {
+            let cmd = SimpleCommand {
+                words: vec![Word {
+                    raw: "echo `date`".into(),
+                }],
+                ..SimpleCommand::default()
+            };
+            assert!(has_command_substitution(&cmd));
+
+            let cmd_no_sub = SimpleCommand {
+                words: vec![Word {
+                    raw: "plain".into(),
+                }],
+                ..SimpleCommand::default()
+            };
+            assert!(!has_command_substitution(&cmd_no_sub));
+        });
+    }
+
+    #[test]
+    fn subshell_wait_retries_on_none() {
+        let program = Program {
+            items: vec![ListItem {
+                and_or: AndOr {
+                    first: Pipeline {
+                        negated: false,
+                        commands: vec![Command::Simple(SimpleCommand {
+                            words: vec![Word { raw: "true".into() }],
+                            ..SimpleCommand::default()
+                        })],
+                    },
+                    rest: vec![],
+                },
+                asynchronous: false,
+            }],
+        };
+        run_trace(
+            vec![
+                t_fork(TraceResult::Pid(6000), vec![]),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(6000), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    TraceResult::Pid(0),
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(6000), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    TraceResult::Status(3),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let status = execute_command(&mut shell, &Command::Subshell(program.clone()))
+                    .expect("subshell");
+                assert_eq!(status, 3);
+            },
+        );
+    }
+
+    #[test]
+    fn subshell_wait_propagates_non_eintr_error() {
+        let program = Program {
+            items: vec![ListItem {
+                and_or: AndOr {
+                    first: Pipeline {
+                        negated: false,
+                        commands: vec![Command::Simple(SimpleCommand {
+                            words: vec![Word { raw: "true".into() }],
+                            ..SimpleCommand::default()
+                        })],
+                    },
+                    rest: vec![],
+                },
+                asynchronous: false,
+            }],
+        };
+        run_trace(
+            vec![
+                t_fork(TraceResult::Pid(7000), vec![]),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(7000), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    TraceResult::Err(libc::EPERM),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let result = execute_command(&mut shell, &Command::Subshell(program.clone()));
+                assert!(result.is_err());
             },
         );
     }

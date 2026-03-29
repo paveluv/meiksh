@@ -1967,3 +1967,134 @@ fn umask_accepts_symbolic_x_uppercase_perm() {
     assert!(output.status.success());
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
 }
+
+#[test]
+fn exec_with_redirection_only_applies_to_shell() {
+    let tmp = TempDir::new("exec-redir");
+    let outfile = tmp.join("out.txt");
+    let script = format!(
+        "exec > '{}'; echo redirected",
+        outfile.display()
+    );
+    let output = Command::new(meiksh())
+        .args(["-c", &script])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let contents = fs::read_to_string(&outfile).expect("read output file");
+    assert_eq!(contents.trim(), "redirected");
+}
+
+#[test]
+fn exec_with_double_dash_passes_arguments() {
+    let output = Command::new(meiksh())
+        .args(["-c", "exec -- /bin/echo hello"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "hello");
+}
+
+#[test]
+fn backslash_newline_continuation_in_tokenizer() {
+    let output = Command::new(meiksh())
+        .args(["-c", "echo hel\\\nlo"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "hello");
+}
+
+#[test]
+fn assignment_with_nested_parameter_expansion() {
+    let output = Command::new(meiksh())
+        .args(["-c", "y=${x:-hello}; echo $y"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "hello");
+}
+
+#[test]
+fn if_with_empty_condition_is_syntax_error() {
+    let output = Command::new(meiksh())
+        .args(["-c", "if then fi"])
+        .output()
+        .expect("run meiksh");
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn while_with_empty_condition_is_syntax_error() {
+    let output = Command::new(meiksh())
+        .args(["-c", "while do done"])
+        .output()
+        .expect("run meiksh");
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn until_with_empty_condition_is_syntax_error() {
+    let output = Command::new(meiksh())
+        .args(["-c", "until do done"])
+        .output()
+        .expect("run meiksh");
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn export_with_tilde_prefix_expansion() {
+    let output = Command::new(meiksh())
+        .args(["-c", "HOME=/fakehome; export V=~/bin; echo $V"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "/fakehome/bin"
+    );
+}
+
+#[test]
+fn export_with_known_tilde_user_expansion() {
+    let output = Command::new(meiksh())
+        .args(["-c", "export V=~root/bin; echo $V"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.trim().ends_with("/bin"), "expected ~root/bin to expand, got: {stdout}");
+    assert!(!stdout.contains('~'), "tilde should have been expanded");
+}
+
+#[test]
+fn export_with_unknown_tilde_user_preserved() {
+    let output = Command::new(meiksh())
+        .args([
+            "-c",
+            "export V=~no_such_user_xyzzy_999/bin; echo $V",
+        ])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "~no_such_user_xyzzy_999/bin"
+    );
+}
+
+#[test]
+fn kill_background_job_via_process_group() {
+    let output = Command::new(meiksh())
+        .args([
+            "-c",
+            "sleep 60 & pid=$!; kill $pid; wait $pid 2>/dev/null; echo done",
+        ])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "done");
+}

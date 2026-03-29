@@ -3216,6 +3216,39 @@ mod tests {
         assert!(pattern_matches("]", r"\]"));
         assert!(pattern_matches("b", "[a-c]"));
         assert!(pattern_matches("d", "[!a-c]"));
+
+        assert!(pattern_matches("a", "[[:alpha:]]"));
+        assert!(pattern_matches("Z", "[[:alpha:]]"));
+        assert!(!pattern_matches("5", "[[:alpha:]]"));
+        assert!(pattern_matches("3", "[[:alnum:]]"));
+        assert!(pattern_matches("z", "[[:alnum:]]"));
+        assert!(!pattern_matches("!", "[[:alnum:]]"));
+        assert!(pattern_matches(" ", "[[:blank:]]"));
+        assert!(pattern_matches("\t", "[[:blank:]]"));
+        assert!(!pattern_matches("a", "[[:blank:]]"));
+        assert!(pattern_matches("\x01", "[[:cntrl:]]"));
+        assert!(!pattern_matches("a", "[[:cntrl:]]"));
+        assert!(pattern_matches("9", "[[:digit:]]"));
+        assert!(!pattern_matches("a", "[[:digit:]]"));
+        assert!(pattern_matches("!", "[[:graph:]]"));
+        assert!(!pattern_matches(" ", "[[:graph:]]"));
+        assert!(pattern_matches("a", "[[:lower:]]"));
+        assert!(!pattern_matches("A", "[[:lower:]]"));
+        assert!(pattern_matches(" ", "[[:print:]]"));
+        assert!(pattern_matches("a", "[[:print:]]"));
+        assert!(!pattern_matches("\x01", "[[:print:]]"));
+        assert!(pattern_matches(".", "[[:punct:]]"));
+        assert!(!pattern_matches("a", "[[:punct:]]"));
+        assert!(pattern_matches("\n", "[[:space:]]"));
+        assert!(!pattern_matches("a", "[[:space:]]"));
+        assert!(pattern_matches("A", "[[:upper:]]"));
+        assert!(!pattern_matches("a", "[[:upper:]]"));
+        assert!(pattern_matches("f", "[[:xdigit:]]"));
+        assert!(pattern_matches("F", "[[:xdigit:]]"));
+        assert!(!pattern_matches("g", "[[:xdigit:]]"));
+        assert!(!pattern_matches("a", "[[:bogus:]]"));
+        assert!(pattern_matches("x", "[[:x]"));
+
         assert_eq!(match_bracket(None, &['[', 'a', ']'], 0), None);
         assert_eq!(match_bracket(Some('a'), &['['], 0), None);
         assert_eq!(
@@ -4739,6 +4772,15 @@ mod tests {
 
         let parts = split_on_unquoted_colons(r#""a\"b":c"#);
         assert_eq!(parts, vec![r#""a\"b""#, "c"]);
+
+        let parts = split_on_unquoted_colons("${x:-a:b}:c");
+        assert_eq!(parts, vec!["${x:-a:b}", "c"]);
+
+        let parts = split_on_unquoted_colons("$(echo a:b):c");
+        assert_eq!(parts, vec!["$(echo a:b)", "c"]);
+
+        let parts = split_on_unquoted_colons("${a:-${b:-x:y}}:z");
+        assert_eq!(parts, vec!["${a:-${b:-x:y}}", "z"]);
     }
 
     #[test]

@@ -6273,4 +6273,43 @@ mod tests {
             assert_eq!(sig, 0);
         });
     }
+
+    #[test]
+    fn kill_matches_job_by_last_pid() {
+        run_trace(
+            vec![t(
+                "kill",
+                vec![ArgMatcher::Int(-9999), ArgMatcher::Int(sys::SIGTERM as i64)],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                let mut job = make_job(1, 9999, "bg");
+                job.children.clear();
+                job.last_pid = Some(9999);
+                job.pgid = Some(9999);
+                shell.jobs.push(job);
+                let outcome =
+                    run(&mut shell, &["kill".into(), "9999".into()]).expect("kill last_pid");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn kill_negative_pid_sends_directly() {
+        run_trace(
+            vec![t(
+                "kill",
+                vec![ArgMatcher::Int(-1), ArgMatcher::Int(sys::SIGTERM as i64)],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome =
+                    run(&mut shell, &["kill".into(), "--".into(), "-1".into()]).expect("kill -1");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
 }

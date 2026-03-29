@@ -19,7 +19,7 @@ fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
                 JobState::Stopped(sig) => {
                     format!("[{id}] Stopped ({})\n", sys::signal_name(sig))
                 }
-                JobState::Running => continue,
+                JobState::Running => continue, // LCOV_EXCL_LINE: reap_jobs never returns Running
             };
             let _ = sys::write_all_fd(sys::STDERR_FILENO, msg.as_bytes());
         }
@@ -1088,6 +1088,25 @@ mod tests {
                 let mut shell = test_shell();
                 let status = run_loop(&mut shell).expect("prompt eintr retry");
                 assert_eq!(status, 0);
+            },
+        );
+    }
+
+    #[test]
+    fn run_loop_propagates_prompt_write_error() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(sys::STDOUT_FILENO),
+                    ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
+                ],
+                TraceResult::Err(sys::EIO),
+            )],
+            || {
+                let mut shell = test_shell();
+                let result = run_loop(&mut shell);
+                assert!(result.is_err());
             },
         );
     }

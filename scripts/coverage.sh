@@ -102,8 +102,17 @@ def inline_test_ranges(path: pathlib.Path) -> list[tuple[int, int]]:
     return ranges
 
 
+def excluded_lines(path: pathlib.Path) -> set[int]:
+    excl = set()
+    for i, line in enumerate(path.read_text().splitlines(), 1):
+        if "LCOV_EXCL_LINE" in line:
+            excl.add(i)
+    return excl
+
+
 current = None
 per_file = {}
+excl_cache: dict[pathlib.Path, set[int]] = {}
 line_counts: dict[tuple, int] = {}
 
 for raw_line in lcov_path.read_text().splitlines():
@@ -111,6 +120,7 @@ for raw_line in lcov_path.read_text().splitlines():
         current = pathlib.Path(raw_line[3:])
         if str(current).startswith(str(repo_root / "src")) and current.exists():
             per_file.setdefault(current, inline_test_ranges(current))
+            excl_cache.setdefault(current, excluded_lines(current))
         else:
             current = None
         continue
@@ -120,6 +130,8 @@ for raw_line in lcov_path.read_text().splitlines():
     line_no = int(line_no)
     count = int(count)
     if any(start <= line_no <= end for start, end in per_file[current]):
+        continue
+    if line_no in excl_cache.get(current, set()):
         continue
     key = (current, line_no)
     line_counts[key] = max(line_counts.get(key, 0), count)
