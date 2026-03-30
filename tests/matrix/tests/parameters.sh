@@ -281,31 +281,14 @@ assert_stdout "$PWD" \
 # character (that is, "!!" ) shall expand to a single <exclamation-mark>
 # character.
 
-interactive_script=$(cat << 'EOF'
-sleep 500ms
-echo 'PS1="cmd \! var \$(echo 1)> "'
-sleep 500ms
-echo 'echo interactive_test'
-sleep 500ms
-echo 'exit'
-EOF
-)
-
-cmd="( $interactive_script ) | run_pty $TARGET_SHELL -i"
-actual=$(eval "$cmd" 2>&1)
-
-# Testing that PS1 expansion expands command history number `!` and command
-# substitution `$(...)`.
-# The exact command number might vary, so we just check for `cmd ` and ` var
-# 1>`.
-case "$actual" in
-    *"cmd "*" var 1>"*)
-        pass
-        ;;
-    *)
-        fail "Expected PS1 expansion to process '!' and '\$(...)', got: $actual"
-        ;;
-esac
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "\\$ "
+send "PS1=\"cmd \\! var \\$(echo 1)> \""
+expect "cmd .* var 1>"
+send "echo interactive_test"
+expect "interactive_test"
+sendeof
+wait'
 
 # ==============================================================================
 # ENV Processing (interactive shell)

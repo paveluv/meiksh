@@ -20,9 +20,5 @@ path = "tests/spec/runner.rs"
 test = false
 
 [[bin]]
-name = "pty"
-path = "tests/pty.rs"
-
-[[bin]]
 name = "expect_pty"
 path = "tests/expect_pty.rs"

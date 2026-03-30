@@ -2,5 +2,4 @@
 .meiksh_history
 docs/posix/
 /*.profraw
-tests/matrix/pty
 tests/matrix/expect_pty

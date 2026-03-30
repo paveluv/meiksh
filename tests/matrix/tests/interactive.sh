@@ -1,13 +1,10 @@
 # Test: Interactive Features
 # Target: tests/matrix/tests/interactive.sh
 #
-# Welcome to the Terminal Simulation! This file spins up our custom Rust
-# Pseudo-TTY (`tests/pty.rs`) to deceive the target shell into thinking
-# it's talking to a real, live human user.
-#
-# Because POSIX demands specific behaviors from interactive shells—such as
-# dynamically evaluating prompt variables (`$PS1`)—we must orchestrate a
-# full terminal session to prove compliance.
+# Tests interactive shell features using expect_pty to drive a real PTY
+# session. POSIX demands specific behaviors from interactive shells—such
+# as dynamically evaluating prompt variables (`$PS1`)—so we orchestrate
+# full terminal sessions to prove compliance.
 
 . "$MATRIX_DIR/lib.sh"
 
@@ -26,38 +23,14 @@
 # ready to read a command, the value of this variable shall be subjected to
 # parameter expansion...
 
-# We'll construct a sequence of commands to pipe into our PTY. We set `PS1`
-# to a known string, then echo a unique phrase, and finally exit.
-# We sleep between strokes to simulate human typing and give the shell
-# time to evaluate the new environment.
-interactive_script=$(cat << 'EOF'
-sleep 500ms
-echo 'PS1="prompt> "'
-sleep 500ms
-echo 'echo interactive-test'
-sleep 500ms
-echo 'exit'
-EOF
-)
-
-# We invoke the target shell strictly in interactive mode (`-i`) and pass
-# it our simulated keystrokes.
-cmd="( $interactive_script ) | run_pty $TARGET_SHELL -i"
-
-# We run the command and capture raw output from the PTY session.
-actual=$(eval "$cmd" 2>&1)
-
-# Did the shell dynamically update its prompt? We search the raw output
-# block for our custom prompt and our echoed test phrase.
-case "$actual" in
-    *"prompt> interactive-test"*)
-        pass
-        ;;
-    *)
-        fail "Expected PS1 prompt change and 'interactive-test' output, got:" \
-             "$actual"
-        ;;
-esac
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "\\$ "
+send "PS1=\"prompt> \""
+expect "prompt> "
+send "echo interactive-test"
+expect "interactive-test"
+sendeof
+wait'
 
 
 # ==============================================================================
