@@ -24,7 +24,7 @@
 # parameter expansion...
 
 assert_pty_script 'spawn $TARGET_SHELL -i
-expect "\\$ "
+expect "$ "
 send "PS1=\"prompt> \""
 expect "prompt> "
 send "echo interactive-test"

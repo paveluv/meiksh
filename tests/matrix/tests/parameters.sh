@@ -282,8 +282,8 @@ assert_stdout "$PWD" \
 # character.
 
 assert_pty_script 'spawn $TARGET_SHELL -i
-expect "\\$ "
-send "PS1=\"cmd \\! var \\$(echo 1)> \""
+expect "$ "
+send "PS1='"'"'cmd \! var $(echo 1)> '"'"'"
 expect "cmd .* var 1>"
 send "echo interactive_test"
 expect "interactive_test"
