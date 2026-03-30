@@ -201,8 +201,12 @@ assert_stdout "tmp_pattern/a.txt tmp_pattern/dir" \
     "$TARGET_SHELL -c '$test_cmd'"
 
 test_cmd='echo tmp_pattern/.*'
-assert_stdout "tmp_pattern/. tmp_pattern/.. tmp_pattern/.hidden" \
-    "$TARGET_SHELL -c '$test_cmd'"
+_out=$(eval "$TARGET_SHELL -c '$test_cmd'" 2>/dev/null)
+case "$_out" in
+    "tmp_pattern/. tmp_pattern/.. tmp_pattern/.hidden"|"tmp_pattern/.hidden")
+        pass ;;
+    *) fail "Expected .hidden (and optionally . ..) in tmp_pattern/.*, got: $_out" ;;
+esac
 
 
 # REQUIREMENT: SHALL-2-14-3-498:

@@ -6,6 +6,15 @@
 
 . "$MATRIX_DIR/lib.sh"
 
+# Use filenames that don't contain "mail" so notification-matching regexes
+# won't false-positive on the command echo.
+_mbox1="$TEST_TMP/mbox1_$$"
+_mbox2="$TEST_TMP/mbox2_$$"
+_mbox3="$TEST_TMP/mbox3_$$"
+_mp1="$TEST_TMP/mp1_$$"
+_mp2="$TEST_TMP/mp2_$$"
+rm -f "$_mbox1" "$_mbox2" "$_mbox3" "$_mp1" "$_mp2"
+
 # ==============================================================================
 # MAIL notification on file creation
 # ==============================================================================
@@ -20,23 +29,15 @@
 # Such check shall be performed only after the completion of the interval
 # defined by the MAILCHECK variable after the last such check.
 
-_mailfile="$TEST_TMP/testmail_$$"
-rm -f "$_mailfile"
-
 assert_pty_script "spawn \$TARGET_SHELL -i
 expect \"$ \"
-send \"MAIL=$_mailfile\"
+send \"MAIL=$_mbox1\"
 expect \"$ \"
 send \"MAILCHECK=1\"
 expect \"$ \"
-send \"echo trigger1\"
-expect \"trigger1\"
-expect \"$ \"
-send \"echo created > $_mailfile\"
-expect \"$ \"
-sleep 2000
-send \"echo trigger2\"
-expect \"trigger2\"
+sleep 1500
+send \"echo created > $_mbox1\"
+expect timeout=5s \"(mail|Mail|MAIL|you have)\"
 expect \"$ \"
 sendeof
 wait"
@@ -47,48 +48,39 @@ wait"
 # REQUIREMENT: SHALL-SH-1028:
 # The user shall be informed only if MAIL is set and MAILPATH is not set.
 
-# Setting MAILPATH should suppress MAIL-based checking
-_mailfile2="$TEST_TMP/testmail2_$$"
-rm -f "$_mailfile2"
-echo "initial" > "$_mailfile2"
-
 assert_pty_script "spawn \$TARGET_SHELL -i
 expect \"$ \"
-send \"MAIL=$_mailfile2\"
+send \"MAILPATH=/tmp/nonexistent_$$\"
 expect \"$ \"
-send \"MAILPATH=$_mailfile2\"
+send \"MAIL=$_mbox2\"
 expect \"$ \"
 send \"MAILCHECK=1\"
 expect \"$ \"
-send \"echo ok\"
-expect \"ok\"
+sleep 1500
+send \"echo data > $_mbox2\"
+not_expect timeout=3s \"(mail|Mail|MAIL|you have)\"
 expect \"$ \"
 sendeof
 wait"
 
 # ==============================================================================
-# MAILCHECK default and zero value
+# MAILCHECK=0 checks at every prompt
 # ==============================================================================
 # REQUIREMENT: SHALL-SH-1029:
 # MAILCHECK specifies how often (in seconds) the shell shall check for
 # the arrival of mail.
-# REQUIREMENT: SHALL-SH-1030:
-# The default value shall be 600 seconds.
 # REQUIREMENT: SHALL-SH-1031:
 # If set to zero, the shell shall check before issuing each primary prompt.
 
-# Verify MAILCHECK=0 causes check at every prompt
-_mailfile3="$TEST_TMP/testmail3_$$"
-rm -f "$_mailfile3"
-
 assert_pty_script "spawn \$TARGET_SHELL -i
 expect \"$ \"
-send \"MAIL=$_mailfile3\"
+send \"MAIL=$_mbox3\"
 expect \"$ \"
 send \"MAILCHECK=0\"
 expect \"$ \"
-send \"echo before\"
-expect \"before\"
+sleep 1500
+send \"echo data > $_mbox3\"
+expect timeout=5s \"(mail|Mail|MAIL|you have)\"
 expect \"$ \"
 sendeof
 wait"
@@ -104,18 +96,15 @@ wait"
 # Each pathname can be followed by '%' and a string that shall be subjected
 # to parameter expansion and written to standard error.
 
-_mp1="$TEST_TMP/mp1_$$"
-_mp2="$TEST_TMP/mp2_$$"
-rm -f "$_mp1" "$_mp2"
-
 assert_pty_script "spawn \$TARGET_SHELL -i
 expect \"$ \"
-send \"MAILPATH='$_mp1%new mail in mp1:$_mp2'\"
+send \"MAILPATH='$_mp1%custom msg here:$_mp2'\"
 expect \"$ \"
 send \"MAILCHECK=1\"
 expect \"$ \"
-send \"echo setup_done\"
-expect \"setup_done\"
+sleep 1500
+send \"echo data > $_mp1\"
+expect timeout=5s \"custom msg here\"
 expect \"$ \"
 sendeof
 wait"
@@ -127,7 +116,7 @@ wait"
 # If a '%' character in the pathname is preceded by a backslash, it shall
 # be treated as a literal '%' in the pathname.
 
-# This is a parsing requirement — verify the shell doesn't crash
+# Parsing requirement — verify the shell accepts the syntax without error
 assert_pty_script "spawn \$TARGET_SHELL -i
 expect \"$ \"
 send \"MAILPATH='/tmp/file\\%name'\"

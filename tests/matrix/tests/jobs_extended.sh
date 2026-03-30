@@ -24,7 +24,7 @@ expect "$ "
 send "sleep 60 &"
 expect "$ "
 send "jobs -l"
-expect_glob "[[]1]*sleep 60*"
+expect "\[[[:digit:]]+\].*sleep 60"
 send "kill %1; wait 2>/dev/null"
 expect "$ "
 sendeof
@@ -92,7 +92,7 @@ expect "$ "
 send "sleep 60 &"
 expect "$ "
 send "jobs"
-expect_glob "[[]?]*Running*sleep 60*"
+expect "\[[[:digit:]]+\].*Running.*sleep 60"
 send "kill %1; wait 2>/dev/null"
 expect "$ "
 sendeof
@@ -113,7 +113,7 @@ expect "$ "
 send "sleep 0.1 &"
 sleep 500
 send "jobs"
-expect_glob "[[]?]*Done*sleep*"
+expect "\[[[:digit:]]+\].*Done.*sleep"
 expect "$ "
 sendeof
 wait'
@@ -133,9 +133,9 @@ expect "$ "
 send "sleep 60"
 sleep 500
 sendraw 1a
-expect_glob "{Stopped,Suspended}*sleep 60"
+expect "(Stopped|Suspended).*sleep 60"
 send "jobs"
-expect_glob "[[]?]*{Stopped,Suspended}*sleep 60*"
+expect "\[[[:digit:]]+\].*(Stopped|Suspended).*sleep 60"
 send "kill %1; wait 2>/dev/null"
 expect "$ "
 sendeof
@@ -154,7 +154,7 @@ expect "$ "
 send "sleep 60 &"
 expect "$ "
 send "jobs"
-expect_glob "[[]1]*Running*sleep 60*"
+expect "\[1\].*Running.*sleep 60"
 send "kill %1; wait 2>/dev/null"
 expect "$ "
 sendeof
@@ -222,9 +222,9 @@ expect "$ "
 send "sleep 60"
 sleep 500
 sendraw 1a
-expect_glob "{Stopped,Suspended}*sleep 60"
+expect "(Stopped|Suspended).*sleep 60"
 send "jobs -l"
-expect_glob "[[]?]*{Stopped,Suspended}*sleep 60*"
+expect "\[[[:digit:]]+\].*(Stopped|Suspended).*sleep 60"
 send "kill %1; wait 2>/dev/null"
 expect "$ "
 sendeof
@@ -246,7 +246,7 @@ expect "$ "
 send "sleep 61 &"
 expect "$ "
 send "jobs"
-expect_glob "[[]?]+*sleep*"
+expect "\[[[:digit:]]+\]\+.*sleep"
 send "kill %1 %2; wait 2>/dev/null"
 expect "$ "
 sendeof
@@ -267,7 +267,7 @@ expect "$ "
 send "sleep 61 &"
 expect "$ "
 send "jobs"
-expect_glob "[[]?]-*sleep*"
+expect "\[[[:digit:]]+\]-.*sleep"
 send "kill %1 %2; wait 2>/dev/null"
 expect "$ "
 sendeof
@@ -285,6 +285,72 @@ send "jobs; echo end_of_jobs"
 expect "end_of_jobs"
 not_expect "Running"
 not_expect "Stopped"
+sendeof
+wait'
+
+# ==============================================================================
+# Signal-terminated job state
+# ==============================================================================
+# REQUIREMENT: SHALL-JOBS-1039:
+# When a job is killed by a signal, the shell shall report a signal-related
+# status (e.g. "Killed", "Terminated", or a signal description). The job must
+# no longer appear as "Running" after being killed.
+
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -m"
+expect "$ "
+send "sleep 60 &"
+expect "$ "
+send "kill -KILL %1"
+sleep 500
+send "jobs"
+not_expect "Running"
+send "wait 2>/dev/null"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# Done(N) for non-zero exit
+# ==============================================================================
+# REQUIREMENT: SHALL-JOBS-1222:
+# When a background command exits with non-zero status, the shell shall include
+# the exit code in the completion notification using the format Done(N).
+
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -m"
+expect "$ "
+send "(exit 2) &"
+sleep 500
+send ""
+expect "Done\([[:digit:]]+\)"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# jobs -p with multiple jobs
+# ==============================================================================
+# REQUIREMENT: SHALL-JOBS-1060:
+# REQUIREMENT: SHALL-JOBS-1221:
+# The -p option shall display the process group leader PIDs, one per line.
+# With multiple background jobs, jobs -p shall list one PID per job.
+
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -m"
+expect "$ "
+send "sleep 60 &"
+expect "$ "
+send "sleep 61 &"
+expect "$ "
+send "jobs -p"
+expect "[[:digit:]]+"
+expect "[[:digit:]]+"
+send "kill %1 %2; wait 2>/dev/null"
+expect "$ "
 sendeof
 wait'
 

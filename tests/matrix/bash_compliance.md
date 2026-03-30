@@ -3,264 +3,240 @@
 **Shell tested:** GNU bash 3.2.57(1)-release (arm64-apple-darwin24) — macOS `/bin/sh`  
 **Also tested:** GNU bash 5.3.9(1)-release — `/opt/homebrew/bin/bash`  
 **Standard:** POSIX.1-2024 (Issue 8)  
-**Test suite:** `tests/matrix` (64 test files)  
+**Test suite:** `tests/matrix` (65 test files)  
 **Date:** 2026-03-24
 
 | Shell | Passed | Failed |
 |-------|--------|--------|
-| bash 3.2.57 (`/bin/sh`) | 58 | 6 |
-| bash 5.3.9 | 46 | 18 |
+| bash 3.2.57 (`/bin/sh`) | 59 | 6 |
+| bash 5.3.9 | 57 | 8 |
 
-Bash 5.3 fixes all four non-vi items listed below (1–4) but introduces new
-failures in other areas (alias expansion in non-interactive mode, `export -p`
-/ `readonly -p` output format, `echo` escape sequences, and others). Those
-additional bash 5.3 regressions are not covered in this report.
-
-This report documents every case where bash (as shipped with macOS) fails to
-conform to the POSIX.1-2024 Shell & Utilities specification. Each item
-includes the normative text from the standard, a standalone reproduction
-command, and the expected vs actual behavior.
+Bash 5.3 fixes items 1–4 below but introduces new failures (items 7–12).
+Items 5–6 (vi editing) persist in both versions.
 
 ---
 
 ## 1. `cd ""` does not produce an error
 
 **Severity:** Low  
-**POSIX reference:** `cd` utility, OPERANDS section
-
-### Standard says
+**POSIX reference:** `cd` utility, OPERANDS section  
+**Bash 3.2:** Broken — **Bash 5.3:** Fixed
 
 > If *directory* is an empty string, `cd` **shall** write a diagnostic
 > message to standard error and exit with non-zero status.
-
-This requirement was added by Austin Group Defect 1047.
-
-### Reproduction
 
 ```sh
 /bin/sh -c 'cd ""; echo "exit=$?"'
 ```
 
 **Expected:** diagnostic on stderr, non-zero exit  
-**Actual:** `exit=0` (silently succeeds, cd to `$HOME` or no-op depending on context)
-
-**Bash 5.3:** Fixed. Returns `exit=1` with diagnostic `/opt/homebrew/bin/bash: line 1: cd: null directory`.
+**Actual (3.2):** `exit=0` (silently succeeds)
 
 ---
 
 ## 2. `command` not treated as declaration utility for tilde expansion
 
 **Severity:** Medium  
-**POSIX reference:** `command` utility, DESCRIPTION section (Issue 8)
-
-### Standard says
+**POSIX reference:** `command` utility, DESCRIPTION section (Issue 8)  
+**Bash 3.2:** Broken — **Bash 5.3:** Fixed
 
 > The `command` utility **shall** be treated as a declaration utility if the
-> first argument passed to the utility is recognized as a declaration
-> utility. In this case, subsequent words of the form *name*=*word* **shall**
-> be expanded in an assignment context.
-
-This requirement was added by Austin Group Defects 351 and 1393. It means
-that `command export VAR=~` must perform tilde expansion just like bare
-`export VAR=~` does.
-
-Note: bare `export HOMEDIR=~` works correctly in bash 3.2 — the tilde is
-expanded. The failure is specifically when `command` wraps `export`.
-
-### Reproduction
+> first argument passed to the utility is recognized as a declaration utility.
 
 ```sh
 /bin/sh -c 'command export HOMEDIR=~; echo "$HOMEDIR"'
 ```
 
-**Expected:** `/Users/<username>` (the value of `$HOME`)  
-**Actual:** `~` (literal tilde, unexpanded)
-
-Both dash and ksh handle this correctly. Bash 3.2 does not recognize
-`command export` as a declaration context.
-
-**Bash 5.3:** Fixed. `command export HOMEDIR=~` correctly expands tilde.
+**Expected:** `/Users/<username>` (HOME expanded)  
+**Actual (3.2):** `~` (literal tilde)
 
 ---
 
 ## 3. Case statement `;&` fallthrough not supported
 
 **Severity:** Medium  
-**POSIX reference:** Shell Command Language §2.9.4.3 *Case Conditional Construct*
+**POSIX reference:** Shell Command Language §2.9.4.3  
+**Bash 3.2:** Broken — **Bash 5.3:** Fixed (since 4.0)
 
-### Standard says
-
-> Each case statement clause, with the possible exception of the last,
-> **shall** be terminated with either `";;"` or `";&"`.
->
 > If the case statement clause is terminated by `";&"`, then the
-> compound-list (if any) of each subsequent clause **shall** be executed,
-> in order, until either a clause terminated by `";;"` is reached and its
-> compound-list (if any) executed or there are no further clauses in the
-> case statement.
-
-The `;&` terminator was added in POSIX Issue 8 (2024).
-
-### Reproduction
+> compound-list of each subsequent clause **shall** be executed.
 
 ```sh
-/bin/sh -c '
-x=a
-case "$x" in
-    a) echo one ;&
-    b) echo two ;&
-    c) echo three ;;
-esac
-'
+/bin/sh -c 'x=a; case "$x" in a) echo one ;& b) echo two ;; esac'
 ```
 
-**Expected output:**
-```
-one
-two
-three
-```
-
-**Actual:** Syntax error — bash 3.2 does not recognize `;&` as a valid case
-terminator.
-
-**Bash 5.3:** Fixed. `;&` fallthrough works correctly (supported since bash 4.0).
+**Expected:** `one` then `two`  
+**Actual (3.2):** Syntax error
 
 ---
 
 ## 4. `read` into a readonly variable returns exit status 0
 
 **Severity:** Medium  
-**POSIX reference:** `read` utility, DESCRIPTION section
-
-### Standard says
+**POSIX reference:** `read` utility, DESCRIPTION section  
+**Bash 3.2:** Broken — **Bash 5.3:** Fixed
 
 > An error in setting any variable (such as if a *var* has previously been
-> marked *readonly*) **shall** be considered an error of `read` processing,
-> and **shall** result in a return value greater than one. Variables named
-> before the one generating the error shall be set as described above; it is
-> unspecified whether variables named later shall be set as above, or `read`
-> simply ceases processing when the error occurs, leaving later named
-> variables unaltered.
-
-### Reproduction
+> marked *readonly*) **shall** result in a return value greater than one.
 
 ```sh
 echo 'val' | /bin/sh -c 'readonly x=locked; read x; echo "exit=$?"'
 ```
 
-**Expected:** diagnostic on stderr, `exit=2` (or any value > 1)  
-**Actual:** `/bin/sh: x: readonly variable` on stderr, but `exit=0`
-
-Bash writes the diagnostic but returns 0 instead of > 1.
-
-A second form with partial assignment:
-
-```sh
-echo 'a b' | /bin/sh -c 'readonly second=locked; read first second; echo "exit=$?"'
-```
-
 **Expected:** non-zero exit  
-**Actual:** `exit=0`
-
-**Bash 5.3:** Fixed. Both forms return `exit=1`.
+**Actual (3.2):** `exit=0`
 
 ---
 
 ## 5. Vi editing mode: `t`/`T` (find character) broken
 
-**Severity:** Low — affects interactive editing only  
-**POSIX reference:** `sh` utility, Vi Line Editing section
+**Severity:** Low  
+**POSIX reference:** `sh` utility, Vi Line Editing section  
+**Bash 3.2:** Broken — **Bash 5.3:** Broken
 
-### Standard says
+`tc` should move to the character *before* the first occurrence of `c`
+after the cursor. `Tc` should move to the character *after* the first
+occurrence of `c` before the cursor.
 
-> `[count]tc`
->
-> Move to the character before the first occurrence of the character 'c'
-> that occurs after the current cursor position.
->
-> `[count]Tc`
->
-> Move to the character after the first occurrence of the character 'c'
-> that occurs before the current cursor position.
-
-### Reproduction
-
-For `tc`:
-
-```sh
-/bin/sh -i
-# Type: set -o vi<Enter>
-# Type: echo abc
-# Press: Escape
-# Type: 0 (go to start of line)
-# Type: tc (move to character before 'c')
-# Type: rZ (replace with Z)
-# Press: Enter
-```
-
-**Expected output:** `echo aZc` (Z replaces 'b', the character before 'c')  
-**Actual:** `Zcho abc` — the cursor lands at position 0 instead of before
-'c', so the replacement hits the wrong character.
-
-For `Ta`:
-
-```sh
-/bin/sh -i
-# Type: set -o vi<Enter>
-# Type: echo abc
-# Press: Escape (cursor on 'c')
-# Type: Ta (move to character after 'a')
-# Type: rZ (replace with Z)
-# Press: Enter
-```
-
-**Expected output:** `echo aZc` (Z replaces 'b', the character after 'a')  
-**Actual:** `echo abcZc` — bash appends rather than replacing in place,
-indicating `T` does not position the cursor correctly.
-
-**Bash 5.3:** Still broken. Same failures for both `t` and `T`.
+Both commands position the cursor incorrectly in bash, causing
+replacements (`rZ`) to land on the wrong character.
 
 ---
 
-## 6. Vi editing mode: `[count]~` (tilde case toggle with count) broken
+## 6. Vi editing mode: `[count]~` (tilde case toggle) ignores count
 
-**Severity:** Low — affects interactive editing only  
-**POSIX reference:** `sh` utility, Vi Line Editing section
+**Severity:** Low  
+**POSIX reference:** `sh` utility, Vi Line Editing section  
+**Bash 3.2:** Broken — **Bash 5.3:** Broken
 
-### Standard says
+`9~` on "aB" should toggle both characters to produce "Ab". Bash only
+toggles the first character, producing "AB".
 
-> `[count]~`
->
-> Convert, if the current character is a lowercase letter, to the equivalent
-> uppercase letter and vice versa [...] The current cursor position then
-> **shall** be advanced by one character.
->
-> If the count is larger than the number of characters after the cursor,
-> this **shall not** be considered an error; the cursor shall advance to the
-> last character on the line.
+---
 
-Note: the basic `~` command (without a count prefix) works correctly.
-The failure is specifically when a numeric count is provided.
+## 7. `trap` with unsigned decimal integer does not reset to default
 
-### Reproduction
+**Severity:** Medium  
+**POSIX reference:** `trap` utility, DESCRIPTION (SHALL-DESCRIPTION-629)  
+**Bash 3.2:** Fixed — **Bash 5.3:** Broken
+
+> If the `-p` option is not specified and the first operand is an unsigned
+> decimal integer, the shell shall treat all operands as conditions and
+> reset each condition to the default value.
 
 ```sh
-/bin/sh -i
-# Type: set -o vi<Enter>
-# Type: echo aB
-# Press: Escape
-# Type: 0w (move to start of 'aB')
-# Type: 9~ (toggle case of up to 9 characters — only 2 remain)
-# Press: Enter
+bash --posix -c 'trap "echo trapped" INT; trap 2; trap -p INT'
 ```
 
-**Expected output:** `Ab` (both characters toggled: `a`→`A`, `B`→`b`)  
-**Actual:** `AB` — only the first character (`a`→`A`) is toggled. The
-count is not applied; `~` processes a single character and stops. The
-final character `B` remains uppercase instead of being toggled to `b`.
+**Expected:** empty output (`INT` was reset to default)  
+**Actual (5.3):** `trap -- - INT` — bash treats `2` as an action string
+rather than triggering the numeric-reset code path.
 
-**Bash 5.3:** Still broken. Same behavior — `9~` toggles only one character.
+---
+
+## 8. Subshell traps not reset to default
+
+**Severity:** Medium  
+**POSIX reference:** `trap` DESCRIPTION (SHALL-DESCRIPTION-640), §2.13 (SHALL-2-13-471)  
+**Bash 3.2:** Fixed — **Bash 5.3:** Broken
+
+> When a subshell is entered, traps that are not being ignored shall be
+> set to the default actions.
+
+```sh
+bash --posix -c 'trap "echo parent" USR1; (trap -p USR1)'
+```
+
+**Expected:** empty output (trap was reset in subshell)  
+**Actual (5.3):** `trap -- 'echo parent' USR1` — bash exposes the
+parent shell's trap inside the subshell via `trap -p`.
+
+The same root cause makes `(trap)` (no operands) in a subshell list
+parent traps, which also violates SHALL-2-13-471.
+
+---
+
+## 9. `echo` does not process XSI escape sequences
+
+**Severity:** Medium  
+**POSIX reference:** `echo` utility, OPERANDS (SHALL-OPERANDS-5003/5004)  
+**Bash 3.2:** Fixed — **Bash 5.3:** Broken
+
+> The following character sequences shall be recognized within any of
+> the arguments: `\a`, `\b`, `\c`, `\f`, `\n`, `\r`, `\t`, `\v`, `\\`, `\0num`
+
+```sh
+bash --posix -c 'echo "\a"' | od -An -tx1
+```
+
+**Expected:** `07 0a` (BEL + newline)  
+**Actual (5.3):** `5c 61 0a` (literal `\a` + newline)
+
+Bash requires `-e` or `shopt -s xpg_echo` to enable escape processing.
+Even `--posix` mode does not activate XSI `echo` behavior.
+
+---
+
+## 10. Variable assignment before function call is temporary
+
+**Severity:** Medium  
+**POSIX reference:** §2.9.1 Simple Commands (SHALL-2-9-1-2-280)  
+**Bash 3.2:** Fixed — **Bash 5.3:** Broken
+
+> If the command name is a function that is not a standard utility
+> implemented as a function, variable assignments shall affect the
+> current execution environment.
+
+```sh
+bash --posix -c '
+f() { echo "func"; }
+x="old"
+x="new" f >/dev/null
+echo "$x"
+'
+```
+
+**Expected:** `new` (assignment persists after function returns)  
+**Actual (5.3):** `old` — bash scopes prefix assignments to the
+function call as temporary, reverting on return.
+
+---
+
+## 11. Tilde expansion result not protected from field splitting/globbing
+
+**Severity:** Low  
+**POSIX reference:** §2.6.1 Tilde Expansion (SHALL-2-6-1-117)  
+**Bash 3.2:** Fixed — **Bash 5.3:** Broken
+
+> The pathname that replaces the tilde-prefix shall be treated as if
+> quoted to prevent it being altered by field splitting and pathname
+> expansion.
+
+```sh
+bash --posix -c 'HOME="home with * spaces"; printf "%s\n" ~'
+```
+
+**Expected:** single line `home with * spaces`  
+**Actual (5.3):** multiple lines — `~` expansion is subject to field
+splitting, breaking the value on spaces and potentially expanding `*`.
+
+---
+
+## 12. Tilde expansion does not reflect mid-script HOME reassignment
+
+**Severity:** Low  
+**POSIX reference:** §2.6.1 Tilde Expansion, XBD §8 (SHALL-XBD-8-3010)  
+**Bash 3.2:** Fixed — **Bash 5.3:** Broken
+
+```sh
+bash --posix -c 'HOME=/tmp/newdir; echo ~'
+```
+
+**Expected:** `/tmp/newdir`  
+**Actual (5.3):** original HOME value — bash performs tilde expansion at
+parse time rather than during word expansion at execution time, so a
+subsequent `HOME=...` assignment does not affect `~` that was already
+parsed.
 
 ---
 
@@ -274,13 +250,20 @@ final character `B` remains uppercase instead of being toggled to `b`.
 | 4 | `read` readonly exit status | `read` DESCRIPTION | Medium | Broken | Fixed |
 | 5 | Vi editing: `t`/`T` | `sh` Vi Editing | Low | Broken | Broken |
 | 6 | Vi editing: `[count]~` | `sh` Vi Editing | Low | Broken | Broken |
+| 7 | `trap <number>` reset | `trap` DESCRIPTION | Medium | Fixed | Broken |
+| 8 | Subshell trap reset | `trap` / §2.13 | Medium | Fixed | Broken |
+| 9 | `echo` XSI escapes | `echo` OPERANDS | Medium | Fixed | Broken |
+| 10 | Function prefix assignment | §2.9.1 | Medium | Fixed | Broken |
+| 11 | Tilde field splitting | §2.6.1 | Low | Fixed | Broken |
+| 12 | Tilde parse-time expansion | §2.6.1 / XBD §8 | Low | Fixed | Broken |
 
-Items 1–4 are semantic non-compliances in the shell language or built-in
-utilities. All four are fixed in bash 5.3. Items 5–6 are vi line editing
-deficiencies that persist through bash 5.3 and do not affect script
-execution.
+Items 1–4 are fixed in bash 5.3. Items 5–6 persist across both versions.
+Items 7–12 are regressions or new non-compliances in bash 5.3.
 
-Item 3 (`;&`) was added in POSIX Issue 8 (2024) and was not part of earlier
-POSIX versions. Bash 4.0+ supports `;&` (added in 2009). All other items
+The `interactive.sh` test also fails on bash 5.3 because bracketed paste
+mode (`\e[?2004h`/`\e[?2004l`) pollutes PTY output. This is not a POSIX
+non-compliance — it is a bash feature that interferes with the test harness.
+
+Item 3 (`;&`) was added in POSIX Issue 8 (2024). All other items
 represent deviations from requirements that existed in earlier POSIX
-versions as well.
+versions.

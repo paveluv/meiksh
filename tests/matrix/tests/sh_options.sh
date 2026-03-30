@@ -80,7 +80,7 @@ assert_stdout "got: input_for_read" \
 # its parent (for example, argv [0] for a C program), which is normally a
 # pathname used to execute the sh utility.
 
-assert_stdout "$TARGET_SHELL" \
+assert_stdout "${TARGET_SHELL%% *}" \
     "echo 'echo \$0' | $TARGET_SHELL"
 
 # ==============================================================================

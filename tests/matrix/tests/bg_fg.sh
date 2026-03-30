@@ -28,7 +28,7 @@ expect "$ "
 send "sleep 60"
 sleep 500
 sendraw 1a
-expect_glob "{Stopped,Suspended}"
+expect "(Stopped|Suspended)"
 send "bg"
 expect "sleep 60"
 expect "$ "
@@ -70,7 +70,7 @@ expect "$ "
 send "sleep 60"
 sleep 500
 sendraw 1a
-expect_glob "{Stopped,Suspended}"
+expect "(Stopped|Suspended)"
 send "bg %1"
 expect "sleep 60"
 expect "$ "
@@ -165,7 +165,7 @@ expect "$ "
 send "sleep 60"
 sleep 500
 sendraw 1a
-expect_glob "{Stopped,Suspended}"
+expect "(Stopped|Suspended)"
 send "bg"
 expect "sleep 60"
 expect "$ "
@@ -188,5 +188,90 @@ wait'
 # Run in non-interactive mode where job control is off by default
 assert_exit_code_non_zero "$TARGET_SHELL -c 'bg 2>/dev/null'"
 assert_exit_code_non_zero "$TARGET_SHELL -c 'fg 2>/dev/null'"
+
+# ==============================================================================
+# Multiple suspended jobs — +/- marking
+# ==============================================================================
+# REQUIREMENT: SHALL-JOBS-1237:
+# The implementation may substitute the string Suspended in place of Stopped.
+# REQUIREMENT: SHALL-JOBS-1234:
+# The jobs utility shall display the status of jobs that were started in the
+# current shell environment.
+
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -m"
+expect "$ "
+send "sleep 60"
+sleep 500
+sendraw 1a
+expect "(Stopped|Suspended)"
+send "sleep 61"
+sleep 500
+sendraw 1a
+expect "(Stopped|Suspended)"
+send "jobs"
+expect_line "\[[[:digit:]]+\]-.*(Stopped|Suspended)"
+expect_line "\[[[:digit:]]+\]\+.*(Stopped|Suspended)"
+send "kill %1 %2; wait 2>/dev/null"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# bg: Output format — POSIX "[%d] %s\n"
+# ==============================================================================
+# REQUIREMENT: SHALL-BG-1031:
+# The output of bg shall consist of a line in the format:
+# "[%d] %s\n", <job-number>, <command>
+
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -m"
+expect "$ "
+send "sleep 60"
+sleep 500
+sendraw 1a
+expect "(Stopped|Suspended)"
+send "bg"
+expect "\[[[:digit:]]+\] .*sleep 60"
+expect "$ "
+send "kill %1 2>/dev/null; wait; true"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# bg/fg: Explicit %N job IDs with multiple jobs
+# ==============================================================================
+# REQUIREMENT: SHALL-BG-1029:
+# The following operand shall be supported: job_id
+# REQUIREMENT: SHALL-FG-1047:
+# The following operand shall be supported: job_id
+
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -m"
+expect "$ "
+send "sleep 60"
+sleep 500
+sendraw 1a
+expect "(Stopped|Suspended)"
+send "sleep 61"
+sleep 500
+sendraw 1a
+expect "(Stopped|Suspended)"
+send "bg %1"
+expect "sleep 60"
+expect "$ "
+send "fg %2"
+expect "sleep 61"
+sleep 200
+sendraw 03
+expect "$ "
+send "kill %1 2>/dev/null; wait; true"
+expect "$ "
+sendeof
+wait'
 
 report
