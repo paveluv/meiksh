@@ -324,8 +324,16 @@ pub(crate) fn set_errno(errno: c_int) {
 
     #[cfg(not(test))]
     unsafe {
-        *libc::__error() = errno;
+        *errno_ptr() = errno;
     }
+}
+
+#[cfg(not(test))]
+unsafe fn errno_ptr() -> *mut c_int {
+    #[cfg(target_os = "macos")]
+    { unsafe { libc::__error() } }
+    #[cfg(target_os = "linux")]
+    { unsafe { libc::__errno_location() } }
 }
 
 fn last_error() -> SysError {
@@ -335,7 +343,7 @@ fn last_error() -> SysError {
     }
 
     #[cfg(not(test))]
-    SysError::Errno(unsafe { *libc::__error() })
+    SysError::Errno(unsafe { *errno_ptr() })
 }
 
 #[cfg(test)]

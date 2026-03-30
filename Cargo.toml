@@ -19,11 +19,9 @@ name = "spec_compliance"
 path = "tests/spec/runner.rs"
 test = false
 
-[[test]]
+[[bin]]
 name = "pty"
 path = "tests/pty.rs"
-harness = false
-test = false
 
 [[bin]]
 name = "expect_pty"

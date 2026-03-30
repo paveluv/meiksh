@@ -202,7 +202,7 @@ EOF
 )
 
 # We spin up the PTY tool and run the target shell in interactive mode.
-cmd="( $interactive_script ) | \"$MATRIX_DIR/pty\" $TARGET_SHELL -i"
+cmd="( $interactive_script ) | \"$PTY_BIN\" $TARGET_SHELL -i"
 
 # We run the command and capture raw output from the PTY session.
 actual=$(eval "$cmd" 2>&1)
