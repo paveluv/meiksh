@@ -26,7 +26,7 @@ expect "$ "
 send "set -m"
 expect "$ "
 send "sleep 60"
-sleep 500
+sleep 500ms
 sendraw 1a
 expect "(Stopped|Suspended)"
 send "bg"
@@ -68,7 +68,7 @@ expect "$ "
 send "set -m"
 expect "$ "
 send "sleep 60"
-sleep 500
+sleep 500ms
 sendraw 1a
 expect "(Stopped|Suspended)"
 send "bg %1"
@@ -103,7 +103,7 @@ send "sleep 60 &"
 expect "$ "
 send "fg"
 expect "sleep 60"
-sleep 200
+sleep 200ms
 sendraw 03
 expect "$ "
 sendeof
@@ -123,7 +123,7 @@ send "sleep 60 &"
 expect "$ "
 send "fg %1"
 expect "sleep 60"
-sleep 200
+sleep 200ms
 sendraw 03
 expect "$ "
 sendeof
@@ -144,7 +144,7 @@ send "sleep 60 &"
 expect "$ "
 send "fg"
 expect "sleep 60"
-sleep 200
+sleep 200ms
 sendraw 03
 expect "$ "
 send "jobs"
@@ -163,7 +163,7 @@ expect "$ "
 send "set -m"
 expect "$ "
 send "sleep 60"
-sleep 500
+sleep 500ms
 sendraw 1a
 expect "(Stopped|Suspended)"
 send "bg"
@@ -171,7 +171,7 @@ expect "sleep 60"
 expect "$ "
 send "fg"
 expect "sleep 60"
-sleep 200
+sleep 200ms
 sendraw 03
 expect "$ "
 sendeof
@@ -203,11 +203,11 @@ expect "$ "
 send "set -m"
 expect "$ "
 send "sleep 60"
-sleep 500
+sleep 500ms
 sendraw 1a
 expect "(Stopped|Suspended)"
 send "sleep 61"
-sleep 500
+sleep 500ms
 sendraw 1a
 expect "(Stopped|Suspended)"
 send "jobs"
@@ -230,7 +230,7 @@ expect "$ "
 send "set -m"
 expect "$ "
 send "sleep 60"
-sleep 500
+sleep 500ms
 sendraw 1a
 expect "(Stopped|Suspended)"
 send "bg"
@@ -254,11 +254,11 @@ expect "$ "
 send "set -m"
 expect "$ "
 send "sleep 60"
-sleep 500
+sleep 500ms
 sendraw 1a
 expect "(Stopped|Suspended)"
 send "sleep 61"
-sleep 500
+sleep 500ms
 sendraw 1a
 expect "(Stopped|Suspended)"
 send "bg %1"
@@ -266,7 +266,7 @@ expect "sleep 60"
 expect "$ "
 send "fg %2"
 expect "sleep 61"
-sleep 200
+sleep 200ms
 sendraw 03
 expect "$ "
 send "kill %1 2>/dev/null; wait; true"

@@ -50,7 +50,7 @@ expect "$ "
 send "set -m"
 expect "$ "
 send "sleep 100"
-sleep 500
+sleep 500ms
 sendraw 1a
 expect "(Stopped|Suspended)"
 send "bg > /tmp/meiksh_bg_out 2>/dev/null"
@@ -79,14 +79,14 @@ expect "$ "
 send "set -m"
 expect "$ "
 send "sleep 100"
-sleep 500
+sleep 500ms
 sendraw 1a
 expect "(Stopped|Suspended)"
 send "bg"
 expect "$ "
 send "fg 2>/dev/null"
 expect "sleep"
-sleep 200
+sleep 200ms
 sendraw 03
 expect "$ "
 send "kill %1 2>/dev/null; wait; true"
@@ -131,7 +131,7 @@ expect "$ "
 send "sleep 0.1 &"
 expect "\[[[:digit:]]+\] [[:digit:]]+"
 expect "$ "
-sleep 500
+sleep 500ms
 send "true"
 expect "Done"
 expect "$ "

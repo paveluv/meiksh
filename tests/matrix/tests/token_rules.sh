@@ -108,11 +108,11 @@ assert_stdout 'a#b' \
 # explicitly enabled.
 
 interactive_script=$(cat << 'EOF'
-sleep 0.5
+sleep 500ms
 echo 'alias foo="echo aliased"'
-sleep 0.5
+sleep 500ms
 echo 'foo'
-sleep 0.5
+sleep 500ms
 echo 'exit'
 EOF
 )
@@ -131,12 +131,12 @@ esac
 
 # Test alias with trailing space allowing subsequent word to be aliased.
 interactive_script=$(cat << 'EOF'
-sleep 0.5
+sleep 500ms
 echo 'alias a1="echo "'
 echo 'alias a2="chained"'
-sleep 0.5
+sleep 500ms
 echo 'a1 a2'
-sleep 0.5
+sleep 500ms
 echo 'exit'
 EOF
 )

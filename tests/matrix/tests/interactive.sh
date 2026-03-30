@@ -31,11 +31,11 @@
 # We sleep between strokes to simulate human typing and give the shell
 # time to evaluate the new environment.
 interactive_script=$(cat << 'EOF'
-sleep 0.5
+sleep 500ms
 echo 'PS1="prompt> "'
-sleep 0.5
+sleep 500ms
 echo 'echo interactive-test'
-sleep 0.5
+sleep 500ms
 echo 'exit'
 EOF
 )

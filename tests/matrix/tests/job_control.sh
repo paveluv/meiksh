@@ -192,11 +192,11 @@
 # back to the user on demand.
 
 interactive_script=$(cat << 'EOF'
-sleep 0.5
+sleep 500ms
 echo 'sleep 10 &'
-sleep 0.5
+sleep 500ms
 echo 'jobs'
-sleep 0.5
+sleep 500ms
 echo 'exit'
 EOF
 )
@@ -278,14 +278,14 @@ expect "$ "
 send "sleep 60 &"
 expect "$ "
 send "kill -STOP %1"
-sleep 500
+sleep 500ms
 expect "$ "
 send "fg %1"
-sleep 500
+sleep 500ms
 send ""
-sleep 200
+sleep 200ms
 send "kill %1"
-sleep 500
+sleep 500ms
 sendeof
 wait'
 
@@ -305,7 +305,7 @@ send "set -m"
 expect "$ "
 send "sleep 0.1 &"
 expect "$ "
-sleep 500
+sleep 500ms
 send "echo trigger_prompt"
 expect "\[[[:digit:]]+\].*Done.*sleep"
 sendeof
@@ -350,7 +350,7 @@ assert_stdout "hello" "$TARGET_SHELL -c '$test_cmd'"
 test_cmd='
 trap "echo TRAP_FIRED" USR1
 (sleep 0.1; kill -USR1 $$) &
-sleep 0.3
+sleep 300ms
 echo FOREGROUND_DONE
 '
 _out=$($TARGET_SHELL -c "$test_cmd" 2>/dev/null)
@@ -518,7 +518,7 @@ send "set -b"
 expect "$ "
 send "sleep 0.1 &"
 expect "\[[[:digit:]]+\] [[:digit:]]+"
-sleep 1000
+sleep 1000ms
 expect "Done"
 send "echo setb_ok"
 expect "setb_ok"

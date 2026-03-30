@@ -282,11 +282,11 @@ assert_stdout "$PWD" \
 # character.
 
 interactive_script=$(cat << 'EOF'
-sleep 0.5
+sleep 500ms
 echo 'PS1="cmd \! var \$(echo 1)> "'
-sleep 0.5
+sleep 500ms
 echo 'echo interactive_test'
-sleep 0.5
+sleep 500ms
 echo 'exit'
 EOF
 )

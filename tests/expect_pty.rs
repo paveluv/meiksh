@@ -16,7 +16,7 @@
 //!   signal <SIGNAME>                      — send a signal to the child's process group
 //!   sendeof                               — close the write side of the PTY
 //!   wait exitcode=N                       — wait for child exit and assert exit code
-//!   sleep <ms>                            — sleep for N milliseconds
+//!   sleep <duration>                       — sleep (e.g. 100ms or 1s)
 //!
 //! Lines starting with '#' and empty lines are ignored.
 //! All expect commands use a built-in regex engine (no external dependencies).
@@ -1087,11 +1087,10 @@ fn run_script(script_lines: &[String]) -> Result<(), String> {
             }
 
             "sleep" => {
-                let ms: u64 = rest
-                    .parse()
-                    .map_err(|e| format!("line {line_num}: bad sleep value: {e}"))?;
-                log.push(format!(">>> sleep {ms}ms"));
-                thread::sleep(Duration::from_millis(ms));
+                let dur = parse_timeout_value(rest)
+                    .map_err(|e| format!("line {line_num}: {e}"))?;
+                log.push(format!(">>> sleep {}ms", dur.as_millis()));
+                thread::sleep(dur);
             }
 
             _ => {
