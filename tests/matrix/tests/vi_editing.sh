@@ -55,9 +55,9 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 68 65 6c 6c 6f 78
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 78
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "hello"
 not_expect "hellox"
@@ -78,9 +78,9 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 68 65 6c 6c 78
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 72 6f
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "hello"
 expect "$ "
@@ -106,11 +106,11 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 42 43
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 30 77
-sleep 50
+sleep 50ms
 sendraw 7e 7e 7e
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "Abc"
 expect "$ "
@@ -135,9 +135,9 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62 63 64
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 68 68 72 61
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "aacd"
 expect "$ "
@@ -162,9 +162,9 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 6f 6e 65 20 74 77 6f
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 62 72 58
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "one Xwo"
 expect "$ "
@@ -190,9 +190,9 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62 63
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 78
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "ab"
 expect "$ "
@@ -222,9 +222,9 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62 63 64 65
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 33 78
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "ab"
 expect "$ "
@@ -246,10 +246,10 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 63
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 68 61 62
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "abc"
 expect "$ "
@@ -291,11 +291,11 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62 20 63 64
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 62
-sleep 50
+sleep 50ms
 sendraw 64 77
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "ab"
 expect "$ "
@@ -319,9 +319,9 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 6f 6c 64
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 63 63
-sleep 50
+sleep 50ms
 sendraw 65 63 68 6f 20 6e 65 77
 sendraw 0a
 expect "new"
@@ -346,9 +346,9 @@ send "echo hist1"
 expect "hist1"
 expect "$ "
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 6b
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "hist1"
 expect "$ "
@@ -372,13 +372,13 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 30
-sleep 50
+sleep 50ms
 sendraw 24
-sleep 50
+sleep 50ms
 sendraw 72 5a
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "aZ"
 expect "$ "
@@ -398,11 +398,11 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62 63
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 78
-sleep 50
+sleep 50ms
 sendraw 75
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "abc"
 expect "$ "
@@ -426,11 +426,11 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62 63 64
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 78
-sleep 50
+sleep 50ms
 sendraw 2e
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "ab"
 expect "$ "
@@ -457,13 +457,13 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62 63
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 78
-sleep 50
+sleep 50ms
 sendraw 68
-sleep 50
+sleep 50ms
 sendraw 70
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "acb"
 expect "$ "
@@ -490,7 +490,7 @@ send "set -o vi"
 expect "$ "
 sendraw 70 61 72 74 69 61 6c
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 03
 expect "$ "
 send "echo after_sigint"
@@ -517,9 +517,9 @@ send "echo history_test_entry"
 expect "history_test_entry"
 expect "$ "
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 6b
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "history_test_entry"
 expect "$ "
@@ -540,9 +540,9 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 6f 6b
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 5a
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "ok"
 expect "$ "
@@ -609,13 +609,13 @@ send "echo from_hist"
 expect "from_hist"
 expect "$ "
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 6b
-sleep 100
+sleep 100ms
 sendraw 24
-sleep 50
+sleep 50ms
 sendraw 72 58
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "from_hisX"
 expect "$ "
@@ -638,9 +638,9 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 39 6c
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "ab"
 expect "$ "
@@ -662,11 +662,11 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 42
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 30 77
-sleep 50
+sleep 50ms
 sendraw 39 7e
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "Ab"
 expect "$ "
@@ -687,11 +687,11 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62 63 64 65 66
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 32 78
-sleep 100
+sleep 100ms
 sendraw 2e
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "ab"
 expect "$ "
@@ -716,13 +716,13 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 30 77 6c
-sleep 50
+sleep 50ms
 sendraw 39 39 68
-sleep 50
+sleep 50ms
 sendraw 72 5a
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "Zcho"
 expect "$ "
@@ -749,13 +749,13 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 2e 62 20 63 2e 64
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 30
-sleep 50
+sleep 50ms
 sendraw 57 57
-sleep 50
+sleep 50ms
 sendraw 72 5a
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "a\.b Z\.d"
 expect "$ "
@@ -769,11 +769,11 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 2e 62 20 63 2e 64
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 42
-sleep 50
+sleep 50ms
 sendraw 72 5a
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "a\.b Z\.d"
 not_expect "c\.d"
@@ -799,11 +799,11 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62 63 64 65
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 33 7c
-sleep 50
+sleep 50ms
 sendraw 72 5a
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "ecZo"
 expect "$ "
@@ -826,13 +826,13 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62 63 62
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 30
-sleep 50
+sleep 50ms
 sendraw 66 62
-sleep 50
+sleep 50ms
 sendraw 72 5a
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "Zcb"
 expect "$ "
@@ -846,11 +846,11 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62 63
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 46 61
-sleep 50
+sleep 50ms
 sendraw 72 5a
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "Zbc"
 expect "$ "
@@ -864,13 +864,13 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62 63
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 30
-sleep 50
+sleep 50ms
 sendraw 74 63
-sleep 50
+sleep 50ms
 sendraw 72 5a
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "echo aZc"
 expect "$ "
@@ -884,11 +884,11 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62 63
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 54 61
-sleep 50
+sleep 50ms
 sendraw 72 5a
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "echo aZc"
 expect "$ "
@@ -908,15 +908,15 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62 61 62
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 30
-sleep 50
+sleep 50ms
 sendraw 66 61
-sleep 50
+sleep 50ms
 sendraw 3b
-sleep 50
+sleep 50ms
 sendraw 72 5a
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "abZb"
 expect "$ "
@@ -930,17 +930,17 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62 61 62
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 30
-sleep 50
+sleep 50ms
 sendraw 66 61
-sleep 50
+sleep 50ms
 sendraw 3b
-sleep 50
+sleep 50ms
 sendraw 2c
-sleep 50
+sleep 50ms
 sendraw 72 5a
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "Zbab"
 expect "$ "
@@ -969,14 +969,14 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62 63 64
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 30 77
-sleep 50
+sleep 50ms
 sendraw 63 77
-sleep 50
+sleep 50ms
 sendraw 58 59
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "XY"
 expect "$ "
@@ -995,14 +995,14 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 30 77
-sleep 50
+sleep 50ms
 sendraw 39 63 77
-sleep 50
+sleep 50ms
 sendraw 5a
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "Z"
 not_expect "ab"
@@ -1025,11 +1025,11 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 30 77
-sleep 50
+sleep 50ms
 sendraw 39 78
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "$ "
 sendeof
@@ -1046,9 +1046,9 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62 63
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 58
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "ac"
 expect "$ "
@@ -1071,11 +1071,11 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 30 77
-sleep 50
+sleep 50ms
 sendraw 58
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "a"
 expect "$ "
@@ -1094,9 +1094,9 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62 63 64
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 39 39 58
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "$ "
 sendeof
@@ -1132,13 +1132,13 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62 63
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 30
-sleep 50
+sleep 50ms
 sendraw 79 77
-sleep 50
+sleep 50ms
 sendraw 72 5a
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "Zcho"
 expect "$ "
@@ -1162,11 +1162,11 @@ send "echo only_cmd"
 expect "only_cmd"
 expect "$ "
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 6b
-sleep 100
+sleep 100ms
 sendraw 6b
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "only_cmd"
 expect "$ "
@@ -1189,11 +1189,11 @@ send "echo hist_a"
 expect "hist_a"
 expect "$ "
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 6b
-sleep 100
+sleep 100ms
 sendraw 6a
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "$ "
 sendeof
@@ -1215,9 +1215,9 @@ send "echo baseline"
 expect "baseline"
 expect "$ "
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 39 39 39 39 39 47
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "$ "
 sendeof
@@ -1241,9 +1241,9 @@ send "echo histtest1"
 expect "histtest1"
 expect "$ "
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 6b
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "histtest1"
 expect "$ "
@@ -1290,9 +1290,9 @@ send "echo other"
 expect "other"
 expect "$ "
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 2f 73 65 61 72 63 68 0a
-sleep 200
+sleep 200ms
 sendraw 0a
 expect "searchme"
 expect "$ "
@@ -1312,9 +1312,9 @@ send "echo first"
 expect "first"
 expect "$ "
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 2f 7a 7a 7a 7a 7a 7a 0a
-sleep 200
+sleep 200ms
 sendraw 0a
 expect "$ "
 sendeof
@@ -1333,15 +1333,15 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 58 62 20 63 64
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 30
-sleep 50
+sleep 50ms
 sendraw 77
-sleep 50
+sleep 50ms
 sendraw 65
-sleep 50
+sleep 50ms
 sendraw 72 5a
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "XZ cd"
 expect "$ "
@@ -1356,13 +1356,13 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62 63 20 64 65 66
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 30
-sleep 50
+sleep 50ms
 sendraw 32 65
-sleep 50
+sleep 50ms
 sendraw 72 5a
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "abZ def"
 expect "$ "
@@ -1382,15 +1382,15 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 2d 62 20 63 64
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 30
-sleep 50
+sleep 50ms
 sendraw 57
-sleep 50
+sleep 50ms
 sendraw 45
-sleep 50
+sleep 50ms
 sendraw 72 5a
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "a-Z cd"
 expect "$ "
@@ -1405,13 +1405,13 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 2e 62 20 63 2e 64
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 30
-sleep 50
+sleep 50ms
 sendraw 77 45
-sleep 50
+sleep 50ms
 sendraw 72 5a
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "a\.Z c\.d"
 expect "$ "
@@ -1433,13 +1433,13 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62 63
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 78
-sleep 50
+sleep 50ms
 sendraw 68
-sleep 50
+sleep 50ms
 sendraw 50
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "cab"
 expect "$ "
@@ -1465,9 +1465,9 @@ send "echo other"
 expect "other"
 expect "$ "
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 3f 66 69 6e 64 6d 65 0a
-sleep 200
+sleep 200ms
 sendraw 0a
 expect "findme"
 expect "$ "
@@ -1495,9 +1495,9 @@ send "echo alpha2"
 expect "alpha2"
 expect "$ "
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 2f 61 6c 70 68 61 0a
-sleep 200
+sleep 200ms
 sendraw 0a
 expect "alpha2"
 expect "$ "
@@ -1525,11 +1525,11 @@ send "echo gamma3"
 expect "gamma3"
 expect "$ "
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 2f 67 61 6d 6d 61 0a
-sleep 200
+sleep 200ms
 sendraw 6e
-sleep 200
+sleep 200ms
 sendraw 0a
 expect "gamma"
 expect "$ "
@@ -1551,17 +1551,17 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62 63 64 65 66
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 30
-sleep 50
+sleep 50ms
 sendraw 77
-sleep 50
+sleep 50ms
 sendraw 52
-sleep 50
+sleep 50ms
 sendraw 58 59
-sleep 50
+sleep 50ms
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "XYcdef"
 expect "$ "
@@ -1582,9 +1582,9 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 68 65 6c 6c 6f
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 23
-sleep 200
+sleep 200ms
 expect "$ "
 not_expect "hello"
 sendeof
@@ -1605,13 +1605,13 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62 63 20 64 65 66
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 30
-sleep 50
+sleep 50ms
 sendraw 77
-sleep 50
+sleep 50ms
 sendraw 44
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "$ "
 sendeof
@@ -1632,17 +1632,17 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62 63 20 64 65 66
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 30
-sleep 50
+sleep 50ms
 sendraw 77
-sleep 50
+sleep 50ms
 sendraw 43
-sleep 50
+sleep 50ms
 sendraw 58 59 5a
-sleep 50
+sleep 50ms
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "XYZ"
 expect "$ "
@@ -1662,13 +1662,13 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62 63
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 53
-sleep 50
+sleep 50ms
 sendraw 65 63 68 6f 20 72 65 70 6c 61 63 65 64
-sleep 50
+sleep 50ms
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "replaced"
 not_expect "abc"
@@ -1690,13 +1690,13 @@ send "set -o vi"
 expect "$ "
 sendraw 65 63 68 6f 20 61 62
 sendraw 1b
-sleep 100
+sleep 100ms
 sendraw 59
-sleep 50
+sleep 50ms
 sendraw 68
-sleep 50
+sleep 50ms
 sendraw 50
-sleep 100
+sleep 100ms
 sendraw 0a
 expect "bab"
 expect "$ "

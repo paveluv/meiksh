@@ -88,7 +88,7 @@ send "set -m"
 expect "$ "
 send "sleep 0.1 &"
 expect "$ "
-sleep 500
+sleep 500ms
 send "wait; jobs; echo end_of_jobs"
 expect "end_of_jobs"
 not_expect "sleep"

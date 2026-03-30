@@ -111,7 +111,7 @@ expect "$ "
 send "set -m"
 expect "$ "
 send "sleep 0.1 &"
-sleep 500
+sleep 500ms
 send "jobs"
 expect "\[[[:digit:]]+\].*Done.*sleep"
 expect "$ "
@@ -131,7 +131,7 @@ expect "$ "
 send "set -m"
 expect "$ "
 send "sleep 60"
-sleep 500
+sleep 500ms
 sendraw 1a
 expect "(Stopped|Suspended).*sleep 60"
 send "jobs"
@@ -220,7 +220,7 @@ expect "$ "
 send "set -m"
 expect "$ "
 send "sleep 60"
-sleep 500
+sleep 500ms
 sendraw 1a
 expect "(Stopped|Suspended).*sleep 60"
 send "jobs -l"
@@ -303,7 +303,7 @@ expect "$ "
 send "sleep 60 &"
 expect "$ "
 send "kill -KILL %1"
-sleep 500
+sleep 500ms
 send "jobs"
 not_expect "Running"
 send "wait 2>/dev/null"
@@ -323,7 +323,7 @@ expect "$ "
 send "set -m"
 expect "$ "
 send "(exit 2) &"
-sleep 500
+sleep 500ms
 send ""
 expect "Done\([[:digit:]]+\)"
 expect "$ "

@@ -35,7 +35,7 @@ send \"MAIL=$_mbox1\"
 expect \"$ \"
 send \"MAILCHECK=1\"
 expect \"$ \"
-sleep 1500
+sleep 1500ms
 send \"echo created > $_mbox1\"
 expect timeout=5s \"(mail|Mail|MAIL|you have)\"
 expect \"$ \"
@@ -56,7 +56,7 @@ send \"MAIL=$_mbox2\"
 expect \"$ \"
 send \"MAILCHECK=1\"
 expect \"$ \"
-sleep 1500
+sleep 1500ms
 send \"echo data > $_mbox2\"
 not_expect timeout=3s \"(mail|Mail|MAIL|you have)\"
 expect \"$ \"
@@ -78,7 +78,7 @@ send \"MAIL=$_mbox3\"
 expect \"$ \"
 send \"MAILCHECK=0\"
 expect \"$ \"
-sleep 1500
+sleep 1500ms
 send \"echo data > $_mbox3\"
 expect timeout=5s \"(mail|Mail|MAIL|you have)\"
 expect \"$ \"
@@ -102,7 +102,7 @@ send \"MAILPATH='$_mp1%custom msg here:$_mp2'\"
 expect \"$ \"
 send \"MAILCHECK=1\"
 expect \"$ \"
-sleep 1500
+sleep 1500ms
 send \"echo data > $_mp1\"
 expect timeout=5s \"custom msg here\"
 expect \"$ \"
