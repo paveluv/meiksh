@@ -39,11 +39,11 @@ unsafe extern "C" {
     pub fn waitpid(pid: pid_t, status: *mut c_int, options: c_int) -> pid_t;
 }
 
-fn WIFEXITED(status: c_int) -> bool {
+fn wifexited(status: c_int) -> bool {
     (status & 0x7f) == 0
 }
 
-fn WEXITSTATUS(status: c_int) -> i32 {
+fn wexitstatus(status: c_int) -> i32 {
     (status >> 8) & 0xff
 }
 
@@ -97,7 +97,7 @@ fn main() {
             let mut stdin = io::stdin();
             let master_fd_clone = master_fd;
             
-            let writer = thread::spawn(move || {
+            let _writer = thread::spawn(move || {
                 let mut buf = [0u8; 1024];
                 let mut master_writer = unsafe { std::fs::File::from_raw_fd(master_fd_clone) };
                 loop {
@@ -132,8 +132,8 @@ fn main() {
             unsafe {
                 let mut status = 0;
                 waitpid(pid, &mut status, 0);
-                if WIFEXITED(status) {
-                    std::process::exit(WEXITSTATUS(status));
+                if wifexited(status) {
+                    std::process::exit(wexitstatus(status));
                 } else {
                     std::process::exit(1);
                 }

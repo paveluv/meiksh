@@ -90,10 +90,18 @@ assert_stderr_contains() {
     esac
 }
 
+run_pty() {
+    "$CARGO" run --quiet --manifest-path "$REPO_ROOT/Cargo.toml" --bin pty -- "$@"
+}
+
+run_expect_pty() {
+    "$CARGO" run --quiet --manifest-path "$REPO_ROOT/Cargo.toml" --bin expect_pty
+}
+
 assert_pty_script() {
     _script="$1"
     _expanded=$(printf '%s\n' "$_script" | sed "s|\$TARGET_SHELL|$TARGET_SHELL|g; s|^spawn |spawn PS1=\$\\\\s |")
-    _output=$(printf '%s\n' "$_expanded" | "$EXPECT_PTY_BIN" 2>&1)
+    _output=$(printf '%s\n' "$_expanded" | run_expect_pty)
     _rc=$?
     if [ "$_rc" -eq 0 ]; then
         pass

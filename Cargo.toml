@@ -26,8 +26,3 @@ path = "tests/pty.rs"
 [[bin]]
 name = "expect_pty"
 path = "tests/expect_pty.rs"
-
-[[test]]
-name = "expect_pty"
-path = "tests/expect_pty.rs"
-harness = true
