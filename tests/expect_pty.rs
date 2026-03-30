@@ -4,21 +4,25 @@
 //! and executes it against a child process running inside a real pseudo-terminal.
 //!
 //! DSL commands:
-//!   spawn <cmd> [args...]      — fork a PTY child and exec the command
-//!   expect "literal"           — wait for exact substring in PTY output (timeout: 5s)
-//!   expect timeout=N "literal" — wait with custom timeout in seconds
-//!   expect_glob "pattern"      — wait for POSIX glob match (*, ?, [...], {a,b})
-//!   not_expect "literal"       — assert substring is NOT in the current output buffer
-//!   send "text"                — write text + newline to the PTY
-//!   sendraw <hex> [<hex>...]   — write raw bytes (hex-encoded) to the PTY
-//!   signal <SIGNAME>           — send a signal to the child's process group
-//!   sendeof                    — close the write side of the PTY
-//!   wait exitcode=N            — wait for child exit and assert exit code
-//!   sleep <ms>                 — sleep for N milliseconds
+//!   spawn <cmd> [args...]                 — fork a PTY child and exec the command
+//!   expect "regex"                        — wait for regex match in PTY output (default 5s)
+//!   expect timeout=2s "regex"             — wait with per-command timeout (ms or s suffix)
+//!   expect_glob "pattern"                 — (deprecated) wait for glob match, auto-converts to regex
+//!   not_expect "regex"                    — assert regex does NOT match current output buffer
+//!   not_expect timeout=500ms "regex"      — timed negative: watch for duration, fail if matched
+//!   expect_line "regex"                   — wait for the next complete line matching regex
+//!   expect_line timeout=1s "regex"        — with per-command timeout
+//!   send "text"                           — write text + newline to the PTY
+//!   sendraw <hex> [<hex>...]              — write raw bytes (hex-encoded) to the PTY
+//!   signal <SIGNAME>                      — send a signal to the child's process group
+//!   sendeof                               — close the write side of the PTY
+//!   wait exitcode=N                       — wait for child exit and assert exit code
+//!   sleep <ms>                            — sleep for N milliseconds
 //!
 //! Lines starting with '#' and empty lines are ignored.
-//! expect uses exact substring matching; expect_glob supports POSIX pattern
-//! matching notation (*, ?, [...] bracket expressions) plus {a,b} brace expansion.
+//! All expect commands use a built-in regex engine (no external dependencies).
+//! Supported regex syntax: . * + ? [...] (a|b) \escape
+//! expect_glob is kept for backward compatibility (auto-converts glob to regex).
 
 use std::env;
 use std::fs;
@@ -200,30 +204,24 @@ impl PtySession {
         Ok(())
     }
 
-    /// Wait for an exact substring to appear in the output buffer.
-    /// On match, consumes all output up to and including the match.
-    /// Returns the consumed output (for diagnostics).
-    fn expect(&self, needle: &str, timeout: Duration) -> Result<String, String> {
+    /// Wait for a regex match in the output buffer.
+    /// On match, consumes all output up to and including the match end.
+    fn expect(&self, pattern: &[RegexNode], pattern_str: &str, timeout: Duration) -> Result<String, String> {
         let start = Instant::now();
         loop {
             {
                 let mut lock = self.buf.lock().unwrap();
                 let haystack = String::from_utf8_lossy(&lock).to_string();
-                if let Some(pos) = haystack.find(needle) {
-                    let consumed_end = pos + needle.len();
-                    let consumed = haystack[..consumed_end].to_string();
-                    // Drain from the byte buffer. We need to figure out the byte
-                    // offset corresponding to consumed_end chars. Since we used
-                    // from_utf8_lossy, byte len of the consumed portion works.
-                    let byte_end = consumed.len();
-                    lock.drain(..byte_end);
+                if let Some((_match_start, match_end)) = regex_find(pattern, &haystack) {
+                    let consumed = haystack[..match_end].to_string();
+                    lock.drain(..match_end);
                     return Ok(consumed);
                 }
                 if start.elapsed() >= timeout {
                     return Err(format!(
                         "expect: timed out after {:.1}s waiting for {:?}\nOutput so far ({} bytes):\n{}",
                         timeout.as_secs_f64(),
-                        needle,
+                        pattern_str,
                         haystack.len(),
                         haystack
                     ));
@@ -233,48 +231,75 @@ impl PtySession {
         }
     }
 
-    /// Wait for a POSIX glob pattern match in the output buffer.
-    /// Supports `*`, `?`, `[...]` bracket expressions, and `{a,b}` brace expansion.
-    /// On match, consumes all output up to and including the match.
-    fn expect_glob(&self, pattern: &str, timeout: Duration) -> Result<String, String> {
-        let alternatives = expand_braces(pattern);
+    /// Assert that a regex does NOT match anywhere in the current buffer.
+    /// With timeout: watch for the given duration, fail if pattern appears.
+    /// Without timeout: instant check against current buffer contents.
+    fn not_expect(&self, pattern: &[RegexNode], pattern_str: &str, timeout: Option<Duration>) -> Result<(), String> {
+        match timeout {
+            None => {
+                let lock = self.buf.lock().unwrap();
+                let haystack = String::from_utf8_lossy(&lock).to_string();
+                if regex_find(pattern, &haystack).is_some() {
+                    Err(format!(
+                        "not_expect: found {:?} in output:\n{}",
+                        pattern_str, haystack
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
+            Some(dur) => {
+                let start = Instant::now();
+                loop {
+                    {
+                        let lock = self.buf.lock().unwrap();
+                        let haystack = String::from_utf8_lossy(&lock).to_string();
+                        if regex_find(pattern, &haystack).is_some() {
+                            return Err(format!(
+                                "not_expect: found {:?} in output during {:.1}s watch:\n{}",
+                                pattern_str, dur.as_secs_f64(), haystack
+                            ));
+                        }
+                    }
+                    if start.elapsed() >= dur {
+                        return Ok(());
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+            }
+        }
+    }
+
+    /// Wait for the next complete line matching a regex pattern.
+    /// Consumes non-matching lines while scanning forward.
+    fn expect_line(&self, pattern: &[RegexNode], pattern_str: &str, timeout: Duration) -> Result<String, String> {
         let start = Instant::now();
         loop {
             {
                 let mut lock = self.buf.lock().unwrap();
                 let haystack = String::from_utf8_lossy(&lock).to_string();
-                if let Some((_start, end)) = find_glob_match(&alternatives, &haystack) {
-                    let consumed = haystack[..end].to_string();
-                    let byte_end = consumed.len();
-                    lock.drain(..byte_end);
-                    return Ok(consumed);
+                if let Some(nl_pos) = haystack.find('\n') {
+                    let line = haystack[..nl_pos].trim_end_matches('\r');
+                    if regex_find(pattern, line).is_some() {
+                        let consumed_end = nl_pos + 1;
+                        let consumed = haystack[..consumed_end].to_string();
+                        lock.drain(..consumed_end);
+                        return Ok(consumed);
+                    }
+                    lock.drain(..nl_pos + 1);
+                    continue;
                 }
                 if start.elapsed() >= timeout {
                     return Err(format!(
-                        "expect_glob: timed out after {:.1}s waiting for pattern {:?}\nExpanded to: {:?}\nOutput so far ({} bytes):\n{}",
+                        "expect_line: timed out after {:.1}s waiting for line matching {:?}\nOutput so far ({} bytes):\n{}",
                         timeout.as_secs_f64(),
-                        pattern,
-                        alternatives,
+                        pattern_str,
                         haystack.len(),
                         haystack
                     ));
                 }
             }
             thread::sleep(Duration::from_millis(10));
-        }
-    }
-
-    /// Assert that a substring is NOT in the current buffer.
-    fn not_expect(&self, needle: &str) -> Result<(), String> {
-        let lock = self.buf.lock().unwrap();
-        let haystack = String::from_utf8_lossy(&lock).to_string();
-        if haystack.contains(needle) {
-            Err(format!(
-                "not_expect: found {:?} in output:\n{}",
-                needle, haystack
-            ))
-        } else {
-            Ok(())
         }
     }
 
@@ -381,20 +406,37 @@ fn extract_quoted(arg: &str) -> Result<&str, String> {
     }
 }
 
-/// Parse the arguments of an expect command, handling optional timeout=N prefix.
-fn parse_expect_args(rest: &str) -> Result<(Duration, &str), String> {
+fn parse_timeout_value(val: &str) -> Result<Duration, String> {
+    if let Some(ms_str) = val.strip_suffix("ms") {
+        let ms: u64 = ms_str
+            .parse()
+            .map_err(|e| format!("bad timeout value: {e}"))?;
+        Ok(Duration::from_millis(ms))
+    } else if let Some(s_str) = val.strip_suffix("s") {
+        let s: u64 = s_str
+            .parse()
+            .map_err(|e| format!("bad timeout value: {e}"))?;
+        Ok(Duration::from_secs(s))
+    } else {
+        Err(format!(
+            "timeout value must end with 'ms' or 's', got: {val}"
+        ))
+    }
+}
+
+/// Parse the arguments of an expect command, handling optional timeout=Nms/Ns prefix.
+/// Returns (None, pattern_str) when no timeout is given — caller picks default.
+fn parse_expect_args(rest: &str) -> Result<(Option<Duration>, &str), String> {
     let rest = rest.trim();
     if let Some(after) = rest.strip_prefix("timeout=") {
         let space = after
             .find(' ')
             .ok_or_else(|| "timeout= must be followed by a space and a quoted string".to_string())?;
-        let secs: u64 = after[..space]
-            .parse()
-            .map_err(|e| format!("bad timeout value: {e}"))?;
+        let timeout = parse_timeout_value(&after[..space])?;
         let quoted = after[space..].trim();
-        Ok((Duration::from_secs(secs), quoted))
+        Ok((Some(timeout), quoted))
     } else {
-        Ok((Duration::from_secs(5), rest))
+        Ok((None, rest))
     }
 }
 
@@ -649,6 +691,355 @@ fn find_glob_match(patterns: &[String], haystack: &str) -> Option<(usize, usize)
     None
 }
 
+// ── Regex engine (no external dependencies) ──────────────────────────────────
+
+#[derive(Debug, Clone)]
+enum RepeatKind {
+    Star,
+    Plus,
+    Question,
+}
+
+#[derive(Debug, Clone)]
+enum RegexNode {
+    Literal(char),
+    AnyChar,
+    Class(Vec<char>),
+    Repeat(Box<RegexNode>, RepeatKind),
+    Group(Vec<Vec<RegexNode>>),
+}
+
+fn parse_regex(pattern: &str) -> Result<Vec<RegexNode>, String> {
+    let chars: Vec<char> = pattern.chars().collect();
+    let (nodes, pos) = parse_alternation(&chars, 0)?;
+    if pos != chars.len() {
+        return Err(format!("unexpected '{}' at position {pos}", chars[pos]));
+    }
+    Ok(nodes)
+}
+
+fn parse_alternation(chars: &[char], start: usize) -> Result<(Vec<RegexNode>, usize), String> {
+    let (first_seq, mut pos) = parse_re_sequence(chars, start)?;
+    if pos < chars.len() && chars[pos] == '|' {
+        let mut alternatives = vec![first_seq];
+        while pos < chars.len() && chars[pos] == '|' {
+            let (next_seq, new_pos) = parse_re_sequence(chars, pos + 1)?;
+            alternatives.push(next_seq);
+            pos = new_pos;
+        }
+        Ok((vec![RegexNode::Group(alternatives)], pos))
+    } else {
+        Ok((first_seq, pos))
+    }
+}
+
+fn parse_re_sequence(chars: &[char], start: usize) -> Result<(Vec<RegexNode>, usize), String> {
+    let mut nodes = Vec::new();
+    let mut pos = start;
+    while pos < chars.len() && chars[pos] != '|' && chars[pos] != ')' {
+        let (atom, new_pos) = parse_re_atom(chars, pos)?;
+        pos = new_pos;
+        if pos < chars.len() && matches!(chars[pos], '*' | '+' | '?') {
+            let kind = match chars[pos] {
+                '*' => RepeatKind::Star,
+                '+' => RepeatKind::Plus,
+                '?' => RepeatKind::Question,
+                _ => unreachable!(),
+            };
+            nodes.push(RegexNode::Repeat(Box::new(atom), kind));
+            pos += 1;
+        } else {
+            nodes.push(atom);
+        }
+    }
+    Ok((nodes, pos))
+}
+
+fn parse_re_atom(chars: &[char], pos: usize) -> Result<(RegexNode, usize), String> {
+    if pos >= chars.len() {
+        return Err("unexpected end of pattern".to_string());
+    }
+    match chars[pos] {
+        '.' => Ok((RegexNode::AnyChar, pos + 1)),
+        '\\' => {
+            if pos + 1 >= chars.len() {
+                return Err("trailing backslash in pattern".to_string());
+            }
+            let escaped = match chars[pos + 1] {
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                c => c,
+            };
+            Ok((RegexNode::Literal(escaped), pos + 2))
+        }
+        '[' => {
+            let mut bracket = vec!['['];
+            let mut i = pos + 1;
+            if i < chars.len() && (chars[i] == '!' || chars[i] == '^') {
+                bracket.push(chars[i]);
+                i += 1;
+            }
+            if i < chars.len() && chars[i] == ']' {
+                bracket.push(']');
+                i += 1;
+            }
+            while i < chars.len() && chars[i] != ']' {
+                if i + 1 < chars.len()
+                    && chars[i] == '['
+                    && matches!(chars[i + 1], ':' | '.' | '=')
+                {
+                    let delim = chars[i + 1];
+                    bracket.push(chars[i]);
+                    bracket.push(chars[i + 1]);
+                    i += 2;
+                    while i < chars.len() {
+                        if chars[i] == delim
+                            && i + 1 < chars.len()
+                            && chars[i + 1] == ']'
+                        {
+                            bracket.push(chars[i]);
+                            bracket.push(chars[i + 1]);
+                            i += 2;
+                            break;
+                        }
+                        bracket.push(chars[i]);
+                        i += 1;
+                    }
+                } else {
+                    bracket.push(chars[i]);
+                    i += 1;
+                }
+            }
+            if i >= chars.len() {
+                return Err(format!("unclosed bracket expression at position {pos}"));
+            }
+            bracket.push(']');
+            Ok((RegexNode::Class(bracket), i + 1))
+        }
+        '(' => {
+            let (inner_nodes, new_pos) = parse_alternation(chars, pos + 1)?;
+            if new_pos >= chars.len() || chars[new_pos] != ')' {
+                return Err(format!("unclosed parenthesis at position {pos}"));
+            }
+            if inner_nodes.len() == 1 {
+                if let RegexNode::Group(_) = &inner_nodes[0] {
+                    return Ok((inner_nodes.into_iter().next().unwrap(), new_pos + 1));
+                }
+            }
+            Ok((RegexNode::Group(vec![inner_nodes]), new_pos + 1))
+        }
+        '*' | '+' | '?' => Err(format!(
+            "quantifier '{}' without preceding element at position {pos}",
+            chars[pos]
+        )),
+        ')' => Err(format!("unexpected ')' at position {pos}")),
+        c => Ok((RegexNode::Literal(c), pos + 1)),
+    }
+}
+
+/// Try to match a sequence of regex nodes starting at `pos` in `text`.
+/// Returns `Some(end_pos)` on success. Handles backtracking for repeats.
+fn match_re_seq(nodes: &[RegexNode], text: &[char], pos: usize) -> Option<usize> {
+    if nodes.is_empty() {
+        return Some(pos);
+    }
+    match &nodes[0] {
+        RegexNode::Repeat(inner, kind) => {
+            let rest = &nodes[1..];
+            match kind {
+                RepeatKind::Star => {
+                    let positions = collect_repeat_positions(inner, text, pos);
+                    for &p in positions.iter().rev() {
+                        if let Some(end) = match_re_seq(rest, text, p) {
+                            return Some(end);
+                        }
+                    }
+                    None
+                }
+                RepeatKind::Plus => {
+                    let mut matches = Vec::new();
+                    let mut current = pos;
+                    loop {
+                        match match_re_one(inner, text, current) {
+                            Some(next) if next > current => {
+                                matches.push(next);
+                                current = next;
+                            }
+                            _ => break,
+                        }
+                    }
+                    for &p in matches.iter().rev() {
+                        if let Some(end) = match_re_seq(rest, text, p) {
+                            return Some(end);
+                        }
+                    }
+                    None
+                }
+                RepeatKind::Question => {
+                    if let Some(next) = match_re_one(inner, text, pos) {
+                        if let Some(end) = match_re_seq(rest, text, next) {
+                            return Some(end);
+                        }
+                    }
+                    match_re_seq(rest, text, pos)
+                }
+            }
+        }
+        node => {
+            if let Some(next) = match_re_one(node, text, pos) {
+                match_re_seq(&nodes[1..], text, next)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// Match a single (non-Repeat) regex node at position `pos`.
+fn match_re_one(node: &RegexNode, text: &[char], pos: usize) -> Option<usize> {
+    match node {
+        RegexNode::Literal(c) => {
+            if pos < text.len() && text[pos] == *c {
+                Some(pos + 1)
+            } else {
+                None
+            }
+        }
+        RegexNode::AnyChar => {
+            if pos < text.len() {
+                Some(pos + 1)
+            } else {
+                None
+            }
+        }
+        RegexNode::Class(bracket) => {
+            if pos < text.len() {
+                match match_bracket_expr(bracket, 0, text[pos]) {
+                    Some((true, _)) => Some(pos + 1),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        }
+        RegexNode::Group(alternatives) => {
+            for alt in alternatives {
+                if let Some(end) = match_re_seq(alt, text, pos) {
+                    return Some(end);
+                }
+            }
+            None
+        }
+        RegexNode::Repeat(..) => match_re_seq(std::slice::from_ref(node), text, pos),
+    }
+}
+
+fn collect_repeat_positions(inner: &RegexNode, text: &[char], pos: usize) -> Vec<usize> {
+    let mut positions = vec![pos];
+    let mut current = pos;
+    loop {
+        match match_re_one(inner, text, current) {
+            Some(next) if next > current => {
+                positions.push(next);
+                current = next;
+            }
+            _ => break,
+        }
+    }
+    positions
+}
+
+/// Find the leftmost regex match in `text`. Returns byte offsets `(start, end)`.
+fn regex_find(pattern: &[RegexNode], text: &str) -> Option<(usize, usize)> {
+    let chars: Vec<char> = text.chars().collect();
+    let byte_offsets: Vec<usize> = text.char_indices().map(|(i, _)| i).collect();
+
+    for start_idx in 0..=chars.len() {
+        if let Some(end_idx) = match_re_seq(pattern, &chars, start_idx) {
+            let start_byte = if start_idx < byte_offsets.len() {
+                byte_offsets[start_idx]
+            } else {
+                text.len()
+            };
+            let end_byte = if end_idx < byte_offsets.len() {
+                byte_offsets[end_idx]
+            } else {
+                text.len()
+            };
+            return Some((start_byte, end_byte));
+        }
+    }
+    None
+}
+
+// ── Glob-to-regex conversion (for deprecated expect_glob) ────────────────────
+
+fn glob_to_regex(glob: &str) -> String {
+    let alternatives = expand_braces(glob);
+    if alternatives.len() == 1 {
+        single_glob_to_regex(&alternatives[0])
+    } else {
+        let parts: Vec<String> = alternatives
+            .iter()
+            .map(|g| single_glob_to_regex(g))
+            .collect();
+        format!("({})", parts.join("|"))
+    }
+}
+
+fn single_glob_to_regex(glob: &str) -> String {
+    let mut result = String::new();
+    let chars: Vec<char> = glob.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '*' => {
+                result.push_str(".*");
+                i += 1;
+            }
+            '?' => {
+                result.push('.');
+                i += 1;
+            }
+            '[' => {
+                result.push('[');
+                i += 1;
+                if i < chars.len() && (chars[i] == '!' || chars[i] == '^') {
+                    result.push(chars[i]);
+                    i += 1;
+                }
+                if i < chars.len() && chars[i] == ']' {
+                    result.push(']');
+                    i += 1;
+                }
+                while i < chars.len() && chars[i] != ']' {
+                    result.push(chars[i]);
+                    i += 1;
+                }
+                if i < chars.len() {
+                    result.push(']');
+                    i += 1;
+                }
+            }
+            '.' | '+' | '(' | ')' | '|' | '^' | '$' | '{' | '}' => {
+                result.push('\\');
+                result.push(chars[i]);
+                i += 1;
+            }
+            '\\' => {
+                result.push_str("\\\\");
+                i += 1;
+            }
+            c => {
+                result.push(c);
+                i += 1;
+            }
+        }
+    }
+    result
+}
+
 fn run_script(script_lines: &[String]) -> Result<(), String> {
     let mut session: Option<PtySession> = None;
     let mut log = Vec::<String>::new();
@@ -725,15 +1116,17 @@ fn run_script(script_lines: &[String]) -> Result<(), String> {
                     .as_ref()
                     .ok_or_else(|| format!("line {line_num}: expect before spawn"))?;
                 let (timeout, quoted_part) = parse_expect_args(rest)?;
-                let needle = extract_quoted(quoted_part)
+                let timeout = timeout.unwrap_or(Duration::from_secs(5));
+                let pattern_str = extract_quoted(quoted_part)
                     .map_err(|e| format!("line {line_num}: {e}"))?;
-                log.push(format!(">>> expect {:?} (timeout={}s)", needle, timeout.as_secs()));
-                match sess.expect(needle, timeout) {
+                let pattern = parse_regex(pattern_str)
+                    .map_err(|e| format!("line {line_num}: bad regex: {e}"))?;
+                log.push(format!(">>> expect {:?} (timeout={:.1}s)", pattern_str, timeout.as_secs_f64()));
+                match sess.expect(&pattern, pattern_str, timeout) {
                     Ok(consumed) => {
                         log.push(format!("<<< matched (consumed {} bytes)", consumed.len()));
                     }
                     Err(e) => {
-                        // Print the full conversation log before failing
                         eprintln!("--- expect_pty conversation log ---");
                         for entry in &log {
                             eprintln!("{entry}");
@@ -749,10 +1142,14 @@ fn run_script(script_lines: &[String]) -> Result<(), String> {
                     .as_ref()
                     .ok_or_else(|| format!("line {line_num}: expect_glob before spawn"))?;
                 let (timeout, quoted_part) = parse_expect_args(rest)?;
-                let pattern = extract_quoted(quoted_part)
+                let timeout = timeout.unwrap_or(Duration::from_secs(5));
+                let glob_pattern = extract_quoted(quoted_part)
                     .map_err(|e| format!("line {line_num}: {e}"))?;
-                log.push(format!(">>> expect_glob {:?} (timeout={}s)", pattern, timeout.as_secs()));
-                match sess.expect_glob(pattern, timeout) {
+                let regex_str = glob_to_regex(glob_pattern);
+                let pattern = parse_regex(&regex_str)
+                    .map_err(|e| format!("line {line_num}: glob->regex conversion error: {e}"))?;
+                log.push(format!(">>> expect_glob {:?} → regex {:?} (timeout={:.1}s)", glob_pattern, regex_str, timeout.as_secs_f64()));
+                match sess.expect(&pattern, glob_pattern, timeout) {
                     Ok(consumed) => {
                         log.push(format!("<<< glob matched (consumed {} bytes)", consumed.len()));
                     }
@@ -771,11 +1168,40 @@ fn run_script(script_lines: &[String]) -> Result<(), String> {
                 let sess = session
                     .as_ref()
                     .ok_or_else(|| format!("line {line_num}: not_expect before spawn"))?;
-                let needle = extract_quoted(rest)
+                let (timeout, quoted_part) = parse_expect_args(rest)?;
+                let pattern_str = extract_quoted(quoted_part)
                     .map_err(|e| format!("line {line_num}: {e}"))?;
-                log.push(format!(">>> not_expect {:?}", needle));
-                sess.not_expect(needle)
+                let pattern = parse_regex(pattern_str)
+                    .map_err(|e| format!("line {line_num}: bad regex: {e}"))?;
+                log.push(format!(">>> not_expect {:?} (timeout={:?})", pattern_str, timeout));
+                sess.not_expect(&pattern, pattern_str, timeout)
                     .map_err(|e| format!("line {line_num}: {e}"))?;
+            }
+
+            "expect_line" => {
+                let sess = session
+                    .as_ref()
+                    .ok_or_else(|| format!("line {line_num}: expect_line before spawn"))?;
+                let (timeout, quoted_part) = parse_expect_args(rest)?;
+                let timeout = timeout.unwrap_or(Duration::from_secs(5));
+                let pattern_str = extract_quoted(quoted_part)
+                    .map_err(|e| format!("line {line_num}: {e}"))?;
+                let pattern = parse_regex(pattern_str)
+                    .map_err(|e| format!("line {line_num}: bad regex: {e}"))?;
+                log.push(format!(">>> expect_line {:?} (timeout={:.1}s)", pattern_str, timeout.as_secs_f64()));
+                match sess.expect_line(&pattern, pattern_str, timeout) {
+                    Ok(consumed) => {
+                        log.push(format!("<<< line matched (consumed {} bytes)", consumed.len()));
+                    }
+                    Err(e) => {
+                        eprintln!("--- expect_pty conversation log ---");
+                        for entry in &log {
+                            eprintln!("{entry}");
+                        }
+                        eprintln!("--- end log ---");
+                        return Err(format!("line {line_num}: {e}"));
+                    }
+                }
             }
 
             "send" => {
@@ -1227,5 +1653,251 @@ mod tests {
         let pats = vec!["foo".to_string()];
         let result = find_glob_match(&pats, "xxfooyyfoozz");
         assert_eq!(result, Some((2, 5)));
+    }
+
+    // -- regex engine --
+
+    #[test]
+    fn regex_literal() {
+        let pat = parse_regex("hello").unwrap();
+        assert!(regex_find(&pat, "hello").is_some());
+        assert!(regex_find(&pat, "say hello world").is_some());
+        assert!(regex_find(&pat, "helxo").is_none());
+    }
+
+    #[test]
+    fn regex_dot() {
+        let pat = parse_regex("h.llo").unwrap();
+        assert!(regex_find(&pat, "hello").is_some());
+        assert!(regex_find(&pat, "hallo").is_some());
+        assert!(regex_find(&pat, "hllo").is_none());
+    }
+
+    #[test]
+    fn regex_star() {
+        let pat = parse_regex("ab*c").unwrap();
+        assert!(regex_find(&pat, "ac").is_some());
+        assert!(regex_find(&pat, "abc").is_some());
+        assert!(regex_find(&pat, "abbc").is_some());
+        assert!(regex_find(&pat, "abbbc").is_some());
+    }
+
+    #[test]
+    fn regex_plus() {
+        let pat = parse_regex("ab+c").unwrap();
+        assert!(regex_find(&pat, "ac").is_none());
+        assert!(regex_find(&pat, "abc").is_some());
+        assert!(regex_find(&pat, "abbc").is_some());
+    }
+
+    #[test]
+    fn regex_question() {
+        let pat = parse_regex("ab?c").unwrap();
+        assert!(regex_find(&pat, "ac").is_some());
+        assert!(regex_find(&pat, "abc").is_some());
+        assert!(regex_find(&pat, "abbc").is_none());
+    }
+
+    #[test]
+    fn regex_dot_star() {
+        let pat = parse_regex("a.*b").unwrap();
+        assert!(regex_find(&pat, "ab").is_some());
+        assert!(regex_find(&pat, "aXb").is_some());
+        assert!(regex_find(&pat, "aXYZb").is_some());
+        assert!(regex_find(&pat, "a").is_none());
+    }
+
+    #[test]
+    fn regex_dot_plus() {
+        let pat = parse_regex("a.+b").unwrap();
+        assert!(regex_find(&pat, "ab").is_none());
+        assert!(regex_find(&pat, "aXb").is_some());
+        assert!(regex_find(&pat, "aXYb").is_some());
+    }
+
+    #[test]
+    fn regex_alternation() {
+        let pat = parse_regex("(cat|dog)").unwrap();
+        assert!(regex_find(&pat, "I have a cat").is_some());
+        assert!(regex_find(&pat, "I have a dog").is_some());
+        assert!(regex_find(&pat, "I have a bird").is_none());
+    }
+
+    #[test]
+    fn regex_alternation_three() {
+        let pat = parse_regex("(a|bb|ccc)").unwrap();
+        assert!(regex_find(&pat, "xa").is_some());
+        assert!(regex_find(&pat, "xbb").is_some());
+        assert!(regex_find(&pat, "xccc").is_some());
+        assert!(regex_find(&pat, "xbc").is_none());
+    }
+
+    #[test]
+    fn regex_bracket_digit() {
+        let pat = parse_regex("[[:digit:]]+").unwrap();
+        assert!(regex_find(&pat, "abc123def").is_some());
+        assert!(regex_find(&pat, "no digits").is_none());
+    }
+
+    #[test]
+    fn regex_bracket_range() {
+        let pat = parse_regex("[a-z]+").unwrap();
+        assert!(regex_find(&pat, "HELLO world").is_some());
+        assert!(regex_find(&pat, "12345").is_none());
+    }
+
+    #[test]
+    fn regex_escape() {
+        let pat = parse_regex(r"\[1\]").unwrap();
+        assert!(regex_find(&pat, "[1]").is_some());
+        assert!(regex_find(&pat, "x[1]y").is_some());
+        assert!(regex_find(&pat, "[2]").is_none());
+    }
+
+    #[test]
+    fn regex_escape_dot() {
+        let pat = parse_regex(r"a\.b").unwrap();
+        assert!(regex_find(&pat, "a.b").is_some());
+        assert!(regex_find(&pat, "aXb").is_none());
+    }
+
+    #[test]
+    fn regex_escape_special() {
+        let pat = parse_regex(r"\(\)\+\*\?").unwrap();
+        assert!(regex_find(&pat, "()+*?").is_some());
+    }
+
+    #[test]
+    fn regex_job_notification() {
+        let pat = parse_regex(r"\[[[:digit:]]+\] [[:digit:]]+").unwrap();
+        assert!(regex_find(&pat, "[1] 12345").is_some());
+        assert!(regex_find(&pat, "foo [2] 99 bar").is_some());
+        assert!(regex_find(&pat, "[a] 123").is_none());
+    }
+
+    #[test]
+    fn regex_stopped_suspended() {
+        let pat = parse_regex("(Stopped|Suspended)").unwrap();
+        assert!(regex_find(&pat, "[1]+  Stopped  sleep 60").is_some());
+        assert!(regex_find(&pat, "[1]+  Suspended  sleep 60").is_some());
+        assert!(regex_find(&pat, "[1]+  Running  sleep 60").is_none());
+    }
+
+    #[test]
+    fn regex_complex_job_status() {
+        let pat = parse_regex(r"\[[[:digit:]]+\][+ ] (Running|Done|Stopped|Suspended)").unwrap();
+        assert!(regex_find(&pat, "[1]+ Running  sleep 60").is_some());
+        assert!(regex_find(&pat, "[2]  Done  ls").is_some());
+        assert!(regex_find(&pat, "[1]+ Stopped  sleep 60").is_some());
+    }
+
+    #[test]
+    fn regex_done_with_code() {
+        let pat = parse_regex(r"Done\([[:digit:]]+\)").unwrap();
+        assert!(regex_find(&pat, "[1]+  Done(2)  false").is_some());
+        assert!(regex_find(&pat, "[1]+  Done(127)  nosuchcmd").is_some());
+        assert!(regex_find(&pat, "[1]+  Done  true").is_none());
+    }
+
+    #[test]
+    fn regex_find_returns_position() {
+        let pat = parse_regex("foo").unwrap();
+        assert_eq!(regex_find(&pat, "xxfooyyfoozz"), Some((2, 5)));
+    }
+
+    #[test]
+    fn regex_find_empty_pattern() {
+        let pat = parse_regex("").unwrap();
+        assert_eq!(regex_find(&pat, "hello"), Some((0, 0)));
+    }
+
+    #[test]
+    fn regex_nested_group() {
+        let pat = parse_regex("((a|b)c)+").unwrap();
+        assert!(regex_find(&pat, "ac").is_some());
+        assert!(regex_find(&pat, "bc").is_some());
+        assert!(regex_find(&pat, "acbc").is_some());
+        assert!(regex_find(&pat, "cc").is_none());
+    }
+
+    #[test]
+    fn regex_group_with_repeat() {
+        let pat = parse_regex("(ab)+").unwrap();
+        assert!(regex_find(&pat, "ab").is_some());
+        assert!(regex_find(&pat, "abab").is_some());
+        assert!(regex_find(&pat, "ba").is_none());
+    }
+
+    #[test]
+    fn regex_backtracking() {
+        let pat = parse_regex("a.*b.*c").unwrap();
+        assert!(regex_find(&pat, "aXbYc").is_some());
+        assert!(regex_find(&pat, "abc").is_some());
+        assert!(regex_find(&pat, "aXbY").is_none());
+    }
+
+    #[test]
+    fn regex_negated_bracket() {
+        let pat = parse_regex("[^abc]+").unwrap();
+        assert!(regex_find(&pat, "xyz").is_some());
+        assert!(regex_find(&pat, "abc").is_none());
+    }
+
+    // -- glob_to_regex --
+
+    #[test]
+    fn glob_to_regex_basic() {
+        assert_eq!(glob_to_regex("hello"), "hello");
+        assert_eq!(glob_to_regex("*"), ".*");
+        assert_eq!(glob_to_regex("?"), ".");
+        assert_eq!(glob_to_regex("a*b"), "a.*b");
+    }
+
+    #[test]
+    fn glob_to_regex_braces() {
+        assert_eq!(glob_to_regex("{a,b}"), "(a|b)");
+        assert_eq!(glob_to_regex("{Stopped,Suspended}"), "(Stopped|Suspended)");
+    }
+
+    #[test]
+    fn glob_to_regex_special_chars() {
+        assert_eq!(glob_to_regex("file.txt"), "file\\.txt");
+        assert_eq!(glob_to_regex("(test)"), "\\(test\\)");
+    }
+
+    #[test]
+    fn glob_to_regex_bracket() {
+        assert_eq!(glob_to_regex("[abc]"), "[abc]");
+        assert_eq!(glob_to_regex("[[:digit:]]"), "[[:digit:]]");
+        assert_eq!(glob_to_regex("[[]"), "[[]");
+    }
+
+    #[test]
+    fn glob_to_regex_roundtrip() {
+        let glob = "[[]?]*{Stopped,Suspended}*sleep 60*";
+        let regex_str = glob_to_regex(glob);
+        let pat = parse_regex(&regex_str).unwrap();
+        assert!(regex_find(&pat, "[1]+  Stopped  sleep 60").is_some());
+        assert!(regex_find(&pat, "[1]+  Suspended  sleep 60").is_some());
+        assert!(regex_find(&pat, "[1]+  Running  sleep 60").is_none());
+    }
+
+    // -- parse_timeout_value --
+
+    #[test]
+    fn timeout_millis() {
+        assert_eq!(parse_timeout_value("500ms").unwrap(), Duration::from_millis(500));
+        assert_eq!(parse_timeout_value("2000ms").unwrap(), Duration::from_millis(2000));
+    }
+
+    #[test]
+    fn timeout_seconds() {
+        assert_eq!(parse_timeout_value("5s").unwrap(), Duration::from_secs(5));
+        assert_eq!(parse_timeout_value("1s").unwrap(), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn timeout_no_suffix_fails() {
+        assert!(parse_timeout_value("500").is_err());
     }
 }

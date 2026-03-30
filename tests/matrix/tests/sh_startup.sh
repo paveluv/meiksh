@@ -13,7 +13,7 @@
 # If command_name is not specified, special parameter 0 shall be set to the
 # value of the first argument passed to sh from its parent.
 
-assert_stdout "$TARGET_SHELL" \
+assert_stdout "${TARGET_SHELL%% *}" \
     "echo 'echo \$0' | $TARGET_SHELL"
 
 # ==============================================================================

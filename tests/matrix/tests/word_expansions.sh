@@ -812,7 +812,7 @@ assert_stdout "-1" \
 assert_pty_script 'spawn $TARGET_SHELL -i
 expect "$ "
 send "sleep 0 &"
-expect_glob "[[]?] *"
+expect "\[[[:digit:]]+\] [[:digit:]]+"
 expect "$ "
 send "echo done"
 expect "done"

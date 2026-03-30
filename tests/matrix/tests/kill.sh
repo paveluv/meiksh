@@ -317,4 +317,64 @@ expect "$ "
 sendeof
 wait'
 
+# ==============================================================================
+# kill %% — current job
+# ==============================================================================
+# REQUIREMENT: SHALL-KILL-1240:
+# %% refers to the current job. The kill utility shall accept job_id operands.
+
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -m"
+expect "$ "
+send "sleep 60 &"
+expect "$ "
+send "kill %%; echo kill_ok_$?"
+expect "kill_ok_0"
+send "wait 2>/dev/null"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# kill %+ — current job (equivalent to %%)
+# ==============================================================================
+# REQUIREMENT: SHALL-KILL-1240:
+# %+ is equivalent to %%. It refers to the current job.
+
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -m"
+expect "$ "
+send "sleep 60 &"
+expect "$ "
+send "kill %+; echo kill_ok_$?"
+expect "kill_ok_0"
+send "wait 2>/dev/null"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# kill %- — previous job
+# ==============================================================================
+# REQUIREMENT: SHALL-KILL-1240:
+# %- refers to the previous job. When two background jobs exist, %- targets
+# the one that was the current job before the most recent one.
+
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -m"
+expect "$ "
+send "sleep 60 &"
+expect "$ "
+send "sleep 61 &"
+expect "$ "
+send "kill %-; echo kill_ok_$?"
+expect "kill_ok_0"
+send "kill %+; wait 2>/dev/null"
+expect "$ "
+sendeof
+wait'
+
 report

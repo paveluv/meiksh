@@ -114,7 +114,7 @@ expect "$ "
 send "echo *.txt"
 expect "$ "
 send "fc -l -1 -1"
-expect "echo *.txt"
+expect "echo \*\.txt"
 expect "$ "
 sendeof
 wait'

@@ -283,4 +283,59 @@ expect "fc_exit_0"
 sendeof
 wait'
 
+# ==============================================================================
+# fc -l with absolute line numbers
+# ==============================================================================
+# REQUIREMENT: SHALL-FC-1045:
+# A positive number representing a command number; command numbers can be
+# displayed with the -l option.
+
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "echo a"
+expect "a"
+expect "$ "
+send "echo b"
+expect "b"
+expect "$ "
+send "echo c"
+expect "c"
+expect "$ "
+send "fc -l 1 3"
+expect "echo a"
+expect "echo b"
+expect "echo c"
+sendeof
+wait'
+
+# ==============================================================================
+# fc -l with out-of-range line number
+# ==============================================================================
+# REQUIREMENT: SHALL-FC-1046:
+# Verify the shell does not crash on out-of-range history line numbers.
+
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "fc -l 9999; echo fc_done"
+expect "fc_done"
+sendeof
+wait'
+
+# ==============================================================================
+# fc -s old=new with string-pattern operand
+# ==============================================================================
+# REQUIREMENT: SHALL-FC-1044:
+# fc -s [old=new] [command] — re-execute the command, performing the
+# optional substitution of old with new.
+
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "echo OLD_VALUE"
+expect "OLD_VALUE"
+expect "$ "
+send "fc -s OLD=NEW echo"
+expect "NEW_VALUE"
+sendeof
+wait'
+
 report

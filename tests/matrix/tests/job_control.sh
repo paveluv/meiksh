@@ -307,7 +307,7 @@ send "sleep 0.1 &"
 expect "$ "
 sleep 500
 send "echo trigger_prompt"
-expect_glob "[[]?]*Done*sleep*"
+expect "\[[[:digit:]]+\].*Done.*sleep"
 sendeof
 wait'
 
@@ -501,5 +501,50 @@ esac
 
 test_cmd='set -- a b c; echo $#'
 assert_stdout "3" "$TARGET_SHELL -c '$test_cmd'"
+
+# ==============================================================================
+# set -b immediate background job notification
+# ==============================================================================
+# REQUIREMENT: SHALL-2-11-453:
+# If set -b is enabled, the message shall be written either immediately after
+# the job became suspended or immediately prior to writing the next prompt for
+# input.
+
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -m"
+expect "$ "
+send "set -b"
+expect "$ "
+send "sleep 0.1 &"
+expect "\[[[:digit:]]+\] [[:digit:]]+"
+sleep 1000
+expect "Done"
+send "echo setb_ok"
+expect "setb_ok"
+sendeof
+wait'
+
+# ==============================================================================
+# Multiple async commands in one list
+# ==============================================================================
+# REQUIREMENT: SHALL-2-11-432:
+# For the purposes of job control, a list that includes more than one
+# asynchronous AND-OR list shall be treated as if it were split into multiple
+# separate lists, each ending with an asynchronous AND-OR list.
+
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -m"
+expect "$ "
+send "sleep 1 & sleep 2 & sleep 3 &"
+expect "\[1\]"
+expect "\[2\]"
+expect "\[3\]"
+expect "$ "
+send "kill %1 %2 %3 2>/dev/null; wait"
+expect "$ "
+sendeof
+wait'
 
 report

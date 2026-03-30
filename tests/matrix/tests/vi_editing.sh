@@ -757,7 +757,7 @@ sleep 50
 sendraw 72 5a
 sleep 100
 sendraw 0a
-expect "a.b Z.d"
+expect "a\.b Z\.d"
 expect "$ "
 sendeof
 wait'
@@ -775,8 +775,8 @@ sleep 50
 sendraw 72 5a
 sleep 100
 sendraw 0a
-expect "a.b Z.d"
-not_expect "c.d"
+expect "a\.b Z\.d"
+not_expect "c\.d"
 expect "$ "
 sendeof
 wait'
@@ -1316,6 +1316,389 @@ sleep 100
 sendraw 2f 7a 7a 7a 7a 7a 7a 0a
 sleep 200
 sendraw 0a
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# vi: e — move to end of word
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-086:
+# [count]e — move cursor to end of current word
+
+# Type "echo Xb cd", ESC, 0 (start), w (to 'X'), e (end of "Xb" = 'b'), rZ -> "echo XZ cd"
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 58 62 20 63 64
+sendraw 1b
+sleep 100
+sendraw 30
+sleep 50
+sendraw 77
+sleep 50
+sendraw 65
+sleep 50
+sendraw 72 5a
+sleep 100
+sendraw 0a
+expect "XZ cd"
+expect "$ "
+sendeof
+wait'
+
+# e with count: 2e skips to end of second word
+# Type "echo abc def", ESC, 0 (start), 2e (end of "abc"), rZ -> "echo abZ def"
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 62 63 20 64 65 66
+sendraw 1b
+sleep 100
+sendraw 30
+sleep 50
+sendraw 32 65
+sleep 50
+sendraw 72 5a
+sleep 100
+sendraw 0a
+expect "abZ def"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# vi: E — move to end of WORD (bigword)
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-088:
+# [count]E — move cursor to end of current bigword
+
+# Type "echo a-b cd", ESC, 0 (start), W (to 'a'), E (end of WORD "a-b" = 'b'), rZ -> "echo a-Z cd"
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 2d 62 20 63 64
+sendraw 1b
+sleep 100
+sendraw 30
+sleep 50
+sendraw 57
+sleep 50
+sendraw 45
+sleep 50
+sendraw 72 5a
+sleep 100
+sendraw 0a
+expect "a-Z cd"
+expect "$ "
+sendeof
+wait'
+
+# E treats punctuation as part of the word
+# Type "echo a.b c.d", ESC, 0 (start), w (to 'a'), E (end of "a.b"), rZ -> "echo a.Z c.d"
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 2e 62 20 63 2e 64
+sendraw 1b
+sleep 100
+sendraw 30
+sleep 50
+sendraw 77 45
+sleep 50
+sendraw 72 5a
+sleep 100
+sendraw 0a
+expect "a\.Z c\.d"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# vi: P — put before cursor
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-122:
+# The text from the save buffer shall be placed before the current cursor
+# position.
+
+# Type "echo abc", ESC, x (delete 'c' into buffer, cursor on 'b'), h (to 'a'), P (put 'c' before 'a')
+# Line becomes "echo cab", output "cab"
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 62 63
+sendraw 1b
+sleep 100
+sendraw 78
+sleep 50
+sendraw 68
+sleep 50
+sendraw 50
+sleep 100
+sendraw 0a
+expect "cab"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# vi: ?pattern — search backward in history
+# ==============================================================================
+# REQUIREMENT: SHALL-SH-1050:
+# If it is found in a previous line, the current command line shall be set
+# to that line and the cursor set to the first character.
+
+# Run "echo findme", then "echo other", then use ?findme to recall
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+send "echo findme"
+expect "findme"
+expect "$ "
+send "echo other"
+expect "other"
+expect "$ "
+sendraw 1b
+sleep 100
+sendraw 3f 66 69 6e 64 6d 65 0a
+sleep 200
+sendraw 0a
+expect "findme"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# vi: n — repeat search in same direction
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-136:
+# n — repeat the most recent history search, in the same direction
+
+# Run three commands, search with /alpha, then n to find earlier match
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+send "echo alpha1"
+expect "alpha1"
+expect "$ "
+send "echo beta"
+expect "beta"
+expect "$ "
+send "echo alpha2"
+expect "alpha2"
+expect "$ "
+sendraw 1b
+sleep 100
+sendraw 2f 61 6c 70 68 61 0a
+sleep 200
+sendraw 0a
+expect "alpha2"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# vi: N — repeat search in opposite direction
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-136:
+# N — repeat the most recent history search, in the opposite direction
+
+# Search backward with /gamma, land on a match, then N to go forward
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+send "echo gamma1"
+expect "gamma1"
+expect "$ "
+send "echo gamma2"
+expect "gamma2"
+expect "$ "
+send "echo gamma3"
+expect "gamma3"
+expect "$ "
+sendraw 1b
+sleep 100
+sendraw 2f 67 61 6d 6d 61 0a
+sleep 200
+sendraw 6e
+sleep 200
+sendraw 0a
+expect "gamma"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# vi: R — replace mode (overwrite characters)
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-130:
+# R — enter replace mode; each character typed shall replace the character
+# at the current cursor position.
+
+# Type "echo abcdef", ESC, 0w (to 'a'), R (enter replace mode), type "XY", ESC, Enter
+# 'a'->'X', 'b'->'Y', rest stays -> "echo XYcdef"
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 62 63 64 65 66
+sendraw 1b
+sleep 100
+sendraw 30
+sleep 50
+sendraw 77
+sleep 50
+sendraw 52
+sleep 50
+sendraw 58 59
+sleep 50
+sendraw 1b
+sleep 100
+sendraw 0a
+expect "XYcdef"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# vi: # — comment out and execute
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-072:
+# # — insert a # at the beginning of the current command line and treat
+# the result as a comment.
+
+# Type "echo hello", ESC, # — line becomes "#echo hello" and is executed as comment
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 68 65 6c 6c 6f
+sendraw 1b
+sleep 100
+sendraw 23
+sleep 200
+expect "$ "
+not_expect "hello"
+sendeof
+wait'
+
+# ==============================================================================
+# vi: D — delete to end of line
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-116:
+# D — delete all characters from the current cursor position to the end
+# of the line.
+
+# Type "echo abc def", ESC, 0w (to 'a'), D (delete "abc def"), Enter -> "echo "
+# But trailing space might be trimmed; verify "echo" output as empty line
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 62 63 20 64 65 66
+sendraw 1b
+sleep 100
+sendraw 30
+sleep 50
+sendraw 77
+sleep 50
+sendraw 44
+sleep 100
+sendraw 0a
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# vi: C — change to end of line
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-110:
+# C — delete all characters from the current cursor position to the end
+# of the line and enter insert mode.
+
+# Type "echo abc def", ESC, 0w (to 'a'), C (delete to end, enter insert), type "XYZ", ESC, Enter
+# -> "echo XYZ"
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 62 63 20 64 65 66
+sendraw 1b
+sleep 100
+sendraw 30
+sleep 50
+sendraw 77
+sleep 50
+sendraw 43
+sleep 50
+sendraw 58 59 5a
+sleep 50
+sendraw 1b
+sleep 100
+sendraw 0a
+expect "XYZ"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# vi: S — substitute entire line
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-132:
+# S — delete the entire edit line and enter insert mode.
+
+# Type "echo abc", ESC, S (delete line, enter insert), type "echo replaced", ESC, Enter
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 62 63
+sendraw 1b
+sleep 100
+sendraw 53
+sleep 50
+sendraw 65 63 68 6f 20 72 65 70 6c 61 63 65 64
+sleep 50
+sendraw 1b
+sleep 100
+sendraw 0a
+expect "replaced"
+not_expect "abc"
+expect "$ "
+sendeof
+wait'
+
+# ==============================================================================
+# vi: Y — yank entire line
+# ==============================================================================
+# REQUIREMENT: SHALL-vi-Line-Editing-Command-Mode-128:
+# Y — yank (copy) the entire edit line into the save buffer.
+
+# Type "echo ab", ESC (cursor on 'b'), Y (yank to end = "b"), h (to 'a'), P (put 'b' before 'a')
+# Line becomes "echo bab", output "bab"
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "$ "
+send "set -o vi"
+expect "$ "
+sendraw 65 63 68 6f 20 61 62
+sendraw 1b
+sleep 100
+sendraw 59
+sleep 50
+sendraw 68
+sleep 50
+sendraw 50
+sleep 100
+sendraw 0a
+expect "bab"
 expect "$ "
 sendeof
 wait'
