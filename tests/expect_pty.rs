@@ -438,7 +438,7 @@ fn parse_expect_args(rest: &str) -> Result<(Option<Duration>, &str), String> {
     }
 }
 
-// ── Glob pattern matching ────────────────────────────────────────────────────
+// ── POSIX bracket expressions ────────────────────────────────────────────────
 
 /// Test whether character `c` belongs to a POSIX named character class.
 fn is_char_class(name: &str, c: char) -> bool {

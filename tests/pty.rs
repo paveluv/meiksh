@@ -1,5 +1,3 @@
-#![allow(non_camel_case_types)]
-
 use std::env;
 use std::io::{self, Read, Write};
 use std::os::unix::io::{FromRawFd, RawFd};
@@ -7,59 +5,46 @@ use std::os::unix::process::CommandExt;
 use std::process::Command;
 use std::thread;
 
-pub type c_int = i32;
-pub type pid_t = i32;
+type CInt = libc::c_int;
 
 #[repr(C)]
-pub struct termios {
-    pub c_iflag: usize,
-    pub c_oflag: usize,
-    pub c_cflag: usize,
-    pub c_lflag: usize,
-    pub c_cc: [u8; 20],
-    pub c_ispeed: usize,
-    pub c_ospeed: usize,
-}
-
-#[repr(C)]
-pub struct winsize {
-    pub ws_row: u16,
-    pub ws_col: u16,
-    pub ws_xpixel: u16,
-    pub ws_ypixel: u16,
+struct Winsize {
+    ws_row: u16,
+    ws_col: u16,
+    ws_xpixel: u16,
+    ws_ypixel: u16,
 }
 
 unsafe extern "C" {
-    pub fn forkpty(
-        amaster: *mut c_int,
-        name: *mut i8,
-        termp: *mut termios,
-        winp: *mut winsize,
-    ) -> pid_t;
-    pub fn waitpid(pid: pid_t, status: *mut c_int, options: c_int) -> pid_t;
+    fn forkpty(
+        amaster: *mut CInt,
+        name: *mut libc::c_char,
+        termp: *mut libc::termios,
+        winp: *mut Winsize,
+    ) -> libc::pid_t;
 }
 
-fn wifexited(status: c_int) -> bool {
-    (status & 0x7f) == 0
+fn wifexited(status: CInt) -> bool {
+    libc::WIFEXITED(status)
 }
 
-fn wexitstatus(status: c_int) -> i32 {
-    (status >> 8) & 0xff
+fn wexitstatus(status: CInt) -> i32 {
+    libc::WEXITSTATUS(status)
 }
 
-pub fn do_forkpty() -> io::Result<(pid_t, RawFd)> {
+fn do_forkpty() -> io::Result<(libc::pid_t, RawFd)> {
     unsafe {
-        let mut master: c_int = -1;
-        let mut termp: termios = std::mem::zeroed();
-        let mut winp: winsize = std::mem::zeroed();
+        let mut master: CInt = -1;
+        let mut termp: libc::termios = std::mem::zeroed();
+        let mut winp: Winsize = std::mem::zeroed();
         winp.ws_row = 24;
         winp.ws_col = 80;
 
         let pid = forkpty(
-            &mut master as *mut _,
+            &mut master,
             std::ptr::null_mut(),
-            &mut termp as *mut _,
-            &mut winp as *mut _,
+            &mut termp,
+            &mut winp,
         );
 
         if pid < 0 {
@@ -130,8 +115,8 @@ fn main() {
             }
             
             unsafe {
-                let mut status = 0;
-                waitpid(pid, &mut status, 0);
+                let mut status: CInt = 0;
+                libc::waitpid(pid, &mut status, 0);
                 if wifexited(status) {
                     std::process::exit(wexitstatus(status));
                 } else {
