@@ -3,8 +3,8 @@
 #
 # Job Control is the magical feature that allows users to seamlessly
 # suspend, resume, and manage multiple processes running on a single TTY.
-# To properly test this, we must run the target shell under our Rust
-# Pseudo-TTY wrapper to trick it into thinking it owns a real terminal.
+# To properly test this, we drive the target shell under a real PTY
+# using expect_pty.
 
 . "$MATRIX_DIR/lib.sh"
 
@@ -186,39 +186,15 @@
 # signal to the default action and raise the signal (after taking any
 # appropriate steps, such as restoring terminal settings).
 
-# Our test simulates a user starting a background process and then
-# interrogating the shell using the `jobs` command. A compliant shell
-# should track background processes, and return their state and PID
-# back to the user on demand.
-
-interactive_script=$(cat << 'EOF'
-sleep 500ms
-echo 'sleep 10 &'
-sleep 500ms
-echo 'jobs'
-sleep 500ms
-echo 'exit'
-EOF
-)
-
-# We spin up the PTY tool and run the target shell in interactive mode.
-cmd="( $interactive_script ) | run_pty $TARGET_SHELL -i"
-
-# We run the command and capture raw output from the PTY session.
-actual=$(eval "$cmd" 2>&1)
-
-# Does the output from `jobs` reflect the background process? We look for
-# the job number `[1]`, the command name `sleep 10`, and its status.
-case "$actual" in
-    *"[1]"*"Running"*"sleep 10"* | \
-    *"[1]"*"sleep 10"* | \
-    *"[1]"*"+"*"Running"*"sleep 10"*)
-        pass
-        ;;
-    *)
-        fail "Expected 'jobs' command to show background job, got: $actual"
-        ;;
-esac
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "\\$ "
+send "sleep 10 &"
+expect "\[[[:digit:]]+\] [[:digit:]]+"
+expect "\\$ "
+send "jobs"
+expect "\[1\].*sleep 10"
+sendeof
+wait'
 
 
 # ==============================================================================

@@ -90,10 +90,6 @@ assert_stderr_contains() {
     esac
 }
 
-run_pty() {
-    "$CARGO" run --quiet --manifest-path "$REPO_ROOT/Cargo.toml" --bin pty -- "$@"
-}
-
 run_expect_pty() {
     "$CARGO" run --quiet --manifest-path "$REPO_ROOT/Cargo.toml" --bin expect_pty
 }

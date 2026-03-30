@@ -107,50 +107,25 @@ assert_stdout 'a#b' \
 # However, POSIX says aliases are processed for interactive shells or when
 # explicitly enabled.
 
-interactive_script=$(cat << 'EOF'
-sleep 500ms
-echo 'alias foo="echo aliased"'
-sleep 500ms
-echo 'foo'
-sleep 500ms
-echo 'exit'
-EOF
-)
-
-cmd="( $interactive_script ) | run_pty $TARGET_SHELL -i"
-actual=$(eval "$cmd" 2>&1)
-
-case "$actual" in
-    *"aliased"*)
-        pass
-        ;;
-    *)
-        fail "Expected alias substitution to print 'aliased', got: $actual"
-        ;;
-esac
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "\\$ "
+send "alias foo=\"echo aliased\""
+expect "\\$ "
+send "foo"
+expect "aliased"
+sendeof
+wait'
 
 # Test alias with trailing space allowing subsequent word to be aliased.
-interactive_script=$(cat << 'EOF'
-sleep 500ms
-echo 'alias a1="echo "'
-echo 'alias a2="chained"'
-sleep 500ms
-echo 'a1 a2'
-sleep 500ms
-echo 'exit'
-EOF
-)
-
-cmd="( $interactive_script ) | run_pty $TARGET_SHELL -i"
-actual=$(eval "$cmd" 2>&1)
-
-case "$actual" in
-    *"chained"*)
-        pass
-        ;;
-    *)
-        fail "Expected chained alias substitution to print 'chained', got: $actual"
-        ;;
-esac
+assert_pty_script 'spawn $TARGET_SHELL -i
+expect "\\$ "
+send "alias a1=\"echo \""
+expect "\\$ "
+send "alias a2=\"chained\""
+expect "\\$ "
+send "a1 a2"
+expect "chained"
+sendeof
+wait'
 
 report
