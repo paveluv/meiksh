@@ -29,7 +29,7 @@ pub struct winsize {
     pub ws_ypixel: u16,
 }
 
-extern "C" {
+unsafe extern "C" {
     pub fn forkpty(
         amaster: *mut c_int,
         name: *mut i8,

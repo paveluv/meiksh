@@ -7,6 +7,7 @@
 # settings—PS1, LANG, aliases, shell rc files—cannot affect results.
 
 MATRIX_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$MATRIX_DIR/../.." && pwd)"
 TEST_DIR="${1:-$MATRIX_DIR/tests}"
 FAILED_TESTS=0
 PASSED_TESTS=0
@@ -16,6 +17,20 @@ TARGET_SHELL="${TARGET_SHELL:-/bin/sh}"
 # Resolve the POSIX shell that is running this script.  We reuse it
 # (via env -i) to execute each test in a pristine environment.
 RUNNER_SHELL="$(command -v sh)"
+
+echo "Building PTY helpers..."
+CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$REPO_ROOT/target}"
+PTY_BIN="$CARGO_TARGET_DIR/debug/pty"
+EXPECT_PTY_BIN="$CARGO_TARGET_DIR/debug/expect_pty"
+
+if ! cargo build --bin pty --bin expect_pty --manifest-path "$REPO_ROOT/Cargo.toml" 2>&1; then
+    echo "cargo build failed; checking for pre-built binaries..."
+    if [ ! -x "$PTY_BIN" ] || [ ! -x "$EXPECT_PTY_BIN" ]; then
+        echo "No usable PTY binaries found. Fix the build or run: cargo build --bin pty --bin expect_pty"
+        exit 1
+    fi
+    echo "Using previously built binaries."
+fi
 
 echo "Running POSIX Compliance Test Suite..."
 
@@ -46,6 +61,8 @@ for test_script in "$TEST_DIR"/*.sh; do
         HISTFILE="/dev/null" \
         TARGET_SHELL="$TARGET_SHELL" \
         MATRIX_DIR="$MATRIX_DIR" \
+        PTY_BIN="$PTY_BIN" \
+        EXPECT_PTY_BIN="$EXPECT_PTY_BIN" \
         TEST_TMP="$TEST_TMP" \
         "$RUNNER_SHELL" -c '
             cd "$TEST_TMP" || exit 1

@@ -117,7 +117,7 @@ echo 'exit'
 EOF
 )
 
-cmd="( $interactive_script ) | \"$MATRIX_DIR/pty\" $TARGET_SHELL -i"
+cmd="( $interactive_script ) | \"$PTY_BIN\" $TARGET_SHELL -i"
 actual=$(eval "$cmd" 2>&1)
 
 case "$actual" in
@@ -141,7 +141,7 @@ echo 'exit'
 EOF
 )
 
-cmd="( $interactive_script ) | \"$MATRIX_DIR/pty\" $TARGET_SHELL -i"
+cmd="( $interactive_script ) | \"$PTY_BIN\" $TARGET_SHELL -i"
 actual=$(eval "$cmd" 2>&1)
 
 case "$actual" in

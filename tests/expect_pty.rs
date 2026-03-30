@@ -1116,7 +1116,7 @@ fn run_script(script_lines: &[String]) -> Result<(), String> {
                     .as_ref()
                     .ok_or_else(|| format!("line {line_num}: expect before spawn"))?;
                 let (timeout, quoted_part) = parse_expect_args(rest)?;
-                let timeout = timeout.unwrap_or(Duration::from_secs(5));
+                let timeout = timeout.unwrap_or(Duration::from_millis(200));
                 let pattern_str = extract_quoted(quoted_part)
                     .map_err(|e| format!("line {line_num}: {e}"))?;
                 let pattern = parse_regex(pattern_str)
@@ -1142,7 +1142,7 @@ fn run_script(script_lines: &[String]) -> Result<(), String> {
                     .as_ref()
                     .ok_or_else(|| format!("line {line_num}: expect_glob before spawn"))?;
                 let (timeout, quoted_part) = parse_expect_args(rest)?;
-                let timeout = timeout.unwrap_or(Duration::from_secs(5));
+                let timeout = timeout.unwrap_or(Duration::from_millis(200));
                 let glob_pattern = extract_quoted(quoted_part)
                     .map_err(|e| format!("line {line_num}: {e}"))?;
                 let regex_str = glob_to_regex(glob_pattern);
@@ -1183,7 +1183,7 @@ fn run_script(script_lines: &[String]) -> Result<(), String> {
                     .as_ref()
                     .ok_or_else(|| format!("line {line_num}: expect_line before spawn"))?;
                 let (timeout, quoted_part) = parse_expect_args(rest)?;
-                let timeout = timeout.unwrap_or(Duration::from_secs(5));
+                let timeout = timeout.unwrap_or(Duration::from_millis(200));
                 let pattern_str = extract_quoted(quoted_part)
                     .map_err(|e| format!("line {line_num}: {e}"))?;
                 let pattern = parse_regex(pattern_str)
