@@ -187,10 +187,10 @@
 # appropriate steps, such as restoring terminal settings).
 
 assert_pty_script 'spawn $TARGET_SHELL -i
-expect "\\$ "
+expect "$ "
 send "sleep 10 &"
 expect "\[[[:digit:]]+\] [[:digit:]]+"
-expect "\\$ "
+expect "$ "
 send "jobs"
 expect "\[1\].*sleep 10"
 sendeof
