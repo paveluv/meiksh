@@ -291,7 +291,7 @@ echo 'exit'
 EOF
 )
 
-cmd="( $interactive_script ) | \"$PTY_BIN\" $TARGET_SHELL -i"
+cmd="( $interactive_script ) | run_pty $TARGET_SHELL -i"
 actual=$(eval "$cmd" 2>&1)
 
 # Testing that PS1 expansion expands command history number `!` and command

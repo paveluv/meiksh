@@ -17,16 +17,9 @@ TARGET_SHELL="${TARGET_SHELL:-/bin/sh}"
 # Resolve the POSIX shell that is running this script.  We reuse it
 # (via env -i) to execute each test in a pristine environment.
 RUNNER_SHELL="$(command -v sh)"
-
-echo "Building PTY helpers..."
-if ! cargo build --quiet --bin pty --bin expect_pty --manifest-path "$REPO_ROOT/Cargo.toml" 2>/dev/null; then
-    echo "Failed to build PTY helpers."
-    exit 1
-fi
-
-CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$REPO_ROOT/target}"
-PTY_BIN="$CARGO_TARGET_DIR/debug/pty"
-EXPECT_PTY_BIN="$CARGO_TARGET_DIR/debug/expect_pty"
+CARGO="$(command -v cargo)"
+RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
 
 echo "Running POSIX Compliance Test Suite..."
 
@@ -57,8 +50,10 @@ for test_script in "$TEST_DIR"/*.sh; do
         HISTFILE="/dev/null" \
         TARGET_SHELL="$TARGET_SHELL" \
         MATRIX_DIR="$MATRIX_DIR" \
-        PTY_BIN="$PTY_BIN" \
-        EXPECT_PTY_BIN="$EXPECT_PTY_BIN" \
+        REPO_ROOT="$REPO_ROOT" \
+        CARGO="$CARGO" \
+        RUSTUP_HOME="$RUSTUP_HOME" \
+        CARGO_HOME="$CARGO_HOME" \
         TEST_TMP="$TEST_TMP" \
         "$RUNNER_SHELL" -c '
             cd "$TEST_TMP" || exit 1

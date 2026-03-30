@@ -42,7 +42,7 @@ EOF
 
 # We invoke the target shell strictly in interactive mode (`-i`) and pass
 # it our simulated keystrokes.
-cmd="( $interactive_script ) | \"$PTY_BIN\" $TARGET_SHELL -i"
+cmd="( $interactive_script ) | run_pty $TARGET_SHELL -i"
 
 # We run the command and capture raw output from the PTY session.
 actual=$(eval "$cmd" 2>&1)
