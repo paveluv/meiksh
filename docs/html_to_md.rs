@@ -384,6 +384,7 @@ fn render_list_item_primary(item: &Element) -> String {
             Node::Text(text) => raw.push_str(&format_plain_text(&decode_html_entities(text))),
             Node::Element(element) => match element.name.as_str() {
                 "ul" | "ol" | "pre" | "table" | "dl" | "blockquote" => {}
+                _ if contains_block_descendant(element) => {}
                 "p" => {
                     if !raw.trim().is_empty() {
                         raw.push(' ');
@@ -396,6 +397,20 @@ fn render_list_item_primary(item: &Element) -> String {
     }
 
     normalize_inline(&raw)
+}
+
+fn contains_block_descendant(element: &Element) -> bool {
+    if matches!(
+        element.name.as_str(),
+        "ul" | "ol" | "pre" | "table" | "dl" | "blockquote" | "hr"
+    ) {
+        return true;
+    }
+
+    element.children.iter().any(|child| match child {
+        Node::Text(_) => false,
+        Node::Element(child) => contains_block_descendant(child),
+    })
 }
 
 fn render_definition_list(element: &Element) -> String {
