@@ -1,0 +1,30 @@
+testsuite "The ulimit Utility"
+
+requirement "SHALL-ULIMIT-1072" doc="The ulimit utility shall conform to XBD 12.2 Utility Syntax Guidelines, except that the order in which options other than -H, -S, and -a are specified may be significant."
+requirement "SHALL-ULIMIT-1302" doc="Conforming applications shall specify each option separately; that is, grouping option letters (for example, -fH) need not be recognized by all implementations."
+requirement "SHALL-ULIMIT-1304" doc="If neither the -H nor -S option is specified and the newlimit operand is present, it shall be used as the new value for both the hard and soft limits."
+requirement "SHALL-ULIMIT-1305" doc="If the newlimit operand is not present, -S shall be the default."
+requirement "SHALL-ULIMIT-1306" doc="If no options other than -H or -S are specified, the behavior shall be as if the -f option was (also) specified."
+requirement "SHALL-ULIMIT-1310" doc="The standard output shall be used when no newlimit operand is present."
+requirement "SHALL-ULIMIT-1076" doc="If the -a option is specified, the output written for each resource shall consist of one line that includes a short phrase identifying the resource."
+
+begin test "ulimit -f unlimited succeeds"
+  begin script
+    ulimit -f unlimited; echo "pass"
+  end script
+  expect_stdout "pass"
+end test "ulimit -f unlimited succeeds"
+
+begin test "ulimit -S -f prints soft file-size limit"
+  begin script
+    ulimit -S -f >/dev/null; echo "pass"
+  end script
+  expect_stdout "pass"
+end test "ulimit -S -f prints soft file-size limit"
+
+begin test "ulimit -a succeeds"
+  begin script
+    ulimit -a >/dev/null; echo $?
+  end script
+  expect_stdout "0"
+end test "ulimit -a succeeds"

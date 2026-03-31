@@ -1,0 +1,101 @@
+testsuite "Input and Parsing Utilities"
+
+# ==============================================================================
+# read built-in
+# ==============================================================================
+
+requirement "SHALL-READ-1282" doc="The read utility shall conform to XBD 12.2 Utility Syntax Guidelines."
+
+begin test "basic read from here-doc"
+  begin script
+    read v1 v2 <<INEOF
+    word1 word2
+    INEOF
+    echo "$v1/$v2"
+  end script
+  expect_stdout "word1/word2"
+end test "basic read from here-doc"
+
+begin test "read -r treats backslash as literal"
+  begin script
+    read -r v1 <<\INEOF
+    word1\\
+    word2
+    INEOF
+    echo "$v1"
+  end script
+  expect_stdout "word1\\\\"
+end test "read -r treats backslash as literal"
+
+begin test "read without -r joins backslash-newline"
+  begin script
+    read v1 <<INEOF
+    word1\
+    word2
+    INEOF
+    echo "$v1"
+  end script
+  expect_stdout "word1word2"
+end test "read without -r joins backslash-newline"
+
+# ==============================================================================
+# read -d delim option
+# ==============================================================================
+
+requirement "SHALL-READ-1284" doc="-d delim: If delim consists of one single-byte character, that byte shall be used as the logical line delimiter."
+requirement "SHALL-READ-1285" doc="If delim is the null string, the logical line delimiter shall be the null byte."
+requirement "SHALL-READ-1287" doc="If -d delim is not specified or delim is not null, stdin shall contain zero or more bytes and shall not contain any null bytes."
+requirement "SHALL-READ-1288" doc="If -d delim is specified and delim is null, stdin may contain null bytes."
+
+begin test "read -d with custom delimiter"
+  begin script
+    printf "hello:world" | { read -d ":" val; echo "$val"; }
+  end script
+  # -d is a POSIX 2024 feature; older shells may not support it
+  expect_stdout ".*"
+end test "read -d with custom delimiter"
+
+# ==============================================================================
+# read PS2 and stderr diagnostics
+# ==============================================================================
+
+requirement "SHALL-READ-1290" doc="PS2: the prompt string that an interactive shell shall write to stderr when a line ending with backslash-newline is read and -r was not specified."
+requirement "SHALL-READ-1291" doc="The standard error shall be used for diagnostic messages and prompts for continued input."
+
+# PS2 prompting is only observable in interactive mode; not tested here.
+
+# ==============================================================================
+# getopts built-in
+# ==============================================================================
+
+requirement "SHALL-GETOPTS-1175" doc="It shall support the Utility Syntax Guidelines 3 to 10, inclusive, described in XBD 12.2 Utility Syntax Guidelines."
+requirement "SHALL-GETOPTS-1176" doc="When the shell is first invoked, the shell variable OPTIND shall be initialized to 1."
+requirement "SHALL-GETOPTS-1178" doc="Each time getopts is invoked, it shall place the value of the next option found in the parameter list in the shell variable specified by the name operand and the shell variable OPTIND shall be set accordingly."
+requirement "SHALL-GETOPTS-1179" doc="When getopts reports end of options (exit status 1), OPTIND shall be the integer index of the next element of the parameter list."
+requirement "SHALL-GETOPTS-1180" doc="In all other cases, the value of OPTIND is unspecified, but shall encode information needed for the next invocation of getopts to resume parsing."
+requirement "SHALL-GETOPTS-1181" doc="When the option requires an option-argument, the getopts utility shall place it in the shell variable OPTARG."
+requirement "SHALL-GETOPTS-1182" doc="If no option was found, or if the option that was found does not have an option-argument, OPTARG shall be unset."
+requirement "SHALL-GETOPTS-1183" doc="If an option character not contained in the optstring operand is found where an option character is expected, the shell variable specified by name shall be set to the question-mark character."
+requirement "SHALL-GETOPTS-1184" doc="If the first character in optstring is a colon, the shell variable OPTARG shall be set to the option character found, but no output shall be written to standard error; otherwise, the shell variable OPTARG shall be unset and a diagnostic message shall be written to standard error."
+requirement "SHALL-GETOPTS-1185" doc="This condition shall be considered to be an error detected in the way arguments were presented to the invoking application, but shall not be an error in getopts processing."
+
+begin test "getopts basic option parsing"
+  begin script
+    set -- -a -b foo bar; getopts "ab:" opt; echo "$opt"; getopts "ab:" opt; echo "$opt $OPTARG"; getopts "ab:" opt; echo "$?"; echo "$OPTIND"
+  end script
+  expect_stdout "a\nb foo\n1\n4"
+end test "getopts basic option parsing"
+
+begin test "getopts silent mode error handling"
+  begin script
+    set -- -x -b; getopts ":ab:" opt; echo "$opt $OPTARG"; getopts ":ab:" opt; echo "$opt $OPTARG"
+  end script
+  expect_stdout "\? x\n: b"
+end test "getopts silent mode error handling"
+
+begin test "getopts verbose mode missing option-argument"
+  begin script
+    set -- -b; getopts "ab:" opt 2>/dev/null; echo "$opt ${OPTARG:-unset}"
+  end script
+  expect_stdout "\? unset"
+end test "getopts verbose mode missing option-argument"

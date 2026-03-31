@@ -1,0 +1,221 @@
+testsuite "Special Built-ins (shift, times, trap)"
+
+# ==============================================================================
+# The 'shift' Utility
+# ==============================================================================
+
+requirement "SHALL-DESCRIPTION-617" doc="The positional parameters shall be shifted."
+requirement "SHALL-DESCRIPTION-619" doc="The parameters represented by the numbers $# down to $#-n+1 shall be unset, and the parameter # is updated to reflect the new number of positional parameters."
+requirement "SHALL-DESCRIPTION-621" doc="If n is not given, it shall be assumed to be 1."
+requirement "SHALL-DESCRIPTION-620" doc="The value n shall be an unsigned decimal integer less than or equal to the current value of the special parameter #."
+
+begin test "shift 1 without arguments shifts $2 to $1"
+  begin script
+    set -- a b c; echo $#; shift; echo "$1 $#"
+  end script
+  expect_stdout "3\nb 2"
+end test "shift 1 without arguments shifts $2 to $1"
+
+begin test "shift 2 shifts $3 to $1"
+  begin script
+    set -- a b c; echo $#; shift 2; echo "$1 $#"
+  end script
+  expect_stdout "3\nc 1"
+end test "shift 2 shifts $3 to $1"
+
+requirement "SHALL-DESCRIPTION-516" doc="If n is greater than $#, the positional parameters shall not be changed."
+
+begin test "shift greater than $# fails and leaves parameters intact"
+  begin script
+    set -- a b c; shift 5 2>/dev/null; echo "$? $1"
+  end script
+  expect_stdout_line ".*[1-9].* a"
+end test "shift greater than $# fails and leaves parameters intact"
+
+
+# ==============================================================================
+# The 'times' Utility
+# ==============================================================================
+
+requirement "SHALL-DESCRIPTION-549" doc="The times utility shall write the accumulated user and system times for the shell and for all of its child processes."
+requirement "SHALL-DESCRIPTION-626" doc="The four pairs of times shall correspond to the members of the <sys/times.h> tms structure."
+
+begin test "times produces output with time format"
+  begin script
+    times 2>/dev/null
+  end script
+  expect_stdout_line ".*m.*s.*"
+end test "times produces output with time format"
+
+
+# ==============================================================================
+# The 'trap' Utility
+# ==============================================================================
+
+requirement "SHALL-DESCRIPTION-629" doc="If the -p option is not specified and the first operand is an unsigned decimal integer, the shell shall treat all operands as conditions and reset each condition to the default value."
+
+begin test "trap with signal number resets to default"
+  begin script
+    trap "echo trapped" INT; trap 2; trap -p INT
+  end script
+  not_expect_stdout_line ".*echo trapped.*"
+end test "trap with signal number resets to default"
+
+requirement "SHALL-DESCRIPTION-630" doc="Otherwise, if the -p option is not specified and there are operands, the first operand shall be treated as an action and the remaining as conditions."
+
+begin test "trap action executed on signal"
+  begin script
+    trap "echo GOT_USR1" USR1; kill -USR1 $$; echo done
+  end script
+  expect_stdout_line ".*GOT_USR1.*"
+  expect_stdout_line ".*done.*"
+end test "trap action executed on signal"
+
+requirement "SHALL-DESCRIPTION-631" doc="If action is -, the shell shall reset each condition to the default value."
+
+begin test "trap - resets trap to default"
+  begin script
+    trap "echo x" EXIT; trap - EXIT; echo done
+  end script
+  expect_stdout "done"
+end test "trap - resets trap to default"
+
+requirement "SHALL-DESCRIPTION-632" doc="If action is null, the shell shall ignore each specified condition."
+
+begin test "trap with empty action ignores condition"
+  begin script
+    trap "" EXIT; echo "running"
+  end script
+  expect_stdout "running"
+end test "trap with empty action ignores condition"
+
+requirement "SHALL-DESCRIPTION-633" doc="Otherwise, the argument action shall be read and executed by the shell when one of the corresponding conditions arises."
+
+begin test "trap action fires on EXIT"
+  begin script
+    trap "echo exit_action" EXIT; echo "main"
+  end script
+  expect_stdout "main\nexit_action"
+end test "trap action fires on EXIT"
+
+requirement "SHALL-DESCRIPTION-634" doc="The action of trap shall override a previous action."
+
+begin test "trap overrides previous action"
+  begin script
+    trap "echo first" EXIT; trap "echo second" EXIT; true
+  end script
+  expect_stdout "second"
+end test "trap overrides previous action"
+
+requirement "SHALL-DESCRIPTION-635" doc="The value of $? after the trap action completes shall be the value it had before the trap action was executed."
+
+begin test "trap preserves $? value"
+  begin script
+    trap 'echo qval=$?' EXIT; false
+  end script
+  expect_stdout_line ".*qval=[1-9].*"
+end test "trap preserves $? value"
+
+requirement "SHALL-DESCRIPTION-636" doc="The EXIT condition shall occur when the shell terminates normally."
+
+begin test "EXIT trap fires on normal exit"
+  begin script
+    trap "echo exit_trap" EXIT; exit 0
+  end script
+  expect_stdout_line ".*exit_trap.*"
+end test "EXIT trap fires on normal exit"
+
+requirement "SHALL-DESCRIPTION-637" doc="The environment in which the shell executes a trap action on EXIT shall be identical to the environment immediately after the last command executed."
+
+begin test "EXIT trap sees latest environment"
+  begin script
+    MYVAL=hello; trap 'echo $MYVAL' EXIT; MYVAL=world
+  end script
+  expect_stdout "world"
+end test "EXIT trap sees latest environment"
+
+requirement "SHALL-DESCRIPTION-639" doc="Traps shall remain in place for a given shell until explicitly changed."
+
+begin test "trap persists across commands"
+  begin script
+    trap "echo still_set" EXIT
+    echo "first_command"
+    echo "second_command"
+  end script
+  expect_stdout_line ".*first_command.*"
+  expect_stdout_line ".*second_command.*"
+  expect_stdout_line ".*still_set.*"
+end test "trap persists across commands"
+
+requirement "SHALL-DESCRIPTION-640" doc="When a subshell is entered, traps that are not being ignored shall be set to the default actions."
+
+begin test "subshell resets traps to default"
+  begin script
+    trap "echo parent_trap" USR1; (trap "echo child_trap" USR1; trap -p USR1)
+  end script
+  not_expect_stdout_line ".*parent_trap.*"
+  expect_stdout_line ".*child_trap.*"
+end test "subshell resets traps to default"
+
+requirement "SHALL-DESCRIPTION-641" doc="The trap command with no operands shall write to standard output a list of commands associated with each condition that is not in the default state."
+requirement "SHALL-DESCRIPTION-643" doc="Otherwise, the list shall contain the commands currently associated with each condition."
+requirement "SHALL-DESCRIPTION-644" doc="The format shall be: command1 [ || command2 ] ..."
+requirement "SHALL-DESCRIPTION-645" doc="The shell shall format the output so that it is suitable for reinput."
+requirement "SHALL-DESCRIPTION-646" doc="If this set includes SIGKILL/SIGSTOP, the shell shall accept them on reinput."
+requirement "SHALL-DESCRIPTION-647" doc="The trap special built-in shall conform to XBD 12.2 Utility Syntax Guidelines."
+requirement "SHALL-OPTIONS-005" doc="The following option shall be supported: -p"
+requirement "SHALL-OPTIONS-649" doc="The shell shall format the output so that it is suitable for reinput."
+
+begin test "trap with no args lists active traps"
+  begin script
+    trap "echo hi" INT; trap
+  end script
+  expect_stdout_line ".*INT.*"
+end test "trap with no args lists active traps"
+
+begin test "trap output is suitable for reinput"
+  begin script
+    trap "echo reinput_trap" EXIT; _saved=$(trap -p EXIT); trap - EXIT; eval "$_saved"; true
+  end script
+  expect_stdout_line ".*reinput_trap.*"
+end test "trap output is suitable for reinput"
+
+requirement "SHALL-DESCRIPTION-610" doc="The default for all options shall be off (unset) unless stated otherwise."
+
+begin test "options default to off (-e is off)"
+  begin script
+    false; echo "survived"
+  end script
+  expect_stdout "survived"
+end test "options default to off (-e is off)"
+
+
+# ==============================================================================
+# Trap in Subshells
+# ==============================================================================
+
+requirement "SHALL-DESCRIPTION-642" doc="If no trap commands have been executed since entry to the subshell, the list shall contain the commands that were associated with each condition immediately before the subshell environment was entered."
+
+begin test "subshell inherits trap list before entry"
+  begin script
+    trap "echo exit_trap" 0
+    ( trap )
+  end script
+  expect_stdout_line ".*exit_trap.*"
+end test "subshell inherits trap list before entry"
+
+
+# ==============================================================================
+# set -- positional parameter manipulation
+# ==============================================================================
+
+requirement "SHALL-DESCRIPTION-603" doc="This option shall be supported if the system supports the User Portability Utilities option."
+requirement "SHALL-DESCRIPTION-605" doc="Enabling vi mode shall disable any other command line editing mode."
+requirement "SHALL-DESCRIPTION-614" doc="The command set -- without argument shall unset all positional parameters and set the special parameter # to zero."
+
+begin test "set -- without arguments unsets all positional parameters"
+  begin script
+    set -- a b c; set --; echo $#
+  end script
+  expect_stdout "0"
+end test "set -- without arguments unsets all positional parameters"

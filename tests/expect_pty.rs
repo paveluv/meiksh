@@ -10,7 +10,8 @@
 //!
 //! Runs structured test suites with isolated environments:
 //!
-//!   expect_pty --shell "bash --posix" tests/*.epty
+//!   expect_pty --shell "/usr/bin/bash --posix" tests/*.epty
+//!   expect_pty --shell "/usr/bin/bash --posix" --script-modes dash-c,tempfile,stdin tests/*.epty
 //!
 //! ### Suite DSL:
 //!   testsuite "name"                      — suite name (one per file)
@@ -20,6 +21,24 @@
 //!   end interactive test "name"           — end an interactive test case
 //!   end test "name"                       — end a non-interactive test case
 //!   setenv "KEY" "VALUE"                  — set env var for the current test
+//!
+//! ### Non-interactive script block (inside begin/end test):
+//!   begin script                          — start a shell script block (col 2)
+//!     <shell code>                        — script body (col 4, stripped to col 0)
+//!   end script                            — end the script block (col 2)
+//!
+//!   The script body is taken verbatim (no quoting/escaping needed).
+//!   {{SHELL}} substitution applies. Executed via --script-modes (default: dash-c).
+//!
+//! ### Non-interactive assertions (after end script):
+//!   expect_stdout "pattern"               — assert stdout matches regex
+//!   expect_stderr "pattern"               — assert stderr matches regex
+//!   expect_stdout_line "pattern"          — assert a stdout line matches
+//!   expect_stderr_line "pattern"          — assert a stderr line matches
+//!   expect_exit_code N                    — assert exit code equals N
+//!   not_expect_stdout "pattern"           — assert stdout does NOT match
+//!   not_expect_stderr "pattern"           — assert stderr does NOT match
+//!   not_expect_exit_code N                — assert exit code does NOT equal N
 //!
 //! ### Interactive (PTY) commands (inside begin/end interactive test):
 //!   spawn <cmd> [args...]                 — fork a PTY child
@@ -36,21 +55,15 @@
 //!   wait exitcode=N                       — wait for child exit
 //!   sleep <duration>                      — sleep (e.g. 100ms or 1s)
 //!
-//! ### Non-interactive commands (inside begin/end test, no "interactive"):
-//!   run "command"                         — run {{SHELL}} -c "command"
-//!   expect_stdout "pattern"               — assert stdout matches regex
-//!   expect_stderr "pattern"               — assert stderr matches regex
-//!   expect_stdout_line "pattern"          — assert a stdout line matches
-//!   expect_stderr_line "pattern"          — assert a stderr line matches
-//!   expect_exit_code N                    — assert exit code equals N
-//!   not_expect_stdout "pattern"           — assert stdout does NOT match
-//!   not_expect_stderr "pattern"           — assert stderr does NOT match
-//!   not_expect_exit_code N                — assert exit code does NOT equal N
-//!
-//! Lines starting with '#' and empty lines are ignored.
-//! Quoted strings support backslash escapes: \" \\ \n \r \t
-//! {{SHELL}} is substituted with the target shell path.
-//! All pattern matching uses the built-in regex engine (no external deps).
+//! ### Formatting rules:
+//! - Trailing whitespace is forbidden on any line.
+//! - Lines starting with '#' and empty lines are ignored (outside script blocks).
+//! - Quoted strings in send/setenv support backslash escapes: \" \\ \n \r \t
+//! - Regex patterns in expect/expect_*/not_expect_* use raw quoting: backslash
+//!   has no special meaning and passes through verbatim to the regex engine.
+//!   To embed a literal double-quote in a pattern, use "" (doubled quote).
+//! - {{SHELL}} is substituted with the target shell path.
+//! - All pattern matching uses the built-in regex engine (no external deps).
 
 use std::collections::HashMap;
 use std::env;
@@ -435,6 +448,36 @@ fn expand_env(s: &str) -> String {
         result = result.replace(&var, &value);
     }
     result
+}
+
+/// Extract a regex pattern from a quoted argument: `"pattern"` -> `pattern`
+/// Backslash has NO special meaning — patterns pass through verbatim to the
+/// regex engine.  To embed a literal double-quote, use `""` (doubled quote).
+/// This means the regex you write between the quotes is exactly what you'd
+/// pass to `rg`.
+fn extract_pattern(arg: &str) -> Result<String, String> {
+    if !arg.starts_with('"') || arg.len() < 2 {
+        return Err(format!("expected quoted pattern, got: {arg}"));
+    }
+    let bytes = arg.as_bytes();
+    let mut result = String::with_capacity(arg.len());
+    let mut i = 1; // skip opening quote
+    while i < bytes.len() {
+        if bytes[i] == b'"' {
+            if i + 1 < bytes.len() && bytes[i + 1] == b'"' {
+                result.push('"');
+                i += 2;
+                continue;
+            }
+            if i + 1 == bytes.len() {
+                return Ok(result);
+            }
+            return Err(format!("unexpected content after closing quote: {arg}"));
+        }
+        result.push(bytes[i] as char);
+        i += 1;
+    }
+    Err(format!("unterminated quoted pattern: {arg}"))
 }
 
 /// Extract a quoted string argument: `"contents"` -> `contents`
@@ -1000,7 +1043,7 @@ fn run_script(script_lines: &[String]) -> Result<(), String> {
                     .ok_or_else(|| format!("line {line_num}: expect before spawn"))?;
                 let (timeout, quoted_part) = parse_expect_args(rest)?;
                 let timeout = timeout.unwrap_or(Duration::from_millis(200));
-                let pattern_str = extract_quoted(quoted_part)
+                let pattern_str = extract_pattern(quoted_part)
                     .map_err(|e| format!("line {line_num}: {e}"))?;
                 let pattern = parse_regex(&pattern_str)
                     .map_err(|e| format!("line {line_num}: bad regex: {e}"))?;
@@ -1025,7 +1068,7 @@ fn run_script(script_lines: &[String]) -> Result<(), String> {
                     .as_ref()
                     .ok_or_else(|| format!("line {line_num}: not_expect before spawn"))?;
                 let (timeout, quoted_part) = parse_expect_args(rest)?;
-                let pattern_str = extract_quoted(quoted_part)
+                let pattern_str = extract_pattern(quoted_part)
                     .map_err(|e| format!("line {line_num}: {e}"))?;
                 let pattern = parse_regex(&pattern_str)
                     .map_err(|e| format!("line {line_num}: bad regex: {e}"))?;
@@ -1040,7 +1083,7 @@ fn run_script(script_lines: &[String]) -> Result<(), String> {
                     .ok_or_else(|| format!("line {line_num}: expect_line before spawn"))?;
                 let (timeout, quoted_part) = parse_expect_args(rest)?;
                 let timeout = timeout.unwrap_or(Duration::from_millis(200));
-                let pattern_str = extract_quoted(quoted_part)
+                let pattern_str = extract_pattern(quoted_part)
                     .map_err(|e| format!("line {line_num}: {e}"))?;
                 let pattern = parse_regex(&pattern_str)
                     .map_err(|e| format!("line {line_num}: bad regex: {e}"))?;
@@ -1166,6 +1209,32 @@ fn run_script(script_lines: &[String]) -> Result<(), String> {
 
 // ── Suite data structures ────────────────────────────────────────────────────
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ScriptMode {
+    DashC,
+    Tempfile,
+    Stdin,
+}
+
+fn parse_script_modes(s: &str) -> Result<Vec<ScriptMode>, String> {
+    let mut modes = Vec::new();
+    for part in s.split(',') {
+        let mode = match part.trim() {
+            "dash-c" => ScriptMode::DashC,
+            "tempfile" => ScriptMode::Tempfile,
+            "stdin" => ScriptMode::Stdin,
+            other => return Err(format!("unknown script mode: {other:?}")),
+        };
+        if !modes.contains(&mode) {
+            modes.push(mode);
+        }
+    }
+    if modes.is_empty() {
+        return Err("--script-modes requires at least one mode".to_string());
+    }
+    Ok(modes)
+}
+
 #[allow(dead_code)]
 struct Requirement {
     id: String,
@@ -1181,6 +1250,7 @@ struct TestCase {
     requirements: Vec<Requirement>,
     env_overrides: Vec<(String, String)>,
     script_lines: Vec<(usize, String)>,
+    script: Option<String>,
 }
 
 struct TestSuite {
@@ -1210,6 +1280,29 @@ struct TestReport {
 // ── Suite parser ─────────────────────────────────────────────────────────────
 
 fn parse_suite(text: &str, filename: &str) -> Result<TestSuite, String> {
+    {
+        let mut inside_script = false;
+        for (lineno, raw_line) in text.lines().enumerate() {
+            if inside_script {
+                if raw_line == "  end script" {
+                    inside_script = false;
+                }
+                continue;
+            }
+            if raw_line.trim() == "begin script" {
+                inside_script = true;
+                continue;
+            }
+            if raw_line.ends_with(' ') || raw_line.ends_with('\t') {
+                return Err(format!(
+                    "line {}: trailing whitespace: {:?}",
+                    lineno + 1,
+                    raw_line
+                ));
+            }
+        }
+    }
+
     let mut suite_name: Option<String> = None;
     let mut tests = Vec::new();
     let mut pending_reqs: Vec<Requirement> = Vec::new();
@@ -1221,9 +1314,34 @@ fn parse_suite(text: &str, filename: &str) -> Result<TestSuite, String> {
     let mut test_env: Vec<(String, String)> = Vec::new();
     let mut test_lines: Vec<(usize, String)> = Vec::new();
     let mut test_reqs: Vec<Requirement> = Vec::new();
+    let mut in_script = false;
+    let mut script_body: Vec<String> = Vec::new();
+    let mut test_script: Option<String> = None;
 
     for (lineno, raw_line) in text.lines().enumerate() {
         let line_num = lineno + 1;
+
+        if in_script {
+            if raw_line == "  end script" {
+                in_script = false;
+                test_script = Some(script_body.join("\n"));
+                continue;
+            }
+            if raw_line.is_empty() {
+                script_body.push(String::new());
+                continue;
+            }
+            if let Some(stripped) = raw_line.strip_prefix("    ") {
+                script_body.push(stripped.to_string());
+            } else {
+                return Err(format!(
+                    "line {line_num}: script body must be indented by 4 spaces: {:?}",
+                    raw_line
+                ));
+            }
+            continue;
+        }
+
         let line = raw_line.trim();
 
         if line.is_empty() || line.starts_with('#') {
@@ -1309,6 +1427,12 @@ fn parse_suite(text: &str, filename: &str) -> Result<TestSuite, String> {
                     end_name, test_name
                 ));
             }
+            if !test_interactive && test_script.is_none() {
+                return Err(format!(
+                    "line {line_num}: non-interactive test {:?} has no begin script/end script block",
+                    test_name
+                ));
+            }
             tests.push(TestCase {
                 name: test_name.clone(),
                 interactive: test_interactive,
@@ -1316,12 +1440,29 @@ fn parse_suite(text: &str, filename: &str) -> Result<TestSuite, String> {
                 requirements: std::mem::take(&mut test_reqs),
                 env_overrides: test_env.clone(),
                 script_lines: test_lines.clone(),
+                script: test_script.take(),
             });
             in_test = false;
             continue;
         }
 
         if in_test {
+            if line == "begin script" {
+                if test_interactive {
+                    return Err(format!(
+                        "line {line_num}: begin script is not allowed in interactive tests"
+                    ));
+                }
+                if test_script.is_some() {
+                    return Err(format!(
+                        "line {line_num}: duplicate begin script in test {:?}",
+                        test_name
+                    ));
+                }
+                in_script = true;
+                script_body.clear();
+                continue;
+            }
             if let Some(rest) = line.strip_prefix("setenv ") {
                 let rest = rest.trim();
                 let key_end = find_closing_quote(rest)
@@ -1340,6 +1481,13 @@ fn parse_suite(text: &str, filename: &str) -> Result<TestSuite, String> {
 
         return Err(format!(
             "line {line_num}: unexpected command outside test block: {line}"
+        ));
+    }
+
+    if in_script {
+        return Err(format!(
+            "unterminated begin script in test {:?} starting at line {test_start_line}",
+            test_name
         ));
     }
 
@@ -1440,24 +1588,70 @@ fn remove_dir_all(path: &str) {
 // ── Non-interactive run command ──────────────────────────────────────────────
 
 fn run_command(
-    shell_cmd: &str,
+    script: &str,
     shell_argv: &[String],
     test_env: &HashMap<String, String>,
     tmpdir: &str,
+    mode: ScriptMode,
 ) -> Result<RunResult, String> {
-    let mut cmd = std::process::Command::new(&shell_argv[0]);
-    for arg in &shell_argv[1..] {
-        cmd.arg(arg);
-    }
-    cmd.arg("-c").arg(shell_cmd);
-    cmd.env_clear();
-    for (k, v) in test_env {
-        cmd.env(k, v);
-    }
-    cmd.current_dir(tmpdir);
-    let output = cmd
-        .output()
-        .map_err(|e| format!("failed to execute shell: {e}"))?;
+    let output = match mode {
+        ScriptMode::DashC => {
+            let mut cmd = Command::new(&shell_argv[0]);
+            for arg in &shell_argv[1..] {
+                cmd.arg(arg);
+            }
+            cmd.arg("-c").arg(script);
+            cmd.env_clear();
+            for (k, v) in test_env {
+                cmd.env(k, v);
+            }
+            cmd.current_dir(tmpdir);
+            cmd.output()
+                .map_err(|e| format!("failed to execute shell (dash-c): {e}"))?
+        }
+        ScriptMode::Tempfile => {
+            let script_path = format!("{tmpdir}/_test.sh");
+            fs::write(&script_path, script)
+                .map_err(|e| format!("failed to write script file: {e}"))?;
+            let mut cmd = Command::new(&shell_argv[0]);
+            for arg in &shell_argv[1..] {
+                cmd.arg(arg);
+            }
+            cmd.arg(&script_path);
+            cmd.env_clear();
+            for (k, v) in test_env {
+                cmd.env(k, v);
+            }
+            cmd.current_dir(tmpdir);
+            let result = cmd.output()
+                .map_err(|e| format!("failed to execute shell (tempfile): {e}"))?;
+            let _ = fs::remove_file(&script_path);
+            result
+        }
+        ScriptMode::Stdin => {
+            use std::io::Write;
+            use std::process::Stdio;
+            let mut cmd = Command::new(&shell_argv[0]);
+            for arg in &shell_argv[1..] {
+                cmd.arg(arg);
+            }
+            cmd.stdin(Stdio::piped());
+            cmd.stdout(Stdio::piped());
+            cmd.stderr(Stdio::piped());
+            cmd.env_clear();
+            for (k, v) in test_env {
+                cmd.env(k, v);
+            }
+            cmd.current_dir(tmpdir);
+            let mut child = cmd.spawn()
+                .map_err(|e| format!("failed to execute shell (stdin): {e}"))?;
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(script.as_bytes());
+            }
+            child.wait_with_output()
+                .map_err(|e| format!("failed to wait for shell (stdin): {e}"))?
+        }
+    };
     Ok(RunResult {
         stdout: String::from_utf8_lossy(&output.stdout).to_string(),
         stderr: String::from_utf8_lossy(&output.stderr).to_string(),
@@ -1471,11 +1665,12 @@ fn run_suite_test(
     test: &TestCase,
     shell_argv: &[String],
     shell_str: &str,
+    script_modes: &[ScriptMode],
 ) -> Result<(), String> {
     let tmpdir = make_test_tmpdir()
         .map_err(|e| format!("failed to create tmpdir: {e}"))?;
 
-    let result = run_suite_test_inner(test, shell_argv, shell_str, &tmpdir);
+    let result = run_suite_test_inner(test, shell_argv, shell_str, &tmpdir, script_modes);
     remove_dir_all(&tmpdir);
     result
 }
@@ -1485,6 +1680,7 @@ fn run_suite_test_inner(
     shell_argv: &[String],
     shell_str: &str,
     tmpdir: &str,
+    script_modes: &[ScriptMode],
 ) -> Result<(), String> {
     let mut test_env = baseline_env(tmpdir);
     for (k, v) in &test.env_overrides {
@@ -1494,6 +1690,32 @@ fn run_suite_test_inner(
     let mut session: Option<PtySession> = None;
     let mut last_run: Option<RunResult> = None;
     let mut log = Vec::<String>::new();
+
+    if let Some(ref script) = test.script {
+        let expanded = script.replace("{{SHELL}}", shell_str);
+        log.push(format!(">>> script ({} modes) {:?}", script_modes.len(),
+            if expanded.len() > 80 { format!("{}...", &expanded[..80]) } else { expanded.clone() }));
+        let mut reference: Option<RunResult> = None;
+        for &mode in script_modes {
+            let rr = run_command(&expanded, shell_argv, &test_env, tmpdir, mode)?;
+            if let Some(ref prev) = reference {
+                if rr.stdout != prev.stdout || rr.stderr != prev.stderr || rr.exit_code != prev.exit_code {
+                    return Err(format!(
+                        "script mode divergence: {:?} vs {:?}\n\
+                         --- {:?} ---\nstdout: {:?}\nstderr: {:?}\nexit: {}\n\
+                         --- {:?} ---\nstdout: {:?}\nstderr: {:?}\nexit: {}",
+                        script_modes[0], mode,
+                        script_modes[0], prev.stdout, prev.stderr, prev.exit_code,
+                        mode, rr.stdout, rr.stderr, rr.exit_code,
+                    ));
+                }
+            } else {
+                reference = Some(rr);
+            }
+        }
+        last_run = reference;
+    }
+
     let lines: Vec<(usize, &str)> = test
         .script_lines
         .iter()
@@ -1542,26 +1764,13 @@ fn run_suite_test_inner(
                 );
             }
 
-            "run" => {
-                if test.interactive {
-                    return Err(format!(
-                        "line {line_num}: run is only allowed in non-interactive tests (use begin test)"
-                    ));
-                }
-                let cmd_text = extract_quoted(rest)
-                    .map_err(|e| format!("line {line_num}: {e}"))?;
-                let expanded = cmd_text.replace("{{SHELL}}", shell_str);
-                log.push(format!(">>> run {:?}", expanded));
-                last_run = Some(run_command(&expanded, shell_argv, &test_env, tmpdir)?);
-            }
-
             "expect_stdout" | "expect_stderr" | "expect_stdout_line"
             | "expect_stderr_line" | "not_expect_stdout" | "not_expect_stderr"
             | "not_expect_stdout_line" | "not_expect_stderr_line" => {
                 let rr = last_run
                     .as_ref()
-                    .ok_or_else(|| format!("line {line_num}: {cmd} before run"))?;
-                let pattern_str = extract_quoted(rest)
+                    .ok_or_else(|| format!("line {line_num}: {cmd} before script"))?;
+                let pattern_str = extract_pattern(rest)
                     .map_err(|e| format!("line {line_num}: {e}"))?;
                 let pattern = parse_regex(&pattern_str)
                     .map_err(|e| format!("line {line_num}: bad regex: {e}"))?;
@@ -1612,7 +1821,7 @@ fn run_suite_test_inner(
             "expect_exit_code" | "not_expect_exit_code" => {
                 let rr = last_run
                     .as_ref()
-                    .ok_or_else(|| format!("line {line_num}: {cmd} before run"))?;
+                    .ok_or_else(|| format!("line {line_num}: {cmd} before script"))?;
                 let expected: i32 = rest
                     .parse()
                     .map_err(|e| format!("line {line_num}: bad exit code: {e}"))?;
@@ -1638,7 +1847,7 @@ fn run_suite_test_inner(
                     .ok_or_else(|| format!("line {line_num}: expect before spawn"))?;
                 let (timeout, quoted_part) = parse_expect_args(rest)?;
                 let timeout = timeout.unwrap_or(Duration::from_millis(200));
-                let pattern_str = extract_quoted(quoted_part)
+                let pattern_str = extract_pattern(quoted_part)
                     .map_err(|e| format!("line {line_num}: {e}"))?;
                 let pattern = parse_regex(&pattern_str)
                     .map_err(|e| format!("line {line_num}: bad regex: {e}"))?;
@@ -1663,7 +1872,7 @@ fn run_suite_test_inner(
                     .as_ref()
                     .ok_or_else(|| format!("line {line_num}: not_expect before spawn"))?;
                 let (timeout, quoted_part) = parse_expect_args(rest)?;
-                let pattern_str = extract_quoted(quoted_part)
+                let pattern_str = extract_pattern(quoted_part)
                     .map_err(|e| format!("line {line_num}: {e}"))?;
                 let pattern = parse_regex(&pattern_str)
                     .map_err(|e| format!("line {line_num}: bad regex: {e}"))?;
@@ -1678,7 +1887,7 @@ fn run_suite_test_inner(
                     .ok_or_else(|| format!("line {line_num}: expect_line before spawn"))?;
                 let (timeout, quoted_part) = parse_expect_args(rest)?;
                 let timeout = timeout.unwrap_or(Duration::from_millis(200));
-                let pattern_str = extract_quoted(quoted_part)
+                let pattern_str = extract_pattern(quoted_part)
                     .map_err(|e| format!("line {line_num}: {e}"))?;
                 let pattern = parse_regex(&pattern_str)
                     .map_err(|e| format!("line {line_num}: bad regex: {e}"))?;
@@ -1803,10 +2012,10 @@ fn dump_log(log: &[String]) {
 
 // ── Suite runner ─────────────────────────────────────────────────────────────
 
-fn run_suite(suite: &TestSuite, shell_argv: &[String], shell_str: &str) -> Vec<TestReport> {
+fn run_suite(suite: &TestSuite, shell_argv: &[String], shell_str: &str, script_modes: &[ScriptMode]) -> Vec<TestReport> {
     let mut reports = Vec::new();
     for test in &suite.tests {
-        let outcome = match run_suite_test(test, shell_argv, shell_str) {
+        let outcome = match run_suite_test(test, shell_argv, shell_str, script_modes) {
             Ok(()) => TestReport {
                 name: test.name.clone(),
                 outcome: TestOutcome::Pass,
@@ -1861,6 +2070,7 @@ fn main() {
     let args: Vec<String> = env::args().collect();
 
     let mut shell_flag: Option<String> = None;
+    let mut script_modes_flag: Option<String> = None;
     let mut files: Vec<String> = Vec::new();
     let mut i = 1;
     while i < args.len() {
@@ -1872,6 +2082,14 @@ fn main() {
                     std::process::exit(2);
                 }
                 shell_flag = Some(args[i].clone());
+            }
+            "--script-modes" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("expect_pty: --script-modes requires an argument");
+                    std::process::exit(2);
+                }
+                script_modes_flag = Some(args[i].clone());
             }
             arg if arg.starts_with('-') && arg != "-" => {
                 eprintln!("expect_pty: unknown flag: {arg}");
@@ -1899,6 +2117,16 @@ fn main() {
             );
             std::process::exit(2);
         }
+        let script_modes = match script_modes_flag {
+            Some(ref s) => match parse_script_modes(s) {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("expect_pty: {e}");
+                    std::process::exit(2);
+                }
+            },
+            None => vec![ScriptMode::DashC],
+        };
 
         let mut total_passed: usize = 0;
         let mut total_failed: usize = 0;
@@ -1921,7 +2149,7 @@ fn main() {
                     std::process::exit(2);
                 }
             };
-            let reports = run_suite(&suite, &shell_argv, &shell_str);
+            let reports = run_suite(&suite, &shell_argv, &shell_str, &script_modes);
             let (p, f) = print_suite_report(&suite, &reports);
             total_passed += p;
             total_failed += f;
@@ -2240,51 +2468,99 @@ mod tests {
         assert!(extract_quoted("hello").is_err());
     }
 
+    // -- extract_pattern --
+
+    #[test]
+    fn pattern_simple() {
+        assert_eq!(extract_pattern(r#""hello""#).unwrap(), "hello");
+    }
+
+    #[test]
+    fn pattern_backslash_verbatim() {
+        // backslash passes through verbatim — no escaping
+        assert_eq!(extract_pattern(r#""a\\b""#).unwrap(), r#"a\\b"#);
+        assert_eq!(extract_pattern(r#""a\nb""#).unwrap(), r#"a\nb"#);
+        assert_eq!(extract_pattern(r#""a\*b""#).unwrap(), r#"a\*b"#);
+        assert_eq!(extract_pattern(r#""a\tb""#).unwrap(), r#"a\tb"#);
+    }
+
+    #[test]
+    fn pattern_trailing_backslash() {
+        assert_eq!(extract_pattern(r#""foo\\""#).unwrap(), r#"foo\\"#);
+    }
+
+    #[test]
+    fn pattern_doubled_quote() {
+        // "" inside pattern → literal "
+        assert_eq!(extract_pattern(r#""say ""hi""""#).unwrap(), r#"say "hi""#);
+    }
+
+    #[test]
+    fn pattern_regex_special_chars() {
+        assert_eq!(extract_pattern(r#"".*foo[0-9]+""#).unwrap(), r#".*foo[0-9]+"#);
+    }
+
+    #[test]
+    fn pattern_unterminated() {
+        assert!(extract_pattern(r#""hello"#).is_err());
+    }
+
+    #[test]
+    fn pattern_not_quoted() {
+        assert!(extract_pattern("hello").is_err());
+    }
+
     // -- .epty parser --
 
     #[test]
     fn parse_suite_basic() {
-        let input = r#"
-testsuite "My Suite"
+        let input = "\
+testsuite \"My Suite\"
 
-requirement "REQ-001" doc="Some requirement"
+requirement \"REQ-001\" doc=\"Some requirement\"
 
-begin test "first test"
-  run "echo hello"
-  expect_stdout "hello"
-end test "first test"
+begin test \"first test\"
+  begin script
+    echo hello
+  end script
+  expect_stdout \"hello\"
+end test \"first test\"
 
-begin interactive test "second test"
+begin interactive test \"second test\"
   spawn /bin/sh
-  expect "$ "
+  expect \"$ \"
   sendeof
   wait
-end interactive test "second test"
-"#;
+end interactive test \"second test\"
+";
         let suite = parse_suite(input, "test.epty").unwrap();
         assert_eq!(suite.name, "My Suite");
         assert_eq!(suite.tests.len(), 2);
         assert_eq!(suite.tests[0].name, "first test");
         assert!(!suite.tests[0].interactive);
+        assert_eq!(suite.tests[0].script.as_deref(), Some("echo hello"));
         assert_eq!(suite.tests[0].requirements.len(), 1);
         assert_eq!(suite.tests[0].requirements[0].id, "REQ-001");
         assert_eq!(suite.tests[1].name, "second test");
         assert!(suite.tests[1].interactive);
+        assert!(suite.tests[1].script.is_none());
         assert_eq!(suite.tests[1].requirements.len(), 0);
     }
 
     #[test]
     fn parse_suite_setenv() {
-        let input = r#"
-testsuite "Env Suite"
+        let input = "\
+testsuite \"Env Suite\"
 
-begin test "with env"
-  setenv "FOO" "bar"
-  setenv "BAZ" "qux"
-  run "echo $FOO"
-  expect_stdout "bar"
-end test "with env"
-"#;
+begin test \"with env\"
+  setenv \"FOO\" \"bar\"
+  setenv \"BAZ\" \"qux\"
+  begin script
+    echo $FOO
+  end script
+  expect_stdout \"bar\"
+end test \"with env\"
+";
         let suite = parse_suite(input, "env.epty").unwrap();
         assert_eq!(suite.tests[0].env_overrides.len(), 2);
         assert_eq!(suite.tests[0].env_overrides[0], ("FOO".into(), "bar".into()));
@@ -2293,76 +2569,183 @@ end test "with env"
 
     #[test]
     fn parse_suite_mismatched_end() {
-        let input = r#"
-testsuite "Bad"
-begin test "alpha"
-  run "true"
-end test "beta"
-"#;
+        let input = "\
+testsuite \"Bad\"
+begin test \"alpha\"
+  begin script
+    true
+  end script
+end test \"beta\"
+";
         assert!(parse_suite(input, "bad.epty").is_err());
     }
 
     #[test]
     fn parse_suite_unterminated_test() {
-        let input = r#"
-testsuite "Bad"
-begin test "alpha"
-  run "true"
-"#;
+        let input = "\
+testsuite \"Bad\"
+begin test \"alpha\"
+  begin script
+    true
+  end script
+";
         assert!(parse_suite(input, "bad.epty").is_err());
     }
 
     #[test]
     fn parse_suite_nested_test() {
-        let input = r#"
-testsuite "Bad"
-begin test "alpha"
-  begin test "beta"
-  end test "beta"
-end test "alpha"
-"#;
+        let input = "\
+testsuite \"Bad\"
+begin test \"alpha\"
+  begin test \"beta\"
+  end test \"beta\"
+end test \"alpha\"
+";
         assert!(parse_suite(input, "bad.epty").is_err());
     }
 
     #[test]
     fn parse_suite_mismatched_interactive() {
-        let input = r#"
-begin interactive test "alpha"
+        let input = "\
+begin interactive test \"alpha\"
   spawn /bin/sh
-end test "alpha"
-"#;
+end test \"alpha\"
+";
         assert!(parse_suite(input, "bad.epty").is_err());
     }
 
     #[test]
     fn parse_suite_no_testsuite_uses_filename() {
-        let input = r#"
-begin test "lone"
-  run "true"
-end test "lone"
-"#;
+        let input = "\
+begin test \"lone\"
+  begin script
+    true
+  end script
+end test \"lone\"
+";
         let suite = parse_suite(input, "my_file.epty").unwrap();
         assert_eq!(suite.name, "my_file.epty");
     }
 
     #[test]
     fn parse_suite_multiple_requirements() {
-        let input = r#"
-testsuite "Multi Req"
+        let input = "\
+testsuite \"Multi Req\"
 
-requirement "REQ-001"
-requirement "REQ-002" doc="Something"
+requirement \"REQ-001\"
+requirement \"REQ-002\" doc=\"Something\"
 
-begin test "covered"
-  run "true"
-end test "covered"
-"#;
+begin test \"covered\"
+  begin script
+    true
+  end script
+end test \"covered\"
+";
         let suite = parse_suite(input, "test.epty").unwrap();
         assert_eq!(suite.tests[0].requirements.len(), 2);
         assert_eq!(suite.tests[0].requirements[0].id, "REQ-001");
         assert!(suite.tests[0].requirements[0].doc.is_none());
         assert_eq!(suite.tests[0].requirements[1].id, "REQ-002");
         assert_eq!(suite.tests[0].requirements[1].doc.as_deref(), Some("Something"));
+    }
+
+    #[test]
+    fn parse_suite_multiline_script() {
+        let input = "\
+begin test \"multi\"
+  begin script
+    echo line1
+    echo line2
+    echo line3
+  end script
+  expect_stdout \"line1\nline2\nline3\"
+end test \"multi\"
+";
+        let suite = parse_suite(input, "test.epty").unwrap();
+        assert_eq!(suite.tests[0].script.as_deref(), Some("echo line1\necho line2\necho line3"));
+    }
+
+    #[test]
+    fn parse_suite_script_with_blank_lines() {
+        let input = "\
+begin test \"blanks\"
+  begin script
+    echo before
+
+    echo after
+  end script
+end test \"blanks\"
+";
+        let suite = parse_suite(input, "test.epty").unwrap();
+        assert_eq!(suite.tests[0].script.as_deref(), Some("echo before\n\necho after"));
+    }
+
+    #[test]
+    fn parse_suite_script_no_quoting_needed() {
+        let input = "\
+begin test \"quotes\"
+  begin script
+    echo \"hello world\" '$var' $(cmd)
+  end script
+end test \"quotes\"
+";
+        let suite = parse_suite(input, "test.epty").unwrap();
+        assert_eq!(suite.tests[0].script.as_deref(), Some("echo \"hello world\" '$var' $(cmd)"));
+    }
+
+    #[test]
+    fn parse_suite_no_script_in_noninteractive_fails() {
+        let input = "\
+begin test \"no script\"
+  expect_exit_code 0
+end test \"no script\"
+";
+        assert!(parse_suite(input, "bad.epty").is_err());
+    }
+
+    #[test]
+    fn parse_suite_script_in_interactive_fails() {
+        let input = "\
+begin interactive test \"bad\"
+  begin script
+    echo hello
+  end script
+end interactive test \"bad\"
+";
+        assert!(parse_suite(input, "bad.epty").is_err());
+    }
+
+    #[test]
+    fn parse_suite_trailing_whitespace_fails() {
+        let input = "begin test \"ws\" \n  begin script\n    true\n  end script\nend test \"ws\"\n";
+        assert!(parse_suite(input, "bad.epty").is_err());
+    }
+
+    #[test]
+    fn parse_suite_unterminated_script_fails() {
+        let input = "\
+begin test \"bad\"
+  begin script
+    echo hello
+end test \"bad\"
+";
+        assert!(parse_suite(input, "bad.epty").is_err());
+    }
+
+    #[test]
+    fn parse_script_modes_test() {
+        assert_eq!(parse_script_modes("dash-c").unwrap(), vec![ScriptMode::DashC]);
+        assert_eq!(parse_script_modes("tempfile").unwrap(), vec![ScriptMode::Tempfile]);
+        assert_eq!(parse_script_modes("stdin").unwrap(), vec![ScriptMode::Stdin]);
+        assert_eq!(
+            parse_script_modes("dash-c,tempfile,stdin").unwrap(),
+            vec![ScriptMode::DashC, ScriptMode::Tempfile, ScriptMode::Stdin]
+        );
+        assert!(parse_script_modes("bad").is_err());
+        assert_eq!(
+            parse_script_modes("dash-c,dash-c").unwrap(),
+            vec![ScriptMode::DashC]
+        );
     }
 
     // -- find_closing_quote --

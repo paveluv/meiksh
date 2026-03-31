@@ -1,0 +1,200 @@
+testsuite "Command Identification and History Utilities"
+
+# ==============================================================================
+# type utility
+# ==============================================================================
+
+requirement "SHALL-TYPE-1293" doc="The type utility shall conform to XBD 12.2 Utility Syntax Guidelines. The standard output of type contains information about each operand in an unspecified format."
+requirement "SHALL-TYPE-1069" doc="The following operand shall be supported: name — A name to be interpreted."
+
+begin test "type finds known command"
+  begin script
+    type sh >/dev/null && echo pass || echo fail
+  end script
+  expect_stdout "pass"
+end test "type finds known command"
+
+begin test "type with known builtin produces output"
+  begin script
+    out=$(type echo 2>/dev/null); [ -n "$out" ] && echo pass || echo fail
+  end script
+  expect_stdout "pass"
+end test "type with known builtin produces output"
+
+begin test "type with unknown name returns non-zero"
+  begin script
+    type nonexistent_command_xyz 2>/dev/null; echo $?
+  end script
+  not_expect_stdout "0"
+end test "type with unknown name returns non-zero"
+
+
+# ==============================================================================
+# hash utility
+# ==============================================================================
+
+requirement "SHALL-HASH-1213" doc="The hash utility shall conform to XBD 12.2 Utility Syntax Guidelines."
+requirement "SHALL-HASH-1217" doc="The standard output of hash shall be used when no arguments are specified."
+requirement "SHALL-HASH-1218" doc="This list shall consist of those utilities named in previous hash invocations that have been invoked."
+requirement "SHALL-HASH-1219" doc="This list shall be cleared when the contents of the PATH environment variable are changed."
+
+begin test "hash remembers and lists utilities"
+  begin script
+    hash -r; hash sh; hash >/dev/null && echo pass || echo fail
+  end script
+  expect_stdout "pass"
+end test "hash remembers and lists utilities"
+
+begin test "hash output goes to stdout"
+  begin script
+    hash -r; hash echo 2>/dev/null; echo 2>/dev/null; hash 2>/dev/null; echo pass
+  end script
+  expect_stdout_line "pass"
+end test "hash output goes to stdout"
+
+begin test "PATH change clears hash table"
+  begin script
+    hash -r; hash echo 2>/dev/null; echo >/dev/null; PATH="$PATH"; hash 2>/dev/null | wc -l
+  end script
+  expect_stdout_line ".*0.*"
+end test "PATH change clears hash table"
+
+
+# ==============================================================================
+# alias utility
+# ==============================================================================
+
+requirement "SHALL-ALIAS-1052" doc="The alias utility shall create or redefine alias definitions or write the values of existing alias definitions to standard output."
+requirement "SHALL-ALIAS-1026-DUP757" doc="The format for displaying aliases shall be: \"%s=%s\\n\", name, value. The value string shall be written with appropriate quoting."
+requirement "SHALL-ALIAS-1028" doc="The following exit values shall be returned: 0 Successful completion."
+requirement "SHALL-OPERANDS-010" doc="The following operands shall be supported."
+
+begin test "alias creates definition visible in output"
+  begin script
+    alias foo=bar; alias foo | grep -q "foo=" && echo pass || echo fail
+  end script
+  expect_stdout "pass"
+end test "alias creates definition visible in output"
+
+begin test "alias redefine updates the definition"
+  begin script
+    alias mya="echo old"; alias mya="echo new"; alias mya
+  end script
+  expect_stdout_line ".*new.*"
+end test "alias redefine updates the definition"
+
+begin test "alias exit code 0 on success"
+  begin script
+    alias a1=b1 2>/dev/null
+  end script
+  expect_exit_code 0
+end test "alias exit code 0 on success"
+
+
+# ==============================================================================
+# unalias utility
+# ==============================================================================
+
+requirement "SHALL-UNALIAS-1337" doc="The unalias utility shall conform to XBD 12.2 Utility Syntax Guidelines."
+
+begin test "unalias removes named alias"
+  begin script
+    alias foo=bar; unalias foo; alias foo >/dev/null 2>&1 || echo pass
+  end script
+  expect_stdout "pass"
+end test "unalias removes named alias"
+
+begin test "unalias -a removes all aliases"
+  begin script
+    alias foo=bar; alias baz=qux; unalias -a; val=$(alias); [ -z "$val" ] && echo pass || echo fail
+  end script
+  expect_stdout "pass"
+end test "unalias -a removes all aliases"
+
+
+# ==============================================================================
+# command utility
+# ==============================================================================
+
+requirement "SHALL-COMMAND-1110" doc="The command utility shall conform to XBD 12.2 Utility Syntax Guidelines."
+requirement "SHALL-COMMAND-1037" doc="The following options shall be supported: -p Perform the command search using a default value for PATH that is guaranteed to find all of the standard utilities."
+requirement "SHALL-COMMAND-1112" doc="Executable utilities, regular built-in utilities, command_names including a slash character, and any implementation-provided functions that are found using the PATH variable shall be written as absolute pathnames."
+requirement "SHALL-COMMAND-1113" doc="Shell functions, special built-in utilities, regular built-in utilities not associated with a PATH search, and shell reserved words shall be written as just their names."
+requirement "SHALL-COMMAND-1114" doc="An alias shall be written as a command line that represents its alias definition."
+requirement "SHALL-COMMAND-1115" doc="Otherwise, no output shall be written and the exit status shall reflect that the name was not found."
+requirement "SHALL-COMMAND-1116" doc="Although the format of this string is unspecified, it shall indicate in which of the following categories command_name falls and shall include the information stated."
+requirement "SHALL-COMMAND-1117" doc="Other shell functions shall be identified as functions."
+requirement "SHALL-COMMAND-1118" doc="Aliases shall be identified as aliases and their definitions included in the string."
+requirement "SHALL-COMMAND-1119" doc="Special built-in utilities shall be identified as special built-in utilities."
+requirement "SHALL-COMMAND-1120" doc="Regular built-in utilities not associated with a PATH search shall be identified as regular built-in utilities."
+requirement "SHALL-COMMAND-1121" doc="Shell reserved words shall be identified as reserved words."
+requirement "SHALL-SH-1017" doc="The following environment variables shall affect the execution of sh: ENV shall be subjected to parameter expansion when an interactive shell is invoked."
+requirement "SHALL-COMMAND-1029" doc="The standard output shall be the same as that of the invoked utility."
+requirement "SHALL-COMMAND-1041" doc="Otherwise, the following exit values shall be returned: 126 The utility was found but could not be invoked. 127 The utility could not be found."
+requirement "SHALL-COMMAND-1040" doc="When the -v or -V options are specified, the following exit values shall be returned: 0 Successful completion."
+requirement "SHALL-COMMAND-1127" doc="Otherwise, the exit status of command shall be that of the simple command specified by the arguments to command."
+
+begin test "command -v finds known utility"
+  begin script
+    command -v sh >/dev/null && echo pass || echo fail
+  end script
+  expect_stdout "pass"
+end test "command -v finds known utility"
+
+begin test "command -v fails for missing command"
+  begin script
+    command -v missing_cmd_not_found >/dev/null || echo pass
+  end script
+  expect_stdout "pass"
+end test "command -v fails for missing command"
+
+begin test "command -V describes known utility"
+  begin script
+    command -V sh >/dev/null && echo pass || echo fail
+  end script
+  expect_stdout "pass"
+end test "command -V describes known utility"
+
+begin test "command bypasses alias"
+  begin script
+    alias echo="echo alias_"; command echo "hello"
+  end script
+  expect_stdout "hello"
+end test "command bypasses alias"
+
+begin test "command returns 127 for missing utility"
+  begin script
+    command missing_cmd_not_found >/dev/null 2>&1; echo $?
+  end script
+  expect_stdout "127"
+end test "command returns 127 for missing utility"
+
+begin test "command returns 126 for non-executable file"
+  begin script
+    mkdir -p mydir; touch mydir/nonexec; PATH="$PWD/mydir:$PATH" command nonexec >/dev/null 2>&1; rc=$?; rm -rf mydir; echo $rc
+  end script
+  expect_stdout "126"
+end test "command returns 126 for non-executable file"
+
+
+# ==============================================================================
+# XBD 12.2 Utility Syntax Guidelines: option-argument handling
+# ==============================================================================
+
+requirement "SHALL-XBD-12-4000" doc="If SYNOPSIS shows option with mandatory option-argument, conforming implementation shall accept option and option-argument as separate arguments."
+requirement "SHALL-XBD-12-4001" doc="Conforming implementation shall also permit specifying option and option-argument in the same argument string."
+requirement "SHALL-XBD-12-4005" doc="If an error is generated, the utility's diagnostic message shall indicate that the value is out of the supported range."
+
+begin test "kill -s TERM as separate option-argument"
+  begin script
+    sleep 0 & _pid=$!; kill -s TERM $_pid 2>/dev/null; wait $_pid 2>/dev/null; true
+  end script
+  expect_exit_code 0
+end test "kill -s TERM as separate option-argument"
+
+begin test "ulimit with invalid value produces diagnostic"
+  begin script
+    err=$(ulimit -f not_a_number 2>&1); [ -n "$err" ] && echo pass || echo fail
+  end script
+  expect_stdout "pass"
+end test "ulimit with invalid value produces diagnostic"

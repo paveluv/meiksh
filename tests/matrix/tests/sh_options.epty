@@ -1,0 +1,96 @@
+testsuite "Shell Invocation Options and Operands"
+
+# ==============================================================================
+# The '-c' Option
+# ==============================================================================
+
+requirement "SHALL-OPTIONS-004" doc="The sh utility shall conform to XBD 12.2 Utility Syntax Guidelines, with an extension for support of a leading plus-sign."
+requirement "SHALL-SH-1021" doc="The following additional options shall be supported: -c Read commands from the command_string operand."
+requirement "SHALL-OPTIONS-007" doc="No commands shall be read from the standard input."
+requirement "SHALL-OPERANDS-013" doc="Special parameter 0 shall be set to the value of command_file."
+requirement "SHALL-OPERANDS-011" doc="The positional parameters ($1, $2, and so on) shall be set to arguments, if any."
+
+begin test "-c runs command_string with $0 and positional params"
+  begin script
+    {{SHELL}} -c 'echo "args: $0 $1 $2"' zero one two
+  end script
+  expect_stdout "args: zero one two"
+end test "-c runs command_string with $0 and positional params"
+
+# ==============================================================================
+# The '-s' Option and Standard Input
+# ==============================================================================
+
+requirement "SHALL-OPERANDS-010" doc="The following operands shall be supported."
+requirement "SHALL-OPTIONS-008" doc="If there are no operands and the -c option is not specified, the -s option shall be assumed."
+requirement "SHALL-STDIN-016" doc="The standard input shall be used only if one of the following is true."
+requirement "SHALL-STDIN-017" doc="It shall not read ahead in such a manner that any characters intended to be read by the invoked command are consumed by the shell."
+requirement "SHALL-STDIN-018" doc="If the standard input to sh is a FIFO or terminal device and is set to non-blocking reads, then sh shall enable blocking reads on standard input."
+requirement "SHALL-STDIN-019" doc="This shall remain in effect when the command completes."
+
+begin test "commands from stdin act like -s"
+  begin script
+    echo 'echo stdin_test' | {{SHELL}}
+  end script
+  expect_stdout "stdin_test"
+end test "commands from stdin act like -s"
+
+begin test "stdin not consumed entirely if a command needs it"
+  begin script
+    (echo 'read line'; echo 'input_for_read'; echo 'echo "got: $line"') | {{SHELL}}
+  end script
+  expect_stdout "got: input_for_read"
+end test "stdin not consumed entirely if a command needs it"
+
+requirement "SHALL-OPERANDS-014" doc="If sh is called using a synopsis form that omits command_file, special parameter 0 shall be set to the value of the first argument passed to sh from its parent."
+
+begin test "$0 is shell path when reading from stdin"
+  begin script
+    echo 'echo $0' | {{SHELL}}
+  end script
+  expect_stdout_line ".*/.*sh.*"
+end test "$0 is shell path when reading from stdin"
+
+# ==============================================================================
+# The Hyphen Operand
+# ==============================================================================
+
+requirement "SHALL-OPERANDS-010" doc="The following operands shall be supported."
+
+begin test "sh - ignores the hyphen and reads from stdin"
+  begin script
+    echo 'echo hyphen_test' | {{SHELL}} -
+  end script
+  expect_stdout "hyphen_test"
+end test "sh - ignores the hyphen and reads from stdin"
+
+# ==============================================================================
+# Option Parsing (+ / -)
+# ==============================================================================
+
+requirement "SHALL-OPTIONS-005" doc="The option letters derived from the set special built-in shall also be accepted with a leading plus-sign instead of a leading hyphen-minus."
+
+begin test "+a turns off allexport"
+  begin script
+    {{SHELL}} -c 'set -a
+    export_on="yes"
+    set +a
+    export_off="no"
+    env | grep export_'
+  end script
+  expect_stdout_line "export_on=yes"
+  not_expect_stdout_line "export_off=.*"
+end test "+a turns off allexport"
+
+# ==============================================================================
+# The 'sh' Invocation File Search
+# ==============================================================================
+
+requirement "SHALL-OPERANDS-012" doc="If the pathname does not contain a slash character, the implementation shall attempt to read that file from the current working directory; the file need not be executable."
+
+begin test "sh reads script from current working directory without slash"
+  begin script
+    echo 'echo "local_script_executed"' > tmp_local.sh; {{SHELL}} tmp_local.sh; rm -f tmp_local.sh
+  end script
+  expect_stdout "local_script_executed"
+end test "sh reads script from current working directory without slash"

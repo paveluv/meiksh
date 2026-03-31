@@ -1,0 +1,87 @@
+testsuite "cd Utility"
+
+# ==============================================================================
+# Requirements
+# ==============================================================================
+
+requirement "SHALL-CD-1086" doc="The cd utility shall conform to XBD 12.2 Utility Syntax Guidelines."
+requirement "SHALL-CD-1033" doc="The following options shall be supported by the implementation. The directory was successfully changed."
+requirement "SHALL-OPERANDS-010" doc="The following operands shall be supported: - A single <hyphen-minus> shall be treated as the first operand and then ignored."
+requirement "SHALL-CD-1093" doc="The following operands shall be supported: directory An absolute or relative pathname of the directory that shall become the new working directory."
+requirement "SHALL-CD-1095" doc="If directory consists of a single '-' character, the cd utility shall behave as if directory contained the value of the OLDPWD environment variable, except that after it sets the value of PWD it shall write the new value to standard output."
+requirement "SHALL-SH-1017" doc="The ENV variable, when and only when an interactive shell is invoked, shall be subjected to parameter expansion and the resulting value used as a pathname of a file containing shell commands to execute in the current environment."
+requirement "SHALL-CD-1097" doc="The cd utility shall use this list in its attempt to change the directory, as described in the DESCRIPTION."
+requirement "SHALL-CD-1098" doc="If CDPATH is not set, it shall be treated as if it were an empty string."
+requirement "SHALL-CD-1094" doc="If the cd utility cannot determine the contents of OLDPWD, it shall write a diagnostic message to standard error and exit with a non-zero status."
+requirement "SHALL-CD-1101" doc="If a non-empty directory name from CDPATH is not used, and the directory argument is not '-', there shall be no output."
+requirement "SHALL-CD-1099" doc="PWD This variable shall be set as specified in the DESCRIPTION."
+requirement "SHALL-CD-1083" doc="If the -P option is in effect, the PWD environment variable shall be set to the string that would be output by pwd -P."
+requirement "SHALL-CD-1035" doc="If the new directory cannot be determined or if an error occurred, it shall remain unchanged. If a - operand is used and the change is successful, the absolute pathname of the new working directory shall be written to standard output."
+requirement "SHALL-STDERR-518" doc="The standard error shall be used only for diagnostic messages."
+requirement "SHALL-SH-1024-DUP746" doc="The following exit values shall be returned: 0 The script to be executed consisted solely of zero or more blank lines or comments, or both."
+requirement "SHALL-CD-1090" doc="If both -L and -P options are specified, the last of these options shall be used and all others ignored."
+requirement "SHALL-CD-1091" doc="If neither -L nor -P is specified, the operand shall be handled dot-dot logically; see the DESCRIPTION."
+requirement "SHALL-CD-1088" doc="-L Handle the operand dot-dot logically; symbolic link components shall not be resolved before dot-dot components are processed."
+requirement "SHALL-CD-1089" doc="-P Handle the operand dot-dot physically; symbolic link components shall be resolved before dot-dot components are processed."
+
+# ==============================================================================
+# Basic cd and cd - navigation
+# ==============================================================================
+
+begin test "cd into directory and cd - toggle"
+  begin script
+    mkdir -p foo/bar; cd foo; echo "$PWD" | grep -q foo && echo pass1 || echo fail1; cd bar; echo "$PWD" | grep -q foo/bar && echo pass2 || echo fail2; cd - >/dev/null; echo "$PWD" | grep -q foo$ && echo pass3 || echo fail3; cd - >/dev/null; echo "$PWD" | grep -q foo/bar && echo pass4 || echo fail4
+  end script
+  expect_stdout "pass1\npass2\npass3\npass4"
+end test "cd into directory and cd - toggle"
+
+# ==============================================================================
+# cd - prints new directory
+# ==============================================================================
+
+begin test "cd - output prints old directory"
+  begin script
+    mkdir -p abc; old=$PWD; cd abc; cd - | grep -q "^$old" && echo pass || echo fail
+  end script
+  expect_stdout "pass"
+end test "cd - output prints old directory"
+
+# ==============================================================================
+# Logical vs physical cd
+# ==============================================================================
+
+begin test "cd default is logical (symlink)"
+  begin script
+    mkdir -p real/dir; ln -s real/dir symlink; cd symbolic >/dev/null 2>&1 || true; cd symlink; cd ..; echo "$PWD" | grep -q real && echo "fail: physical" || echo "pass logical"
+  end script
+  expect_stdout "pass logical"
+end test "cd default is logical (symlink)"
+
+begin test "cd -P is physical (symlink)"
+  begin script
+    mkdir -p real/dir2; ln -s real/dir2 symlink2; cd symlink2; cd -P ..; echo "$PWD" | grep -q real && echo "pass physical" || echo "fail logical"
+  end script
+  expect_stdout "pass physical"
+end test "cd -P is physical (symlink)"
+
+# ==============================================================================
+# cd with empty string
+# ==============================================================================
+
+begin test "cd empty string fails"
+  begin script
+    cd "" 2>/dev/null
+  end script
+  not_expect_exit_code 0
+end test "cd empty string fails"
+
+# ==============================================================================
+# cd - with unset OLDPWD
+# ==============================================================================
+
+begin test "cd - with unset OLDPWD fails"
+  begin script
+    unset OLDPWD; cd - 2>/dev/null
+  end script
+  not_expect_exit_code 0
+end test "cd - with unset OLDPWD fails"

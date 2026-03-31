@@ -1,0 +1,282 @@
+testsuite "Maybe Built-in — echo"
+
+# ==============================================================================
+# echo shall not recognize "--" argument
+# ==============================================================================
+
+requirement "SHALL-OPTIONS-5000" doc="echo shall not recognize the \"--\" argument in that context; it shall be treated as a string operand."
+
+begin test "echo -- prints double dash"
+  begin script
+    echo --
+  end script
+  expect_stdout "--"
+end test "echo -- prints double dash"
+
+begin test "echo -- hello prints both"
+  begin script
+    echo -- hello
+  end script
+  expect_stdout "-- hello"
+end test "echo -- hello prints both"
+
+begin test "echo -- -- prints both double dashes"
+  begin script
+    echo -- --
+  end script
+  expect_stdout "-- --"
+end test "echo -- -- prints both double dashes"
+
+# ==============================================================================
+# String operand shall be supported
+# ==============================================================================
+
+requirement "SHALL-OPERANDS-5001" doc="string operand shall be supported."
+
+begin test "echo hello"
+  begin script
+    echo hello
+  end script
+  expect_stdout "hello"
+end test "echo hello"
+
+begin test "echo with no arguments produces empty line"
+  begin script
+    echo
+  end script
+  expect_stdout ""
+end test "echo with no arguments produces empty line"
+
+begin test "echo hello world joins with space"
+  begin script
+    echo hello world
+  end script
+  expect_stdout "hello world"
+end test "echo hello world joins with space"
+
+begin test "echo one two three joins with spaces"
+  begin script
+    echo one two three
+  end script
+  expect_stdout "one two three"
+end test "echo one two three joins with spaces"
+
+begin test "echo single character"
+  begin script
+    echo x
+  end script
+  expect_stdout "x"
+end test "echo single character"
+
+# ==============================================================================
+# If first operand is - followed by e, E, n chars, behavior unspecified
+# ==============================================================================
+
+requirement "SHALL-OPERANDS-5002" doc="If the first operand is -n, -e, -E, or any combination of those characters following a hyphen, behavior is implementation-defined (unspecified)."
+
+begin test "echo -n does not crash"
+  begin script
+    echo -n test >/dev/null
+  end script
+  expect_exit_code 0
+end test "echo -n does not crash"
+
+begin test "echo -e does not crash"
+  begin script
+    echo -e test >/dev/null
+  end script
+  expect_exit_code 0
+end test "echo -e does not crash"
+
+begin test "echo -E does not crash"
+  begin script
+    echo -E test >/dev/null
+  end script
+  expect_exit_code 0
+end test "echo -E does not crash"
+
+begin test "echo -nee does not crash"
+  begin script
+    echo -nee test >/dev/null
+  end script
+  expect_exit_code 0
+end test "echo -nee does not crash"
+
+begin test "echo -neE does not crash"
+  begin script
+    echo -neE test >/dev/null
+  end script
+  expect_exit_code 0
+end test "echo -neE does not crash"
+
+# ==============================================================================
+# XSI escape sequences
+# ==============================================================================
+
+requirement "SHALL-OPERANDS-5003" doc="XSI escape sequences: \\a, \\b, \\c, \\f, \\n, \\r, \\t, \\v, \\\\, \\0num"
+
+begin test "echo \\a produces BEL (0x07)"
+  begin script
+    echo "\a" 2>/dev/null | od -An -tx1 | tr -d ' \n'
+  end script
+  expect_stdout ".*07.*"
+end test "echo \\a produces BEL (0x07)"
+
+begin test "echo \\b produces BS (0x08)"
+  begin script
+    echo "\b" 2>/dev/null | od -An -tx1 | tr -d ' \n'
+  end script
+  expect_stdout ".*08.*"
+end test "echo \\b produces BS (0x08)"
+
+begin test "echo \\f produces FF (0x0c)"
+  begin script
+    echo "\f" 2>/dev/null | od -An -tx1 | tr -d ' \n'
+  end script
+  expect_stdout ".*0c.*"
+end test "echo \\f produces FF (0x0c)"
+
+begin test "echo \\n produces two newlines"
+  begin script
+    echo "\n" 2>/dev/null | od -An -tx1 | tr -d ' \n'
+  end script
+  expect_stdout ".*0a0a.*"
+end test "echo \\n produces two newlines"
+
+begin test "echo \\r produces CR (0x0d)"
+  begin script
+    echo "\r" 2>/dev/null | od -An -tx1 | tr -d ' \n'
+  end script
+  expect_stdout ".*0d.*"
+end test "echo \\r produces CR (0x0d)"
+
+begin test "echo \\t produces HT (0x09)"
+  begin script
+    echo "\t" 2>/dev/null | od -An -tx1 | tr -d ' \n'
+  end script
+  expect_stdout ".*09.*"
+end test "echo \\t produces HT (0x09)"
+
+begin test "echo \\v produces VT (0x0b)"
+  begin script
+    echo "\v" 2>/dev/null | od -An -tx1 | tr -d ' \n'
+  end script
+  expect_stdout ".*0b.*"
+end test "echo \\v produces VT (0x0b)"
+
+begin test "echo \\\\ produces literal backslash"
+  begin script
+    echo "\\\\"
+  end script
+  expect_stdout "\\"
+end test "echo \\\\ produces literal backslash"
+
+begin test "echo \\065 produces ASCII 5"
+  begin script
+    echo "\065" 2>/dev/null
+  end script
+  expect_stdout ".*5.*"
+end test "echo \\065 produces ASCII 5"
+
+begin test "echo \\0101 produces ASCII A"
+  begin script
+    echo "\0101" 2>/dev/null
+  end script
+  expect_stdout ".*A.*"
+end test "echo \\0101 produces ASCII A"
+
+# ==============================================================================
+# All characters following \c shall be ignored
+# ==============================================================================
+
+requirement "SHALL-OPERANDS-5004" doc="All characters following \\c in the string shall be ignored. The trailing newline is also suppressed."
+
+begin test "echo \\c suppresses text after it"
+  begin script
+    echo "hello\c world" 2>/dev/null | od -An -tx1 | tr -d ' \n'
+  end script
+  expect_stdout "68656c6c6f"
+  not_expect_stdout ".*776f726c64.*"
+end test "echo \\c suppresses text after it"
+
+begin test "echo AB\\c produces exactly 2 bytes"
+  begin script
+    echo "AB\c" 2>/dev/null | wc -c | tr -d ' '
+  end script
+  expect_stdout "2"
+end test "echo AB\\c produces exactly 2 bytes"
+
+# ==============================================================================
+# Arguments separated by single space, followed by newline
+# ==============================================================================
+
+requirement "SHALL-STDOUT-5006" doc="Arguments shall be separated by single <space> characters and followed by a <newline> character."
+
+begin test "echo a b c joins with single spaces"
+  begin script
+    echo a b c
+  end script
+  expect_stdout "a b c"
+end test "echo a b c joins with single spaces"
+
+begin test "echo hello produces 6 bytes (with trailing newline)"
+  begin script
+    echo hello 2>/dev/null | wc -c | tr -d ' '
+  end script
+  expect_stdout "6"
+end test "echo hello produces 6 bytes (with trailing newline)"
+
+begin test "echo with no args produces 1 byte (newline only)"
+  begin script
+    echo 2>/dev/null | wc -c | tr -d ' '
+  end script
+  expect_stdout "1"
+end test "echo with no args produces 1 byte (newline only)"
+
+begin test "echo many arguments"
+  begin script
+    echo 1 2 3 4 5
+  end script
+  expect_stdout "1 2 3 4 5"
+end test "echo many arguments"
+
+# ==============================================================================
+# Implementations shall not support any options
+# ==============================================================================
+
+requirement "SHALL-ISSUE-6-5007" doc="Implementations shall not support any options. All arguments, including those that look like options, are treated as string operands."
+
+begin test "echo -- hello treats -- as operand"
+  begin script
+    echo -- hello
+  end script
+  expect_stdout "-- hello"
+end test "echo -- hello treats -- as operand"
+
+begin test "echo -x prints -x"
+  begin script
+    echo -x
+  end script
+  expect_stdout "-x"
+end test "echo -x prints -x"
+
+begin test "echo -abc prints -abc"
+  begin script
+    echo -abc
+  end script
+  expect_stdout "-abc"
+end test "echo -abc prints -abc"
+
+begin test "echo --help prints --help"
+  begin script
+    echo --help
+  end script
+  expect_stdout "--help"
+end test "echo --help prints --help"
+
+begin test "echo --version prints --version"
+  begin script
+    echo --version
+  end script
+  expect_stdout "--version"
+end test "echo --version prints --version"

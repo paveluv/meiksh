@@ -1,0 +1,73 @@
+testsuite "Shell Startup and Invocation"
+
+# ==============================================================================
+# Special parameter 0 defaults to shell name
+# ==============================================================================
+
+requirement "SHALL-SH-1015" doc="If command_name is not specified, special parameter 0 shall be set to the value of the first argument passed to sh from its parent."
+
+begin test "special parameter 0 defaults to shell name"
+  begin script
+    echo 'echo $0' | {{SHELL}}
+  end script
+  expect_stdout_line ".*/.*sh.*"
+end test "special parameter 0 defaults to shell name"
+
+# ==============================================================================
+# -c command_string
+# ==============================================================================
+
+requirement "SHALL-SH-1016" doc="command_string: A string that shall be interpreted by the shell as one or more commands, as if the string were the argument to the system() function."
+
+begin test "-c command_string executes command"
+  begin script
+    {{SHELL}} -c 'echo hello'
+  end script
+  expect_stdout "hello"
+end test "-c command_string executes command"
+
+begin test "-c command_string multiple commands"
+  begin script
+    {{SHELL}} -c 'echo first; echo second'
+  end script
+  expect_stdout "first\nsecond"
+end test "-c command_string multiple commands"
+
+# ==============================================================================
+# -s option: read from stdin
+# ==============================================================================
+
+requirement "SHALL-SH-1022" doc="The standard input shall be used only if one of the following is true: The -s option is specified."
+
+begin test "-s reads commands from stdin"
+  begin script
+    echo 'echo from_stdin' | {{SHELL}} -s
+  end script
+  expect_stdout "from_stdin"
+end test "-s reads commands from stdin"
+
+# ==============================================================================
+# ENV processing for interactive shells
+# ==============================================================================
+
+requirement "SHALL-SH-1018" doc="ENV shall be ignored if the real and effective user IDs or real and effective group IDs of the process are different."
+
+begin test "ENV file processed for interactive shell"
+  begin script
+    _env_file=${TMPDIR:-/tmp}/_test_env_$$.sh; echo 'ENV_LOADED=yes' > $_env_file; ENV=$_env_file; export ENV; {{SHELL}} -i -c 'echo $ENV_LOADED' 2>/dev/null; rc=$?; rm -f $_env_file; exit $rc
+  end script
+  expect_stdout_line ".*yes.*"
+end test "ENV file processed for interactive shell"
+
+# ==============================================================================
+# Empty command_string exits zero
+# ==============================================================================
+
+requirement "SHALL-2-8-1-250" doc="If the command_string operand is an empty string, sh shall exit with a zero exit status."
+
+begin test "empty command_string exits zero"
+  begin script
+    {{SHELL}} -c ''
+  end script
+  expect_exit_code 0
+end test "empty command_string exits zero"

@@ -1,0 +1,232 @@
+testsuite "Compound Commands"
+
+# ==============================================================================
+# The 'for' Loop
+# ==============================================================================
+
+requirement "SHALL-2-9-4-2-349" doc="The for loop shall execute a sequence of commands for each member in a list of items"
+requirement "SHALL-2-9-4-2-351" doc="The variable name shall be set to each item, in turn, and the compound-list executed each time"
+
+begin test "for loop iterates over items"
+  begin script
+    for i in a b c; do printf "%s " "$i"; done
+  end script
+  expect_stdout "a b c"
+end test "for loop iterates over items"
+
+requirement "SHALL-2-9-4-2-352" doc="If no items result from the expansion, the compound-list shall not be executed"
+requirement "SHALL-2-9-4-2-1-353" doc="If there is at least one item in the list, the exit status of a for command shall be the exit status of the last compound-list executed"
+requirement "SHALL-2-9-4-2-1-354" doc="If there are no items, the exit status shall be zero"
+
+begin test "for loop exit status is last command"
+  begin script
+    for i in 1 2; do
+    false
+    done
+    exit $?
+  end script
+  expect_exit_code 1
+end test "for loop exit status is last command"
+
+begin test "for loop with empty list does not execute body"
+  begin script
+    x=1; for i in; do x=2; done; echo "$x"
+  end script
+  expect_stdout "1"
+end test "for loop with empty list does not execute body"
+
+
+# ==============================================================================
+# The 'case' Construct
+# ==============================================================================
+
+requirement "SHALL-2-9-4-3-355" doc="The conditional construct case shall execute the compound-list corresponding to the first matching pattern"
+requirement "SHALL-2-9-4-3-356" doc="The reserved word in shall denote the beginning of the patterns to be matched"
+requirement "SHALL-2-9-4-3-357" doc="Multiple patterns with the same compound-list shall be delimited by the | symbol"
+requirement "SHALL-2-9-4-3-360" doc="After the first match, no more patterns shall be expanded, and the compound-list of the matching clause shall be executed"
+requirement "SHALL-2-9-4-3-1-363" doc="The exit status of case shall be zero if no patterns are matched"
+requirement "SHALL-2-9-4-3-1-364" doc="Otherwise, the exit status shall be the exit status of the compound-list of the last clause executed"
+
+begin test "case exit status from matched clause"
+  begin script
+    case "xyz" in
+    abc) false ;;
+    xyz) false ;;
+    esac
+    exit $?
+  end script
+  expect_exit_code 1
+end test "case exit status from matched clause"
+
+begin test "case exit status zero when no match"
+  begin script
+    case "xyz" in
+    abc) false ;;
+    esac
+    exit $?
+  end script
+  expect_exit_code 0
+end test "case exit status zero when no match"
+
+requirement "SHALL-2-9-4-3-361" doc="If the case statement clause is terminated by ;; no further clauses shall be examined"
+
+begin test "case with pipe patterns and early exit"
+  begin script
+    case "apple" in
+    banana|orange) echo "no" ;;
+    apple|pear) echo "yes" ;;
+    *) echo "default" ;;
+    esac
+  end script
+  expect_stdout "yes"
+end test "case with pipe patterns and early exit"
+
+begin test "case default wildcard match"
+  begin script
+    case "grape" in
+    apple) echo "no" ;;
+    *) echo "default" ;;
+    esac
+  end script
+  expect_stdout "default"
+end test "case default wildcard match"
+
+
+# ==============================================================================
+# The 'if' Construct
+# ==============================================================================
+
+requirement "SHALL-2-9-4-4-365" doc="The if command shall execute a compound-list and use its exit status to determine whether to execute another compound-list"
+requirement "SHALL-2-9-4-4-366" doc="If the if compound-list exit status is zero, the then compound-list shall be executed"
+requirement "SHALL-2-9-4-4-367" doc="Each elif compound-list shall be executed in turn, and if its exit status is zero, the then compound-list shall be executed"
+requirement "SHALL-2-9-4-4-368" doc="Otherwise, the else compound-list shall be executed"
+requirement "SHALL-2-9-4-4-1-369" doc="The exit status of the if command shall be the exit status of the then or else compound-list that was executed, or zero if none was executed"
+
+begin test "if exit status from then clause"
+  begin script
+    if true; then
+    false
+    fi
+    exit $?
+  end script
+  expect_exit_code 1
+end test "if exit status from then clause"
+
+begin test "if true branch"
+  begin script
+    if true; then echo "if"; elif false; then echo "elif"; else echo "else"; fi
+  end script
+  expect_stdout "if"
+end test "if true branch"
+
+begin test "elif true branch"
+  begin script
+    if false; then echo "if"; elif true; then echo "elif"; else echo "else"; fi
+  end script
+  expect_stdout "elif"
+end test "elif true branch"
+
+begin test "else branch"
+  begin script
+    if false; then echo "if"; elif false; then echo "elif"; else echo "else"; fi
+  end script
+  expect_stdout "else"
+end test "else branch"
+
+
+# ==============================================================================
+# The 'while' Loop
+# ==============================================================================
+
+requirement "SHALL-2-9-4-5-370" doc="The while loop shall continuously execute one compound-list as long as another compound-list has a zero exit status"
+requirement "SHALL-2-9-4-5-371" doc="The compound-list-1 shall be executed, and if it has a non-zero exit status, the while command shall complete"
+requirement "SHALL-2-9-4-5-372" doc="Otherwise, the compound-list-2 shall be executed, and the process shall repeat"
+requirement "SHALL-2-9-4-5-1-373" doc="The exit status of the while loop shall be the exit status of the last compound-list-2 executed, or zero if none was executed"
+
+begin test "while loop exit status zero when body never executes"
+  begin script
+    while false; do
+    true
+    done
+    exit $?
+  end script
+  expect_exit_code 0
+end test "while loop exit status zero when body never executes"
+
+begin test "while loop exit status from last iteration"
+  begin script
+    counter=0
+    while [ "$counter" -lt 1 ]; do
+    counter=$((counter + 1))
+    false
+    done
+    exit $?
+  end script
+  expect_exit_code 1
+end test "while loop exit status from last iteration"
+
+begin test "while loop iterates correctly"
+  begin script
+    x=0; while [ $x -lt 3 ]; do x=$((x+1)); printf "%s " "$x"; done
+  end script
+  expect_stdout "1 2 3"
+end test "while loop iterates correctly"
+
+begin test "while loop with false condition does not execute"
+  begin script
+    x=0; while false; do x=$((x+1)); done; echo "$x"
+  end script
+  expect_stdout "0"
+end test "while loop with false condition does not execute"
+
+
+# ==============================================================================
+# The 'until' Loop
+# ==============================================================================
+
+requirement "SHALL-2-9-4-6-374" doc="The until loop shall continuously execute one compound-list as long as another compound-list has a non-zero exit status"
+requirement "SHALL-2-9-4-6-375" doc="The compound-list-1 shall be executed, and if it has a zero exit status, the until command completes"
+requirement "SHALL-2-9-4-6-376" doc="Otherwise, the compound-list-2 shall be executed, and the process repeats"
+requirement "SHALL-2-9-4-6-1-377" doc="The exit status of the until loop shall be the exit status of the last compound-list-2 executed, or zero if none was executed"
+
+begin test "until loop iterates correctly"
+  begin script
+    x=0; until [ $x -eq 3 ]; do x=$((x+1)); printf "%s " "$x"; done
+  end script
+  expect_stdout "1 2 3"
+end test "until loop iterates correctly"
+
+begin test "until loop with true condition does not execute"
+  begin script
+    x=0; until true; do x=$((x+1)); done; echo "$x"
+  end script
+  expect_stdout "0"
+end test "until loop with true condition does not execute"
+
+
+# ==============================================================================
+# Grouping Commands (Subshells)
+# ==============================================================================
+
+requirement "SHALL-2-9-4-1-346" doc="Variable assignments and built-in commands that affect the environment shall not remain in effect after the list finishes"
+
+begin test "subshell variable isolation"
+  begin script
+    FOO=parent; (FOO=child); echo "$FOO"
+  end script
+  expect_stdout "parent"
+end test "subshell variable isolation"
+
+
+# ==============================================================================
+# Redirections on Compound Commands
+# ==============================================================================
+
+requirement "SHALL-2-9-4-344" doc="Each redirection shall apply to all the commands within the compound command that do not explicitly override that redirection"
+
+begin test "redirection applies to all commands in group"
+  begin script
+    { echo a; echo b; } > tmp_group.txt; cat tmp_group.txt
+  end script
+  expect_stdout "a\nb"
+end test "redirection applies to all commands in group"

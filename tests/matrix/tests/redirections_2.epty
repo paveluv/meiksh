@@ -1,0 +1,191 @@
+testsuite "Advanced Redirections"
+
+# ==============================================================================
+# General Redirection Rules
+# ==============================================================================
+
+requirement "SHALL-2-7-189" doc="The number n is an optional one or more digit decimal number designating the file descriptor number; the application shall ensure it is delimited from any preceding text and immediately precedes the redirection operator redir-op (with no intervening blank characters allowed)"
+requirement "SHALL-2-7-192" doc="The largest file descriptor number supported in shell redirections is implementation-defined; however, all implementations shall support at least 0 to 9, inclusive, for use by the application"
+requirement "SHALL-2-7-193" doc="If the redirection operator is << or <<- , the word that follows the redirection operator shall be subjected to quote removal; it is unspecified whether any of the other expansions occur"
+requirement "SHALL-2-7-191" doc="The optional number, redirection operator, and word shall not appear in the arguments provided to the command to be executed (if any)"
+
+begin test "fd 3 works and does not appear in arguments"
+  begin script
+    echo "fd3 content" 3>tmp_fd3.txt; cat tmp_fd3.txt
+  end script
+  expect_stdout "fd3 content"
+end test "fd 3 works and does not appear in arguments"
+
+requirement "SHALL-2-7-194" doc="For the other redirection operators, the word that follows the redirection operator shall be subjected to tilde expansion, parameter expansion, command substitution, arithmetic expansion, and quote removal"
+requirement "SHALL-2-7-195" doc="Pathname expansion shall not be performed on the word by a non-interactive shell; an interactive shell may perform it, but if the expansion would result in more than one word it is unspecified whether the redirection proceeds without pathname expansion being performed or the redirection fails"
+requirement "SHALL-2-7-196" doc="A failure to open or create a file shall cause a redirection to fail"
+
+begin test "failed redirection to read-only directory fails the command"
+  begin script
+    mkdir -p tmp_ro_dir; chmod -w tmp_ro_dir; echo "fail" > tmp_ro_dir/file.txt
+  end script
+  not_expect_exit_code 0
+end test "failed redirection to read-only directory fails the command"
+
+begin test "pathname expansion does not occur on redirection word"
+  begin script
+    echo "literal" > tmp_*_redir.txt; ls tmp_*_redir.txt
+  end script
+  expect_stdout "tmp_\*_redir.txt"
+end test "pathname expansion does not occur on redirection word"
+
+begin test "redirection words are subject to parameter expansion"
+  begin script
+    file_var="tmp_var_redir.txt"; echo "expanded" > "$file_var"; cat tmp_var_redir.txt
+  end script
+  expect_stdout "expanded"
+end test "redirection words are subject to parameter expansion"
+
+
+# ==============================================================================
+# Open Mechanics
+# ==============================================================================
+
+requirement "SHALL-2-7-1-197" doc="Input redirection shall cause the file whose name results from the expansion of word to be opened for reading on the designated file descriptor, or standard input if the file descriptor is not specified"
+requirement "SHALL-2-7-2-201" doc="The check for existence, file creation, and open operations shall be performed atomically as is done by the open() function when the O_CREAT and O_EXCL flags are set"
+requirement "SHALL-2-7-2-203" doc="If the file does not exist, it shall be created as an empty file; otherwise, it shall be opened as if the open() function was called with the O_TRUNC flag set"
+requirement "SHALL-2-7-3-205" doc="The file shall be opened as if the open() function was called with the O_APPEND flag set"
+
+begin test "append redirection appends to file"
+  begin script
+    echo "initial" > tmp_append.txt; echo "append" >> tmp_append.txt; cat tmp_append.txt
+  end script
+  expect_stdout "initial\nappend"
+end test "append redirection appends to file"
+
+
+# ==============================================================================
+# Here-Document Mechanics
+# ==============================================================================
+
+requirement "SHALL-2-7-4-207" doc="The here-document shall be treated as a single word that begins after the next NEWLINE token and continues until there is a line containing only the delimiter and a newline, with no blank characters in between"
+requirement "SHALL-2-7-4-208" doc="For the purposes of locating this terminating line, the end of a command_string operand shall be treated as a newline character"
+requirement "SHALL-2-7-4-211" doc="The removal of backslash-newline for line continuation shall be performed during the search for the trailing delimiter"
+requirement "SHALL-2-7-4-212" doc="All lines of the here-document shall be expanded for parameter expansion, command substitution, and arithmetic expansion"
+requirement "SHALL-2-7-4-213" doc="If the redirection operator is never evaluated, the here-document shall be read without performing any expansions"
+requirement "SHALL-2-7-4-215" doc="The double-quote character shall not be treated specially within a here-document, except when it appears within $(), backticks, or ${}"
+requirement "SHALL-2-7-4-219" doc="When a here-document is read from a terminal device and the shell is interactive, it shall write the contents of PS2 to standard error before reading each line of input"
+
+begin test "here-document expands variables and handles backslash continuation"
+  begin script
+    var="expanded"; cat <<EOF
+    this is $var
+    backslash \
+    continues
+    double "quotes"
+    EOF
+  end script
+  expect_stdout "this is expanded\nbackslash continues\ndouble ""quotes"""
+end test "here-document expands variables and handles backslash continuation"
+
+begin test "here-document not expanded when command is not executed"
+  begin script
+    if false; then cat <<EOF
+    this contains an invalid $var_that_fails_if_expanded
+    EOF
+    fi; echo "survived"
+  end script
+  expect_stdout "survived"
+end test "here-document not expanded when command is not executed"
+
+
+# ==============================================================================
+# Multiple Here-Documents
+# ==============================================================================
+
+requirement "SHALL-2-7-4-218" doc="If more than one << or <<- operator is specified on a line, the here-document associated with the first operator shall be supplied first by the application and shall be read first by the shell"
+
+begin test "multiple here-documents on one line are read in order"
+  begin script
+    cat <<EOF1; cat <<EOF2
+    first
+    EOF1
+    second
+    EOF2
+  end script
+  expect_stdout "first\nsecond"
+end test "multiple here-documents on one line are read in order"
+
+
+# ==============================================================================
+# Stripping Tabs in Here-Documents (<<-)
+# ==============================================================================
+
+requirement "SHALL-2-7-4-216" doc="If the redirection operator is <<- , all leading tab characters shall be stripped from input lines and from the line containing the trailing delimiter"
+requirement "SHALL-2-7-4-217" doc="Stripping of leading tab characters shall occur as the here-document is read from the shell input and consequently does not affect any tab characters that result from expansions"
+
+begin test "here-document with <<- strips leading tabs"
+  begin script
+    cat <<-EOF
+    	line 1
+    		line 2
+    EOF
+  end script
+  expect_stdout "line 1\nline 2"
+end test "here-document with <<- strips leading tabs"
+
+
+# ==============================================================================
+# Read-Write Redirections (<>)
+# ==============================================================================
+
+requirement "SHALL-2-7-7-227" doc="The redirection operator [n]<>word shall cause the file whose name is the expansion of word to be opened for both reading and writing on the file descriptor denoted by n, or standard input if n is not specified"
+requirement "SHALL-2-7-3-206" doc="If the file does not exist, it shall be created"
+
+begin test "read-write redirection creates file and allows writing"
+  begin script
+    echo "rw test" 3<>tmp_rw.txt 1>&3; cat tmp_rw.txt
+  end script
+  expect_stdout "rw test"
+end test "read-write redirection creates file and allows writing"
+
+
+# ==============================================================================
+# Duplicating and Closing Output File Descriptors (>&)
+# ==============================================================================
+
+requirement "SHALL-2-7-6-224" doc="The redirection operator [n]>&word shall duplicate one output file descriptor from another, or shall close one"
+requirement "SHALL-2-7-6-225" doc="If word evaluates to one or more digits, the file descriptor denoted by n, or standard output if n is not specified, shall be made to be a copy of the file descriptor denoted by word"
+requirement "SHALL-2-7-5-223" doc="Attempts to close a file descriptor that is not open shall not constitute an error"
+
+begin test "duplicate output fd to file"
+  begin script
+    exec 4>tmp_dup.txt; echo "dup test" >&4; exec 4>&-; cat tmp_dup.txt
+  end script
+  expect_stdout "dup test"
+end test "duplicate output fd to file"
+
+begin test "closing an unopened output fd is not an error"
+  begin script
+    echo "ok" 9>&-
+  end script
+  expect_stdout "ok"
+end test "closing an unopened output fd is not an error"
+
+
+# ==============================================================================
+# Duplicating and Closing Input File Descriptors (<&)
+# ==============================================================================
+
+requirement "SHALL-2-7-5-220" doc="The redirection operator [n]<&word shall duplicate one input file descriptor from another, or shall close one"
+requirement "SHALL-2-7-5-221" doc="If word evaluates to one or more digits, the file descriptor denoted by n, or standard input if n is not specified, shall be made to be a copy of the file descriptor denoted by word"
+requirement "SHALL-2-7-5-222" doc="If word evaluates to -, file descriptor n, or standard input if n is not specified, shall be closed"
+
+begin test "duplicate input fd from file"
+  begin script
+    echo "input dup" > tmp_in.txt; exec 5<tmp_in.txt; cat <&5; exec 5<&-
+  end script
+  expect_stdout "input dup"
+end test "duplicate input fd from file"
+
+begin test "closing an unopened input fd is not an error"
+  begin script
+    echo "ok" 8<&-
+  end script
+  expect_stdout "ok"
+end test "closing an unopened input fd is not an error"

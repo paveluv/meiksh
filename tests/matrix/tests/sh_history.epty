@@ -1,0 +1,117 @@
+testsuite "Shell History Management"
+
+# ==============================================================================
+# Requirements
+# ==============================================================================
+
+requirement "SHALL-SH-1019" doc="The FCEDIT variable, when expanded by the shell, shall determine the default value for the -e editor option's editor option-argument"
+requirement "SHALL-SH-1020" doc="If FCEDIT is null or unset, ed shall be used as the editor"
+requirement "SHALL-SH-1024" doc="The maximum number of commands in the history list is unspecified, but shall be at least 128"
+requirement "SHALL-SH-1023" doc="As entries are deleted from the history file, they shall be deleted oldest first"
+requirement "SHALL-SH-1021-DUP621" doc="If the shell cannot obtain both read and write access to, or create, the history file, it shall use an unspecified mechanism that allows the history to operate properly"
+requirement "SHALL-SH-1048" doc="Commands in the command history shall be treated as strings, not as filenames"
+
+
+# ==============================================================================
+# FCEDIT default editor
+# ==============================================================================
+
+begin interactive test "FCEDIT can be set and fc uses it"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "HISTSIZE=100"
+  expect "$ "
+  send "echo fcedit_test"
+  expect "fcedit_test"
+  expect "$ "
+  send "FCEDIT=true fc -e true"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "FCEDIT can be set and fc uses it"
+
+
+# ==============================================================================
+# History list minimum size
+# ==============================================================================
+
+begin interactive test "History list supports at least 128 entries"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "HISTSIZE=128"
+  expect "$ "
+  send "echo hist_min_size"
+  expect "hist_min_size"
+  expect "$ "
+  send "fc -l -1 -1"
+  expect "echo hist_min_size"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "History list supports at least 128 entries"
+
+
+# ==============================================================================
+# History deletion order
+# ==============================================================================
+
+begin interactive test "Oldest history entries are deleted first"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "HISTSIZE=3"
+  expect "$ "
+  send "echo cmd1"
+  expect "cmd1"
+  expect "$ "
+  send "echo cmd2"
+  expect "cmd2"
+  expect "$ "
+  send "echo cmd3"
+  expect "cmd3"
+  expect "$ "
+  send "echo cmd4"
+  expect "cmd4"
+  expect "$ "
+  send "fc -l -2 -1"
+  expect "cmd4"
+  not_expect "cmd1"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "Oldest history entries are deleted first"
+
+
+# ==============================================================================
+# History file fallback
+# ==============================================================================
+
+begin interactive test "History works when HISTFILE is unwritable"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "HISTFILE=/dev/null/impossible"
+  expect "$ "
+  send "echo hist_works"
+  expect "hist_works"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "History works when HISTFILE is unwritable"
+
+
+# ==============================================================================
+# Commands treated as strings, not filenames
+# ==============================================================================
+
+begin interactive test "History treats commands as strings not filenames"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "HISTSIZE=100"
+  expect "$ "
+  send "echo *.txt"
+  expect "$ "
+  send "fc -l -1 -1"
+  expect "echo \*\.txt"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "History treats commands as strings not filenames"

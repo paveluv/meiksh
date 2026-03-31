@@ -1,0 +1,118 @@
+testsuite "Function Definition and Execution"
+
+# ==============================================================================
+# Expansions and Syntax Properties
+# ==============================================================================
+
+requirement "SHALL-2-9-5-380" doc="When the function is declared, none of the expansions in 2.6 Word Expansions shall be performed on the text in compound-command or io-redirect; all expansions shall be performed as normal each time the function is called."
+requirement "SHALL-2-9-5-381" doc="Similarly, the optional io-redirect redirections and any variable assignments within compound-command shall be performed during the execution of the function itself, not the function definition."
+requirement "SHALL-2-9-5-382" doc="When a function is executed, it shall have the syntax-error properties described for special built-in utilities in the first item in the enumerated list at the beginning of 2.15 Special Built-In Utilities."
+requirement "SHALL-2-9-5-1-388" doc="The exit status of a function definition shall be zero if the function was declared successfully; otherwise, it shall be greater than zero."
+requirement "SHALL-2-9-5-1-389" doc="The exit status of a function invocation shall be the exit status of the last command executed by the function."
+
+begin test "variable inside function not expanded at declaration time"
+  begin script
+    my_var="declared"
+    myfunc() {
+        echo "$my_var"
+    }
+    my_var="called"
+    myfunc
+  end script
+  expect_stdout "called"
+end test "variable inside function not expanded at declaration time"
+
+begin test "redirection error on function call yields non-zero exit"
+  begin script
+    myfunc() {
+        echo "executing"
+    }
+    myfunc > /invalid/dir/does/not/exist
+    exit $?
+  end script
+  not_expect_exit_code 0
+end test "redirection error on function call yields non-zero exit"
+
+# ==============================================================================
+# Function Definition and Invocation
+# ==============================================================================
+
+requirement "SHALL-2-9-5-378" doc="The format of a function definition command is as follows: fname ( ) compound-command [ io-redirect ... ] The function is named fname; the application shall ensure that it is a name and that it is not the name of a special built-in utility."
+requirement "SHALL-2-9-5-383" doc="The compound-command shall be executed whenever the function name is specified as the name of a simple command."
+
+begin test "define and invoke a function"
+  begin script
+    myfunc() { echo "func executing"; }; myfunc
+  end script
+  expect_stdout "func executing"
+end test "define and invoke a function"
+
+
+# ==============================================================================
+# Name Spaces
+# ==============================================================================
+
+requirement "SHALL-2-9-5-379" doc="The implementation shall maintain separate name spaces for functions and variables."
+
+begin test "variable and function with same name do not conflict"
+  begin script
+    foo=var_value; foo() { echo "func_value"; }; echo "$foo"; foo
+  end script
+  expect_stdout "var_value\nfunc_value"
+end test "variable and function with same name do not conflict"
+
+
+# ==============================================================================
+# Positional Parameters in Functions
+# ==============================================================================
+
+requirement "SHALL-2-9-5-384" doc="The operands to the command temporarily shall become the positional parameters during the execution of the compound-command; the special parameter '#' also shall be changed to reflect the number of operands."
+requirement "SHALL-2-9-5-385" doc="The special parameter 0 shall be unchanged."
+requirement "SHALL-2-9-5-386" doc="When the function completes, the values of the positional parameters and the special parameter '#' shall be restored to the values they had before the function was executed."
+
+begin test "positional parameters pass to function and restore after"
+  begin script
+    set -- parent_arg
+    myfunc() {
+        printf "%s " "$1"
+        printf "%s " "$#"
+    }
+    printf "%s " "$1"
+    printf "%s " "$#"
+    myfunc "child_arg"
+    printf "%s " "$1"
+    printf "%s" "$#"
+  end script
+  expect_stdout "parent_arg 1 child_arg 1 parent_arg 1"
+end test "positional parameters pass to function and restore after"
+
+begin test "function does not change dollar zero"
+  begin script
+    outer="$0"
+    myfunc() {
+        echo "$0"
+    }
+    inner=$(myfunc)
+    [ "$outer" = "$inner" ] && echo "same" || echo "different"
+  end script
+  expect_stdout "same"
+end test "function does not change dollar zero"
+
+
+# ==============================================================================
+# Returning from Functions
+# ==============================================================================
+
+requirement "SHALL-2-9-5-387" doc="If the special built-in return is executed in the compound-command, the function completes and execution shall resume with the next command after the function call."
+
+begin test "return from function sets exit status and skips remaining"
+  begin script
+    myfunc() {
+        return 42
+        echo "should not execute"
+    }
+    myfunc
+    echo "$?"
+  end script
+  expect_stdout "42"
+end test "return from function sets exit status and skips remaining"

@@ -1,0 +1,51 @@
+testsuite "XBD 12 Utility Syntax Guidelines"
+
+# ==============================================================================
+# Double-dash end-of-options handling
+# ==============================================================================
+
+requirement "SHALL-XBD-12-4022" doc="If an option that has option-arguments is repeated, the option and option-argument combinations should be interpreted in the order specified on the command line."
+requirement "SHALL-XBD-12-4023" doc="The order of operands may matter and position-related interpretations should be determined on a utility-specific basis."
+
+begin test "cd accepts -- and processes directory starting with dash"
+  begin script
+    mkdir -p ./-dir; cd -- -dir && echo "$PWD" | grep -q -- "-dir$" && echo success || echo fail; cd ..; rm -rf ./-dir
+  end script
+  expect_stdout_line ".*success.*"
+end test "cd accepts -- and processes directory starting with dash"
+
+begin test "set accepts -- to indicate end of options"
+  begin script
+    set -- -x -e; echo "$1 $2"
+  end script
+  expect_stdout "-x -e"
+end test "set accepts -- to indicate end of options"
+
+begin test "unset accepts --"
+  begin script
+    myvar=foo; unset -- myvar; echo "${myvar:-empty}"
+  end script
+  expect_stdout "empty"
+end test "unset accepts --"
+
+# ==============================================================================
+# Option and option-argument parsing
+# ==============================================================================
+
+requirement "SHALL-XBD-12-4015" doc="Each option and option-argument should be a separate argument, except as noted in 12.1 Utility Argument Syntax, item (2)."
+requirement "SHALL-XBD-12-4011" doc="The -W (capital-W) option shall be reserved for vendor options."
+requirement "SHALL-XBD-12-4012" doc="Multi-digit options should not be allowed."
+
+begin test "getopts parses combined option-argument"
+  begin script
+    getopts "ab:" opt -a -bfoo; echo "$opt $OPTARG"
+  end script
+  expect_stdout "a.*"
+end test "getopts parses combined option-argument"
+
+begin test "getopts parses separate option-argument"
+  begin script
+    getopts "ab:" opt -b foo; echo "$opt $OPTARG"
+  end script
+  expect_stdout "b foo"
+end test "getopts parses separate option-argument"

@@ -1,0 +1,91 @@
+testsuite "Shell Grammar and Lexical Conventions"
+
+# ==============================================================================
+# Grammar Token Identification
+# ==============================================================================
+
+requirement "SHALL-2-10-1-396" doc="If the string consists solely of digits and the delimiter character is one of '<' or '>', the token identifier IO_NUMBER shall result."
+requirement "SHALL-2-10-1-397" doc="If the string contains at least three characters, begins with a '{' and ends with a '}', and the delimiter character is one of '<' or '>', the token identifier IO_LOCATION may result; if not, TOKEN shall result."
+
+begin test "digit before redirection parsed as IO_NUMBER"
+  begin script
+    echo content > tmp_grammar.txt; 0<tmp_grammar.txt
+  end script
+  expect_exit_code 0
+end test "digit before redirection parsed as IO_NUMBER"
+
+begin test "space before redirection not parsed as IO_NUMBER"
+  begin script
+    echo content > tmp_grammar.txt; 0 <tmp_grammar.txt
+  end script
+  not_expect_exit_code 0
+end test "space before redirection not parsed as IO_NUMBER"
+
+
+# ==============================================================================
+# Assignment Parsing Rules
+# ==============================================================================
+
+requirement "SHALL-2-10-2-415" doc="If the TOKEN is exactly a reserved word, the token identifier for that reserved word shall result."
+requirement "SHALL-2-10-2-416" doc="Otherwise, 7b shall be applied."
+requirement "SHALL-2-10-2-417" doc="If the TOKEN contains an unquoted equals-sign not part of an embedded expansion: if the TOKEN begins with '=', then the token WORD shall be returned."
+requirement "SHALL-2-10-2-418" doc="If all characters preceding the first such equals-sign form a valid name, the token ASSIGNMENT_WORD shall be returned."
+
+begin test "valid assignment prefix scopes to command"
+  begin script
+    var=1 env | grep -q "^var=1$" && echo "assigned"
+  end script
+  expect_stdout "assigned"
+end test "valid assignment prefix scopes to command"
+
+begin test "invalid name cannot be assignment"
+  begin script
+    1invalid=true sh -c "echo executed"
+  end script
+  not_expect_exit_code 0
+end test "invalid name cannot be assignment"
+
+begin test "string starting with = is just a WORD"
+  begin script
+    =foo
+  end script
+  not_expect_exit_code 0
+end test "string starting with = is just a WORD"
+
+# ==============================================================================
+# "in" and "do" parsing in Loops
+# ==============================================================================
+
+requirement "SHALL-2-10-2-409" doc="When the TOKEN meets the requirements for a name, the token identifier NAME shall result."
+requirement "SHALL-2-10-2-404" doc="Otherwise, the token WORD shall be returned."
+requirement "SHALL-2-10-2-413" doc="When the TOKEN is exactly the reserved word in or do, the token identifier for in or do shall result, respectively."
+
+begin test "invalid identifier in for loop causes syntax error"
+  begin script
+    for 1invalid in a; do echo $1invalid; done
+  end script
+  not_expect_exit_code 0
+end test "invalid identifier in for loop causes syntax error"
+
+begin test "for-in loop with valid identifier"
+  begin script
+    for i in a; do echo $i; done
+  end script
+  expect_stdout "a"
+end test "for-in loop with valid identifier"
+
+# ==============================================================================
+# "case" statement parsing
+# ==============================================================================
+
+requirement "SHALL-2-10-2-407" doc="When the TOKEN is exactly the reserved word esac, the token identifier for esac shall result."
+requirement "SHALL-2-10-2-411" doc="When the TOKEN is exactly the reserved word in, the token identifier for in shall result."
+
+begin test "case statement with in and esac"
+  begin script
+    case "foo" in
+        foo) echo "matched" ;;
+    esac
+  end script
+  expect_stdout "matched"
+end test "case statement with in and esac"

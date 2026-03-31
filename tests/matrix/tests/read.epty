@@ -1,0 +1,468 @@
+testsuite "read Built-in Utility"
+
+# ==============================================================================
+# Basic Line Reading
+# ==============================================================================
+
+requirement "SHALL-READ-1259" doc="read shall read a single logical line from stdin."
+requirement "SHALL-READ-1266" doc="Terminating logical line delimiter shall be removed."
+
+begin test "basic single word"
+  begin script
+    echo 'hello' | { read line; echo "$line"; }
+  end script
+  expect_stdout "hello"
+end test "basic single word"
+
+begin test "basic multi-word"
+  begin script
+    echo 'hello world' | { read line; echo "$line"; }
+  end script
+  expect_stdout "hello world"
+end test "basic multi-word"
+
+begin test "only first line consumed by single read"
+  begin script
+    printf 'first
+    second
+    ' | { read line; echo "$line"; }
+  end script
+  expect_stdout "first"
+end test "only first line consumed by single read"
+
+# ==============================================================================
+# Backslash Escape Processing (no -r)
+# ==============================================================================
+
+requirement "SHALL-READ-1260" doc="If -r not specified, backslash shall act as escape character."
+requirement "SHALL-READ-1261" doc="Unescaped backslash preserves literal value of following backslash."
+requirement "SHALL-READ-1264" doc="All other unescaped backslash characters removed after splitting."
+
+begin test "backslash-space preserves literal space"
+  begin script
+    printf 'hello\ world
+    ' | { read var; echo "$var"; }
+  end script
+  expect_stdout "hello world"
+end test "backslash-space preserves literal space"
+
+begin test "backslash-backslash produces single backslash"
+  begin script
+    printf '%s
+    ' 'a\\b' | { read var; printf '%s' "$var"; }
+  end script
+  expect_stdout "a\\b"
+end test "backslash-backslash produces single backslash"
+
+begin test "backslash before regular char removes backslash"
+  begin script
+    printf '%s
+    ' 'a\b' | { read var; printf '%s' "$var"; }
+  end script
+  expect_stdout "ab"
+end test "backslash before regular char removes backslash"
+
+requirement "SHALL-READ-1262" doc="If excepted character follows backslash, read interprets as line continuation."
+requirement "SHALL-READ-1263" doc="Backslash and excepted character removed before splitting."
+
+begin test "backslash-newline joins lines (line continuation)"
+  begin script
+    printf 'hello\\
+    world
+    ' | { read var; echo "$var"; }
+  end script
+  expect_stdout "helloworld"
+end test "backslash-newline joins lines (line continuation)"
+
+# ==============================================================================
+# The -r Option (Raw Mode)
+# ==============================================================================
+
+requirement "SHALL-READ-1282" doc="read shall conform to XBD 12.2 Utility Syntax Guidelines."
+
+begin test "read -r treats backslashes literally"
+  begin script
+    printf '%s
+    ' 'hello\world' | { read -r var; printf '%s' "$var"; }
+  end script
+  expect_stdout "hello\\world"
+end test "read -r treats backslashes literally"
+
+begin test "read -r backslash-newline does not join lines"
+  begin script
+    printf 'hello\\
+    world
+    ' | { read -r var; echo "$var"; }
+  end script
+  expect_stdout "hello\\"
+end test "read -r backslash-newline does not join lines"
+
+begin test "read -r preserves double backslash"
+  begin script
+    printf '%s
+    ' 'a\\b' | { read -r var; printf '%s' "$var"; }
+  end script
+  expect_stdout "a\\\\b"
+end test "read -r preserves double backslash"
+
+# ==============================================================================
+# Field Splitting with Default IFS
+# ==============================================================================
+
+requirement "SHALL-READ-1270" doc="If IFS unset or non-empty, modified field splitting algorithm applied."
+requirement "SHALL-READ-1274" doc="Var operands processed in order; output fields assigned in order."
+requirement "SHALL-READ-1271" doc="Loop ceases when input empty or n output fields generated (n = vars - 1)."
+requirement "SHALL-READ-1272" doc="Remaining input returned unsplit, with leading/trailing IFS whitespace removed."
+
+begin test "two variables two fields"
+  begin script
+    echo 'hello world' | { read a b; echo "$a $b"; }
+  end script
+  expect_stdout "hello world"
+end test "two variables two fields"
+
+begin test "multiple spaces treated as single delimiter"
+  begin script
+    echo 'hello    world' | { read a b; echo "$a $b"; }
+  end script
+  expect_stdout "hello world"
+end test "multiple spaces treated as single delimiter"
+
+begin test "leading whitespace stripped"
+  begin script
+    echo '   hello world' | { read a b; echo "$a $b"; }
+  end script
+  expect_stdout "hello world"
+end test "leading whitespace stripped"
+
+begin test "trailing whitespace stripped from last field"
+  begin script
+    echo 'hello world   ' | { read a b; echo "$a $b"; }
+  end script
+  expect_stdout "hello world"
+end test "trailing whitespace stripped from last field"
+
+requirement "SHALL-READ-1275" doc="If exactly one var remains and there was unsplit input, assign unsplit input."
+
+begin test "fewer vars than fields: last gets remainder"
+  begin script
+    echo 'a b c d' | { read first rest; echo "$first $rest"; }
+  end script
+  expect_stdout "a b c d"
+end test "fewer vars than fields: last gets remainder"
+
+begin test "remainder preserves internal spacing"
+  begin script
+    echo 'a b   c   d' | { read first rest; echo "$first $rest"; }
+  end script
+  expect_stdout "a b   c   d"
+end test "remainder preserves internal spacing"
+
+requirement "SHALL-READ-1276" doc="If unprocessed var operands remain, each set to empty string."
+
+begin test "more vars than fields: extras get empty"
+  begin script
+    echo 'hello' | { read a b c; echo "$a:$b:$c"; }
+  end script
+  expect_stdout "hello::"
+end test "more vars than fields: extras get empty"
+
+begin test "more vars than fields: two words three vars"
+  begin script
+    echo 'hello world' | { read a b c; echo "$a:$b:$c"; }
+  end script
+  expect_stdout "hello:world:"
+end test "more vars than fields: two words three vars"
+
+# ==============================================================================
+# Custom IFS
+# ==============================================================================
+
+requirement "SHALL-READ-1067" doc="IFS determines internal field separators."
+
+begin test "colon as IFS"
+  begin script
+    echo 'a:b:c' | { IFS=: read a b c; echo "$a:$b:$c"; }
+  end script
+  expect_stdout "a:b:c"
+end test "colon as IFS"
+
+begin test "comma as IFS"
+  begin script
+    echo 'x,y' | { IFS=, read a b; echo "$a $b"; }
+  end script
+  expect_stdout "x y"
+end test "comma as IFS"
+
+begin test "multi-character IFS: colon and comma"
+  begin script
+    echo 'a:b,c' | { IFS=:, read a b c; echo "$a $b $c"; }
+  end script
+  expect_stdout "a b c"
+end test "multi-character IFS: colon and comma"
+
+begin test "non-whitespace IFS preserves leading/trailing delimiters as empty fields"
+  begin script
+    echo ':b:' | { IFS=: read a b c; echo "$a:$b:$c"; }
+  end script
+  expect_stdout ":b:"
+end test "non-whitespace IFS preserves leading/trailing delimiters as empty fields"
+
+# ==============================================================================
+# Empty IFS
+# ==============================================================================
+
+requirement "SHALL-READ-1267" doc="If IFS is empty string, data assigned to first var, others set empty."
+requirement "SHALL-READ-1268" doc="No other processing in that case."
+
+begin test "empty IFS: entire line goes into first variable"
+  begin script
+    echo 'hello world' | { IFS= read a b; echo "$a:$b"; }
+  end script
+  expect_stdout "hello world:"
+end test "empty IFS: entire line goes into first variable"
+
+begin test "empty IFS: no field splitting"
+  begin script
+    echo 'a:b:c' | { IFS= read x y; echo "$x:$y"; }
+  end script
+  expect_stdout "a:b:c:"
+end test "empty IFS: no field splitting"
+
+begin test "empty IFS with single variable: entire line assigned"
+  begin script
+    printf '  hello  world  
+    ' | { IFS= read x; echo "$x"; }
+  end script
+  expect_stdout "  hello  world.*"
+end test "empty IFS with single variable: entire line assigned"
+
+# ==============================================================================
+# Variable Operand: Existing or Nonexisting
+# ==============================================================================
+
+requirement "SHALL-READ-1066" doc="Operand: var - name of existing or nonexisting shell variable."
+
+begin test "reading into unset variable creates it"
+  begin script
+    echo 'created' | { unset newvar; read newvar; echo "$newvar"; }
+  end script
+  expect_stdout "created"
+end test "reading into unset variable creates it"
+
+begin test "reading into existing variable overwrites it"
+  begin script
+    echo 'new' | { existing=old; read existing; echo "$existing"; }
+  end script
+  expect_stdout "new"
+end test "reading into existing variable overwrites it"
+
+# ==============================================================================
+# Current Shell Environment
+# ==============================================================================
+
+requirement "SHALL-READ-1277" doc="Setting variables affects current shell execution environment."
+
+begin test "variable set by read persists"
+  begin script
+    echo 'hello world' | { read a b; echo "$a:$b"; }
+  end script
+  expect_stdout "hello:world"
+end test "variable set by read persists"
+
+begin test "read in while loop affects current shell via heredoc"
+  begin script
+    val=init
+    while read val; do :; done <<EOF
+    first
+    last
+    EOF
+    echo "done:$val"
+  end script
+  expect_stdout "done:last"
+end test "read in while loop affects current shell via heredoc"
+
+# ==============================================================================
+# Subshell Isolation
+# ==============================================================================
+
+requirement "SHALL-READ-1280" doc="read in subshell shall not affect caller's environment."
+
+begin test "read in explicit subshell does not affect parent"
+  begin script
+    x=parent; (echo child | read x); echo "$x"
+  end script
+  expect_stdout "parent"
+end test "read in explicit subshell does not affect parent"
+
+begin test "read in pipeline subshell does not affect parent"
+  begin script
+    x=parent; echo child | read x; echo "$x"
+  end script
+  expect_stdout "parent"
+end test "read in pipeline subshell does not affect parent"
+
+# ==============================================================================
+# Readonly Variable Error
+# ==============================================================================
+
+requirement "SHALL-READ-1278" doc="Error in setting any variable (readonly) results in return >1."
+requirement "SHALL-READ-1279" doc="It is unspecified whether variables named after the error-generating one are set."
+
+begin test "read into readonly variable returns non-zero"
+  begin script
+    echo 'val' | { readonly rovar=locked; read rovar; }
+  end script
+  not_expect_exit_code 0
+end test "read into readonly variable returns non-zero"
+
+begin test "partial assignment with readonly second var returns non-zero"
+  begin script
+    echo 'a b' | { readonly second=locked; read first second; }
+  end script
+  not_expect_exit_code 0
+end test "partial assignment with readonly second var returns non-zero"
+
+# ==============================================================================
+# EOF Handling
+# ==============================================================================
+
+requirement "SHALL-READ-1281" doc="If EOF before terminating delimiter, vars set and exit status 1."
+
+begin test "EOF with no trailing newline: exit code 1"
+  begin script
+    printf 'no newline' | { read var; exit $?; }
+  end script
+  expect_exit_code 1
+end test "EOF with no trailing newline: exit code 1"
+
+begin test "EOF with no trailing newline: variable still assigned"
+  begin script
+    printf 'no newline' | { read var; echo "$var"; }
+  end script
+  expect_stdout "no newline"
+end test "EOF with no trailing newline: variable still assigned"
+
+begin test "completely empty input: exit code 1"
+  begin script
+    printf '' | { read var; exit $?; }
+  end script
+  expect_exit_code 1
+end test "completely empty input: exit code 1"
+
+begin test "completely empty input: variable set to empty"
+  begin script
+    printf '' | { read var; echo "$var"; }
+  end script
+  expect_stdout ""
+end test "completely empty input: variable set to empty"
+
+begin test "next read after all lines consumed hits EOF"
+  begin script
+    echo 'only' | { read line1; read line2; exit $?; }
+  end script
+  expect_exit_code 1
+end test "next read after all lines consumed hits EOF"
+
+# ==============================================================================
+# Prompt on Terminal (SHALL-READ-1265)
+# ==============================================================================
+
+requirement "SHALL-READ-1265" doc="If stdin is terminal and shell interactive, read shall prompt for continuation on backslash-newline."
+
+# ==============================================================================
+# read with No Variables (REPLY)
+# ==============================================================================
+
+begin test "single variable captures entire line"
+  begin script
+    echo 'entire line' | { read line; echo "$line"; }
+  end script
+  expect_stdout "entire line"
+end test "single variable captures entire line"
+
+# ==============================================================================
+# Interaction of -r with IFS Splitting
+# ==============================================================================
+
+begin test "read -r with custom IFS: backslashes literal and splitting on IFS"
+  begin script
+    printf '%s
+    ' 'a\b:c' | { IFS=: read -r x y; printf '%s:%s' "$x" "$y"; }
+  end script
+  expect_stdout "a\\b:c"
+end test "read -r with custom IFS: backslashes literal and splitting on IFS"
+
+begin test "read -r with multiple IFS fields"
+  begin script
+    echo 'one:two:three four' | { IFS=: read -r a b c; echo "$a:$b:$c"; }
+  end script
+  expect_stdout "one:two:three four"
+end test "read -r with multiple IFS fields"
+
+# ==============================================================================
+# Whitespace IFS Trimming Details
+# ==============================================================================
+
+begin test "tabs in input treated as whitespace delimiters"
+  begin script
+    printf 'a	b
+    ' | { read x y; echo "$x $y"; }
+  end script
+  expect_stdout "a b"
+end test "tabs in input treated as whitespace delimiters"
+
+begin test "mixed tabs and spaces"
+  begin script
+    printf '  	hello	  world  	
+    ' | { read a b; echo "$a $b"; }
+  end script
+  expect_stdout "hello world"
+end test "mixed tabs and spaces"
+
+begin test "remainder preserves internal tabs"
+  begin script
+    printf 'a	b	c
+    ' | { read x; echo "$x"; }
+  end script
+  expect_stdout "a\tb\tc"
+end test "remainder preserves internal tabs"
+
+# ==============================================================================
+# Multiple Reads from Same Stream
+# ==============================================================================
+
+begin test "each read consumes next line"
+  begin script
+    printf 'first
+    second
+    third
+    ' | { read a; read b; read c; echo "$a:$b:$c"; }
+  end script
+  expect_stdout "first:second:third"
+end test "each read consumes next line"
+
+# ==============================================================================
+# Empty Lines
+# ==============================================================================
+
+begin test "empty line results in empty variable"
+  begin script
+    echo '' | { read var; echo "$var"; }
+  end script
+  expect_stdout ""
+end test "empty line results in empty variable"
+
+begin test "empty line exit code 0"
+  begin script
+    echo '' | { read var; }
+  end script
+  expect_exit_code 0
+end test "empty line exit code 0"
+
+begin test "multiple vars with empty input all set to empty"
+  begin script
+    echo '' | { read a b c; echo "$a:$b:$c"; }
+  end script
+  expect_stdout "::"
+end test "multiple vars with empty input all set to empty"

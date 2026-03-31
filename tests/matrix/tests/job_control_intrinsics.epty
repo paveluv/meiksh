@@ -1,0 +1,59 @@
+testsuite "Job Control Intrinsics"
+
+# ==============================================================================
+# jobs -p shows background PIDs
+# ==============================================================================
+
+requirement "SHALL-JOBS-1221" doc="If the current shell execution environment is not a subshell environment, the jobs utility shall display the status of background jobs"
+requirement "SHALL-JOBS-1038" doc="The following environment variables shall affect the execution of jobs: LANG, LC_ALL"
+requirement "SHALL-SH-1024-DUP746" doc="The following exit values shall be returned: 0 The script consisted solely of zero or more blank lines or comments"
+requirement "SHALL-FG-1049" doc="If fg does not move a job into the foreground, the exit value shall be >0"
+requirement "SHALL-WAIT-1087" doc="The following operand shall be supported: pid — unsigned decimal integer process ID"
+requirement "SHALL-WAIT-1344" doc="If the wait utility is invoked with no operands, it shall wait until all process IDs known to the invoking shell have terminated"
+requirement "SHALL-WAIT-1347" doc="If the wait utility detects that the value of the pid operand is not a known process ID, wait shall return exit status 127"
+requirement "SHALL-KILL-1240" doc="For each pid operand, the kill utility shall perform actions equivalent to the kill() function"
+requirement "SHALL-KILL-1063" doc="pid operand: a decimal integer specifying a process or process group to be signaled"
+
+# ==============================================================================
+# jobs -p shows background PID
+# ==============================================================================
+
+begin test "jobs -p shows background PID"
+  begin script
+    sleep 2 & bg_pid=$!; jobs -p > jobs_out 2>/dev/null; grep -q "$bg_pid" jobs_out; res=$?; kill "$bg_pid" 2>/dev/null; wait "$bg_pid" 2>/dev/null; exit $res
+  end script
+  expect_exit_code 0
+end test "jobs -p shows background PID"
+
+# ==============================================================================
+# wait with no operands exits 0 when all finish
+# ==============================================================================
+
+begin test "wait with no operands exits 0 when all finish"
+  begin script
+    sleep 1 & sleep 1 & wait; exit $?
+  end script
+  expect_exit_code 0
+end test "wait with no operands exits 0 when all finish"
+
+# ==============================================================================
+# wait for unknown pid exits 127
+# ==============================================================================
+
+begin test "wait for unknown pid exits 127"
+  begin script
+    wait 999999; exit $?
+  end script
+  expect_exit_code 127
+end test "wait for unknown pid exits 127"
+
+# ==============================================================================
+# kill invalid pid fails
+# ==============================================================================
+
+begin test "kill invalid pid fails"
+  begin script
+    kill 999999 2>/dev/null
+  end script
+  not_expect_exit_code 0
+end test "kill invalid pid fails"

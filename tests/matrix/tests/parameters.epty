@@ -1,0 +1,228 @@
+testsuite "Parameters and Variables"
+
+# ==============================================================================
+# Positional Parameters
+# ==============================================================================
+
+requirement "SHALL-2-5-1-060" doc="The digits denoting the positional parameters shall always be interpreted as a decimal value, even if there is a leading zero."
+requirement "SHALL-2-5-1-061" doc="When a positional parameter with more than one digit is specified, the application shall enclose the digits in braces."
+
+begin test "$01 is $0 followed by literal 1, and ${10} expands to 10th arg"
+  begin script
+    {{SHELL}} -c 'echo "$01"; echo "${10}"' '{{SHELL}}' 1 2 3 4 5 6 7 8 9 10th
+  end script
+  expect_stdout_line ".*1"
+  expect_stdout_line "10th"
+end test "$01 is $0 followed by literal 1, and ${10} expands to 10th arg"
+
+# ==============================================================================
+# Special Parameters
+# ==============================================================================
+
+requirement "SHALL-2-5-059" doc="The shell shall process their values as characters only when performing operations that are described in this standard in terms of characters."
+requirement "SHALL-2-5-2-062" doc="Listed below are the special parameters and the values to which they shall expand."
+requirement "SHALL-2-5-2-072" doc="The -i option shall be included in $- if the shell is interactive, regardless of whether it was specified on invocation."
+requirement "SHALL-2-5-2-063" doc="When the expansion occurs in a context where field splitting will be performed, any empty fields may be discarded and each of the non-empty fields shall be further split as described in Field Splitting."
+
+begin test "$* and $@ without quotes split on IFS"
+  begin script
+    {{SHELL}} -c 'for i in $*; do echo "$i"; done; for i in $@; do echo "$i"; done' sh a b c
+  end script
+  expect_stdout "a\nb\nc\na\nb\nc"
+end test "$* and $@ without quotes split on IFS"
+
+requirement "SHALL-2-5-2-064" doc="If one of these conditions is true, the initial fields shall be retained as separate fields."
+requirement "SHALL-2-5-2-067" doc="When the expansion occurs in a context where field splitting will not be performed, the initial fields shall be joined to form a single field with the value of each parameter separated by the first character of IFS."
+
+begin test "quoted $* is single string, quoted $@ is distinct args"
+  begin script
+    {{SHELL}} -c 'for i in "$*"; do echo "$i"; done; for i in "$@"; do echo "$i"; done' sh a b c
+  end script
+  expect_stdout "a b c\na\nb\nc"
+end test "quoted $* is single string, quoted $@ is distinct args"
+
+requirement "SHALL-2-5-2-065" doc="If there are no positional parameters, the expansion of @ shall generate zero fields, even when @ is within double-quotes."
+
+begin test "$@ with no positional params generates zero fields"
+  begin script
+    {{SHELL}} -c 'for i in "$@"; do echo "found: $i"; done' sh
+  end script
+  expect_stdout ""
+end test "$@ with no positional params generates zero fields"
+
+requirement "SHALL-2-5-2-068" doc="The command name (parameter 0) shall not be counted in the number given by # because it is a special parameter, not a positional parameter."
+
+begin test "$# counts positional parameters not including $0"
+  begin script
+    {{SHELL}} -c 'echo "$#"' sh a b c
+  end script
+  expect_stdout "3"
+end test "$# counts positional parameters not including $0"
+
+requirement "SHALL-2-5-2-069" doc="If this pipeline terminated, the status value shall be its exit status."
+requirement "SHALL-2-5-2-070" doc="The value of the special parameter ? shall be set to 0 during initialization of the shell."
+
+begin test "$? is 0 at shell startup"
+  begin script
+    echo "$?"
+  end script
+  expect_stdout "0"
+end test "$? is 0 at shell startup"
+
+requirement "SHALL-2-5-2-071" doc="When a subshell environment is created, the value of the special parameter ? from the invoking shell environment shall be preserved in the subshell."
+
+begin test "$? preserved in subshell"
+  begin script
+    false; (echo "$?")
+  end script
+  expect_stdout "1"
+end test "$? preserved in subshell"
+
+requirement "SHALL-2-5-2-073" doc="In a subshell, $$ shall expand to the same value as that of the current shell."
+
+begin test "$$ same in subshell"
+  begin script
+    parent="$$"; sub="$(echo "$$")"; [ "$parent" = "$sub" ] && echo "same"
+  end script
+  expect_stdout "same"
+end test "$$ same in subshell"
+
+# ==============================================================================
+# Environment Variables
+# ==============================================================================
+
+requirement "SHALL-2-5-3-074" doc="Variables shall be initialized from the environment."
+requirement "SHALL-2-5-3-075" doc="Shell variables shall be initialized only from environment variables that have valid names."
+requirement "SHALL-2-5-3-076" doc="If a variable is initialized from the environment, it shall be marked for export immediately."
+requirement "SHALL-V3CHAP02-1002-DUP75" doc="The processing of the ENV shell variable shall be supported if the system supports the User Portability Utilities option."
+
+begin test "environment variable is visible via env"
+  begin script
+    TEST_ENV_VAR=value; export TEST_ENV_VAR; env | grep -q "^TEST_ENV_VAR=" && echo "exported"
+  end script
+  expect_stdout "exported"
+end test "environment variable is visible via env"
+
+requirement "SHALL-2-5-3-085" doc="Each time an interactive shell is ready to read a command, the value of PS1 shall be subjected to parameter expansion and exclamation-mark expansion."
+requirement "SHALL-2-5-3-086" doc="After expansion, the value shall be written to standard error."
+requirement "SHALL-2-5-3-090" doc="The default value of PS1 shall be '$ '."
+requirement "SHALL-2-5-3-093" doc="Each time the user enters a newline prior to completing a command line in an interactive shell, the value of PS2 shall be subjected to parameter expansion."
+requirement "SHALL-2-5-3-095" doc="The default value of PS2 shall be '> '."
+
+requirement "SHALL-2-5-3-081" doc="If IFS is not set, field splitting by the shell and line splitting by the read utility shall be performed as if the value of IFS is space-tab-newline."
+requirement "SHALL-2-5-3-082" doc="The shell shall set IFS to space-tab-newline when it is invoked."
+
+begin test "IFS default splits on space, tab, and newline"
+  begin script
+    foo="a b	c
+    d"; for i in $foo; do echo "split"; done | wc -l | tr -d " "
+  end script
+  expect_stdout "4"
+end test "IFS default splits on space, tab, and newline"
+
+requirement "SHALL-2-5-3-084" doc="In a subshell, PPID shall be set to the same value as that of the parent of the current shell."
+
+begin test "PPID same in subshell"
+  begin script
+    parent="$PPID"; sub="$(echo "$PPID")"; [ "$parent" = "$sub" ] && echo "same"
+  end script
+  expect_stdout "same"
+end test "PPID same in subshell"
+
+# ==============================================================================
+# Environment Variables (PS4, PWD, etc.)
+# ==============================================================================
+
+requirement "SHALL-2-5-3-096" doc="When an execution trace (set -x) is being performed, before each line in the execution trace, the value of PS4 shall be subjected to parameter expansion."
+requirement "SHALL-2-5-3-098" doc="The default value of PS4 shall be '+ '."
+
+begin test "set -x traces commands with default PS4 prefix"
+  begin script
+    set -x
+    echo "traced"
+    set +x
+  end script
+  expect_stderr_line ".*\+ echo traced.*"
+end test "set -x traces commands with default PS4 prefix"
+
+begin test "changing PS4 alters trace prefix"
+  begin script
+    PS4="TRACE:\$LINENO> "
+    set -x
+    echo "traced"
+    set +x
+  end script
+  expect_stderr_line ".*TRACE:.*"
+end test "changing PS4 alters trace prefix"
+
+requirement "SHALL-2-5-3-099" doc="In the shell the value of PWD shall be initialized from the environment."
+requirement "SHALL-2-5-3-100" doc="If a value for PWD is passed to the shell in the environment when it is executed, the shell shall set PWD to the value from the environment."
+requirement "SHALL-SH-1017" doc="The following environment variables shall affect the execution of sh."
+requirement "SHALL-ENVIRONMENT-VARIABLES-024" doc="PWD shall represent an absolute pathname of the current working directory."
+
+begin test "PWD is set to current working directory"
+  begin script
+    test -n "$PWD" && echo ok
+  end script
+  expect_stdout "ok"
+end test "PWD is set to current working directory"
+
+# ==============================================================================
+# PS1 and Exclamation-mark Expansion
+# ==============================================================================
+
+requirement "SHALL-2-5-3-087" doc="The expansions shall be performed in two passes, where the result of the first pass is input to the second pass."
+requirement "SHALL-2-5-3-088" doc="One of the passes shall perform only the exclamation-mark expansion."
+requirement "SHALL-2-5-3-089" doc="The other pass shall perform the other expansion(s) according to the rules in Word Expansions."
+requirement "SHALL-2-5-3-091" doc="Exclamation-mark expansion: The shell shall replace each instance of ! with the history file number of the next command to be typed."
+requirement "SHALL-2-5-3-092" doc="An exclamation-mark character escaped by another (i.e. !!) shall expand to a single exclamation-mark character."
+
+begin interactive test "PS1 parameter and exclamation-mark expansion"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "PS1='cmd \\! var $(echo 1)> '"
+  expect "cmd .* var 1>"
+  send "echo interactive_test"
+  expect "interactive_test"
+  sendeof
+  wait
+end interactive test "PS1 parameter and exclamation-mark expansion"
+
+# ==============================================================================
+# ENV Processing (interactive shell)
+# ==============================================================================
+
+requirement "SHALL-2-5-3-078" doc="ENV, when and only when an interactive shell is invoked, shall be subjected to parameter expansion and the resulting value used as a pathname of a file."
+requirement "SHALL-2-5-3-079" doc="Before any interactive commands are read, the shell shall tokenize the contents of the ENV file, parse the tokens, and execute the resulting commands."
+
+begin test "ENV file processed for interactive shell"
+  begin script
+    _env_file=${TMPDIR:-/tmp}/_test_env_$$.sh; echo 'ENVMARKER=loaded' > $_env_file; EFILE=$_env_file; export EFILE; ENV=$EFILE; export ENV; {{SHELL}} -i -c 'echo $ENVMARKER' 2>/dev/null; rc=$?; rm -f $_env_file; exit $rc
+  end script
+  expect_stdout_line ".*loaded.*"
+end test "ENV file processed for interactive shell"
+
+requirement "SHALL-2-5-3-080" doc="ENV shall be ignored if the user's real and effective user IDs or real and effective group IDs are different."
+
+begin test "ENV set to valid file does not crash non-interactive shell"
+  begin script
+    _env_file=${TMPDIR:-/tmp}/_test_env2_$$.sh; echo 'echo env_ran' > $_env_file; ENV=$_env_file {{SHELL}} -c true 2>/dev/null; rc=$?; rm -f $_env_file; exit $rc
+  end script
+  expect_exit_code 0
+end test "ENV set to valid file does not crash non-interactive shell"
+
+# ==============================================================================
+# LC_CTYPE change does not affect lexical processing
+# ==============================================================================
+
+requirement "SHALL-2-5-3-083" doc="Changing the value of LC_CTYPE after the shell has started shall not affect the lexical processing of shell commands in the current shell execution environment or its subshells."
+
+begin test "LC_CTYPE change mid-script does not break lexical processing"
+  begin script
+    LC_CTYPE=C; export LC_CTYPE
+    echo "hello world"
+    LC_CTYPE=POSIX; export LC_CTYPE
+    echo "still works"
+  end script
+  expect_stdout "hello world\nstill works"
+end test "LC_CTYPE change mid-script does not break lexical processing"

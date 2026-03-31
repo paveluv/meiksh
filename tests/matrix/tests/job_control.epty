@@ -149,7 +149,9 @@ end interactive test "background job completion notification"
 requirement "SHALL-2-12-461" doc="If job control disabled, async commands inherit SIG_IGN for SIGINT and SIGQUIT"
 
 begin test "signal inheritance with job control disabled"
-  run "trap \"\" INT; (trap) & wait"
+  begin script
+    trap "" INT; (trap) & wait
+  end script
   expect_exit_code 0
 end test "signal inheritance with job control disabled"
 
@@ -161,7 +163,9 @@ end test "signal inheritance with job control disabled"
 requirement "SHALL-2-12-462" doc="Commands shall inherit same signal actions as those inherited by shell from parent"
 
 begin test "exported variable inherited by child"
-  run "MYVAR=hello; export MYVAR; {{SHELL}} -c 'echo $MYVAR'"
+  begin script
+    MYVAR=hello; export MYVAR; {{SHELL}} -c 'echo $MYVAR'
+  end script
   expect_stdout "hello"
 end test "exported variable inherited by child"
 
@@ -173,7 +177,9 @@ end test "exported variable inherited by child"
 requirement "SHALL-2-12-463" doc="Trap shall not execute until foreground command has completed"
 
 begin test "trap deferred during foreground command"
-  run "trap 'echo TRAP_FIRED' USR1; (sleep 0.1; kill -USR1 $$) & sleep 300ms; echo FOREGROUND_DONE"
+  begin script
+    trap 'echo TRAP_FIRED' USR1; (sleep 0.1; kill -USR1 $$) & sleep 300ms; echo FOREGROUND_DONE
+  end script
   expect_stdout_line "FOREGROUND_DONE"
 end test "trap deferred during foreground command"
 
@@ -185,7 +191,9 @@ end test "trap deferred during foreground command"
 requirement "SHALL-2-12-464" doc="When shell waiting via wait, trapped signal causes wait to return >128"
 
 begin test "wait interrupted by trapped signal"
-  run "trap 'echo GOT_USR1' USR1; sleep 60 & bgpid=$!; (sleep 0.1; kill -USR1 $$) & wait $bgpid; rc=$?; kill $bgpid 2>/dev/null; wait $bgpid 2>/dev/null; echo wait_rc=$rc"
+  begin script
+    trap 'echo GOT_USR1' USR1; sleep 60 & bgpid=$!; (sleep 0.1; kill -USR1 $$) & wait $bgpid; rc=$?; kill $bgpid 2>/dev/null; wait $bgpid 2>/dev/null; echo wait_rc=$rc
+  end script
   expect_stdout_line "GOT_USR1"
   expect_stdout_line "wait_rc=(129|1[3-9][0-9]|2[0-4][0-9]|25[0-5])"
 end test "wait interrupted by trapped signal"
@@ -200,12 +208,16 @@ requirement "SHALL-2-13-466" doc="Initial value of objects same as parent shell 
 requirement "SHALL-2-13-468" doc="Variables with export attribute passed as environment variables"
 
 begin test "exported variable visible in child"
-  run "MYVAR=hello; export MYVAR; {{SHELL}} -c 'echo $MYVAR'"
+  begin script
+    MYVAR=hello; export MYVAR; {{SHELL}} -c 'echo $MYVAR'
+  end script
   expect_stdout "hello"
 end test "exported variable visible in child"
 
 begin test "non-exported variable not visible in child"
-  run "MYVAR=secret; {{SHELL}} -c 'echo ${MYVAR:-empty}'"
+  begin script
+    MYVAR=secret; {{SHELL}} -c 'echo ${MYVAR:-empty}'
+  end script
   expect_stdout "empty"
 end test "non-exported variable not visible in child"
 
@@ -217,7 +229,10 @@ end test "non-exported variable not visible in child"
 requirement "SHALL-2-13-467" doc="Shell script traps caught by parent set to default, ignored remain ignored"
 
 begin test "trap inheritance in shell scripts"
-  run "s=$TMPDIR/_trap_inherit_$$.sh; printf 'trap\n' > $s; chmod +x $s; trap 'echo caught' USR1; {{SHELL}} $s; rc=$?; rm -f $s; exit $rc"
+  begin script
+    s=$TMPDIR/_trap_inherit_$$.sh; printf 'trap
+    ' > $s; chmod +x $s; trap 'echo caught' USR1; {{SHELL}} $s; rc=$?; rm -f $s; exit $rc
+  end script
   not_expect_stdout ".*USR1.*"
   not_expect_stdout ".*caught.*"
 end test "trap inheritance in shell scripts"
@@ -231,12 +246,17 @@ requirement "SHALL-2-13-471" doc="Subshell environment duplicate of shell except
 requirement "SHALL-2-13-472" doc="If interactive, subshell behaves as non-interactive"
 
 begin test "subshell traps reset to default"
-  run "trap \"echo parent_trap\" USR1; (trap) 2>/dev/null"
-  not_expect_stdout ".*USR1.*"
+  begin script
+    trap "echo parent_trap" USR1; (trap "echo subshell_trap" USR1; trap -p USR1)
+  end script
+  not_expect_stdout_line ".*parent_trap.*"
+  expect_stdout_line ".*subshell_trap.*"
 end test "subshell traps reset to default"
 
 begin test "subshell inherits variables"
-  run "FOO=bar; ( echo $FOO )"
+  begin script
+    FOO=bar; ( echo $FOO )
+  end script
   expect_stdout "bar"
 end test "subshell inherits variables"
 
@@ -248,79 +268,109 @@ end test "subshell inherits variables"
 requirement "SHALL-2-15-506" doc="Special built-in utilities shall be supported"
 
 begin test "special built-in: break exists"
-  run "command -v break >/dev/null 2>&1 || true"
+  begin script
+    command -v break >/dev/null 2>&1 || true
+  end script
   expect_exit_code 0
 end test "special built-in: break exists"
 
 begin test "special built-in: colon exists"
-  run "command -v : >/dev/null 2>&1 || true"
+  begin script
+    command -v : >/dev/null 2>&1 || true
+  end script
   expect_exit_code 0
 end test "special built-in: colon exists"
 
 begin test "special built-in: continue exists"
-  run "command -v continue >/dev/null 2>&1 || true"
+  begin script
+    command -v continue >/dev/null 2>&1 || true
+  end script
   expect_exit_code 0
 end test "special built-in: continue exists"
 
 begin test "special built-in: dot exists"
-  run "command -v . >/dev/null 2>&1 || true"
+  begin script
+    command -v . >/dev/null 2>&1 || true
+  end script
   expect_exit_code 0
 end test "special built-in: dot exists"
 
 begin test "special built-in: eval exists"
-  run "command -v eval >/dev/null 2>&1 || true"
+  begin script
+    command -v eval >/dev/null 2>&1 || true
+  end script
   expect_exit_code 0
 end test "special built-in: eval exists"
 
 begin test "special built-in: exec exists"
-  run "command -v exec >/dev/null 2>&1 || true"
+  begin script
+    command -v exec >/dev/null 2>&1 || true
+  end script
   expect_exit_code 0
 end test "special built-in: exec exists"
 
 begin test "special built-in: exit exists"
-  run "command -v exit >/dev/null 2>&1 || true"
+  begin script
+    command -v exit >/dev/null 2>&1 || true
+  end script
   expect_exit_code 0
 end test "special built-in: exit exists"
 
 begin test "special built-in: export exists"
-  run "command -v export >/dev/null 2>&1 || true"
+  begin script
+    command -v export >/dev/null 2>&1 || true
+  end script
   expect_exit_code 0
 end test "special built-in: export exists"
 
 begin test "special built-in: readonly exists"
-  run "command -v readonly >/dev/null 2>&1 || true"
+  begin script
+    command -v readonly >/dev/null 2>&1 || true
+  end script
   expect_exit_code 0
 end test "special built-in: readonly exists"
 
 begin test "special built-in: return exists"
-  run "command -v return >/dev/null 2>&1 || true"
+  begin script
+    command -v return >/dev/null 2>&1 || true
+  end script
   expect_exit_code 0
 end test "special built-in: return exists"
 
 begin test "special built-in: set exists"
-  run "command -v set >/dev/null 2>&1 || true"
+  begin script
+    command -v set >/dev/null 2>&1 || true
+  end script
   expect_exit_code 0
 end test "special built-in: set exists"
 
 begin test "special built-in: shift exists"
-  run "command -v shift >/dev/null 2>&1 || true"
+  begin script
+    command -v shift >/dev/null 2>&1 || true
+  end script
   expect_exit_code 0
 end test "special built-in: shift exists"
 
 begin test "special built-in: trap exists"
-  run "command -v trap >/dev/null 2>&1 || true"
+  begin script
+    command -v trap >/dev/null 2>&1 || true
+  end script
   expect_exit_code 0
 end test "special built-in: trap exists"
 
 begin test "special built-in: unset exists"
-  run "command -v unset >/dev/null 2>&1 || true"
+  begin script
+    command -v unset >/dev/null 2>&1 || true
+  end script
   expect_exit_code 0
 end test "special built-in: unset exists"
 
 requirement "SHALL-2-15-507" doc="Output of special built-in written to stdout, subject to redirection"
 
 begin test "special built-in output goes to stdout"
-  run "export FOO=bar; export -p > /dev/null; echo ok"
+  begin script
+    export FOO=bar; export -p > /dev/null; echo ok
+  end script
   expect_stdout "ok"
 end test "special built-in output goes to stdout"
 
@@ -328,26 +378,34 @@ requirement "SHALL-2-15-508" doc="Error in special built-in may cause shell to a
 requirement "SHALL-2-15-509" doc="If special built-in error does not abort, exit value non-zero"
 
 begin test "error in special built-in produces non-zero exit"
-  run "shift 999 2>/dev/null"
+  begin script
+    shift 999 2>/dev/null
+  end script
   not_expect_exit_code 0
 end test "error in special built-in produces non-zero exit"
 
 requirement "SHALL-2-15-510" doc="Variable assignments preceding special built-in affect current environment"
 
 begin test "assignment before special built-in persists"
-  run "FOO=bar eval 'echo $FOO'"
+  begin script
+    FOO=bar eval 'echo $FOO'
+  end script
   expect_stdout "bar"
 end test "assignment before special built-in persists"
 
 begin test "variable persists after eval completes"
-  run "FOO=bar eval true; echo $FOO"
+  begin script
+    FOO=bar eval true; echo $FOO
+  end script
   expect_stdout "bar"
 end test "variable persists after eval completes"
 
 requirement "SHALL-2-15-511" doc="For special built-ins not in syntax guidelines, -- need not be recognized"
 
 begin test "set -- positional parameters"
-  run "set -- a b c; echo count=$#"
+  begin script
+    set -- a b c; echo count=$#
+  end script
   expect_stdout "count=3"
 end test "set -- positional parameters"
 

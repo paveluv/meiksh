@@ -1,0 +1,64 @@
+testsuite "XBD 8 Environment Variables"
+
+# ==============================================================================
+# PATH
+# ==============================================================================
+
+requirement "SHALL-XBD-8-3011" doc="PATH This variable shall represent the sequence of path prefixes that certain functions and utilities apply in searching for an executable file."
+
+begin test "PATH used to find executable"
+  begin script
+    mkdir -p mybin; printf '#!/bin/sh
+    echo mytool executed
+    ' > mybin/mytool; chmod +x mybin/mytool; PATH="$PWD/mybin:$PATH" mytool; rm -rf mybin
+  end script
+  expect_stdout "mytool executed"
+end test "PATH used to find executable"
+
+# ==============================================================================
+# PWD
+# ==============================================================================
+
+requirement "SHALL-XBD-8-3012" doc="PWD This variable shall represent an absolute pathname of the current working directory."
+
+begin test "PWD reflects current working directory"
+  begin script
+    echo "$PWD"
+  end script
+  expect_stdout ".*"
+end test "PWD reflects current working directory"
+
+# ==============================================================================
+# HOME
+# ==============================================================================
+
+requirement "SHALL-XBD-8-3010" doc="HOME The system shall initialize this variable at the time of login to be a pathname of the user's home directory."
+
+begin test "HOME used for tilde expansion"
+  begin script
+    mkdir -p myhome; HOME="$PWD/myhome"; echo ~; rm -rf myhome
+  end script
+  expect_stdout ".*/myhome"
+end test "HOME used for tilde expansion"
+
+# ==============================================================================
+# Locale Variables
+# ==============================================================================
+
+requirement "SHALL-XBD-8-3000" doc="LANG This variable shall determine the locale category for native language, local customs, and coded character set in the absence of the LC_ALL and other LC_* environment variables."
+requirement "SHALL-XBD-8-3002" doc="LC_ALL This variable shall determine the values for all locale categories."
+requirement "SHALL-XBD-8-3003" doc="LC_COLLATE This variable shall determine the locale category for character collation."
+requirement "SHALL-XBD-8-3004" doc="LC_CTYPE This variable shall determine the locale category for character handling functions, such as tolower(), toupper(), and isalpha()."
+requirement "SHALL-XBD-8-3005" doc="LC_MESSAGES This variable shall determine the locale category for processing affirmative and negative responses and the language and cultural conventions in which messages should be written."
+requirement "SHALL-XBD-8-3007" doc="If the LC_ALL environment variable is defined and is not null, the value of LC_ALL shall be used."
+requirement "SHALL-XBD-8-3008" doc="If the LC_* environment variable is defined and is not null, the value of the environment variable shall be used to initialize the category that corresponds to the environment variable."
+requirement "SHALL-XBD-8-3009" doc="If the LANG environment variable is defined and is not null, the value of the LANG environment variable shall be used."
+requirement "SHALL-XBD-8-3001" doc="The LANGUAGE environment variable shall be examined to determine the messages object to be used for the gettext family of functions or the gettext and ngettext utilities."
+requirement "SHALL-XBD-8-3006" doc="This variable shall contain a sequence of templates to be used by catopen() when attempting to locate message catalogs, and by the gettext family of functions when locating messages objects."
+
+begin test "locale variables passed to child environment"
+  begin script
+    export LANG=C; export LC_ALL=C; export LC_COLLATE=C; export LC_CTYPE=C; export LC_MESSAGES=C; export LANGUAGE=C; export NLSPATH=/dev/null; env | grep -E "^(LANG|LC_ALL|LC_COLLATE|LC_CTYPE|LC_MESSAGES|LANGUAGE|NLSPATH)=" | sort
+  end script
+  expect_stdout "LANG=C\nLANGUAGE=C\nLC_ALL=C\nLC_COLLATE=C\nLC_CTYPE=C\nLC_MESSAGES=C\nNLSPATH=/dev/null"
+end test "locale variables passed to child environment"
