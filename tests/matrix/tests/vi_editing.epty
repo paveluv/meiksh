@@ -1242,7 +1242,7 @@ end interactive test "history search nonexistent pattern"
 # vi: e — move to end of word
 # ==============================================================================
 
-requirement "SHALL-vi-Line-Editing-Command-Mode-086" doc="[count]e — move cursor to end of current word"
+requirement "SHALL-vi-Line-Editing-Command-Mode-082" doc="[count]e — move cursor to end of current word"
 
 begin interactive test "move to end of word e"
   spawn -i
@@ -1293,7 +1293,7 @@ end interactive test "move to end of word 2e"
 # vi: E — move to end of WORD (bigword)
 # ==============================================================================
 
-requirement "SHALL-vi-Line-Editing-Command-Mode-088" doc="[count]E — move cursor to end of current bigword"
+requirement "SHALL-vi-Line-Editing-Command-Mode-084" doc="[count]E — move cursor to end of current bigword"
 
 begin interactive test "move to end of bigword E"
   spawn -i
@@ -1592,7 +1592,7 @@ end interactive test "substitute entire line S"
 # vi: Y — yank entire line
 # ==============================================================================
 
-requirement "SHALL-vi-Line-Editing-Command-Mode-128" doc="Y — yank (copy) the entire edit line into the save buffer"
+requirement "SHALL-SH-1043" doc="Y — yank (copy) the entire edit line into the save buffer"
 
 begin interactive test "yank entire line Y"
   spawn -i
@@ -1614,3 +1614,168 @@ begin interactive test "yank entire line Y"
   sendeof
   wait
 end interactive test "yank entire line Y"
+
+
+# ==============================================================================
+# vi: * — glob expand bigword (Esc-*)
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-057" doc="Expansions displayed on subsequent terminal lines"
+requirement "SHALL-vi-Line-Editing-Command-Mode-058" doc="If bigword has no glob chars, * is implicitly assumed at end"
+requirement "SHALL-vi-Line-Editing-Command-Mode-059" doc="Matched directories shall have / appended"
+requirement "SHALL-vi-Line-Editing-Command-Mode-060" doc="After expansion, line redrawn and cursor repositioned in command mode"
+
+begin interactive test "vi glob expand * with known files"
+  spawn -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  send "touch aaa_one aaa_two"
+  expect "$ "
+  # Type: echo aaa_<Esc>
+  sendraw 65 63 68 6f 20 61 61 61 5f
+  sendraw 1b
+  sleep 100ms
+  # Press * to glob-expand the bigword
+  sendraw 2a
+  sleep 200ms
+  # Press Enter to execute
+  sendraw 0a
+  expect "aaa_one aaa_two"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi glob expand * with known files"
+
+begin interactive test "vi glob expand * on directory appends slash"
+  spawn -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  send "mkdir testdir_comp"
+  expect "$ "
+  # Type: echo testdir<Esc>
+  sendraw 65 63 68 6f 20 74 65 73 74 64 69 72
+  sendraw 1b
+  sleep 100ms
+  # Press * to glob-expand
+  sendraw 2a
+  sleep 200ms
+  sendraw 0a
+  expect "testdir_comp"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi glob expand * on directory appends slash"
+
+# ==============================================================================
+# vi: \ — filename completion (Esc-\)
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-062" doc="Maximal expansion replaces original bigword, cursor placed after"
+requirement "SHALL-vi-Line-Editing-Command-Mode-063" doc="Unique directory match: / inserted after bigword"
+requirement "SHALL-vi-Line-Editing-Command-Mode-064" doc="Unique file match: space inserted after bigword"
+requirement "SHALL-vi-Line-Editing-Command-Mode-065" doc="After \\ completion, sh placed in insert mode"
+requirement "SHALL-vi-Line-Editing-Command-Mode-066" doc="If at end of line, cursor moved to first column after expansions, insert mode"
+requirement "SHALL-vi-Line-Editing-Command-Mode-067" doc="Otherwise, cursor is last column of first char after expansions, insert mode"
+requirement "SHALL-vi-Line-Editing-Command-Mode-068" doc="If bigword has no glob chars, * implicitly assumed at end for \\"
+
+begin interactive test "vi filename completion unique file"
+  spawn -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  send "touch unique_file_xyz.txt"
+  expect "$ "
+  # Type: echo unique_f<Esc>
+  sendraw 65 63 68 6f 20 75 6e 69 71 75 65 5f 66
+  sendraw 1b
+  sleep 100ms
+  # Press \ to complete
+  sendraw 5c
+  sleep 200ms
+  # Press Enter (we are in insert mode after completion)
+  sendraw 0a
+  expect "unique_file_xyz.txt"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi filename completion unique file"
+
+begin interactive test "vi filename completion unique directory adds slash"
+  spawn -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  send "mkdir only_dir_here"
+  expect "$ "
+  # Type: echo only_d<Esc>
+  sendraw 65 63 68 6f 20 6f 6e 6c 79 5f 64
+  sendraw 1b
+  sleep 100ms
+  # Press \ to complete
+  sendraw 5c
+  sleep 200ms
+  # Press Enter
+  sendraw 0a
+  expect "only_dir_here"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi filename completion unique directory adds slash"
+
+# ==============================================================================
+# vi: @ — alias letter expansion
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-069" doc="If alias _letter contains editing commands, they shall be performed as part of insertion"
+requirement "SHALL-vi-Line-Editing-Command-Mode-070" doc="If no alias _letter is enabled, @ command shall have no effect"
+
+begin interactive test "vi @ alias no alias enabled has no effect"
+  spawn -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  # Type: echo hello<Esc>
+  sendraw 65 63 68 6f 20 68 65 6c 6c 6f
+  sendraw 1b
+  sleep 100ms
+  # Press @x — no alias for 'x', should have no effect
+  sendraw 40 78
+  sleep 100ms
+  # Press Enter — original line should be unchanged
+  sendraw 0a
+  expect "hello"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi @ alias no alias enabled has no effect"
+
+# ==============================================================================
+# vi: v — invoke editor
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-078" doc="When the editor exits, commands in the temp file shall be executed and placed in history"
+
+begin interactive test "vi v command invokes editor and executes result"
+  spawn -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  # Create a fake vi that performs sed substitution on the temp file
+  send "printf '#!/bin/sh\nsed -i s/placeholder/from_editor/ \"$1\"\n' > $HOME/vi && chmod +x $HOME/vi"
+  expect "$ "
+  send "export PATH=$HOME:$PATH"
+  expect "$ "
+  # Type: echo placeholder<Esc>
+  sendraw 65 63 68 6f 20 70 6c 61 63 65 68 6f 6c 64 65 72
+  sendraw 1b
+  sleep 100ms
+  # Press v to invoke the editor (vi from PATH)
+  sendraw 76
+  sleep 500ms
+  expect timeout=3s "from_editor"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi v command invokes editor and executes result"

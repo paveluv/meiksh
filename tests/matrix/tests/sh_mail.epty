@@ -119,3 +119,19 @@ begin interactive test "MAILPATH percent escaping"
   sendeof
   wait
 end interactive test "MAILPATH percent escaping"
+
+# ==============================================================================
+# MAILCHECK default value
+# ==============================================================================
+
+requirement "SHALL-SH-1030" doc="The default value shall be 600 seconds."
+
+begin interactive test "MAILCHECK defaults to 600"
+  spawn -i
+  expect "$ "
+  send "echo $MAILCHECK"
+  expect "600"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "MAILCHECK defaults to 600"

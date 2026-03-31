@@ -90,7 +90,7 @@ end interactive test "fg output goes to stdout"
 # Async launch notification goes to stderr (POSIX 2.9.3.1)
 # ==============================================================================
 
-requirement "SHALL-2-9-3-1-353" doc="When an asynchronous list is started by the shell, the format of the job-related message written to standard error is: [%d] %d\n. The async [N] PID notification must go to stderr, not stdout"
+requirement "SHALL-V3CHAP02-1012" doc="When an asynchronous list is started by the shell, the format of the job-related message written to standard error is: [%d] %d\n. The async [N] PID notification must go to stderr, not stdout"
 
 begin interactive test "async launch notification goes to stderr"
   spawn -i

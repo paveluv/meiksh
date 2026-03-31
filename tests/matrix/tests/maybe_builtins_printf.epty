@@ -652,3 +652,17 @@ begin test "printf %.3s output correct despite truncation"
   end script
   expect_stdout "hel"
 end test "printf %.3s output correct despite truncation"
+
+# ==============================================================================
+# printf: %n$ format reuse — n refers to nth arg after highest consumed
+# ==============================================================================
+
+requirement "SHALL-EXTENDED-DESCRIPTION-5044" doc="On format reuse, %n$ refers to nth arg following highest consumed by previous use"
+
+begin test "printf %n$ format reuse"
+  begin script
+    /usr/bin/printf '%1$s %2$s\n' a b c d
+  end script
+  expect_stdout_line "a b"
+  expect_stdout_line "c d"
+end test "printf %n$ format reuse"
