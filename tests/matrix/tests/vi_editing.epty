@@ -1763,7 +1763,7 @@ begin interactive test "vi v command invokes editor and executes result"
   send "set -o vi"
   expect "$ "
   # Create a fake vi that performs sed substitution on the temp file
-  send "printf '#!/bin/sh\nsed -i s/placeholder/from_editor/ \"$1\"\n' > $HOME/vi && chmod +x $HOME/vi"
+  send "printf '#!%s\nsed -i s/placeholder/from_editor/ \"$1\"\n' \"${SHELL%% *}\" > $HOME/vi && chmod +x $HOME/vi"
   expect "$ "
   send "export PATH=$HOME:$PATH"
   expect "$ "
