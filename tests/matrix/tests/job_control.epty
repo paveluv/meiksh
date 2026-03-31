@@ -38,7 +38,7 @@ requirement "SHALL-ASYNCHRONOUS-EVENTS-027" doc="Interactive shell: SIGQUIT and 
 requirement "SHALL-ASYNCHRONOUS-EVENTS-028" doc="With -m, SIGTTIN SIGTTOU SIGTSTP shall be ignored"
 requirement "SHALL-ASYNCHRONOUS-EVENTS-029" doc="If caught, signal-catching function sets default and re-raises"
 
-begin test "background job and jobs listing"
+begin interactive test "background job and jobs listing"
   spawn {{SHELL}} -i
   expect "$ "
   send "sleep 10 &"
@@ -48,7 +48,7 @@ begin test "background job and jobs listing"
   expect "\[1\].*sleep 10"
   sendeof
   wait
-end test "background job and jobs listing"
+end interactive test "background job and jobs listing"
 
 
 # ==============================================================================
@@ -57,7 +57,7 @@ end test "background job and jobs listing"
 
 requirement "SHALL-Command-History-List-031" doc="When used interactively, shell shall maintain command history in HISTFILE"
 
-begin test "history maintained interactively"
+begin interactive test "history maintained interactively"
   spawn {{SHELL}} -i
   expect "$ "
   send "echo histcheck_1"
@@ -71,7 +71,7 @@ begin test "history maintained interactively"
   expect "histcheck_2"
   sendeof
   wait
-end test "history maintained interactively"
+end interactive test "history maintained interactively"
 
 
 # ==============================================================================
@@ -80,7 +80,7 @@ end test "history maintained interactively"
 
 requirement "SHALL-DESCRIPTION-602" doc="A user shall explicitly exit to leave the interactive shell"
 
-begin test "user must explicitly exit interactive shell"
+begin interactive test "user must explicitly exit interactive shell"
   spawn {{SHELL}} -i
   expect "$ "
   send "echo still_here"
@@ -88,7 +88,7 @@ begin test "user must explicitly exit interactive shell"
   expect "$ "
   send "exit"
   wait
-end test "user must explicitly exit interactive shell"
+end interactive test "user must explicitly exit interactive shell"
 
 
 # ==============================================================================
@@ -99,7 +99,7 @@ requirement "SHALL-2-11-455" doc="fg and bg shall send SIGCONT to stopped proces
 requirement "SHALL-2-11-456" doc="fg shall send SIGCONT after setting foreground process group"
 requirement "SHALL-2-11-457" doc="fg shall restore terminal settings before sending SIGCONT"
 
-begin test "fg/bg send SIGCONT to stopped job"
+begin interactive test "fg/bg send SIGCONT to stopped job"
   spawn {{SHELL}} -i
   expect "$ "
   send "set -m"
@@ -117,7 +117,7 @@ begin test "fg/bg send SIGCONT to stopped job"
   sleep 500ms
   sendeof
   wait
-end test "fg/bg send SIGCONT to stopped job"
+end interactive test "fg/bg send SIGCONT to stopped job"
 
 
 # ==============================================================================
@@ -127,7 +127,7 @@ end test "fg/bg send SIGCONT to stopped job"
 requirement "SHALL-2-11-459" doc="When background job completes, interactive shell writes message to stderr"
 requirement "SHALL-2-11-454" doc="If set -b disabled, message written prior to next prompt"
 
-begin test "background job completion notification"
+begin interactive test "background job completion notification"
   spawn {{SHELL}} -i
   expect "$ "
   send "set -m"
@@ -139,7 +139,7 @@ begin test "background job completion notification"
   expect "\[[[:digit:]]+\].*Done.*sleep"
   sendeof
   wait
-end test "background job completion notification"
+end interactive test "background job completion notification"
 
 
 # ==============================================================================
@@ -358,7 +358,7 @@ end test "set -- positional parameters"
 
 requirement "SHALL-2-11-453" doc="If set -b enabled, message written immediately or prior to next prompt"
 
-begin test "set -b immediate background job notification"
+begin interactive test "set -b immediate background job notification"
   spawn {{SHELL}} -i
   expect "$ "
   send "set -m"
@@ -373,7 +373,7 @@ begin test "set -b immediate background job notification"
   expect "setb_ok"
   sendeof
   wait
-end test "set -b immediate background job notification"
+end interactive test "set -b immediate background job notification"
 
 
 # ==============================================================================
@@ -382,7 +382,7 @@ end test "set -b immediate background job notification"
 
 requirement "SHALL-2-11-432" doc="List with multiple async AND-OR lists treated as split into separate lists"
 
-begin test "multiple async commands in one list"
+begin interactive test "multiple async commands in one list"
   spawn {{SHELL}} -i
   expect "$ "
   send "set -m"
@@ -396,4 +396,4 @@ begin test "multiple async commands in one list"
   expect "$ "
   sendeof
   wait
-end test "multiple async commands in one list"
+end interactive test "multiple async commands in one list"
