@@ -11,12 +11,14 @@ requirement "SHALL-SH-1027" doc="Such check shall be performed only after the co
 begin interactive test "MAIL notification on file creation"
   spawn {{SHELL}} -i
   expect "$ "
-  send "MAIL=$TEST_TMP/mbox1_$$"
+  send "bind 'set enable-bracketed-paste off'"
   expect "$ "
   send "MAILCHECK=1"
   expect "$ "
-  sleep 1500ms
-  send "echo created > $TEST_TMP/mbox1_$$"
+  send "MAIL=$HOME/mbox1"
+  expect "$ "
+  sleep 1100ms
+  send "echo created > $HOME/mbox1"
   expect timeout=5s "(mail|Mail|MAIL|you have)"
   expect "$ "
   sendeof
@@ -32,14 +34,16 @@ requirement "SHALL-SH-1028" doc="The user shall be informed only if MAIL is set 
 begin interactive test "MAIL not checked if MAILPATH is set"
   spawn {{SHELL}} -i
   expect "$ "
-  send "MAILPATH=/tmp/nonexistent_$$"
-  expect "$ "
-  send "MAIL=$TEST_TMP/mbox2_$$"
+  send "bind 'set enable-bracketed-paste off'"
   expect "$ "
   send "MAILCHECK=1"
   expect "$ "
-  sleep 1500ms
-  send "echo data > $TEST_TMP/mbox2_$$"
+  send "MAILPATH=/tmp/nonexistent_mailpath"
+  expect "$ "
+  send "MAIL=$HOME/mbox2"
+  expect "$ "
+  sleep 1100ms
+  send "echo data > $HOME/mbox2"
   not_expect timeout=3s "(mail|Mail|MAIL|you have)"
   expect "$ "
   sendeof
@@ -56,12 +60,16 @@ requirement "SHALL-SH-1031" doc="If set to zero, the shell shall check before is
 begin interactive test "MAILCHECK=0 checks at every prompt"
   spawn {{SHELL}} -i
   expect "$ "
-  send "MAIL=$TEST_TMP/mbox3_$$"
+  send "bind 'set enable-bracketed-paste off'"
   expect "$ "
   send "MAILCHECK=0"
   expect "$ "
-  sleep 1500ms
-  send "echo data > $TEST_TMP/mbox3_$$"
+  send "touch $HOME/mbox3"
+  expect "$ "
+  send "MAIL=$HOME/mbox3"
+  expect "$ "
+  sleep 1100ms
+  send "echo data >> $HOME/mbox3"
   expect timeout=5s "(mail|Mail|MAIL|you have)"
   expect "$ "
   sendeof
@@ -78,12 +86,16 @@ requirement "SHALL-SH-1033" doc="Each pathname can be followed by '%' and a stri
 begin interactive test "MAILPATH with custom message"
   spawn {{SHELL}} -i
   expect "$ "
-  send "MAILPATH='$TEST_TMP/mp1_$$%custom msg here:$TEST_TMP/mp2_$$'"
+  send "bind 'set enable-bracketed-paste off'"
   expect "$ "
-  send "MAILCHECK=1"
+  send "MAILCHECK=0"
   expect "$ "
-  sleep 1500ms
-  send "echo data > $TEST_TMP/mp1_$$"
+  send "touch $HOME/mp1"
+  expect "$ "
+  send "MAILPATH=\"$HOME/mp1%custom msg here:$HOME/mp2\""
+  expect "$ "
+  sleep 1100ms
+  send "echo data >> $HOME/mp1"
   expect timeout=5s "custom msg here"
   expect "$ "
   sendeof
