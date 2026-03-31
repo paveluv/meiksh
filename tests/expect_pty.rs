@@ -15,11 +15,13 @@
 //! ### Suite DSL:
 //!   testsuite "name"                      — suite name (one per file)
 //!   requirement "ID" doc="..."            — POSIX requirement reference
-//!   begin test "name"                     — start a test case
-//!   end test "name"                       — end a test case (name must match)
+//!   begin interactive test "name"         — start an interactive (PTY) test case
+//!   begin test "name"                     — start a non-interactive test case
+//!   end interactive test "name"           — end an interactive test case
+//!   end test "name"                       — end a non-interactive test case
 //!   setenv "KEY" "VALUE"                  — set env var for the current test
 //!
-//! ### Interactive (PTY) commands (inside begin/end test):
+//! ### Interactive (PTY) commands (inside begin/end interactive test):
 //!   spawn <cmd> [args...]                 — fork a PTY child
 //!   expect "regex"                        — wait for regex match in PTY output
 //!   expect timeout=2s "regex"             — with per-command timeout
@@ -34,7 +36,7 @@
 //!   wait exitcode=N                       — wait for child exit
 //!   sleep <duration>                      — sleep (e.g. 100ms or 1s)
 //!
-//! ### Non-interactive commands (inside begin/end test):
+//! ### Non-interactive commands (inside begin/end test, no "interactive"):
 //!   run "command"                         — run {{SHELL}} -c "command"
 //!   expect_stdout "pattern"               — assert stdout matches regex
 //!   expect_stderr "pattern"               — assert stderr matches regex
@@ -1189,6 +1191,7 @@ struct Requirement {
 
 struct TestCase {
     name: String,
+    interactive: bool,
     #[allow(dead_code)]
     line_num: usize,
     #[allow(dead_code)]
@@ -1229,6 +1232,7 @@ fn parse_suite(text: &str, filename: &str) -> Result<TestSuite, String> {
     let mut pending_reqs: Vec<Requirement> = Vec::new();
 
     let mut in_test = false;
+    let mut test_interactive = false;
     let mut test_name = String::new();
     let mut test_start_line: usize = 0;
     let mut test_env: Vec<(String, String)> = Vec::new();
@@ -1274,7 +1278,13 @@ fn parse_suite(text: &str, filename: &str) -> Result<TestSuite, String> {
             continue;
         }
 
-        if let Some(rest) = line.strip_prefix("begin test ") {
+        // begin interactive test "name" | begin test "name"
+        let begin_match = line
+            .strip_prefix("begin interactive test ")
+            .map(|rest| (true, rest))
+            .or_else(|| line.strip_prefix("begin test ").map(|rest| (false, rest)));
+
+        if let Some((interactive, rest)) = begin_match {
             if in_test {
                 return Err(format!(
                     "line {line_num}: nested begin test (already in {:?})",
@@ -1282,6 +1292,7 @@ fn parse_suite(text: &str, filename: &str) -> Result<TestSuite, String> {
                 ));
             }
             in_test = true;
+            test_interactive = interactive;
             test_name = extract_quoted(rest.trim())
                 .map_err(|e| format!("line {line_num}: {e}"))?;
             test_start_line = line_num;
@@ -1291,9 +1302,21 @@ fn parse_suite(text: &str, filename: &str) -> Result<TestSuite, String> {
             continue;
         }
 
-        if let Some(rest) = line.strip_prefix("end test ") {
+        // end interactive test "name" | end test "name"
+        let end_match = line
+            .strip_prefix("end interactive test ")
+            .map(|rest| (true, rest))
+            .or_else(|| line.strip_prefix("end test ").map(|rest| (false, rest)));
+
+        if let Some((interactive, rest)) = end_match {
             if !in_test {
                 return Err(format!("line {line_num}: end test without begin test"));
+            }
+            if interactive != test_interactive {
+                let expected = if test_interactive { "end interactive test" } else { "end test" };
+                return Err(format!(
+                    "line {line_num}: expected {expected} to match begin, got: {line}"
+                ));
             }
             let end_name = extract_quoted(rest.trim())
                 .map_err(|e| format!("line {line_num}: {e}"))?;
@@ -1305,6 +1328,7 @@ fn parse_suite(text: &str, filename: &str) -> Result<TestSuite, String> {
             }
             tests.push(TestCase {
                 name: test_name.clone(),
+                interactive: test_interactive,
                 line_num: test_start_line,
                 requirements: std::mem::take(&mut test_reqs),
                 env_overrides: test_env.clone(),
@@ -1459,8 +1483,6 @@ fn run_suite_test_inner(
     let mut session: Option<PtySession> = None;
     let mut last_run: Option<RunResult> = None;
     let mut log = Vec::<String>::new();
-    let mut mode: Option<&str> = None; // "interactive" or "run"
-
     let lines: Vec<(usize, &str)> = test
         .script_lines
         .iter()
@@ -1502,12 +1524,11 @@ fn run_suite_test_inner(
 
         match cmd {
             "spawn" => {
-                if mode == Some("run") {
+                if !test.interactive {
                     return Err(format!(
-                        "line {line_num}: cannot mix spawn and run in the same test"
+                        "line {line_num}: spawn is only allowed in interactive tests (use begin interactive test)"
                     ));
                 }
-                mode = Some("interactive");
                 if session.is_some() {
                     return Err(format!("line {line_num}: spawn called twice"));
                 }
@@ -1528,12 +1549,11 @@ fn run_suite_test_inner(
             }
 
             "run" => {
-                if mode == Some("interactive") {
+                if test.interactive {
                     return Err(format!(
-                        "line {line_num}: cannot mix run and spawn in the same test"
+                        "line {line_num}: run is only allowed in non-interactive tests (use begin test)"
                     ));
                 }
-                mode = Some("run");
                 let cmd_text = extract_quoted(rest)
                     .map_err(|e| format!("line {line_num}: {e}"))?;
                 let expanded = cmd_text.replace("{{SHELL}}", shell_str);
@@ -2240,18 +2260,22 @@ begin test "first test"
   expect_stdout "hello"
 end test "first test"
 
-begin test "second test"
-  run "true"
-  expect_exit_code 0
-end test "second test"
+begin interactive test "second test"
+  spawn /bin/sh
+  expect "$ "
+  sendeof
+  wait
+end interactive test "second test"
 "#;
         let suite = parse_suite(input, "test.epty").unwrap();
         assert_eq!(suite.name, "My Suite");
         assert_eq!(suite.tests.len(), 2);
         assert_eq!(suite.tests[0].name, "first test");
+        assert!(!suite.tests[0].interactive);
         assert_eq!(suite.tests[0].requirements.len(), 1);
         assert_eq!(suite.tests[0].requirements[0].id, "REQ-001");
         assert_eq!(suite.tests[1].name, "second test");
+        assert!(suite.tests[1].interactive);
         assert_eq!(suite.tests[1].requirements.len(), 0);
     }
 
@@ -2301,6 +2325,16 @@ testsuite "Bad"
 begin test "alpha"
   begin test "beta"
   end test "beta"
+end test "alpha"
+"#;
+        assert!(parse_suite(input, "bad.epty").is_err());
+    }
+
+    #[test]
+    fn parse_suite_mismatched_interactive() {
+        let input = r#"
+begin interactive test "alpha"
+  spawn /bin/sh
 end test "alpha"
 "#;
         assert!(parse_suite(input, "bad.epty").is_err());
