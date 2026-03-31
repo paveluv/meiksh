@@ -270,7 +270,7 @@ begin test "variable set by read persists"
   expect_stdout "hello:world"
 end test "variable set by read persists"
 
-begin test "read in while loop affects current shell via heredoc"
+begin test "read at EOF clears variable to empty"
   begin script
     val=init
     while read val; do :; done <<EOF
@@ -279,8 +279,8 @@ begin test "read in while loop affects current shell via heredoc"
     EOF
     echo "done:$val"
   end script
-  expect_stdout "done:last"
-end test "read in while loop affects current shell via heredoc"
+  expect_stdout "done:"
+end test "read at EOF clears variable to empty"
 
 # ==============================================================================
 # Subshell Isolation
