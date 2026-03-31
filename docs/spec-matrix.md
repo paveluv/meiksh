@@ -14,7 +14,6 @@ Supporting docs:
 - Compatibility watchlist: Issue 7 shell behavior that may still matter for older validation suites
 - Mirror contract: `docs/posix-manifest.txt`
 - Mirror fetch: `docs/fetch-posix-docs.sh`
-- Mirror validation: `scripts/check-posix-docs.sh`
 
 ## Mirror And Governance
 
@@ -22,7 +21,7 @@ Supporting docs:
 | --- | --- | --- | --- | --- | --- | --- |
 | `REQ-DOCS-MIRROR-001` | `docs/posix-manifest.txt` | Required local shell-conformance mirror is defined by an explicit manifest. | implemented | covered | `docs/posix-manifest.txt`, `docs/README.md` | The manifest now defines the expected local standards set instead of relying on ad-hoc fetch commands. |
 | `REQ-DOCS-MIRROR-002` | `docs/posix-manifest.txt` | Local mirror can be fetched from a single manifest-driven workflow. | implemented | covered | `docs/fetch-posix-docs.sh` | Fetch script now reads the manifest, and the current local mirror matches the manifest-defined set. |
-| `REQ-DOCS-MIRROR-003` | `docs/posix-manifest.txt` | Local mirror completeness can be checked mechanically. | implemented | covered | `scripts/check-posix-docs.sh` | This is the repository guardrail for mirror completeness claims; `GAP-DOCS-001` is closed. |
+| `REQ-DOCS-MIRROR-003` | `docs/posix-manifest.txt` | Local mirror completeness is defined by a single upstream archive manifest entry. | implemented | covered | `docs/posix-manifest.txt`, `docs/fetch-posix-docs.sh` | The mirror contract is now a single archive source instead of a per-page checklist; `GAP-DOCS-001` remains closed. |
 | `REQ-DOCS-LEDGER-001` | `docs/posix/issue8/sh-utility.html`, `docs/posix/issue8/shell-command-language.html` | Conformance tracking uses stable REQ IDs and separate normative/test status. | implemented | covered | `docs/spec-matrix.md`, `docs/requirements/conventions.md` | Milestone 0 converts the matrix from a prose-heavy summary into a requirement ledger. |
 
 ## Utility Entry And Startup
@@ -144,7 +143,6 @@ Supporting docs:
 - Unit tests in `src/syntax.rs`, `src/expand.rs`, `src/exec.rs`, `src/builtin.rs`, `src/interactive.rs`, `src/shell.rs`, and `src/sys.rs` (using the syscall trace model for OS-interacting code paths)
 - Integration tests in `tests/integration/basic.rs`
 - Production-only line coverage in `scripts/coverage.sh`
-- Local standards mirror validation in `scripts/check-posix-docs.sh`
 
 ## Gap Register
 

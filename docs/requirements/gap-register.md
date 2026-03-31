@@ -6,7 +6,7 @@ This register turns broad partial-conformance areas into named backlog items tha
 
 | Gap ID | Linked requirement area | Resolution |
 | --- | --- | --- |
-| `GAP-DOCS-001` | `REQ-DOCS-MIRROR-*` | Closed. The local standards mirror is now complete relative to `docs/posix-manifest.txt`, and `scripts/check-posix-docs.sh` validates it mechanically. |
+| `GAP-DOCS-001` | `REQ-DOCS-MIRROR-*` | Closed. The local standards mirror is now sourced from the single archive declared in `docs/posix-manifest.txt`, and `docs/fetch-posix-docs.sh` populates it directly. |
 | `GAP-SH-002` | `REQ-SH-STARTUP-*`, `REQ-SH-OPERANDS-*` | Closed (Milestone 1). `$-` `i` flag is now fixed at startup in the `interactive` field, not recomputed dynamically from terminal state. |
 | `GAP-SH-004` | `REQ-SH-INTERACTIVE-*`, `REQ-JOBS-SIGNALS-*` | Closed (Milestone 1). Interactive shells now ignore SIGQUIT and SIGTERM at startup, install SIGINT handler, and SIGINT during `read_line` discards the current input and re-prompts. |
 | `GAP-EXPAND-004` | `REQ-EXPAND-CMDSUB-*` | Closed (Milestone 1). `capture_output` no longer returns `Err` on non-zero child exit. It always returns `Ok(text)` and sets `self.last_status` to the child's exit code. |
