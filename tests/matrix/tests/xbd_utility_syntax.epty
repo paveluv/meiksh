@@ -57,3 +57,25 @@ begin test "getopts parses separate option-argument"
   end script
   expect_stdout "b foo"
 end test "getopts parses separate option-argument"
+
+# ==============================================================================
+# XBD 12.2: Optional option-argument directly adjacent
+# ==============================================================================
+
+requirement "SHALL-XBD-12-4002" doc="If the SYNOPSIS shows an optional option-argument, a conforming application shall place any option-argument directly adjacent to the option"
+requirement "SHALL-XBD-12-4003" doc="If the utility receives an argument containing only the option, it shall behave as specified for an omitted option-argument"
+
+begin test "ulimit -Sf with value adjacent"
+  begin script
+    ulimit -Sf 100
+    ulimit -Sf
+  end script
+  expect_stdout_line "100"
+end test "ulimit -Sf with value adjacent"
+
+begin test "kill -l lists signals"
+  begin script
+    kill -l 2>/dev/null
+  end script
+  expect_stdout_line ".*(HUP|INT|TERM).*"
+end test "kill -l lists signals"

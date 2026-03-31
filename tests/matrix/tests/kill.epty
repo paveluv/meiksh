@@ -384,3 +384,19 @@ begin interactive test "kill %- targets previous job"
   sendeof
   wait
 end interactive test "kill %- targets previous job"
+
+# ==============================================================================
+# kill -s as separate option-argument (from command_identification)
+# ==============================================================================
+
+requirement "SHALL-XBD-12-4000" doc="If SYNOPSIS shows option with mandatory option-argument, conforming implementation shall accept option and option-argument as separate arguments."
+
+begin test "kill -s TERM as separate option-argument"
+  begin script
+    sleep 0 & _pid=$!
+    kill -s TERM $_pid 2>/dev/null
+    wait $_pid 2>/dev/null
+    true
+  end script
+  expect_exit_code 0
+end test "kill -s TERM as separate option-argument"

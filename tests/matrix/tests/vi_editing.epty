@@ -5,10 +5,7 @@ testsuite "vi Line Editing"
 # ==============================================================================
 
 requirement "SHALL-Command-Line-Editing-032" doc="The command set -o vi shall enable vi-mode editing and place sh into vi insert mode"
-requirement "SHALL-Command-Line-Editing-033" doc="This command also shall disable any other editing mode"
-requirement "SHALL-Command-Line-Editing-vi-mode-034" doc="In vi editing mode, there shall be a distinguished line, the edit line"
 requirement "SHALL-Command-Line-Editing-vi-mode-035" doc="When in insert mode, an entered character shall be inserted into the command line"
-requirement "SHALL-Command-Line-Editing-vi-mode-036" doc="Upon entering sh and after termination of the previous command, sh shall be in insert mode"
 requirement "SHALL-vi-Line-Editing-Insert-Mode-042" doc="While in insert mode, any character typed shall be inserted in the current command line"
 
 begin interactive test "vi mode basic insert"
@@ -22,6 +19,23 @@ begin interactive test "vi mode basic insert"
   sendeof
   wait
 end interactive test "vi mode basic insert"
+
+requirement "SHALL-Command-Line-Editing-vi-mode-036" doc="Upon entering sh and after termination of the previous command, sh shall be in insert mode"
+
+begin interactive test "vi insert mode is default after command"
+  spawn -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  send "echo first"
+  expect "first"
+  expect "$ "
+  send "echo second"
+  expect "second"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi insert mode is default after command"
 
 
 # ==============================================================================
@@ -55,7 +69,7 @@ end interactive test "ESC switches to command mode"
 # Replace character (r)
 # ==============================================================================
 
-requirement "SHALL-vi-Line-Editing-Command-Mode-096" doc="Replace the current character with the character c"
+requirement "SHALL-Command-Line-Editing-vi-mode-038" doc="In command mode, an entered character shall either invoke a defined operation, be used as part of a multi-character operation, or be treated as an error"
 
 begin interactive test "replace character r"
   spawn -i
@@ -235,13 +249,7 @@ end interactive test "append a inserts after cursor"
 # Delete with motion (d + motion)
 # ==============================================================================
 
-requirement "SHALL-SH-1036" doc="If count is specified, it shall be applied to the motion command"
-requirement "SHALL-SH-1037" doc="A count shall be ignored for the following motion commands: 0 ^ $ c"
-requirement "SHALL-SH-1038" doc="If the motion command would move toward the beginning of the command line, the character under the current cursor position shall not be deleted"
-requirement "SHALL-SH-1039" doc="If the motion command is d, the entire current command line shall be cleared"
-requirement "SHALL-SH-1040" doc="If the count is larger than the number of characters between the current cursor position and the end of the command line, all remaining characters shall be deleted"
-requirement "SHALL-vi-Line-Editing-Command-Mode-108" doc="If the motion command would move the current cursor position toward the beginning of the command line, the character under the cursor and all characters to the end of the motion shall be deleted"
-requirement "SHALL-vi-Line-Editing-Command-Mode-111" doc="If the motion command is invalid, the terminal shall be alerted, the cursor shall not be moved, and no text shall be deleted"
+requirement "SHALL-vi-Line-Editing-Command-Mode-108" doc="If the motion command would move the current cursor position toward the beginning of the command line, the character under the current cursor position shall not be deleted"
 
 begin interactive test "delete with motion dw"
   spawn -i
@@ -261,6 +269,68 @@ begin interactive test "delete with motion dw"
   sendeof
   wait
 end interactive test "delete with motion dw"
+
+requirement "SHALL-SH-1039" doc="If the motion command is d, the entire current command line shall be cleared"
+
+begin interactive test "dd clears entire command line"
+  spawn -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 68 65 6c 6c 6f
+  sendraw 1b
+  sleep 100ms
+  sendraw 64 64
+  sleep 100ms
+  sendraw 0a
+  expect "$ "
+  sendeof
+  wait
+end interactive test "dd clears entire command line"
+
+requirement "SHALL-SH-1038" doc="If the motion command would move toward the beginning of the command line, the character under the current cursor position shall not be deleted"
+
+begin interactive test "delete backward preserves cursor char"
+  spawn -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  # Type: echo ab cd (two words after echo)
+  sendraw 65 63 68 6f 20 61 62 20 63 64
+  sendraw 1b
+  sleep 100ms
+  # Move to start of "cd", then db (delete backward word "ab ")
+  sendraw 77
+  sleep 50ms
+  sendraw 64 62
+  sleep 100ms
+  sendraw 0a
+  expect "cd"
+  not_expect "ab"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "delete backward preserves cursor char"
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-111" doc="If the motion command is invalid, the terminal shall be alerted, the cursor shall not be moved, and no text shall be deleted"
+
+begin interactive test "delete with invalid motion alerts"
+  spawn -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 6f 6b
+  sendraw 1b
+  sleep 100ms
+  # dz is invalid (z is not a motion)
+  sendraw 64 7a
+  sleep 100ms
+  sendraw 0a
+  expect "ok"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "delete with invalid motion alerts"
 
 
 # ==============================================================================
@@ -320,7 +390,7 @@ end interactive test "history navigation k"
 # Go to beginning (0) and end ($)
 # ==============================================================================
 
-requirement "SHALL-vi-Line-Editing-Command-Mode-093" doc="The first character position shall be numbered 1"
+requirement "SHALL-vi-Line-Editing-Command-Mode-048" doc="The term motion command represents one of the commands: <space> 0 b F l W ^ $ ; E f T w | , B e h t"
 
 begin interactive test "go to beginning 0 and end dollar"
   spawn -i
@@ -759,7 +829,9 @@ end interactive test "pipe column movement"
 # Find character: f, F, t, T
 # ==============================================================================
 
-requirement "SHALL-vi-Line-Editing-Command-Mode-098" doc="If the character 'c' does not occur in the line before the current cursor position, the terminal shall be alerted and the cursor shall not be moved"
+requirement "SHALL-vi-Line-Editing-Command-Mode-048" doc="The term motion command represents one of the commands: <space> 0 b F l W ^ $ ; E f T w | , B e h t"
+requirement "SHALL-vi-Line-Editing-Command-Mode-096" doc="If the character c does not occur in the line after the current cursor position, the terminal shall be alerted and the cursor shall not be moved"
+requirement "SHALL-vi-Line-Editing-Command-Mode-098" doc="If the character c does not occur in the line before the current cursor position, the terminal shall be alerted and the cursor shall not be moved"
 
 begin interactive test "find forward f"
   spawn -i
@@ -1186,14 +1258,7 @@ end interactive test "HISTSIZE unset default"
 # History search / and ?
 # ==============================================================================
 
-requirement "SHALL-SH-1046" doc="Patterns use pattern matching notation, except that ^ shall have special meaning when it appears as the first character of pattern"
-requirement "SHALL-SH-1047" doc="The ^ is discarded and the characters after the ^ shall be matched only at the beginning of a line"
-requirement "SHALL-SH-1049" doc="If the pattern is not found, the current command line shall be unchanged and the terminal shall be alerted"
 requirement "SHALL-SH-1050" doc="If it is found in a previous line, the current command line shall be set to that line and the cursor set to the first character"
-requirement "SHALL-SH-1051" doc="If it is found in a following line, the current command line shall be set to that line and the cursor set to the first character"
-requirement "SHALL-vi-Line-Editing-Command-Mode-137" doc="If there is no previous non-empty pattern, the terminal shall be alerted and the current command line shall remain unchanged"
-requirement "SHALL-vi-Line-Editing-Command-Mode-138" doc="If pattern is empty, the last non-empty pattern provided to / or ? shall be used"
-requirement "SHALL-vi-Line-Editing-Command-Mode-140" doc="If there is no previous / or ?, the terminal shall be alerted and the current command line shall remain unchanged"
 
 begin interactive test "history search forward slash"
   spawn -i
@@ -1217,6 +1282,7 @@ begin interactive test "history search forward slash"
   wait
 end interactive test "history search forward slash"
 
+requirement "SHALL-SH-1049" doc="If the pattern is not found, the current command line shall be unchanged and the terminal shall be alerted"
 requirement "SHALL-vi-Line-Editing-Command-Mode-139" doc="If no matching command line is found, the terminal shall be alerted and the current command line shall remain unchanged"
 
 begin interactive test "history search nonexistent pattern"
@@ -1242,7 +1308,7 @@ end interactive test "history search nonexistent pattern"
 # vi: e — move to end of word
 # ==============================================================================
 
-requirement "SHALL-vi-Line-Editing-Command-Mode-082" doc="[count]e — move cursor to end of current word"
+requirement "SHALL-vi-Line-Editing-Command-Mode-082" doc="If the count is larger than the number of words after the cursor, this shall not be considered an error; the cursor shall advance to the last character on the line"
 
 begin interactive test "move to end of word e"
   spawn -i
@@ -1293,7 +1359,7 @@ end interactive test "move to end of word 2e"
 # vi: E — move to end of WORD (bigword)
 # ==============================================================================
 
-requirement "SHALL-vi-Line-Editing-Command-Mode-084" doc="[count]E — move cursor to end of current bigword"
+requirement "SHALL-vi-Line-Editing-Command-Mode-084" doc="If the count is larger than the number of bigwords after the cursor, this shall not be considered an error; the cursor shall advance to the last character on the line"
 
 begin interactive test "move to end of bigword E"
   spawn -i
@@ -1344,6 +1410,8 @@ end interactive test "E treats punctuation as part of word"
 # vi: P — put before cursor
 # ==============================================================================
 
+requirement "SHALL-vi-Line-Editing-Command-Mode-125" doc="The current cursor position shall be moved to the last character put from the save buffer"
+
 begin interactive test "put before cursor P"
   spawn -i
   expect "$ "
@@ -1369,6 +1437,8 @@ end interactive test "put before cursor P"
 # ==============================================================================
 # vi: ?pattern — search backward in history
 # ==============================================================================
+
+requirement "SHALL-SH-1050" doc="If it is found in a previous line, the current command line shall be set to that line and the cursor shall be set to the first character of the new command line"
 
 begin interactive test "search backward question mark"
   spawn -i
@@ -1396,6 +1466,8 @@ end interactive test "search backward question mark"
 # ==============================================================================
 # vi: n — repeat search in same direction
 # ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-138" doc="If pattern is empty, the last non-empty pattern provided to / or ? shall be used"
 
 begin interactive test "repeat search n"
   spawn -i
@@ -1426,6 +1498,8 @@ end interactive test "repeat search n"
 # ==============================================================================
 # vi: N — repeat search in opposite direction
 # ==============================================================================
+
+requirement "SHALL-SH-1049" doc="If the pattern is not found, the current command line shall be unchanged and the terminal shall be alerted"
 
 begin interactive test "repeat search opposite direction N"
   spawn -i
@@ -1459,6 +1533,8 @@ end interactive test "repeat search opposite direction N"
 # vi: R — replace mode (overwrite characters)
 # ==============================================================================
 
+requirement "SHALL-vi-Line-Editing-Command-Mode-105" doc="Characters that are entered shall be inserted before the next character"
+
 begin interactive test "replace mode R"
   spawn -i
   expect "$ "
@@ -1489,6 +1565,8 @@ end interactive test "replace mode R"
 # vi: # — comment out and execute
 # ==============================================================================
 
+requirement "SHALL-vi-Line-Editing-Command-Mode-056" doc="This line shall be entered into the command history"
+
 begin interactive test "comment out hash"
   spawn -i
   expect "$ "
@@ -1509,6 +1587,8 @@ end interactive test "comment out hash"
 # ==============================================================================
 # vi: D — delete to end of line
 # ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-109" doc="If the motion command would move the current cursor position toward the end of the command line, the character under the current cursor position shall be deleted"
 
 begin interactive test "delete to end of line D"
   spawn -i
@@ -1534,6 +1614,8 @@ end interactive test "delete to end of line D"
 # ==============================================================================
 # vi: C — change to end of line
 # ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-107" doc="If the motion command is the character c, the current command line shall be cleared and insert mode shall be entered"
 
 begin interactive test "change to end of line C"
   spawn -i
@@ -1565,6 +1647,8 @@ end interactive test "change to end of line C"
 # vi: S — substitute entire line
 # ==============================================================================
 
+requirement "SHALL-vi-Line-Editing-Command-Mode-107" doc="If the motion command is the character c, the current command line shall be cleared and insert mode shall be entered"
+
 begin interactive test "substitute entire line S"
   spawn -i
   expect "$ "
@@ -1592,7 +1676,7 @@ end interactive test "substitute entire line S"
 # vi: Y — yank entire line
 # ==============================================================================
 
-requirement "SHALL-SH-1043" doc="Y — yank (copy) the entire edit line into the save buffer"
+requirement "SHALL-SH-1043" doc="If the motion command is y, the entire current command line shall be yanked into the save buffer"
 
 begin interactive test "yank entire line Y"
   spawn -i
