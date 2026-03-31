@@ -1,0 +1,120 @@
+testsuite "Simple Commands - Executing Utilities and Functions"
+
+# ==============================================================================
+# Variable Assignment Scope
+# ==============================================================================
+
+requirement "SHALL-2-9-1-2-276" doc="Variable assignments shall be performed as follows: If no command name results, variable assignments shall affect the current execution environment."
+requirement "SHALL-2-9-1-2-280" doc="If the command name is a function that is not a standard utility implemented as a function, variable assignments shall affect the current execution environment during the execution of the function."
+
+begin test "function call with var assignment permanently modifies environment"
+  begin script
+    my_func() { echo "func"; }
+    my_var="old"
+    my_var="new" my_func >/dev/null
+    echo "$my_var"
+  end script
+  expect_stdout "new"
+end test "function call with var assignment permanently modifies environment"
+
+requirement "SHALL-2-9-1-1-274" doc="Each variable assignment shall be expanded for tilde expansion, parameter expansion, command substitution, arithmetic expansion, and quote removal prior to assigning the value."
+
+begin test "arithmetic expansion in variable assignment preceding command"
+  begin script
+    my_var=$((2+3)) env | grep -q "^my_var=5$" && echo "expanded"
+  end script
+  expect_stdout "expanded"
+end test "arithmetic expansion in variable assignment preceding command"
+
+# ==============================================================================
+# Simple Command Execution Steps
+# ==============================================================================
+
+requirement "SHALL-2-9-1-5-298" doc="If a standard utility or a conforming application is executed with file descriptor 0 not open for reading or with file descriptor 1 or 2 not open for writing, the environment in which the utility or application is executed shall be deemed non-conforming."
+requirement "SHALL-2-9-1-4-287" doc="If a simple command has a command name and an optional list of arguments after word expansion, the following actions shall be performed."
+requirement "SHALL-2-9-1-4-290" doc="It shall be invoked in conjunction with the path search in step 1e."
+requirement "SHALL-2-9-1-4-291" doc="If the command name matches the name of an intrinsic utility, that utility shall be invoked."
+requirement "SHALL-2-9-1-4-294" doc="Otherwise, the shell shall execute a non-built-in utility as described in 2.9.1.6 Non-built-in Utility Execution."
+requirement "SHALL-2-9-1-4-295" doc="If the remembered location fails for a subsequent invocation, the shell shall repeat the search to find the new location for the utility, if any."
+
+begin test "command name resolves to regular utility and executes"
+  begin script
+    echo test_utility
+  end script
+  expect_stdout "test_utility"
+end test "command name resolves to regular utility and executes"
+
+# ==============================================================================
+# Standard Utility Implementations
+# ==============================================================================
+
+requirement "SHALL-2-9-1-2-278" doc="If the command name is a standard utility implemented as a function, the effect of variable assignments shall be as if the utility was not implemented as a function."
+requirement "SHALL-2-9-1-1-270" doc="If there is a command name and it is recognized as a declaration utility, then any remaining words after the word that expanded to produce the command name, that would be recognized as a variable assignment in isolation, shall be expanded as a variable assignment."
+
+begin test "export with variable assignment is visible in environment"
+  begin script
+    export var=123; env | grep "^var="
+  end script
+  expect_stdout "var=123"
+end test "export with variable assignment is visible in environment"
+
+# ==============================================================================
+# Command Search (PATH Resolution)
+# ==============================================================================
+
+requirement "SHALL-2-9-1-4-289" doc="If the implementation has provided a standard utility in the form of a function, and that function definition still exists, it shall not be recognized at this point."
+requirement "SHALL-2-9-1-4-292" doc="Otherwise, the command shall be searched for using the PATH environment variable as described in XBD 8."
+requirement "SHALL-2-9-1-4-293" doc="If the search is successful and the system has implemented the utility as a built-in or as a shell function associated with the directory that was most recently tested during the successful PATH search, that built-in or function shall be invoked."
+
+begin test "command without slashes resolves via PATH"
+  begin script
+    mkdir -p tmp_path_test
+    echo 'echo "found_in_path"' > tmp_path_test/my_custom_cmd
+    chmod +x tmp_path_test/my_custom_cmd
+    PATH="$PWD/tmp_path_test:$PATH" my_custom_cmd
+  end script
+  expect_stdout "found_in_path"
+end test "command without slashes resolves via PATH"
+
+requirement "SHALL-2-9-1-4-297" doc="If the command name contains at least one slash, the shell shall execute a non-built-in utility as described in 2.9.1.6 Non-built-in Utility Execution."
+
+begin test "command with slash executes directly"
+  begin script
+    mkdir -p tmp_path_test
+    echo 'echo "found_in_path"' > tmp_path_test/my_custom_cmd
+    chmod +x tmp_path_test/my_custom_cmd
+    ./tmp_path_test/my_custom_cmd
+  end script
+  expect_stdout "found_in_path"
+end test "command with slash executes directly"
+
+# ==============================================================================
+# Non-Executable Execution (ENOEXEC equivalent)
+# ==============================================================================
+
+requirement "SHALL-2-9-1-6-299" doc="If the execution is being made via the exec special built-in utility, the shell shall not create a separate utility environment for this execution."
+requirement "SHALL-2-9-1-6-300" doc="If the current shell environment is a subshell environment, the new process image shall replace the subshell environment and the shell shall continue in the environment from which that subshell environment was invoked."
+requirement "SHALL-2-9-1-6-302" doc="In either case, execution of the utility in the specified environment shall be performed as follows."
+requirement "SHALL-2-9-1-6-303" doc="If the search is successful, the shell shall execute the utility with actions equivalent to calling the execl() function with the path argument set to the pathname resulting from the search."
+requirement "SHALL-2-9-1-6-307" doc="If the command name contains at least one slash, the shell shall execute the utility with actions equivalent to calling the execl() function with the path and arg0 arguments set to the command name."
+requirement "SHALL-2-9-1-6-308" doc="If the execl() function fails due to an error equivalent to ENOEXEC, the shell shall execute a command equivalent to having a shell invoked with the command name as its first operand."
+requirement "SHALL-2-9-1-6-305" doc="In this case, it shall write an error message, and the command shall fail with an exit status of 126."
+requirement "SHALL-2-9-1-6-310" doc="If the named utility does not exist, the command shall fail with an exit status of 127 and the shell shall write an error message."
+
+begin test "file without magic header but with exec bit runs as shell script"
+  begin script
+    mkdir -p tmp_path_test
+    echo "echo executed_fallback" > tmp_path_test/no_magic_header
+    chmod +x tmp_path_test/no_magic_header
+    ./tmp_path_test/no_magic_header
+  end script
+  expect_stdout "executed_fallback"
+end test "file without magic header but with exec bit runs as shell script"
+
+begin test "non-existent file with slash fails with exit code 127"
+  begin script
+    mkdir -p tmp_path_test
+    ./tmp_path_test/does_not_exist_123
+  end script
+  expect_exit_code 127
+end test "non-existent file with slash fails with exit code 127"

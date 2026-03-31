@@ -1,0 +1,155 @@
+testsuite "Maybe-Builtin — pwd (Print Working Directory)"
+
+# ==============================================================================
+# Requirements
+# ==============================================================================
+
+requirement "SHALL-OPTIONS-5055" doc="If the PWD environment variable contains an absolute pathname of the current directory that does not contain dot or dot-dot or symlink components, pwd -L shall write this to stdout."
+requirement "SHALL-OPTIONS-5056" doc="Otherwise, -L behaves as -P."
+requirement "SHALL-OPTIONS-5058" doc="Multiple pathnames possible: one starting with single / and one with //. If the system distinguishes // from /, pwd might return either form."
+requirement "SHALL-OPTIONS-5059" doc="The pathname written to standard output shall not contain any unnecessary slash characters after the leading one (or two, if the implementation distinguishes //)."
+requirement "SHALL-STDERR-5063" doc="Output format shall be: \"%s\\n\", <directory pathname>. Exactly one newline after the pathname."
+requirement "SHALL-CONSEQUENCES-OF-ERRORS-5064" doc="On error (other than write error), no output to stdout shall be produced."
+
+# ==============================================================================
+# -L option: use PWD if it is an absolute pathname with no dot/dot-dot/symlink
+# ==============================================================================
+
+begin test "pwd -L with clean PWD uses it"
+  begin script
+    _tmpdir="/tmp/pwd_test_$$"; mkdir -p "$_tmpdir/real/deep"; ln -sfn "$_tmpdir/real/deep" "$_tmpdir/link"; _real=$(cd "$_tmpdir/real/deep" && pwd -P); cd "$_tmpdir/real/deep"; PWD="$_real" pwd -L; rm -rf "$_tmpdir"
+  end script
+  expect_stdout_line "/.*"
+end test "pwd -L with clean PWD uses it"
+
+begin test "pwd -L rejects PWD containing dot-dot"
+  begin script
+    _tmpdir="/tmp/pwd_test_$$"; mkdir -p "$_tmpdir/real/deep"; cd "$_tmpdir/real/deep"; _out=$(PWD="$_tmpdir/real/deep/../deep" pwd -L); case "$_out" in *".."*) echo FAIL_DOTDOT ;; *) echo PASS ;; esac; rm -rf "$_tmpdir"
+  end script
+  expect_stdout "PASS"
+end test "pwd -L rejects PWD containing dot-dot"
+
+# ==============================================================================
+# -L falls back to -P when PWD is invalid
+# ==============================================================================
+
+begin test "pwd -L with bogus PWD falls back to physical"
+  begin script
+    _tmpdir="/tmp/pwd_test_$$"; mkdir -p "$_tmpdir/real/deep"; cd "$_tmpdir/real/deep"; _physical=$(pwd -P); _out=$(PWD=/nonexistent/bogus pwd -L); if [ "$_out" = "$_physical" ]; then echo MATCH; else echo FAIL; fi; rm -rf "$_tmpdir"
+  end script
+  expect_stdout "MATCH"
+end test "pwd -L with bogus PWD falls back to physical"
+
+begin test "pwd -L with symlink PWD outputs absolute path"
+  begin script
+    _tmpdir="/tmp/pwd_test_$$"; mkdir -p "$_tmpdir/real/deep"; ln -sfn "$_tmpdir/real/deep" "$_tmpdir/link"; cd "$_tmpdir/real/deep"; _out=$(PWD="$_tmpdir/link" pwd -L); case "$_out" in /*) echo PASS ;; *) echo FAIL ;; esac; rm -rf "$_tmpdir"
+  end script
+  expect_stdout "PASS"
+end test "pwd -L with symlink PWD outputs absolute path"
+
+# ==============================================================================
+# Multiple pathnames: one starting with / and one with //
+# ==============================================================================
+
+begin test "pwd -P outputs absolute path"
+  begin script
+    pwd -P | grep -q '^/' && echo PASS || echo FAIL
+  end script
+  expect_stdout "PASS"
+end test "pwd -P outputs absolute path"
+
+begin test "pwd -L outputs absolute path"
+  begin script
+    pwd -L | grep -q '^/' && echo PASS || echo FAIL
+  end script
+  expect_stdout "PASS"
+end test "pwd -L outputs absolute path"
+
+begin test "pwd with no options outputs absolute path"
+  begin script
+    pwd | grep -q '^/' && echo PASS || echo FAIL
+  end script
+  expect_stdout "PASS"
+end test "pwd with no options outputs absolute path"
+
+# ==============================================================================
+# Pathname shall not contain unnecessary slash characters
+# ==============================================================================
+
+begin test "pwd -P from root has no unnecessary double slashes"
+  begin script
+    _out=$(cd / && pwd -P); _stripped=$(echo "$_out" | sed 's|^//||'); case "$_stripped" in *//*) echo FAIL ;; *) echo PASS ;; esac
+  end script
+  expect_stdout "PASS"
+end test "pwd -P from root has no unnecessary double slashes"
+
+begin test "pwd -P from deep dir has no unnecessary double slashes"
+  begin script
+    _tmpdir="/tmp/pwd_test_$$"; mkdir -p "$_tmpdir/real/deep"; _out=$(cd "$_tmpdir/real/deep" && pwd -P); _stripped=$(echo "$_out" | sed 's|^//||'); case "$_stripped" in *//*) echo FAIL ;; *) echo PASS ;; esac; rm -rf "$_tmpdir"
+  end script
+  expect_stdout "PASS"
+end test "pwd -P from deep dir has no unnecessary double slashes"
+
+begin test "pwd -L has no unnecessary double slashes"
+  begin script
+    _tmpdir="/tmp/pwd_test_$$"; mkdir -p "$_tmpdir/real/deep"; _out=$(cd "$_tmpdir/real/deep" && pwd -L); _stripped=$(echo "$_out" | sed 's|^//||'); case "$_stripped" in *//*) echo FAIL ;; *) echo PASS ;; esac; rm -rf "$_tmpdir"
+  end script
+  expect_stdout "PASS"
+end test "pwd -L has no unnecessary double slashes"
+
+begin test "pwd -P has no trailing slash"
+  begin script
+    _tmpdir="/tmp/pwd_test_$$"; mkdir -p "$_tmpdir/real/deep"; _out=$(cd "$_tmpdir/real/deep" && pwd -P); case "$_out" in */) echo FAIL ;; *) echo PASS ;; esac; rm -rf "$_tmpdir"
+  end script
+  expect_stdout "PASS"
+end test "pwd -P has no trailing slash"
+
+# ==============================================================================
+# Output format: "%s\n", <directory pathname>
+# ==============================================================================
+
+begin test "pwd produces exactly one line"
+  begin script
+    _lines=$(pwd | wc -l | tr -d ' '); if [ "$_lines" = "1" ]; then echo PASS; else echo FAIL; fi
+  end script
+  expect_stdout "PASS"
+end test "pwd produces exactly one line"
+
+begin test "pwd output ends with exactly one trailing newline"
+  begin script
+    _raw_len=$(pwd | wc -c | tr -d ' '); _path_len=$(printf '%s' "$(pwd)" | wc -c | tr -d ' '); _diff=$((_raw_len - _path_len)); if [ "$_diff" = "1" ]; then echo PASS; else echo FAIL; fi
+  end script
+  expect_stdout "PASS"
+end test "pwd output ends with exactly one trailing newline"
+
+begin test "pwd produces no stderr on success"
+  begin script
+    _err=$(pwd 2>&1 1>/dev/null); if [ -z "$_err" ]; then echo PASS; else echo FAIL; fi
+  end script
+  expect_stdout "PASS"
+end test "pwd produces no stderr on success"
+
+begin test "pwd -L produces no stderr on success"
+  begin script
+    _err=$(pwd -L 2>&1 1>/dev/null); if [ -z "$_err" ]; then echo PASS; else echo FAIL; fi
+  end script
+  expect_stdout "PASS"
+end test "pwd -L produces no stderr on success"
+
+begin test "pwd -P produces no stderr on success"
+  begin script
+    _err=$(pwd -P 2>&1 1>/dev/null); if [ -z "$_err" ]; then echo PASS; else echo FAIL; fi
+  end script
+  expect_stdout "PASS"
+end test "pwd -P produces no stderr on success"
+
+# ==============================================================================
+# Consequences of errors: no output on error (other than write error)
+# ==============================================================================
+
+begin test "pwd -P in deleted directory either succeeds with absolute path or fails silently"
+  begin script
+    _tmpdir="/tmp/pwd_test_$$"; mkdir -p "$_tmpdir/will_remove"; cd "$_tmpdir/will_remove"; rmdir "$_tmpdir/will_remove"; _result=$(pwd -P 2>/dev/null); _rc=$?; if [ "$_rc" -eq 0 ]; then case "$_result" in /*) echo PASS ;; *) echo FAIL_NOT_ABSOLUTE ;; esac; else if [ -z "$_result" ]; then echo PASS; else echo FAIL_STDOUT_ON_ERROR; fi; fi; rm -rf "$_tmpdir"
+  end script
+  expect_stdout "PASS"
+end test "pwd -P in deleted directory either succeeds with absolute path or fails silently"

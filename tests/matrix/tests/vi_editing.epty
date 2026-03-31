@@ -1,0 +1,1616 @@
+testsuite "vi Line Editing"
+
+# ==============================================================================
+# Entering vi Mode and Basic Insert
+# ==============================================================================
+
+requirement "SHALL-Command-Line-Editing-032" doc="The command set -o vi shall enable vi-mode editing and place sh into vi insert mode"
+requirement "SHALL-Command-Line-Editing-033" doc="This command also shall disable any other editing mode"
+requirement "SHALL-Command-Line-Editing-vi-mode-034" doc="In vi editing mode, there shall be a distinguished line, the edit line"
+requirement "SHALL-Command-Line-Editing-vi-mode-035" doc="When in insert mode, an entered character shall be inserted into the command line"
+requirement "SHALL-Command-Line-Editing-vi-mode-036" doc="Upon entering sh and after termination of the previous command, sh shall be in insert mode"
+requirement "SHALL-vi-Line-Editing-Insert-Mode-042" doc="While in insert mode, any character typed shall be inserted in the current command line"
+
+begin interactive test "vi mode basic insert"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  send "echo vi_mode_works"
+  expect "vi_mode_works"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi mode basic insert"
+
+
+# ==============================================================================
+# ESC switches to command mode
+# ==============================================================================
+
+requirement "SHALL-Command-Line-Editing-vi-mode-037" doc="Typing an escape character shall switch sh into command mode"
+requirement "SHALL-Command-Line-Editing-vi-mode-038" doc="In command mode, an entered character shall either invoke a defined operation, be used as part of a multi-character operation, or be treated as an error"
+requirement "SHALL-SH-1023-DUP665" doc="The following commands shall be recognized in command mode: <newline> Execute the current command line"
+
+begin interactive test "ESC switches to command mode"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 68 65 6c 6c 6f 78
+  sendraw 1b
+  sleep 100ms
+  sendraw 78
+  sleep 100ms
+  sendraw 0a
+  expect "hello"
+  not_expect "hellox"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "ESC switches to command mode"
+
+
+# ==============================================================================
+# Replace character (r)
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-096" doc="Replace the current character with the character c"
+
+begin interactive test "replace character r"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 68 65 6c 6c 78
+  sendraw 1b
+  sleep 100ms
+  sendraw 72 6f
+  sleep 100ms
+  sendraw 0a
+  expect "hello"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "replace character r"
+
+
+# ==============================================================================
+# Case inversion (~)
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-071" doc="The current cursor position then shall be advanced by one character"
+requirement "SHALL-vi-Line-Editing-Command-Mode-072" doc="If the cursor was positioned on the last character of the line, the case conversion shall occur, but the cursor shall not advance"
+requirement "SHALL-vi-Line-Editing-Command-Mode-073" doc="If the ~ command is preceded by a count, that number of characters shall be converted"
+
+begin interactive test "case inversion tilde"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 42 43
+  sendraw 1b
+  sleep 100ms
+  sendraw 30 77
+  sleep 50ms
+  sendraw 7e 7e 7e
+  sleep 100ms
+  sendraw 0a
+  expect "Abc"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "case inversion tilde"
+
+
+# ==============================================================================
+# Cursor movement: h (left) and l (right)
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-079" doc="If the cursor was positioned on the first character of the line, the terminal shall be alerted and the cursor shall not be moved"
+requirement "SHALL-vi-Line-Editing-Command-Mode-081" doc="If the cursor was positioned on the last character of the line, the terminal shall be alerted and the cursor shall not be advanced"
+
+begin interactive test "cursor movement h and l"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 63 64
+  sendraw 1b
+  sleep 100ms
+  sendraw 68 68 72 61
+  sleep 100ms
+  sendraw 0a
+  expect "aacd"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "cursor movement h and l"
+
+
+# ==============================================================================
+# Word movement: w (next word) and b (back word)
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-082" doc="If the count is larger than the number of words after the cursor, this shall not be considered an error; the cursor shall advance to the last character on the line"
+requirement "SHALL-vi-Line-Editing-Command-Mode-090" doc="If the count is larger than the number of words preceding the cursor, this shall not be considered an error"
+
+begin interactive test "word movement w and b"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 6f 6e 65 20 74 77 6f
+  sendraw 1b
+  sleep 100ms
+  sendraw 62 72 58
+  sleep 100ms
+  sendraw 0a
+  expect "one Xwo"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "word movement w and b"
+
+
+# ==============================================================================
+# Delete character (x) and (X)
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-114" doc="If the cursor was positioned on the last character of the line, the character shall be deleted and the cursor position shall be moved back"
+requirement "SHALL-vi-Line-Editing-Command-Mode-117" doc="If the cursor was positioned on the first character of the line, the terminal shall be alerted, and the X command shall have no effect"
+requirement "SHALL-vi-Line-Editing-Command-Mode-121" doc="The deleted characters shall be placed in the save buffer"
+
+begin interactive test "delete character x"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 63
+  sendraw 1b
+  sleep 100ms
+  sendraw 78
+  sleep 100ms
+  sendraw 0a
+  expect "ab"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "delete character x"
+
+
+# ==============================================================================
+# Count prefix
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-047" doc="Decimal digits not beginning with 0 that precede a command letter shall be remembered"
+requirement "SHALL-vi-Line-Editing-Command-Mode-051" doc="Any command that is preceded by count shall take a count"
+requirement "SHALL-vi-Line-Editing-Command-Mode-052" doc="Unless otherwise noted, this count shall cause the specified operation to repeat by the number of times specified by the count"
+
+begin interactive test "count prefix 3x"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 63 64 65
+  sendraw 1b
+  sleep 100ms
+  sendraw 33 78
+  sleep 100ms
+  sendraw 0a
+  expect "ab"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "count prefix 3x"
+
+
+# ==============================================================================
+# Append (a) and Insert (i)
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-105" doc="Characters that are entered shall be inserted before the next character"
+requirement "SHALL-vi-Line-Editing-Command-Mode-106" doc="Characters that are entered shall be inserted before the current character"
+
+begin interactive test "append a inserts after cursor"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 63
+  sendraw 1b
+  sleep 100ms
+  sendraw 68 61 62
+  sendraw 1b
+  sleep 100ms
+  sendraw 0a
+  expect "abc"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "append a inserts after cursor"
+
+
+# ==============================================================================
+# Delete with motion (d + motion)
+# ==============================================================================
+
+requirement "SHALL-SH-1036" doc="If count is specified, it shall be applied to the motion command"
+requirement "SHALL-SH-1037" doc="A count shall be ignored for the following motion commands: 0 ^ $ c"
+requirement "SHALL-SH-1038" doc="If the motion command would move toward the beginning of the command line, the character under the current cursor position shall not be deleted"
+requirement "SHALL-SH-1039" doc="If the motion command is d, the entire current command line shall be cleared"
+requirement "SHALL-SH-1040" doc="If the count is larger than the number of characters between the current cursor position and the end of the command line, all remaining characters shall be deleted"
+requirement "SHALL-vi-Line-Editing-Command-Mode-108" doc="If the motion command would move the current cursor position toward the beginning of the command line, the character under the cursor and all characters to the end of the motion shall be deleted"
+requirement "SHALL-vi-Line-Editing-Command-Mode-111" doc="If the motion command is invalid, the terminal shall be alerted, the cursor shall not be moved, and no text shall be deleted"
+
+begin interactive test "delete with motion dw"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 20 63 64
+  sendraw 1b
+  sleep 100ms
+  sendraw 62
+  sleep 50ms
+  sendraw 64 77
+  sleep 100ms
+  sendraw 0a
+  expect "ab"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "delete with motion dw"
+
+
+# ==============================================================================
+# Change with motion (c + motion)
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-107" doc="If the motion command is the character 'c', the current command line shall be cleared and insert mode shall be entered"
+requirement "SHALL-vi-Line-Editing-Command-Mode-112" doc="After this command, the current cursor position shall be on the last character that was changed"
+
+begin interactive test "change with motion cc"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 6f 6c 64
+  sendraw 1b
+  sleep 100ms
+  sendraw 63 63
+  sleep 50ms
+  sendraw 65 63 68 6f 20 6e 65 77
+  sendraw 0a
+  expect "new"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "change with motion cc"
+
+
+# ==============================================================================
+# History navigation: k (previous) and j (next)
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-129" doc="If count is not specified, it shall default to 1"
+requirement "SHALL-vi-Line-Editing-Command-Mode-130" doc="The cursor shall be positioned on the first character of the new command"
+
+begin interactive test "history navigation k"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  send "echo hist1"
+  expect "hist1"
+  expect "$ "
+  sendraw 1b
+  sleep 100ms
+  sendraw 6b
+  sleep 100ms
+  sendraw 0a
+  expect "hist1"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "history navigation k"
+
+
+# ==============================================================================
+# Go to beginning (0) and end ($)
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-093" doc="The first character position shall be numbered 1"
+
+begin interactive test "go to beginning 0 and end dollar"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62
+  sendraw 1b
+  sleep 100ms
+  sendraw 30
+  sleep 50ms
+  sendraw 24
+  sleep 50ms
+  sendraw 72 5a
+  sleep 100ms
+  sendraw 0a
+  expect "aZ"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "go to beginning 0 and end dollar"
+
+
+# ==============================================================================
+# Undo (u)
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-127" doc="This operation shall not undo the copy of any command line to the edit line"
+
+begin interactive test "undo u"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 63
+  sendraw 1b
+  sleep 100ms
+  sendraw 78
+  sleep 50ms
+  sendraw 75
+  sleep 100ms
+  sendraw 0a
+  expect "abc"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "undo u"
+
+
+# ==============================================================================
+# Dot repeat (.)
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-075" doc="If the previous command was preceded by a count, and no count is given on the '.' command, the count from the previous command shall be included"
+requirement "SHALL-vi-Line-Editing-Command-Mode-076" doc="If the '.' command is preceded by a count, this shall override any count argument to the previous command"
+
+begin interactive test "dot repeat"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 63 64
+  sendraw 1b
+  sleep 100ms
+  sendraw 78
+  sleep 50ms
+  sendraw 2e
+  sleep 100ms
+  sendraw 0a
+  expect "ab"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "dot repeat"
+
+
+# ==============================================================================
+# Put (p) after delete
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-123" doc="The current cursor position shall be advanced to the last character put from the save buffer"
+requirement "SHALL-vi-Line-Editing-Command-Mode-124" doc="A count shall indicate how many copies of the save buffer shall be put"
+requirement "SHALL-vi-Line-Editing-Command-Mode-125" doc="The current cursor position shall be moved to the last character put from the save buffer"
+
+begin interactive test "put p after delete"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 63
+  sendraw 1b
+  sleep 100ms
+  sendraw 78
+  sleep 50ms
+  sendraw 68
+  sleep 50ms
+  sendraw 70
+  sleep 100ms
+  sendraw 0a
+  expect "acb"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "put p after delete"
+
+
+# ==============================================================================
+# SIGINT in command mode
+# ==============================================================================
+
+requirement "SHALL-Command-Line-Editing-vi-mode-040" doc="If sh receives a SIGINT signal in command mode, it shall terminate command line editing on the current command line, reissue the prompt on the next line of the terminal"
+requirement "SHALL-ASYNCHRONOUS-EVENTS-026" doc="SIGINT signals received during command line editing shall be handled"
+requirement "SHALL-vi-Line-Editing-Insert-Mode-045" doc="If sh receives a SIGINT signal in insert mode, it shall terminate command line editing with the same effects"
+
+begin interactive test "SIGINT in command mode"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 70 61 72 74 69 61 6c
+  sendraw 1b
+  sleep 100ms
+  sendraw 03
+  expect "$ "
+  send "echo after_sigint"
+  expect "after_sigint"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "SIGINT in command mode"
+
+
+# ==============================================================================
+# Insert mode: entering commands into history
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Insert-Mode-043" doc="If the current command line is not empty, this line shall be entered into the command history"
+requirement "SHALL-vi-Line-Editing-Command-Mode-056" doc="This line shall be entered into the command history; see fc"
+
+begin interactive test "insert mode enters commands into history"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  send "echo history_test_entry"
+  expect "history_test_entry"
+  expect "$ "
+  sendraw 1b
+  sleep 100ms
+  sendraw 6b
+  sleep 100ms
+  sendraw 0a
+  expect "history_test_entry"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "insert mode enters commands into history"
+
+
+# ==============================================================================
+# Unrecognized command alerts terminal
+# ==============================================================================
+
+requirement "SHALL-Command-Line-Editing-vi-mode-039" doc="A character that is not recognized as part of an editing command shall terminate any specific editing command and shall alert the terminal"
+
+begin interactive test "unrecognized command alerts terminal"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 6f 6b
+  sendraw 1b
+  sleep 100ms
+  sendraw 5a
+  sleep 100ms
+  sendraw 0a
+  expect "ok"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "unrecognized command alerts terminal"
+
+
+# ==============================================================================
+# Insert mode: backspace erases from screen and buffer
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Insert-Mode-044" doc="In insert mode, characters shall be erased from both the screen and the buffer when backspacing"
+
+begin interactive test "insert mode backspace erases"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 58 7f
+  sendraw 0a
+  expect "ab"
+  not_expect "abX"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "insert mode backspace erases"
+
+
+# ==============================================================================
+# EOF interpretation at beginning of line
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Insert-Mode-046" doc="This interpretation shall occur only at the beginning of an input line"
+
+begin interactive test "EOF interpretation at beginning of line"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 04 62
+  sendraw 0a
+  expect "$ "
+  sendeof
+  wait
+end interactive test "EOF interpretation at beginning of line"
+
+
+# ==============================================================================
+# Edit line semantics: modify from history replaces edit line
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-048" doc="If the current line is not the edit line, any command that modifies the current line shall cause the content of the current line to replace the content of the edit line"
+requirement "SHALL-vi-Line-Editing-Command-Mode-049" doc="The modification requested shall then be performed to the edit line"
+requirement "SHALL-vi-Line-Editing-Command-Mode-050" doc="When the current line is the edit line, the modification shall be done directly to the edit line"
+
+begin interactive test "edit line semantics modify from history"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  send "echo from_hist"
+  expect "from_hist"
+  expect "$ "
+  sendraw 1b
+  sleep 100ms
+  sendraw 6b
+  sleep 100ms
+  sendraw 24
+  sleep 50ms
+  sendraw 72 58
+  sleep 100ms
+  sendraw 0a
+  expect "from_hisX"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "edit line semantics modify from history"
+
+
+# ==============================================================================
+# Count out of range alerts terminal
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-053" doc="A count that is out of range is considered an error condition and shall alert the terminal, but neither the cursor position, nor the command line, shall change"
+
+begin interactive test "count out of range alerts terminal"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62
+  sendraw 1b
+  sleep 100ms
+  sendraw 39 6c
+  sleep 100ms
+  sendraw 0a
+  expect "ab"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "count out of range alerts terminal"
+
+
+# ==============================================================================
+# Tilde count overflow
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-074" doc="If the count is larger than the number of characters after the cursor, this shall not be considered an error; the cursor shall advance to the last character on the line"
+
+begin interactive test "tilde count overflow"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 42
+  sendraw 1b
+  sleep 100ms
+  sendraw 30 77
+  sleep 50ms
+  sendraw 39 7e
+  sleep 100ms
+  sendraw 0a
+  expect "Ab"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "tilde count overflow"
+
+
+# ==============================================================================
+# Dot repeat count propagation
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-077" doc="The count specified in the '.' command shall become the count for subsequent '.' commands issued without a count"
+
+begin interactive test "dot repeat count propagation"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 63 64 65 66
+  sendraw 1b
+  sleep 100ms
+  sendraw 32 78
+  sleep 100ms
+  sendraw 2e
+  sleep 100ms
+  sendraw 0a
+  expect "ab"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "dot repeat count propagation"
+
+
+# ==============================================================================
+# h count overflow
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-080" doc="If the count is larger than the number of characters before the cursor, this shall not be considered an error; the cursor shall move to the first character on the line"
+
+begin interactive test "h count overflow"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62
+  sendraw 1b
+  sleep 100ms
+  sendraw 30 77 6c
+  sleep 50ms
+  sendraw 39 39 68
+  sleep 50ms
+  sendraw 72 5a
+  sleep 100ms
+  sendraw 0a
+  expect "Zcho"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "h count overflow"
+
+
+# ==============================================================================
+# Bigword forward (W) and backward (B) and end (E)
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-084" doc="If the count is larger than the number of bigwords after the cursor, this shall not be considered an error; the cursor shall advance to the last character on the line"
+requirement "SHALL-vi-Line-Editing-Command-Mode-092" doc="If the count is larger than the number of bigwords preceding the cursor, this shall not be considered an error; the cursor shall return to the first character on the line"
+
+begin interactive test "bigword forward W"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 2e 62 20 63 2e 64
+  sendraw 1b
+  sleep 100ms
+  sendraw 30
+  sleep 50ms
+  sendraw 57 57
+  sleep 50ms
+  sendraw 72 5a
+  sleep 100ms
+  sendraw 0a
+  expect "a\.b Z\.d"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "bigword forward W"
+
+begin interactive test "bigword backward B"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 2e 62 20 63 2e 64
+  sendraw 1b
+  sleep 100ms
+  sendraw 42
+  sleep 50ms
+  sendraw 72 5a
+  sleep 100ms
+  sendraw 0a
+  expect "a\.b Z\.d"
+  not_expect "c\.d"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "bigword backward B"
+
+
+# ==============================================================================
+# Pipe column movement (|)
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-094" doc="If the count is larger than the number of characters on the line, this shall not be considered an error; the cursor shall be placed on the last character on the line"
+
+begin interactive test "pipe column movement"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 63 64 65
+  sendraw 1b
+  sleep 100ms
+  sendraw 33 7c
+  sleep 50ms
+  sendraw 72 5a
+  sleep 100ms
+  sendraw 0a
+  expect "ecZo"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "pipe column movement"
+
+
+# ==============================================================================
+# Find character: f, F, t, T
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-098" doc="If the character 'c' does not occur in the line before the current cursor position, the terminal shall be alerted and the cursor shall not be moved"
+
+begin interactive test "find forward f"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 63 62
+  sendraw 1b
+  sleep 100ms
+  sendraw 30
+  sleep 50ms
+  sendraw 66 62
+  sleep 50ms
+  sendraw 72 5a
+  sleep 100ms
+  sendraw 0a
+  expect "Zcb"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "find forward f"
+
+begin interactive test "find backward F"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 63
+  sendraw 1b
+  sleep 100ms
+  sendraw 46 61
+  sleep 50ms
+  sendraw 72 5a
+  sleep 100ms
+  sendraw 0a
+  expect "Zbc"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "find backward F"
+
+begin interactive test "find forward stop before t"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 63
+  sendraw 1b
+  sleep 100ms
+  sendraw 30
+  sleep 50ms
+  sendraw 74 63
+  sleep 50ms
+  sendraw 72 5a
+  sleep 100ms
+  sendraw 0a
+  expect "echo aZc"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "find forward stop before t"
+
+begin interactive test "find backward stop after T"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 63
+  sendraw 1b
+  sleep 100ms
+  sendraw 54 61
+  sleep 50ms
+  sendraw 72 5a
+  sleep 100ms
+  sendraw 0a
+  expect "echo aZc"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "find backward stop after T"
+
+
+# ==============================================================================
+# Repeat find (;) and reverse repeat (,)
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-103" doc="Any number argument on that previous command shall be ignored"
+
+begin interactive test "repeat find semicolon"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 61 62
+  sendraw 1b
+  sleep 100ms
+  sendraw 30
+  sleep 50ms
+  sendraw 66 61
+  sleep 50ms
+  sendraw 3b
+  sleep 50ms
+  sendraw 72 5a
+  sleep 100ms
+  sendraw 0a
+  expect "abZb"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "repeat find semicolon"
+
+begin interactive test "reverse repeat find comma"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 61 62
+  sendraw 1b
+  sleep 100ms
+  sendraw 30
+  sleep 50ms
+  sendraw 66 61
+  sleep 50ms
+  sendraw 3b
+  sleep 50ms
+  sendraw 2c
+  sleep 50ms
+  sendraw 72 5a
+  sleep 100ms
+  sendraw 0a
+  expect "Zbab"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "reverse repeat find comma"
+
+
+# ==============================================================================
+# Change motion toward end / count overflow
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-109" doc="If the motion command would move the current cursor position toward the end of the command line, the character under the current cursor position shall be deleted"
+requirement "SHALL-vi-Line-Editing-Command-Mode-110" doc="If the count is larger than the number of characters between the current cursor position and the end of the command line toward which the motion command would move the cursor, this shall not be considered an error; all of the remaining characters in the aforementioned range shall be deleted and insert mode shall be entered"
+
+begin interactive test "change word cw"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 63 64
+  sendraw 1b
+  sleep 100ms
+  sendraw 30 77
+  sleep 50ms
+  sendraw 63 77
+  sleep 50ms
+  sendraw 58 59
+  sendraw 1b
+  sleep 100ms
+  sendraw 0a
+  expect "XY"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "change word cw"
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-113" doc="If the count is larger than the number of characters after the cursor, this shall not be considered an error; all of the remaining characters shall be changed"
+
+begin interactive test "change word count overflow 9cw"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62
+  sendraw 1b
+  sleep 100ms
+  sendraw 30 77
+  sleep 50ms
+  sendraw 39 63 77
+  sleep 50ms
+  sendraw 5a
+  sendraw 1b
+  sleep 100ms
+  sendraw 0a
+  expect "Z"
+  not_expect "ab"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "change word count overflow 9cw"
+
+
+# ==============================================================================
+# Delete x count overflow
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-115" doc="If the count is larger than the number of characters after the cursor, this shall not be considered an error; all the characters from the cursor to the end of the line shall be deleted"
+
+begin interactive test "delete x count overflow 9x"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62
+  sendraw 1b
+  sleep 100ms
+  sendraw 30 77
+  sleep 50ms
+  sendraw 39 78
+  sleep 100ms
+  sendraw 0a
+  expect "$ "
+  sendeof
+  wait
+end interactive test "delete x count overflow 9x"
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-116" doc="The character under the current cursor position shall not change"
+
+begin interactive test "X deletes before cursor"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 63
+  sendraw 1b
+  sleep 100ms
+  sendraw 58
+  sleep 100ms
+  sendraw 0a
+  expect "ac"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "X deletes before cursor"
+
+
+# ==============================================================================
+# X edge cases
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-119" doc="If the line contained no characters, the terminal shall be alerted and the cursor shall not be moved"
+requirement "SHALL-vi-Line-Editing-Command-Mode-118" doc="If the line contained a single character, the X command shall have no effect"
+
+begin interactive test "X on first char no effect"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61
+  sendraw 1b
+  sleep 100ms
+  sendraw 30 77
+  sleep 50ms
+  sendraw 58
+  sleep 100ms
+  sendraw 0a
+  expect "a"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "X on first char no effect"
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-120" doc="If the count is larger than the number of characters before the cursor, this shall not be considered an error; all the characters from before the cursor to the beginning of the line shall be deleted"
+
+begin interactive test "X count overflow 99X"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 63 64
+  sendraw 1b
+  sleep 100ms
+  sendraw 39 39 58
+  sleep 100ms
+  sendraw 0a
+  expect "$ "
+  sendeof
+  wait
+end interactive test "X count overflow 99X"
+
+
+# ==============================================================================
+# Yank (y + motion): cursor position unchanged
+# ==============================================================================
+
+requirement "SHALL-SH-1041" doc="A number count shall be applied to the motion command"
+requirement "SHALL-SH-1042" doc="If the motion command would move toward the beginning of the command line, the character under the current cursor position shall not be included in the set of yanked characters"
+requirement "SHALL-SH-1043" doc="If the motion command is y, the entire current command line shall be yanked into the save buffer"
+requirement "SHALL-SH-1044" doc="The current cursor position shall be unchanged"
+requirement "SHALL-SH-1045" doc="If the count is larger than the number of characters between the cursor and the end of the line, all remaining characters shall be yanked"
+requirement "SHALL-vi-Line-Editing-Command-Mode-122" doc="The current character position shall be unchanged"
+
+begin interactive test "yank yw cursor unchanged"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 63
+  sendraw 1b
+  sleep 100ms
+  sendraw 30
+  sleep 50ms
+  sendraw 79 77
+  sleep 50ms
+  sendraw 72 5a
+  sleep 100ms
+  sendraw 0a
+  expect "Zcho"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "yank yw cursor unchanged"
+
+
+# ==============================================================================
+# History k/- past HISTSIZE boundary
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-131" doc="If a k or - command would retreat past the maximum number of commands in effect for this shell, the terminal shall be alerted, and the command shall have no effect"
+
+begin interactive test "history k past HISTSIZE boundary"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  send "echo only_cmd"
+  expect "only_cmd"
+  expect "$ "
+  sendraw 1b
+  sleep 100ms
+  sendraw 6b
+  sleep 100ms
+  sendraw 6b
+  sleep 100ms
+  sendraw 0a
+  expect "only_cmd"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "history k past HISTSIZE boundary"
+
+
+# ==============================================================================
+# History j/+ past edit line
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-134" doc="If a j or + command advances past the edit line, the current command line shall be restored to the edit line and the terminal shall be alerted"
+
+begin interactive test "history j past edit line"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  send "echo hist_a"
+  expect "hist_a"
+  expect "$ "
+  sendraw 1b
+  sleep 100ms
+  sendraw 6b
+  sleep 100ms
+  sendraw 6a
+  sleep 100ms
+  sendraw 0a
+  expect "$ "
+  sendeof
+  wait
+end interactive test "history j past edit line"
+
+
+# ==============================================================================
+# History G with nonexistent line number
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-135" doc="If command line number does not exist, the terminal shall be alerted and the command line shall not be changed"
+
+begin interactive test "history G nonexistent line"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  send "echo baseline"
+  expect "baseline"
+  expect "$ "
+  sendraw 1b
+  sleep 100ms
+  sendraw 39 39 39 39 39 47
+  sleep 100ms
+  sendraw 0a
+  expect "$ "
+  sendeof
+  wait
+end interactive test "history G nonexistent line"
+
+
+# ==============================================================================
+# HISTSIZE unset default
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-136" doc="If this variable is unset, an unspecified default greater than or equal to 128 shall be used"
+
+begin interactive test "HISTSIZE unset default"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  send "unset HISTSIZE"
+  expect "$ "
+  send "echo histtest1"
+  expect "histtest1"
+  expect "$ "
+  sendraw 1b
+  sleep 100ms
+  sendraw 6b
+  sleep 100ms
+  sendraw 0a
+  expect "histtest1"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "HISTSIZE unset default"
+
+
+# ==============================================================================
+# History search / and ?
+# ==============================================================================
+
+requirement "SHALL-SH-1046" doc="Patterns use pattern matching notation, except that ^ shall have special meaning when it appears as the first character of pattern"
+requirement "SHALL-SH-1047" doc="The ^ is discarded and the characters after the ^ shall be matched only at the beginning of a line"
+requirement "SHALL-SH-1049" doc="If the pattern is not found, the current command line shall be unchanged and the terminal shall be alerted"
+requirement "SHALL-SH-1050" doc="If it is found in a previous line, the current command line shall be set to that line and the cursor set to the first character"
+requirement "SHALL-SH-1051" doc="If it is found in a following line, the current command line shall be set to that line and the cursor set to the first character"
+requirement "SHALL-vi-Line-Editing-Command-Mode-137" doc="If there is no previous non-empty pattern, the terminal shall be alerted and the current command line shall remain unchanged"
+requirement "SHALL-vi-Line-Editing-Command-Mode-138" doc="If pattern is empty, the last non-empty pattern provided to / or ? shall be used"
+requirement "SHALL-vi-Line-Editing-Command-Mode-140" doc="If there is no previous / or ?, the terminal shall be alerted and the current command line shall remain unchanged"
+
+begin interactive test "history search forward slash"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  send "echo searchme"
+  expect "searchme"
+  expect "$ "
+  send "echo other"
+  expect "other"
+  expect "$ "
+  sendraw 1b
+  sleep 100ms
+  sendraw 2f 73 65 61 72 63 68 0a
+  sleep 200ms
+  sendraw 0a
+  expect "searchme"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "history search forward slash"
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-139" doc="If no matching command line is found, the terminal shall be alerted and the current command line shall remain unchanged"
+
+begin interactive test "history search nonexistent pattern"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  send "echo first"
+  expect "first"
+  expect "$ "
+  sendraw 1b
+  sleep 100ms
+  sendraw 2f 7a 7a 7a 7a 7a 7a 0a
+  sleep 200ms
+  sendraw 0a
+  expect "$ "
+  sendeof
+  wait
+end interactive test "history search nonexistent pattern"
+
+
+# ==============================================================================
+# vi: e — move to end of word
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-086" doc="[count]e — move cursor to end of current word"
+
+begin interactive test "move to end of word e"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 58 62 20 63 64
+  sendraw 1b
+  sleep 100ms
+  sendraw 30
+  sleep 50ms
+  sendraw 77
+  sleep 50ms
+  sendraw 65
+  sleep 50ms
+  sendraw 72 5a
+  sleep 100ms
+  sendraw 0a
+  expect "XZ cd"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "move to end of word e"
+
+begin interactive test "move to end of word 2e"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 63 20 64 65 66
+  sendraw 1b
+  sleep 100ms
+  sendraw 30
+  sleep 50ms
+  sendraw 32 65
+  sleep 50ms
+  sendraw 72 5a
+  sleep 100ms
+  sendraw 0a
+  expect "abZ def"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "move to end of word 2e"
+
+
+# ==============================================================================
+# vi: E — move to end of WORD (bigword)
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-088" doc="[count]E — move cursor to end of current bigword"
+
+begin interactive test "move to end of bigword E"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 2d 62 20 63 64
+  sendraw 1b
+  sleep 100ms
+  sendraw 30
+  sleep 50ms
+  sendraw 57
+  sleep 50ms
+  sendraw 45
+  sleep 50ms
+  sendraw 72 5a
+  sleep 100ms
+  sendraw 0a
+  expect "a-Z cd"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "move to end of bigword E"
+
+begin interactive test "E treats punctuation as part of word"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 2e 62 20 63 2e 64
+  sendraw 1b
+  sleep 100ms
+  sendraw 30
+  sleep 50ms
+  sendraw 77 45
+  sleep 50ms
+  sendraw 72 5a
+  sleep 100ms
+  sendraw 0a
+  expect "a\.Z c\.d"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "E treats punctuation as part of word"
+
+
+# ==============================================================================
+# vi: P — put before cursor
+# ==============================================================================
+
+begin interactive test "put before cursor P"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 63
+  sendraw 1b
+  sleep 100ms
+  sendraw 78
+  sleep 50ms
+  sendraw 68
+  sleep 50ms
+  sendraw 50
+  sleep 100ms
+  sendraw 0a
+  expect "cab"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "put before cursor P"
+
+
+# ==============================================================================
+# vi: ?pattern — search backward in history
+# ==============================================================================
+
+begin interactive test "search backward question mark"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  send "echo findme"
+  expect "findme"
+  expect "$ "
+  send "echo other"
+  expect "other"
+  expect "$ "
+  sendraw 1b
+  sleep 100ms
+  sendraw 3f 66 69 6e 64 6d 65 0a
+  sleep 200ms
+  sendraw 0a
+  expect "findme"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "search backward question mark"
+
+
+# ==============================================================================
+# vi: n — repeat search in same direction
+# ==============================================================================
+
+begin interactive test "repeat search n"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  send "echo alpha1"
+  expect "alpha1"
+  expect "$ "
+  send "echo beta"
+  expect "beta"
+  expect "$ "
+  send "echo alpha2"
+  expect "alpha2"
+  expect "$ "
+  sendraw 1b
+  sleep 100ms
+  sendraw 2f 61 6c 70 68 61 0a
+  sleep 200ms
+  sendraw 0a
+  expect "alpha2"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "repeat search n"
+
+
+# ==============================================================================
+# vi: N — repeat search in opposite direction
+# ==============================================================================
+
+begin interactive test "repeat search opposite direction N"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  send "echo gamma1"
+  expect "gamma1"
+  expect "$ "
+  send "echo gamma2"
+  expect "gamma2"
+  expect "$ "
+  send "echo gamma3"
+  expect "gamma3"
+  expect "$ "
+  sendraw 1b
+  sleep 100ms
+  sendraw 2f 67 61 6d 6d 61 0a
+  sleep 200ms
+  sendraw 6e
+  sleep 200ms
+  sendraw 0a
+  expect "gamma"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "repeat search opposite direction N"
+
+
+# ==============================================================================
+# vi: R — replace mode (overwrite characters)
+# ==============================================================================
+
+begin interactive test "replace mode R"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 63 64 65 66
+  sendraw 1b
+  sleep 100ms
+  sendraw 30
+  sleep 50ms
+  sendraw 77
+  sleep 50ms
+  sendraw 52
+  sleep 50ms
+  sendraw 58 59
+  sleep 50ms
+  sendraw 1b
+  sleep 100ms
+  sendraw 0a
+  expect "XYcdef"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "replace mode R"
+
+
+# ==============================================================================
+# vi: # — comment out and execute
+# ==============================================================================
+
+begin interactive test "comment out hash"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 68 65 6c 6c 6f
+  sendraw 1b
+  sleep 100ms
+  sendraw 23
+  sleep 200ms
+  expect "$ "
+  not_expect "hello"
+  sendeof
+  wait
+end interactive test "comment out hash"
+
+
+# ==============================================================================
+# vi: D — delete to end of line
+# ==============================================================================
+
+begin interactive test "delete to end of line D"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 63 20 64 65 66
+  sendraw 1b
+  sleep 100ms
+  sendraw 30
+  sleep 50ms
+  sendraw 77
+  sleep 50ms
+  sendraw 44
+  sleep 100ms
+  sendraw 0a
+  expect "$ "
+  sendeof
+  wait
+end interactive test "delete to end of line D"
+
+
+# ==============================================================================
+# vi: C — change to end of line
+# ==============================================================================
+
+begin interactive test "change to end of line C"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 63 20 64 65 66
+  sendraw 1b
+  sleep 100ms
+  sendraw 30
+  sleep 50ms
+  sendraw 77
+  sleep 50ms
+  sendraw 43
+  sleep 50ms
+  sendraw 58 59 5a
+  sleep 50ms
+  sendraw 1b
+  sleep 100ms
+  sendraw 0a
+  expect "XYZ"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "change to end of line C"
+
+
+# ==============================================================================
+# vi: S — substitute entire line
+# ==============================================================================
+
+begin interactive test "substitute entire line S"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 63
+  sendraw 1b
+  sleep 100ms
+  sendraw 53
+  sleep 50ms
+  sendraw 65 63 68 6f 20 72 65 70 6c 61 63 65 64
+  sleep 50ms
+  sendraw 1b
+  sleep 100ms
+  sendraw 0a
+  expect "replaced"
+  not_expect "abc"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "substitute entire line S"
+
+
+# ==============================================================================
+# vi: Y — yank entire line
+# ==============================================================================
+
+requirement "SHALL-vi-Line-Editing-Command-Mode-128" doc="Y — yank (copy) the entire edit line into the save buffer"
+
+begin interactive test "yank entire line Y"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62
+  sendraw 1b
+  sleep 100ms
+  sendraw 59
+  sleep 50ms
+  sendraw 68
+  sleep 50ms
+  sendraw 50
+  sleep 100ms
+  sendraw 0a
+  expect "bab"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "yank entire line Y"

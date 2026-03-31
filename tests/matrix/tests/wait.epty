@@ -1,0 +1,223 @@
+testsuite "Wait for Process Completion"
+
+# ==============================================================================
+# wait with no operands — exit 0 when all known PIDs have terminated
+# ==============================================================================
+
+requirement "SHALL-WAIT-1089" doc="Exit 0 with no operands when all known PIDs terminated; >128 for signal death"
+
+begin test "all background jobs finish normally: wait exits 0"
+  begin script
+    true & true & wait
+  end script
+  expect_exit_code 0
+end test "all background jobs finish normally: wait exits 0"
+
+begin test "single background job finishes: wait exits 0"
+  begin script
+    sleep 0.1 & wait
+  end script
+  expect_exit_code 0
+end test "single background job finishes: wait exits 0"
+
+# ==============================================================================
+# wait shall wait for child processes to terminate
+# ==============================================================================
+
+requirement "SHALL-WAIT-1343" doc="wait shall wait for child processes to terminate"
+
+begin test "background job writes file; after wait file must exist"
+  begin script
+    rm -f /tmp/_wait_test_$$; (sleep 0.2; echo done > /tmp/_wait_test_$$) & wait; cat /tmp/_wait_test_$$; rm -f /tmp/_wait_test_$$
+  end script
+  expect_stdout "done"
+end test "background job writes file; after wait file must exist"
+
+begin test "wait actually blocks until child is finished"
+  begin script
+    start=$(date +%s); sleep 1 & wait; end=$(date +%s); elapsed=$((end - start)); [ "$elapsed" -ge 1 ] && echo blocked
+  end script
+  expect_stdout "blocked"
+end test "wait actually blocks until child is finished"
+
+# ==============================================================================
+# wait with pid operands — wait until all specified PIDs terminate
+# ==============================================================================
+
+requirement "SHALL-WAIT-1345" doc="If pid operands specified, wait until all terminated"
+
+begin test "wait for two PIDs"
+  begin script
+    sleep 0.1 & p1=$!; sleep 0.2 & p2=$!; wait $p1 $p2; echo "both_done"
+  end script
+  expect_stdout "both_done"
+end test "wait for two PIDs"
+
+begin test "wait for a single PID"
+  begin script
+    sleep 0.1 & p=$!; wait $p; echo "single_done"
+  end script
+  expect_stdout "single_done"
+end test "wait for a single PID"
+
+# ==============================================================================
+# Unknown process IDs treated as exit status 127
+# ==============================================================================
+
+requirement "SHALL-WAIT-1346" doc="Unknown process IDs treated as exit status 127"
+
+begin test "unknown PID returns 127"
+  begin script
+    wait 99999
+  end script
+  expect_exit_code 127
+end test "unknown PID returns 127"
+
+begin test "PID 1 (init) not a child returns 127"
+  begin script
+    wait 1
+  end script
+  expect_exit_code 127
+end test "PID 1 (init) not a child returns 127"
+
+# ==============================================================================
+# Successfully waited PID removed from known PIDs
+# ==============================================================================
+
+requirement "SHALL-WAIT-1348" doc="Successfully waited PID removed from known PIDs"
+
+begin test "second wait on same PID returns 127"
+  begin script
+    sleep 0.1 & p=$!; wait $p; wait $p; echo $?
+  end script
+  expect_stdout "127"
+end test "second wait on same PID returns 127"
+
+# ==============================================================================
+# PID associated with background job removed from jobs list after wait
+# ==============================================================================
+
+requirement "SHALL-WAIT-1349" doc="If PID associated with bg job, job removed"
+
+begin interactive test "waited job removed from jobs list"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 0.1 &"
+  expect "$ "
+  sleep 500ms
+  send "wait; jobs; echo end_of_jobs"
+  expect "end_of_jobs"
+  not_expect "sleep"
+  sendeof
+  wait
+end interactive test "waited job removed from jobs list"
+
+# ==============================================================================
+# Exit status determined by last pipeline
+# ==============================================================================
+
+requirement "SHALL-WAIT-1351" doc="Exit status determined by last pipeline"
+
+begin test "wait with no operands after failing background pipeline"
+  begin script
+    (exit 3) & wait; echo $?
+  end script
+  expect_stdout "0"
+end test "wait with no operands after failing background pipeline"
+
+begin test "wait after all background jobs succeed"
+  begin script
+    true & true & wait; echo $?
+  end script
+  expect_stdout "0"
+end test "wait after all background jobs succeed"
+
+# ==============================================================================
+# Exit status of wait equals exit status of last operand
+# ==============================================================================
+
+requirement "SHALL-WAIT-1354" doc="Exit status of wait equals exit status of last operand"
+
+begin test "single operand: wait returns that process exit status"
+  begin script
+    (exit 42) & p=$!; wait $p; echo $?
+  end script
+  expect_stdout "42"
+end test "single operand: wait returns that process exit status"
+
+begin test "multiple operands: wait returns exit status of last"
+  begin script
+    (exit 7) & p1=$!; (exit 13) & p2=$!; wait $p1 $p2; echo $?
+  end script
+  expect_stdout "13"
+end test "multiple operands: wait returns exit status of last"
+
+begin test "last operand exits 0 even if earlier ones fail"
+  begin script
+    (exit 5) & p1=$!; (exit 0) & p2=$!; wait $p1 $p2; echo $?
+  end script
+  expect_stdout "0"
+end test "last operand exits 0 even if earlier ones fail"
+
+begin test "first operand exits 0, last exits non-zero"
+  begin script
+    (exit 0) & p1=$!; (exit 9) & p2=$!; wait $p1 $p2; echo $?
+  end script
+  expect_stdout "9"
+end test "first operand exits 0, last exits non-zero"
+
+# ==============================================================================
+# Process terminated by signal: exit status >128, distinct per signal
+# ==============================================================================
+
+requirement "SHALL-WAIT-1355" doc="Process terminated by signal: exit status >128, distinct per signal"
+
+begin test "SIGTERM exit status >128"
+  begin script
+    sleep 60 & p=$!; kill -TERM $p; wait $p; rc=$?; [ "$rc" -gt 128 ] && echo sigterm_ok
+  end script
+  expect_stdout "sigterm_ok"
+end test "SIGTERM exit status >128"
+
+begin test "SIGKILL exit status >128"
+  begin script
+    sleep 60 & p=$!; kill -KILL $p; wait $p; rc=$?; [ "$rc" -gt 128 ] && echo sigkill_ok
+  end script
+  expect_stdout "sigkill_ok"
+end test "SIGKILL exit status >128"
+
+begin test "different signals produce distinct exit statuses"
+  begin script
+    sleep 60 & p1=$!; kill -TERM $p1; wait $p1; rc_term=$?; sleep 60 & p2=$!; kill -KILL $p2; wait $p2; rc_kill=$?; [ "$rc_term" -ne "$rc_kill" ] && echo distinct_ok
+  end script
+  expect_stdout "distinct_ok"
+end test "different signals produce distinct exit statuses"
+
+begin test "signal death >128 with no-operand wait"
+  begin script
+    sleep 60 & p=$!; kill -TERM $p; wait $p 2>/dev/null; rc=$?; [ "$rc" -gt 128 ] && echo no_op_sig_ok
+  end script
+  expect_stdout "no_op_sig_ok"
+end test "signal death >128 with no-operand wait"
+
+# ==============================================================================
+# wait -l: symbolic signal name output
+# ==============================================================================
+
+requirement "SHALL-WAIT-1353" doc="When both the -l option and exit_status operand are specified, the symbolic name of the corresponding signal shall be written."
+
+begin test "wait -l 143 prints TERM signal name"
+  begin script
+    wait -l 143 2>/dev/null || true
+  end script
+  expect_stdout_line ".*(TERM|Term|term).*"
+end test "wait -l 143 prints TERM signal name"
+
+begin test "wait -l 137 prints KILL signal name"
+  begin script
+    wait -l 137 2>/dev/null || true
+  end script
+  expect_stdout_line ".*(KILL|Kill|kill).*"
+end test "wait -l 137 prints KILL signal name"

@@ -1,0 +1,241 @@
+testsuite "cd Utility — Extended Coverage"
+
+# ==============================================================================
+# cd -L (logical mode) — follows symlinks in PWD
+# ==============================================================================
+
+requirement "SHALL-CD-1070" doc="The cd utility shall change the working directory of the current shell execution environment"
+requirement "SHALL-CD-1080" doc="The cd utility shall then perform actions equivalent to the chdir() function called with curpath as the path argument"
+requirement "SHALL-CD-1082" doc="If the -P option is not in effect, the PWD environment variable shall be set to the value that curpath had on entry"
+requirement "SHALL-CD-1088" doc="Symbolic link components shall not be resolved before dot-dot components are processed"
+requirement "SHALL-CD-1033" doc="If the -L option is in effect, the PWD environment variable shall be updated to point to the logical name of the current working directory"
+requirement "SHALL-CD-1086" doc="The cd utility shall conform to XBD 12.2 Utility Syntax Guidelines"
+requirement "SHALL-CD-1099" doc="PWD This variable shall be set as specified in the DESCRIPTION"
+
+begin test "cd -L keeps logical symlink path in PWD"
+  begin script
+    mkdir -p real_target/sub; ln -s real_target link_l; cd -L link_l; case "$PWD" in */link_l) echo pass_pwd_logical ;; *) echo "fail: PWD=$PWD" ;; esac
+  end script
+  expect_stdout "pass_pwd_logical"
+end test "cd -L keeps logical symlink path in PWD"
+
+begin test "cd -L into symlink subdirectory"
+  begin script
+    mkdir -p real_target2/sub; ln -s real_target2 link_l2; cd -L link_l2/sub; case "$PWD" in */link_l2/sub) echo pass_logical_sub ;; *) echo "fail: PWD=$PWD" ;; esac
+  end script
+  expect_stdout "pass_logical_sub"
+end test "cd -L into symlink subdirectory"
+
+begin test "cd -L .. goes to logical parent"
+  begin script
+    mkdir -p real_deep/child; ln -s real_deep link_deep; cd -L link_deep/child; cd -L ..; case "$PWD" in */link_deep) echo pass_logical_dotdot ;; *) echo "fail: PWD=$PWD" ;; esac
+  end script
+  expect_stdout "pass_logical_dotdot"
+end test "cd -L .. goes to logical parent"
+
+# ==============================================================================
+# cd -P (physical mode) — resolves symlinks
+# ==============================================================================
+
+requirement "SHALL-CD-1074" doc="The curpath value shall then be converted to canonical form"
+requirement "SHALL-CD-1075" doc="For each dot-dot component, if there is a preceding component and it is neither root nor dot-dot, the preceding and dot-dot components are removed"
+requirement "SHALL-CD-1076" doc="The preceding component, all slash chars, dot-dot, and following slash removed"
+requirement "SHALL-CD-1089" doc="Symbolic link components shall be resolved before dot-dot components are processed"
+requirement "SHALL-CD-1083" doc="If the -P option is in effect, the PWD environment variable shall be set to the string that would be output by pwd -P"
+
+begin test "cd -P resolves symlink to real path"
+  begin script
+    mkdir -p phys_real/inner; ln -s phys_real link_p; cd -P link_p; case "$PWD" in */phys_real) echo pass_physical ;; *) echo "fail: PWD=$PWD" ;; esac
+  end script
+  expect_stdout "pass_physical"
+end test "cd -P resolves symlink to real path"
+
+begin test "cd -P .. resolves real path first"
+  begin script
+    mkdir -p phys_real2/inner2; ln -s phys_real2/inner2 link_p2; cd -P link_p2; cd -P ..; case "$PWD" in */phys_real2) echo pass_physical_dotdot ;; *) echo "fail: PWD=$PWD" ;; esac
+  end script
+  expect_stdout "pass_physical_dotdot"
+end test "cd -P .. resolves real path first"
+
+# ==============================================================================
+# -L and -P together: last one wins
+# ==============================================================================
+
+requirement "SHALL-CD-1090" doc="If both -L and -P options are specified, the last of these options shall be used and all others ignored"
+
+begin test "-L -P last option P wins"
+  begin script
+    mkdir -p combo_real; ln -s combo_real link_combo; cd -L -P link_combo; case "$PWD" in */combo_real) echo pass_last_P ;; *) echo "fail: PWD=$PWD" ;; esac
+  end script
+  expect_stdout "pass_last_P"
+end test "-L -P last option P wins"
+
+begin test "-P -L last option L wins"
+  begin script
+    mkdir -p combo_real2; ln -s combo_real2 link_combo2; cd -P -L link_combo2; case "$PWD" in */link_combo2) echo pass_last_L ;; *) echo "fail: PWD=$PWD" ;; esac
+  end script
+  expect_stdout "pass_last_L"
+end test "-P -L last option L wins"
+
+# ==============================================================================
+# CDPATH search behavior
+# ==============================================================================
+
+requirement "SHALL-CD-1034" doc="CDPATH: A colon-separated list of pathnames"
+requirement "SHALL-CD-1097" doc="The cd utility shall use this list in its attempt to change the directory, as described in the DESCRIPTION"
+requirement "SHALL-CD-1098" doc="If CDPATH is not set, it shall be treated as if it were an empty string"
+
+begin test "CDPATH finds target directory"
+  begin script
+    mkdir -p /tmp/_cd_test_cdpath/searchdir/target_dir; CDPATH=/tmp/_cd_test_cdpath/searchdir; export CDPATH; cd target_dir >/dev/null; case "$PWD" in */target_dir) echo pass_cdpath ;; *) echo "fail: PWD=$PWD" ;; esac; rm -rf /tmp/_cd_test_cdpath
+  end script
+  expect_stdout "pass_cdpath"
+end test "CDPATH finds target directory"
+
+begin test "CDPATH with multiple colon-separated entries"
+  begin script
+    mkdir -p /tmp/_cd_test_cp2/a /tmp/_cd_test_cp2/b/found_here; CDPATH=/tmp/_cd_test_cp2/a:/tmp/_cd_test_cp2/b; export CDPATH; cd found_here >/dev/null; case "$PWD" in */found_here) echo pass_cdpath_multi ;; *) echo "fail: PWD=$PWD" ;; esac; rm -rf /tmp/_cd_test_cp2
+  end script
+  expect_stdout "pass_cdpath_multi"
+end test "CDPATH with multiple colon-separated entries"
+
+requirement "SHALL-CD-1101" doc="If a non-empty directory name from CDPATH is not used, there shall be no output"
+
+begin test "cd without CDPATH produces no output"
+  begin script
+    mkdir -p local_only; unset CDPATH; output=$(cd local_only 2>&1); if [ -z "$output" ]; then echo pass_no_output; else echo "fail: output=$output"; fi
+  end script
+  expect_stdout "pass_no_output"
+end test "cd without CDPATH produces no output"
+
+begin test "CDPATH match prints new directory to stdout"
+  begin script
+    mkdir -p /tmp/_cd_test_cp3/cdout_dir; CDPATH=/tmp/_cd_test_cp3; export CDPATH; output=$(cd cdout_dir); case "$output" in */cdout_dir) echo pass_cdpath_output ;; *) echo "fail: output=$output" ;; esac; rm -rf /tmp/_cd_test_cp3
+  end script
+  expect_stdout "pass_cdpath_output"
+end test "CDPATH match prints new directory to stdout"
+
+# ==============================================================================
+# cd - (previous directory using OLDPWD)
+# ==============================================================================
+
+requirement "SHALL-CD-1085" doc="If PWD is set, the OLDPWD shell variable shall also be set to the value of the old working directory"
+requirement "SHALL-CD-1095" doc="If directory is a single hyphen, cd shall behave as if directory contained the value of OLDPWD, then write the new value to stdout"
+requirement "SHALL-CD-1035" doc="If a - operand is used and the change is successful, the absolute pathname of the new working directory shall be written to stdout"
+
+begin test "cd - returns to previous directory"
+  begin script
+    first=$PWD; mkdir -p cd_dash_test; cd cd_dash_test; second=$PWD; cd - >/dev/null; if [ "$PWD" = "$first" ]; then echo pass_cd_dash; else echo "fail: PWD=$PWD expected=$first"; fi
+  end script
+  expect_stdout "pass_cd_dash"
+end test "cd - returns to previous directory"
+
+begin test "cd - updates OLDPWD"
+  begin script
+    mkdir -p dash_old1 dash_old2; cd dash_old1; cd ../dash_old2; cd - >/dev/null; case "$OLDPWD" in */dash_old2) echo pass_oldpwd_updated ;; *) echo "fail: OLDPWD=$OLDPWD" ;; esac
+  end script
+  expect_stdout "pass_oldpwd_updated"
+end test "cd - updates OLDPWD"
+
+requirement "SHALL-CD-1094" doc="If cd cannot determine the contents of OLDPWD, it shall write a diagnostic message to stderr and exit with non-zero status"
+
+begin test "cd - with unset OLDPWD fails"
+  begin script
+    unset OLDPWD; cd - 2>/dev/null
+  end script
+  not_expect_exit_code 0
+end test "cd - with unset OLDPWD fails"
+
+# ==============================================================================
+# cd with no arguments (goes to HOME)
+# ==============================================================================
+
+requirement "SHALL-CD-1071" doc="If no directory operand is given and HOME is empty or undefined, the default behavior is implementation-defined"
+requirement "SHALL-CD-1072" doc="If no directory operand is given and HOME is set to a non-empty value, cd shall behave as if the directory named in HOME was specified"
+requirement "SHALL-CD-1093" doc="The following operands shall be supported: directory"
+requirement "SHALL-OPERANDS-010" doc="If directory is not specified, cd shall behave as if the directory named in HOME were specified"
+
+begin test "cd with no args goes to HOME"
+  begin script
+    export HOME=/tmp; cd /; cd; if [ "$PWD" = "/tmp" ]; then echo pass_cd_home; else echo "fail: PWD=$PWD"; fi
+  end script
+  expect_stdout "pass_cd_home"
+end test "cd with no args goes to HOME"
+
+begin test "cd with unset HOME fails"
+  begin script
+    unset HOME; cd 2>/dev/null
+  end script
+  not_expect_exit_code 0
+end test "cd with unset HOME fails"
+
+# ==============================================================================
+# . and .. handling in paths
+# ==============================================================================
+
+requirement "SHALL-CD-1091" doc="If neither -L nor -P is specified, the operand shall be handled dot-dot logically"
+
+begin test "dot and dot-dot navigation"
+  begin script
+    mkdir -p dot_a/dot_b; cd dot_a/dot_b; inner=$PWD; cd ./../../dot_a/./dot_b; if [ "$PWD" = "$inner" ]; then echo pass_dot_handling; else echo "fail: PWD=$PWD expected=$inner"; fi
+  end script
+  expect_stdout "pass_dot_handling"
+end test "dot and dot-dot navigation"
+
+begin test "cd . stays in current directory"
+  begin script
+    before=$PWD; cd .; if [ "$PWD" = "$before" ]; then echo pass_cd_dot; else echo "fail: PWD=$PWD expected=$before"; fi
+  end script
+  expect_stdout "pass_cd_dot"
+end test "cd . stays in current directory"
+
+begin test "cd .. goes to parent directory"
+  begin script
+    mkdir -p dotdot_parent/dotdot_child; cd dotdot_parent/dotdot_child; cd ..; case "$PWD" in */dotdot_parent) echo pass_cd_dotdot ;; *) echo "fail: PWD=$PWD" ;; esac
+  end script
+  expect_stdout "pass_cd_dotdot"
+end test "cd .. goes to parent directory"
+
+# ==============================================================================
+# Error conditions
+# ==============================================================================
+
+requirement "SHALL-CD-1081" doc="If these actions fail for any reason, cd shall display an appropriate error message and the command shall not alter the working directory"
+requirement "SHALL-CD-1036" doc="Exit value 0 if current working directory successfully changed"
+requirement "SHALL-CD-1103" doc="The working directory shall remain unchanged"
+requirement "SHALL-STDERR-518" doc="The standard error shall be used only for diagnostic messages"
+
+begin test "cd to a regular file fails"
+  begin script
+    touch not_a_dir_file; cd not_a_dir_file 2>/dev/null
+  end script
+  not_expect_exit_code 0
+end test "cd to a regular file fails"
+
+begin test "cd to nonexistent path fails"
+  begin script
+    cd /nonexistent_path_xyz_12345 2>/dev/null
+  end script
+  not_expect_exit_code 0
+end test "cd to nonexistent path fails"
+
+begin test "cd to directory with no execute permission fails"
+  begin script
+    mkdir -p no_perm_dir; chmod 000 no_perm_dir; cd no_perm_dir 2>/dev/null; rc=$?; chmod 755 no_perm_dir; exit $rc
+  end script
+  not_expect_exit_code 0
+end test "cd to directory with no execute permission fails"
+
+begin test "PWD unchanged after failed cd"
+  begin script
+    before=$PWD; cd /nonexistent_xyz_99999 2>/dev/null || true; if [ "$PWD" = "$before" ]; then echo pass_pwd_unchanged; else echo "fail: PWD=$PWD expected=$before"; fi
+  end script
+  expect_stdout "pass_pwd_unchanged"
+end test "PWD unchanged after failed cd"
+
+begin test "cd to empty string fails"
+  begin script
+    cd "" 2>/dev/null
+  end script
+  not_expect_exit_code 0
+end test "cd to empty string fails"

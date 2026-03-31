@@ -1,0 +1,334 @@
+testsuite "Maybe-Builtin Utilities (true, false, test, pwd, printf)"
+
+# ==============================================================================
+# true utility
+# ==============================================================================
+
+requirement "SHALL-DESCRIPTION-5076" doc="The true utility shall return with exit code zero."
+
+begin test "true returns exit code 0"
+  begin script
+    true
+  end script
+  expect_exit_code 0
+end test "true returns exit code 0"
+
+# ==============================================================================
+# false utility
+# ==============================================================================
+
+requirement "SHALL-DESCRIPTION-5018" doc="The false utility shall return with a non-zero exit code."
+requirement "SHALL-EXIT-STATUS-5019" doc="The false utility shall always exit with a value between 1 and 125."
+
+begin test "false returns non-zero exit code"
+  begin script
+    false
+  end script
+  not_expect_exit_code 0
+end test "false returns non-zero exit code"
+
+begin test "false exit code is between 1 and 125"
+  begin script
+    false; rc=$?; [ $rc -ge 1 ] && [ $rc -le 125 ] && echo "in_range"
+  end script
+  expect_stdout "in_range"
+end test "false exit code is between 1 and 125"
+
+# ==============================================================================
+# test utility
+# ==============================================================================
+
+requirement "SHALL-DESCRIPTION-5065" doc="The test utility shall evaluate the expression and indicate the result of the evaluation by its exit status."
+requirement "SHALL-DESCRIPTION-5066" doc="In the second form where the utility name is [ rather than test, the application shall ensure that the closing square bracket is a separate argument."
+requirement "SHALL-OPERANDS-5070" doc="The application shall ensure that all operators and elements of primaries are presented as separate arguments to test."
+requirement "SHALL-OPERANDS-5071" doc="The test utility operands."
+
+begin test "test 1 -eq 1 returns 0"
+  begin script
+    test 1 -eq 1
+  end script
+  expect_exit_code 0
+end test "test 1 -eq 1 returns 0"
+
+begin test "test 1 -eq 2 returns non-zero"
+  begin script
+    test 1 -eq 2
+  end script
+  not_expect_exit_code 0
+end test "test 1 -eq 2 returns non-zero"
+
+begin test "[ 1 -eq 1 ] returns 0"
+  begin script
+    [ 1 -eq 1 ]
+  end script
+  expect_exit_code 0
+end test "[ 1 -eq 1 ] returns 0"
+
+begin test "[ 1 -eq 2 ] returns non-zero"
+  begin script
+    [ 1 -eq 2 ]
+  end script
+  not_expect_exit_code 0
+end test "[ 1 -eq 2 ] returns non-zero"
+
+# ==============================================================================
+# test does not recognize --
+# ==============================================================================
+
+requirement "SHALL-OPTIONS-5068" doc="The test utility shall not recognize the \"--\" argument."
+requirement "SHALL-OPTIONS-5069" doc="No options shall be supported."
+
+begin test "test does not consume -- as end-of-options"
+  begin script
+    test -- = --
+  end script
+  expect_exit_code 0
+end test "test does not consume -- as end-of-options"
+
+# ==============================================================================
+# test file and string primaries
+# ==============================================================================
+
+begin test "test -d on existing directory"
+  begin script
+    test -d /
+  end script
+  expect_exit_code 0
+end test "test -d on existing directory"
+
+begin test "test -d on nonexistent directory"
+  begin script
+    test -d /nonexistent_dir_99999
+  end script
+  not_expect_exit_code 0
+end test "test -d on nonexistent directory"
+
+begin test "test -n on non-empty string"
+  begin script
+    test -n "hello"
+  end script
+  expect_exit_code 0
+end test "test -n on non-empty string"
+
+begin test "test -z on empty string"
+  begin script
+    test -z ""
+  end script
+  expect_exit_code 0
+end test "test -z on empty string"
+
+begin test "test -z on non-empty string returns non-zero"
+  begin script
+    test -z "hello"
+  end script
+  not_expect_exit_code 0
+end test "test -z on non-empty string returns non-zero"
+
+# ==============================================================================
+# test operand form and precedence
+# ==============================================================================
+
+requirement "SHALL-OPERANDS-5072" doc="test operands shall be of the form -operator where the first character of operator is not a digit."
+requirement "SHALL-OPERANDS-5073" doc="The algorithm for determining precedence is based on the number of arguments presented to test. When using \"[...]\" form, the final ] is not counted."
+requirement "SHALL-EXIT-STATUS-5075" doc="Exit values: 0 = expression evaluated to true. 1 = expression evaluated to false or missing. >1 = error occurred."
+
+begin test "unary -n on non-empty string"
+  begin script
+    test -n hello
+  end script
+  expect_exit_code 0
+end test "unary -n on non-empty string"
+
+begin test "unary -z on empty string"
+  begin script
+    test -z ""
+  end script
+  expect_exit_code 0
+end test "unary -z on empty string"
+
+begin test "unary -n on empty string returns non-zero"
+  begin script
+    test -n ""
+  end script
+  not_expect_exit_code 0
+end test "unary -n on empty string returns non-zero"
+
+begin test "binary = equality"
+  begin script
+    test hello = hello
+  end script
+  expect_exit_code 0
+end test "binary = equality"
+
+begin test "binary = inequality"
+  begin script
+    test hello = world
+  end script
+  not_expect_exit_code 0
+end test "binary = inequality"
+
+begin test "binary -gt true"
+  begin script
+    test 5 -gt 3
+  end script
+  expect_exit_code 0
+end test "binary -gt true"
+
+begin test "binary -gt false"
+  begin script
+    test 3 -gt 5
+  end script
+  not_expect_exit_code 0
+end test "binary -gt false"
+
+begin test "zero arguments returns non-zero"
+  begin script
+    test
+  end script
+  not_expect_exit_code 0
+end test "zero arguments returns non-zero"
+
+begin test "one non-empty argument returns 0"
+  begin script
+    test something
+  end script
+  expect_exit_code 0
+end test "one non-empty argument returns 0"
+
+begin test "one empty argument returns non-zero"
+  begin script
+    test ""
+  end script
+  not_expect_exit_code 0
+end test "one empty argument returns non-zero"
+
+begin test "test true exit code is 0"
+  begin script
+    test 1 -eq 1; echo "$?"
+  end script
+  expect_stdout "0"
+end test "test true exit code is 0"
+
+begin test "test false exit code is 1"
+  begin script
+    test 1 -eq 2; echo "$?"
+  end script
+  expect_stdout "1"
+end test "test false exit code is 1"
+
+begin test "test error exit code via missing operand"
+  begin script
+    test -f 2>/dev/null; rc=$?; [ $rc -ge 1 ] && echo "non_zero"
+  end script
+  expect_stdout "non_zero"
+end test "test error exit code via missing operand"
+
+begin test "[ ] with no arguments returns non-zero"
+  begin script
+    [ ]
+  end script
+  not_expect_exit_code 0
+end test "[ ] with no arguments returns non-zero"
+
+begin test "[ hello ] returns 0"
+  begin script
+    [ hello ]
+  end script
+  expect_exit_code 0
+end test "[ hello ] returns 0"
+
+# ==============================================================================
+# pwd utility
+# ==============================================================================
+
+requirement "SHALL-DESCRIPTION-5053" doc="The pwd utility shall write to standard output an absolute pathname of the current working directory."
+requirement "SHALL-OPTIONS-5054" doc="The pwd utility shall conform to XBD 12.2 Utility Syntax Guidelines."
+
+begin test "pwd after cd / writes /"
+  begin script
+    cd / && pwd
+  end script
+  expect_stdout "/"
+end test "pwd after cd / writes /"
+
+requirement "SHALL-OPTIONS-5057" doc="-P The pathname written shall not contain any components that refer to files of type symbolic link."
+
+begin test "pwd -P returns non-empty path"
+  begin script
+    pwd -P | grep -q . && echo "ok"
+  end script
+  expect_stdout "ok"
+end test "pwd -P returns non-empty path"
+
+requirement "SHALL-OPTIONS-5060" doc="If both -L and -P are specified, the last one shall apply."
+
+begin test "pwd -L -P succeeds"
+  begin script
+    pwd -L -P >/dev/null
+  end script
+  expect_exit_code 0
+end test "pwd -L -P succeeds"
+
+requirement "SHALL-OPTIONS-5061" doc="If neither -L nor -P is specified, pwd shall behave as if -L had been specified."
+
+begin test "pwd default matches pwd -L"
+  begin script
+    cd / && default=$(pwd) && l=$(pwd -L) && [ "$default" = "$l" ] && echo "match"
+  end script
+  expect_stdout "match"
+end test "pwd default matches pwd -L"
+
+# ==============================================================================
+# printf utility
+# ==============================================================================
+
+requirement "SHALL-DESCRIPTION-5020" doc="The printf utility shall write formatted operands to the standard output."
+requirement "SHALL-DESCRIPTION-5021" doc="The argument operands shall be formatted under control of the format operand."
+
+begin test "printf with %s format"
+  begin script
+    printf "%s %s
+    " hello world
+  end script
+  expect_stdout "hello world"
+end test "printf with %s format"
+
+requirement "SHALL-EXTENDED-DESCRIPTION-5043" doc="The format operand shall be reused as often as necessary to satisfy the argument operands."
+
+begin test "printf reuses format for multiple arguments"
+  begin script
+    printf "%s
+    " a b c
+  end script
+  expect_stdout "a\nb\nc"
+end test "printf reuses format for multiple arguments"
+
+requirement "SHALL-EXTENDED-DESCRIPTION-5047" doc="The argument operands shall be treated as strings if the corresponding conversion specifier is b, c, or s."
+
+begin test "printf %s treats argument as string"
+  begin script
+    printf "%s
+    " test
+  end script
+  expect_stdout "test"
+end test "printf %s treats argument as string"
+
+requirement "SHALL-EXTENDED-DESCRIPTION-5048" doc="Otherwise, they shall be evaluated as unsuffixed C integer constants."
+
+begin test "printf %d treats argument as integer"
+  begin script
+    printf "%d
+    " 42
+  end script
+  expect_stdout "42"
+end test "printf %d treats argument as integer"
+
+requirement "SHALL-EXTENDED-DESCRIPTION-5049" doc="If the leading character is a single-quote or double-quote, the value shall be the numeric value in the underlying codeset."
+
+begin test "printf %d with leading quote gives character value"
+  begin script
+    printf "%d
+    " "'A"
+  end script
+  expect_stdout "65"
+end test "printf %d with leading quote gives character value"

@@ -1,0 +1,356 @@
+testsuite "Kill"
+
+# ==============================================================================
+# kill — Send Signals to Processes
+# ==============================================================================
+
+requirement "SHALL-KILL-1238" doc="If no signal is specified, the kill utility shall send a SIGTERM signal"
+requirement "SHALL-KILL-1240" doc="The kill utility shall accept a job_id operand (%N) to specify the process group of a background job"
+requirement "SHALL-KILL-1241" doc="kill -s signal_name pid — send a signal specified by name to the process"
+requirement "SHALL-KILL-1245" doc="kill -s signal_name pid — send a signal specified by name"
+requirement "SHALL-KILL-1247" doc="kill -s signal_name pid — signal name form"
+requirement "SHALL-KILL-1248" doc="If the first argument is a negative integer, it shall be interpreted as a -signal_number option"
+requirement "SHALL-KILL-1250" doc="kill -signal_name pid — the abbreviated form where the signal name follows the hyphen directly"
+requirement "SHALL-KILL-1062" doc="When -l is specified without an exit_status operand, write all signal names to stdout"
+requirement "SHALL-KILL-1255" doc="When -l is specified without an exit_status, write all values of signal_name supported"
+requirement "SHALL-KILL-1243" doc="When -l is specified with an exit_status operand, write the signal name corresponding to the exit status"
+requirement "SHALL-KILL-1244" doc="When -l is specified with an exit_status operand, write signal name to stdout"
+requirement "SHALL-KILL-1063" doc="pid operand: a decimal integer specifying a process or process group"
+requirement "SHALL-KILL-1065" doc="If at least one matching process is found and the signal is successfully sent, exit status shall be 0"
+requirement "SHALL-KILL-1253" doc="When the -l option is not specified, the standard output shall not be used"
+requirement "SHALL-KILL-1256" doc="For the last signal written, separator shall be a newline"
+requirement "SHALL-KILL-1251" doc="If process number 0 is specified, all processes in the current process group shall be signaled"
+requirement "SHALL-KILL-1246" doc="If signal_number is 0, no signal shall be sent, but error checking shall still be performed"
+requirement "SHALL-KILL-1041" doc="When both -l and exit_status are specified, the symbolic name shall be written as a format string"
+
+# ==============================================================================
+# kill with default signal (SIGTERM)
+# ==============================================================================
+
+begin test "kill with default signal sends SIGTERM"
+  begin script
+    sleep 60 & p=$!; kill $p; wait $p 2>/dev/null; echo done
+  end script
+  expect_stdout "done"
+end test "kill with default signal sends SIGTERM"
+
+# ==============================================================================
+# kill -s signal_name pid
+# ==============================================================================
+
+begin test "kill -s TERM sends SIGTERM"
+  begin script
+    sleep 60 & p=$!; kill -s TERM $p; wait $p 2>/dev/null; echo done
+  end script
+  expect_stdout "done"
+end test "kill -s TERM sends SIGTERM"
+
+begin test "kill -s KILL sends SIGKILL"
+  begin script
+    sleep 60 & p=$!; kill -s KILL $p; wait $p 2>/dev/null; echo done
+  end script
+  expect_stdout "done"
+end test "kill -s KILL sends SIGKILL"
+
+# ==============================================================================
+# kill -signal_name pid (abbreviated form)
+# ==============================================================================
+
+begin test "kill -TERM abbreviated form"
+  begin script
+    sleep 60 & p=$!; kill -TERM $p; wait $p 2>/dev/null; echo done
+  end script
+  expect_stdout "done"
+end test "kill -TERM abbreviated form"
+
+begin test "kill -KILL abbreviated form"
+  begin script
+    sleep 60 & p=$!; kill -KILL $p; wait $p 2>/dev/null; echo done
+  end script
+  expect_stdout "done"
+end test "kill -KILL abbreviated form"
+
+begin test "kill -HUP abbreviated form"
+  begin script
+    sleep 60 & p=$!; kill -HUP $p; wait $p 2>/dev/null; echo done
+  end script
+  expect_stdout "done"
+end test "kill -HUP abbreviated form"
+
+# ==============================================================================
+# kill -signal_number pid
+# ==============================================================================
+
+begin test "kill -15 sends SIGTERM by number"
+  begin script
+    sleep 60 & p=$!; kill -15 $p; wait $p 2>/dev/null; echo done
+  end script
+  expect_stdout "done"
+end test "kill -15 sends SIGTERM by number"
+
+begin test "kill -9 sends SIGKILL by number"
+  begin script
+    sleep 60 & p=$!; kill -9 $p; wait $p 2>/dev/null; echo done
+  end script
+  expect_stdout "done"
+end test "kill -9 sends SIGKILL by number"
+
+# ==============================================================================
+# kill -l — list all signal names
+# ==============================================================================
+
+begin test "kill -l lists standard POSIX signals"
+  begin script
+    kill -l
+  end script
+  expect_stdout ".*HUP.*"
+  expect_stdout ".*INT.*"
+  expect_stdout ".*KILL.*"
+  expect_stdout ".*TERM.*"
+  expect_exit_code 0
+end test "kill -l lists standard POSIX signals"
+
+# ==============================================================================
+# kill -l exit_status — translate exit status to signal name
+# ==============================================================================
+
+begin test "kill -l 9 outputs KILL"
+  begin script
+    kill -l 9
+  end script
+  expect_stdout ".*KILL.*"
+end test "kill -l 9 outputs KILL"
+
+begin test "kill -l 137 outputs KILL"
+  begin script
+    kill -l 137
+  end script
+  expect_stdout ".*KILL.*"
+end test "kill -l 137 outputs KILL"
+
+begin test "kill -l 15 outputs TERM"
+  begin script
+    kill -l 15
+  end script
+  expect_stdout ".*TERM.*"
+end test "kill -l 15 outputs TERM"
+
+begin test "kill -l 143 outputs TERM"
+  begin script
+    kill -l 143
+  end script
+  expect_stdout ".*TERM.*"
+end test "kill -l 143 outputs TERM"
+
+# ==============================================================================
+# Exit status of kill: 0 on success
+# ==============================================================================
+
+begin test "kill exits 0 on success with default signal"
+  begin script
+    sleep 60 & p=$!; kill $p; echo $?; wait $p 2>/dev/null
+  end script
+  expect_stdout_line "0.*"
+end test "kill exits 0 on success with default signal"
+
+begin test "kill -s KILL exits 0 on success"
+  begin script
+    sleep 60 & p=$!; kill -s KILL $p; echo $?; wait $p 2>/dev/null
+  end script
+  expect_stdout_line "0.*"
+end test "kill -s KILL exits 0 on success"
+
+# ==============================================================================
+# Exit status of kill: >0 on failure
+# ==============================================================================
+
+begin test "kill nonexistent PID exits non-zero"
+  begin script
+    kill 99999999 2>/dev/null
+  end script
+  not_expect_exit_code 0
+end test "kill nonexistent PID exits non-zero"
+
+# ==============================================================================
+# Invalid signal name handling
+# ==============================================================================
+
+begin test "kill without -l produces no stdout"
+  begin script
+    kill -s TERM $$ 2>/dev/null
+  end script
+  expect_stdout ""
+end test "kill without -l produces no stdout"
+
+begin test "kill -s NONEXISTENT exits non-zero"
+  begin script
+    kill -s NONEXISTENT $$ 2>/dev/null
+  end script
+  not_expect_exit_code 0
+end test "kill -s NONEXISTENT exits non-zero"
+
+begin test "kill -NONEXISTENT exits non-zero"
+  begin script
+    kill -NONEXISTENT $$ 2>/dev/null
+  end script
+  not_expect_exit_code 0
+end test "kill -NONEXISTENT exits non-zero"
+
+# ==============================================================================
+# kill -l output format
+# ==============================================================================
+
+begin test "kill -l output contains HUP"
+  begin script
+    kill -l
+  end script
+  expect_stdout ".*HUP.*"
+end test "kill -l output contains HUP"
+
+begin test "kill -99999 invalid signal number exits non-zero"
+  begin script
+    kill -99999 $$ 2>/dev/null
+  end script
+  not_expect_exit_code 0
+end test "kill -99999 invalid signal number exits non-zero"
+
+# ==============================================================================
+# kill with PID 0 — signal current process group
+# ==============================================================================
+
+begin test "kill -s 0 0 checks current process group"
+  begin script
+    kill -s 0 0
+  end script
+  expect_exit_code 0
+end test "kill -s 0 0 checks current process group"
+
+# ==============================================================================
+# kill with signal 0 (existence check)
+# ==============================================================================
+
+begin test "kill -0 own PID succeeds"
+  begin script
+    kill -0 $$
+  end script
+  expect_exit_code 0
+end test "kill -0 own PID succeeds"
+
+begin test "kill -0 nonexistent PID fails"
+  begin script
+    kill -0 99999999 2>/dev/null
+  end script
+  not_expect_exit_code 0
+end test "kill -0 nonexistent PID fails"
+
+# ==============================================================================
+# kill with job ID (%N) — interactive
+# ==============================================================================
+
+begin interactive test "kill with job ID %1"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 60 &"
+  expect "$ "
+  send "kill %1"
+  expect "$ "
+  send "wait 2>/dev/null; echo killed_ok"
+  expect "killed_ok"
+  sendeof
+  wait
+end interactive test "kill with job ID %1"
+
+begin interactive test "kill -s KILL with job ID %1"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 60 &"
+  expect "$ "
+  send "kill -s KILL %1"
+  expect "$ "
+  send "wait 2>/dev/null; echo killed_ok"
+  expect "killed_ok"
+  sendeof
+  wait
+end interactive test "kill -s KILL with job ID %1"
+
+# ==============================================================================
+# kill -s 0 with job ID (job existence check)
+# ==============================================================================
+
+begin interactive test "kill -s 0 with job ID checks existence"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 60 &"
+  expect "$ "
+  send "kill -s 0 %1; echo check_$?"
+  expect "check_0"
+  send "kill %1; wait 2>/dev/null"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "kill -s 0 with job ID checks existence"
+
+# ==============================================================================
+# kill %% — current job
+# ==============================================================================
+
+begin interactive test "kill %% targets current job"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 60 &"
+  expect "$ "
+  send "kill %%; echo kill_ok_$?"
+  expect "kill_ok_0"
+  send "wait 2>/dev/null"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "kill %% targets current job"
+
+# ==============================================================================
+# kill %+ — current job (equivalent to %%)
+# ==============================================================================
+
+begin interactive test "kill %+ targets current job"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 60 &"
+  expect "$ "
+  send "kill %+; echo kill_ok_$?"
+  expect "kill_ok_0"
+  send "wait 2>/dev/null"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "kill %+ targets current job"
+
+# ==============================================================================
+# kill %- — previous job
+# ==============================================================================
+
+begin interactive test "kill %- targets previous job"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 60 &"
+  expect "$ "
+  send "sleep 61 &"
+  expect "$ "
+  send "kill %-; echo kill_ok_$?"
+  expect "kill_ok_0"
+  send "kill %+; wait 2>/dev/null"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "kill %- targets previous job"

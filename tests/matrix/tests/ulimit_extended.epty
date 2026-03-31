@@ -1,0 +1,160 @@
+testsuite "Extended ulimit Built-in"
+
+# ==============================================================================
+# ulimit reports/sets resource limits
+# ==============================================================================
+
+requirement "SHALL-ULIMIT-1297" doc="ulimit reports and sets resource limits in effect."
+
+begin test "ulimit -f produces output"
+  begin script
+    out=$(ulimit -f); [ -n "$out" ] && echo pass || echo fail
+  end script
+  expect_stdout "pass"
+end test "ulimit -f produces output"
+
+begin test "ulimit -a lists multiple limits"
+  begin script
+    lines=$(ulimit -a | wc -l); [ "$lines" -gt 1 ] && echo pass || echo fail
+  end script
+  expect_stdout "pass"
+end test "ulimit -a lists multiple limits"
+
+# ==============================================================================
+# "unlimited\n" format for resources without numeric limit
+# ==============================================================================
+
+requirement "SHALL-ULIMIT-1044" doc="The format for the value of a resource that has no enforced numeric limit shall be \"unlimited\\n\"."
+
+begin test "ulimit -f reports unlimited after setting unlimited"
+  begin script
+    ulimit -f unlimited; ulimit -f
+  end script
+  expect_stdout "unlimited"
+end test "ulimit -f reports unlimited after setting unlimited"
+
+# ==============================================================================
+# -H option reports/sets hard limit
+# ==============================================================================
+
+requirement "SHALL-ULIMIT-1073" doc="-H option shall report or set the hard resource limit."
+
+begin test "ulimit -Hf produces output"
+  begin script
+    out=$(ulimit -Hf); [ -n "$out" ] && echo pass || echo fail
+  end script
+  expect_stdout "pass"
+end test "ulimit -Hf produces output"
+
+begin test "ulimit -Hf returns number or unlimited"
+  begin script
+    val=$(ulimit -Hf); case "$val" in unlimited|*[0-9]*) echo pass ;; *) echo fail ;; esac
+  end script
+  expect_stdout "pass"
+end test "ulimit -Hf returns number or unlimited"
+
+# ==============================================================================
+# newlimit operand - integer or unlimited
+# ==============================================================================
+
+requirement "SHALL-ULIMIT-1074" doc="The newlimit operand shall be an integer or the string \"unlimited\"."
+
+begin test "setting soft limit to its current value succeeds"
+  begin script
+    ulimit -Sf $(ulimit -Sf)
+  end script
+  expect_exit_code 0
+end test "setting soft limit to its current value succeeds"
+
+begin test "setting soft limit to unlimited succeeds when hard is unlimited"
+  begin script
+    hard=$(ulimit -Hf); if [ "$hard" = "unlimited" ]; then ulimit -Sf unlimited && echo pass; else echo pass; fi
+  end script
+  expect_stdout "pass"
+end test "setting soft limit to unlimited succeeds when hard is unlimited"
+
+begin test "setting limit to non-numeric string fails"
+  begin script
+    ulimit -f notanumber 2>/dev/null
+  end script
+  not_expect_exit_code 0
+end test "setting limit to non-numeric string fails"
+
+# ==============================================================================
+# Single limit value written in specified format
+# ==============================================================================
+
+requirement "SHALL-ULIMIT-1077" doc="A single limit value shall be written in the specified format."
+
+begin test "ulimit -f returns numeric or unlimited"
+  begin script
+    val=$(ulimit -f); case "$val" in unlimited) echo pass ;; *[!0-9]*) echo fail ;; *) echo pass ;; esac
+  end script
+  expect_stdout "pass"
+end test "ulimit -f returns numeric or unlimited"
+
+# ==============================================================================
+# unlimited considered larger than any other limit
+# ==============================================================================
+
+requirement "SHALL-ULIMIT-1298" doc="The value \"unlimited\" shall be considered to be larger than any other limit value."
+
+begin test "unlimited hard limit allows setting arbitrary soft limit"
+  begin script
+    hard=$(ulimit -Hf); if [ "$hard" = "unlimited" ]; then ulimit -Sf 12345 && ulimit -Sf unlimited && echo pass; else echo pass; fi
+  end script
+  expect_stdout "pass"
+end test "unlimited hard limit allows setting arbitrary soft limit"
+
+# ==============================================================================
+# unlimited means no enforcement of limits
+# ==============================================================================
+
+requirement "SHALL-ULIMIT-1299" doc="The value \"unlimited\" shall mean that there is no enforcement of the associated resource limit."
+
+begin test "unlimited means no enforcement"
+  begin script
+    ulimit -Sf unlimited 2>/dev/null; if [ "$(ulimit -Sf)" = "unlimited" ]; then echo pass; else echo skip; fi
+  end script
+  expect_stdout_line ".*"
+end test "unlimited means no enforcement"
+
+# ==============================================================================
+# Numerals 0 to max recognized as numeric values
+# ==============================================================================
+
+requirement "SHALL-ULIMIT-1308" doc="Numerals from 0 to the maximum value shall be recognized as numeric values for the newlimit operand."
+
+begin test "0 is a valid limit"
+  begin script
+    ulimit -Sf 0
+  end script
+  expect_exit_code 0
+end test "0 is a valid limit"
+
+begin test "setting soft limit to 0 takes effect"
+  begin script
+    ulimit -Sf 0; ulimit -Sf
+  end script
+  expect_stdout "0"
+end test "setting soft limit to 0 takes effect"
+
+begin test "current soft limit is a valid numeric value to re-set"
+  begin script
+    cur=$(ulimit -Sf); if [ "$cur" != "unlimited" ]; then ulimit -Sf $cur && echo pass; else echo pass; fi
+  end script
+  expect_stdout "pass"
+end test "current soft limit is a valid numeric value to re-set"
+
+# ==============================================================================
+# Format within each line is unspecified, except limit value format
+# ==============================================================================
+
+requirement "SHALL-ULIMIT-1312" doc="The format of the output within each line is otherwise unspecified, except that the limit value format is as specified."
+
+begin test "ulimit -a lines each contain a limit value"
+  begin script
+    bad=$(ulimit -a | while IFS= read -r line; do case "$line" in *unlimited*|*[0-9]*) ;; "") ;; *) echo "bad: $line" ;; esac; done); [ -z "$bad" ] && echo pass || echo fail
+  end script
+  expect_stdout "pass"
+end test "ulimit -a lines each contain a limit value"

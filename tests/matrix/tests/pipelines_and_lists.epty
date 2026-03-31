@@ -1,0 +1,194 @@
+testsuite "Pipelines and Lists"
+
+# ==============================================================================
+# Pipeline Execution
+# ==============================================================================
+
+requirement "SHALL-2-9-265" doc="There shall be no limit on the size of any shell command other than that imposed by the underlying system (memory constraints, {ARG_MAX}, and so on)"
+requirement "SHALL-2-9-2-311" doc="For each command but the last, the shell shall connect the standard output of the command to the standard input of the next command as if by creating a pipe"
+requirement "SHALL-2-9-2-313" doc="The standard output of command1 shall be connected to the standard input of command2"
+requirement "SHALL-2-9-2-315" doc="If the pipeline is not in the background, the shell shall wait for the last command specified in the pipeline to complete, and may also wait for all commands to complete"
+requirement "SHALL-2-9-2-314" doc="The standard input, standard output, or both of a command shall be considered to be assigned by the pipeline before any redirection specified by redirection operators that are part of the command"
+
+begin test "basic pipe stdout flows into stdin"
+  begin script
+    echo "hello pipe" | tr "p" "t"
+  end script
+  expect_stdout "hello tite"
+end test "basic pipe stdout flows into stdin"
+
+begin test "pipeline assignments happen before redirections"
+  begin script
+    echo "pipeline test" | cat > tmp_pipe.txt; cat tmp_pipe.txt
+  end script
+  expect_stdout "pipeline test"
+end test "pipeline assignments happen before redirections"
+
+begin test "pipeline with multiple stages"
+  begin script
+    echo "a" | sed "s/a/b/" | sed "s/b/c/"
+  end script
+  expect_stdout "c"
+end test "pipeline with multiple stages"
+
+
+# ==============================================================================
+# AND-OR Lists
+# ==============================================================================
+
+requirement "SHALL-2-9-3-318" doc="The operators && and || shall have equal precedence and shall be evaluated with left associativity"
+
+begin test "left associativity: false && echo foo || echo bar"
+  begin script
+    false && echo foo || echo bar
+  end script
+  expect_stdout "bar"
+end test "left associativity: false && echo foo || echo bar"
+
+begin test "left associativity: true || echo foo && echo bar"
+  begin script
+    true || echo foo && echo bar
+  end script
+  expect_stdout "bar"
+end test "left associativity: true || echo foo && echo bar"
+
+requirement "SHALL-2-9-3-3-337" doc="First command1 shall be executed"
+requirement "SHALL-2-9-3-3-338" doc="If its exit status is zero, command2 shall be executed, and so on, until a command has a non-zero exit status or there are no more commands left to execute"
+
+begin test "AND list executes second command on success"
+  begin script
+    true && echo "and success"
+  end script
+  expect_stdout "and success"
+end test "AND list executes second command on success"
+
+begin test "AND list skips second command on failure"
+  begin script
+    false && echo "should not print"
+  end script
+  expect_stdout ""
+end test "AND list skips second command on failure"
+
+requirement "SHALL-2-9-3-4-341" doc="First, command1 shall be executed"
+requirement "SHALL-2-9-3-4-342" doc="If its exit status is non-zero, command2 shall be executed, and so on, until a command has a zero exit status or there are no more commands left to execute"
+
+begin test "OR list executes second command on failure"
+  begin script
+    false || echo "or success"
+  end script
+  expect_stdout "or success"
+end test "OR list executes second command on failure"
+
+begin test "OR list skips second command on success"
+  begin script
+    true || echo "should not print"
+  end script
+  expect_stdout ""
+end test "OR list skips second command on success"
+
+
+# ==============================================================================
+# Pipeline Exit Statuses
+# ==============================================================================
+
+requirement "SHALL-2-9-2-1-316" doc="The exit status of a pipeline shall depend on whether or not the pipefail option is enabled and whether or not the pipeline begins with the ! reserved word"
+requirement "SHALL-2-9-2-1-317" doc="The shell shall use the pipefail setting at the time it begins execution of the pipeline, not the setting at the time it sets the exit status of the pipeline"
+
+begin test "pipeline exit status is last command"
+  begin script
+    false | true
+  end script
+  expect_exit_code 0
+end test "pipeline exit status is last command"
+
+
+# ==============================================================================
+# Sequential Lists
+# ==============================================================================
+
+requirement "SHALL-2-9-3-2-331" doc="AND-OR lists that are separated by a semicolon shall be executed sequentially"
+requirement "SHALL-2-9-3-2-333" doc="Each AND-OR list shall be expanded and executed in the order specified"
+requirement "SHALL-2-9-3-2-334" doc="If job control is enabled, the AND-OR lists shall form all or part of a foreground job that can be controlled"
+requirement "SHALL-2-9-3-2-1-335" doc="The exit status of a sequential AND-OR list shall be the exit status of the last pipeline in the AND-OR list that is executed"
+
+begin test "sequential list exit status is last pipeline"
+  begin script
+    echo a; echo b; false
+  end script
+  expect_exit_code 1
+end test "sequential list exit status is last pipeline"
+
+requirement "SHALL-2-9-3-319" doc="A semicolon separator or terminator shall cause the preceding AND-OR list to be executed sequentially; an & separator or terminator shall cause asynchronous execution of the preceding AND-OR list"
+
+begin test "sequential AND-OR lists write solely bar"
+  begin script
+    false && echo foo || echo bar; true || echo foo && echo bar
+  end script
+  expect_stdout "bar\nbar"
+end test "sequential AND-OR lists write solely bar"
+
+
+# ==============================================================================
+# AND Lists
+# ==============================================================================
+
+requirement "SHALL-2-9-3-3-1-339" doc="The exit status of an AND list shall be the exit status of the last command that is executed in the list"
+
+begin test "AND list exit status is last executed command"
+  begin script
+    true && false && echo no
+  end script
+  expect_exit_code 1
+end test "AND list exit status is last executed command"
+
+
+# ==============================================================================
+# OR Lists
+# ==============================================================================
+
+requirement "SHALL-2-9-3-4-340" doc="The format shall be: command1 || command2"
+requirement "SHALL-2-9-3-4-1-343" doc="The exit status of an OR list shall be the exit status of the last command that is executed in the list"
+
+begin test "OR list exit status is last executed command"
+  begin script
+    false || false || true
+  end script
+  expect_exit_code 0
+end test "OR list exit status is last executed command"
+
+
+# ==============================================================================
+# Exit Status Tracking
+# ==============================================================================
+
+requirement "SHALL-2-9-264" doc="Unless otherwise stated, the exit status of a command shall be that of the last simple command executed by the command"
+
+begin test "exit status of true; false is non-zero"
+  begin script
+    true; false
+  end script
+  not_expect_exit_code 0
+end test "exit status of true; false is non-zero"
+
+begin test "exit status of false; true is zero"
+  begin script
+    false; true
+  end script
+  expect_exit_code 0
+end test "exit status of false; true is zero"
+
+
+# ==============================================================================
+# Async AND-OR Lists
+# ==============================================================================
+
+requirement "SHALL-2-9-3-1-1-330" doc="The exit status of an asynchronous AND-OR list shall be zero"
+
+begin test "async AND-OR list exit status is zero"
+  begin script
+    false &
+    wait $!
+    exit 0
+  end script
+  expect_exit_code 0
+end test "async AND-OR list exit status is zero"

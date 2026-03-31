@@ -1,0 +1,652 @@
+testsuite "Maybe-Builtin — printf (Write Formatted Output)"
+
+# ==============================================================================
+# Format operand support
+# ==============================================================================
+
+requirement "SHALL-OPERANDS-5022" doc="format operand shall be supported"
+
+begin test "printf plain string"
+  begin script
+    printf hello
+  end script
+  expect_stdout "hello"
+end test "printf plain string"
+
+begin test "printf %s with two arguments"
+  begin script
+    printf "%s %s" hello world
+  end script
+  expect_stdout "hello world"
+end test "printf %s with two arguments"
+
+begin test "printf %d integer"
+  begin script
+    printf "%d" 42
+  end script
+  expect_stdout "42"
+end test "printf %d integer"
+
+# ==============================================================================
+# Format operand begins and ends in initial shift state
+# ==============================================================================
+
+requirement "SHALL-EXTENDED-DESCRIPTION-5025" doc="format operand begins and ends in initial shift state"
+
+begin test "printf %s preserves shift state"
+  begin script
+    printf "%s" abc
+  end script
+  expect_stdout "abc"
+end test "printf %s preserves shift state"
+
+begin test "printf mixed %s%d shift state"
+  begin script
+    printf "%s%d" abc 123
+  end script
+  expect_stdout "abc123"
+end test "printf mixed %s%d shift state"
+
+# ==============================================================================
+# Format used as format string described in XBD 5
+# ==============================================================================
+
+requirement "SHALL-EXTENDED-DESCRIPTION-5026" doc="format used as format string described in XBD 5"
+
+begin test "printf format %s %s"
+  begin script
+    printf "%s %s" hello world
+  end script
+  expect_stdout "hello world"
+end test "printf format %s %s"
+
+begin test "printf format num=%d"
+  begin script
+    printf "num=%d" 42
+  end script
+  expect_stdout "num=42"
+end test "printf format num=%d"
+
+begin test "printf right-justified width %4d"
+  begin script
+    printf "%4d" 42
+  end script
+  expect_stdout "  42"
+end test "printf right-justified width %4d"
+
+begin test "printf left-justified width %-4d"
+  begin script
+    printf "%-4d" 42
+  end script
+  expect_stdout "42.*"
+end test "printf left-justified width %-4d"
+
+begin test "printf zero-padded hex %04x"
+  begin script
+    printf "%04x" 42
+  end script
+  expect_stdout "002a"
+end test "printf zero-padded hex %04x"
+
+begin test "printf precision %.5s truncates"
+  begin script
+    printf "%.5s" helloworld
+  end script
+  expect_stdout "hello"
+end test "printf precision %.5s truncates"
+
+# ==============================================================================
+# Escape sequences: \\, \a, \b, \f, \n, \r, \t, \v, \ddd
+# ==============================================================================
+
+requirement "SHALL-EXTENDED-DESCRIPTION-5029" doc="Escape sequences \\\\, \\a, \\b, \\f, \\n, \\r, \\t, \\v, \\ddd octal"
+
+begin test "printf backslash escape"
+  begin script
+    printf "\\\\"
+  end script
+  expect_stdout "\\"
+end test "printf backslash escape"
+
+begin test "printf newline escape"
+  begin script
+    printf "a\nb"
+  end script
+  expect_stdout "a\nb"
+end test "printf newline escape"
+
+begin test "printf tab escape"
+  begin script
+    printf "a\tb"
+  end script
+  expect_stdout "a\tb"
+end test "printf tab escape"
+
+begin test "printf carriage return escape"
+  begin script
+    printf "a\rb" | cat -v
+  end script
+  expect_stdout_line ".*\^M.*|.*b.*"
+end test "printf carriage return escape"
+
+begin test "printf bell escape produces a byte"
+  begin script
+    printf "\a" | wc -c | tr -d ' '
+  end script
+  expect_stdout_line ".*[1-9].*"
+end test "printf bell escape produces a byte"
+
+begin test "printf backspace escape"
+  begin script
+    printf "a\bb" | cat -v
+  end script
+  expect_stdout_line ".*\^H.*|.*b.*"
+end test "printf backspace escape"
+
+begin test "printf form feed escape"
+  begin script
+    printf "a\fb" | cat -v
+  end script
+  expect_stdout_line ".*\^L.*|.*b.*"
+end test "printf form feed escape"
+
+begin test "printf vertical tab escape"
+  begin script
+    printf "a\vb" | cat -v
+  end script
+  expect_stdout_line ".*\^K.*|.*b.*"
+end test "printf vertical tab escape"
+
+begin test "printf octal \\101 produces A"
+  begin script
+    printf "\101"
+  end script
+  expect_stdout "A"
+end test "printf octal \\101 produces A"
+
+begin test "printf octal \\060 produces 0"
+  begin script
+    printf "\060"
+  end script
+  expect_stdout "0"
+end test "printf octal \\060 produces 0"
+
+# ==============================================================================
+# No blanks before/after d or u conversion output
+# ==============================================================================
+
+requirement "SHALL-EXTENDED-DESCRIPTION-5030" doc="No blanks before/after d or u conversion output"
+
+begin test "printf %d no surrounding blanks"
+  begin script
+    printf "%d" 42
+  end script
+  expect_stdout "42"
+end test "printf %d no surrounding blanks"
+
+begin test "printf %d negative"
+  begin script
+    printf "%d" -1
+  end script
+  expect_stdout "-1"
+end test "printf %d negative"
+
+begin test "printf %d zero"
+  begin script
+    printf "%d" 0
+  end script
+  expect_stdout "0"
+end test "printf %d zero"
+
+begin test "printf %u no surrounding blanks"
+  begin script
+    printf "%u" 42
+  end script
+  expect_stdout "42"
+end test "printf %u no surrounding blanks"
+
+begin test "printf %u zero"
+  begin script
+    printf "%u" 0
+  end script
+  expect_stdout "0"
+end test "printf %u zero"
+
+# ==============================================================================
+# No leading zeros for o conversion unless specified
+# ==============================================================================
+
+requirement "SHALL-EXTENDED-DESCRIPTION-5031" doc="No leading zeros for o conversion unless specified"
+
+begin test "printf %o without leading zero"
+  begin script
+    printf "%o" 42
+  end script
+  expect_stdout "52"
+end test "printf %o without leading zero"
+
+begin test "printf %o zero"
+  begin script
+    printf "%o" 0
+  end script
+  expect_stdout "0"
+end test "printf %o zero"
+
+begin test "printf %#o with leading zero"
+  begin script
+    printf "%#o" 42
+  end script
+  expect_stdout "052"
+end test "printf %#o with leading zero"
+
+# ==============================================================================
+# b conversion specifier shall be supported
+# ==============================================================================
+
+requirement "SHALL-EXTENDED-DESCRIPTION-5032" doc="b conversion specifier shall be supported"
+
+begin test "printf %b plain string"
+  begin script
+    printf "%b" hello
+  end script
+  expect_stdout "hello"
+end test "printf %b plain string"
+
+begin test "printf %b two arguments"
+  begin script
+    printf "%b %b" hello world
+  end script
+  expect_stdout "hello world"
+end test "printf %b two arguments"
+
+# ==============================================================================
+# b argument taken as string with backslash-escape sequences
+# ==============================================================================
+
+requirement "SHALL-EXTENDED-DESCRIPTION-5033" doc="b argument taken as string with backslash-escape sequences"
+
+begin test "printf %b newline in argument"
+  begin script
+    printf "%b" "a\nb"
+  end script
+  expect_stdout "a\nb"
+end test "printf %b newline in argument"
+
+begin test "printf %b tab in argument"
+  begin script
+    printf "%b" "a\tb"
+  end script
+  expect_stdout "a\tb"
+end test "printf %b tab in argument"
+
+# ==============================================================================
+# Backslash-escape sequences supported in b conversion
+# ==============================================================================
+
+requirement "SHALL-EXTENDED-DESCRIPTION-5034" doc="Backslash-escape sequences supported in b conversion"
+
+begin test "printf %b hello newline world"
+  begin script
+    printf "%b" "hello\nworld"
+  end script
+  expect_stdout "hello\nworld"
+end test "printf %b hello newline world"
+
+# ==============================================================================
+# \\, \a, \b, \f, \n, \r, \t, \v converted to values in %b
+# ==============================================================================
+
+requirement "SHALL-EXTENDED-DESCRIPTION-5035" doc="\\\\, \\a, \\b, \\f, \\n, \\r, \\t, \\v converted to values"
+
+begin test "printf %b backslash"
+  begin script
+    printf "%b" "\\\\"
+  end script
+  expect_stdout "\\"
+end test "printf %b backslash"
+
+begin test "printf %b newline"
+  begin script
+    printf "%b" "x\ny"
+  end script
+  expect_stdout "x\ny"
+end test "printf %b newline"
+
+begin test "printf %b tab"
+  begin script
+    printf "%b" "x\ty"
+  end script
+  expect_stdout "x\ty"
+end test "printf %b tab"
+
+# ==============================================================================
+# \0ddd octal converted to byte in %b
+# ==============================================================================
+
+requirement "SHALL-EXTENDED-DESCRIPTION-5036" doc="\\0ddd octal converted to byte"
+
+begin test "printf %b \\0101 produces A"
+  begin script
+    printf "%b" "\0101"
+  end script
+  expect_stdout "A"
+end test "printf %b \\0101 produces A"
+
+begin test "printf %b \\0060 produces 0"
+  begin script
+    printf "%b" "\0060"
+  end script
+  expect_stdout "0"
+end test "printf %b \\0060 produces 0"
+
+# ==============================================================================
+# \c in %b: not written and causes printf to ignore remaining
+# ==============================================================================
+
+requirement "SHALL-EXTENDED-DESCRIPTION-5037" doc="\\c shall not be written and causes printf to ignore remaining"
+
+begin test "printf %b \\c stops output"
+  begin script
+    printf "%b" "hello\cworld"
+  end script
+  expect_stdout "hello"
+end test "printf %b \\c stops output"
+
+begin test "printf %b \\c stops subsequent %b arguments"
+  begin script
+    printf "%b%b" "a\c" "b"
+  end script
+  expect_stdout "a"
+end test "printf %b \\c stops subsequent %b arguments"
+
+begin test "printf %b \\c stops format reuse"
+  begin script
+    printf "%b" "first\csecond" third
+  end script
+  expect_stdout "first"
+end test "printf %b \\c stops format reuse"
+
+# ==============================================================================
+# Bytes written until end of string or precision
+# ==============================================================================
+
+requirement "SHALL-EXTENDED-DESCRIPTION-5038" doc="Bytes written until end of string or precision"
+
+begin test "printf %s full string"
+  begin script
+    printf "%s" hello
+  end script
+  expect_stdout "hello"
+end test "printf %s full string"
+
+begin test "printf %.3s truncation"
+  begin script
+    printf "%.3s" hello
+  end script
+  expect_stdout "hel"
+end test "printf %.3s truncation"
+
+begin test "printf %.2s truncation"
+  begin script
+    printf "%.2s" hello
+  end script
+  expect_stdout "he"
+end test "printf %.2s truncation"
+
+# ==============================================================================
+# If precision omitted, taken as infinite
+# ==============================================================================
+
+requirement "SHALL-EXTENDED-DESCRIPTION-5039" doc="If precision omitted, taken as infinite"
+
+begin test "printf %s without precision prints full string"
+  begin script
+    printf "%s" "hello world this is a long string"
+  end script
+  expect_stdout "hello world this is a long string"
+end test "printf %s without precision prints full string"
+
+begin test "printf %s long string no truncation"
+  begin script
+    printf "%s" "abcdefghijklmnopqrstuvwxyz0123456789"
+  end script
+  expect_stdout "abcdefghijklmnopqrstuvwxyz0123456789"
+end test "printf %s long string no truncation"
+
+# ==============================================================================
+# For each conversion spec, an argument operand evaluated
+# ==============================================================================
+
+requirement "SHALL-EXTENDED-DESCRIPTION-5040" doc="For each conversion spec, an argument operand evaluated"
+
+begin test "printf %s %d two specs two args"
+  begin script
+    printf "%s %d" hello 42
+  end script
+  expect_stdout "hello 42"
+end test "printf %s %d two specs two args"
+
+begin test "printf three %s specs"
+  begin script
+    printf "%s %s %s" a b c
+  end script
+  expect_stdout "a b c"
+end test "printf three %s specs"
+
+begin test "printf three %d specs"
+  begin script
+    printf "%d %d %d" 1 2 3
+  end script
+  expect_stdout "1 2 3"
+end test "printf three %d specs"
+
+# ==============================================================================
+# Operand determined: if starts with % n $, use n-th operand
+# ==============================================================================
+
+requirement "SHALL-EXTENDED-DESCRIPTION-5041" doc="Operand determined: if starts with %n$, use n-th operand"
+
+begin test "printf positional n$ specifiers (optional)"
+  begin script
+    printf "%2\$s %1\$s\n" hello world 2>/dev/null; true
+  end script
+  expect_exit_code 0
+end test "printf positional n$ specifiers (optional)"
+
+# ==============================================================================
+# Otherwise, next argument after previous
+# ==============================================================================
+
+requirement "SHALL-EXTENDED-DESCRIPTION-5042" doc="Otherwise, next argument after previous"
+
+begin test "printf sequential argument consumption"
+  begin script
+    printf "%s %s %s" a b c
+  end script
+  expect_stdout "a b c"
+end test "printf sequential argument consumption"
+
+begin test "printf mixed %d %s %d"
+  begin script
+    printf "%d %s %d" 1 hello 3
+  end script
+  expect_stdout "1 hello 3"
+end test "printf mixed %d %s %d"
+
+begin test "printf format reuse with %d newline"
+  begin script
+    printf "%d\n" 1 2 3
+  end script
+  expect_stdout "1\n2\n3"
+end test "printf format reuse with %d newline"
+
+begin test "printf format reuse with %s newline"
+  begin script
+    printf "%s\n" a b c
+  end script
+  expect_stdout "a\nb\nc"
+end test "printf format reuse with %s newline"
+
+# ==============================================================================
+# c conversion: first byte written, additional discarded
+# ==============================================================================
+
+requirement "SHALL-EXTENDED-DESCRIPTION-5046" doc="c conversion: first byte written, additional discarded"
+
+begin test "printf %c takes first byte of abc"
+  begin script
+    printf "%c" abc
+  end script
+  expect_stdout "a"
+end test "printf %c takes first byte of abc"
+
+begin test "printf %c takes first byte of xyz"
+  begin script
+    printf "%c" xyz
+  end script
+  expect_stdout "x"
+end test "printf %c takes first byte of xyz"
+
+begin test "printf %c takes first byte of 123"
+  begin script
+    printf "%c" 123
+  end script
+  expect_stdout "1"
+end test "printf %c takes first byte of 123"
+
+begin test "printf %c with empty arg produces null/empty"
+  begin script
+    result=$(printf "%c" ""); [ -z "$result" ] && echo "ok" || echo "fail"
+  end script
+  expect_stdout "ok"
+end test "printf %c with empty arg produces null/empty"
+
+# ==============================================================================
+# Extra conversion specs: null for b/c/s, zero for others
+# ==============================================================================
+
+requirement "SHALL-EXTENDED-DESCRIPTION-5045" doc="Extra b, c, or s conversion specifiers shall be evaluated as if a null string argument were supplied; other extra specifiers as if zero."
+
+begin test "extra %s gets null string"
+  begin script
+    printf "%s %s" hello
+  end script
+  expect_stdout "hello.*"
+end test "extra %s gets null string"
+
+begin test "extra %d gets zero"
+  begin script
+    printf "%d %d" 42
+  end script
+  expect_stdout "42 0"
+end test "extra %d gets zero"
+
+begin test "extra %o gets zero"
+  begin script
+    printf "%o %o" 42
+  end script
+  expect_stdout "52 0"
+end test "extra %o gets zero"
+
+begin test "extra %x gets zero"
+  begin script
+    printf "%x %x" 42
+  end script
+  expect_stdout "2a 0"
+end test "extra %x gets zero"
+
+begin test "extra %b gets null string"
+  begin script
+    printf "%b %b" hello
+  end script
+  expect_stdout "hello.*"
+end test "extra %b gets null string"
+
+# ==============================================================================
+# Cannot completely convert argument → diagnostic, non-zero exit
+# ==============================================================================
+
+requirement "SHALL-EXTENDED-DESCRIPTION-5050" doc="Cannot completely convert argument → diagnostic, non-zero exit"
+
+begin test "printf %d with non-numeric arg exits non-zero"
+  begin script
+    printf "%d" not_a_number 2>/dev/null
+  end script
+  not_expect_exit_code 0
+end test "printf %d with non-numeric arg exits non-zero"
+
+begin test "printf %d with trailing non-numeric exits non-zero"
+  begin script
+    printf "%d" 42abc 2>/dev/null
+  end script
+  not_expect_exit_code 0
+end test "printf %d with trailing non-numeric exits non-zero"
+
+begin test "printf %u with non-numeric arg exits non-zero"
+  begin script
+    printf "%u" xyz 2>/dev/null
+  end script
+  not_expect_exit_code 0
+end test "printf %u with non-numeric arg exits non-zero"
+
+begin test "printf %o with non-numeric arg exits non-zero"
+  begin script
+    printf "%o" xyz 2>/dev/null
+  end script
+  not_expect_exit_code 0
+end test "printf %o with non-numeric arg exits non-zero"
+
+begin test "printf %x with non-numeric arg exits non-zero"
+  begin script
+    printf "%x" xyz 2>/dev/null
+  end script
+  not_expect_exit_code 0
+end test "printf %x with non-numeric arg exits non-zero"
+
+begin test "printf %d non-numeric produces stderr diagnostic"
+  begin script
+    printf "%d" not_a_number 2>&1 >/dev/null
+  end script
+  expect_stdout_line ".+"
+end test "printf %d non-numeric produces stderr diagnostic"
+
+# ==============================================================================
+# Not an error if argument not completely used for b, c, s
+# ==============================================================================
+
+requirement "SHALL-EXTENDED-DESCRIPTION-5051" doc="Not an error if argument not completely used for b, c, s"
+
+begin test "printf %c with multi-char arg exits 0"
+  begin script
+    printf "%c" hello
+  end script
+  expect_exit_code 0
+end test "printf %c with multi-char arg exits 0"
+
+begin test "printf %.3s with truncation exits 0"
+  begin script
+    printf "%.3s" hello
+  end script
+  expect_exit_code 0
+end test "printf %.3s with truncation exits 0"
+
+begin test "printf %b with long arg exits 0"
+  begin script
+    printf "%b" "hello world"
+  end script
+  expect_exit_code 0
+end test "printf %b with long arg exits 0"
+
+begin test "printf %c output correct despite partial use"
+  begin script
+    printf "%c" hello
+  end script
+  expect_stdout "h"
+end test "printf %c output correct despite partial use"
+
+begin test "printf %.3s output correct despite truncation"
+  begin script
+    printf "%.3s" hello
+  end script
+  expect_stdout "hel"
+end test "printf %.3s output correct despite truncation"

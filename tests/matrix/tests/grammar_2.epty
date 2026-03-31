@@ -1,0 +1,77 @@
+testsuite "Shell Grammar and Lexical Conventions (Part 2)"
+
+# ==============================================================================
+# Token Classification
+# ==============================================================================
+
+requirement "SHALL-2-10-390" doc="This formal syntax shall take precedence over the preceding text syntax description."
+requirement "SHALL-2-10-1-391" doc="The input language to the shell shall be first recognized at the character level."
+requirement "SHALL-2-10-1-392" doc="The resulting tokens shall be classified by their immediate context according to the following rules (applied in order)."
+requirement "SHALL-2-10-1-393" doc="These rules shall be used to determine what a \"token\" is that is subject to parsing at the token level."
+requirement "SHALL-2-10-1-394" doc="The rules for token recognition in 2.3 Token Recognition shall apply."
+requirement "SHALL-2-10-1-395" doc="If the token is an operator, the token identifier for that operator shall result."
+requirement "SHALL-2-10-1-398" doc="Otherwise, the token identifier TOKEN shall result."
+requirement "SHALL-2-10-1-400" doc="The reduction shall then proceed based upon the token identifier type yielded by the rule applied."
+requirement "SHALL-2-10-1-401" doc="When more than one rule applies, the highest numbered rule shall apply (which in turn may refer to another rule). (Note that except in rule 7, the presence of an '=' in the token has no effect.)"
+requirement "SHALL-2-10-1-402" doc="The WORD tokens shall have the word expansion rules applied to them immediately before the associated command is executed, not at the time the command is parsed."
+
+begin test "variable assignment and expansion in simple command"
+  begin script
+    var="value"; echo "$var"
+  end script
+  expect_stdout "value"
+end test "variable assignment and expansion in simple command"
+
+
+# ==============================================================================
+# Command Name and Redirection Token Contexts
+# ==============================================================================
+
+requirement "SHALL-2-10-2-403" doc="[Command Name] When the TOKEN is exactly a reserved word, the token identifier for that reserved word shall result."
+requirement "SHALL-2-10-2-404" doc="Otherwise, the token WORD shall be returned."
+requirement "SHALL-2-10-2-405" doc="[Redirection to or from filename] The expansions specified in 2.7 Redirection shall occur."
+requirement "SHALL-2-10-2-406" doc="[Redirection from here-document] Quote removal shall be applied to the word to determine the delimiter that is used to find the end of the here-document that begins after the next <newline>."
+
+begin test "quoted here-document delimiter suppresses expansion"
+  begin script
+    cat << "EOF"
+    $var
+    EOF
+  end script
+  expect_stdout "\$var"
+end test "quoted here-document delimiter suppresses expansion"
+
+
+# ==============================================================================
+# "in" and "do" parsing fallbacks
+# ==============================================================================
+
+requirement "SHALL-2-10-2-420" doc="If a returned ASSIGNMENT_WORD token begins with a valid name, assignment of the value after the first <equals-sign> to the name shall occur as specified in 2.9.1 Simple Commands."
+
+begin test "assignment word in command prefix"
+  begin script
+    var=123 env | grep -q "^var=123" && echo "assignment"
+  end script
+  expect_stdout "assignment"
+end test "assignment word in command prefix"
+
+
+# ==============================================================================
+# Function Definitions
+# ==============================================================================
+
+requirement "SHALL-2-10-2-421" doc="[NAME in function] When the TOKEN is exactly a reserved word, the token identifier for that reserved word shall result."
+requirement "SHALL-2-10-2-422" doc="Otherwise, when the TOKEN meets the requirements for a name, the token identifier NAME shall result."
+requirement "SHALL-2-10-2-423" doc="[Body of function] Word expansion and assignment shall never occur, even when required by the rules above, when this rule is being parsed."
+requirement "SHALL-2-10-2-424" doc="Each TOKEN that might either be expanded or have assignment applied to it shall instead be returned as a single WORD consisting only of characters that are exactly the token described in 2.3 Token Recognition."
+
+begin test "function definition and invocation"
+  begin script
+    myfunc() {
+        local_var="x"
+        echo "$local_var"
+    }
+    myfunc
+  end script
+  expect_stdout "x"
+end test "function definition and invocation"

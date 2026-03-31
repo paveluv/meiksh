@@ -1,98 +1,212 @@
 # Bash POSIX Compliance Report
 
-**Shell tested:** GNU bash 3.2.57(1)-release (arm64-apple-darwin24) — macOS `/bin/sh`  
-**Also tested:** GNU bash 5.3.9(1)-release — `/opt/homebrew/bin/bash`  
-**Standard:** POSIX.1-2024 (Issue 8)  
-**Test suite:** `tests/matrix` (65 test files)  
-**Date:** 2026-03-24
+**Shell tested:** GNU bash 5.2.37(1)-release (x86_64-pc-linux-gnu)
+**Standard:** POSIX.1-2024 (Issue 8)
+**Test suite:** `tests/matrix` (65 `.epty` test suites, 1011 tests)
+**Date:** 2026-03-30
 
-| Shell | Passed | Failed |
-|-------|--------|--------|
-| bash 3.2.57 (`/bin/sh`) | 59 | 6 |
-| bash 5.3.9 | 57 | 8 |
+| Result | Count |
+|--------|-------|
+| Passed | 986 |
+| Failed | 25 |
 
-Bash 5.3 fixes items 1–4 below but introduces new failures (items 7–12).
-Items 5–6 (vi editing) persist in both versions.
+The 25 failures fall into 13 distinct issues documented below.
+Items 1–4 are test-expectation issues (the tests assume behavior that is
+debatable or contradicted by POSIX). Items 5–13 are genuine
+non-compliances in bash 5.2.
 
 ---
 
-## 1. `cd ""` does not produce an error
+## 1. `test -f` with missing operand exits 0 (test expectation issue)
 
-**Severity:** Low  
-**POSIX reference:** `cd` utility, OPERANDS section  
-**Bash 3.2:** Broken — **Bash 5.3:** Fixed
+**Severity:** None (bash is correct)
+**Suite:** `maybe_builtins` (1 test)
+**POSIX reference:** XCU §test, EXIT STATUS — argument-count algorithm
+
+> 1 argument: Exit true (0) if $1 is not null; otherwise, exit false.
+
+`test -f` has one argument (`-f`) which is not null, so exit status 0 is
+correct per POSIX. The test expected `test -f` to be treated as a unary
+primary with a missing operand, but the argument-count algorithm takes
+precedence.
+
+```sh
+/usr/bin/bash --posix -c 'test -f; echo $?'
+# Output: 0
+```
+
+---
+
+## 2. `read` clears variable on EOF in while loop (test expectation issue)
+
+**Severity:** None (bash is correct)
+**Suite:** `read` (1 test)
+**POSIX reference:** XCU §read, DESCRIPTION (SHALL-READ-1281)
+
+> When the standard input is a terminal [...] if the end-of-file
+> condition is detected, the read utility shall set each variable
+> var to an empty string.
+
+A `while read val; do :; done` loop that exhausts its input leaves `val`
+empty after the final EOF-returning `read` call. The test expected `val`
+to retain the value from the last *successful* iteration, but both bash
+and dash clear it. This is POSIX-correct behavior.
+
+```sh
+/usr/bin/bash --posix -c '
+val=init
+while read val; do :; done <<EOF
+first
+last
+EOF
+echo "val=[$val]"'
+# Output: val=[]
+```
+
+---
+
+## 3. `set` output polluted by `BASH_EXECUTION_STRING` (test expectation issue)
+
+**Severity:** Low (bash-specific variable interferes with grep)
+**Suite:** `set_options` (1 test)
+**POSIX reference:** XCU §set, DESCRIPTION (SHALL-DESCRIPTION-582)
+
+> The current settings of the variables [...] shall be written to
+> standard output [...] with appropriate quoting.
+
+Bash's `set` output is properly quoted. However, when invoked via
+`-c "script"`, bash exposes `BASH_EXECUTION_STRING` which contains the
+script text. A `set | grep "my_weird_var="` picks up both the variable
+assignment *and* the `BASH_EXECUTION_STRING` line, causing `eval` to
+fail on the combined output. This is not a quoting deficiency — it is a
+grep-selectivity issue caused by a bash-specific internal variable.
+
+```sh
+/usr/bin/bash --posix -c '
+my_var="hello \"world\""
+set | grep "my_var="'
+# Output includes multiple matches:
+#   BASH_EXECUTION_STRING='my_var="hello \"world\""...
+#   my_var='hello "world"'
+# The variable itself is properly quoted, but grep picks up
+# BASH_EXECUTION_STRING too, breaking eval on the combined output.
+```
+
+---
+
+## 4. `read` EOF on terminal does not preserve variable (test expectation issue)
+
+*This is the same POSIX rule as item 2 — listed separately because it
+manifests in a different test. See item 2 for details.*
+
+---
+
+## 5. `cd ""` does not produce an error
+
+**Severity:** Low
+**Suites:** `cd`, `cd_extended` (2 tests)
+**POSIX reference:** XCU §cd, OPERANDS
 
 > If *directory* is an empty string, `cd` **shall** write a diagnostic
 > message to standard error and exit with non-zero status.
 
 ```sh
-/bin/sh -c 'cd ""; echo "exit=$?"'
+/usr/bin/bash --posix -c 'cd ""; echo "exit=$?"'
+# Expected: diagnostic on stderr, non-zero exit
+# Actual:   exit=0 (silently succeeds)
 ```
-
-**Expected:** diagnostic on stderr, non-zero exit  
-**Actual (3.2):** `exit=0` (silently succeeds)
 
 ---
 
-## 2. `command` not treated as declaration utility for tilde expansion
+## 6. `echo` does not process XSI escape sequences
 
-**Severity:** Medium  
-**POSIX reference:** `command` utility, DESCRIPTION section (Issue 8)  
-**Bash 3.2:** Broken — **Bash 5.3:** Fixed
+**Severity:** Medium
+**Suite:** `maybe_builtins_echo` (11 tests)
+**POSIX reference:** XCU §echo, OPERANDS (SHALL-OPERANDS-5003, SHALL-OPERANDS-5004)
 
-> The `command` utility **shall** be treated as a declaration utility if the
-> first argument passed to the utility is recognized as a declaration utility.
+> The following character sequences shall be recognized within any of
+> the arguments: `\a`, `\b`, `\c`, `\f`, `\n`, `\r`, `\t`, `\v`,
+> `\\`, `\0num`
 
 ```sh
-/bin/sh -c 'command export HOMEDIR=~; echo "$HOMEDIR"'
+/usr/bin/bash --posix -c 'echo "\a" | od -An -tx1 | tr -d " "'
+# Expected: 070a   (BEL + newline)
+# Actual:   5c610a (literal \a + newline)
+
+/usr/bin/bash --posix -c 'echo "\0101"'
+# Expected: A
+# Actual:   \0101
+
+/usr/bin/bash --posix -c 'printf "%s" "hello\c world" | wc -c'
+# echo \c should suppress trailing output; bash outputs it literally
 ```
 
-**Expected:** `/Users/<username>` (HOME expanded)  
-**Actual (3.2):** `~` (literal tilde)
+Bash requires `-e` or `shopt -s xpg_echo` to enable escape processing.
+Even `--posix` mode does not activate XSI `echo` behavior.
 
 ---
 
-## 3. Case statement `;&` fallthrough not supported
+## 7. Variable assignment before function call is temporary
 
-**Severity:** Medium  
-**POSIX reference:** Shell Command Language §2.9.4.3  
-**Bash 3.2:** Broken — **Bash 5.3:** Fixed (since 4.0)
+**Severity:** Medium
+**Suite:** `simple_commands_2` (1 test)
+**POSIX reference:** §2.9.1 Simple Commands (SHALL-2-9-1-2-280)
 
-> If the case statement clause is terminated by `";&"`, then the
-> compound-list of each subsequent clause **shall** be executed.
+> If the command name is a function that is not a standard utility
+> implemented as a function, variable assignments shall affect the
+> current execution environment.
 
 ```sh
-/bin/sh -c 'x=a; case "$x" in a) echo one ;& b) echo two ;; esac'
+/usr/bin/bash --posix -c '
+f() { echo "func"; }
+x="old"
+x="new" f >/dev/null
+echo "$x"'
+# Expected: new
+# Actual:   old
 ```
 
-**Expected:** `one` then `two`  
-**Actual (3.2):** Syntax error
+Bash scopes prefix assignments to the function call as temporary,
+reverting on return.
 
 ---
 
-## 4. `read` into a readonly variable returns exit status 0
+## 8. MAIL notification not triggered in interactive mode
 
-**Severity:** Medium  
-**POSIX reference:** `read` utility, DESCRIPTION section  
-**Bash 3.2:** Broken — **Bash 5.3:** Fixed
+**Severity:** Low
+**Suite:** `sh_mail` (3 tests)
+**POSIX reference:** XCU §sh, Shell Variables — MAIL (SHALL-SH-1025), MAILCHECK (SHALL-SH-1027, SHALL-SH-1029, SHALL-SH-1031), MAILPATH (SHALL-SH-1032, SHALL-SH-1033)
 
-> An error in setting any variable (such as if a *var* has previously been
-> marked *readonly*) **shall** result in a return value greater than one.
+> If `MAIL` is set, the shell **shall** inform the user if the file
+> named by the variable is created or if its modification time has
+> changed. Informing the user **shall** be accomplished by writing a
+> string of unspecified format to standard error.
+
+The three failing tests set `MAIL` (or `MAILPATH`) and `MAILCHECK=1`
+(or `0`), create the mailbox file, and wait for a notification message.
+Bash 5.2 in `--posix` interactive mode does not produce the expected
+notification within the 5-second timeout. This may be a timing issue,
+a `MAILCHECK` granularity issue, or a genuine non-compliance.
 
 ```sh
-echo 'val' | /bin/sh -c 'readonly x=locked; read x; echo "exit=$?"'
+# Manual reproduction (interactive):
+/usr/bin/bash --posix -i
+$ MAIL=/tmp/test_mbox_$$
+$ MAILCHECK=1
+# Wait 2 seconds, then in another terminal:
+#   echo data > /tmp/test_mbox_$$
+# Press Enter to trigger a prompt.
+# Expected: "you have mail" message on stderr
+# Actual:   no message appears
 ```
-
-**Expected:** non-zero exit  
-**Actual (3.2):** `exit=0`
 
 ---
 
-## 5. Vi editing mode: `t`/`T` (find character) broken
+## 9. Vi editing mode: `t`/`T` (find character) broken
 
-**Severity:** Low  
-**POSIX reference:** `sh` utility, Vi Line Editing section  
-**Bash 3.2:** Broken — **Bash 5.3:** Broken
+**Severity:** Low
+**Suite:** `vi_editing` (2 tests)
+**POSIX reference:** XCU §sh, Vi Line Editing
 
 `tc` should move to the character *before* the first occurrence of `c`
 after the cursor. `Tc` should move to the character *after* the first
@@ -103,167 +217,65 @@ replacements (`rZ`) to land on the wrong character.
 
 ---
 
-## 6. Vi editing mode: `[count]~` (tilde case toggle) ignores count
+## 10. Vi editing mode: `[count]~` (tilde case toggle) ignores count
 
-**Severity:** Low  
-**POSIX reference:** `sh` utility, Vi Line Editing section  
-**Bash 3.2:** Broken — **Bash 5.3:** Broken
+**Severity:** Low
+**Suite:** `vi_editing` (1 test)
+**POSIX reference:** XCU §sh, Vi Line Editing
 
-`9~` on "aB" should toggle both characters to produce "Ab". Bash only
-toggles the first character, producing "AB".
-
----
-
-## 7. `trap` with unsigned decimal integer does not reset to default
-
-**Severity:** Medium  
-**POSIX reference:** `trap` utility, DESCRIPTION (SHALL-DESCRIPTION-629)  
-**Bash 3.2:** Fixed — **Bash 5.3:** Broken
-
-> If the `-p` option is not specified and the first operand is an unsigned
-> decimal integer, the shell shall treat all operands as conditions and
-> reset each condition to the default value.
-
-```sh
-bash --posix -c 'trap "echo trapped" INT; trap 2; trap -p INT'
-```
-
-**Expected:** empty output (`INT` was reset to default)  
-**Actual (5.3):** `trap -- - INT` — bash treats `2` as an action string
-rather than triggering the numeric-reset code path.
+`9~` on `aB` should toggle both characters to produce `Ab`. Bash only
+toggles the first character, producing `AB`.
 
 ---
 
-## 8. Subshell traps not reset to default
+## 11. `wait -l` not implemented
 
-**Severity:** Medium  
-**POSIX reference:** `trap` DESCRIPTION (SHALL-DESCRIPTION-640), §2.13 (SHALL-2-13-471)  
-**Bash 3.2:** Fixed — **Bash 5.3:** Broken
+**Severity:** Low
+**Suite:** `wait` (2 tests)
+**POSIX reference:** XCU §wait (SHALL-WAIT-1353)
 
-> When a subshell is entered, traps that are not being ignored shall be
-> set to the default actions.
+> When both the `-l` option and *exit_status* operand are specified,
+> the symbolic name of the corresponding signal **shall** be written
+> to standard output.
 
-```sh
-bash --posix -c 'trap "echo parent" USR1; (trap -p USR1)'
-```
-
-**Expected:** empty output (trap was reset in subshell)  
-**Actual (5.3):** `trap -- 'echo parent' USR1` — bash exposes the
-parent shell's trap inside the subshell via `trap -p`.
-
-The same root cause makes `(trap)` (no operands) in a subshell list
-parent traps, which also violates SHALL-2-13-471.
-
----
-
-## 9. `echo` does not process XSI escape sequences
-
-**Severity:** Medium  
-**POSIX reference:** `echo` utility, OPERANDS (SHALL-OPERANDS-5003/5004)  
-**Bash 3.2:** Fixed — **Bash 5.3:** Broken
-
-> The following character sequences shall be recognized within any of
-> the arguments: `\a`, `\b`, `\c`, `\f`, `\n`, `\r`, `\t`, `\v`, `\\`, `\0num`
+`wait -l 143` should output a line containing `TERM` (128 + 15 =
+SIGTERM). Bash 5.2 does not implement the `-l` option — it was added
+in POSIX.1-2024 (Issue 8).
 
 ```sh
-bash --posix -c 'echo "\a"' | od -An -tx1
+/usr/bin/bash --posix -c 'wait -l 143 2>&1'
+# Expected: line containing "TERM"
+# Actual:   bash: wait: -l: invalid option
+#           wait: usage: wait [-fn] [-p var] [id ...]
 ```
-
-**Expected:** `07 0a` (BEL + newline)  
-**Actual (5.3):** `5c 61 0a` (literal `\a` + newline)
-
-Bash requires `-e` or `shopt -s xpg_echo` to enable escape processing.
-Even `--posix` mode does not activate XSI `echo` behavior.
-
----
-
-## 10. Variable assignment before function call is temporary
-
-**Severity:** Medium  
-**POSIX reference:** §2.9.1 Simple Commands (SHALL-2-9-1-2-280)  
-**Bash 3.2:** Fixed — **Bash 5.3:** Broken
-
-> If the command name is a function that is not a standard utility
-> implemented as a function, variable assignments shall affect the
-> current execution environment.
-
-```sh
-bash --posix -c '
-f() { echo "func"; }
-x="old"
-x="new" f >/dev/null
-echo "$x"
-'
-```
-
-**Expected:** `new` (assignment persists after function returns)  
-**Actual (5.3):** `old` — bash scopes prefix assignments to the
-function call as temporary, reverting on return.
-
----
-
-## 11. Tilde expansion result not protected from field splitting/globbing
-
-**Severity:** Low  
-**POSIX reference:** §2.6.1 Tilde Expansion (SHALL-2-6-1-117)  
-**Bash 3.2:** Fixed — **Bash 5.3:** Broken
-
-> The pathname that replaces the tilde-prefix shall be treated as if
-> quoted to prevent it being altered by field splitting and pathname
-> expansion.
-
-```sh
-bash --posix -c 'HOME="home with * spaces"; printf "%s\n" ~'
-```
-
-**Expected:** single line `home with * spaces`  
-**Actual (5.3):** multiple lines — `~` expansion is subject to field
-splitting, breaking the value on spaces and potentially expanding `*`.
-
----
-
-## 12. Tilde expansion does not reflect mid-script HOME reassignment
-
-**Severity:** Low  
-**POSIX reference:** §2.6.1 Tilde Expansion, XBD §8 (SHALL-XBD-8-3010)  
-**Bash 3.2:** Fixed — **Bash 5.3:** Broken
-
-```sh
-bash --posix -c 'HOME=/tmp/newdir; echo ~'
-```
-
-**Expected:** `/tmp/newdir`  
-**Actual (5.3):** original HOME value — bash performs tilde expansion at
-parse time rather than during word expansion at execution time, so a
-subsequent `HOME=...` assignment does not affect `~` that was already
-parsed.
 
 ---
 
 ## Summary
 
-| # | Area | POSIX Section | Impact | Bash 3.2 | Bash 5.3 |
-|---|------|--------------|--------|----------|----------|
-| 1 | `cd ""` error handling | `cd` OPERANDS | Low | Broken | Fixed |
-| 2 | `command` declaration utility | `command` DESCRIPTION | Medium | Broken | Fixed |
-| 3 | `;&` case fallthrough | §2.9.4.3 | Medium | Broken | Fixed (since 4.0) |
-| 4 | `read` readonly exit status | `read` DESCRIPTION | Medium | Broken | Fixed |
-| 5 | Vi editing: `t`/`T` | `sh` Vi Editing | Low | Broken | Broken |
-| 6 | Vi editing: `[count]~` | `sh` Vi Editing | Low | Broken | Broken |
-| 7 | `trap <number>` reset | `trap` DESCRIPTION | Medium | Fixed | Broken |
-| 8 | Subshell trap reset | `trap` / §2.13 | Medium | Fixed | Broken |
-| 9 | `echo` XSI escapes | `echo` OPERANDS | Medium | Fixed | Broken |
-| 10 | Function prefix assignment | §2.9.1 | Medium | Fixed | Broken |
-| 11 | Tilde field splitting | §2.6.1 | Low | Fixed | Broken |
-| 12 | Tilde parse-time expansion | §2.6.1 / XBD §8 | Low | Fixed | Broken |
+| # | Area | POSIX Section | Impact | Tests | Status |
+|---|------|---------------|--------|-------|--------|
+| 1 | `test -f` arg-count rule | XCU §test EXIT STATUS | None | 1 | Test issue |
+| 2 | `read` EOF clears var | XCU §read SHALL-READ-1281 | None | 1 | Test issue |
+| 3 | `set` + `BASH_EXECUTION_STRING` | XCU §set SHALL-DESCRIPTION-582 | Low | 1 | Test issue |
+| 4 | (Same as 2) | — | — | — | — |
+| 5 | `cd ""` error handling | XCU §cd OPERANDS | Low | 2 | Broken |
+| 6 | `echo` XSI escapes | XCU §echo SHALL-OPERANDS-5003 | Medium | 11 | Broken |
+| 7 | Function prefix assignment | §2.9.1 SHALL-2-9-1-2-280 | Medium | 1 | Broken |
+| 8 | MAIL notification | XCU §sh SHALL-SH-1025 | Low | 3 | Broken |
+| 9 | Vi editing: `t`/`T` | XCU §sh Vi Editing | Low | 2 | Broken |
+| 10 | Vi editing: `[count]~` | XCU §sh Vi Editing | Low | 1 | Broken |
+| 11 | `wait -l` | XCU §wait SHALL-WAIT-1353 | Low | 2 | Broken (Issue 8 feature) |
+|    | **Total** | | | **25** | |
 
-Items 1–4 are fixed in bash 5.3. Items 5–6 persist across both versions.
-Items 7–12 are regressions or new non-compliances in bash 5.3.
+Items 1–3 are test-expectation issues where bash behavior is arguably
+correct or the test methodology has a flaw. Items 5–11 are genuine
+non-compliances.
 
-The `interactive.sh` test also fails on bash 5.3 because bracketed paste
-mode (`\e[?2004h`/`\e[?2004l`) pollutes PTY output. This is not a POSIX
-non-compliance — it is a bash feature that interferes with the test harness.
+The `echo` issue (item 6, 11 tests) accounts for nearly half of all
+failures. Bash requires `-e` or `shopt -s xpg_echo` to enable POSIX
+`echo` escape processing, even in `--posix` mode.
 
-Item 3 (`;&`) was added in POSIX Issue 8 (2024). All other items
-represent deviations from requirements that existed in earlier POSIX
-versions.
+Item 11 (`wait -l`) is a POSIX.1-2024 (Issue 8) addition that bash 5.2
+has not yet implemented. All other items represent deviations from
+requirements that existed in earlier POSIX versions.

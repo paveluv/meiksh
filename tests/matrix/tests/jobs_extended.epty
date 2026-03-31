@@ -1,0 +1,369 @@
+testsuite "Jobs (Extended)"
+
+# ==============================================================================
+# jobs -l — long format with PIDs
+# ==============================================================================
+
+requirement "SHALL-JOBS-1057" doc="The jobs -l option shall provide a long listing including process group ID"
+requirement "SHALL-JOBS-1235" doc="The -l option provides additional information for each job"
+requirement "SHALL-JOBS-1223" doc="The output shall include the job number, current job, process group ID, state, and command"
+
+begin interactive test "jobs -l shows long listing"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 60 &"
+  expect "$ "
+  send "jobs -l"
+  expect "\[[[:digit:]]+\].*sleep 60"
+  send "kill %1; wait 2>/dev/null"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "jobs -l shows long listing"
+
+begin interactive test "jobs -l shows numeric PID"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 60 &"
+  expect "$ "
+  send "jobs -l | grep -E \"[0-9]+\" && echo pid_ok"
+  expect "pid_ok"
+  send "kill %1; wait 2>/dev/null"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "jobs -l shows numeric PID"
+
+
+# ==============================================================================
+# jobs -p — PIDs only
+# ==============================================================================
+
+requirement "SHALL-JOBS-1060" doc="The -p option shall display only the process group leaders' process IDs"
+requirement "SHALL-JOBS-1221" doc="The jobs utility shall display the status of jobs started in the current session"
+
+begin interactive test "jobs -p returns PID"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 60 &"
+  expect "$ "
+  send "JPID=$(jobs -p); echo pid_is_$JPID"
+  expect "pid_is_"
+  send "kill %1; wait 2>/dev/null"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "jobs -p returns PID"
+
+begin interactive test "jobs -p output is numeric"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 60 &"
+  expect "$ "
+  send "jobs -p | grep -qE \"^[0-9]+$\" && echo numeric_ok"
+  expect "numeric_ok"
+  send "kill %1; wait 2>/dev/null"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "jobs -p output is numeric"
+
+
+# ==============================================================================
+# Job state display: Running
+# ==============================================================================
+
+requirement "SHALL-JOBS-1039" doc="The default output format shall include job_number, current status, and command"
+
+begin interactive test "running job shows Running state"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 60 &"
+  expect "$ "
+  send "jobs"
+  expect "\[[[:digit:]]+\].*Running.*sleep 60"
+  send "kill %1; wait 2>/dev/null"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "running job shows Running state"
+
+
+# ==============================================================================
+# Job state display: Done
+# ==============================================================================
+
+requirement "SHALL-JOBS-1222" doc="When a background command exits, the shell shall include exit status in the completion notification"
+
+begin interactive test "completed job shows Done state"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 0.1 &"
+  sleep 500ms
+  send "jobs"
+  expect "\[[[:digit:]]+\].*Done.*sleep"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "completed job shows Done state"
+
+
+# ==============================================================================
+# Job state display: Stopped / Suspended
+# ==============================================================================
+
+requirement "SHALL-JOBS-1232" doc="A job that has been suspended shall be reported with the state Stopped"
+requirement "SHALL-JOBS-1237" doc="POSIX permits Suspended as an alternative to Stopped"
+
+begin interactive test "stopped job shows Stopped or Suspended state"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 60"
+  sleep 500ms
+  sendraw 1a
+  expect "(Stopped|Suspended).*sleep 60"
+  send "jobs"
+  expect "\[[[:digit:]]+\].*(Stopped|Suspended).*sleep 60"
+  send "kill %1; wait 2>/dev/null"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "stopped job shows Stopped or Suspended state"
+
+
+# ==============================================================================
+# Output format: job number, status, command
+# ==============================================================================
+
+begin interactive test "output format includes job number status command"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 60 &"
+  expect "$ "
+  send "jobs"
+  expect "\[1\].*Running.*sleep 60"
+  send "kill %1; wait 2>/dev/null"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "output format includes job number status command"
+
+
+# ==============================================================================
+# jobs with job_id operand
+# ==============================================================================
+
+requirement "SHALL-JOBS-1058" doc="If job_id is given, the output shall be information about that job only"
+requirement "SHALL-JOBS-1061" doc="If there are no current jobs, jobs shall produce no output"
+
+begin interactive test "jobs with job_id shows only that job"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 60 &"
+  expect "$ "
+  send "sleep 61 &"
+  expect "$ "
+  send "jobs %1"
+  expect "sleep 60"
+  not_expect "sleep 61"
+  send "kill %1 %2; wait 2>/dev/null"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "jobs with job_id shows only that job"
+
+
+# ==============================================================================
+# jobs with no args lists all jobs
+# ==============================================================================
+
+requirement "SHALL-JOBS-1225" doc="If no job_id operands are given, all current jobs shall be displayed"
+requirement "SHALL-JOBS-1227" doc="The jobs utility shall display information about each job"
+
+begin interactive test "jobs with no args lists all jobs"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 60 &"
+  expect "$ "
+  send "sleep 61 &"
+  expect "$ "
+  send "jobs"
+  expect "sleep 60"
+  expect "sleep 61"
+  send "kill %1 %2; wait 2>/dev/null"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "jobs with no args lists all jobs"
+
+
+# ==============================================================================
+# jobs -l with stopped job shows PID and state
+# ==============================================================================
+
+requirement "SHALL-JOBS-1236" doc="jobs -l on a stopped job shall show the PID and the state"
+
+begin interactive test "jobs -l with stopped job shows PID and state"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 60"
+  sleep 500ms
+  sendraw 1a
+  expect "(Stopped|Suspended).*sleep 60"
+  send "jobs -l"
+  expect "\[[[:digit:]]+\].*(Stopped|Suspended).*sleep 60"
+  send "kill %1; wait 2>/dev/null"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "jobs -l with stopped job shows PID and state"
+
+
+# ==============================================================================
+# jobs: current job marker (+)
+# ==============================================================================
+
+requirement "SHALL-JOBS-1233" doc="The current job shall be indicated with a + marker"
+
+begin interactive test "current job marker +"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 60 &"
+  expect "$ "
+  send "sleep 61 &"
+  expect "$ "
+  send "jobs"
+  expect "\[[[:digit:]]+\]\+.*sleep"
+  send "kill %1 %2; wait 2>/dev/null"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "current job marker +"
+
+
+# ==============================================================================
+# jobs: previous job marker (-)
+# ==============================================================================
+
+requirement "SHALL-JOBS-1234" doc="The previous job shall be indicated with a - marker"
+
+begin interactive test "previous job marker -"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 60 &"
+  expect "$ "
+  send "sleep 61 &"
+  expect "$ "
+  send "jobs"
+  expect "\[[[:digit:]]+\]-.*sleep"
+  send "kill %1 %2; wait 2>/dev/null"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "previous job marker -"
+
+
+# ==============================================================================
+# jobs with no background jobs produces no output
+# ==============================================================================
+
+begin interactive test "jobs with no background jobs produces no output"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "jobs; echo end_of_jobs"
+  expect "end_of_jobs"
+  not_expect "Running"
+  not_expect "Stopped"
+  sendeof
+  wait
+end interactive test "jobs with no background jobs produces no output"
+
+
+# ==============================================================================
+# Signal-terminated job state
+# ==============================================================================
+
+begin interactive test "signal-terminated job no longer Running"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 60 &"
+  expect "$ "
+  send "kill -KILL %1"
+  sleep 500ms
+  send "jobs"
+  not_expect "Running"
+  send "wait 2>/dev/null"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "signal-terminated job no longer Running"
+
+
+# ==============================================================================
+# Done(N) for non-zero exit
+# ==============================================================================
+
+begin interactive test "Done(N) for non-zero exit"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "(exit 2) &"
+  sleep 500ms
+  send ""
+  expect "Done\([[:digit:]]+\)"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "Done(N) for non-zero exit"
+
+
+# ==============================================================================
+# jobs -p with multiple jobs
+# ==============================================================================
+
+begin interactive test "jobs -p with multiple jobs"
+  spawn {{SHELL}} -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 60 &"
+  expect "$ "
+  send "sleep 61 &"
+  expect "$ "
+  send "jobs -p"
+  expect "[[:digit:]]+"
+  expect "[[:digit:]]+"
+  send "kill %1 %2; wait 2>/dev/null"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "jobs -p with multiple jobs"

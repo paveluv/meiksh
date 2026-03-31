@@ -1,0 +1,39 @@
+testsuite "Reserved Words"
+
+# ==============================================================================
+# Unquoted Recognition
+# ==============================================================================
+
+requirement "SHALL-2-4-058" doc="The following words shall be recognized as reserved words when none of the characters is quoted and when the word is used as the first word of a command or the third word in a case or for command."
+
+begin test "quoted reserved word is not recognized"
+  begin script
+    "if" true; then echo yes; fi
+  end script
+  not_expect_exit_code 0
+end test "quoted reserved word is not recognized"
+
+begin test "unquoted reserved word builds syntax"
+  begin script
+    if true; then echo "yes"; fi
+  end script
+  expect_stdout "yes"
+end test "unquoted reserved word builds syntax"
+
+begin test "reserved words as arguments are not special"
+  begin script
+    echo if while for done
+  end script
+  expect_stdout "if while for done"
+end test "reserved words as arguments are not special"
+
+# ==============================================================================
+# The 'time' Reserved Word
+# ==============================================================================
+
+begin test "time reserved word measures and passes through output"
+  begin script
+    time echo "measured"
+  end script
+  expect_stdout "measured"
+end test "time reserved word measures and passes through output"

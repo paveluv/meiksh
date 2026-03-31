@@ -1,0 +1,70 @@
+testsuite "Additional Special Built-in Requirements"
+
+# ==============================================================================
+# The 'export' and 'readonly' Utilities
+# ==============================================================================
+
+requirement "SHALL-DESCRIPTION-560" doc="The export special built-in shall be a declaration utility."
+requirement "SHALL-DESCRIPTION-561" doc="If export is recognized as the command name, subsequent words of the form name = word shall be expanded in an assignment context."
+requirement "SHALL-DESCRIPTION-570" doc="The readonly special built-in shall be a declaration utility."
+requirement "SHALL-DESCRIPTION-571" doc="If readonly is recognized as the command name, subsequent words of the form name = word shall be expanded in an assignment context."
+
+begin test "export as declaration utility"
+  begin script
+    export decl_var="~"
+    echo "$decl_var"
+  end script
+  expect_exit_code 0
+end test "export as declaration utility"
+
+
+# ==============================================================================
+# The 'exit' and 'wait' Utilities
+# ==============================================================================
+
+requirement "SHALL-DESCRIPTION-552" doc="If n has a value between 0 and 255 inclusive, the wait status shall indicate it exited with exit status n."
+requirement "SHALL-DESCRIPTION-553" doc="If n has a value greater than 256 corresponding to a signal exit status, the wait status shall indicate termination by that signal."
+
+begin test "exit with value 200"
+  begin script
+    (exit 200); echo $?
+  end script
+  expect_stdout "200"
+end test "exit with value 200"
+
+requirement "SHALL-DESCRIPTION-556" doc="A trap action on EXIT shall be executed before the shell terminates, except when exit is invoked in that trap action itself."
+
+begin test "EXIT trap fires before shell terminates"
+  begin script
+    trap "echo exit_action" EXIT
+    exit 0
+  end script
+  expect_stdout "exit_action"
+end test "EXIT trap fires before shell terminates"
+
+# ==============================================================================
+# The 'set' Utility
+# ==============================================================================
+
+requirement "SHALL-DESCRIPTION-584" doc="When options are specified, they shall set or unset attributes of the shell."
+requirement "SHALL-DESCRIPTION-586" doc="Implementations shall support the options in both their hyphen-minus and plus-sign forms."
+requirement "SHALL-DESCRIPTION-597" doc="-f The shell shall disable pathname expansion."
+
+begin test "set -f disables pathname expansion"
+  begin script
+    set -f
+    touch tmp_builtins_5.txt
+    echo tmp_builtins_5*.txt
+  end script
+  expect_stdout "tmp_builtins_5\*.txt"
+end test "set -f disables pathname expansion"
+
+requirement "SHALL-DESCRIPTION-611" doc="The remaining arguments shall be assigned in order to the positional parameters."
+
+begin test "set -- assigns positional parameters"
+  begin script
+    set -- a b c
+    echo "$1 $2 $3"
+  end script
+  expect_stdout "a b c"
+end test "set -- assigns positional parameters"

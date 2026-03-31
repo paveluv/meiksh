@@ -1,0 +1,70 @@
+testsuite "Execution Environment"
+
+# ==============================================================================
+# Script Input Evaluation
+# ==============================================================================
+
+requirement "SHALL-INPUT-FILES-020" doc="The input file can be of any type, but the initial portion shall consist of characters and shall not contain the NUL character"
+requirement "SHALL-INPUT-FILES-021" doc="The shell shall not enforce any line length limits"
+requirement "SHALL-INPUT-FILES-022" doc="If the input file consists solely of zero or more blank lines and comments, sh shall exit with a zero exit status"
+
+begin test "blank lines and comments exit zero"
+  begin script
+    printf '
+    # just a comment
+
+
+    ' > tmp_empty.sh; {{SHELL}} tmp_empty.sh
+  end script
+  expect_exit_code 0
+end test "blank lines and comments exit zero"
+
+
+# ==============================================================================
+# The Context: Shell Execution Environment
+# ==============================================================================
+
+requirement "SHALL-2-8-1-246" doc="Shell Execution Environment: the shell execution environment includes variables, working directory, file descriptors"
+
+begin test "pwd matches working directory"
+  begin script
+    pwd
+  end script
+  expect_stdout ".*"
+  expect_exit_code 0
+end test "pwd matches working directory"
+
+
+# ==============================================================================
+# The Outcome: Exit Statuses
+# ==============================================================================
+
+requirement "SHALL-2-8-2-259" doc="Exit Status for Commands: the exit status of a command is that of the last command executed"
+
+begin test "true exits 0"
+  begin script
+    true
+  end script
+  expect_exit_code 0
+end test "true exits 0"
+
+begin test "false exits 1"
+  begin script
+    false
+  end script
+  expect_exit_code 1
+end test "false exits 1"
+
+
+# ==============================================================================
+# Simple Commands: Variables and Redirections
+# ==============================================================================
+
+requirement "SHALL-2-9-1-4-287" doc="Simple Commands: a simple command is a sequence of optional variable assignments and redirections"
+
+begin test "prefix variable assignment passed to command"
+  begin script
+    FOO=bar {{SHELL}} -c 'echo $FOO'
+  end script
+  expect_stdout "bar"
+end test "prefix variable assignment passed to command"

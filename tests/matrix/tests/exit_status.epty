@@ -1,0 +1,120 @@
+testsuite "Exit Status and Error Consequences"
+
+# ==============================================================================
+# Command Search Exit Statuses
+# ==============================================================================
+
+requirement "SHALL-2-9-1-4-296" doc="If the search is unsuccessful, the command shall fail with an exit status of 127 and the shell shall write an error message"
+requirement "SHALL-2-9-1-6-310" doc="If the search is unsuccessful, the command shall fail with an exit status of 127 and the shell shall write an error"
+requirement "SHALL-2-8-2-259" doc="If the command is not found, the exit status shall be 127"
+
+begin test "non-existent command returns 127"
+  begin script
+    this_command_does_not_exist_xyz123; echo "$?"
+  end script
+  expect_stdout "127"
+end test "non-existent command returns 127"
+
+requirement "SHALL-2-9-1-6-304" doc="If execl fails due to ENOEXEC, shell shall execute a command equivalent to having a shell invoked with the pathname"
+requirement "SHALL-2-9-1-6-305" doc="In this case, it shall write an error message, and the command shall fail with an exit status of 126"
+requirement "SHALL-2-8-2-260" doc="If the command name is found but it is not an executable utility, the exit status shall be 126"
+
+begin test "non-executable file returns 126"
+  begin script
+    touch tmp_not_exec; chmod -x tmp_not_exec; ./tmp_not_exec; echo "$?"
+  end script
+  expect_stdout "126"
+end test "non-executable file returns 126"
+
+
+# ==============================================================================
+# Built-in Utility Exit Statuses
+# ==============================================================================
+
+requirement "SHALL-EXIT-STATUS-537" doc="If there are no arguments, or only null arguments, eval shall return a zero exit status"
+
+begin test "eval with no arguments returns 0"
+  begin script
+    eval
+  end script
+  expect_exit_code 0
+end test "eval with no arguments returns 0"
+
+begin test "eval with empty string returns 0"
+  begin script
+    eval ""
+  end script
+  expect_exit_code 0
+end test "eval with empty string returns 0"
+
+requirement "SHALL-EXIT-STATUS-548" doc="Otherwise, exec shall return a zero exit status"
+
+begin test "exec with no utility returns 0"
+  begin script
+    exec
+  end script
+  expect_exit_code 0
+end test "exec with no utility returns 0"
+
+requirement "SHALL-EXIT-STATUS-578" doc="The exit status shall be n, if specified, except that the behavior is unspecified if n is not an unsigned decimal integer or is greater than 255"
+requirement "SHALL-EXIT-STATUS-579" doc="If n is not specified, the result shall be as if n were specified with the current value of $?"
+
+begin test "return without n inherits previous exit status"
+  begin script
+    myfunc() { false; return; }; myfunc; echo "$?"
+  end script
+  expect_stdout "1"
+end test "return without n inherits previous exit status"
+
+requirement "SHALL-DESCRIPTION-576" doc="The return utility shall cause the shell to stop executing the current function or dot script"
+
+begin test "return with explicit n sets exit status"
+  begin script
+    myfunc() { return 5; }; myfunc; echo "$?"
+  end script
+  expect_stdout "5"
+end test "return with explicit n sets exit status"
+
+requirement "SHALL-EXIT-STATUS-623" doc="If the n operand is invalid or is greater than $#, this may be treated as an error; if the shell does not exit, a non-zero exit status shall be returned"
+requirement "SHALL-EXIT-STATUS-624" doc="Otherwise, zero shall be returned"
+
+begin test "shift with valid bounds returns 0"
+  begin script
+    {{SHELL}} -c 'shift 1; echo "$?"' sh arg1
+  end script
+  expect_stdout "0"
+end test "shift with valid bounds returns 0"
+
+
+# ==============================================================================
+# The 'sh' Utility Exit Status
+# ==============================================================================
+
+requirement "SHALL-EXIT-STATUS-143" doc="The shell shall terminate in the same manner as for an exit command with no operands, unless the last command was executed without forking"
+
+begin test "shell script inherits exit status of last command"
+  begin script
+    echo "exit 42" > tmp_script.sh; {{SHELL}} tmp_script.sh; echo "$?"
+  end script
+  expect_stdout "42"
+end test "shell script inherits exit status of last command"
+
+
+# ==============================================================================
+# Signals and Exit Status
+# ==============================================================================
+
+requirement "SHALL-2-8-2-261" doc="If the command terminated due to receipt of a signal, the shell shall assign it an exit status greater than 128"
+requirement "SHALL-2-8-2-262" doc="The exit status shall identify, in an implementation-defined manner, which signal terminated the command"
+
+begin test "signal-terminated process has exit status > 128"
+  begin script
+    sleep 10 &
+    pid=$!
+    kill -9 $pid >/dev/null 2>&1
+    wait $pid
+    status=$?
+    [ $status -gt 128 ] && echo "signal_exit"
+  end script
+  expect_stdout "signal_exit"
+end test "signal-terminated process has exit status > 128"

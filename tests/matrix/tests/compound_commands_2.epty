@@ -1,0 +1,105 @@
+testsuite "Compound Commands (Part 2)"
+
+# ==============================================================================
+# Compound Lists and Exit Statuses
+# ==============================================================================
+
+requirement "SHALL-2-9-4-345" doc="The exit status of a compound-list shall be the value that the special parameter '?' would have immediately after execution of the compound-list"
+requirement "SHALL-2-9-4-2-350" doc="First, the list of words following in shall be expanded to generate a list of items"
+
+begin test "for-in expands word list correctly"
+  begin script
+    for i in "a b" c; do
+        echo "$i"
+    done
+  end script
+  expect_stdout "a b\nc"
+end test "for-in expands word list correctly"
+
+
+# ==============================================================================
+# Case Statement Extensions
+# ==============================================================================
+
+requirement "SHALL-2-9-4-3-358" doc="Each case statement clause, with the possible exception of the last, shall be terminated with either \";;\" or \";&\""
+requirement "SHALL-2-9-4-3-359" doc="In order from the beginning to the end of the case statement, each pattern that labels a compound-list shall be subjected to tilde expansion, parameter expansion, command substitution, and arithmetic expansion"
+requirement "SHALL-2-9-4-3-362" doc="If the case statement clause is terminated by \";&\", then the compound-list (if any) of each subsequent clause shall be executed, in order, until either a clause terminated by \";;\" is reached or there are no further clauses"
+
+begin test "case ;; termination"
+  begin script
+    case "xyz" in
+        abc) echo no ;;
+        xyz) echo yes ;;
+        *) echo default ;;
+    esac
+  end script
+  expect_stdout "yes"
+end test "case ;; termination"
+
+begin test "pattern expansion in case labels"
+  begin script
+    X=hello
+    case "hello" in
+        $X) echo matched ;;
+        *) echo nomatch ;;
+    esac
+  end script
+  expect_stdout "matched"
+end test "pattern expansion in case labels"
+
+begin test "pattern with command substitution in case label"
+  begin script
+    case "3" in
+        $(echo 3)) echo three ;;
+        *) echo other ;;
+    esac
+  end script
+  expect_stdout "three"
+end test "pattern with command substitution in case label"
+
+begin test "pattern with arithmetic expansion in case label"
+  begin script
+    case "6" in
+        $((2+4))) echo six ;;
+        *) echo other ;;
+    esac
+  end script
+  expect_stdout "six"
+end test "pattern with arithmetic expansion in case label"
+
+begin test "case ;& fallthrough"
+  begin script
+    case a in a) echo first ;& b) echo second ;; c) echo third ;; esac
+  end script
+  expect_stdout "first\nsecond"
+end test "case ;& fallthrough"
+
+begin test "case ;& multi-fallthrough until ;;"
+  begin script
+    case x in x) echo one ;& y) echo two ;& z) echo three ;; w) echo four ;; esac
+  end script
+  expect_stdout "one\ntwo\nthree"
+end test "case ;& multi-fallthrough until ;;"
+
+
+# ==============================================================================
+# Syntax Spacing
+# ==============================================================================
+
+requirement "SHALL-2-9-4-1-347" doc="A conforming application shall ensure that it separates the two leading '(' characters with white space to prevent the shell from performing an arithmetic evaluation"
+
+begin test "nested subshells with spaced parens"
+  begin script
+    ( ( echo hello ) )
+  end script
+  expect_stdout "hello"
+end test "nested subshells with spaced parens"
+
+requirement "SHALL-2-9-2-312" doc="If the pipeline begins with the reserved word ! and command1 is a subshell command, the application shall ensure that the ( operator at the beginning of command1 is separated from the ! by one or more blank characters"
+
+begin test "! ( false ) succeeds with blank separation"
+  begin script
+    ! ( false )
+  end script
+  expect_exit_code 0
+end test "! ( false ) succeeds with blank separation"

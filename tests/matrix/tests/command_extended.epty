@@ -1,0 +1,250 @@
+testsuite "command — Extended Tests"
+
+# ==============================================================================
+# command -V: Output format
+# ==============================================================================
+
+requirement "SHALL-COMMAND-1030" doc="-V option output format: \"%s\\n\", unspecified"
+
+begin test "command -V echo produces output mentioning echo"
+  begin script
+    command -V echo 2>&1
+  end script
+  expect_stdout_line ".*echo.*"
+end test "command -V echo produces output mentioning echo"
+
+begin test "command -V for nonexistent command fails"
+  begin script
+    command -V nonexistent_cmd_xyzzy 2>/dev/null
+  end script
+  not_expect_exit_code 0
+end test "command -V for nonexistent command fails"
+
+begin test "command -V cd produces output mentioning cd"
+  begin script
+    command -V cd 2>&1
+  end script
+  expect_stdout_line ".*cd.*"
+end test "command -V cd produces output mentioning cd"
+
+# ==============================================================================
+# command: Argument operand treated as argument to command_name
+# ==============================================================================
+
+requirement "SHALL-COMMAND-1038" doc="argument operand treated as argument to command_name"
+
+begin test "arguments after command_name are passed through"
+  begin script
+    command echo hello world
+  end script
+  expect_stdout "hello world"
+end test "arguments after command_name are passed through"
+
+begin test "multiple arguments forwarded correctly"
+  begin script
+    command printf "%s %s %s
+    " a b c
+  end script
+  expect_stdout "a b c"
+end test "multiple arguments forwarded correctly"
+
+# ==============================================================================
+# command: Suppresses shell function lookup
+# ==============================================================================
+
+requirement "SHALL-COMMAND-1104" doc="command utility suppresses shell function lookup"
+
+begin test "command bypasses function shadowing echo"
+  begin script
+    echo() { printf "FUNCTION
+    "; }; command echo REAL
+  end script
+  expect_stdout "REAL"
+end test "command bypasses function shadowing echo"
+
+begin test "function itself works without command prefix"
+  begin script
+    echo() { printf "FUNCTION
+    "; }; echo ignored
+  end script
+  expect_stdout "FUNCTION"
+end test "function itself works without command prefix"
+
+begin test "command bypasses function shadowing cat"
+  begin script
+    cat() { printf "FAKE_CAT
+    "; }; printf "real
+    " | command cat
+  end script
+  expect_stdout "real"
+end test "command bypasses function shadowing cat"
+
+# ==============================================================================
+# command: Special properties of special built-ins do not occur
+# ==============================================================================
+
+requirement "SHALL-COMMAND-1105" doc="Special properties of special built-ins do not occur"
+
+begin test "command export does not abort shell"
+  begin script
+    command export 2>/dev/null; echo survived
+  end script
+  expect_stdout_line ".*survived.*"
+end test "command export does not abort shell"
+
+begin test "command break outside loop does not abort shell"
+  begin script
+    command break 2>/dev/null; echo still_here
+  end script
+  expect_stdout "still_here"
+end test "command break outside loop does not abort shell"
+
+# ==============================================================================
+# command: Same effect as omitting command, no alias/reserved word recognition
+# ==============================================================================
+
+requirement "SHALL-COMMAND-1106" doc="Effect same as omitting command, except no alias/reserved word recognition"
+
+begin test "command executes utility normally"
+  begin script
+    command echo hello
+  end script
+  expect_stdout "hello"
+end test "command executes utility normally"
+
+begin test "command does not perform alias expansion"
+  begin script
+    alias ls="echo ALIASED" 2>/dev/null; command ls / >/dev/null 2>&1; echo $?
+  end script
+  not_expect_stdout ".*ALIASED.*"
+end test "command does not perform alias expansion"
+
+# ==============================================================================
+# command -v / -V: Provide info on command name interpretation
+# ==============================================================================
+
+requirement "SHALL-COMMAND-1107" doc="-v or -V provides info on how command name is interpreted"
+
+begin test "command -v ls prints path or name"
+  begin script
+    command -v ls 2>&1
+  end script
+  expect_stdout_line ".*((/.*ls)|ls).*"
+end test "command -v ls prints path or name"
+
+begin test "command -v cd prints builtin name"
+  begin script
+    command -v cd 2>&1
+  end script
+  expect_stdout_line ".*cd.*"
+end test "command -v cd prints builtin name"
+
+begin test "command -v for defined function prints function name"
+  begin script
+    myfn() { :; }; command -v myfn
+  end script
+  expect_stdout "myfn"
+end test "command -v for defined function prints function name"
+
+begin test "command -v for alias or no alias"
+  begin script
+    alias greet="echo hi" 2>/dev/null; command -v greet 2>/dev/null || echo NO_ALIAS
+  end script
+  expect_stdout_line ".*(greet|echo hi|NO_ALIAS).*"
+end test "command -v for alias or no alias"
+
+begin test "command -v for nonexistent command fails"
+  begin script
+    command -v nonexistent_cmd_xyzzy 2>/dev/null
+  end script
+  not_expect_exit_code 0
+end test "command -v for nonexistent command fails"
+
+begin test "command -V echo describes command type"
+  begin script
+    command -V echo 2>&1
+  end script
+  expect_stdout_line ".*echo.*"
+end test "command -V echo describes command type"
+
+# ==============================================================================
+# command: Treated as declaration utility if first arg is declaration utility
+# ==============================================================================
+
+requirement "SHALL-COMMAND-1108" doc="Treated as declaration utility if first arg is declaration utility"
+
+begin test "command export behaves as declaration utility"
+  begin script
+    command export FOO=bar; echo $FOO
+  end script
+  expect_stdout "bar"
+end test "command export behaves as declaration utility"
+
+begin test "command readonly behaves as declaration utility"
+  begin script
+    command readonly RO_VAR=42; echo $RO_VAR
+  end script
+  expect_stdout "42"
+end test "command readonly behaves as declaration utility"
+
+begin test "command local inside function"
+  begin script
+    f() { command local LV=hello 2>/dev/null && echo $LV || echo $LV; }; f
+  end script
+  expect_stdout_line ".*hello.*"
+end test "command local inside function"
+
+# ==============================================================================
+# command: Subsequent name=word expanded in assignment context
+# ==============================================================================
+
+requirement "SHALL-COMMAND-1109" doc="Subsequent name=word expanded in assignment context"
+
+begin test "command export assigns variable"
+  begin script
+    command export TVAR=hello; echo $TVAR
+  end script
+  expect_stdout "hello"
+end test "command export assigns variable"
+
+begin test "multiple assignments in one command export"
+  begin script
+    command export A=1 B=2 C=3; echo $A $B $C
+  end script
+  expect_stdout "1 2 3"
+end test "multiple assignments in one command export"
+
+begin test "tilde expansion in assignment context"
+  begin script
+    command export HOMEDIR=~; case "$HOMEDIR" in /*) echo absolute;; *) echo relative;; esac
+  end script
+  expect_stdout "absolute"
+end test "tilde expansion in assignment context"
+
+begin test "variable references expand in assignment values"
+  begin script
+    X=hello; command export Y=${X}_world; echo $Y
+  end script
+  expect_stdout "hello_world"
+end test "variable references expand in assignment values"
+
+# ==============================================================================
+# XBD 12.2: Optional option-argument directly adjacent
+# ==============================================================================
+
+requirement "SHALL-XBD-12-4002" doc="If the SYNOPSIS shows an optional option-argument, a conforming application shall place any option-argument directly adjacent to the option"
+requirement "SHALL-XBD-12-4003" doc="If the utility receives an argument containing only the option, it shall behave as specified for an omitted option-argument"
+
+begin test "ulimit -Sf with value adjacent"
+  begin script
+    ulimit -Sf 100; ulimit -Sf
+  end script
+  expect_stdout_line ".*(100|unlimited).*"
+end test "ulimit -Sf with value adjacent"
+
+begin test "kill -l lists signals"
+  begin script
+    kill -l 2>/dev/null
+  end script
+  expect_stdout_line ".*(HUP|INT|TERM).*"
+end test "kill -l lists signals"
