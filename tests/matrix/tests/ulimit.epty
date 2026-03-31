@@ -31,3 +31,17 @@ begin test "ulimit -a succeeds"
   end script
   expect_stdout "0"
 end test "ulimit -a succeeds"
+
+# ==============================================================================
+# ulimit diagnostic for invalid values (from command_identification)
+# ==============================================================================
+
+requirement "SHALL-XBD-12-4005" doc="If an error is generated, the utility's diagnostic message shall indicate that the value is out of the supported range."
+
+begin test "ulimit with invalid value produces diagnostic"
+  begin script
+    err=$(ulimit -f not_a_number 2>&1)
+    [ -n "$err" ] && echo pass || echo fail
+  end script
+  expect_stdout "pass"
+end test "ulimit with invalid value produces diagnostic"

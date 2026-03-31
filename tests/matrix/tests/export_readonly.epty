@@ -13,6 +13,7 @@ begin test "export -p shows exported variable"
     export MYEXPORTVAR
     export -p | grep MYEXPORTVAR
   end script
+  expect_exit_code 0
   expect_stdout_line ".*export.*MYEXPORTVAR.*hello.*"
 end test "export -p shows exported variable"
 
@@ -22,6 +23,7 @@ begin test "export -p handles spaces in values"
     export TESTV
     export -p | grep TESTV
   end script
+  expect_exit_code 0
   expect_stdout_line ".*export.*TESTV.*"
 end test "export -p handles spaces in values"
 
@@ -37,6 +39,7 @@ begin test "set -o allexport exports all assignments"
     ALLEXP_VAR=allexp_val
     env | grep ALLEXP_VAR
   end script
+  expect_exit_code 0
   expect_stdout_line ".*ALLEXP_VAR=allexp_val.*"
 end test "set -o allexport exports all assignments"
 
@@ -52,5 +55,6 @@ begin test "readonly -p shows readonly variable"
     readonly ROVAR
     readonly -p | grep ROVAR
   end script
+  expect_exit_code 0
   expect_stdout_line ".*readonly.*ROVAR.*roval.*"
 end test "readonly -p shows readonly variable"

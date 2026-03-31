@@ -11,7 +11,8 @@ begin test "alias-name operand writes definition to stdout"
     alias myalias="echo hello"
     alias myalias
   end script
-  expect_stdout_line ".*myalias.*echo.*hello.*"
+  expect_exit_code 0
+  expect_stdout_line ".*myalias=.*echo hello.*"
 end test "alias-name operand writes definition to stdout"
 
 begin test "query second alias writes its definition"
@@ -20,7 +21,8 @@ begin test "query second alias writes its definition"
     alias bar="grep x"
     alias foo
   end script
-  expect_stdout_line ".*foo.*ls.*"
+  expect_exit_code 0
+  expect_stdout_line ".*foo=.*ls -la.*"
 end test "query second alias writes its definition"
 
 # ==============================================================================
@@ -39,6 +41,7 @@ begin test "alias definition replaces command name"
     alias greet="echo hello world"
     greet
   end script
+  expect_exit_code 0
   expect_stdout "hello world"
 end test "alias definition replaces command name"
 
@@ -47,6 +50,7 @@ begin test "alias definition replaces command name numeric"
     alias answer="echo 42"
     answer
   end script
+  expect_exit_code 0
   expect_stdout "42"
 end test "alias definition replaces command name numeric"
 
@@ -61,6 +65,7 @@ begin test "alias affects current shell"
     alias myecho="echo from_alias"
     myecho
   end script
+  expect_exit_code 0
   expect_stdout "from_alias"
 end test "alias affects current shell"
 
@@ -106,8 +111,9 @@ begin test "alias with no operands lists all definitions"
     alias a2="echo 2"
     alias
   end script
-  expect_stdout_line ".*a1.*echo.*1.*"
-  expect_stdout_line ".*a2.*echo.*2.*"
+  expect_exit_code 0
+  expect_stdout_line ".*a1=.*echo 1.*"
+  expect_stdout_line ".*a2=.*echo 2.*"
 end test "alias with no operands lists all definitions"
 
 # ==============================================================================
@@ -131,7 +137,7 @@ begin test "alias quoting handles single quotes in value"
     alias sq="echo it's fine"
     alias sq
   end script
-  expect_stdout_line "sq=.*"
+  expect_stdout_line ".*sq=.*"
 end test "alias quoting handles single quotes in value"
 
 # ==============================================================================
@@ -161,10 +167,19 @@ begin test "unalias removes named alias"
   begin script
     alias rmme="echo gone"
     unalias rmme
+  end script
+  expect_exit_code 0
+end test "unalias removes named alias"
+
+begin test "querying removed alias fails"
+  begin script
+    alias rmme="echo gone"
+    unalias rmme
     alias rmme 2>&1
   end script
+  not_expect_exit_code 0
   not_expect_stdout_line ".*rmme.*echo.*gone.*"
-end test "unalias removes named alias"
+end test "querying removed alias fails"
 
 begin test "unaliased command does not expand"
   begin script
@@ -191,7 +206,7 @@ begin test "unalias removes multiple aliases"
   end script
   not_expect_stdout_line ".*a=.*echo.*A.*"
   not_expect_stdout_line ".*b=.*echo.*B.*"
-  expect_stdout_line ".*c.*echo.*C.*"
+  expect_stdout_line ".*c=.*echo C.*"
 end test "unalias removes multiple aliases"
 
 # ==============================================================================
@@ -207,6 +222,7 @@ begin test "unaliased name no longer expands"
     echo after_removal
   end script
   expect_stdout "after_removal"
+  not_expect_stdout "WRONG"
 end test "unaliased name no longer expands"
 
 begin test "unalias -a clears environment"
@@ -216,4 +232,64 @@ begin test "unalias -a clears environment"
     echo clean
   end script
   expect_stdout "clean"
+  not_expect_stdout "WRONG"
 end test "unalias -a clears environment"
+
+# ==============================================================================
+# alias utility (from command_identification)
+# ==============================================================================
+
+requirement "SHALL-ALIAS-1052" doc="The alias utility shall create or redefine alias definitions or write the values of existing alias definitions to standard output."
+requirement "SHALL-ALIAS-1026-DUP757" doc="The format for displaying aliases shall be: \"%s=%s\\n\", name, value. The value string shall be written with appropriate quoting."
+requirement "SHALL-ALIAS-1028" doc="The following exit values shall be returned: 0 Successful completion."
+requirement "SHALL-OPERANDS-010" doc="The following operands shall be supported."
+
+begin test "alias creates definition visible in output"
+  begin script
+    alias foo=bar
+    alias foo | grep -q "foo=" && echo pass || echo fail
+  end script
+  expect_stdout "pass"
+end test "alias creates definition visible in output"
+
+begin test "alias redefine updates the definition"
+  begin script
+    alias mya="echo old"
+    alias mya="echo new"
+    alias mya
+  end script
+  expect_stdout_line ".*mya=.*new.*"
+end test "alias redefine updates the definition"
+
+begin test "alias exit code 0 on success"
+  begin script
+    alias a1=b1 2>/dev/null
+  end script
+  expect_exit_code 0
+end test "alias exit code 0 on success"
+
+# ==============================================================================
+# unalias utility (from command_identification)
+# ==============================================================================
+
+requirement "SHALL-UNALIAS-1337" doc="The unalias utility shall conform to XBD 12.2 Utility Syntax Guidelines."
+
+begin test "unalias removes alias and query fails"
+  begin script
+    alias foo=bar
+    unalias foo
+    alias foo >/dev/null 2>&1 || echo pass
+  end script
+  expect_stdout "pass"
+end test "unalias removes alias and query fails"
+
+begin test "unalias -a empties alias list"
+  begin script
+    alias foo=bar
+    alias baz=qux
+    unalias -a
+    val=$(alias)
+    [ -z "$val" ] && echo pass || echo fail
+  end script
+  expect_stdout "pass"
+end test "unalias -a empties alias list"

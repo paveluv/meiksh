@@ -156,7 +156,7 @@ begin test "command -v for alias or no alias"
     alias greet="echo hi" 2>/dev/null
     command -v greet 2>/dev/null || echo NO_ALIAS
   end script
-  expect_stdout_line ".*(greet|echo hi|NO_ALIAS).*"
+  expect_stdout_line ".*(alias greet=.*|NO_ALIAS).*"
 end test "command -v for alias or no alias"
 
 begin test "command -v for nonexistent command fails"
@@ -195,6 +195,7 @@ begin test "command readonly behaves as declaration utility"
   expect_stdout "42"
 end test "command readonly behaves as declaration utility"
 
+# Note: 'local' is not specified by POSIX; this tests an extension
 begin test "command local inside function"
   begin script
     f() { command local LV=hello 2>/dev/null && echo $LV || echo $LV; }
@@ -241,25 +242,3 @@ begin test "variable references expand in assignment values"
   end script
   expect_stdout "hello_world"
 end test "variable references expand in assignment values"
-
-# ==============================================================================
-# XBD 12.2: Optional option-argument directly adjacent
-# ==============================================================================
-
-requirement "SHALL-XBD-12-4002" doc="If the SYNOPSIS shows an optional option-argument, a conforming application shall place any option-argument directly adjacent to the option"
-requirement "SHALL-XBD-12-4003" doc="If the utility receives an argument containing only the option, it shall behave as specified for an omitted option-argument"
-
-begin test "ulimit -Sf with value adjacent"
-  begin script
-    ulimit -Sf 100
-    ulimit -Sf
-  end script
-  expect_stdout_line ".*(100|unlimited).*"
-end test "ulimit -Sf with value adjacent"
-
-begin test "kill -l lists signals"
-  begin script
-    kill -l 2>/dev/null
-  end script
-  expect_stdout_line ".*(HUP|INT|TERM).*"
-end test "kill -l lists signals"

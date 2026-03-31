@@ -14,6 +14,7 @@ begin test "basic pipe stdout flows into stdin"
   begin script
     echo "hello pipe" | tr "p" "t"
   end script
+  expect_exit_code 0
   expect_stdout "hello tite"
 end test "basic pipe stdout flows into stdin"
 
@@ -22,6 +23,7 @@ begin test "pipeline assignments happen before redirections"
     echo "pipeline test" | cat > tmp_pipe.txt
     cat tmp_pipe.txt
   end script
+  expect_exit_code 0
   expect_stdout "pipeline test"
 end test "pipeline assignments happen before redirections"
 
@@ -29,6 +31,7 @@ begin test "pipeline with multiple stages"
   begin script
     echo "a" | sed "s/a/b/" | sed "s/b/c/"
   end script
+  expect_exit_code 0
   expect_stdout "c"
 end test "pipeline with multiple stages"
 
@@ -43,6 +46,7 @@ begin test "left associativity: false && echo foo || echo bar"
   begin script
     false && echo foo || echo bar
   end script
+  expect_exit_code 0
   expect_stdout "bar"
 end test "left associativity: false && echo foo || echo bar"
 
@@ -50,6 +54,7 @@ begin test "left associativity: true || echo foo && echo bar"
   begin script
     true || echo foo && echo bar
   end script
+  expect_exit_code 0
   expect_stdout "bar"
 end test "left associativity: true || echo foo && echo bar"
 
@@ -60,6 +65,7 @@ begin test "AND list executes second command on success"
   begin script
     true && echo "and success"
   end script
+  expect_exit_code 0
   expect_stdout "and success"
 end test "AND list executes second command on success"
 
@@ -77,6 +83,7 @@ begin test "OR list executes second command on failure"
   begin script
     false || echo "or success"
   end script
+  expect_exit_code 0
   expect_stdout "or success"
 end test "OR list executes second command on failure"
 
@@ -84,6 +91,7 @@ begin test "OR list skips second command on success"
   begin script
     true || echo "should not print"
   end script
+  expect_exit_code 0
   expect_stdout ""
 end test "OR list skips second command on success"
 
@@ -128,6 +136,7 @@ begin test "sequential AND-OR lists write solely bar"
     false && echo foo || echo bar
     true || echo foo && echo bar
   end script
+  expect_exit_code 0
   expect_stdout "bar\nbar"
 end test "sequential AND-OR lists write solely bar"
 

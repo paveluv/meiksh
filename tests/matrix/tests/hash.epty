@@ -162,3 +162,43 @@ begin test "hashing a shell function does not add it"
   end script
   expect_stdout "notfound"
 end test "hashing a shell function does not add it"
+
+# ==============================================================================
+# hash utility (from command_identification)
+# ==============================================================================
+
+requirement "SHALL-HASH-1213" doc="The hash utility shall conform to XBD 12.2 Utility Syntax Guidelines."
+requirement "SHALL-HASH-1217" doc="The standard output of hash shall be used when no arguments are specified."
+requirement "SHALL-HASH-1218" doc="This list shall consist of those utilities named in previous hash invocations that have been invoked."
+requirement "SHALL-HASH-1219" doc="This list shall be cleared when the contents of the PATH environment variable are changed."
+
+begin test "hash remembers and lists utilities"
+  begin script
+    hash -r
+    hash sh
+    hash >/dev/null && echo pass || echo fail
+  end script
+  expect_stdout "pass"
+end test "hash remembers and lists utilities"
+
+begin test "hash output goes to stdout"
+  begin script
+    hash -r
+    hash echo 2>/dev/null
+    echo 2>/dev/null
+    hash 2>/dev/null
+    echo pass
+  end script
+  expect_stdout_line "pass"
+end test "hash output goes to stdout"
+
+begin test "PATH change clears hash table"
+  begin script
+    hash -r
+    hash echo 2>/dev/null
+    echo >/dev/null
+    PATH="$PATH"
+    hash 2>/dev/null | wc -l
+  end script
+  expect_stdout_line ".*0.*"
+end test "PATH change clears hash table"

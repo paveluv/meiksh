@@ -103,3 +103,417 @@ begin test "range expressions and hyphen positioning"
   end script
   expect_stdout "match b range\nmatch - first\nmatch - last\nmatch ] and -\nmatch ] in ]ac-"
 end test "range expressions and hyphen positioning"
+
+# ==============================================================================
+# Bracket expressions — basic semantics (from locale.epty)
+# ==============================================================================
+
+requirement "SHALL-XBD-9-3-5-2000" doc="A bracket expression is an RE that matches a specific set of single characters"
+
+begin test "bracket expression matches single characters"
+  setenv "LC_ALL" "test_EPTY.UTF-8"
+  begin script
+    case "a" in
+      [abc]) echo "match";;
+      *) echo "nomatch";;
+    esac
+  end script
+  expect_stdout "match"
+end test "bracket expression matches single characters"
+
+requirement "SHALL-XBD-9-3-5-2001" doc="] loses special meaning if first in bracket expression"
+
+begin test "right-bracket first in bracket expression"
+  setenv "LC_ALL" "test_EPTY.UTF-8"
+  begin script
+    case "]" in
+      []abc]) echo "match";;
+      *) echo "nomatch";;
+    esac
+  end script
+  expect_stdout "match"
+end test "right-bracket first in bracket expression"
+
+requirement "SHALL-XBD-9-3-5-2002" doc="] terminates bracket expression unless in collating symbol or special sequence"
+
+begin test "right-bracket terminates bracket expression"
+  setenv "LC_ALL" "test_EPTY.UTF-8"
+  begin script
+    case "b" in
+      [ab]) echo "match";;
+      *) echo "nomatch";;
+    esac
+    case "]" in
+      [ab]) echo "bracket_match";;
+      *) echo "bracket_nomatch";;
+    esac
+  end script
+  expect_stdout_line "match"
+  expect_stdout_line "bracket_nomatch"
+end test "right-bracket terminates bracket expression"
+
+requirement "SHALL-XBD-9-3-5-2003" doc="In BRE, . * [ \\ lose special meaning inside bracket expression"
+
+begin test "special BRE chars lose meaning in bracket expression"
+  setenv "LC_ALL" "test_EPTY.UTF-8"
+  begin script
+    echo '.' | grep '[.*]' >/dev/null && echo "dot_match"
+    echo '*' | grep '[.*]' >/dev/null && echo "star_match"
+    echo 'x' | grep '[.*]' >/dev/null && echo "x_match" || echo "x_nomatch"
+  end script
+  expect_stdout_line "dot_match"
+  expect_stdout_line "star_match"
+  expect_stdout_line "x_nomatch"
+end test "special BRE chars lose meaning in bracket expression"
+
+requirement "SHALL-XBD-9-3-5-2004" doc="In ERE, special chars lose meaning inside bracket expression"
+
+begin test "special ERE chars lose meaning in bracket expression"
+  setenv "LC_ALL" "test_EPTY.UTF-8"
+  begin script
+    echo '(' | grep -E '[(+?]' >/dev/null && echo "paren_match"
+    echo '+' | grep -E '[(+?]' >/dev/null && echo "plus_match"
+    echo 'x' | grep -E '[(+?]' >/dev/null && echo "x_match" || echo "x_nomatch"
+  end script
+  expect_stdout_line "paren_match"
+  expect_stdout_line "plus_match"
+  expect_stdout_line "x_nomatch"
+end test "special ERE chars lose meaning in bracket expression"
+
+requirement "SHALL-XBD-9-3-5-2005" doc="In shell patterns, special chars lose meaning inside bracket expression"
+
+begin test "special shell pattern chars lose meaning in bracket expression"
+  setenv "LC_ALL" "test_EPTY.UTF-8"
+  begin script
+    case '?' in
+      [?*]) echo "qmark_match";;
+      *) echo "qmark_nomatch";;
+    esac
+    case '*' in
+      [?*]) echo "star_match";;
+      *) echo "star_nomatch";;
+    esac
+    case 'x' in
+      [?*]) echo "x_match";;
+      *) echo "x_nomatch";;
+    esac
+  end script
+  expect_stdout_line "qmark_match"
+  expect_stdout_line "star_match"
+  expect_stdout_line "x_nomatch"
+end test "special shell pattern chars lose meaning in bracket expression"
+
+requirement "SHALL-XBD-9-3-5-2006" doc="[. [= and [: are special character sequences in bracket expressions"
+
+begin test "bracket expression special sequences are recognized"
+  setenv "LC_ALL" "test_EPTY.UTF-8"
+  begin script
+    case "a" in
+      [[:alpha:]]) echo "class_match";;
+      *) echo "class_nomatch";;
+    esac
+  end script
+  expect_stdout "class_match"
+end test "bracket expression special sequences are recognized"
+
+requirement "SHALL-XBD-9-3-5-2007" doc="Special sequences shall be followed by valid expression and matching terminator"
+
+begin test "bracket expression special sequences have matching terminators"
+  setenv "LC_ALL" "test_EPTY.UTF-8"
+  begin script
+    case "5" in
+      [[:digit:]]) echo "match";;
+      *) echo "nomatch";;
+    esac
+  end script
+  expect_stdout "match"
+end test "bracket expression special sequences have matching terminators"
+
+requirement "SHALL-XBD-9-3-5-2008" doc="Matching list matches any single character matched by one of the expressions"
+
+begin test "matching list expression"
+  setenv "LC_ALL" "test_EPTY.UTF-8"
+  begin script
+    case "3" in
+      [[:digit:]a-f]) echo "match";;
+      *) echo "nomatch";;
+    esac
+    case "e" in
+      [[:digit:]a-f]) echo "match2";;
+      *) echo "nomatch2";;
+    esac
+    case "z" in
+      [[:digit:]a-f]) echo "match3";;
+      *) echo "nomatch3";;
+    esac
+  end script
+  expect_stdout_line "match"
+  expect_stdout_line "match2"
+  expect_stdout_line "nomatch3"
+end test "matching list expression"
+
+requirement "SHALL-XBD-9-3-5-2009" doc="An ordinary character in the list matches only that character"
+
+begin test "ordinary character in bracket expression"
+  setenv "LC_ALL" "test_EPTY.UTF-8"
+  begin script
+    case "a" in
+      [abc]) echo "match";;
+      *) echo "nomatch";;
+    esac
+    case "d" in
+      [abc]) echo "match2";;
+      *) echo "nomatch2";;
+    esac
+  end script
+  expect_stdout_line "match"
+  expect_stdout_line "nomatch2"
+end test "ordinary character in bracket expression"
+
+requirement "SHALL-XBD-9-3-5-2010" doc="Non-matching list with ^ is the logical inverse"
+
+begin test "non-matching list with circumflex"
+  setenv "LC_ALL" "test_EPTY.UTF-8"
+  begin script
+    case "x" in
+      [^abc]) echo "match";;
+      *) echo "nomatch";;
+    esac
+    case "a" in
+      [^abc]) echo "match2";;
+      *) echo "nomatch2";;
+    esac
+  end script
+  expect_stdout_line "match"
+  expect_stdout_line "nomatch2"
+end test "non-matching list with circumflex"
+
+requirement "SHALL-XBD-9-3-5-2011" doc="Circumflex has special meaning only when first in list after ["
+
+begin test "circumflex only special when first"
+  setenv "LC_ALL" "test_EPTY.UTF-8"
+  begin script
+    case "^" in
+      [a^b]) echo "match";;
+      *) echo "nomatch";;
+    esac
+  end script
+  expect_stdout "match"
+end test "circumflex only special when first"
+
+requirement "SHALL-XBD-9-3-5-2012" doc="Multi-character collating elements shall be represented as collating symbols"
+
+begin test "multi-character collating elements notation"
+  setenv "LC_ALL" "test_EPTY.UTF-8"
+  begin script
+    case "a" in
+      [abc]) echo "basic_match";;
+      *) echo "basic_nomatch";;
+    esac
+  end script
+  expect_stdout "basic_match"
+end test "multi-character collating elements notation"
+
+requirement "SHALL-XBD-9-3-5-2013" doc="Collating symbol [.x.] matches the collating element"
+
+begin test "collating symbol basic syntax"
+  setenv "LC_ALL" "test_EPTY.UTF-8"
+  begin script
+    case "a" in
+      [[.a.]]) echo "match";;
+      *) echo "nomatch";;
+    esac
+  end script
+  expect_stdout "match"
+end test "collating symbol basic syntax"
+
+requirement "SHALL-XBD-9-3-5-2014" doc="Equivalence class represents set of collating elements in same class"
+
+begin test "equivalence class expression syntax"
+  setenv "LC_ALL" "test_EPTY.UTF-8"
+  begin script
+    case "a" in
+      [[=a=]]) echo "match";;
+      *) echo "nomatch";;
+    esac
+  end script
+  expect_stdout "match"
+end test "equivalence class expression syntax"
+
+requirement "SHALL-XBD-9-3-5-2015" doc="Only primary equivalence classes shall be recognized"
+
+begin test "primary equivalence class recognition"
+  setenv "LC_ALL" "test_EPTY.UTF-8"
+  begin script
+    case "a" in
+      [[=a=]]) echo "match";;
+      *) echo "nomatch";;
+    esac
+  end script
+  expect_stdout "match"
+end test "primary equivalence class recognition"
+
+requirement "SHALL-XBD-9-3-5-2016" doc="Equivalence class expressed by enclosing a collating element within [= =]"
+
+begin test "equivalence class bracket notation"
+  setenv "LC_ALL" "test_EPTY.UTF-8"
+  begin script
+    case "a" in
+      [[=a=]bc]) echo "match";;
+      *) echo "nomatch";;
+    esac
+    case "b" in
+      [[=a=]bc]) echo "match2";;
+      *) echo "nomatch2";;
+    esac
+  end script
+  expect_stdout_line "match"
+  expect_stdout_line "match2"
+end test "equivalence class bracket notation"
+
+requirement "SHALL-XBD-9-3-5-2017" doc="If collating element not in equivalence class, treated as collating symbol"
+
+begin test "equivalence class fallback to collating symbol"
+  setenv "LC_ALL" "test_EPTY.UTF-8"
+  begin script
+    case "z" in
+      [[=z=]]) echo "match";;
+      *) echo "nomatch";;
+    esac
+  end script
+  expect_stdout "match"
+end test "equivalence class fallback to collating symbol"
+
+requirement "SHALL-XBD-9-3-5-2019" doc="All character classes specified in the current locale shall be recognized"
+
+begin test "all character classes recognized in locale"
+  setenv "LC_ALL" "test_EPTY.UTF-8"
+  begin script
+    pass=true
+    for class in alpha digit upper lower space print; do
+      case "a" in
+        [[:${class}:]]*) ;;
+      esac
+    done
+    case "A" in [[:upper:]]) echo "upper_ok";; *) echo "upper_fail"; pass=false;; esac
+    case "a" in [[:lower:]]) echo "lower_ok";; *) echo "lower_fail"; pass=false;; esac
+    case "0" in [[:digit:]]) echo "digit_ok";; *) echo "digit_fail"; pass=false;; esac
+    case " " in [[:space:]]) echo "space_ok";; *) echo "space_fail"; pass=false;; esac
+    case "a" in [[:alpha:]]) echo "alpha_ok";; *) echo "alpha_fail"; pass=false;; esac
+    case "!" in [[:punct:]]) echo "punct_ok";; *) echo "punct_fail"; pass=false;; esac
+  end script
+  expect_stdout_line "upper_ok"
+  expect_stdout_line "lower_ok"
+  expect_stdout_line "digit_ok"
+  expect_stdout_line "space_ok"
+  expect_stdout_line "alpha_ok"
+  expect_stdout_line "punct_ok"
+end test "all character classes recognized in locale"
+
+requirement "SHALL-XBD-9-3-5-2021" doc="In non-POSIX locales, range expressions have unspecified behavior"
+
+begin test "range expression in POSIX locale"
+  setenv "LC_ALL" "C"
+  begin script
+    case "b" in
+      [a-z]) echo "match";;
+      *) echo "nomatch";;
+    esac
+    case "B" in
+      [a-z]) echo "upper_match";;
+      *) echo "upper_nomatch";;
+    esac
+  end script
+  expect_stdout_line "match"
+  expect_stdout_line "upper_nomatch"
+end test "range expression in POSIX locale"
+
+requirement "SHALL-XBD-9-3-5-2022" doc="Range expression with starting and ending points separated by hyphen"
+
+begin test "range expression basic syntax"
+  setenv "LC_ALL" "test_EPTY.UTF-8"
+  begin script
+    case "b" in
+      [a-c]) echo "match";;
+      *) echo "nomatch";;
+    esac
+    case "d" in
+      [a-c]) echo "match2";;
+      *) echo "nomatch2";;
+    esac
+  end script
+  expect_stdout_line "match"
+  expect_stdout_line "nomatch2"
+end test "range expression basic syntax"
+
+requirement "SHALL-XBD-9-3-5-2023" doc="Starting and ending range points shall be collating elements or symbols"
+
+begin test "range expression endpoints are collating elements"
+  setenv "LC_ALL" "test_EPTY.UTF-8"
+  begin script
+    case "m" in
+      [a-z]) echo "match";;
+      *) echo "nomatch";;
+    esac
+  end script
+  expect_stdout "match"
+end test "range expression endpoints are collating elements"
+
+requirement "SHALL-XBD-9-3-5-2024" doc="Hyphen treated as itself if first (after ^) or last in list"
+
+begin test "hyphen literal when first or last"
+  setenv "LC_ALL" "test_EPTY.UTF-8"
+  begin script
+    case "-" in
+      [-abc]) echo "first_match";;
+      *) echo "first_nomatch";;
+    esac
+    case "-" in
+      [abc-]) echo "last_match";;
+      *) echo "last_nomatch";;
+    esac
+  end script
+  expect_stdout_line "first_match"
+  expect_stdout_line "last_match"
+end test "hyphen literal when first or last"
+
+requirement "SHALL-XBD-9-3-5-2025" doc="Hyphen as starting range point: must come first or be specified as collating symbol"
+
+begin test "hyphen as starting range point"
+  setenv "LC_ALL" "test_EPTY.UTF-8"
+  begin script
+    case "-" in
+      [-a]) echo "match";;
+      *) echo "nomatch";;
+    esac
+  end script
+  expect_stdout "match"
+end test "hyphen as starting range point"
+
+requirement "SHALL-XBD-9-3-5-2026" doc="Both ] and - in bracket: ] first, - last"
+
+begin test "bracket with both ] and -"
+  setenv "LC_ALL" "test_EPTY.UTF-8"
+  begin script
+    case "]" in
+      []a-]) echo "bracket_match";;
+      *) echo "bracket_nomatch";;
+    esac
+    case "-" in
+      []a-]) echo "hyphen_match";;
+      *) echo "hyphen_nomatch";;
+    esac
+    case "a" in
+      []a-]) echo "a_match";;
+      *) echo "a_nomatch";;
+    esac
+    case "b" in
+      []a-]) echo "b_match";;
+      *) echo "b_nomatch";;
+    esac
+  end script
+  expect_stdout_line "bracket_match"
+  expect_stdout_line "hyphen_match"
+  expect_stdout_line "a_match"
+  expect_stdout_line "b_nomatch"
+end test "bracket with both ] and -"

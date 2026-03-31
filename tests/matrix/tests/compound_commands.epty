@@ -13,6 +13,7 @@ begin test "for loop iterates over items"
       printf "%s " "$i"
     done
   end script
+  expect_exit_code 0
   expect_stdout "a b c"
 end test "for loop iterates over items"
 
@@ -38,6 +39,7 @@ begin test "for loop with empty list does not execute body"
     done
     echo "$x"
   end script
+  expect_exit_code 0
   expect_stdout "1"
 end test "for loop with empty list does not execute body"
 
@@ -84,6 +86,7 @@ begin test "case with pipe patterns and early exit"
     *) echo "default" ;;
     esac
   end script
+  expect_exit_code 0
   expect_stdout "yes"
 end test "case with pipe patterns and early exit"
 
@@ -94,6 +97,7 @@ begin test "case default wildcard match"
     *) echo "default" ;;
     esac
   end script
+  expect_exit_code 0
   expect_stdout "default"
 end test "case default wildcard match"
 
@@ -128,6 +132,7 @@ begin test "if true branch"
       echo "else"
     fi
   end script
+  expect_exit_code 0
   expect_stdout "if"
 end test "if true branch"
 
@@ -141,6 +146,7 @@ begin test "elif true branch"
       echo "else"
     fi
   end script
+  expect_exit_code 0
   expect_stdout "elif"
 end test "elif true branch"
 
@@ -154,6 +160,7 @@ begin test "else branch"
       echo "else"
     fi
   end script
+  expect_exit_code 0
   expect_stdout "else"
 end test "else branch"
 
@@ -197,6 +204,7 @@ begin test "while loop iterates correctly"
       printf "%s " "$x"
     done
   end script
+  expect_exit_code 0
   expect_stdout "1 2 3"
 end test "while loop iterates correctly"
 
@@ -208,6 +216,7 @@ begin test "while loop with false condition does not execute"
     done
     echo "$x"
   end script
+  expect_exit_code 0
   expect_stdout "0"
 end test "while loop with false condition does not execute"
 
@@ -229,6 +238,7 @@ begin test "until loop iterates correctly"
       printf "%s " "$x"
     done
   end script
+  expect_exit_code 0
   expect_stdout "1 2 3"
 end test "until loop iterates correctly"
 
@@ -240,6 +250,7 @@ begin test "until loop with true condition does not execute"
     done
     echo "$x"
   end script
+  expect_exit_code 0
   expect_stdout "0"
 end test "until loop with true condition does not execute"
 
@@ -256,6 +267,7 @@ begin test "subshell variable isolation"
     (FOO=child)
     echo "$FOO"
   end script
+  expect_exit_code 0
   expect_stdout "parent"
 end test "subshell variable isolation"
 
@@ -271,5 +283,6 @@ begin test "redirection applies to all commands in group"
     { echo a; echo b; } > tmp_group.txt
     cat tmp_group.txt
   end script
+  expect_exit_code 0
   expect_stdout "a\nb"
 end test "redirection applies to all commands in group"

@@ -6,11 +6,7 @@ testsuite "Asynchronous Lists"
 
 requirement "SHALL-2-9-3-1-320" doc="If an AND-OR list is terminated by the control operator <ampersand> ( '&' ), the shell shall execute the AND-OR list asynchronously in a subshell environment."
 requirement "SHALL-2-9-3-1-321" doc="This subshell shall execute in the background; that is, the shell shall not wait for the subshell to terminate before executing the next command (if any); if there are no further commands to execute, the shell shall not wait for the subshell to terminate before exiting."
-requirement "SHALL-2-9-3-1-322" doc="If job control is enabled (see set , -m ), the AND-OR list shall become a job-control background job and a job number shall be assigned to it."
-requirement "SHALL-2-9-3-1-323" doc="If job control is disabled, the AND-OR list may become a non-job-control background job, in which case a job number shall be assigned to it; if no job number is assigned it shall become a background command but not a background job."
 requirement "SHALL-2-9-3-1-324" doc="The process ID associated with the asynchronous AND-OR list shall become known in the current shell execution environment; see 2.13 Shell Execution Environment."
-requirement "SHALL-2-9-3-1-325" doc="This process ID shall remain known until any one of the following occurs (and, unless otherwise specified, may continue to remain known after it occurs)."
-requirement "SHALL-2-9-3-1-329" doc="If the shell is interactive and the asynchronous AND-OR list became a background job, the job number and process ID shall be written to standard error."
 
 begin test "background job PID and wait"
   begin script
@@ -19,6 +15,7 @@ begin test "background job PID and wait"
     wait $bg_pid
     cat tmp_bg.txt
   end script
+  expect_exit_code 0
   expect_stdout "bg_test"
 end test "background job PID and wait"
 
@@ -29,6 +26,7 @@ begin test "background job runs in subshell"
     wait $!
     echo "$my_var"
   end script
+  expect_exit_code 0
   expect_stdout "parent"
 end test "background job runs in subshell"
 
@@ -46,6 +44,7 @@ begin test "background stdin from /dev/null"
     wait $!
     echo "done"
   end script
+  expect_exit_code 0
   expect_stdout "done"
 end test "background stdin from /dev/null"
 
@@ -55,5 +54,6 @@ begin test "explicit redirect overrides /dev/null"
     cat < tmp_in.txt &
     wait $!
   end script
+  expect_exit_code 0
   expect_stdout "redirected"
 end test "explicit redirect overrides /dev/null"
