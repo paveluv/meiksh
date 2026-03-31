@@ -109,7 +109,7 @@ assert_stdout 'a#b' \
 
 assert_pty_script 'spawn $TARGET_SHELL -i
 expect "$ "
-send "alias foo='"'"'echo aliased'"'"'"
+send "alias foo=\"echo aliased\""
 expect "$ "
 send "foo"
 expect "aliased"
@@ -119,9 +119,9 @@ wait'
 # Test alias with trailing space allowing subsequent word to be aliased.
 assert_pty_script 'spawn $TARGET_SHELL -i
 expect "$ "
-send "alias a1='"'"'echo '"'"'"
+send "alias a1=\"echo \""
 expect "$ "
-send "alias a2='"'"'chained'"'"'"
+send "alias a2=\"chained\""
 expect "$ "
 send "a1 a2"
 expect "chained"
