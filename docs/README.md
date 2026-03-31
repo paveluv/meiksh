@@ -37,17 +37,7 @@ Use the manifest-driven fetch script:
 ./docs/fetch-posix-docs.sh
 ```
 
-That script reads `docs/posix-manifest.txt` and downloads every required page into the matching path under `docs/posix/`.
-
-## Validate The Mirror
-
-Check that the local mirror contains every required page:
-
-```sh
-./scripts/check-posix-docs.sh
-```
-
-This validates presence and non-empty content for every manifest entry. It is the repository's basic guardrail before claiming a standards audit is complete.
+That script reads `docs/posix-manifest.txt`, downloads the POSIX tarball, and unpacks it under `docs/posix/`.
 
 ## Requirements Tracking
 
@@ -84,6 +74,6 @@ Issue 7 `sh` utility:
 
 ## Notes
 
-- `docs/posix-manifest.txt` is the mirror contract; `docs/fetch-posix-docs.sh` and `scripts/check-posix-docs.sh` are expected to stay in sync with it.
+- `docs/posix-manifest.txt` is the mirror contract, and `docs/fetch-posix-docs.sh` is expected to stay in sync with it.
 - `docs/spec-matrix.md` and the files under `docs/requirements/` should reference exact local `docs/posix/...` paths and anchors when recording conformance status.
 - Keep the downloaded material untracked.

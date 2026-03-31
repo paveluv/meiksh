@@ -33,5 +33,4 @@ The manifest includes the currently used low-level interfaces plus additional sh
 ## Audit Expectations
 
 - `docs/fetch-posix-docs.sh` should be able to populate every manifest entry.
-- `scripts/check-posix-docs.sh` should succeed before a standards-completeness claim is made.
 - `docs/spec-matrix.md` should reference exact local mirror paths from this inventory rather than ad-hoc external URLs.
