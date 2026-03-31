@@ -27,7 +27,8 @@ requirement "SHALL-DESCRIPTION-553" doc="If n has a value greater than 256 corre
 
 begin test "exit with value 200"
   begin script
-    (exit 200); echo $?
+    (exit 200)
+    echo $?
   end script
   expect_stdout "200"
 end test "exit with value 200"

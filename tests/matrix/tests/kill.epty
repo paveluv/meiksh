@@ -29,7 +29,10 @@ requirement "SHALL-KILL-1041" doc="When both -l and exit_status are specified, t
 
 begin test "kill with default signal sends SIGTERM"
   begin script
-    sleep 60 & p=$!; kill $p; wait $p 2>/dev/null; echo done
+    sleep 60 & p=$!
+    kill $p
+    wait $p 2>/dev/null
+    echo done
   end script
   expect_stdout "done"
 end test "kill with default signal sends SIGTERM"
@@ -40,14 +43,20 @@ end test "kill with default signal sends SIGTERM"
 
 begin test "kill -s TERM sends SIGTERM"
   begin script
-    sleep 60 & p=$!; kill -s TERM $p; wait $p 2>/dev/null; echo done
+    sleep 60 & p=$!
+    kill -s TERM $p
+    wait $p 2>/dev/null
+    echo done
   end script
   expect_stdout "done"
 end test "kill -s TERM sends SIGTERM"
 
 begin test "kill -s KILL sends SIGKILL"
   begin script
-    sleep 60 & p=$!; kill -s KILL $p; wait $p 2>/dev/null; echo done
+    sleep 60 & p=$!
+    kill -s KILL $p
+    wait $p 2>/dev/null
+    echo done
   end script
   expect_stdout "done"
 end test "kill -s KILL sends SIGKILL"
@@ -58,21 +67,30 @@ end test "kill -s KILL sends SIGKILL"
 
 begin test "kill -TERM abbreviated form"
   begin script
-    sleep 60 & p=$!; kill -TERM $p; wait $p 2>/dev/null; echo done
+    sleep 60 & p=$!
+    kill -TERM $p
+    wait $p 2>/dev/null
+    echo done
   end script
   expect_stdout "done"
 end test "kill -TERM abbreviated form"
 
 begin test "kill -KILL abbreviated form"
   begin script
-    sleep 60 & p=$!; kill -KILL $p; wait $p 2>/dev/null; echo done
+    sleep 60 & p=$!
+    kill -KILL $p
+    wait $p 2>/dev/null
+    echo done
   end script
   expect_stdout "done"
 end test "kill -KILL abbreviated form"
 
 begin test "kill -HUP abbreviated form"
   begin script
-    sleep 60 & p=$!; kill -HUP $p; wait $p 2>/dev/null; echo done
+    sleep 60 & p=$!
+    kill -HUP $p
+    wait $p 2>/dev/null
+    echo done
   end script
   expect_stdout "done"
 end test "kill -HUP abbreviated form"
@@ -83,14 +101,20 @@ end test "kill -HUP abbreviated form"
 
 begin test "kill -15 sends SIGTERM by number"
   begin script
-    sleep 60 & p=$!; kill -15 $p; wait $p 2>/dev/null; echo done
+    sleep 60 & p=$!
+    kill -15 $p
+    wait $p 2>/dev/null
+    echo done
   end script
   expect_stdout "done"
 end test "kill -15 sends SIGTERM by number"
 
 begin test "kill -9 sends SIGKILL by number"
   begin script
-    sleep 60 & p=$!; kill -9 $p; wait $p 2>/dev/null; echo done
+    sleep 60 & p=$!
+    kill -9 $p
+    wait $p 2>/dev/null
+    echo done
   end script
   expect_stdout "done"
 end test "kill -9 sends SIGKILL by number"
@@ -148,14 +172,20 @@ end test "kill -l 143 outputs TERM"
 
 begin test "kill exits 0 on success with default signal"
   begin script
-    sleep 60 & p=$!; kill $p; echo $?; wait $p 2>/dev/null
+    sleep 60 & p=$!
+    kill $p
+    echo $?
+    wait $p 2>/dev/null
   end script
   expect_stdout_line "0.*"
 end test "kill exits 0 on success with default signal"
 
 begin test "kill -s KILL exits 0 on success"
   begin script
-    sleep 60 & p=$!; kill -s KILL $p; echo $?; wait $p 2>/dev/null
+    sleep 60 & p=$!
+    kill -s KILL $p
+    echo $?
+    wait $p 2>/dev/null
   end script
   expect_stdout_line "0.*"
 end test "kill -s KILL exits 0 on success"

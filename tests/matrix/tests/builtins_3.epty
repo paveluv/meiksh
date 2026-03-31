@@ -10,7 +10,9 @@ requirement "SHALL-DESCRIPTION-562" doc="The export special built-in shall suppo
 
 begin test "export makes variable available to child processes"
   begin script
-    foo="bar"; export foo baz="qux"; env | grep -E "^(foo|baz)=" | sort
+    foo="bar"
+    export foo baz="qux"
+    env | grep -E "^(foo|baz)=" | sort
   end script
   expect_stdout "baz=qux\nfoo=bar"
 end test "export makes variable available to child processes"
@@ -20,7 +22,11 @@ requirement "SHALL-DESCRIPTION-645" doc="The shell shall format the output, incl
 
 begin test "export -p generates eval-able output"
   begin script
-    export EXPORTED_VAR="val with spaces"; output=$(export -p | grep "EXPORTED_VAR="); unset EXPORTED_VAR; eval "$output"; echo "$EXPORTED_VAR"
+    export EXPORTED_VAR="val with spaces"
+    output=$(export -p | grep "EXPORTED_VAR=")
+    unset EXPORTED_VAR
+    eval "$output"
+    echo "$EXPORTED_VAR"
   end script
   expect_stdout "val with spaces"
 end test "export -p generates eval-able output"
@@ -39,14 +45,18 @@ requirement "SHALL-DESCRIPTION-572" doc="The readonly special built-in shall sup
 
 begin test "readonly prevents assignment"
   begin script
-    readonly RO_VAR="protected"; RO_VAR="mutated"
+    readonly RO_VAR="protected"
+    RO_VAR="mutated"
   end script
   not_expect_exit_code 0
 end test "readonly prevents assignment"
 
 begin test "readonly -p generates eval-able output"
   begin script
-    readonly RO_VAR="protected"; output=$(readonly -p | grep "RO_VAR="); echo "$output; echo \"$RO_VAR\"" > tmp_ro.sh; {{SHELL}} tmp_ro.sh
+    readonly RO_VAR="protected"
+    output=$(readonly -p | grep "RO_VAR=")
+    echo "$output; echo \"$RO_VAR\"" > tmp_ro.sh
+    {{SHELL}} tmp_ro.sh
   end script
   expect_stdout "protected"
 end test "readonly -p generates eval-able output"
@@ -58,7 +68,8 @@ end test "readonly -p generates eval-able output"
 
 begin test "set lists all shell variables"
   begin script
-    MY_TEST_VAR="hello_set"; set | grep -q "^MY_TEST_VAR=hello_set$" && echo "found"
+    MY_TEST_VAR="hello_set"
+    set | grep -q "^MY_TEST_VAR=hello_set$" && echo "found"
   end script
   expect_stdout "found"
 end test "set lists all shell variables"
@@ -79,7 +90,9 @@ requirement "SHALL-DESCRIPTION-656" doc="The unset special built-in shall suppor
 
 begin test "unset removes a variable"
   begin script
-    my_var="value"; unset my_var; echo "${my_var:-is_unset}"
+    my_var="value"
+    unset my_var
+    echo "${my_var:-is_unset}"
   end script
   expect_stdout "is_unset"
 end test "unset removes a variable"
@@ -88,7 +101,9 @@ requirement "SHALL-DESCRIPTION-620" doc="The value n shall be an unsigned decima
 
 begin test "unset -f removes a function"
   begin script
-    my_func() { echo "running"; }; unset -f my_func; my_func 2>/dev/null || echo "not found"
+    my_func() { echo "running"; }
+    unset -f my_func
+    my_func 2>/dev/null || echo "not found"
   end script
   expect_stdout "not found"
 end test "unset -f removes a function"

@@ -10,7 +10,8 @@ requirement "SHALL-XBD-9-3-5-2009" doc="An ordinary character in the list shall 
 
 begin test "bracket expression matches ordinary characters"
   begin script
-    case b in [abc]) echo "match b" ;; *) echo "no match" ;; esac; case z in [abc]) echo "match z" ;; *) echo "no match" ;; esac
+    case b in [abc]) echo "match b" ;; *) echo "no match" ;; esac
+    case z in [abc]) echo "match z" ;; *) echo "no match" ;; esac
   end script
   expect_stdout "match b\nno match"
 end test "bracket expression matches ordinary characters"
@@ -24,7 +25,10 @@ requirement "SHALL-XBD-9-3-5-2011" doc="The circumflex shall have this special m
 
 begin test "circumflex negation in bracket expressions"
   begin script
-    case b in [!ac]) echo "match b" ;; *) echo "no match b" ;; esac; case a in [!ac]) echo "match a" ;; *) echo "no match a" ;; esac; case a in [a!c]) echo "match a" ;; *) echo "no match a" ;; esac; case '!' in [a!c]) echo "match !" ;; *) echo "no match !" ;; esac
+    case b in [!ac]) echo "match b" ;; *) echo "no match b" ;; esac
+    case a in [!ac]) echo "match a" ;; *) echo "no match a" ;; esac
+    case a in [a!c]) echo "match a" ;; *) echo "no match a" ;; esac
+    case '!' in [a!c]) echo "match !" ;; *) echo "no match !" ;; esac
   end script
   expect_stdout "match b\nno match a\nmatch a\nmatch !"
 end test "circumflex negation in bracket expressions"
@@ -38,7 +42,10 @@ requirement "SHALL-XBD-9-3-5-2002" doc="Otherwise, it shall terminate the bracke
 
 begin test "right-square-bracket literal when first in list"
   begin script
-    case "]" in []a]) echo "match ]" ;; *) echo "no match ]" ;; esac; case a in []a]) echo "match a" ;; *) echo "no match a" ;; esac; case "]" in [!]]) echo "no match ]" ;; *) echo "match ]" ;; esac; case a in [!]]) echo "match a" ;; *) echo "no match a" ;; esac
+    case "]" in []a]) echo "match ]" ;; *) echo "no match ]" ;; esac
+    case a in []a]) echo "match a" ;; *) echo "no match a" ;; esac
+    case "]" in [!]]) echo "no match ]" ;; *) echo "match ]" ;; esac
+    case a in [!]]) echo "match a" ;; *) echo "no match a" ;; esac
   end script
   expect_stdout "match ]\nmatch a\nmatch ]\nmatch a"
 end test "right-square-bracket literal when first in list"
@@ -51,7 +58,10 @@ requirement "SHALL-XBD-9-3-5-2005" doc="When the bracket expression appears with
 
 begin test "special chars lose meaning inside bracket expression"
   begin script
-    case "?" in [?]) echo "match ?" ;; *) echo "no match ?" ;; esac; case "*" in [*]) echo "match *" ;; *) echo "no match *" ;; esac; case "[" in [\[]) echo "match [" ;; *) echo "no match [" ;; esac; case "\\" in [\\]) echo "match \\" ;; *) echo "no match \\" ;; esac
+    case "?" in [?]) echo "match ?" ;; *) echo "no match ?" ;; esac
+    case "*" in [*]) echo "match *" ;; *) echo "no match *" ;; esac
+    case "[" in [\[]) echo "match [" ;; *) echo "no match [" ;; esac
+    case "\\" in [\\]) echo "match \\" ;; *) echo "no match \\" ;; esac
   end script
   expect_stdout "match \?\nmatch \*\nmatch \[\nmatch \\"
 end test "special chars lose meaning inside bracket expression"
@@ -65,7 +75,10 @@ requirement "SHALL-XBD-9-3-5-2006" doc="The following character class expression
 
 begin test "character class expressions match correctly"
   begin script
-    case "A" in [[:alpha:]]) echo "match A alpha" ;; *) echo "no match A alpha" ;; esac; case "5" in [[:digit:]]) echo "match 5 digit" ;; *) echo "no match 5 digit" ;; esac; case " " in [[:space:]]) echo "match space" ;; *) echo "no match space" ;; esac; case "!" in [[:punct:]]) echo "match punct" ;; *) echo "no match punct" ;; esac
+    case "A" in [[:alpha:]]) echo "match A alpha" ;; *) echo "no match A alpha" ;; esac
+    case "5" in [[:digit:]]) echo "match 5 digit" ;; *) echo "no match 5 digit" ;; esac
+    case " " in [[:space:]]) echo "match space" ;; *) echo "no match space" ;; esac
+    case "!" in [[:punct:]]) echo "match punct" ;; *) echo "no match punct" ;; esac
   end script
   expect_stdout "match A alpha\nmatch 5 digit\nmatch space\nmatch punct"
 end test "character class expressions match correctly"
@@ -82,7 +95,11 @@ requirement "SHALL-XBD-9-3-5-2026" doc="If a bracket expression specifies both -
 
 begin test "range expressions and hyphen positioning"
   begin script
-    case b in [a-c]) echo "match b range" ;; *) echo "no match b" ;; esac; case "-" in [-ac]) echo "match - first" ;; *) echo "no match" ;; esac; case "-" in [ac-]) echo "match - last" ;; *) echo "no match" ;; esac; case "-" in []ac-]) echo "match ] and -" ;; *) echo "no match" ;; esac; case "]" in []ac-]) echo "match ] in ]ac-" ;; *) echo "no match" ;; esac
+    case b in [a-c]) echo "match b range" ;; *) echo "no match b" ;; esac
+    case "-" in [-ac]) echo "match - first" ;; *) echo "no match" ;; esac
+    case "-" in [ac-]) echo "match - last" ;; *) echo "no match" ;; esac
+    case "-" in []ac-]) echo "match ] and -" ;; *) echo "no match" ;; esac
+    case "]" in []ac-]) echo "match ] in ]ac-" ;; *) echo "no match" ;; esac
   end script
   expect_stdout "match b range\nmatch - first\nmatch - last\nmatch ] and -\nmatch ] in ]ac-"
 end test "range expressions and hyphen positioning"

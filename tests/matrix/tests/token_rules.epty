@@ -9,7 +9,8 @@ requirement "SHALL-2-3-046" doc="The current character shall be used as the begi
 
 begin test "unquoted > is a control operator"
   begin script
-    echo a>tmp_token.txt; cat tmp_token.txt
+    echo a>tmp_token.txt
+    cat tmp_token.txt
   end script
   expect_stdout "a"
 end test "unquoted > is a control operator"
@@ -19,7 +20,9 @@ requirement "SHALL-2-3-035" doc="If the previous character was part of an operat
 
 begin test ">> forms a single append operator"
   begin script
-    echo a >tmp_token.txt; echo b >>tmp_token.txt; cat tmp_token.txt
+    echo a >tmp_token.txt
+    echo b >>tmp_token.txt
+    cat tmp_token.txt
   end script
   expect_stdout "a\nb"
 end test ">> forms a single append operator"

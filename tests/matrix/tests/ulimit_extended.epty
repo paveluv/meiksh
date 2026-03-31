@@ -8,14 +8,16 @@ requirement "SHALL-ULIMIT-1297" doc="ulimit reports and sets resource limits in 
 
 begin test "ulimit -f produces output"
   begin script
-    out=$(ulimit -f); [ -n "$out" ] && echo pass || echo fail
+    out=$(ulimit -f)
+    [ -n "$out" ] && echo pass || echo fail
   end script
   expect_stdout "pass"
 end test "ulimit -f produces output"
 
 begin test "ulimit -a lists multiple limits"
   begin script
-    lines=$(ulimit -a | wc -l); [ "$lines" -gt 1 ] && echo pass || echo fail
+    lines=$(ulimit -a | wc -l)
+    [ "$lines" -gt 1 ] && echo pass || echo fail
   end script
   expect_stdout "pass"
 end test "ulimit -a lists multiple limits"
@@ -28,7 +30,8 @@ requirement "SHALL-ULIMIT-1044" doc="The format for the value of a resource that
 
 begin test "ulimit -f reports unlimited after setting unlimited"
   begin script
-    ulimit -f unlimited; ulimit -f
+    ulimit -f unlimited
+    ulimit -f
   end script
   expect_stdout "unlimited"
 end test "ulimit -f reports unlimited after setting unlimited"
@@ -41,14 +44,16 @@ requirement "SHALL-ULIMIT-1073" doc="-H option shall report or set the hard reso
 
 begin test "ulimit -Hf produces output"
   begin script
-    out=$(ulimit -Hf); [ -n "$out" ] && echo pass || echo fail
+    out=$(ulimit -Hf)
+    [ -n "$out" ] && echo pass || echo fail
   end script
   expect_stdout "pass"
 end test "ulimit -Hf produces output"
 
 begin test "ulimit -Hf returns number or unlimited"
   begin script
-    val=$(ulimit -Hf); case "$val" in unlimited|*[0-9]*) echo pass ;; *) echo fail ;; esac
+    val=$(ulimit -Hf)
+    case "$val" in unlimited|*[0-9]*) echo pass ;; *) echo fail ;; esac
   end script
   expect_stdout "pass"
 end test "ulimit -Hf returns number or unlimited"
@@ -68,7 +73,12 @@ end test "setting soft limit to its current value succeeds"
 
 begin test "setting soft limit to unlimited succeeds when hard is unlimited"
   begin script
-    hard=$(ulimit -Hf); if [ "$hard" = "unlimited" ]; then ulimit -Sf unlimited && echo pass; else echo pass; fi
+    hard=$(ulimit -Hf)
+    if [ "$hard" = "unlimited" ]; then
+      ulimit -Sf unlimited && echo pass
+    else
+      echo pass
+    fi
   end script
   expect_stdout "pass"
 end test "setting soft limit to unlimited succeeds when hard is unlimited"
@@ -88,7 +98,8 @@ requirement "SHALL-ULIMIT-1077" doc="A single limit value shall be written in th
 
 begin test "ulimit -f returns numeric or unlimited"
   begin script
-    val=$(ulimit -f); case "$val" in unlimited) echo pass ;; *[!0-9]*) echo fail ;; *) echo pass ;; esac
+    val=$(ulimit -f)
+    case "$val" in unlimited) echo pass ;; *[!0-9]*) echo fail ;; *) echo pass ;; esac
   end script
   expect_stdout "pass"
 end test "ulimit -f returns numeric or unlimited"
@@ -101,7 +112,12 @@ requirement "SHALL-ULIMIT-1298" doc="The value \"unlimited\" shall be considered
 
 begin test "unlimited hard limit allows setting arbitrary soft limit"
   begin script
-    hard=$(ulimit -Hf); if [ "$hard" = "unlimited" ]; then ulimit -Sf 12345 && ulimit -Sf unlimited && echo pass; else echo pass; fi
+    hard=$(ulimit -Hf)
+    if [ "$hard" = "unlimited" ]; then
+      ulimit -Sf 12345 && ulimit -Sf unlimited && echo pass
+    else
+      echo pass
+    fi
   end script
   expect_stdout "pass"
 end test "unlimited hard limit allows setting arbitrary soft limit"
@@ -114,7 +130,12 @@ requirement "SHALL-ULIMIT-1299" doc="The value \"unlimited\" shall mean that the
 
 begin test "unlimited means no enforcement"
   begin script
-    ulimit -Sf unlimited 2>/dev/null; if [ "$(ulimit -Sf)" = "unlimited" ]; then echo pass; else echo skip; fi
+    ulimit -Sf unlimited 2>/dev/null
+    if [ "$(ulimit -Sf)" = "unlimited" ]; then
+      echo pass
+    else
+      echo skip
+    fi
   end script
   expect_stdout_line ".*"
 end test "unlimited means no enforcement"
@@ -134,14 +155,20 @@ end test "0 is a valid limit"
 
 begin test "setting soft limit to 0 takes effect"
   begin script
-    ulimit -Sf 0; ulimit -Sf
+    ulimit -Sf 0
+    ulimit -Sf
   end script
   expect_stdout "0"
 end test "setting soft limit to 0 takes effect"
 
 begin test "current soft limit is a valid numeric value to re-set"
   begin script
-    cur=$(ulimit -Sf); if [ "$cur" != "unlimited" ]; then ulimit -Sf $cur && echo pass; else echo pass; fi
+    cur=$(ulimit -Sf)
+    if [ "$cur" != "unlimited" ]; then
+      ulimit -Sf $cur && echo pass
+    else
+      echo pass
+    fi
   end script
   expect_stdout "pass"
 end test "current soft limit is a valid numeric value to re-set"
@@ -154,7 +181,9 @@ requirement "SHALL-ULIMIT-1312" doc="The format of the output within each line i
 
 begin test "ulimit -a lines each contain a limit value"
   begin script
-    bad=$(ulimit -a | while IFS= read -r line; do case "$line" in *unlimited*|*[0-9]*) ;; "") ;; *) echo "bad: $line" ;; esac; done); [ -z "$bad" ] && echo pass || echo fail
+    bad=$(ulimit -a | while IFS= read -r line; do case "$line" in *unlimited*|*[0-9]*) ;; "") ;; *) echo "bad: $line" ;; esac
+    done)
+    [ -z "$bad" ] && echo pass || echo fail
   end script
   expect_stdout "pass"
 end test "ulimit -a lines each contain a limit value"

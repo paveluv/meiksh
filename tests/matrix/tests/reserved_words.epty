@@ -8,14 +8,18 @@ requirement "SHALL-2-4-058" doc="The following words shall be recognized as rese
 
 begin test "quoted reserved word is not recognized"
   begin script
-    "if" true; then echo yes; fi
+    "if" true
+    then echo yes
+    fi
   end script
   not_expect_exit_code 0
 end test "quoted reserved word is not recognized"
 
 begin test "unquoted reserved word builds syntax"
   begin script
-    if true; then echo "yes"; fi
+    if true; then
+      echo "yes"
+    fi
   end script
   expect_stdout "yes"
 end test "unquoted reserved word builds syntax"

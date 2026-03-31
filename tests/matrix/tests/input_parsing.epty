@@ -81,21 +81,34 @@ requirement "SHALL-GETOPTS-1185" doc="This condition shall be considered to be a
 
 begin test "getopts basic option parsing"
   begin script
-    set -- -a -b foo bar; getopts "ab:" opt; echo "$opt"; getopts "ab:" opt; echo "$opt $OPTARG"; getopts "ab:" opt; echo "$?"; echo "$OPTIND"
+    set -- -a -b foo bar
+    getopts "ab:" opt
+    echo "$opt"
+    getopts "ab:" opt
+    echo "$opt $OPTARG"
+    getopts "ab:" opt
+    echo "$?"
+    echo "$OPTIND"
   end script
   expect_stdout "a\nb foo\n1\n4"
 end test "getopts basic option parsing"
 
 begin test "getopts silent mode error handling"
   begin script
-    set -- -x -b; getopts ":ab:" opt; echo "$opt $OPTARG"; getopts ":ab:" opt; echo "$opt $OPTARG"
+    set -- -x -b
+    getopts ":ab:" opt
+    echo "$opt $OPTARG"
+    getopts ":ab:" opt
+    echo "$opt $OPTARG"
   end script
   expect_stdout "\? x\n: b"
 end test "getopts silent mode error handling"
 
 begin test "getopts verbose mode missing option-argument"
   begin script
-    set -- -b; getopts "ab:" opt 2>/dev/null; echo "$opt ${OPTARG:-unset}"
+    set -- -b
+    getopts "ab:" opt 2>/dev/null
+    echo "$opt ${OPTARG:-unset}"
   end script
   expect_stdout "\? unset"
 end test "getopts verbose mode missing option-argument"

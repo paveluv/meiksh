@@ -8,7 +8,8 @@ requirement "SHALL-XBD-8-3011" doc="PATH This variable shall represent the seque
 
 begin test "PATH used to find executable"
   begin script
-    mkdir -p mybin; printf '#!/bin/sh
+    mkdir -p mybin
+    printf '#!/bin/sh
     echo mytool executed
     ' > mybin/mytool; chmod +x mybin/mytool; PATH="$PWD/mybin:$PATH" mytool; rm -rf mybin
   end script
@@ -36,7 +37,10 @@ requirement "SHALL-XBD-8-3010" doc="HOME The system shall initialize this variab
 
 begin test "HOME used for tilde expansion"
   begin script
-    mkdir -p myhome; HOME="$PWD/myhome"; echo ~; rm -rf myhome
+    mkdir -p myhome
+    HOME="$PWD/myhome"
+    echo ~
+    rm -rf myhome
   end script
   expect_stdout ".*/myhome"
 end test "HOME used for tilde expansion"
@@ -58,7 +62,14 @@ requirement "SHALL-XBD-8-3006" doc="This variable shall contain a sequence of te
 
 begin test "locale variables passed to child environment"
   begin script
-    export LANG=C; export LC_ALL=C; export LC_COLLATE=C; export LC_CTYPE=C; export LC_MESSAGES=C; export LANGUAGE=C; export NLSPATH=/dev/null; env | grep -E "^(LANG|LC_ALL|LC_COLLATE|LC_CTYPE|LC_MESSAGES|LANGUAGE|NLSPATH)=" | sort
+    export LANG=C
+    export LC_ALL=C
+    export LC_COLLATE=C
+    export LC_CTYPE=C
+    export LC_MESSAGES=C
+    export LANGUAGE=C
+    export NLSPATH=/dev/null
+    env | grep -E "^(LANG|LC_ALL|LC_COLLATE|LC_CTYPE|LC_MESSAGES|LANGUAGE|NLSPATH)=" | sort
   end script
   expect_stdout "LANG=C\nLANGUAGE=C\nLC_ALL=C\nLC_COLLATE=C\nLC_CTYPE=C\nLC_MESSAGES=C\nNLSPATH=/dev/null"
 end test "locale variables passed to child environment"

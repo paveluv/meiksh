@@ -17,7 +17,8 @@ requirement "SHALL-2-10-1-402" doc="The WORD tokens shall have the word expansio
 
 begin test "variable assignment and expansion in simple command"
   begin script
-    var="value"; echo "$var"
+    var="value"
+    echo "$var"
   end script
   expect_stdout "value"
 end test "variable assignment and expansion in simple command"

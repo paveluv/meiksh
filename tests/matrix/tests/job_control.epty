@@ -150,7 +150,8 @@ requirement "SHALL-2-12-461" doc="If job control disabled, async commands inheri
 
 begin test "signal inheritance with job control disabled"
   begin script
-    trap "" INT; (trap) & wait
+    trap "" INT
+    (trap) & wait
   end script
   expect_exit_code 0
 end test "signal inheritance with job control disabled"
@@ -164,7 +165,9 @@ requirement "SHALL-2-12-462" doc="Commands shall inherit same signal actions as 
 
 begin test "exported variable inherited by child"
   begin script
-    MYVAR=hello; export MYVAR; {{SHELL}} -c 'echo $MYVAR'
+    MYVAR=hello
+    export MYVAR
+    {{SHELL}} -c 'echo $MYVAR'
   end script
   expect_stdout "hello"
 end test "exported variable inherited by child"
@@ -178,7 +181,9 @@ requirement "SHALL-2-12-463" doc="Trap shall not execute until foreground comman
 
 begin test "trap deferred during foreground command"
   begin script
-    trap 'echo TRAP_FIRED' USR1; (sleep 0.1; kill -USR1 $$) & sleep 300ms; echo FOREGROUND_DONE
+    trap 'echo TRAP_FIRED' USR1
+    (sleep 0.1; kill -USR1 $$) & sleep 300ms
+    echo FOREGROUND_DONE
   end script
   expect_stdout_line "FOREGROUND_DONE"
 end test "trap deferred during foreground command"
@@ -192,7 +197,13 @@ requirement "SHALL-2-12-464" doc="When shell waiting via wait, trapped signal ca
 
 begin test "wait interrupted by trapped signal"
   begin script
-    trap 'echo GOT_USR1' USR1; sleep 60 & bgpid=$!; (sleep 0.1; kill -USR1 $$) & wait $bgpid; rc=$?; kill $bgpid 2>/dev/null; wait $bgpid 2>/dev/null; echo wait_rc=$rc
+    trap 'echo GOT_USR1' USR1
+    sleep 60 & bgpid=$!
+    (sleep 0.1; kill -USR1 $$) & wait $bgpid
+    rc=$?
+    kill $bgpid 2>/dev/null
+    wait $bgpid 2>/dev/null
+    echo wait_rc=$rc
   end script
   expect_stdout_line "GOT_USR1"
   expect_stdout_line "wait_rc=(129|1[3-9][0-9]|2[0-4][0-9]|25[0-5])"
@@ -209,14 +220,17 @@ requirement "SHALL-2-13-468" doc="Variables with export attribute passed as envi
 
 begin test "exported variable visible in child"
   begin script
-    MYVAR=hello; export MYVAR; {{SHELL}} -c 'echo $MYVAR'
+    MYVAR=hello
+    export MYVAR
+    {{SHELL}} -c 'echo $MYVAR'
   end script
   expect_stdout "hello"
 end test "exported variable visible in child"
 
 begin test "non-exported variable not visible in child"
   begin script
-    MYVAR=secret; {{SHELL}} -c 'echo ${MYVAR:-empty}'
+    MYVAR=secret
+    {{SHELL}} -c 'echo ${MYVAR:-empty}'
   end script
   expect_stdout "empty"
 end test "non-exported variable not visible in child"
@@ -230,7 +244,8 @@ requirement "SHALL-2-13-467" doc="Shell script traps caught by parent set to def
 
 begin test "trap inheritance in shell scripts"
   begin script
-    s=$TMPDIR/_trap_inherit_$$.sh; printf 'trap
+    s=$TMPDIR/_trap_inherit_$$.sh
+    printf 'trap
     ' > $s; chmod +x $s; trap 'echo caught' USR1; {{SHELL}} $s; rc=$?; rm -f $s; exit $rc
   end script
   not_expect_stdout ".*USR1.*"
@@ -247,7 +262,8 @@ requirement "SHALL-2-13-472" doc="If interactive, subshell behaves as non-intera
 
 begin test "subshell traps reset to default"
   begin script
-    trap "echo parent_trap" USR1; (trap "echo subshell_trap" USR1; trap -p USR1)
+    trap "echo parent_trap" USR1
+    (trap "echo subshell_trap" USR1; trap -p USR1)
   end script
   not_expect_stdout_line ".*parent_trap.*"
   expect_stdout_line ".*subshell_trap.*"
@@ -255,7 +271,8 @@ end test "subshell traps reset to default"
 
 begin test "subshell inherits variables"
   begin script
-    FOO=bar; ( echo $FOO )
+    FOO=bar
+    ( echo $FOO )
   end script
   expect_stdout "bar"
 end test "subshell inherits variables"
@@ -369,7 +386,9 @@ requirement "SHALL-2-15-507" doc="Output of special built-in written to stdout, 
 
 begin test "special built-in output goes to stdout"
   begin script
-    export FOO=bar; export -p > /dev/null; echo ok
+    export FOO=bar
+    export -p > /dev/null
+    echo ok
   end script
   expect_stdout "ok"
 end test "special built-in output goes to stdout"
@@ -395,7 +414,8 @@ end test "assignment before special built-in persists"
 
 begin test "variable persists after eval completes"
   begin script
-    FOO=bar eval true; echo $FOO
+    FOO=bar eval true
+    echo $FOO
   end script
   expect_stdout "bar"
 end test "variable persists after eval completes"
@@ -404,7 +424,8 @@ requirement "SHALL-2-15-511" doc="For special built-ins not in syntax guidelines
 
 begin test "set -- positional parameters"
   begin script
-    set -- a b c; echo count=$#
+    set -- a b c
+    echo count=$#
   end script
   expect_stdout "count=3"
 end test "set -- positional parameters"

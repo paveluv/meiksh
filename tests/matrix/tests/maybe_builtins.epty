@@ -29,7 +29,9 @@ end test "false returns non-zero exit code"
 
 begin test "false exit code is between 1 and 125"
   begin script
-    false; rc=$?; [ $rc -ge 1 ] && [ $rc -le 125 ] && echo "in_range"
+    false
+    rc=$?
+    [ $rc -ge 1 ] && [ $rc -le 125 ] && echo "in_range"
   end script
   expect_stdout "in_range"
 end test "false exit code is between 1 and 125"
@@ -204,21 +206,24 @@ end test "one empty argument returns non-zero"
 
 begin test "test true exit code is 0"
   begin script
-    test 1 -eq 1; echo "$?"
+    test 1 -eq 1
+    echo "$?"
   end script
   expect_stdout "0"
 end test "test true exit code is 0"
 
 begin test "test false exit code is 1"
   begin script
-    test 1 -eq 2; echo "$?"
+    test 1 -eq 2
+    echo "$?"
   end script
   expect_stdout "1"
 end test "test false exit code is 1"
 
 begin test "test with single non-null argument exits 0"
   begin script
-    test -f; echo $?
+    test -f
+    echo $?
   end script
   expect_stdout "0"
 end test "test with single non-null argument exits 0"

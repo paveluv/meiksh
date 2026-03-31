@@ -13,7 +13,8 @@ requirement "SHALL-ENVIRONMENT-VARIABLES-024" doc="The following environment var
 
 begin test "exec of nonexistent command causes non-interactive shell to exit"
   begin script
-    exec /invalid/does/not/exist; echo "survived"
+    exec /invalid/does/not/exist
+    echo "survived"
   end script
   not_expect_exit_code 0
 end test "exec of nonexistent command causes non-interactive shell to exit"
@@ -28,14 +29,18 @@ requirement "SHALL-DESCRIPTION-542" doc="The exec special built-in shall support
 
 begin test "exec with no operands manipulates file descriptors"
   begin script
-    exec 3>tmp_fd3.txt; echo "fd3 test" >&3; exec 3>&-; cat tmp_fd3.txt
+    exec 3>tmp_fd3.txt
+    echo "fd3 test" >&3
+    exec 3>&-
+    cat tmp_fd3.txt
   end script
   expect_stdout "fd3 test"
 end test "exec with no operands manipulates file descriptors"
 
 begin test "exec with operands replaces the shell"
   begin script
-    exec printf "%s" "exec test"; echo "never runs"
+    exec printf "%s" "exec test"
+    echo "never runs"
   end script
   expect_stdout "exec test"
 end test "exec with operands replaces the shell"
@@ -60,14 +65,16 @@ end test "exit n sets explicit exit status"
 
 begin test "exit inside subshell only terminates the subshell"
   begin script
-    (exit 99); echo "$?"
+    (exit 99)
+    echo "$?"
   end script
   expect_stdout "99"
 end test "exit inside subshell only terminates the subshell"
 
 begin test "exit with no n uses last command exit status"
   begin script
-    false; exit
+    false
+    exit
   end script
   expect_exit_code 1
 end test "exit with no n uses last command exit status"

@@ -15,7 +15,8 @@ end test "umask 0022 exits successfully"
 
 begin test "umask 0022 reports correct value"
   begin script
-    umask 0022; umask
+    umask 0022
+    umask
   end script
   expect_stdout_line "0*022"
 end test "umask 0022 reports correct value"
@@ -28,7 +29,15 @@ requirement "SHALL-UMASK-1317" doc="The file mode creation mask shall affect the
 
 begin test "umask affects file permissions"
   begin script
-    _d=$(mktemp -d); umask 0077; > "$_d/test_077"; umask 0000; > "$_d/test_000"; _p077=$(ls -l "$_d/test_077" | awk '{print $1}'); _p000=$(ls -l "$_d/test_000" | awk '{print $1}'); rm -rf "$_d"; [ "$_p077" != "$_p000" ] && echo different || echo same
+    _d=$(mktemp -d)
+    umask 0077
+    > "$_d/test_077"
+    umask 0000
+    > "$_d/test_000"
+    _p077=$(ls -l "$_d/test_077" | awk '{print $1}')
+    _p000=$(ls -l "$_d/test_000" | awk '{print $1}')
+    rm -rf "$_d"
+    [ "$_p077" != "$_p000" ] && echo different || echo same
   end script
   expect_stdout "different"
 end test "umask affects file permissions"
@@ -41,14 +50,16 @@ requirement "SHALL-UMASK-1319" doc="If the mask operand is not specified, the um
 
 begin test "umask with no operand produces output"
   begin script
-    umask 0027; umask
+    umask 0027
+    umask
   end script
   expect_stdout_line ".+"
 end test "umask with no operand produces output"
 
 begin test "umask with no operand reflects set value"
   begin script
-    umask 0027; umask
+    umask 0027
+    umask
   end script
   expect_stdout_line "0*027"
 end test "umask with no operand reflects set value"
@@ -81,14 +92,16 @@ requirement "SHALL-UMASK-1080" doc="The mask operand shall specify the new file 
 
 begin test "umask octal operand 0037"
   begin script
-    umask 0037; umask
+    umask 0037
+    umask
   end script
   expect_stdout_line "0*037"
 end test "umask octal operand 0037"
 
 begin test "umask symbolic operand u=rwx,g=rx,o="
   begin script
-    umask u=rwx,g=rx,o=; umask
+    umask u=rwx,g=rx,o=
+    umask
   end script
   expect_stdout_line "0*027"
 end test "umask symbolic operand u=rwx,g=rx,o="
@@ -101,21 +114,24 @@ requirement "SHALL-UMASK-1079" doc="-S: Produce symbolic output."
 
 begin test "umask -S produces symbolic output"
   begin script
-    umask 0022; umask -S
+    umask 0022
+    umask -S
   end script
   expect_stdout_line ".*u=.*g=.*o=.*"
 end test "umask -S produces symbolic output"
 
 begin test "umask -S reflects mask 0077"
   begin script
-    umask 0077; umask -S
+    umask 0077
+    umask -S
   end script
   expect_stdout_line ".*u=rwx.*g=.*o=.*"
 end test "umask -S reflects mask 0077"
 
 begin test "umask -S with mask 0000 shows all permissions"
   begin script
-    umask 0000; umask -S
+    umask 0000
+    umask -S
   end script
   expect_stdout_line ".*u=rwx.*g=rwx.*o=rwx.*"
 end test "umask -S with mask 0000 shows all permissions"
@@ -128,14 +144,18 @@ requirement "SHALL-UMASK-1318" doc="The file mode creation mask set in a subshel
 
 begin test "subshell umask does not affect parent"
   begin script
-    umask 0022; (umask 0077); umask
+    umask 0022
+    (umask 0077)
+    umask
   end script
   expect_stdout_line "0*022"
 end test "subshell umask does not affect parent"
 
 begin test "subshell and parent masks are independent"
   begin script
-    umask 0022; (umask 0077; echo inner=$(umask)); echo outer=$(umask)
+    umask 0022
+    (umask 0077; echo inner=$(umask))
+    echo outer=$(umask)
   end script
   expect_stdout_line ".*inner=.*077.*"
   expect_stdout_line ".*outer=.*022.*"
@@ -149,7 +169,12 @@ requirement "SHALL-UMASK-1322" doc="When the user invokes umask with no operand,
 
 begin test "umask default output round-trip"
   begin script
-    umask 0037; _saved=$(umask); umask 0000; umask "$_saved"; _restored=$(umask); [ "$_saved" = "$_restored" ] && echo roundtrip_ok || echo MISMATCH
+    umask 0037
+    _saved=$(umask)
+    umask 0000
+    umask "$_saved"
+    _restored=$(umask)
+    [ "$_saved" = "$_restored" ] && echo roundtrip_ok || echo MISMATCH
   end script
   expect_stdout "roundtrip_ok"
 end test "umask default output round-trip"
@@ -162,7 +187,12 @@ requirement "SHALL-UMASK-1327" doc="The default output shall be recognized as a 
 
 begin test "umask default output as mask operand round-trip"
   begin script
-    umask 0055; _saved=$(umask); umask 0000; umask "$_saved"; _restored=$(umask); [ "$_saved" = "$_restored" ] && echo roundtrip_ok || echo MISMATCH
+    umask 0055
+    _saved=$(umask)
+    umask 0000
+    umask "$_saved"
+    _restored=$(umask)
+    [ "$_saved" = "$_restored" ] && echo roundtrip_ok || echo MISMATCH
   end script
   expect_stdout "roundtrip_ok"
 end test "umask default output as mask operand round-trip"

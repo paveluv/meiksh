@@ -448,7 +448,8 @@ requirement "SHALL-EXTENDED-DESCRIPTION-5041" doc="Operand determined: if starts
 
 begin test "printf positional n$ specifiers (optional)"
   begin script
-    printf "%2\$s %1\$s\n" hello world 2>/dev/null; true
+    printf "%2\$s %1\$s\n" hello world 2>/dev/null
+    true
   end script
   expect_exit_code 0
 end test "printf positional n$ specifiers (optional)"
@@ -516,7 +517,8 @@ end test "printf %c takes first byte of 123"
 
 begin test "printf %c with empty arg produces null/empty"
   begin script
-    result=$(printf "%c" ""); [ -z "$result" ] && echo "ok" || echo "fail"
+    result=$(printf "%c" "")
+    [ -z "$result" ] && echo "ok" || echo "fail"
   end script
   expect_stdout "ok"
 end test "printf %c with empty arg produces null/empty"

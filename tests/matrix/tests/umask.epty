@@ -17,7 +17,9 @@ requirement "SHALL-UMASK-1331" doc="If -S is specified, the message shall be in 
 
 begin test "umask set and query octal value"
   begin script
-    umask 022; val=$(umask); echo "$val" | grep -q "022" && echo "pass" || echo "fail: $val"
+    umask 022
+    val=$(umask)
+    echo "$val" | grep -q "022" && echo "pass" || echo "fail: $val"
   end script
   expect_stdout "pass"
 end test "umask set and query octal value"
@@ -28,7 +30,9 @@ end test "umask set and query octal value"
 
 begin test "umask -S prints symbolic mode"
   begin script
-    umask 022; val=$(umask -S); echo "$val"
+    umask 022
+    val=$(umask -S)
+    echo "$val"
   end script
   expect_stdout "u=rwx,g=rx,o=rx"
 end test "umask -S prints symbolic mode"
@@ -39,7 +43,10 @@ end test "umask -S prints symbolic mode"
 
 begin test "umask symbolic mode a=rx"
   begin script
-    umask 022; umask a=rx; val=$(umask); echo "$val" | grep -q "222" && echo "pass" || echo "fail: $val"
+    umask 022
+    umask a=rx
+    val=$(umask)
+    echo "$val" | grep -q "222" && echo "pass" || echo "fail: $val"
   end script
   expect_stdout "pass"
 end test "umask symbolic mode a=rx"
@@ -50,7 +57,10 @@ end test "umask symbolic mode a=rx"
 
 begin test "umask symbolic relative g-w"
   begin script
-    umask 022; umask g-w; val=$(umask -S); echo "$val"
+    umask 022
+    umask g-w
+    val=$(umask -S)
+    echo "$val"
   end script
   expect_stdout "u=rwx,g=rx,o=rx"
 end test "umask symbolic relative g-w"

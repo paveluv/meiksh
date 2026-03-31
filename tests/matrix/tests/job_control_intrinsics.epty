@@ -20,7 +20,13 @@ requirement "SHALL-KILL-1063" doc="pid operand: a decimal integer specifying a p
 
 begin test "jobs -p shows background PID"
   begin script
-    sleep 2 & bg_pid=$!; jobs -p > jobs_out 2>/dev/null; grep -q "$bg_pid" jobs_out; res=$?; kill "$bg_pid" 2>/dev/null; wait "$bg_pid" 2>/dev/null; exit $res
+    sleep 2 & bg_pid=$!
+    jobs -p > jobs_out 2>/dev/null
+    grep -q "$bg_pid" jobs_out
+    res=$?
+    kill "$bg_pid" 2>/dev/null
+    wait "$bg_pid" 2>/dev/null
+    exit $res
   end script
   expect_exit_code 0
 end test "jobs -p shows background PID"
@@ -31,7 +37,8 @@ end test "jobs -p shows background PID"
 
 begin test "wait with no operands exits 0 when all finish"
   begin script
-    sleep 1 & sleep 1 & wait; exit $?
+    sleep 1 & sleep 1 & wait
+    exit $?
   end script
   expect_exit_code 0
 end test "wait with no operands exits 0 when all finish"
@@ -42,7 +49,8 @@ end test "wait with no operands exits 0 when all finish"
 
 begin test "wait for unknown pid exits 127"
   begin script
-    wait 999999; exit $?
+    wait 999999
+    exit $?
   end script
   expect_exit_code 127
 end test "wait for unknown pid exits 127"

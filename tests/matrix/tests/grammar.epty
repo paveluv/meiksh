@@ -9,14 +9,16 @@ requirement "SHALL-2-10-1-397" doc="If the string contains at least three charac
 
 begin test "digit before redirection parsed as IO_NUMBER"
   begin script
-    echo content > tmp_grammar.txt; 0<tmp_grammar.txt
+    echo content > tmp_grammar.txt
+    0<tmp_grammar.txt
   end script
   expect_exit_code 0
 end test "digit before redirection parsed as IO_NUMBER"
 
 begin test "space before redirection not parsed as IO_NUMBER"
   begin script
-    echo content > tmp_grammar.txt; 0 <tmp_grammar.txt
+    echo content > tmp_grammar.txt
+    0 <tmp_grammar.txt
   end script
   not_expect_exit_code 0
 end test "space before redirection not parsed as IO_NUMBER"
@@ -62,14 +64,18 @@ requirement "SHALL-2-10-2-413" doc="When the TOKEN is exactly the reserved word 
 
 begin test "invalid identifier in for loop causes syntax error"
   begin script
-    for 1invalid in a; do echo $1invalid; done
+    for 1invalid in a; do
+      echo $1invalid
+    done
   end script
   not_expect_exit_code 0
 end test "invalid identifier in for loop causes syntax error"
 
 begin test "for-in loop with valid identifier"
   begin script
-    for i in a; do echo $i; done
+    for i in a; do
+      echo $i
+    done
   end script
   expect_stdout "a"
 end test "for-in loop with valid identifier"

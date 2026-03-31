@@ -28,14 +28,21 @@ requirement "SHALL-WAIT-1343" doc="wait shall wait for child processes to termin
 
 begin test "background job writes file; after wait file must exist"
   begin script
-    rm -f /tmp/_wait_test_$$; (sleep 0.2; echo done > /tmp/_wait_test_$$) & wait; cat /tmp/_wait_test_$$; rm -f /tmp/_wait_test_$$
+    rm -f /tmp/_wait_test_$$
+    (sleep 0.2; echo done > /tmp/_wait_test_$$) & wait
+    cat /tmp/_wait_test_$$
+    rm -f /tmp/_wait_test_$$
   end script
   expect_stdout "done"
 end test "background job writes file; after wait file must exist"
 
 begin test "wait actually blocks until child is finished"
   begin script
-    start=$(date +%s); sleep 1 & wait; end=$(date +%s); elapsed=$((end - start)); [ "$elapsed" -ge 1 ] && echo blocked
+    start=$(date +%s)
+    sleep 1 & wait
+    end=$(date +%s)
+    elapsed=$((end - start))
+    [ "$elapsed" -ge 1 ] && echo blocked
   end script
   expect_stdout "blocked"
 end test "wait actually blocks until child is finished"
@@ -48,14 +55,19 @@ requirement "SHALL-WAIT-1345" doc="If pid operands specified, wait until all ter
 
 begin test "wait for two PIDs"
   begin script
-    sleep 0.1 & p1=$!; sleep 0.2 & p2=$!; wait $p1 $p2; echo "both_done"
+    sleep 0.1 & p1=$!
+    sleep 0.2 & p2=$!
+    wait $p1 $p2
+    echo "both_done"
   end script
   expect_stdout "both_done"
 end test "wait for two PIDs"
 
 begin test "wait for a single PID"
   begin script
-    sleep 0.1 & p=$!; wait $p; echo "single_done"
+    sleep 0.1 & p=$!
+    wait $p
+    echo "single_done"
   end script
   expect_stdout "single_done"
 end test "wait for a single PID"
@@ -88,7 +100,10 @@ requirement "SHALL-WAIT-1348" doc="Successfully waited PID removed from known PI
 
 begin test "second wait on same PID returns 127"
   begin script
-    sleep 0.1 & p=$!; wait $p; wait $p; echo $?
+    sleep 0.1 & p=$!
+    wait $p
+    wait $p
+    echo $?
   end script
   expect_stdout "127"
 end test "second wait on same PID returns 127"
@@ -122,14 +137,16 @@ requirement "SHALL-WAIT-1351" doc="Exit status determined by last pipeline"
 
 begin test "wait with no operands after failing background pipeline"
   begin script
-    (exit 3) & wait; echo $?
+    (exit 3) & wait
+    echo $?
   end script
   expect_stdout "0"
 end test "wait with no operands after failing background pipeline"
 
 begin test "wait after all background jobs succeed"
   begin script
-    true & true & wait; echo $?
+    true & true & wait
+    echo $?
   end script
   expect_stdout "0"
 end test "wait after all background jobs succeed"
@@ -142,28 +159,39 @@ requirement "SHALL-WAIT-1354" doc="Exit status of wait equals exit status of las
 
 begin test "single operand: wait returns that process exit status"
   begin script
-    (exit 42) & p=$!; wait $p; echo $?
+    (exit 42) & p=$!
+    wait $p
+    echo $?
   end script
   expect_stdout "42"
 end test "single operand: wait returns that process exit status"
 
 begin test "multiple operands: wait returns exit status of last"
   begin script
-    (exit 7) & p1=$!; (exit 13) & p2=$!; wait $p1 $p2; echo $?
+    (exit 7) & p1=$!
+    (exit 13) & p2=$!
+    wait $p1 $p2
+    echo $?
   end script
   expect_stdout "13"
 end test "multiple operands: wait returns exit status of last"
 
 begin test "last operand exits 0 even if earlier ones fail"
   begin script
-    (exit 5) & p1=$!; (exit 0) & p2=$!; wait $p1 $p2; echo $?
+    (exit 5) & p1=$!
+    (exit 0) & p2=$!
+    wait $p1 $p2
+    echo $?
   end script
   expect_stdout "0"
 end test "last operand exits 0 even if earlier ones fail"
 
 begin test "first operand exits 0, last exits non-zero"
   begin script
-    (exit 0) & p1=$!; (exit 9) & p2=$!; wait $p1 $p2; echo $?
+    (exit 0) & p1=$!
+    (exit 9) & p2=$!
+    wait $p1 $p2
+    echo $?
   end script
   expect_stdout "9"
 end test "first operand exits 0, last exits non-zero"
@@ -176,28 +204,48 @@ requirement "SHALL-WAIT-1355" doc="Process terminated by signal: exit status >12
 
 begin test "SIGTERM exit status >128"
   begin script
-    sleep 60 & p=$!; kill -TERM $p; wait $p; rc=$?; [ "$rc" -gt 128 ] && echo sigterm_ok
+    sleep 60 & p=$!
+    kill -TERM $p
+    wait $p
+    rc=$?
+    [ "$rc" -gt 128 ] && echo sigterm_ok
   end script
   expect_stdout "sigterm_ok"
 end test "SIGTERM exit status >128"
 
 begin test "SIGKILL exit status >128"
   begin script
-    sleep 60 & p=$!; kill -KILL $p; wait $p; rc=$?; [ "$rc" -gt 128 ] && echo sigkill_ok
+    sleep 60 & p=$!
+    kill -KILL $p
+    wait $p
+    rc=$?
+    [ "$rc" -gt 128 ] && echo sigkill_ok
   end script
   expect_stdout "sigkill_ok"
 end test "SIGKILL exit status >128"
 
 begin test "different signals produce distinct exit statuses"
   begin script
-    sleep 60 & p1=$!; kill -TERM $p1; wait $p1; rc_term=$?; sleep 60 & p2=$!; kill -KILL $p2; wait $p2; rc_kill=$?; [ "$rc_term" -ne "$rc_kill" ] && echo distinct_ok
+    sleep 60 & p1=$!
+    kill -TERM $p1
+    wait $p1
+    rc_term=$?
+    sleep 60 & p2=$!
+    kill -KILL $p2
+    wait $p2
+    rc_kill=$?
+    [ "$rc_term" -ne "$rc_kill" ] && echo distinct_ok
   end script
   expect_stdout "distinct_ok"
 end test "different signals produce distinct exit statuses"
 
 begin test "signal death >128 with no-operand wait"
   begin script
-    sleep 60 & p=$!; kill -TERM $p; wait $p 2>/dev/null; rc=$?; [ "$rc" -gt 128 ] && echo no_op_sig_ok
+    sleep 60 & p=$!
+    kill -TERM $p
+    wait $p 2>/dev/null
+    rc=$?
+    [ "$rc" -gt 128 ] && echo no_op_sig_ok
   end script
   expect_stdout "no_op_sig_ok"
 end test "signal death >128 with no-operand wait"

@@ -8,14 +8,17 @@ requirement "SHALL-ALIAS-1026" doc="When an alias-name operand is given, the ali
 
 begin test "alias-name operand writes definition to stdout"
   begin script
-    alias myalias="echo hello"; alias myalias
+    alias myalias="echo hello"
+    alias myalias
   end script
   expect_stdout_line ".*myalias.*echo.*hello.*"
 end test "alias-name operand writes definition to stdout"
 
 begin test "query second alias writes its definition"
   begin script
-    alias foo="ls -la"; alias bar="grep x"; alias foo
+    alias foo="ls -la"
+    alias bar="grep x"
+    alias foo
   end script
   expect_stdout_line ".*foo.*ls.*"
 end test "query second alias writes its definition"
@@ -77,14 +80,16 @@ requirement "SHALL-ALIAS-1055" doc="Aliases shall not affect the environment of 
 
 begin test "alias in subshell does not leak to parent"
   begin script
-    (alias leaked="echo LEAKED"); echo world
+    (alias leaked="echo LEAKED")
+    echo world
   end script
   expect_stdout "world"
 end test "alias in subshell does not leak to parent"
 
 begin test "alias in child shell does not leak to parent"
   begin script
-    {{SHELL}} -c 'alias outer_leak="echo LEAKED"' 2>/dev/null; echo ok
+    {{SHELL}} -c 'alias outer_leak="echo LEAKED"' 2>/dev/null
+    echo ok
   end script
   expect_stdout "ok"
 end test "alias in child shell does not leak to parent"
@@ -97,7 +102,9 @@ requirement "SHALL-ALIAS-1057" doc="If no operands are given, all alias definiti
 
 begin test "alias with no operands lists all definitions"
   begin script
-    alias a1="echo 1"; alias a2="echo 2"; alias
+    alias a1="echo 1"
+    alias a2="echo 2"
+    alias
   end script
   expect_stdout_line ".*a1.*echo.*1.*"
   expect_stdout_line ".*a2.*echo.*2.*"
@@ -135,7 +142,10 @@ requirement "SHALL-UNALIAS-1083" doc="The -a option shall remove all alias defin
 
 begin test "unalias -a removes all aliases"
   begin script
-    alias x1="echo 1"; alias x2="echo 2"; unalias -a; alias
+    alias x1="echo 1"
+    alias x2="echo 2"
+    unalias -a
+    alias
   end script
   not_expect_stdout_line ".*x1.*"
   not_expect_stdout_line ".*x2.*"
@@ -149,14 +159,18 @@ requirement "SHALL-UNALIAS-1084" doc="The alias-name operand shall remove the na
 
 begin test "unalias removes named alias"
   begin script
-    alias rmme="echo gone"; unalias rmme; alias rmme 2>&1
+    alias rmme="echo gone"
+    unalias rmme
+    alias rmme 2>&1
   end script
   not_expect_stdout_line ".*rmme.*echo.*gone.*"
 end test "unalias removes named alias"
 
 begin test "unaliased command does not expand"
   begin script
-    alias rmme2="echo gone"; unalias rmme2; rmme2
+    alias rmme2="echo gone"
+    unalias rmme2
+    rmme2
   end script
   not_expect_exit_code 0
 end test "unaliased command does not expand"
@@ -169,7 +183,11 @@ requirement "SHALL-UNALIAS-1335" doc="The unalias utility shall remove the defin
 
 begin test "unalias removes multiple aliases"
   begin script
-    alias a="echo A"; alias b="echo B"; alias c="echo C"; unalias a b; alias
+    alias a="echo A"
+    alias b="echo B"
+    alias c="echo C"
+    unalias a b
+    alias
   end script
   not_expect_stdout_line ".*a=.*echo.*A.*"
   not_expect_stdout_line ".*b=.*echo.*B.*"
@@ -184,14 +202,18 @@ requirement "SHALL-UNALIAS-1336" doc="Aliases shall be removed from the current 
 
 begin test "unaliased name no longer expands"
   begin script
-    alias zz="echo WRONG"; unalias zz; echo after_removal
+    alias zz="echo WRONG"
+    unalias zz
+    echo after_removal
   end script
   expect_stdout "after_removal"
 end test "unaliased name no longer expands"
 
 begin test "unalias -a clears environment"
   begin script
-    alias yy="echo WRONG"; unalias -a; echo clean
+    alias yy="echo WRONG"
+    unalias -a
+    echo clean
   end script
   expect_stdout "clean"
 end test "unalias -a clears environment"
