@@ -953,24 +953,7 @@ fn run_script(script_lines: &[String]) -> Result<(), String> {
             continue;
         }
 
-        // Strip inline comments (only outside quoted strings)
-        let effective = if let Some(q_start) = line.find('"') {
-            if let Some(q_end) = line[q_start + 1..].find('"') {
-                let after_quote = q_start + 1 + q_end + 1;
-                if let Some(hash_pos) = line[after_quote..].find('#') {
-                    line[..after_quote + hash_pos].trim()
-                } else {
-                    line
-                }
-            } else {
-                line
-            }
-        } else if let Some(hash_pos) = line.find('#') {
-            line[..hash_pos].trim()
-        } else {
-            line
-        };
-
+        let effective = strip_inline_comment(line);
         if effective.is_empty() {
             continue;
         }
@@ -1393,6 +1376,34 @@ fn find_closing_quote(s: &str) -> Result<usize, String> {
     Err(format!("unterminated quoted string: {s}"))
 }
 
+/// Strip inline comments: everything after an unquoted `#` is removed.
+/// Respects `\"` escapes inside quoted strings.
+fn strip_inline_comment(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'"' {
+            i += 1;
+            while i < bytes.len() {
+                if bytes[i] == b'\\' {
+                    i += 2;
+                    continue;
+                }
+                if bytes[i] == b'"' {
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+        } else if bytes[i] == b'#' {
+            return line[..i].trim_end();
+        } else {
+            i += 1;
+        }
+    }
+    line
+}
+
 // ── Test isolation ───────────────────────────────────────────────────────────
 
 fn baseline_env(tmpdir: &str) -> HashMap<String, String> {
@@ -1495,24 +1506,7 @@ fn run_suite_test_inner(
             continue;
         }
 
-        // Strip inline comments
-        let effective = if let Some(q_start) = line.find('"') {
-            if let Some(q_end) = line[q_start + 1..].find('"') {
-                let after_quote = q_start + 1 + q_end + 1;
-                if let Some(hash_pos) = line[after_quote..].find('#') {
-                    line[..after_quote + hash_pos].trim()
-                } else {
-                    line
-                }
-            } else {
-                line
-            }
-        } else if let Some(hash_pos) = line.find('#') {
-            line[..hash_pos].trim()
-        } else {
-            line
-        };
-
+        let effective = strip_inline_comment(line);
         if effective.is_empty() {
             continue;
         }
