@@ -9,9 +9,10 @@ requirement "SHALL-XBD-8-3011" doc="PATH This variable shall represent the seque
 begin test "PATH used to find executable"
   begin script
     mkdir -p mybin
-    printf '#!/bin/sh
-    echo mytool executed
-    ' > mybin/mytool; chmod +x mybin/mytool; PATH="$PWD/mybin:$PATH" mytool; rm -rf mybin
+    printf '#!%s\necho mytool executed\n' "${SHELL%% *}" > mybin/mytool
+    chmod +x mybin/mytool
+    PATH="$PWD/mybin:$PATH" mytool
+    rm -rf mybin
   end script
   expect_stdout "mytool executed"
 end test "PATH used to find executable"
