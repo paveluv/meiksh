@@ -82,7 +82,7 @@ requirement "SHALL-2-3-1-054" doc="Changes to aliases shall not take effect out 
 requirement "SHALL-2-3-1-055" doc="Alias definitions shall not be inherited by separate invocations of the shell"
 
 begin interactive test "alias substitution"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "alias foo=\"echo aliased\""
   expect "$ "
@@ -93,7 +93,7 @@ begin interactive test "alias substitution"
 end interactive test "alias substitution"
 
 begin interactive test "alias with trailing space chains to next word"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "alias a1=\"echo \""
   expect "$ "

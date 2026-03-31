@@ -28,7 +28,7 @@
 //!   end script                            — end the script block (col 2)
 //!
 //!   The script body is taken verbatim (no quoting/escaping needed).
-//!   {{SHELL}} substitution applies. Executed via --script-modes (default: dash-c).
+//!   $SHELL is set to the --shell value. Executed via --script-modes (default: dash-c).
 //!
 //! ### Non-interactive assertions (after end script):
 //!   expect_stdout "pattern"               — assert stdout matches regex
@@ -41,7 +41,7 @@
 //!   not_expect_exit_code N                — assert exit code does NOT equal N
 //!
 //! ### Interactive (PTY) commands (inside begin/end interactive test):
-//!   spawn <cmd> [args...]                 — fork a PTY child
+//!   spawn [flags...]                       — fork an interactive shell (shell from --shell, flags appended)
 //!   expect "regex"                        — wait for regex match in PTY output
 //!   expect timeout=2s "regex"             — with per-command timeout
 //!   not_expect "regex"                    — assert regex does NOT match
@@ -62,7 +62,7 @@
 //! - Regex patterns in expect/expect_*/not_expect_* use raw quoting: backslash
 //!   has no special meaning and passes through verbatim to the regex engine.
 //!   To embed a literal double-quote in a pattern, use "" (doubled quote).
-//! - {{SHELL}} is substituted with the target shell path.
+//! - $SHELL env var is set to the --shell value (including flags, e.g. "/usr/bin/bash --posix").
 //! - All pattern matching uses the built-in regex engine (no external deps).
 
 use std::collections::HashMap;
@@ -1300,6 +1300,12 @@ fn parse_suite(text: &str, filename: &str) -> Result<TestSuite, String> {
                     raw_line
                 ));
             }
+            if raw_line.contains("{{SHELL}}") {
+                return Err(format!(
+                    "line {}: {{{{SHELL}}}} is no longer supported \u{2014} use $SHELL in scripts or `spawn -i` for interactive tests",
+                    lineno + 1
+                ));
+            }
         }
     }
 
@@ -1554,7 +1560,7 @@ fn strip_inline_comment(line: &str) -> &str {
 
 // ── Test isolation ───────────────────────────────────────────────────────────
 
-fn baseline_env(tmpdir: &str) -> HashMap<String, String> {
+fn baseline_env(tmpdir: &str, shell_str: &str) -> HashMap<String, String> {
     let mut env = HashMap::new();
     env.insert("PATH".into(), "/usr/bin:/bin".into());
     env.insert("HOME".into(), tmpdir.into());
@@ -1566,6 +1572,7 @@ fn baseline_env(tmpdir: &str) -> HashMap<String, String> {
     env.insert("PS2".into(), "> ".into());
     env.insert("ENV".into(), String::new());
     env.insert("HISTFILE".into(), "/dev/null".into());
+    env.insert("SHELL".into(), shell_str.into());
     env
 }
 
@@ -1682,7 +1689,7 @@ fn run_suite_test_inner(
     tmpdir: &str,
     script_modes: &[ScriptMode],
 ) -> Result<(), String> {
-    let mut test_env = baseline_env(tmpdir);
+    let mut test_env = baseline_env(tmpdir, shell_str);
     for (k, v) in &test.env_overrides {
         test_env.insert(k.clone(), v.clone());
     }
@@ -1692,12 +1699,11 @@ fn run_suite_test_inner(
     let mut log = Vec::<String>::new();
 
     if let Some(ref script) = test.script {
-        let expanded = script.replace("{{SHELL}}", shell_str);
         log.push(format!(">>> script ({} modes) {:?}", script_modes.len(),
-            if expanded.len() > 80 { format!("{}...", &expanded[..80]) } else { expanded.clone() }));
+            if script.len() > 80 { format!("{}...", &script[..80]) } else { script.clone() }));
         let mut reference: Option<RunResult> = None;
         for &mode in script_modes {
-            let rr = run_command(&expanded, shell_argv, &test_env, tmpdir, mode)?;
+            let rr = run_command(script, shell_argv, &test_env, tmpdir, mode)?;
             if let Some(ref prev) = reference {
                 if rr.stdout != prev.stdout || rr.stderr != prev.stderr || rr.exit_code != prev.exit_code {
                     return Err(format!(
@@ -1745,19 +1751,23 @@ fn run_suite_test_inner(
                         "line {line_num}: spawn is only allowed in interactive tests (use begin interactive test)"
                     ));
                 }
+                if rest.contains("{{SHELL}}") {
+                    return Err(format!(
+                        "line {line_num}: spawn does not accept {{{{SHELL}}}} \u{2014} write `spawn -i` instead (shell is prepended automatically from --shell)"
+                    ));
+                }
                 if session.is_some() {
                     return Err(format!("line {line_num}: spawn called twice"));
                 }
-                let expanded = rest.replace("{{SHELL}}", shell_str);
-                let words: Vec<String> = expanded
-                    .split_whitespace()
-                    .map(String::from)
-                    .collect();
+                let mut words: Vec<String> = shell_argv.iter().map(|s| s.to_string()).collect();
+                if !rest.is_empty() {
+                    words.extend(rest.split_whitespace().map(String::from));
+                }
                 let env_pairs: Vec<(String, String)> = test_env
                     .iter()
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
-                log.push(format!(">>> spawn {}", expanded));
+                log.push(format!(">>> spawn {}", words.join(" ")));
                 session = Some(
                     PtySession::spawn_clean(&words, &env_pairs)
                         .map_err(|e| format!("line {line_num}: spawn failed: {e}"))?,
@@ -2192,15 +2202,6 @@ fn main() {
             std::process::exit(2);
         };
 
-        // Apply {{SHELL}} substitution if --shell was given
-        let script_text = if let Some(ref shell) = shell_flag {
-            script_text.replace("{{SHELL}}", shell)
-        } else if let Ok(shell) = env::var("TARGET_SHELL") {
-            script_text.replace("{{SHELL}}", &shell)
-        } else {
-            script_text
-        };
-
         let lines: Vec<String> = script_text.lines().map(String::from).collect();
 
         match run_script(&lines) {
@@ -2527,7 +2528,7 @@ begin test \"first test\"
 end test \"first test\"
 
 begin interactive test \"second test\"
-  spawn /bin/sh
+  spawn -i
   expect \"$ \"
   sendeof
   wait
@@ -2608,7 +2609,7 @@ end test \"alpha\"
     fn parse_suite_mismatched_interactive() {
         let input = "\
 begin interactive test \"alpha\"
-  spawn /bin/sh
+  spawn -i
 end test \"alpha\"
 ";
         assert!(parse_suite(input, "bad.epty").is_err());

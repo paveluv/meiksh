@@ -88,7 +88,7 @@ requirement "SHALL-EXIT-STATUS-624" doc="Otherwise, zero shall be returned"
 
 begin test "shift with valid bounds returns 0"
   begin script
-    {{SHELL}} -c 'shift 1; echo "$?"' sh arg1
+    $SHELL -c 'shift 1; echo "$?"' sh arg1
   end script
   expect_stdout "0"
 end test "shift with valid bounds returns 0"
@@ -103,7 +103,7 @@ requirement "SHALL-EXIT-STATUS-143" doc="The shell shall terminate in the same m
 begin test "shell script inherits exit status of last command"
   begin script
     echo "exit 42" > tmp_script.sh
-    {{SHELL}} tmp_script.sh
+    $SHELL tmp_script.sh
     echo "$?"
   end script
   expect_stdout "42"

@@ -36,7 +36,7 @@ requirement "SHALL-GETOPTS-1200" doc="The first operand that does not begin with
 
 begin test "getopts retrieves options from parameter list"
   begin script
-    {{SHELL}} -c 'OPTIND=1; result=""; set -- -a -b -c; while getopts abc name; do result="${result}${name}"; done; echo "$result"'
+    $SHELL -c 'OPTIND=1; result=""; set -- -a -b -c; while getopts abc name; do result="${result}${name}"; done; echo "$result"'
   end script
   expect_stdout "abc"
 end test "getopts retrieves options from parameter list"
@@ -47,7 +47,7 @@ end test "getopts retrieves options from parameter list"
 
 begin test "getopts sets name to option character"
   begin script
-    {{SHELL}} -c 'OPTIND=1; getopts ab: name -a; echo "$name"'
+    $SHELL -c 'OPTIND=1; getopts ab: name -a; echo "$name"'
   end script
   expect_stdout "a"
 end test "getopts sets name to option character"
@@ -58,7 +58,7 @@ end test "getopts sets name to option character"
 
 begin test "getopts loop extracts each option in turn"
   begin script
-    {{SHELL}} -c 'result=""; OPTIND=1; set -- -a -b -c; while getopts abc name; do result="${result}${name}"; done; echo "$result"'
+    $SHELL -c 'result=""; OPTIND=1; set -- -a -b -c; while getopts abc name; do result="${result}${name}"; done; echo "$result"'
   end script
   expect_stdout "abc"
 end test "getopts loop extracts each option in turn"
@@ -69,7 +69,7 @@ end test "getopts loop extracts each option in turn"
 
 begin test "option with colon expects argument"
   begin script
-    {{SHELL}} -c 'OPTIND=1; set -- -f myfile; getopts f: name; echo "$name"'
+    $SHELL -c 'OPTIND=1; set -- -f myfile; getopts f: name; echo "$name"'
   end script
   expect_stdout "f"
 end test "option with colon expects argument"
@@ -80,14 +80,14 @@ end test "option with colon expects argument"
 
 begin test "OPTARG set to option-argument value (separate word)"
   begin script
-    {{SHELL}} -c 'OPTIND=1; set -- -f myfile.txt; getopts f: name; echo "$OPTARG"'
+    $SHELL -c 'OPTIND=1; set -- -f myfile.txt; getopts f: name; echo "$OPTARG"'
   end script
   expect_stdout "myfile.txt"
 end test "OPTARG set to option-argument value (separate word)"
 
 begin test "OPTARG set to option-argument value (concatenated)"
   begin script
-    {{SHELL}} -c 'OPTIND=1; set -- -fmyfile.txt; getopts f: name; echo "$OPTARG"'
+    $SHELL -c 'OPTIND=1; set -- -fmyfile.txt; getopts f: name; echo "$OPTARG"'
   end script
   expect_stdout "myfile.txt"
 end test "OPTARG set to option-argument value (concatenated)"
@@ -98,28 +98,28 @@ end test "OPTARG set to option-argument value (concatenated)"
 
 begin test "OPTIND initialized to 1"
   begin script
-    {{SHELL}} -c 'echo "$OPTIND"'
+    $SHELL -c 'echo "$OPTIND"'
   end script
   expect_stdout "1"
 end test "OPTIND initialized to 1"
 
 begin test "OPTIND updated after first option"
   begin script
-    {{SHELL}} -c 'OPTIND=1; set -- -a -b; getopts ab name; echo "$OPTIND"'
+    $SHELL -c 'OPTIND=1; set -- -a -b; getopts ab name; echo "$OPTIND"'
   end script
   expect_stdout "2"
 end test "OPTIND updated after first option"
 
 begin test "OPTIND updated after two options"
   begin script
-    {{SHELL}} -c 'OPTIND=1; set -- -a -b; getopts ab name; getopts ab name; echo "$OPTIND"'
+    $SHELL -c 'OPTIND=1; set -- -a -b; getopts ab name; getopts ab name; echo "$OPTIND"'
   end script
   expect_stdout "3"
 end test "OPTIND updated after two options"
 
 begin test "OPTIND after option with separate argument"
   begin script
-    {{SHELL}} -c 'OPTIND=1; set -- -f val; getopts f: name; echo "$OPTIND"'
+    $SHELL -c 'OPTIND=1; set -- -f val; getopts f: name; echo "$OPTIND"'
   end script
   expect_stdout "3"
 end test "OPTIND after option with separate argument"
@@ -130,14 +130,14 @@ end test "OPTIND after option with separate argument"
 
 begin test "invalid option sets name to ?"
   begin script
-    {{SHELL}} -c 'OPTIND=1; set -- -z; getopts ab name; echo "$name"'
+    $SHELL -c 'OPTIND=1; set -- -z; getopts ab name; echo "$name"'
   end script
   expect_stdout "\?"
 end test "invalid option sets name to ?"
 
 begin test "invalid option in silent mode sets OPTARG to offending char"
   begin script
-    {{SHELL}} -c 'OPTIND=1; set -- -z; getopts :ab name; echo "$OPTARG"'
+    $SHELL -c 'OPTIND=1; set -- -z; getopts :ab name; echo "$OPTARG"'
   end script
   expect_stdout "z"
 end test "invalid option in silent mode sets OPTARG to offending char"
@@ -148,14 +148,14 @@ end test "invalid option in silent mode sets OPTARG to offending char"
 
 begin test "missing argument sets name to ?"
   begin script
-    {{SHELL}} -c 'OPTIND=1; set -- -f; getopts f: name 2>/dev/null; echo "$name"'
+    $SHELL -c 'OPTIND=1; set -- -f; getopts f: name 2>/dev/null; echo "$name"'
   end script
   expect_stdout "\?"
 end test "missing argument sets name to ?"
 
 begin test "missing argument in silent mode sets name to colon"
   begin script
-    {{SHELL}} -c 'OPTIND=1; set -- -f; getopts :f: name; echo "$name:$OPTARG"'
+    $SHELL -c 'OPTIND=1; set -- -f; getopts :f: name; echo "$name:$OPTARG"'
   end script
   expect_stdout "::f"
 end test "missing argument in silent mode sets name to colon"
@@ -166,7 +166,7 @@ end test "missing argument in silent mode sets name to colon"
 
 begin test "OPTIND reset allows reparsing"
   begin script
-    {{SHELL}} -c 'OPTIND=1; set -- -a -b; result=""; while getopts ab name; do result="${result}${name}"; done; OPTIND=1; set -- -x -y; while getopts xy name; do result="${result}${name}"; done; echo "$result"'
+    $SHELL -c 'OPTIND=1; set -- -a -b; result=""; while getopts ab name; do result="${result}${name}"; done; OPTIND=1; set -- -x -y; while getopts xy name; do result="${result}${name}"; done; echo "$result"'
   end script
   expect_stdout "abxy"
 end test "OPTIND reset allows reparsing"
@@ -177,14 +177,14 @@ end test "OPTIND reset allows reparsing"
 
 begin test "-- terminates option processing"
   begin script
-    {{SHELL}} -c 'OPTIND=1; result=""; set -- -a -- -b; while getopts ab name; do result="${result}${name}"; done; echo "$result"'
+    $SHELL -c 'OPTIND=1; result=""; set -- -a -- -b; while getopts ab name; do result="${result}${name}"; done; echo "$result"'
   end script
   expect_stdout "a"
 end test "-- terminates option processing"
 
 begin test "OPTIND points past -- to operand"
   begin script
-    {{SHELL}} -c 'OPTIND=1; set -- -a -- operand; while getopts a name; do :; done; shift $((OPTIND - 1)); echo "$1"'
+    $SHELL -c 'OPTIND=1; set -- -a -- operand; while getopts a name; do :; done; shift $((OPTIND - 1)); echo "$1"'
   end script
   expect_stdout "operand"
 end test "OPTIND points past -- to operand"
@@ -195,21 +195,21 @@ end test "OPTIND points past -- to operand"
 
 begin test "getopts returns non-zero when options exhausted"
   begin script
-    {{SHELL}} -c 'OPTIND=1; set -- -a; getopts a name; getopts a name; echo "$?"'
+    $SHELL -c 'OPTIND=1; set -- -a; getopts a name; getopts a name; echo "$?"'
   end script
   expect_stdout "1"
 end test "getopts returns non-zero when options exhausted"
 
 begin test "getopts returns 0 on successful parse"
   begin script
-    {{SHELL}} -c 'OPTIND=1; set -- -a; getopts a name'
+    $SHELL -c 'OPTIND=1; set -- -a; getopts a name'
   end script
   expect_exit_code 0
 end test "getopts returns 0 on successful parse"
 
 begin test "getopts returns non-zero with no options"
   begin script
-    {{SHELL}} -c 'OPTIND=1; set -- ; getopts a name'
+    $SHELL -c 'OPTIND=1; set -- ; getopts a name'
   end script
   not_expect_exit_code 0
 end test "getopts returns non-zero with no options"
@@ -220,28 +220,28 @@ end test "getopts returns non-zero with no options"
 
 begin test "unknown option in silent mode: name=? OPTARG=char"
   begin script
-    {{SHELL}} -c 'OPTIND=1; set -- -z; getopts :ab name; echo "$name:$OPTARG"'
+    $SHELL -c 'OPTIND=1; set -- -z; getopts :ab name; echo "$name:$OPTARG"'
   end script
   expect_stdout "\?:z"
 end test "unknown option in silent mode: name=? OPTARG=char"
 
 begin test "no stderr for unknown option in silent mode"
   begin script
-    {{SHELL}} -c 'OPTIND=1; set -- -z; getopts :ab name' 2>&1
+    $SHELL -c 'OPTIND=1; set -- -z; getopts :ab name' 2>&1
   end script
   expect_stderr ""
 end test "no stderr for unknown option in silent mode"
 
 begin test "missing argument in silent mode: name=: OPTARG=char"
   begin script
-    {{SHELL}} -c 'OPTIND=1; set -- -f; getopts :f: name; echo "$name:$OPTARG"'
+    $SHELL -c 'OPTIND=1; set -- -f; getopts :f: name; echo "$name:$OPTARG"'
   end script
   expect_stdout "::f"
 end test "missing argument in silent mode: name=: OPTARG=char"
 
 begin test "no stderr for missing argument in silent mode"
   begin script
-    {{SHELL}} -c 'OPTIND=1; set -- -f; getopts :f: name' 2>&1
+    $SHELL -c 'OPTIND=1; set -- -f; getopts :f: name' 2>&1
   end script
   expect_stderr ""
 end test "no stderr for missing argument in silent mode"
@@ -252,7 +252,7 @@ end test "no stderr for missing argument in silent mode"
 
 begin test "OPTIND=1 reset parses new parameters"
   begin script
-    {{SHELL}} -c 'OPTIND=1; set -- -x; getopts x name; r1="$name"; OPTIND=1; set -- -y; getopts y name; r2="$name"; echo "${r1}:${r2}"'
+    $SHELL -c 'OPTIND=1; set -- -x; getopts x name; r1="$name"; OPTIND=1; set -- -y; getopts y name; r2="$name"; echo "${r1}:${r2}"'
   end script
   expect_stdout "x:y"
 end test "OPTIND=1 reset parses new parameters"
@@ -263,14 +263,14 @@ end test "OPTIND=1 reset parses new parameters"
 
 begin test "combined options after single hyphen"
   begin script
-    {{SHELL}} -c 'OPTIND=1; result=""; set -- -abc; while getopts abc name; do result="${result}${name}"; done; echo "$result"'
+    $SHELL -c 'OPTIND=1; result=""; set -- -abc; while getopts abc name; do result="${result}${name}"; done; echo "$result"'
   end script
   expect_stdout "abc"
 end test "combined options after single hyphen"
 
 begin test "combined options where last takes argument"
   begin script
-    {{SHELL}} -c 'OPTIND=1; result=""; arg=""; set -- -abf file.txt; while getopts abf: name; do result="${result}${name}"; if [ "$name" = "f" ]; then arg="$OPTARG"; fi; done; echo "${result}:${arg}"'
+    $SHELL -c 'OPTIND=1; result=""; arg=""; set -- -abf file.txt; while getopts abf: name; do result="${result}${name}"; if [ "$name" = "f" ]; then arg="$OPTARG"; fi; done; echo "${result}:${arg}"'
   end script
   expect_stdout "abf:file.txt"
 end test "combined options where last takes argument"
@@ -281,7 +281,7 @@ end test "combined options where last takes argument"
 
 begin test "OPTARG unset for options without arguments"
   begin script
-    {{SHELL}} -c 'OPTIND=1; OPTARG="stale"; set -- -a; getopts a name; echo "${OPTARG:-UNSET}"'
+    $SHELL -c 'OPTIND=1; OPTARG="stale"; set -- -a; getopts a name; echo "${OPTARG:-UNSET}"'
   end script
   expect_stdout "UNSET"
 end test "OPTARG unset for options without arguments"
@@ -292,14 +292,14 @@ end test "OPTARG unset for options without arguments"
 
 begin test "getopts uses positional parameters by default"
   begin script
-    {{SHELL}} -c 'set -- -a -b; OPTIND=1; result=""; while getopts ab name; do result="${result}${name}"; done; echo "$result"'
+    $SHELL -c 'set -- -a -b; OPTIND=1; result=""; while getopts ab name; do result="${result}${name}"; done; echo "$result"'
   end script
   expect_stdout "ab"
 end test "getopts uses positional parameters by default"
 
 begin test "getopts uses function positional parameters"
   begin script
-    {{SHELL}} -c 'f() { OPTIND=1; result=""; while getopts xy name; do result="${result}${name}"; done; echo "$result"; }; f -x -y'
+    $SHELL -c 'f() { OPTIND=1; result=""; while getopts xy name; do result="${result}${name}"; done; echo "$result"; }; f -x -y'
   end script
   expect_stdout "xy"
 end test "getopts uses function positional parameters"
@@ -310,7 +310,7 @@ end test "getopts uses function positional parameters"
 
 begin test "non-option argument stops parsing"
   begin script
-    {{SHELL}} -c 'OPTIND=1; result=""; set -- -a operand -b; while getopts ab name; do result="${result}${name}"; done; echo "$result"'
+    $SHELL -c 'OPTIND=1; result=""; set -- -a operand -b; while getopts ab name; do result="${result}${name}"; done; echo "$result"'
   end script
   expect_stdout "a"
 end test "non-option argument stops parsing"

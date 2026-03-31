@@ -8,7 +8,7 @@ requirement "SHALL-SH-1015" doc="If command_name is not specified, special param
 
 begin test "special parameter 0 defaults to shell name"
   begin script
-    echo 'echo $0' | {{SHELL}}
+    echo 'echo $0' | $SHELL
   end script
   expect_stdout_line ".*/.*sh.*"
 end test "special parameter 0 defaults to shell name"
@@ -21,14 +21,14 @@ requirement "SHALL-SH-1016" doc="command_string: A string that shall be interpre
 
 begin test "-c command_string executes command"
   begin script
-    {{SHELL}} -c 'echo hello'
+    $SHELL -c 'echo hello'
   end script
   expect_stdout "hello"
 end test "-c command_string executes command"
 
 begin test "-c command_string multiple commands"
   begin script
-    {{SHELL}} -c 'echo first; echo second'
+    $SHELL -c 'echo first; echo second'
   end script
   expect_stdout "first\nsecond"
 end test "-c command_string multiple commands"
@@ -41,7 +41,7 @@ requirement "SHALL-SH-1022" doc="The standard input shall be used only if one of
 
 begin test "-s reads commands from stdin"
   begin script
-    echo 'echo from_stdin' | {{SHELL}} -s
+    echo 'echo from_stdin' | $SHELL -s
   end script
   expect_stdout "from_stdin"
 end test "-s reads commands from stdin"
@@ -58,7 +58,7 @@ begin test "ENV file processed for interactive shell"
     echo 'ENV_LOADED=yes' > $_env_file
     ENV=$_env_file
     export ENV
-    {{SHELL}} -i -c 'echo $ENV_LOADED' 2>/dev/null
+    $SHELL -i -c 'echo $ENV_LOADED' 2>/dev/null
     rc=$?
     rm -f $_env_file
     exit $rc
@@ -74,7 +74,7 @@ requirement "SHALL-2-8-1-250" doc="If the command_string operand is an empty str
 
 begin test "empty command_string exits zero"
   begin script
-    {{SHELL}} -c ''
+    $SHELL -c ''
   end script
   expect_exit_code 0
 end test "empty command_string exits zero"

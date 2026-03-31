@@ -98,14 +98,14 @@ end test "bad expansion parameter error"
 
 begin test "end of input delimits current token"
   begin script
-    printf '%s' 'echo lastword' | {{SHELL}}
+    printf '%s' 'echo lastword' | $SHELL
   end script
   expect_stdout "lastword"
 end test "end of input delimits current token"
 
 begin test "empty token discarded"
   begin script
-    {{SHELL}} -c ';;' 2>/dev/null || true
+    $SHELL -c ';;' 2>/dev/null || true
   end script
   expect_exit_code 0
 end test "empty token discarded"

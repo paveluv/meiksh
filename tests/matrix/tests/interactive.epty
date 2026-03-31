@@ -9,7 +9,7 @@ requirement "SHALL-DESCRIPTION-602" doc="A user shall explicitly exit to leave t
 requirement "SHALL-2-5-3-085" doc="Parameters: PS1: Each time an interactive shell is ready to read a command, the value of this variable shall be subjected to parameter expansion"
 
 begin interactive test "PS1 prompt expansion"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "PS1=\"prompt> \""
   expect "prompt> "

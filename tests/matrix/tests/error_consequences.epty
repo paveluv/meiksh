@@ -18,7 +18,7 @@ requirement "SHALL-2-8-1-255" doc="An unrecoverable read error while reading fro
 begin test "syntax error causes non-interactive shell to exit"
   begin script
     echo 'if true; echo "no_then"; fi; echo "survived"' > tmp_err1.sh
-    {{SHELL}} tmp_err1.sh 2>/dev/null
+    $SHELL tmp_err1.sh 2>/dev/null
   end script
   not_expect_exit_code 0
 end test "syntax error causes non-interactive shell to exit"
@@ -26,7 +26,7 @@ end test "syntax error causes non-interactive shell to exit"
 begin test "syntax error prevents further execution"
   begin script
     echo 'if true; echo "no_then"; fi; echo "survived"' > tmp_err1.sh
-    {{SHELL}} tmp_err1.sh 2>/dev/null
+    $SHELL tmp_err1.sh 2>/dev/null
   end script
   expect_stdout ""
 end test "syntax error prevents further execution"
@@ -34,7 +34,7 @@ end test "syntax error prevents further execution"
 begin test "readonly assignment before special built-in causes exit"
   begin script
     echo 'readonly RO_VAR=1; RO_VAR=2 export OTHER=3; echo "survived"' > tmp_err2.sh
-    {{SHELL}} tmp_err2.sh 2>/dev/null
+    $SHELL tmp_err2.sh 2>/dev/null
   end script
   expect_stdout ""
 end test "readonly assignment before special built-in causes exit"
@@ -42,7 +42,7 @@ end test "readonly assignment before special built-in causes exit"
 begin test "invalid option on special built-in causes exit"
   begin script
     echo 'set -Z; echo "survived"' > tmp_err3.sh
-    {{SHELL}} tmp_err3.sh 2>/dev/null
+    $SHELL tmp_err3.sh 2>/dev/null
   end script
   expect_stdout ""
 end test "invalid option on special built-in causes exit"
@@ -58,7 +58,7 @@ requirement "SHALL-2-8-1-252" doc="If it is executed via the command utility, th
 begin test "command utility prevents exit on special built-in error"
   begin script
     echo 'command set -Z; echo "survived"' > tmp_err4.sh
-    {{SHELL}} tmp_err4.sh 2>/dev/null
+    $SHELL tmp_err4.sh 2>/dev/null
   end script
   expect_stdout "survived"
 end test "command utility prevents exit on special built-in error"

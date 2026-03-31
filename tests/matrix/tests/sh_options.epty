@@ -12,7 +12,7 @@ requirement "SHALL-OPERANDS-011" doc="The positional parameters ($1, $2, and so 
 
 begin test "-c runs command_string with $0 and positional params"
   begin script
-    {{SHELL}} -c 'echo "args: $0 $1 $2"' zero one two
+    $SHELL -c 'echo "args: $0 $1 $2"' zero one two
   end script
   expect_stdout "args: zero one two"
 end test "-c runs command_string with $0 and positional params"
@@ -30,14 +30,14 @@ requirement "SHALL-STDIN-019" doc="This shall remain in effect when the command 
 
 begin test "commands from stdin act like -s"
   begin script
-    echo 'echo stdin_test' | {{SHELL}}
+    echo 'echo stdin_test' | $SHELL
   end script
   expect_stdout "stdin_test"
 end test "commands from stdin act like -s"
 
 begin test "stdin not consumed entirely if a command needs it"
   begin script
-    (echo 'read line'; echo 'input_for_read'; echo 'echo "got: $line"') | {{SHELL}}
+    (echo 'read line'; echo 'input_for_read'; echo 'echo "got: $line"') | $SHELL
   end script
   expect_stdout "got: input_for_read"
 end test "stdin not consumed entirely if a command needs it"
@@ -46,7 +46,7 @@ requirement "SHALL-OPERANDS-014" doc="If sh is called using a synopsis form that
 
 begin test "$0 is shell path when reading from stdin"
   begin script
-    echo 'echo $0' | {{SHELL}}
+    echo 'echo $0' | $SHELL
   end script
   expect_stdout_line ".*/.*sh.*"
 end test "$0 is shell path when reading from stdin"
@@ -59,7 +59,7 @@ requirement "SHALL-OPERANDS-010" doc="The following operands shall be supported.
 
 begin test "sh - ignores the hyphen and reads from stdin"
   begin script
-    echo 'echo hyphen_test' | {{SHELL}} -
+    echo 'echo hyphen_test' | $SHELL -
   end script
   expect_stdout "hyphen_test"
 end test "sh - ignores the hyphen and reads from stdin"
@@ -72,7 +72,7 @@ requirement "SHALL-OPTIONS-005" doc="The option letters derived from the set spe
 
 begin test "+a turns off allexport"
   begin script
-    {{SHELL}} -c 'set -a
+    $SHELL -c 'set -a
     export_on="yes"
     set +a
     export_off="no"
@@ -91,7 +91,7 @@ requirement "SHALL-OPERANDS-012" doc="If the pathname does not contain a slash c
 begin test "sh reads script from current working directory without slash"
   begin script
     echo 'echo "local_script_executed"' > tmp_local.sh
-    {{SHELL}} tmp_local.sh
+    $SHELL tmp_local.sh
     rm -f tmp_local.sh
   end script
   expect_stdout "local_script_executed"

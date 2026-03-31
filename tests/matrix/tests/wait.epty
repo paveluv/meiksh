@@ -115,7 +115,7 @@ end test "second wait on same PID returns 127"
 requirement "SHALL-WAIT-1349" doc="If PID associated with bg job, job removed"
 
 begin interactive test "waited job removed from jobs list"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "

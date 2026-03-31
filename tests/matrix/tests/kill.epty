@@ -278,7 +278,7 @@ end test "kill -0 nonexistent PID fails"
 # ==============================================================================
 
 begin interactive test "kill with job ID %1"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -293,7 +293,7 @@ begin interactive test "kill with job ID %1"
 end interactive test "kill with job ID %1"
 
 begin interactive test "kill -s KILL with job ID %1"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -312,7 +312,7 @@ end interactive test "kill -s KILL with job ID %1"
 # ==============================================================================
 
 begin interactive test "kill -s 0 with job ID checks existence"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -331,7 +331,7 @@ end interactive test "kill -s 0 with job ID checks existence"
 # ==============================================================================
 
 begin interactive test "kill %% targets current job"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -350,7 +350,7 @@ end interactive test "kill %% targets current job"
 # ==============================================================================
 
 begin interactive test "kill %+ targets current job"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -369,7 +369,7 @@ end interactive test "kill %+ targets current job"
 # ==============================================================================
 
 begin interactive test "kill %- targets previous job"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "

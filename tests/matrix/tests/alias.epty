@@ -88,7 +88,7 @@ end test "alias in subshell does not leak to parent"
 
 begin test "alias in child shell does not leak to parent"
   begin script
-    {{SHELL}} -c 'alias outer_leak="echo LEAKED"' 2>/dev/null
+    $SHELL -c 'alias outer_leak="echo LEAKED"' 2>/dev/null
     echo ok
   end script
   expect_stdout "ok"
