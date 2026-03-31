@@ -108,14 +108,18 @@ requirement "SHALL-2-14-3-495" doc="If a <slash> character is found following an
 
 begin test "* does not match across slash in pathname"
   begin script
-    mkdir -p tmp_pattern/dir; touch tmp_pattern/dir/file.txt tmp_pattern/dir/file.md tmp_pattern/a.txt; echo tmp_pattern/*/file.txt
+    mkdir -p tmp_pattern/dir
+    touch tmp_pattern/dir/file.txt tmp_pattern/dir/file.md tmp_pattern/a.txt
+    echo tmp_pattern/*/file.txt
   end script
   expect_stdout "tmp_pattern/dir/file.txt"
 end test "* does not match across slash in pathname"
 
 begin test "* without slash does not match dir/file"
   begin script
-    mkdir -p tmp_pattern/dir; touch tmp_pattern/dir/file.txt tmp_pattern/a.txt; echo tmp_pattern/*file.txt
+    mkdir -p tmp_pattern/dir
+    touch tmp_pattern/dir/file.txt tmp_pattern/a.txt
+    echo tmp_pattern/*file.txt
   end script
   expect_stdout "tmp_pattern/\*file.txt"
 end test "* without slash does not match dir/file"
@@ -129,7 +133,9 @@ requirement "SHALL-2-14-3-497" doc="The leading <period> shall not be matched by
 
 begin test "glob * does not match dotfiles"
   begin script
-    mkdir -p tmp_pattern; touch tmp_pattern/.hidden tmp_pattern/a.txt tmp_pattern/dir; echo tmp_pattern/*
+    mkdir -p tmp_pattern
+    touch tmp_pattern/.hidden tmp_pattern/a.txt tmp_pattern/dir
+    echo tmp_pattern/*
   end script
   expect_stdout_line ".*a\.txt.*dir.*"
   not_expect_stdout_line ".*\.hidden.*"
@@ -137,7 +143,9 @@ end test "glob * does not match dotfiles"
 
 begin test ".* matches hidden files"
   begin script
-    mkdir -p tmp_pattern; touch tmp_pattern/.hidden; echo tmp_pattern/.*
+    mkdir -p tmp_pattern
+    touch tmp_pattern/.hidden
+    echo tmp_pattern/.*
   end script
   expect_stdout_line ".*\.hidden.*"
 end test ".* matches hidden files"
@@ -157,7 +165,8 @@ requirement "SHALL-2-14-3-505" doc="If a specified pattern does not contain any 
 
 begin test "unmatched glob pattern left unchanged"
   begin script
-    mkdir -p tmp_pattern; echo tmp_pattern/*.md
+    mkdir -p tmp_pattern
+    echo tmp_pattern/*.md
   end script
   expect_stdout "tmp_pattern/\*.md"
 end test "unmatched glob pattern left unchanged"

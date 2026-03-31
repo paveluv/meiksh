@@ -22,7 +22,8 @@ requirement "SHALL-2-9-1-1-269" doc="If no fields remain, the next word (if any)
 
 begin test "empty first word skipped to find command"
   begin script
-    empty=""; $empty printf "%s
+    empty=""
+    $empty printf "%s
     " "hello"
   end script
   expect_stdout "hello"
@@ -36,7 +37,8 @@ requirement "SHALL-2-9-1-2-276" doc="If no command name results, variable assign
 
 begin test "assignment with no command alters shell state"
   begin script
-    FOO=bar; printf "%s
+    FOO=bar
+    printf "%s
     " "$FOO"
   end script
   expect_stdout "bar"
@@ -46,7 +48,8 @@ requirement "SHALL-2-9-1-2-277" doc="If the command name is not a special built-
 
 begin test "assignment before regular command is temporary"
   begin script
-    FOO=bar sh -c 'echo $FOO'; echo "${FOO:-unset}"
+    FOO=bar sh -c 'echo $FOO'
+    echo "${FOO:-unset}"
   end script
   expect_stdout "bar\nunset"
 end test "assignment before regular command is temporary"
@@ -55,7 +58,8 @@ requirement "SHALL-2-9-1-2-279" doc="If the command name is a special built-in u
 
 begin test "assignment before special built-in persists"
   begin script
-    FOO=bar export DUMMY=1; printf "%s
+    FOO=bar export DUMMY=1
+    printf "%s
     " "$FOO"
   end script
   expect_stdout "bar"
@@ -65,7 +69,8 @@ requirement "SHALL-2-9-1-2-281" doc="If any of the variable assignments attempt 
 
 begin test "assignment to readonly variable fails"
   begin script
-    readonly FOO=1; FOO=2
+    readonly FOO=1
+    FOO=2
   end script
   not_expect_exit_code 0
 end test "assignment to readonly variable fails"
@@ -79,7 +84,8 @@ requirement "SHALL-2-9-1-3-283" doc="If any of the redirections performed in the
 
 begin test "redirection with no command creates file"
   begin script
-    > tmp_redir.txt; ls tmp_redir.txt
+    > tmp_redir.txt
+    ls tmp_redir.txt
   end script
   expect_stdout "tmp_redir.txt"
 end test "redirection with no command creates file"

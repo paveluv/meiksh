@@ -16,14 +16,16 @@ end test "type finds known command"
 
 begin test "type with known builtin produces output"
   begin script
-    out=$(type echo 2>/dev/null); [ -n "$out" ] && echo pass || echo fail
+    out=$(type echo 2>/dev/null)
+    [ -n "$out" ] && echo pass || echo fail
   end script
   expect_stdout "pass"
 end test "type with known builtin produces output"
 
 begin test "type with unknown name returns non-zero"
   begin script
-    type nonexistent_command_xyz 2>/dev/null; echo $?
+    type nonexistent_command_xyz 2>/dev/null
+    echo $?
   end script
   not_expect_stdout "0"
 end test "type with unknown name returns non-zero"
@@ -40,21 +42,31 @@ requirement "SHALL-HASH-1219" doc="This list shall be cleared when the contents 
 
 begin test "hash remembers and lists utilities"
   begin script
-    hash -r; hash sh; hash >/dev/null && echo pass || echo fail
+    hash -r
+    hash sh
+    hash >/dev/null && echo pass || echo fail
   end script
   expect_stdout "pass"
 end test "hash remembers and lists utilities"
 
 begin test "hash output goes to stdout"
   begin script
-    hash -r; hash echo 2>/dev/null; echo 2>/dev/null; hash 2>/dev/null; echo pass
+    hash -r
+    hash echo 2>/dev/null
+    echo 2>/dev/null
+    hash 2>/dev/null
+    echo pass
   end script
   expect_stdout_line "pass"
 end test "hash output goes to stdout"
 
 begin test "PATH change clears hash table"
   begin script
-    hash -r; hash echo 2>/dev/null; echo >/dev/null; PATH="$PATH"; hash 2>/dev/null | wc -l
+    hash -r
+    hash echo 2>/dev/null
+    echo >/dev/null
+    PATH="$PATH"
+    hash 2>/dev/null | wc -l
   end script
   expect_stdout_line ".*0.*"
 end test "PATH change clears hash table"
@@ -71,14 +83,17 @@ requirement "SHALL-OPERANDS-010" doc="The following operands shall be supported.
 
 begin test "alias creates definition visible in output"
   begin script
-    alias foo=bar; alias foo | grep -q "foo=" && echo pass || echo fail
+    alias foo=bar
+    alias foo | grep -q "foo=" && echo pass || echo fail
   end script
   expect_stdout "pass"
 end test "alias creates definition visible in output"
 
 begin test "alias redefine updates the definition"
   begin script
-    alias mya="echo old"; alias mya="echo new"; alias mya
+    alias mya="echo old"
+    alias mya="echo new"
+    alias mya
   end script
   expect_stdout_line ".*new.*"
 end test "alias redefine updates the definition"
@@ -99,14 +114,20 @@ requirement "SHALL-UNALIAS-1337" doc="The unalias utility shall conform to XBD 1
 
 begin test "unalias removes named alias"
   begin script
-    alias foo=bar; unalias foo; alias foo >/dev/null 2>&1 || echo pass
+    alias foo=bar
+    unalias foo
+    alias foo >/dev/null 2>&1 || echo pass
   end script
   expect_stdout "pass"
 end test "unalias removes named alias"
 
 begin test "unalias -a removes all aliases"
   begin script
-    alias foo=bar; alias baz=qux; unalias -a; val=$(alias); [ -z "$val" ] && echo pass || echo fail
+    alias foo=bar
+    alias baz=qux
+    unalias -a
+    val=$(alias)
+    [ -z "$val" ] && echo pass || echo fail
   end script
   expect_stdout "pass"
 end test "unalias -a removes all aliases"
@@ -157,21 +178,28 @@ end test "command -V describes known utility"
 
 begin test "command bypasses alias"
   begin script
-    alias echo="echo alias_"; command echo "hello"
+    alias echo="echo alias_"
+    command echo "hello"
   end script
   expect_stdout "hello"
 end test "command bypasses alias"
 
 begin test "command returns 127 for missing utility"
   begin script
-    command missing_cmd_not_found >/dev/null 2>&1; echo $?
+    command missing_cmd_not_found >/dev/null 2>&1
+    echo $?
   end script
   expect_stdout "127"
 end test "command returns 127 for missing utility"
 
 begin test "command returns 126 for non-executable file"
   begin script
-    mkdir -p mydir; touch mydir/nonexec; PATH="$PWD/mydir:$PATH" command nonexec >/dev/null 2>&1; rc=$?; rm -rf mydir; echo $rc
+    mkdir -p mydir
+    touch mydir/nonexec
+    PATH="$PWD/mydir:$PATH" command nonexec >/dev/null 2>&1
+    rc=$?
+    rm -rf mydir
+    echo $rc
   end script
   expect_stdout "126"
 end test "command returns 126 for non-executable file"
@@ -187,14 +215,18 @@ requirement "SHALL-XBD-12-4005" doc="If an error is generated, the utility's dia
 
 begin test "kill -s TERM as separate option-argument"
   begin script
-    sleep 0 & _pid=$!; kill -s TERM $_pid 2>/dev/null; wait $_pid 2>/dev/null; true
+    sleep 0 & _pid=$!
+    kill -s TERM $_pid 2>/dev/null
+    wait $_pid 2>/dev/null
+    true
   end script
   expect_exit_code 0
 end test "kill -s TERM as separate option-argument"
 
 begin test "ulimit with invalid value produces diagnostic"
   begin script
-    err=$(ulimit -f not_a_number 2>&1); [ -n "$err" ] && echo pass || echo fail
+    err=$(ulimit -f not_a_number 2>&1)
+    [ -n "$err" ] && echo pass || echo fail
   end script
   expect_stdout "pass"
 end test "ulimit with invalid value produces diagnostic"

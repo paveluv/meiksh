@@ -11,14 +11,20 @@ requirement "SHALL-DESCRIPTION-620" doc="The value n shall be an unsigned decima
 
 begin test "shift 1 without arguments shifts $2 to $1"
   begin script
-    set -- a b c; echo $#; shift; echo "$1 $#"
+    set -- a b c
+    echo $#
+    shift
+    echo "$1 $#"
   end script
   expect_stdout "3\nb 2"
 end test "shift 1 without arguments shifts $2 to $1"
 
 begin test "shift 2 shifts $3 to $1"
   begin script
-    set -- a b c; echo $#; shift 2; echo "$1 $#"
+    set -- a b c
+    echo $#
+    shift 2
+    echo "$1 $#"
   end script
   expect_stdout "3\nc 1"
 end test "shift 2 shifts $3 to $1"
@@ -27,7 +33,9 @@ requirement "SHALL-DESCRIPTION-516" doc="If n is greater than $#, the positional
 
 begin test "shift greater than $# fails and leaves parameters intact"
   begin script
-    set -- a b c; shift 5 2>/dev/null; echo "$? $1"
+    set -- a b c
+    shift 5 2>/dev/null
+    echo "$? $1"
   end script
   expect_stdout_line ".*[1-9].* a"
 end test "shift greater than $# fails and leaves parameters intact"
@@ -56,7 +64,9 @@ requirement "SHALL-DESCRIPTION-629" doc="If the -p option is not specified and t
 
 begin test "trap with signal number resets to default"
   begin script
-    trap "echo trapped" INT; trap 2; trap -p INT
+    trap "echo trapped" INT
+    trap 2
+    trap -p INT
   end script
   not_expect_stdout_line ".*echo trapped.*"
 end test "trap with signal number resets to default"
@@ -65,7 +75,9 @@ requirement "SHALL-DESCRIPTION-630" doc="Otherwise, if the -p option is not spec
 
 begin test "trap action executed on signal"
   begin script
-    trap "echo GOT_USR1" USR1; kill -USR1 $$; echo done
+    trap "echo GOT_USR1" USR1
+    kill -USR1 $$
+    echo done
   end script
   expect_stdout_line ".*GOT_USR1.*"
   expect_stdout_line ".*done.*"
@@ -75,7 +87,9 @@ requirement "SHALL-DESCRIPTION-631" doc="If action is -, the shell shall reset e
 
 begin test "trap - resets trap to default"
   begin script
-    trap "echo x" EXIT; trap - EXIT; echo done
+    trap "echo x" EXIT
+    trap - EXIT
+    echo done
   end script
   expect_stdout "done"
 end test "trap - resets trap to default"
@@ -84,7 +98,8 @@ requirement "SHALL-DESCRIPTION-632" doc="If action is null, the shell shall igno
 
 begin test "trap with empty action ignores condition"
   begin script
-    trap "" EXIT; echo "running"
+    trap "" EXIT
+    echo "running"
   end script
   expect_stdout "running"
 end test "trap with empty action ignores condition"
@@ -93,7 +108,8 @@ requirement "SHALL-DESCRIPTION-633" doc="Otherwise, the argument action shall be
 
 begin test "trap action fires on EXIT"
   begin script
-    trap "echo exit_action" EXIT; echo "main"
+    trap "echo exit_action" EXIT
+    echo "main"
   end script
   expect_stdout "main\nexit_action"
 end test "trap action fires on EXIT"
@@ -102,7 +118,9 @@ requirement "SHALL-DESCRIPTION-634" doc="The action of trap shall override a pre
 
 begin test "trap overrides previous action"
   begin script
-    trap "echo first" EXIT; trap "echo second" EXIT; true
+    trap "echo first" EXIT
+    trap "echo second" EXIT
+    true
   end script
   expect_stdout "second"
 end test "trap overrides previous action"
@@ -111,7 +129,8 @@ requirement "SHALL-DESCRIPTION-635" doc="The value of $? after the trap action c
 
 begin test "trap preserves $? value"
   begin script
-    trap 'echo qval=$?' EXIT; false
+    trap 'echo qval=$?' EXIT
+    false
   end script
   expect_stdout_line ".*qval=[1-9].*"
 end test "trap preserves $? value"
@@ -120,7 +139,8 @@ requirement "SHALL-DESCRIPTION-636" doc="The EXIT condition shall occur when the
 
 begin test "EXIT trap fires on normal exit"
   begin script
-    trap "echo exit_trap" EXIT; exit 0
+    trap "echo exit_trap" EXIT
+    exit 0
   end script
   expect_stdout_line ".*exit_trap.*"
 end test "EXIT trap fires on normal exit"
@@ -129,7 +149,9 @@ requirement "SHALL-DESCRIPTION-637" doc="The environment in which the shell exec
 
 begin test "EXIT trap sees latest environment"
   begin script
-    MYVAL=hello; trap 'echo $MYVAL' EXIT; MYVAL=world
+    MYVAL=hello
+    trap 'echo $MYVAL' EXIT
+    MYVAL=world
   end script
   expect_stdout "world"
 end test "EXIT trap sees latest environment"
@@ -151,7 +173,8 @@ requirement "SHALL-DESCRIPTION-640" doc="When a subshell is entered, traps that 
 
 begin test "subshell resets traps to default"
   begin script
-    trap "echo parent_trap" USR1; (trap "echo child_trap" USR1; trap -p USR1)
+    trap "echo parent_trap" USR1
+    (trap "echo child_trap" USR1; trap -p USR1)
   end script
   not_expect_stdout_line ".*parent_trap.*"
   expect_stdout_line ".*child_trap.*"
@@ -168,14 +191,19 @@ requirement "SHALL-OPTIONS-649" doc="The shell shall format the output so that i
 
 begin test "trap with no args lists active traps"
   begin script
-    trap "echo hi" INT; trap
+    trap "echo hi" INT
+    trap
   end script
   expect_stdout_line ".*INT.*"
 end test "trap with no args lists active traps"
 
 begin test "trap output is suitable for reinput"
   begin script
-    trap "echo reinput_trap" EXIT; _saved=$(trap -p EXIT); trap - EXIT; eval "$_saved"; true
+    trap "echo reinput_trap" EXIT
+    _saved=$(trap -p EXIT)
+    trap - EXIT
+    eval "$_saved"
+    true
   end script
   expect_stdout_line ".*reinput_trap.*"
 end test "trap output is suitable for reinput"
@@ -184,7 +212,8 @@ requirement "SHALL-DESCRIPTION-610" doc="The default for all options shall be of
 
 begin test "options default to off (-e is off)"
   begin script
-    false; echo "survived"
+    false
+    echo "survived"
   end script
   expect_stdout "survived"
 end test "options default to off (-e is off)"
@@ -215,7 +244,9 @@ requirement "SHALL-DESCRIPTION-614" doc="The command set -- without argument sha
 
 begin test "set -- without arguments unsets all positional parameters"
   begin script
-    set -- a b c; set --; echo $#
+    set -- a b c
+    set --
+    echo $#
   end script
   expect_stdout "0"
 end test "set -- without arguments unsets all positional parameters"

@@ -290,14 +290,18 @@ requirement "SHALL-READ-1280" doc="read in subshell shall not affect caller's en
 
 begin test "read in explicit subshell does not affect parent"
   begin script
-    x=parent; (echo child | read x); echo "$x"
+    x=parent
+    (echo child | read x)
+    echo "$x"
   end script
   expect_stdout "parent"
 end test "read in explicit subshell does not affect parent"
 
 begin test "read in pipeline subshell does not affect parent"
   begin script
-    x=parent; echo child | read x; echo "$x"
+    x=parent
+    echo child | read x
+    echo "$x"
   end script
   expect_stdout "parent"
 end test "read in pipeline subshell does not affect parent"

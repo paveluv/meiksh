@@ -10,21 +10,24 @@ requirement "SHALL-ULIMIT-1076" doc="If the -a option is specified, the output w
 
 begin test "ulimit -f unlimited succeeds"
   begin script
-    ulimit -f unlimited; echo "pass"
+    ulimit -f unlimited
+    echo "pass"
   end script
   expect_stdout "pass"
 end test "ulimit -f unlimited succeeds"
 
 begin test "ulimit -S -f prints soft file-size limit"
   begin script
-    ulimit -S -f >/dev/null; echo "pass"
+    ulimit -S -f >/dev/null
+    echo "pass"
   end script
   expect_stdout "pass"
 end test "ulimit -S -f prints soft file-size limit"
 
 begin test "ulimit -a succeeds"
   begin script
-    ulimit -a >/dev/null; echo $?
+    ulimit -a >/dev/null
+    echo $?
   end script
   expect_stdout "0"
 end test "ulimit -a succeeds"

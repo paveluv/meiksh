@@ -30,7 +30,15 @@ requirement "SHALL-CD-1089" doc="-P Handle the operand dot-dot physically; symbo
 
 begin test "cd into directory and cd - toggle"
   begin script
-    mkdir -p foo/bar; cd foo; echo "$PWD" | grep -q foo && echo pass1 || echo fail1; cd bar; echo "$PWD" | grep -q foo/bar && echo pass2 || echo fail2; cd - >/dev/null; echo "$PWD" | grep -q foo$ && echo pass3 || echo fail3; cd - >/dev/null; echo "$PWD" | grep -q foo/bar && echo pass4 || echo fail4
+    mkdir -p foo/bar
+    cd foo
+    echo "$PWD" | grep -q foo && echo pass1 || echo fail1
+    cd bar
+    echo "$PWD" | grep -q foo/bar && echo pass2 || echo fail2
+    cd - >/dev/null
+    echo "$PWD" | grep -q foo$ && echo pass3 || echo fail3
+    cd - >/dev/null
+    echo "$PWD" | grep -q foo/bar && echo pass4 || echo fail4
   end script
   expect_stdout "pass1\npass2\npass3\npass4"
 end test "cd into directory and cd - toggle"
@@ -41,7 +49,10 @@ end test "cd into directory and cd - toggle"
 
 begin test "cd - output prints old directory"
   begin script
-    mkdir -p abc; old=$PWD; cd abc; cd - | grep -q "^$old" && echo pass || echo fail
+    mkdir -p abc
+    old=$PWD
+    cd abc
+    cd - | grep -q "^$old" && echo pass || echo fail
   end script
   expect_stdout "pass"
 end test "cd - output prints old directory"
@@ -52,14 +63,23 @@ end test "cd - output prints old directory"
 
 begin test "cd default is logical (symlink)"
   begin script
-    mkdir -p real/dir; ln -s real/dir symlink; cd symbolic >/dev/null 2>&1 || true; cd symlink; cd ..; echo "$PWD" | grep -q real && echo "fail: physical" || echo "pass logical"
+    mkdir -p real/dir
+    ln -s real/dir symlink
+    cd symbolic >/dev/null 2>&1 || true
+    cd symlink
+    cd ..
+    echo "$PWD" | grep -q real && echo "fail: physical" || echo "pass logical"
   end script
   expect_stdout "pass logical"
 end test "cd default is logical (symlink)"
 
 begin test "cd -P is physical (symlink)"
   begin script
-    mkdir -p real/dir2; ln -s real/dir2 symlink2; cd symlink2; cd -P ..; echo "$PWD" | grep -q real && echo "pass physical" || echo "fail logical"
+    mkdir -p real/dir2
+    ln -s real/dir2 symlink2
+    cd symlink2
+    cd -P ..
+    echo "$PWD" | grep -q real && echo "pass physical" || echo "fail logical"
   end script
   expect_stdout "pass physical"
 end test "cd -P is physical (symlink)"
@@ -81,7 +101,8 @@ end test "cd empty string fails"
 
 begin test "cd - with unset OLDPWD fails"
   begin script
-    unset OLDPWD; cd - 2>/dev/null
+    unset OLDPWD
+    cd - 2>/dev/null
   end script
   not_expect_exit_code 0
 end test "cd - with unset OLDPWD fails"

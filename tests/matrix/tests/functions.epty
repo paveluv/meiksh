@@ -42,7 +42,8 @@ requirement "SHALL-2-9-5-383" doc="The compound-command shall be executed whenev
 
 begin test "define and invoke a function"
   begin script
-    myfunc() { echo "func executing"; }; myfunc
+    myfunc() { echo "func executing"; }
+    myfunc
   end script
   expect_stdout "func executing"
 end test "define and invoke a function"
@@ -56,7 +57,10 @@ requirement "SHALL-2-9-5-379" doc="The implementation shall maintain separate na
 
 begin test "variable and function with same name do not conflict"
   begin script
-    foo=var_value; foo() { echo "func_value"; }; echo "$foo"; foo
+    foo=var_value
+    foo() { echo "func_value"; }
+    echo "$foo"
+    foo
   end script
   expect_stdout "var_value\nfunc_value"
 end test "variable and function with same name do not conflict"

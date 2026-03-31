@@ -87,14 +87,16 @@ requirement "SHALL-COMMAND-1105" doc="Special properties of special built-ins do
 
 begin test "command export does not abort shell"
   begin script
-    command export 2>/dev/null; echo survived
+    command export 2>/dev/null
+    echo survived
   end script
   expect_stdout_line ".*survived.*"
 end test "command export does not abort shell"
 
 begin test "command break outside loop does not abort shell"
   begin script
-    command break 2>/dev/null; echo still_here
+    command break 2>/dev/null
+    echo still_here
   end script
   expect_stdout "still_here"
 end test "command break outside loop does not abort shell"
@@ -114,7 +116,9 @@ end test "command executes utility normally"
 
 begin test "command does not perform alias expansion"
   begin script
-    alias ls="echo ALIASED" 2>/dev/null; command ls / >/dev/null 2>&1; echo $?
+    alias ls="echo ALIASED" 2>/dev/null
+    command ls / >/dev/null 2>&1
+    echo $?
   end script
   not_expect_stdout ".*ALIASED.*"
 end test "command does not perform alias expansion"
@@ -141,14 +145,16 @@ end test "command -v cd prints builtin name"
 
 begin test "command -v for defined function prints function name"
   begin script
-    myfn() { :; }; command -v myfn
+    myfn() { :; }
+    command -v myfn
   end script
   expect_stdout "myfn"
 end test "command -v for defined function prints function name"
 
 begin test "command -v for alias or no alias"
   begin script
-    alias greet="echo hi" 2>/dev/null; command -v greet 2>/dev/null || echo NO_ALIAS
+    alias greet="echo hi" 2>/dev/null
+    command -v greet 2>/dev/null || echo NO_ALIAS
   end script
   expect_stdout_line ".*(greet|echo hi|NO_ALIAS).*"
 end test "command -v for alias or no alias"
@@ -175,21 +181,24 @@ requirement "SHALL-COMMAND-1108" doc="Treated as declaration utility if first ar
 
 begin test "command export behaves as declaration utility"
   begin script
-    command export FOO=bar; echo $FOO
+    command export FOO=bar
+    echo $FOO
   end script
   expect_stdout "bar"
 end test "command export behaves as declaration utility"
 
 begin test "command readonly behaves as declaration utility"
   begin script
-    command readonly RO_VAR=42; echo $RO_VAR
+    command readonly RO_VAR=42
+    echo $RO_VAR
   end script
   expect_stdout "42"
 end test "command readonly behaves as declaration utility"
 
 begin test "command local inside function"
   begin script
-    f() { command local LV=hello 2>/dev/null && echo $LV || echo $LV; }; f
+    f() { command local LV=hello 2>/dev/null && echo $LV || echo $LV; }
+    f
   end script
   expect_stdout_line ".*hello.*"
 end test "command local inside function"
@@ -202,28 +211,33 @@ requirement "SHALL-COMMAND-1109" doc="Subsequent name=word expanded in assignmen
 
 begin test "command export assigns variable"
   begin script
-    command export TVAR=hello; echo $TVAR
+    command export TVAR=hello
+    echo $TVAR
   end script
   expect_stdout "hello"
 end test "command export assigns variable"
 
 begin test "multiple assignments in one command export"
   begin script
-    command export A=1 B=2 C=3; echo $A $B $C
+    command export A=1 B=2 C=3
+    echo $A $B $C
   end script
   expect_stdout "1 2 3"
 end test "multiple assignments in one command export"
 
 begin test "tilde expansion in assignment context"
   begin script
-    command export HOMEDIR=~; case "$HOMEDIR" in /*) echo absolute;; *) echo relative;; esac
+    command export HOMEDIR=~
+    case "$HOMEDIR" in /*) echo absolute;; *) echo relative;; esac
   end script
   expect_stdout "absolute"
 end test "tilde expansion in assignment context"
 
 begin test "variable references expand in assignment values"
   begin script
-    X=hello; command export Y=${X}_world; echo $Y
+    X=hello
+    command export Y=${X}_world
+    echo $Y
   end script
   expect_stdout "hello_world"
 end test "variable references expand in assignment values"
@@ -237,7 +251,8 @@ requirement "SHALL-XBD-12-4003" doc="If the utility receives an argument contain
 
 begin test "ulimit -Sf with value adjacent"
   begin script
-    ulimit -Sf 100; ulimit -Sf
+    ulimit -Sf 100
+    ulimit -Sf
   end script
   expect_stdout_line ".*(100|unlimited).*"
 end test "ulimit -Sf with value adjacent"

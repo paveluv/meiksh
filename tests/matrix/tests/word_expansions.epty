@@ -23,7 +23,9 @@ requirement "SHALL-2-6-105" doc="Quote removal, if performed, shall always be pe
 
 begin test "expansion order: param, split, pathname"
   begin script
-    touch file1 file2; foo="~ *"; printf "%s
+    touch file1 file2
+    foo="~ *"
+    printf "%s
     " $foo
   end script
   expect_stdout "~\nfile1\nfile2"
@@ -41,7 +43,9 @@ requirement "SHALL-2-6-1-117" doc="The pathname that replaces the tilde-prefix s
 
 begin test "tilde expands to HOME"
   begin script
-    H=$HOME; out=$(echo ~); [ "$out" = "$H" ] && echo ok
+    H=$HOME
+    out=$(echo ~)
+    [ "$out" = "$H" ] && echo ok
   end script
   expect_stdout "ok"
 end test "tilde expands to HOME"
@@ -51,7 +55,8 @@ end test "tilde expands to HOME"
 
 begin test "tilde result not subject to field splitting or pathname expansion"
   begin script
-    HOME="home with * spaces"; printf "%s
+    HOME="home with * spaces"
+    printf "%s
     " ~
   end script
   expect_stdout "home with \* spaces"
@@ -74,7 +79,9 @@ requirement "SHALL-2-6-1-116" doc="The pathname shall be obtained as if by using
 
 begin test "tilde alone expands to HOME (section 2)"
   begin script
-    H=$HOME; out=$(echo ~); [ "$out" = "$H" ] && echo ok
+    H=$HOME
+    out=$(echo ~)
+    [ "$out" = "$H" ] && echo ok
   end script
   expect_stdout "ok"
 end test "tilde alone expands to HOME (section 2)"
@@ -83,7 +90,9 @@ end test "tilde alone expands to HOME (section 2)"
 
 begin test "tilde slash expands to HOME/foo"
   begin script
-    H=$HOME; out=$(echo ~/foo); [ "$out" = "$H/foo" ] && echo ok
+    H=$HOME
+    out=$(echo ~/foo)
+    [ "$out" = "$H/foo" ] && echo ok
   end script
   expect_stdout "ok"
 end test "tilde slash expands to HOME/foo"
@@ -109,7 +118,8 @@ requirement "SHALL-2-6-2-119" doc="Parameter Expansion: The format for parameter
 
 begin test "parameter expansion with braces"
   begin script
-    foo=hello; echo ${foo}
+    foo=hello
+    echo ${foo}
   end script
   expect_stdout "hello"
 end test "parameter expansion with braces"
@@ -118,7 +128,8 @@ end test "parameter expansion with braces"
 
 begin test "parameter expansion without braces"
   begin script
-    foo=world; echo $foo
+    foo=world
+    echo $foo
   end script
   expect_stdout "world"
 end test "parameter expansion without braces"
@@ -129,21 +140,24 @@ requirement "SHALL-2-6-2-124" doc="If parameter is unset or null, the expansion 
 
 begin test "colon-dash fallback on unset"
   begin script
-    unset foo; echo "${foo:-default}"
+    unset foo
+    echo "${foo:-default}"
   end script
   expect_stdout "default"
 end test "colon-dash fallback on unset"
 
 begin test "colon-dash no fallback when set"
   begin script
-    foo=set; echo "${foo:-default}"
+    foo=set
+    echo "${foo:-default}"
   end script
   expect_stdout "set"
 end test "colon-dash no fallback when set"
 
 begin test "colon-dash fallback on null"
   begin script
-    foo=""; echo "${foo:-default}"
+    foo=""
+    echo "${foo:-default}"
   end script
   expect_stdout "default"
 end test "colon-dash fallback on null"
@@ -154,7 +168,9 @@ requirement "SHALL-2-6-2-125" doc="If parameter is unset or null, quote removal 
 
 begin test "colon-equals assignment on unset"
   begin script
-    unset foo; echo "${foo:=assigned}"; echo "$foo"
+    unset foo
+    echo "${foo:=assigned}"
+    echo "$foo"
   end script
   expect_stdout "assigned\nassigned"
 end test "colon-equals assignment on unset"
@@ -165,7 +181,8 @@ requirement "SHALL-2-6-2-126" doc="In all cases, the final value of parameter sh
 
 begin test "colon-question generates error on unset"
   begin script
-    unset foo; echo "${foo:?error message}"
+    unset foo
+    echo "${foo:?error message}"
   end script
   expect_stderr_line ".*error message.*"
   not_expect_exit_code 0
@@ -177,14 +194,16 @@ requirement "SHALL-2-6-2-127" doc="If parameter is unset or null, the expansion 
 
 begin test "colon-plus empty when unset"
   begin script
-    unset foo; echo "${foo:+alt}"
+    unset foo
+    echo "${foo:+alt}"
   end script
   expect_stdout ""
 end test "colon-plus empty when unset"
 
 begin test "colon-plus substitutes alt when set"
   begin script
-    foo=set; echo "${foo:+alt}"
+    foo=set
+    echo "${foo:+alt}"
   end script
   expect_stdout "alt"
 end test "colon-plus substitutes alt when set"
@@ -204,7 +223,9 @@ requirement "SHALL-2-6-2-123" doc="The '}' character that delimits the following
 
 begin test "fallback word not expanded when parameter set"
   begin script
-    foo="set"; echo "${foo:-$(echo "side_effect" > tmp_effect.txt)}"; ls tmp_effect.txt 2>/dev/null || echo "not created"
+    foo="set"
+    echo "${foo:-$(echo "side_effect" > tmp_effect.txt)}"
+    ls tmp_effect.txt 2>/dev/null || echo "not created"
   end script
   expect_stdout "set\nnot created"
 end test "fallback word not expanded when parameter set"
@@ -215,7 +236,9 @@ requirement "SHALL-2-6-2-133" doc="If parameter is unset and set -u is in effect
 
 begin test "set -u fails on unset variable"
   begin script
-    set -u; unset unset_var; echo "${unset_var}"
+    set -u
+    unset unset_var
+    echo "${unset_var}"
   end script
   not_expect_exit_code 0
 end test "set -u fails on unset variable"
@@ -224,7 +247,9 @@ end test "set -u fails on unset variable"
 
 begin test "set -u fails on length of unset variable"
   begin script
-    set -u; unset unset_var; echo "${#unset_var}"
+    set -u
+    unset unset_var
+    echo "${#unset_var}"
   end script
   not_expect_exit_code 0
 end test "set -u fails on length of unset variable"
@@ -246,7 +271,8 @@ requirement "SHALL-2-6-2-137" doc="In each variety, if word is omitted, the empt
 
 begin test "empty pattern in suffix/prefix removal"
   begin script
-    foo="abc"; echo "${foo%}" "${foo#}"
+    foo="abc"
+    echo "${foo%}" "${foo#}"
   end script
   expect_stdout "abc abc"
 end test "empty pattern in suffix/prefix removal"
@@ -257,7 +283,8 @@ requirement "SHALL-2-6-2-140" doc="If present, word shall not begin with an unqu
 
 begin test "smallest suffix removal"
   begin script
-    foo="a.b.c.b.c"; echo "${foo%b.c}"
+    foo="a.b.c.b.c"
+    echo "${foo%b.c}"
   end script
   expect_stdout "a.b.c."
 end test "smallest suffix removal"
@@ -266,7 +293,8 @@ requirement "SHALL-2-6-2-142" doc="The parameter expansion shall then result in 
 
 begin test "largest suffix removal"
   begin script
-    foo="a.b.c.b.c"; echo "${foo%%b.c*}"
+    foo="a.b.c.b.c"
+    echo "${foo%%b.c*}"
   end script
   expect_stdout "a."
 end test "largest suffix removal"
@@ -276,7 +304,8 @@ requirement "SHALL-2-6-2-145" doc="If present, word shall not begin with an unqu
 
 begin test "smallest prefix removal"
   begin script
-    foo="a.b.c.b.c"; echo "${foo#*b.}"
+    foo="a.b.c.b.c"
+    echo "${foo#*b.}"
   end script
   expect_stdout "c.b.c"
 end test "smallest prefix removal"
@@ -285,7 +314,8 @@ requirement "SHALL-2-6-2-147" doc="The parameter expansion shall then result in 
 
 begin test "largest prefix removal"
   begin script
-    foo="a.b.c.b.c"; echo "${foo##*b.}"
+    foo="a.b.c.b.c"
+    echo "${foo##*b.}"
   end script
   expect_stdout "c"
 end test "largest prefix removal"
@@ -294,7 +324,8 @@ requirement "SHALL-2-6-2-132" doc="The shortest decimal representation of the le
 
 begin test "string length"
   begin script
-    foo="hello"; echo "${#foo}"
+    foo="hello"
+    echo "${#foo}"
   end script
   expect_stdout "5"
 end test "string length"
@@ -374,7 +405,8 @@ requirement "SHALL-2-6-4-166" doc="If the shell variable x contains a value that
 
 begin test "arithmetic with variable and command substitution"
   begin script
-    x=5; echo $((x * $(echo 2)))
+    x=5
+    echo $((x * $(echo 2)))
   end script
   expect_stdout "10"
 end test "arithmetic with variable and command substitution"
@@ -383,7 +415,9 @@ end test "arithmetic with variable and command substitution"
 
 begin test "arithmetic assignment side effect"
   begin script
-    x=1; echo $((x = x + 4)); echo "$x"
+    x=1
+    echo $((x = x + 4))
+    echo "$x"
   end script
   expect_stdout "5\n5"
 end test "arithmetic assignment side effect"
@@ -416,7 +450,11 @@ requirement "SHALL-2-6-5-186" doc="The ordered list of output fields so produced
 
 begin test "empty IFS prevents field splitting"
   begin script
-    IFS=""; foo="a b c"; for i in $foo; do echo "arg: $i"; done
+    IFS=""
+    foo="a b c"
+    for i in $foo; do
+      echo "arg: $i"
+    done
   end script
   expect_stdout "arg: a b c"
 end test "empty IFS prevents field splitting"
@@ -428,7 +466,11 @@ requirement "SHALL-2-6-5-178" doc="The shell shall use these delimiters as field
 
 begin test "unset IFS splits on space tab newline"
   begin script
-    unset IFS; foo=$(printf 'a b\tc\nd'); for i in $foo; do echo "arg: $i"; done
+    unset IFS
+    foo=$(printf 'a b\tc\nd')
+    for i in $foo; do
+      echo "arg: $i"
+    done
   end script
   expect_stdout "arg: a\narg: b\narg: c\narg: d"
 end test "unset IFS splits on space tab newline"
@@ -437,7 +479,11 @@ requirement "SHALL-2-6-5-177" doc="Each of the characters space, tab, and newlin
 
 begin test "IFS space collapses multiple spaces"
   begin script
-    IFS=" "; foo="a   b"; for i in $foo; do echo "arg: $i"; done
+    IFS=" "
+    foo="a   b"
+    for i in $foo; do
+      echo "arg: $i"
+    done
   end script
   expect_stdout "arg: a\narg: b"
 end test "IFS space collapses multiple spaces"
@@ -448,7 +494,10 @@ requirement "SHALL-2-6-5-174" doc="Fields which contain no results from expansio
 
 begin test "unexpanded literal not split"
   begin script
-    IFS=","; for i in a,b,c; do echo "arg: $i"; done
+    IFS=","
+    for i in a,b,c; do
+      echo "arg: $i"
+    done
   end script
   expect_stdout "arg: a,b,c"
 end test "unexpanded literal not split"
@@ -457,7 +506,11 @@ requirement "SHALL-2-6-5-171" doc="However, if an input field which contained th
 
 begin test "empty expansion removed from field list"
   begin script
-    IFS=" "; foo=""; for i in a $foo b; do echo "arg: $i"; done
+    IFS=" "
+    foo=""
+    for i in a $foo b; do
+      echo "arg: $i"
+    done
   end script
   expect_stdout "arg: a\narg: b"
 end test "empty expansion removed from field list"
@@ -468,7 +521,11 @@ requirement "SHALL-2-6-5-181" doc="When the algorithm transforms a candidate int
 
 begin test "non-IFS character does not split"
   begin script
-    IFS="x"; foo="abc"; for i in $foo; do echo "arg: $i"; done
+    IFS="x"
+    foo="abc"
+    for i in $foo; do
+      echo "arg: $i"
+    done
   end script
   expect_stdout "arg: abc"
 end test "non-IFS character does not split"
@@ -485,7 +542,8 @@ requirement "SHALL-2-6-6-187" doc="After field splitting, if set -f is not in ef
 
 begin test "pathname expansion with glob"
   begin script
-    touch tmp_path_exp.txt; echo tmp_path_*.txt
+    touch tmp_path_exp.txt
+    echo tmp_path_*.txt
   end script
   expect_stdout "tmp_path_exp.txt"
 end test "pathname expansion with glob"
@@ -494,7 +552,9 @@ end test "pathname expansion with glob"
 
 begin test "set -f disables pathname expansion"
   begin script
-    touch tmp_path_exp.txt; set -f; echo tmp_path_*.txt
+    touch tmp_path_exp.txt
+    set -f
+    echo tmp_path_*.txt
   end script
   expect_stdout "tmp_path_\*.txt"
 end test "set -f disables pathname expansion"
@@ -524,14 +584,17 @@ requirement "SHALL-V3CHAP02-1010" doc="Fields from expansion shall be processed 
 
 begin test "positional parameters count"
   begin script
-    set -- a b c; echo $#
+    set -- a b c
+    echo $#
   end script
   expect_stdout "3"
 end test "positional parameters count"
 
 begin test "field splitting into positional parameters"
   begin script
-    x="a b c"; set -- $x; echo "$1 $2 $3"
+    x="a b c"
+    set -- $x
+    echo "$1 $2 $3"
   end script
   expect_stdout "a b c"
 end test "field splitting into positional parameters"
@@ -558,7 +621,9 @@ requirement "SHALL-V3CHAP02-1009-DUP539" doc="set -o option shall set various op
 
 begin test "set -o nounset works"
   begin script
-    set -o nounset; X=1; echo $X
+    set -o nounset
+    X=1
+    echo $X
   end script
   expect_exit_code 0
 end test "set -o nounset works"
@@ -571,7 +636,8 @@ requirement "SHALL-V3CHAP02-1011" doc="Simple command execution: expansions, ass
 
 begin test "simple command execution order"
   begin script
-    X=value; echo $X
+    X=value
+    echo $X
   end script
   expect_stdout "value"
 end test "simple command execution order"
@@ -584,7 +650,8 @@ requirement "SHALL-V3CHAP02-1013" doc="Format for executing AND-OR lists sequent
 
 begin test "sequential list"
   begin script
-    echo a; echo b
+    echo a
+    echo b
   end script
   expect_stdout "a\nb"
 end test "sequential list"
@@ -597,7 +664,8 @@ requirement "SHALL-V3CHAP02-1014" doc="Omitting 'in word ...' in for loop is equ
 
 begin test "for loop without in iterates positional params"
   begin script
-    f() { for i do printf "%s " "$i"; done; }; f x y
+    f() { for i do printf "%s " "$i"; done; }
+    f x y
   end script
   expect_stdout_line ".*x.*y.*"
 end test "for loop without in iterates positional params"
@@ -610,7 +678,9 @@ requirement "SHALL-V3CHAP02-1007-DUP264" doc="Non-built-in utilities shall execu
 
 begin test "subshell does not affect parent variable"
   begin script
-    X=0; (X=1); echo $X
+    X=0
+    (X=1)
+    echo $X
   end script
   expect_stdout "0"
 end test "subshell does not affect parent variable"
@@ -656,7 +726,8 @@ requirement "SHALL-V3CHAP02-1018" doc="PATH environment variable shall affect ex
 
 begin test "PATH affects utility search"
   begin script
-    PATH=/usr/bin:/bin; ls / >/dev/null
+    PATH=/usr/bin:/bin
+    ls / >/dev/null
   end script
   expect_exit_code 0
 end test "PATH affects utility search"
@@ -673,7 +744,9 @@ requirement "SHALL-V3CHAP02-1006" doc="PS4 processing shall be supported."
 
 begin test "PS4 used for xtrace prefix"
   begin script
-    PS4="TRACE: "; set -x; echo hello 2>&1 | grep TRACE && echo found || echo found
+    PS4="TRACE: "
+    set -x
+    echo hello 2>&1 | grep TRACE && echo found || echo found
   end script
   expect_exit_code 0
 end test "PS4 used for xtrace prefix"

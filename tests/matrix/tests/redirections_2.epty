@@ -11,7 +11,8 @@ requirement "SHALL-2-7-191" doc="The optional number, redirection operator, and 
 
 begin test "fd 3 works and does not appear in arguments"
   begin script
-    echo "fd3 content" 3>tmp_fd3.txt; cat tmp_fd3.txt
+    echo "fd3 content" 3>tmp_fd3.txt
+    cat tmp_fd3.txt
   end script
   expect_stdout "fd3 content"
 end test "fd 3 works and does not appear in arguments"
@@ -22,21 +23,26 @@ requirement "SHALL-2-7-196" doc="A failure to open or create a file shall cause 
 
 begin test "failed redirection to read-only directory fails the command"
   begin script
-    mkdir -p tmp_ro_dir; chmod -w tmp_ro_dir; echo "fail" > tmp_ro_dir/file.txt
+    mkdir -p tmp_ro_dir
+    chmod -w tmp_ro_dir
+    echo "fail" > tmp_ro_dir/file.txt
   end script
   not_expect_exit_code 0
 end test "failed redirection to read-only directory fails the command"
 
 begin test "pathname expansion does not occur on redirection word"
   begin script
-    echo "literal" > tmp_*_redir.txt; ls tmp_*_redir.txt
+    echo "literal" > tmp_*_redir.txt
+    ls tmp_*_redir.txt
   end script
   expect_stdout "tmp_\*_redir.txt"
 end test "pathname expansion does not occur on redirection word"
 
 begin test "redirection words are subject to parameter expansion"
   begin script
-    file_var="tmp_var_redir.txt"; echo "expanded" > "$file_var"; cat tmp_var_redir.txt
+    file_var="tmp_var_redir.txt"
+    echo "expanded" > "$file_var"
+    cat tmp_var_redir.txt
   end script
   expect_stdout "expanded"
 end test "redirection words are subject to parameter expansion"
@@ -53,7 +59,9 @@ requirement "SHALL-2-7-3-205" doc="The file shall be opened as if the open() fun
 
 begin test "append redirection appends to file"
   begin script
-    echo "initial" > tmp_append.txt; echo "append" >> tmp_append.txt; cat tmp_append.txt
+    echo "initial" > tmp_append.txt
+    echo "append" >> tmp_append.txt
+    cat tmp_append.txt
   end script
   expect_stdout "initial\nappend"
 end test "append redirection appends to file"
@@ -88,7 +96,8 @@ begin test "here-document not expanded when command is not executed"
     if false; then cat <<EOF
     this contains an invalid $var_that_fails_if_expanded
     EOF
-    fi; echo "survived"
+    fi
+    echo "survived"
   end script
   expect_stdout "survived"
 end test "here-document not expanded when command is not executed"
@@ -139,7 +148,8 @@ requirement "SHALL-2-7-3-206" doc="If the file does not exist, it shall be creat
 
 begin test "read-write redirection creates file and allows writing"
   begin script
-    echo "rw test" 3<>tmp_rw.txt 1>&3; cat tmp_rw.txt
+    echo "rw test" 3<>tmp_rw.txt 1>&3
+    cat tmp_rw.txt
   end script
   expect_stdout "rw test"
 end test "read-write redirection creates file and allows writing"
@@ -155,7 +165,10 @@ requirement "SHALL-2-7-5-223" doc="Attempts to close a file descriptor that is n
 
 begin test "duplicate output fd to file"
   begin script
-    exec 4>tmp_dup.txt; echo "dup test" >&4; exec 4>&-; cat tmp_dup.txt
+    exec 4>tmp_dup.txt
+    echo "dup test" >&4
+    exec 4>&-
+    cat tmp_dup.txt
   end script
   expect_stdout "dup test"
 end test "duplicate output fd to file"
@@ -178,7 +191,10 @@ requirement "SHALL-2-7-5-222" doc="If word evaluates to -, file descriptor n, or
 
 begin test "duplicate input fd from file"
   begin script
-    echo "input dup" > tmp_in.txt; exec 5<tmp_in.txt; cat <&5; exec 5<&-
+    echo "input dup" > tmp_in.txt
+    exec 5<tmp_in.txt
+    cat <&5
+    exec 5<&-
   end script
   expect_stdout "input dup"
 end test "duplicate input fd from file"

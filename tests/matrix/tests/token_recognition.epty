@@ -73,8 +73,10 @@ end test "end of substitution does not delimit token"
 
 begin test "complete_command executed before next is tokenized"
   begin script
-    x=first; echo $x
-    x=second; echo $x
+    x=first
+    echo $x
+    x=second
+    echo $x
   end script
   expect_stdout "first\nsecond"
 end test "complete_command executed before next is tokenized"
@@ -216,7 +218,8 @@ end test "double quotes backslash produces single backslash"
 
 begin test "double quotes allow parameter and command and arithmetic expansion"
   begin script
-    foo=bar; echo "$foo $(echo sub) $((2+2)) $'literal'"
+    foo=bar
+    echo "$foo $(echo sub) $((2+2)) $'literal'"
   end script
   expect_stdout "bar sub 4 \$'literal'"
 end test "double quotes allow parameter and command and arithmetic expansion"
@@ -251,7 +254,8 @@ end test "backslash in double quotes special only before certain chars"
 
 begin test "double quotes preserve expansion result literally"
   begin script
-    foo='* * *'; echo "$foo"
+    foo='* * *'
+    echo "$foo"
   end script
   expect_stdout "\* \* \*"
 end test "double quotes preserve expansion result literally"
@@ -262,14 +266,17 @@ end test "double quotes preserve expansion result literally"
 
 begin test "substring processing not affected by outer double quotes"
   begin script
-    foo="a*b"; unset unset_var; echo "${foo#a*}" "${unset_var:-*}"
+    foo="a*b"
+    unset unset_var
+    echo "${foo#a*}" "${unset_var:-*}"
   end script
   expect_stdout ".*\*b \*.*"
 end test "substring processing not affected by outer double quotes"
 
 begin test "backslash dollar and backquote inside braces"
   begin script
-    unset foo; printf "%s\n" "${foo:-`echo default` \$ \n \\ }"
+    unset foo
+    printf "%s\n" "${foo:-`echo default` \$ \n \\ }"
   end script
   expect_stdout "default \$ \\n \\.*"
 end test "backslash dollar and backquote inside braces"
@@ -331,14 +338,17 @@ end test "reserved words not recognized when quoted"
 
 begin test "reserved word in variable value not recognized"
   begin script
-    x=case; echo $x
+    x=case
+    echo $x
   end script
   expect_stdout "case"
 end test "reserved word in variable value not recognized"
 
 begin test "reserved words work in correct positions"
   begin script
-    if true; then echo yes; fi
+    if true; then
+      echo yes
+    fi
   end script
   expect_stdout "yes"
 end test "reserved words work in correct positions"

@@ -9,21 +9,27 @@ requirement "SHALL-XBD-12-4023" doc="The order of operands may matter and positi
 
 begin test "cd accepts -- and processes directory starting with dash"
   begin script
-    mkdir -p ./-dir; cd -- -dir && echo "$PWD" | grep -q -- "-dir$" && echo success || echo fail; cd ..; rm -rf ./-dir
+    mkdir -p ./-dir
+    cd -- -dir && echo "$PWD" | grep -q -- "-dir$" && echo success || echo fail
+    cd ..
+    rm -rf ./-dir
   end script
   expect_stdout_line ".*success.*"
 end test "cd accepts -- and processes directory starting with dash"
 
 begin test "set accepts -- to indicate end of options"
   begin script
-    set -- -x -e; echo "$1 $2"
+    set -- -x -e
+    echo "$1 $2"
   end script
   expect_stdout "-x -e"
 end test "set accepts -- to indicate end of options"
 
 begin test "unset accepts --"
   begin script
-    myvar=foo; unset -- myvar; echo "${myvar:-empty}"
+    myvar=foo
+    unset -- myvar
+    echo "${myvar:-empty}"
   end script
   expect_stdout "empty"
 end test "unset accepts --"
@@ -38,14 +44,16 @@ requirement "SHALL-XBD-12-4012" doc="Multi-digit options should not be allowed."
 
 begin test "getopts parses combined option-argument"
   begin script
-    getopts "ab:" opt -a -bfoo; echo "$opt $OPTARG"
+    getopts "ab:" opt -a -bfoo
+    echo "$opt $OPTARG"
   end script
   expect_stdout "a.*"
 end test "getopts parses combined option-argument"
 
 begin test "getopts parses separate option-argument"
   begin script
-    getopts "ab:" opt -b foo; echo "$opt $OPTARG"
+    getopts "ab:" opt -b foo
+    echo "$opt $OPTARG"
   end script
   expect_stdout "b foo"
 end test "getopts parses separate option-argument"

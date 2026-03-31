@@ -8,7 +8,8 @@ requirement "SHALL-2-7-5-221" doc="Redirection operators: Redirection is used to
 
 begin test "basic output redirection with >"
   begin script
-    echo hello > tmp.txt; cat tmp.txt
+    echo hello > tmp.txt
+    cat tmp.txt
   end script
   expect_stdout "hello"
 end test "basic output redirection with >"
@@ -23,14 +24,16 @@ requirement "SHALL-2-7-1-198" doc="If the number is omitted, the redirection sha
 
 begin test "input redirection with <"
   begin script
-    echo world > tmp.txt; cat < tmp.txt
+    echo world > tmp.txt
+    cat < tmp.txt
   end script
   expect_stdout "world"
 end test "input redirection with <"
 
 begin test "explicit stdin redirection with 0<"
   begin script
-    echo world > tmp.txt; cat 0< tmp.txt
+    echo world > tmp.txt
+    cat 0< tmp.txt
   end script
   expect_stdout "world"
 end test "explicit stdin redirection with 0<"
@@ -39,7 +42,8 @@ requirement "SHALL-2-7-190" doc="If n is quoted, the number shall not be recogni
 
 begin test "quoted fd number is not a redirection"
   begin script
-    echo content > tmp.txt; "0"<tmp.txt
+    echo content > tmp.txt
+    "0"<tmp.txt
   end script
   not_expect_exit_code 0
 end test "quoted fd number is not a redirection"
@@ -54,7 +58,8 @@ requirement "SHALL-2-7-2-199" doc="If the number is omitted, the redirection sha
 
 begin test "explicit stdout redirection with 1>"
   begin script
-    echo foo 1> tmp.txt; cat tmp.txt
+    echo foo 1> tmp.txt
+    cat tmp.txt
   end script
   expect_stdout "foo"
 end test "explicit stdout redirection with 1>"
@@ -63,7 +68,9 @@ requirement "SHALL-2-7-2-202" doc="In all other cases (noclobber not set, redire
 
 begin test "noclobber prevents overwriting existing file"
   begin script
-    set -C; echo a > tmp.txt; echo b > tmp.txt
+    set -C
+    echo a > tmp.txt
+    echo b > tmp.txt
   end script
   not_expect_exit_code 0
 end test "noclobber prevents overwriting existing file"
@@ -78,7 +85,9 @@ requirement "SHALL-2-7-3-206" doc="If the file does not exist, it shall be creat
 
 begin test "append redirection with >>"
   begin script
-    echo a >> tmp_append.txt; echo b >> tmp_append.txt; cat tmp_append.txt
+    echo a >> tmp_append.txt
+    echo b >> tmp_append.txt
+    cat tmp_append.txt
   end script
   expect_stdout "a\nb"
 end test "append redirection with >>"

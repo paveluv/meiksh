@@ -46,7 +46,8 @@ requirement "SHALL-DESCRIPTION-590" doc="When job control is disabled, the -b op
 
 begin test "set -b is accepted without error"
   begin script
-    set -b; set +b
+    set -b
+    set +b
   end script
   expect_exit_code 0
 end test "set -b is accepted without error"
@@ -59,14 +60,24 @@ requirement "SHALL-DESCRIPTION-592" doc="-C Prevent existing regular files from 
 
 begin test "noclobber prevents overwrite with >"
   begin script
-    _f=${TMPDIR:-/tmp}/_noclobber_test_$$; echo original > $_f; set -C; echo overwritten > $_f 2>/dev/null; cat $_f; rm -f $_f
+    _f=${TMPDIR:-/tmp}/_noclobber_test_$$
+    echo original > $_f
+    set -C
+    echo overwritten > $_f 2>/dev/null
+    cat $_f
+    rm -f $_f
   end script
   expect_stdout_line ".*original.*"
 end test "noclobber prevents overwrite with >"
 
 begin test ">| overrides noclobber"
   begin script
-    _f=${TMPDIR:-/tmp}/_noclobber_test2_$$; echo original > $_f; set -C; echo forced >| $_f; cat $_f; rm -f $_f
+    _f=${TMPDIR:-/tmp}/_noclobber_test2_$$
+    echo original > $_f
+    set -C
+    echo forced >| $_f
+    cat $_f
+    rm -f $_f
   end script
   expect_stdout_line ".*forced.*"
 end test ">| overrides noclobber"
@@ -94,10 +105,14 @@ end test "errexit exits on command failure"
 begin test "errexit ignores failures in if/while/until and AND-OR lists"
   begin script
     set -e
-    if false; then echo "no"; fi
+    if false; then
+      echo "no"
+    fi
     false || true
     true && false || true
-    while false; do echo "no"; done
+    while false; do
+      echo "no"
+    done
     echo "survived"
   end script
   expect_stdout "survived"
@@ -105,14 +120,18 @@ end test "errexit ignores failures in if/while/until and AND-OR lists"
 
 begin test "errexit does not exit on ! pipeline"
   begin script
-    set -e; ! false; echo "survived_not"
+    set -e
+    ! false
+    echo "survived_not"
   end script
   expect_stdout "survived_not"
 end test "errexit does not exit on ! pipeline"
 
 begin test "errexit triggers on pipeline failure (last command)"
   begin script
-    set -e; echo ok | false; echo should_not_appear
+    set -e
+    echo ok | false
+    echo should_not_appear
   end script
   not_expect_stdout_line ".*should_not_appear.*"
 end test "errexit triggers on pipeline failure (last command)"
@@ -142,7 +161,8 @@ requirement "SHALL-DESCRIPTION-600" doc="This option shall be enabled by default
 
 begin test "set -m is accepted without error"
   begin script
-    set -m 2>/dev/null; true
+    set -m 2>/dev/null
+    true
   end script
   expect_exit_code 0
 end test "set -m is accepted without error"
@@ -181,7 +201,9 @@ end test "nounset exits on unset variable expansion"
 begin test "nounset does not trigger on $@ and $*"
   begin script
     set -u
-    for i in "$@"; do echo $i; done
+    for i in "$@"; do
+      echo $i
+    done
     echo "survived"
   end script
   expect_stdout "survived"
@@ -223,7 +245,8 @@ requirement "SHALL-DESCRIPTION-591" doc="Asynchronous notification shall not be 
 
 begin test "set -o succeeds"
   begin script
-    set -o 2>/dev/null; true
+    set -o 2>/dev/null
+    true
   end script
   expect_exit_code 0
 end test "set -o succeeds"
@@ -237,14 +260,17 @@ requirement "SHALL-DESCRIPTION-614" doc="set -- without argument shall unset all
 
 begin test "set -- assigns positional parameters"
   begin script
-    set -- a b c; echo "$# $1 $2 $3"
+    set -- a b c
+    echo "$# $1 $2 $3"
   end script
   expect_stdout "3 a b c"
 end test "set -- assigns positional parameters"
 
 begin test "set -- without args clears positional parameters"
   begin script
-    set -- x y z; set --; echo "$#"
+    set -- x y z
+    set --
+    echo "$#"
   end script
   expect_stdout "0"
 end test "set -- without args clears positional parameters"

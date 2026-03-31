@@ -13,21 +13,36 @@ requirement "SHALL-DESCRIPTION-516" doc="If n is greater than the number of encl
 
 begin test "break without n defaults to 1"
   begin script
-    for i in 1 2 3; do echo $i; break; echo "no"; done; echo "done"
+    for i in 1 2 3; do
+      echo $i
+      break
+      echo "no"
+    done
+    echo "done"
   end script
   expect_stdout "1\ndone"
 end test "break without n defaults to 1"
 
 begin test "break 2 exits two loops"
   begin script
-    for i in a b; do for j in 1 2; do echo "$i$j"; break 2; done; done; echo "done"
+    for i in a b; do
+      for j in 1 2
+      do echo "$i$j"
+      break 2
+    done
+    done
+    echo "done"
   end script
   expect_stdout "a1\ndone"
 end test "break 2 exits two loops"
 
 begin test "break n greater than enclosing loops"
   begin script
-    for i in a b; do echo $i; break 5; done; echo "done"
+    for i in a b; do
+      echo $i
+      break 5
+    done
+    echo "done"
   end script
   expect_stdout "a\ndone"
 end test "break n greater than enclosing loops"
@@ -45,14 +60,26 @@ requirement "SHALL-DESCRIPTION-525" doc="If n is greater than the number of encl
 
 begin test "continue without n defaults to 1"
   begin script
-    for i in 1 2; do echo $i; continue; echo "no"; done; echo "done"
+    for i in 1 2; do
+      echo $i
+      continue
+      echo "no"
+    done
+    echo "done"
   end script
   expect_stdout "1\n2\ndone"
 end test "continue without n defaults to 1"
 
 begin test "continue 2 returns to outer loop"
   begin script
-    for i in a b; do echo "outer $i"; for j in 1 2; do echo "inner $j"; continue 2; done; done; echo "done"
+    for i in a b; do
+      echo "outer $i"
+      for j in 1 2; do
+        echo "inner $j"
+        continue 2
+      done
+    done
+    echo "done"
   end script
   expect_stdout "outer a\ninner 1\nouter b\ninner 1\ndone"
 end test "continue 2 returns to outer loop"
@@ -90,7 +117,8 @@ requirement "SHALL-DESCRIPTION-535" doc="The constructed command string shall be
 
 begin test "eval concatenates and executes arguments"
   begin script
-    foo="bar"; eval echo "$foo" "and" "baz"
+    foo="bar"
+    eval echo "$foo" "and" "baz"
   end script
   expect_stdout "bar and baz"
 end test "eval concatenates and executes arguments"
@@ -108,14 +136,19 @@ requirement "SHALL-DESCRIPTION-531" doc="The dot special built-in shall support 
 
 begin test "dot sources file in current directory"
   begin script
-    echo 'export SOURCED_VAR=hello' > tmp_source.sh; . ./tmp_source.sh; echo "$SOURCED_VAR"
+    echo 'export SOURCED_VAR=hello' > tmp_source.sh
+    . ./tmp_source.sh
+    echo "$SOURCED_VAR"
   end script
   expect_stdout "hello"
 end test "dot sources file in current directory"
 
 begin test "dot sources file via PATH resolution"
   begin script
-    mkdir -p tmp_bin; echo 'export SOURCED_VAR=path_resolved' > tmp_bin/tmp_source.sh; PATH="$PWD/tmp_bin:$PATH" . tmp_source.sh; echo "$SOURCED_VAR"
+    mkdir -p tmp_bin
+    echo 'export SOURCED_VAR=path_resolved' > tmp_bin/tmp_source.sh
+    PATH="$PWD/tmp_bin:$PATH" . tmp_source.sh
+    echo "$SOURCED_VAR"
   end script
   expect_stdout "path_resolved"
 end test "dot sources file via PATH resolution"

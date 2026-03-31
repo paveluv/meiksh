@@ -73,7 +73,8 @@ requirement "SHALL-2-5-2-071" doc="When a subshell environment is created, the v
 
 begin test "$? preserved in subshell"
   begin script
-    false; (echo "$?")
+    false
+    (echo "$?")
   end script
   expect_stdout "1"
 end test "$? preserved in subshell"
@@ -82,7 +83,9 @@ requirement "SHALL-2-5-2-073" doc="In a subshell, $$ shall expand to the same va
 
 begin test "$$ same in subshell"
   begin script
-    parent="$$"; sub="$(echo "$$")"; [ "$parent" = "$sub" ] && echo "same"
+    parent="$$"
+    sub="$(echo "$$")"
+    [ "$parent" = "$sub" ] && echo "same"
   end script
   expect_stdout "same"
 end test "$$ same in subshell"
@@ -98,7 +101,9 @@ requirement "SHALL-V3CHAP02-1002-DUP75" doc="The processing of the ENV shell var
 
 begin test "environment variable is visible via env"
   begin script
-    TEST_ENV_VAR=value; export TEST_ENV_VAR; env | grep -q "^TEST_ENV_VAR=" && echo "exported"
+    TEST_ENV_VAR=value
+    export TEST_ENV_VAR
+    env | grep -q "^TEST_ENV_VAR=" && echo "exported"
   end script
   expect_stdout "exported"
 end test "environment variable is visible via env"
@@ -124,7 +129,9 @@ requirement "SHALL-2-5-3-084" doc="In a subshell, PPID shall be set to the same 
 
 begin test "PPID same in subshell"
   begin script
-    parent="$PPID"; sub="$(echo "$PPID")"; [ "$parent" = "$sub" ] && echo "same"
+    parent="$PPID"
+    sub="$(echo "$PPID")"
+    [ "$parent" = "$sub" ] && echo "same"
   end script
   expect_stdout "same"
 end test "PPID same in subshell"
@@ -197,7 +204,16 @@ requirement "SHALL-2-5-3-079" doc="Before any interactive commands are read, the
 
 begin test "ENV file processed for interactive shell"
   begin script
-    _env_file=${TMPDIR:-/tmp}/_test_env_$$.sh; echo 'ENVMARKER=loaded' > $_env_file; EFILE=$_env_file; export EFILE; ENV=$EFILE; export ENV; {{SHELL}} -i -c 'echo $ENVMARKER' 2>/dev/null; rc=$?; rm -f $_env_file; exit $rc
+    _env_file=${TMPDIR:-/tmp}/_test_env_$$.sh
+    echo 'ENVMARKER=loaded' > $_env_file
+    EFILE=$_env_file
+    export EFILE
+    ENV=$EFILE
+    export ENV
+    {{SHELL}} -i -c 'echo $ENVMARKER' 2>/dev/null
+    rc=$?
+    rm -f $_env_file
+    exit $rc
   end script
   expect_stdout_line ".*loaded.*"
 end test "ENV file processed for interactive shell"
@@ -206,7 +222,12 @@ requirement "SHALL-2-5-3-080" doc="ENV shall be ignored if the user's real and e
 
 begin test "ENV set to valid file does not crash non-interactive shell"
   begin script
-    _env_file=${TMPDIR:-/tmp}/_test_env2_$$.sh; echo 'echo env_ran' > $_env_file; ENV=$_env_file {{SHELL}} -c true 2>/dev/null; rc=$?; rm -f $_env_file; exit $rc
+    _env_file=${TMPDIR:-/tmp}/_test_env2_$$.sh
+    echo 'echo env_ran' > $_env_file
+    ENV=$_env_file {{SHELL}} -c true 2>/dev/null
+    rc=$?
+    rm -f $_env_file
+    exit $rc
   end script
   expect_exit_code 0
 end test "ENV set to valid file does not crash non-interactive shell"
@@ -219,9 +240,11 @@ requirement "SHALL-2-5-3-083" doc="Changing the value of LC_CTYPE after the shel
 
 begin test "LC_CTYPE change mid-script does not break lexical processing"
   begin script
-    LC_CTYPE=C; export LC_CTYPE
+    LC_CTYPE=C
+    export LC_CTYPE
     echo "hello world"
-    LC_CTYPE=POSIX; export LC_CTYPE
+    LC_CTYPE=POSIX
+    export LC_CTYPE
     echo "still works"
   end script
   expect_stdout "hello world\nstill works"

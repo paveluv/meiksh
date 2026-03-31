@@ -9,7 +9,9 @@ requirement "SHALL-2-9-4-2-351" doc="The variable name shall be set to each item
 
 begin test "for loop iterates over items"
   begin script
-    for i in a b c; do printf "%s " "$i"; done
+    for i in a b c; do
+      printf "%s " "$i"
+    done
   end script
   expect_stdout "a b c"
 end test "for loop iterates over items"
@@ -30,7 +32,11 @@ end test "for loop exit status is last command"
 
 begin test "for loop with empty list does not execute body"
   begin script
-    x=1; for i in; do x=2; done; echo "$x"
+    x=1
+    for i in; do
+      x=2
+    done
+    echo "$x"
   end script
   expect_stdout "1"
 end test "for loop with empty list does not execute body"
@@ -114,21 +120,39 @@ end test "if exit status from then clause"
 
 begin test "if true branch"
   begin script
-    if true; then echo "if"; elif false; then echo "elif"; else echo "else"; fi
+    if true; then
+      echo "if"
+    elif false; then
+      echo "elif"
+    else
+      echo "else"
+    fi
   end script
   expect_stdout "if"
 end test "if true branch"
 
 begin test "elif true branch"
   begin script
-    if false; then echo "if"; elif true; then echo "elif"; else echo "else"; fi
+    if false; then
+      echo "if"
+    elif true; then
+      echo "elif"
+    else
+      echo "else"
+    fi
   end script
   expect_stdout "elif"
 end test "elif true branch"
 
 begin test "else branch"
   begin script
-    if false; then echo "if"; elif false; then echo "elif"; else echo "else"; fi
+    if false; then
+      echo "if"
+    elif false; then
+      echo "elif"
+    else
+      echo "else"
+    fi
   end script
   expect_stdout "else"
 end test "else branch"
@@ -167,14 +191,22 @@ end test "while loop exit status from last iteration"
 
 begin test "while loop iterates correctly"
   begin script
-    x=0; while [ $x -lt 3 ]; do x=$((x+1)); printf "%s " "$x"; done
+    x=0
+    while [ $x -lt 3 ]; do
+      x=$((x+1))
+      printf "%s " "$x"
+    done
   end script
   expect_stdout "1 2 3"
 end test "while loop iterates correctly"
 
 begin test "while loop with false condition does not execute"
   begin script
-    x=0; while false; do x=$((x+1)); done; echo "$x"
+    x=0
+    while false; do
+      x=$((x+1))
+    done
+    echo "$x"
   end script
   expect_stdout "0"
 end test "while loop with false condition does not execute"
@@ -191,14 +223,22 @@ requirement "SHALL-2-9-4-6-1-377" doc="The exit status of the until loop shall b
 
 begin test "until loop iterates correctly"
   begin script
-    x=0; until [ $x -eq 3 ]; do x=$((x+1)); printf "%s " "$x"; done
+    x=0
+    until [ $x -eq 3 ]; do
+      x=$((x+1))
+      printf "%s " "$x"
+    done
   end script
   expect_stdout "1 2 3"
 end test "until loop iterates correctly"
 
 begin test "until loop with true condition does not execute"
   begin script
-    x=0; until true; do x=$((x+1)); done; echo "$x"
+    x=0
+    until true; do
+      x=$((x+1))
+    done
+    echo "$x"
   end script
   expect_stdout "0"
 end test "until loop with true condition does not execute"
@@ -212,7 +252,9 @@ requirement "SHALL-2-9-4-1-346" doc="Variable assignments and built-in commands 
 
 begin test "subshell variable isolation"
   begin script
-    FOO=parent; (FOO=child); echo "$FOO"
+    FOO=parent
+    (FOO=child)
+    echo "$FOO"
   end script
   expect_stdout "parent"
 end test "subshell variable isolation"
@@ -226,7 +268,8 @@ requirement "SHALL-2-9-4-344" doc="Each redirection shall apply to all the comma
 
 begin test "redirection applies to all commands in group"
   begin script
-    { echo a; echo b; } > tmp_group.txt; cat tmp_group.txt
+    { echo a; echo b; } > tmp_group.txt
+    cat tmp_group.txt
   end script
   expect_stdout "a\nb"
 end test "redirection applies to all commands in group"

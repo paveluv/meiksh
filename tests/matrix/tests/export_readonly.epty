@@ -9,14 +9,18 @@ requirement "SHALL-V3CHAP02-1016-DUP506" doc="Shell shall format export -p outpu
 
 begin test "export -p shows exported variable"
   begin script
-    MYEXPORTVAR=hello; export MYEXPORTVAR; export -p | grep MYEXPORTVAR
+    MYEXPORTVAR=hello
+    export MYEXPORTVAR
+    export -p | grep MYEXPORTVAR
   end script
   expect_stdout_line ".*export.*MYEXPORTVAR.*hello.*"
 end test "export -p shows exported variable"
 
 begin test "export -p handles spaces in values"
   begin script
-    TESTV="has spaces"; export TESTV; export -p | grep TESTV
+    TESTV="has spaces"
+    export TESTV
+    export -p | grep TESTV
   end script
   expect_stdout_line ".*export.*TESTV.*"
 end test "export -p handles spaces in values"
@@ -29,7 +33,9 @@ requirement "SHALL-V3CHAP02-1018-DUP540" doc="set -o allexport shall be equivale
 
 begin test "set -o allexport exports all assignments"
   begin script
-    set -o allexport; ALLEXP_VAR=allexp_val; env | grep ALLEXP_VAR
+    set -o allexport
+    ALLEXP_VAR=allexp_val
+    env | grep ALLEXP_VAR
   end script
   expect_stdout_line ".*ALLEXP_VAR=allexp_val.*"
 end test "set -o allexport exports all assignments"
@@ -42,7 +48,9 @@ requirement "SHALL-V3CHAP02-1017-DUP513" doc="readonly -p output shall be format
 
 begin test "readonly -p shows readonly variable"
   begin script
-    ROVAR=roval; readonly ROVAR; readonly -p | grep ROVAR
+    ROVAR=roval
+    readonly ROVAR
+    readonly -p | grep ROVAR
   end script
   expect_stdout_line ".*readonly.*ROVAR.*roval.*"
 end test "readonly -p shows readonly variable"

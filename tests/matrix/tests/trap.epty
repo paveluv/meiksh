@@ -9,7 +9,8 @@ requirement "SHALL-V3CHAP02-1020-DUP577" doc="trap -p output format: trap -- %s 
 
 begin test "trap -p shows trap -- format"
   begin script
-    trap "echo caught" INT; trap -p INT
+    trap "echo caught" INT
+    trap -p INT
   end script
   expect_stdout_line ".*trap -- .*INT.*"
 end test "trap -p shows trap -- format"
@@ -18,7 +19,9 @@ requirement "SHALL-V3CHAP02-1015-DUP505" doc="When trap -p is used without argum
 
 begin test "trap -p lists all traps"
   begin script
-    trap "echo a" INT; trap "echo b" TERM; trap -p
+    trap "echo a" INT
+    trap "echo b" TERM
+    trap -p
   end script
   expect_stdout_line ".*INT.*"
   expect_stdout_line ".*TERM.*"
@@ -32,7 +35,8 @@ requirement "SHALL-V3CHAP02-1019-DUP571" doc="If action is neither '-' nor empty
 
 begin test "EXIT trap fires on exit"
   begin script
-    trap "echo trapped_exit" EXIT; exit 0
+    trap "echo trapped_exit" EXIT
+    exit 0
   end script
   expect_stdout_line ".*trapped_exit.*"
 end test "EXIT trap fires on exit"
@@ -40,7 +44,9 @@ end test "EXIT trap fires on exit"
 # trap with - (reset to default)
 begin test "trap - resets EXIT trap"
   begin script
-    trap "echo bad" EXIT; trap - EXIT; exit 0
+    trap "echo bad" EXIT
+    trap - EXIT
+    exit 0
   end script
   not_expect_stdout_line ".*bad.*"
 end test "trap - resets EXIT trap"
@@ -63,7 +69,8 @@ requirement "SHALL-V3CHAP02-1014-DUP586" doc="Invalid signal names/numbers shall
 # trap with invalid signal shall return non-zero, but the shell must continue.
 begin test "trap with invalid signal returns non-zero"
   begin script
-    trap "" INVALID_SIGNAL_NAME_XYZ 2>/dev/null; echo "rc=$?"
+    trap "" INVALID_SIGNAL_NAME_XYZ 2>/dev/null
+    echo "rc=$?"
   end script
   not_expect_stdout_line "rc=0"
   expect_stdout_line "rc=.*"
@@ -72,7 +79,8 @@ end test "trap with invalid signal returns non-zero"
 # Verify shell doesn't abort on invalid signal
 begin test "shell survives invalid signal name"
   begin script
-    trap "" INVALID_SIGNAL_NAME_XYZ 2>/dev/null; echo survived
+    trap "" INVALID_SIGNAL_NAME_XYZ 2>/dev/null
+    echo survived
   end script
   expect_stdout_line ".*survived.*"
 end test "shell survives invalid signal name"

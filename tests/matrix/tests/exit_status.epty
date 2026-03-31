@@ -10,7 +10,8 @@ requirement "SHALL-2-8-2-259" doc="If the command is not found, the exit status 
 
 begin test "non-existent command returns 127"
   begin script
-    this_command_does_not_exist_xyz123; echo "$?"
+    this_command_does_not_exist_xyz123
+    echo "$?"
   end script
   expect_stdout "127"
 end test "non-existent command returns 127"
@@ -21,7 +22,10 @@ requirement "SHALL-2-8-2-260" doc="If the command name is found but it is not an
 
 begin test "non-executable file returns 126"
   begin script
-    touch tmp_not_exec; chmod -x tmp_not_exec; ./tmp_not_exec; echo "$?"
+    touch tmp_not_exec
+    chmod -x tmp_not_exec
+    ./tmp_not_exec
+    echo "$?"
   end script
   expect_stdout "126"
 end test "non-executable file returns 126"
@@ -61,7 +65,9 @@ requirement "SHALL-EXIT-STATUS-579" doc="If n is not specified, the result shall
 
 begin test "return without n inherits previous exit status"
   begin script
-    myfunc() { false; return; }; myfunc; echo "$?"
+    myfunc() { false; return; }
+    myfunc
+    echo "$?"
   end script
   expect_stdout "1"
 end test "return without n inherits previous exit status"
@@ -70,7 +76,9 @@ requirement "SHALL-DESCRIPTION-576" doc="The return utility shall cause the shel
 
 begin test "return with explicit n sets exit status"
   begin script
-    myfunc() { return 5; }; myfunc; echo "$?"
+    myfunc() { return 5; }
+    myfunc
+    echo "$?"
   end script
   expect_stdout "5"
 end test "return with explicit n sets exit status"
@@ -94,7 +102,9 @@ requirement "SHALL-EXIT-STATUS-143" doc="The shell shall terminate in the same m
 
 begin test "shell script inherits exit status of last command"
   begin script
-    echo "exit 42" > tmp_script.sh; {{SHELL}} tmp_script.sh; echo "$?"
+    echo "exit 42" > tmp_script.sh
+    {{SHELL}} tmp_script.sh
+    echo "$?"
   end script
   expect_stdout "42"
 end test "shell script inherits exit status of last command"

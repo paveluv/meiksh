@@ -19,7 +19,8 @@ end test "basic pipe stdout flows into stdin"
 
 begin test "pipeline assignments happen before redirections"
   begin script
-    echo "pipeline test" | cat > tmp_pipe.txt; cat tmp_pipe.txt
+    echo "pipeline test" | cat > tmp_pipe.txt
+    cat tmp_pipe.txt
   end script
   expect_stdout "pipeline test"
 end test "pipeline assignments happen before redirections"
@@ -113,7 +114,9 @@ requirement "SHALL-2-9-3-2-1-335" doc="The exit status of a sequential AND-OR li
 
 begin test "sequential list exit status is last pipeline"
   begin script
-    echo a; echo b; false
+    echo a
+    echo b
+    false
   end script
   expect_exit_code 1
 end test "sequential list exit status is last pipeline"
@@ -122,7 +125,8 @@ requirement "SHALL-2-9-3-319" doc="A semicolon separator or terminator shall cau
 
 begin test "sequential AND-OR lists write solely bar"
   begin script
-    false && echo foo || echo bar; true || echo foo && echo bar
+    false && echo foo || echo bar
+    true || echo foo && echo bar
   end script
   expect_stdout "bar\nbar"
 end test "sequential AND-OR lists write solely bar"
@@ -165,14 +169,16 @@ requirement "SHALL-2-9-264" doc="Unless otherwise stated, the exit status of a c
 
 begin test "exit status of true; false is non-zero"
   begin script
-    true; false
+    true
+    false
   end script
   not_expect_exit_code 0
 end test "exit status of true; false is non-zero"
 
 begin test "exit status of false; true is zero"
   begin script
-    false; true
+    false
+    true
   end script
   expect_exit_code 0
 end test "exit status of false; true is zero"

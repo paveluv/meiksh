@@ -90,7 +90,9 @@ requirement "SHALL-OPERANDS-012" doc="If the pathname does not contain a slash c
 
 begin test "sh reads script from current working directory without slash"
   begin script
-    echo 'echo "local_script_executed"' > tmp_local.sh; {{SHELL}} tmp_local.sh; rm -f tmp_local.sh
+    echo 'echo "local_script_executed"' > tmp_local.sh
+    {{SHELL}} tmp_local.sh
+    rm -f tmp_local.sh
   end script
   expect_stdout "local_script_executed"
 end test "sh reads script from current working directory without slash"

@@ -8,7 +8,10 @@ requirement "SHALL-HASH-1053" doc="-r option forgets all remembered locations"
 
 begin test "hash -r forgets all remembered locations"
   begin script
-    hash ls 2>/dev/null; hash -r; out=$(hash 2>&1); [ -z "$out" ] && echo empty || echo notempty
+    hash ls 2>/dev/null
+    hash -r
+    out=$(hash 2>&1)
+    [ -z "$out" ] && echo empty || echo notempty
   end script
   expect_stdout "empty"
 end test "hash -r forgets all remembered locations"
@@ -35,7 +38,9 @@ end test "hash a known utility succeeds"
 
 begin test "hash output mentions hashed utility"
   begin script
-    hash -r; hash ls 2>/dev/null; hash 2>&1
+    hash -r
+    hash ls 2>/dev/null
+    hash 2>&1
   end script
   expect_stdout_line ".*ls.*"
 end test "hash output mentions hashed utility"
@@ -55,7 +60,9 @@ requirement "SHALL-HASH-1209" doc="hash affects how current shell remembers util
 
 begin test "hash remembers utility location"
   begin script
-    hash -r; hash ls 2>/dev/null; hash 2>&1
+    hash -r
+    hash ls 2>/dev/null
+    hash 2>&1
   end script
   expect_stdout_line ".*ls.*"
 end test "hash remembers utility location"
@@ -68,14 +75,19 @@ requirement "SHALL-HASH-1210" doc="Depending on arguments, adds locations or pur
 
 begin test "hash with utility argument adds it"
   begin script
-    hash -r; hash cat 2>/dev/null; hash 2>&1
+    hash -r
+    hash cat 2>/dev/null
+    hash 2>&1
   end script
   expect_stdout_line ".*cat.*"
 end test "hash with utility argument adds it"
 
 begin test "hash -r purges the list"
   begin script
-    hash cat 2>/dev/null; hash -r; out=$(hash 2>&1); [ -z "$out" ] && echo purged || echo stillhas
+    hash cat 2>/dev/null
+    hash -r
+    out=$(hash 2>&1)
+    [ -z "$out" ] && echo purged || echo stillhas
   end script
   expect_stdout "purged"
 end test "hash -r purges the list"
@@ -88,21 +100,29 @@ requirement "SHALL-HASH-1211" doc="When no arguments, reports on contents of lis
 
 begin test "hash reports when table has items"
   begin script
-    hash -r; hash ls 2>/dev/null; hash cat 2>/dev/null; out=$(hash 2>&1); [ -n "$out" ] && echo reported || echo empty
+    hash -r
+    hash ls 2>/dev/null
+    hash cat 2>/dev/null
+    out=$(hash 2>&1)
+    [ -n "$out" ] && echo reported || echo empty
   end script
   expect_stdout "reported"
 end test "hash reports when table has items"
 
 begin test "hash produces no output when table is empty"
   begin script
-    hash -r; out=$(hash 2>&1); [ -z "$out" ] && echo empty || echo notempty
+    hash -r
+    out=$(hash 2>&1)
+    [ -z "$out" ] && echo empty || echo notempty
   end script
   expect_stdout "empty"
 end test "hash produces no output when table is empty"
 
 begin test "hash output contains paths for hashed utilities"
   begin script
-    hash -r; hash ls 2>/dev/null; hash 2>&1
+    hash -r
+    hash ls 2>/dev/null
+    hash 2>&1
   end script
   expect_stdout_line ".*/.*"
 end test "hash output contains paths for hashed utilities"
@@ -115,21 +135,30 @@ requirement "SHALL-HASH-1212" doc="Built-ins and functions shall not be reported
 
 begin test "function not in hash output"
   begin script
-    myfunc() { echo hi; }; hash -r; hash 2>&1
+    myfunc() { echo hi; }
+    hash -r
+    hash 2>&1
   end script
   not_expect_stdout_line ".*myfunc.*"
 end test "function not in hash output"
 
 begin test "built-in cd not in hash output"
   begin script
-    hash -r; hash ls 2>/dev/null; out=$(hash 2>&1); case "$out" in *cd*) echo found_cd;; *) echo no_cd;; esac
+    hash -r
+    hash ls 2>/dev/null
+    out=$(hash 2>&1)
+    case "$out" in *cd*) echo found_cd;; *) echo no_cd;; esac
   end script
   expect_stdout "no_cd"
 end test "built-in cd not in hash output"
 
 begin test "hashing a shell function does not add it"
   begin script
-    hash -r; testfn() { :; }; hash testfn 2>/dev/null; out=$(hash 2>&1); case "$out" in *testfn*) echo found;; *) echo notfound;; esac
+    hash -r
+    testfn() { :; }
+    hash testfn 2>/dev/null
+    out=$(hash 2>&1)
+    case "$out" in *testfn*) echo found;; *) echo notfound;; esac
   end script
   expect_stdout "notfound"
 end test "hashing a shell function does not add it"

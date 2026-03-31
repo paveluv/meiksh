@@ -25,21 +25,28 @@ requirement "SHALL-2-13-474" doc="Command substitution, commands that are groupe
 
 begin test "parent variable visible in subshell but changes do not propagate"
   begin script
-    var="parent"; (echo "$var"; var="child"; echo "$var"); echo "$var"
+    var="parent"
+    (echo "$var"; var="child"; echo "$var")
+    echo "$var"
   end script
   expect_stdout "parent\nchild\nparent"
 end test "parent variable visible in subshell but changes do not propagate"
 
 begin test "command substitution isolation"
   begin script
-    var="parent"; output=$(var="child"; echo "$var"); echo "$output $var"
+    var="parent"
+    output=$(var="child"; echo "$var")
+    echo "$output $var"
   end script
   expect_stdout "child parent"
 end test "command substitution isolation"
 
 begin test "asynchronous list isolation"
   begin script
-    var="parent"; { var="child"; echo "$var" > tmp_sub.txt; } & wait; echo "$var"; cat tmp_sub.txt
+    var="parent"
+    { var="child"; echo "$var" > tmp_sub.txt; } & wait
+    echo "$var"
+    cat tmp_sub.txt
   end script
   expect_stdout "parent\nchild"
 end test "asynchronous list isolation"
@@ -52,14 +59,20 @@ requirement "SHALL-2-13-475" doc="Except where otherwise stated, all other comma
 
 begin test "group commands execute in current environment"
   begin script
-    var="parent"; { var="child"; echo "$var"; }; echo "$var"
+    var="parent"
+    { var="child"; echo "$var"; }
+    echo "$var"
   end script
   expect_stdout "child\nchild"
 end test "group commands execute in current environment"
 
 begin test "if construct executes in current environment"
   begin script
-    var="parent"; if true; then var="child"; fi; echo "$var"
+    var="parent"
+    if true; then
+      var="child"
+    fi
+    echo "$var"
   end script
   expect_stdout "child"
 end test "if construct executes in current environment"
@@ -72,7 +85,10 @@ requirement "SHALL-2-13-469" doc="The environment of the shell process shall not
 
 begin test "external cd does not change parent working directory"
   begin script
-    cd /tmp; parent="$PWD"; env cd /; echo "$PWD" = "$parent"
+    cd /tmp
+    parent="$PWD"
+    env cd /
+    echo "$PWD" = "$parent"
   end script
   expect_stdout "/tmp = /tmp"
 end test "external cd does not change parent working directory"
