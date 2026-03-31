@@ -89,14 +89,40 @@ reverting on return.
 
 **Severity:** Low
 **Suite:** `vi_editing` (2 tests)
-**POSIX reference:** XCU §sh, Vi Line Editing
+**POSIX reference:** XCU §sh, Vi Line Editing (Command Mode)
 
-`tc` should move to the character *before* the first occurrence of `c`
-after the cursor. `Tc` should move to the character *after* the first
-occurrence of `c` before the cursor.
+> `[count]tc` — Move the cursor to the character **before** the first
+> occurrence of `c` that has not already been found [...] after the
+> cursor.
+>
+> `[count]Tc` — Move the cursor to the character **after** the first
+> occurrence of `c` that has not already been found [...] before the
+> cursor.
 
-Both commands position the cursor incorrectly in bash, causing
-replacements (`rZ`) to land on the wrong character.
+Both `t` and `T` position the cursor on the target character itself
+(like `f`/`F`) rather than one character before/after it.
+
+**Reproduction** (interactive — run `/usr/bin/bash --posix -i`):
+
+```
+$ set -o vi
+$ echo abc        # type "echo abc", then:
+                   # ESC  0  tc  rZ  Enter
+```
+
+Step by step: type `echo abc`, press **Escape**, press **0** (go to
+`e`), press **t** then **c** (should move cursor to `b`, one *before*
+`c`), press **r** then **Z** (replace character under cursor with `Z`).
+
+Expected output: `aZc` (`b` was replaced).
+Actual output: bash runs `Zcho abc` — cursor landed on `c` (the target
+itself, not one before it), so `rZ` replaced `c` and the line became
+`echo abZ`, then the `0` repositioned and the replacement hit the wrong
+spot.
+
+The same issue affects `T`: with cursor at end of `echo abc`, pressing
+**T** then **a** should move to `b` (one *after* `a`), but bash moves
+to `a` itself.
 
 ---
 
@@ -104,10 +130,28 @@ replacements (`rZ`) to land on the wrong character.
 
 **Severity:** Low
 **Suite:** `vi_editing` (1 test)
-**POSIX reference:** XCU §sh, Vi Line Editing
+**POSIX reference:** XCU §sh, Vi Line Editing (Command Mode)
 
-`9~` on `aB` should toggle both characters to produce `Ab`. Bash only
-toggles the first character, producing `AB`.
+> `[count]~` — If the count is larger than the number of characters
+> after the cursor, this shall not be considered an error; the cursor
+> shall advance to the last character on the line.
+
+**Reproduction** (interactive — run `/usr/bin/bash --posix -i`):
+
+```
+$ set -o vi
+$ echo aB          # type "echo aB", then:
+                    # ESC  0w  9~  Enter
+```
+
+Step by step: type `echo aB`, press **Escape**, press **0** then **w**
+(cursor on `a`), press **9** then **~** (toggle case of up to 9
+characters — only 2 remain: `aB`).
+
+Expected output: `Ab` (both characters toggled).
+Actual output: `AB` — bash ignores the count and toggles only the
+character under the cursor (`a` → `A`), advancing by one. The `B`
+is untouched.
 
 ---
 
