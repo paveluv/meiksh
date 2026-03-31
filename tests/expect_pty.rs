@@ -1,27 +1,56 @@
-//! expect_pty — A scriptable PTY driver for interactive shell testing.
+//! expect_pty — A scriptable PTY driver and test suite runner.
 //!
-//! Reads a line-oriented conversation script from stdin (or a file argument)
-//! and executes it against a child process running inside a real pseudo-terminal.
+//! ## Legacy mode (backward compatible)
 //!
-//! DSL commands:
-//!   spawn <cmd> [args...]                 — fork a PTY child and exec the command
-//!   expect "regex"                        — wait for regex match in PTY output (default 5s)
-//!   expect timeout=2s "regex"             — wait with per-command timeout (ms or s suffix)
-//!   not_expect "regex"                    — assert regex does NOT match current output buffer
-//!   not_expect timeout=500ms "regex"      — timed negative: watch for duration, fail if matched
-//!   expect_line "regex"                   — wait for the next complete line matching regex
+//! Reads a line-oriented conversation script from stdin (or a single file):
+//!
+//!   expect_pty [script.txt]
+//!
+//! ## Suite mode (.epty files)
+//!
+//! Runs structured test suites with isolated environments:
+//!
+//!   expect_pty --shell "bash --posix" tests/*.epty
+//!
+//! ### Suite DSL:
+//!   testsuite "name"                      — suite name (one per file)
+//!   requirement "ID" doc="..."            — POSIX requirement reference
+//!   begin test "name"                     — start a test case
+//!   end test "name"                       — end a test case (name must match)
+//!   setenv "KEY" "VALUE"                  — set env var for the current test
+//!
+//! ### Interactive (PTY) commands (inside begin/end test):
+//!   spawn <cmd> [args...]                 — fork a PTY child
+//!   expect "regex"                        — wait for regex match in PTY output
+//!   expect timeout=2s "regex"             — with per-command timeout
+//!   not_expect "regex"                    — assert regex does NOT match
+//!   not_expect timeout=500ms "regex"      — timed negative assertion
+//!   expect_line "regex"                   — wait for matching line
 //!   expect_line timeout=1s "regex"        — with per-command timeout
-//!   send "text"                           — write text + newline to the PTY
-//!   sendraw <hex> [<hex>...]              — write raw bytes (hex-encoded) to the PTY
-//!   signal <SIGNAME>                      — send a signal to the child's process group
-//!   sendeof                               — close the write side of the PTY
-//!   wait exitcode=N                       — wait for child exit and assert exit code
-//!   sleep <duration>                       — sleep (e.g. 100ms or 1s)
+//!   send "text"                           — write text + newline to PTY
+//!   sendraw <hex> [<hex>...]              — write raw bytes to PTY
+//!   signal <SIGNAME>                      — send signal to child
+//!   sendeof                               — send EOF to PTY
+//!   wait exitcode=N                       — wait for child exit
+//!   sleep <duration>                      — sleep (e.g. 100ms or 1s)
+//!
+//! ### Non-interactive commands (inside begin/end test):
+//!   run "command"                         — run {{SHELL}} -c "command"
+//!   expect_stdout "pattern"               — assert stdout matches regex
+//!   expect_stderr "pattern"               — assert stderr matches regex
+//!   expect_stdout_line "pattern"          — assert a stdout line matches
+//!   expect_stderr_line "pattern"          — assert a stderr line matches
+//!   expect_exit_code N                    — assert exit code equals N
+//!   not_expect_stdout "pattern"           — assert stdout does NOT match
+//!   not_expect_stderr "pattern"           — assert stderr does NOT match
+//!   not_expect_exit_code N                — assert exit code does NOT equal N
 //!
 //! Lines starting with '#' and empty lines are ignored.
-//! All expect commands use a built-in regex engine (no external dependencies).
-//! Supported regex syntax: . * + ? [...] (a|b) \escape
+//! Quoted strings support backslash escapes: \" \\ \n \r \t
+//! {{SHELL}} is substituted with the target shell path.
+//! All pattern matching uses the built-in regex engine (no external deps).
 
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io::{self, Read};
@@ -73,6 +102,18 @@ struct PtySession {
 
 impl PtySession {
     fn spawn(argv: &[String], env_vars: &[(String, String)]) -> io::Result<Self> {
+        Self::spawn_inner(argv, env_vars, false)
+    }
+
+    fn spawn_clean(argv: &[String], env_vars: &[(String, String)]) -> io::Result<Self> {
+        Self::spawn_inner(argv, env_vars, true)
+    }
+
+    fn spawn_inner(
+        argv: &[String],
+        env_vars: &[(String, String)],
+        clear_env: bool,
+    ) -> io::Result<Self> {
         if argv.is_empty() {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty argv"));
         }
@@ -80,7 +121,6 @@ impl PtySession {
         unsafe {
             let mut master: CInt = -1;
 
-            // Properly initialize termios for a sane terminal
             let mut termp: libc::termios = std::mem::zeroed();
             termp.c_iflag = (libc::ICRNL | libc::IXON) as libc::tcflag_t;
             termp.c_oflag = (libc::OPOST | libc::ONLCR) as libc::tcflag_t;
@@ -88,16 +128,14 @@ impl PtySession {
             termp.c_lflag =
                 (libc::ECHO | libc::ECHOE | libc::ECHOK | libc::ICANON | libc::ISIG | libc::IEXTEN)
                     as libc::tcflag_t;
-            // Special characters
-            termp.c_cc[libc::VINTR] = 0x03; // Ctrl-C
-            termp.c_cc[libc::VQUIT] = 0x1c; // Ctrl-backslash
-            termp.c_cc[libc::VERASE] = 0x7f; // DEL
-            termp.c_cc[libc::VKILL] = 0x15; // Ctrl-U
-            termp.c_cc[libc::VEOF] = 0x04; // Ctrl-D
-            termp.c_cc[libc::VSUSP] = 0x1a; // Ctrl-Z
+            termp.c_cc[libc::VINTR] = 0x03;
+            termp.c_cc[libc::VQUIT] = 0x1c;
+            termp.c_cc[libc::VERASE] = 0x7f;
+            termp.c_cc[libc::VKILL] = 0x15;
+            termp.c_cc[libc::VEOF] = 0x04;
+            termp.c_cc[libc::VSUSP] = 0x1a;
             termp.c_cc[libc::VMIN] = 1;
             termp.c_cc[libc::VTIME] = 0;
-            // Set baud rate
             libc::cfsetispeed(&mut termp, libc::B38400);
             libc::cfsetospeed(&mut termp, libc::B38400);
 
@@ -117,9 +155,11 @@ impl PtySession {
             }
 
             if pid == 0 {
-                // Child — set env vars and exec the command
                 let mut cmd = Command::new(&argv[0]);
                 cmd.args(&argv[1..]);
+                if clear_env {
+                    cmd.env_clear();
+                }
                 for (k, v) in env_vars {
                     cmd.env(k, v);
                 }
@@ -396,12 +436,34 @@ fn expand_env(s: &str) -> String {
 }
 
 /// Extract a quoted string argument: `"contents"` -> `contents`
-fn extract_quoted(arg: &str) -> Result<&str, String> {
-    if arg.starts_with('"') && arg.ends_with('"') && arg.len() >= 2 {
-        Ok(&arg[1..arg.len() - 1])
-    } else {
-        Err(format!("expected quoted string, got: {arg}"))
+/// Supports backslash escapes: `\"` -> `"`, `\\` -> `\`, `\n` -> newline, etc.
+fn extract_quoted(arg: &str) -> Result<String, String> {
+    if !arg.starts_with('"') || arg.len() < 2 {
+        return Err(format!("expected quoted string, got: {arg}"));
     }
+    let inner = &arg[1..];
+    let mut result = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        if c == '"' {
+            if chars.next().is_none() {
+                return Ok(result);
+            }
+            return Err(format!("unexpected content after closing quote: {arg}"));
+        }
+        if c == '\\' {
+            match chars.next() {
+                Some('n') => result.push('\n'),
+                Some('r') => result.push('\r'),
+                Some('t') => result.push('\t'),
+                Some(esc) => result.push(esc),
+                None => return Err(format!("trailing backslash in quoted string: {arg}")),
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    Err(format!("unterminated quoted string: {arg}"))
 }
 
 fn parse_timeout_value(val: &str) -> Result<Duration, String> {
@@ -843,6 +905,15 @@ fn collect_repeat_positions(inner: &RegexNode, text: &[char], pos: usize) -> Vec
     positions
 }
 
+/// Check if the pattern matches the entire `text` (anchored at both ends).
+fn regex_full_match(pattern: &[RegexNode], text: &str) -> bool {
+    let chars: Vec<char> = text.chars().collect();
+    match match_re_seq(pattern, &chars, 0) {
+        Some(end) => end == chars.len(),
+        None => false,
+    }
+}
+
 /// Find the leftmost regex match in `text`. Returns byte offsets `(start, end)`.
 fn regex_find(pattern: &[RegexNode], text: &str) -> Option<(usize, usize)> {
     let chars: Vec<char> = text.chars().collect();
@@ -946,10 +1017,10 @@ fn run_script(script_lines: &[String]) -> Result<(), String> {
                 let timeout = timeout.unwrap_or(Duration::from_millis(200));
                 let pattern_str = extract_quoted(quoted_part)
                     .map_err(|e| format!("line {line_num}: {e}"))?;
-                let pattern = parse_regex(pattern_str)
+                let pattern = parse_regex(&pattern_str)
                     .map_err(|e| format!("line {line_num}: bad regex: {e}"))?;
                 log.push(format!(">>> expect {:?} (timeout={:.1}s)", pattern_str, timeout.as_secs_f64()));
-                match sess.expect(&pattern, pattern_str, timeout) {
+                match sess.expect(&pattern, &pattern_str, timeout) {
                     Ok(consumed) => {
                         log.push(format!("<<< matched (consumed {} bytes)", consumed.len()));
                     }
@@ -971,10 +1042,10 @@ fn run_script(script_lines: &[String]) -> Result<(), String> {
                 let (timeout, quoted_part) = parse_expect_args(rest)?;
                 let pattern_str = extract_quoted(quoted_part)
                     .map_err(|e| format!("line {line_num}: {e}"))?;
-                let pattern = parse_regex(pattern_str)
+                let pattern = parse_regex(&pattern_str)
                     .map_err(|e| format!("line {line_num}: bad regex: {e}"))?;
                 log.push(format!(">>> not_expect {:?} (timeout={:?})", pattern_str, timeout));
-                sess.not_expect(&pattern, pattern_str, timeout)
+                sess.not_expect(&pattern, &pattern_str, timeout)
                     .map_err(|e| format!("line {line_num}: {e}"))?;
             }
 
@@ -986,10 +1057,10 @@ fn run_script(script_lines: &[String]) -> Result<(), String> {
                 let timeout = timeout.unwrap_or(Duration::from_millis(200));
                 let pattern_str = extract_quoted(quoted_part)
                     .map_err(|e| format!("line {line_num}: {e}"))?;
-                let pattern = parse_regex(pattern_str)
+                let pattern = parse_regex(&pattern_str)
                     .map_err(|e| format!("line {line_num}: bad regex: {e}"))?;
                 log.push(format!(">>> expect_line {:?} (timeout={:.1}s)", pattern_str, timeout.as_secs_f64()));
-                match sess.expect_line(&pattern, pattern_str, timeout) {
+                match sess.expect_line(&pattern, &pattern_str, timeout) {
                     Ok(consumed) => {
                         log.push(format!("<<< line matched (consumed {} bytes)", consumed.len()));
                     }
@@ -1010,7 +1081,7 @@ fn run_script(script_lines: &[String]) -> Result<(), String> {
                     .ok_or_else(|| format!("line {line_num}: send before spawn"))?;
                 let text = extract_quoted(rest)
                     .map_err(|e| format!("line {line_num}: {e}"))?;
-                let expanded = expand_env(text);
+                let expanded = expand_env(&text);
                 log.push(format!(">>> send {:?}", expanded));
                 sess.send_line(&expanded)
                     .map_err(|e| format!("line {line_num}: send failed: {e}"))?;
@@ -1108,35 +1179,796 @@ fn run_script(script_lines: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+// ── Suite data structures ────────────────────────────────────────────────────
+
+#[allow(dead_code)]
+struct Requirement {
+    id: String,
+    doc: Option<String>,
+}
+
+struct TestCase {
+    name: String,
+    #[allow(dead_code)]
+    line_num: usize,
+    #[allow(dead_code)]
+    requirements: Vec<Requirement>,
+    env_overrides: Vec<(String, String)>,
+    script_lines: Vec<(usize, String)>,
+}
+
+struct TestSuite {
+    name: String,
+    filename: String,
+    tests: Vec<TestCase>,
+}
+
+struct RunResult {
+    stdout: String,
+    stderr: String,
+    exit_code: i32,
+}
+
+#[derive(Clone, Copy)]
+enum TestOutcome {
+    Pass,
+    Fail,
+}
+
+struct TestReport {
+    name: String,
+    outcome: TestOutcome,
+    error: Option<String>,
+}
+
+// ── Suite parser ─────────────────────────────────────────────────────────────
+
+fn parse_suite(text: &str, filename: &str) -> Result<TestSuite, String> {
+    let mut suite_name: Option<String> = None;
+    let mut tests = Vec::new();
+    let mut pending_reqs: Vec<Requirement> = Vec::new();
+
+    let mut in_test = false;
+    let mut test_name = String::new();
+    let mut test_start_line: usize = 0;
+    let mut test_env: Vec<(String, String)> = Vec::new();
+    let mut test_lines: Vec<(usize, String)> = Vec::new();
+    let mut test_reqs: Vec<Requirement> = Vec::new();
+
+    for (lineno, raw_line) in text.lines().enumerate() {
+        let line_num = lineno + 1;
+        let line = raw_line.trim();
+
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        if let Some(rest) = line.strip_prefix("testsuite ") {
+            if suite_name.is_some() {
+                return Err(format!("line {line_num}: duplicate testsuite directive"));
+            }
+            suite_name = Some(
+                extract_quoted(rest.trim())
+                    .map_err(|e| format!("line {line_num}: {e}"))?,
+            );
+            continue;
+        }
+
+        if let Some(rest) = line.strip_prefix("requirement ") {
+            let rest = rest.trim();
+            let (id_part, remainder) = match rest.find(' ') {
+                Some(pos) => (rest[..pos].trim(), rest[pos + 1..].trim()),
+                None => (rest, ""),
+            };
+            let id = extract_quoted(id_part)
+                .map_err(|e| format!("line {line_num}: {e}"))?;
+            let doc = if let Some(doc_rest) = remainder.strip_prefix("doc=") {
+                Some(
+                    extract_quoted(doc_rest.trim())
+                        .map_err(|e| format!("line {line_num}: {e}"))?,
+                )
+            } else {
+                None
+            };
+            pending_reqs.push(Requirement { id, doc });
+            continue;
+        }
+
+        if let Some(rest) = line.strip_prefix("begin test ") {
+            if in_test {
+                return Err(format!(
+                    "line {line_num}: nested begin test (already in {:?})",
+                    test_name
+                ));
+            }
+            in_test = true;
+            test_name = extract_quoted(rest.trim())
+                .map_err(|e| format!("line {line_num}: {e}"))?;
+            test_start_line = line_num;
+            test_env.clear();
+            test_lines.clear();
+            test_reqs = std::mem::take(&mut pending_reqs);
+            continue;
+        }
+
+        if let Some(rest) = line.strip_prefix("end test ") {
+            if !in_test {
+                return Err(format!("line {line_num}: end test without begin test"));
+            }
+            let end_name = extract_quoted(rest.trim())
+                .map_err(|e| format!("line {line_num}: {e}"))?;
+            if end_name != test_name {
+                return Err(format!(
+                    "line {line_num}: end test {:?} does not match begin test {:?}",
+                    end_name, test_name
+                ));
+            }
+            tests.push(TestCase {
+                name: test_name.clone(),
+                line_num: test_start_line,
+                requirements: std::mem::take(&mut test_reqs),
+                env_overrides: test_env.clone(),
+                script_lines: test_lines.clone(),
+            });
+            in_test = false;
+            continue;
+        }
+
+        if in_test {
+            if let Some(rest) = line.strip_prefix("setenv ") {
+                let rest = rest.trim();
+                let key_end = find_closing_quote(rest)
+                    .map_err(|e| format!("line {line_num}: setenv key: {e}"))?;
+                let key = extract_quoted(&rest[..key_end + 1])
+                    .map_err(|e| format!("line {line_num}: setenv key: {e}"))?;
+                let val_part = rest[key_end + 1..].trim();
+                let val = extract_quoted(val_part)
+                    .map_err(|e| format!("line {line_num}: setenv value: {e}"))?;
+                test_env.push((key, val));
+            } else {
+                test_lines.push((line_num, raw_line.to_string()));
+            }
+            continue;
+        }
+
+        return Err(format!(
+            "line {line_num}: unexpected command outside test block: {line}"
+        ));
+    }
+
+    if in_test {
+        return Err(format!(
+            "unterminated test {:?} starting at line {test_start_line}",
+            test_name
+        ));
+    }
+
+    Ok(TestSuite {
+        name: suite_name.unwrap_or_else(|| filename.to_string()),
+        filename: filename.to_string(),
+        tests,
+    })
+}
+
+fn find_closing_quote(s: &str) -> Result<usize, String> {
+    if !s.starts_with('"') {
+        return Err(format!("expected quoted string, got: {s}"));
+    }
+    let mut i = 1;
+    let bytes = s.as_bytes();
+    while i < bytes.len() {
+        if bytes[i] == b'\\' {
+            i += 2;
+            continue;
+        }
+        if bytes[i] == b'"' {
+            return Ok(i);
+        }
+        i += 1;
+    }
+    Err(format!("unterminated quoted string: {s}"))
+}
+
+// ── Test isolation ───────────────────────────────────────────────────────────
+
+fn baseline_env(tmpdir: &str) -> HashMap<String, String> {
+    let mut env = HashMap::new();
+    env.insert("PATH".into(), "/usr/bin:/bin".into());
+    env.insert("HOME".into(), tmpdir.into());
+    env.insert("TMPDIR".into(), tmpdir.into());
+    env.insert("TERM".into(), "xterm".into());
+    env.insert("LANG".into(), "C".into());
+    env.insert("LC_ALL".into(), "C".into());
+    env.insert("PS1".into(), "$ ".into());
+    env.insert("PS2".into(), "> ".into());
+    env.insert("ENV".into(), String::new());
+    env.insert("HISTFILE".into(), "/dev/null".into());
+    env
+}
+
+fn make_test_tmpdir() -> io::Result<String> {
+    let template = "/tmp/epty_test_XXXXXX";
+    let mut buf = template.as_bytes().to_vec();
+    buf.push(0);
+    let ptr = unsafe { libc::mkdtemp(buf.as_mut_ptr() as *mut libc::c_char) };
+    if ptr.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    buf.pop(); // remove null
+    Ok(String::from_utf8_lossy(&buf).to_string())
+}
+
+fn remove_dir_all(path: &str) {
+    let _ = fs::remove_dir_all(path);
+}
+
+// ── Non-interactive run command ──────────────────────────────────────────────
+
+fn run_command(
+    shell_cmd: &str,
+    shell_argv: &[String],
+    test_env: &HashMap<String, String>,
+    tmpdir: &str,
+) -> Result<RunResult, String> {
+    let mut cmd = std::process::Command::new(&shell_argv[0]);
+    for arg in &shell_argv[1..] {
+        cmd.arg(arg);
+    }
+    cmd.arg("-c").arg(shell_cmd);
+    cmd.env_clear();
+    for (k, v) in test_env {
+        cmd.env(k, v);
+    }
+    cmd.current_dir(tmpdir);
+    let output = cmd
+        .output()
+        .map_err(|e| format!("failed to execute shell: {e}"))?;
+    Ok(RunResult {
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        exit_code: output.status.code().unwrap_or(128),
+    })
+}
+
+// ── Suite test executor ──────────────────────────────────────────────────────
+
+fn run_suite_test(
+    test: &TestCase,
+    shell_argv: &[String],
+    shell_str: &str,
+) -> Result<(), String> {
+    let tmpdir = make_test_tmpdir()
+        .map_err(|e| format!("failed to create tmpdir: {e}"))?;
+
+    let result = run_suite_test_inner(test, shell_argv, shell_str, &tmpdir);
+    remove_dir_all(&tmpdir);
+    result
+}
+
+fn run_suite_test_inner(
+    test: &TestCase,
+    shell_argv: &[String],
+    shell_str: &str,
+    tmpdir: &str,
+) -> Result<(), String> {
+    let mut test_env = baseline_env(tmpdir);
+    for (k, v) in &test.env_overrides {
+        test_env.insert(k.clone(), v.clone());
+    }
+
+    let mut session: Option<PtySession> = None;
+    let mut last_run: Option<RunResult> = None;
+    let mut log = Vec::<String>::new();
+    let mut mode: Option<&str> = None; // "interactive" or "run"
+
+    let lines: Vec<(usize, &str)> = test
+        .script_lines
+        .iter()
+        .map(|(ln, s)| (*ln, s.as_str()))
+        .collect();
+
+    for &(line_num, raw_line) in &lines {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        // Strip inline comments
+        let effective = if let Some(q_start) = line.find('"') {
+            if let Some(q_end) = line[q_start + 1..].find('"') {
+                let after_quote = q_start + 1 + q_end + 1;
+                if let Some(hash_pos) = line[after_quote..].find('#') {
+                    line[..after_quote + hash_pos].trim()
+                } else {
+                    line
+                }
+            } else {
+                line
+            }
+        } else if let Some(hash_pos) = line.find('#') {
+            line[..hash_pos].trim()
+        } else {
+            line
+        };
+
+        if effective.is_empty() {
+            continue;
+        }
+
+        let (cmd, rest) = match effective.find(' ') {
+            Some(pos) => (effective[..pos].trim(), effective[pos + 1..].trim()),
+            None => (effective, ""),
+        };
+
+        match cmd {
+            "spawn" => {
+                if mode == Some("run") {
+                    return Err(format!(
+                        "line {line_num}: cannot mix spawn and run in the same test"
+                    ));
+                }
+                mode = Some("interactive");
+                if session.is_some() {
+                    return Err(format!("line {line_num}: spawn called twice"));
+                }
+                let expanded = rest.replace("{{SHELL}}", shell_str);
+                let words: Vec<String> = expanded
+                    .split_whitespace()
+                    .map(String::from)
+                    .collect();
+                let env_pairs: Vec<(String, String)> = test_env
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                log.push(format!(">>> spawn {}", expanded));
+                session = Some(
+                    PtySession::spawn_clean(&words, &env_pairs)
+                        .map_err(|e| format!("line {line_num}: spawn failed: {e}"))?,
+                );
+            }
+
+            "run" => {
+                if mode == Some("interactive") {
+                    return Err(format!(
+                        "line {line_num}: cannot mix run and spawn in the same test"
+                    ));
+                }
+                mode = Some("run");
+                let cmd_text = extract_quoted(rest)
+                    .map_err(|e| format!("line {line_num}: {e}"))?;
+                let expanded = cmd_text.replace("{{SHELL}}", shell_str);
+                log.push(format!(">>> run {:?}", expanded));
+                last_run = Some(run_command(&expanded, shell_argv, &test_env, tmpdir)?);
+            }
+
+            "expect_stdout" | "expect_stderr" | "expect_stdout_line"
+            | "expect_stderr_line" | "not_expect_stdout" | "not_expect_stderr"
+            | "not_expect_stdout_line" | "not_expect_stderr_line" => {
+                let rr = last_run
+                    .as_ref()
+                    .ok_or_else(|| format!("line {line_num}: {cmd} before run"))?;
+                let pattern_str = extract_quoted(rest)
+                    .map_err(|e| format!("line {line_num}: {e}"))?;
+                let pattern = parse_regex(&pattern_str)
+                    .map_err(|e| format!("line {line_num}: bad regex: {e}"))?;
+                let (haystack, label) = if cmd.contains("stderr") {
+                    (&rr.stderr, "stderr")
+                } else {
+                    (&rr.stdout, "stdout")
+                };
+                log.push(format!(">>> {cmd} {:?}", pattern_str));
+
+                let negate = cmd.starts_with("not_");
+                let line_mode = cmd.contains("_line");
+
+                if line_mode {
+                    let found = haystack
+                        .lines()
+                        .any(|l| regex_full_match(&pattern, l));
+                    if !negate && !found {
+                        return Err(format!(
+                            "line {line_num}: {cmd}: no {label} line matched {:?}\n{label}:\n{}",
+                            pattern_str, haystack
+                        ));
+                    }
+                    if negate && found {
+                        return Err(format!(
+                            "line {line_num}: {cmd}: found {:?} in {label}\n{label}:\n{}",
+                            pattern_str, haystack
+                        ));
+                    }
+                } else {
+                    let trimmed = haystack.trim_end();
+                    let found = regex_full_match(&pattern, trimmed);
+                    if !negate && !found {
+                        return Err(format!(
+                            "line {line_num}: {cmd}: {label} did not match {:?}\n{label}:\n{}",
+                            pattern_str, haystack
+                        ));
+                    }
+                    if negate && found {
+                        return Err(format!(
+                            "line {line_num}: {cmd}: {label} matched {:?} (expected no match)\n{label}:\n{}",
+                            pattern_str, haystack
+                        ));
+                    }
+                }
+            }
+
+            "expect_exit_code" | "not_expect_exit_code" => {
+                let rr = last_run
+                    .as_ref()
+                    .ok_or_else(|| format!("line {line_num}: {cmd} before run"))?;
+                let expected: i32 = rest
+                    .parse()
+                    .map_err(|e| format!("line {line_num}: bad exit code: {e}"))?;
+                log.push(format!(">>> {cmd} {expected}"));
+                let negate = cmd.starts_with("not_");
+                if !negate && rr.exit_code != expected {
+                    return Err(format!(
+                        "line {line_num}: {cmd}: expected {expected}, got {}",
+                        rr.exit_code
+                    ));
+                }
+                if negate && rr.exit_code == expected {
+                    return Err(format!(
+                        "line {line_num}: {cmd}: did not expect {expected}",
+                    ));
+                }
+            }
+
+            // Interactive PTY commands — delegate to existing logic
+            "expect" => {
+                let sess = session
+                    .as_ref()
+                    .ok_or_else(|| format!("line {line_num}: expect before spawn"))?;
+                let (timeout, quoted_part) = parse_expect_args(rest)?;
+                let timeout = timeout.unwrap_or(Duration::from_millis(200));
+                let pattern_str = extract_quoted(quoted_part)
+                    .map_err(|e| format!("line {line_num}: {e}"))?;
+                let pattern = parse_regex(&pattern_str)
+                    .map_err(|e| format!("line {line_num}: bad regex: {e}"))?;
+                log.push(format!(
+                    ">>> expect {:?} (timeout={:.1}s)",
+                    pattern_str,
+                    timeout.as_secs_f64()
+                ));
+                match sess.expect(&pattern, &pattern_str, timeout) {
+                    Ok(consumed) => {
+                        log.push(format!("<<< matched (consumed {} bytes)", consumed.len()));
+                    }
+                    Err(e) => {
+                        dump_log(&log);
+                        return Err(format!("line {line_num}: {e}"));
+                    }
+                }
+            }
+
+            "not_expect" => {
+                let sess = session
+                    .as_ref()
+                    .ok_or_else(|| format!("line {line_num}: not_expect before spawn"))?;
+                let (timeout, quoted_part) = parse_expect_args(rest)?;
+                let pattern_str = extract_quoted(quoted_part)
+                    .map_err(|e| format!("line {line_num}: {e}"))?;
+                let pattern = parse_regex(&pattern_str)
+                    .map_err(|e| format!("line {line_num}: bad regex: {e}"))?;
+                log.push(format!(">>> not_expect {:?} (timeout={:?})", pattern_str, timeout));
+                sess.not_expect(&pattern, &pattern_str, timeout)
+                    .map_err(|e| format!("line {line_num}: {e}"))?;
+            }
+
+            "expect_line" => {
+                let sess = session
+                    .as_ref()
+                    .ok_or_else(|| format!("line {line_num}: expect_line before spawn"))?;
+                let (timeout, quoted_part) = parse_expect_args(rest)?;
+                let timeout = timeout.unwrap_or(Duration::from_millis(200));
+                let pattern_str = extract_quoted(quoted_part)
+                    .map_err(|e| format!("line {line_num}: {e}"))?;
+                let pattern = parse_regex(&pattern_str)
+                    .map_err(|e| format!("line {line_num}: bad regex: {e}"))?;
+                log.push(format!(
+                    ">>> expect_line {:?} (timeout={:.1}s)",
+                    pattern_str,
+                    timeout.as_secs_f64()
+                ));
+                match sess.expect_line(&pattern, &pattern_str, timeout) {
+                    Ok(consumed) => {
+                        log.push(format!("<<< line matched (consumed {} bytes)", consumed.len()));
+                    }
+                    Err(e) => {
+                        dump_log(&log);
+                        return Err(format!("line {line_num}: {e}"));
+                    }
+                }
+            }
+
+            "send" => {
+                let sess = session
+                    .as_ref()
+                    .ok_or_else(|| format!("line {line_num}: send before spawn"))?;
+                let text = extract_quoted(rest)
+                    .map_err(|e| format!("line {line_num}: {e}"))?;
+                log.push(format!(">>> send {:?}", text));
+                sess.send_line(&text)
+                    .map_err(|e| format!("line {line_num}: send failed: {e}"))?;
+            }
+
+            "sendraw" => {
+                let sess = session
+                    .as_ref()
+                    .ok_or_else(|| format!("line {line_num}: sendraw before spawn"))?;
+                let hex_parts: Vec<&str> = rest.split_whitespace().collect();
+                let mut bytes = Vec::new();
+                for hex in &hex_parts {
+                    let b = u8::from_str_radix(hex, 16)
+                        .map_err(|e| format!("line {line_num}: bad hex byte '{hex}': {e}"))?;
+                    bytes.push(b);
+                }
+                log.push(format!(">>> sendraw [{}]", hex_parts.join(" ")));
+                sess.write_bytes(&bytes)
+                    .map_err(|e| format!("line {line_num}: sendraw failed: {e}"))?;
+            }
+
+            "signal" => {
+                let sess = session
+                    .as_ref()
+                    .ok_or_else(|| format!("line {line_num}: signal before spawn"))?;
+                let sig = parse_signal(rest)
+                    .map_err(|e| format!("line {line_num}: {e}"))?;
+                log.push(format!(">>> signal {rest}"));
+                sess.send_signal(sig)
+                    .map_err(|e| format!("line {line_num}: signal failed: {e}"))?;
+            }
+
+            "sendeof" => {
+                let sess = session
+                    .as_mut()
+                    .ok_or_else(|| format!("line {line_num}: sendeof before spawn"))?;
+                log.push(">>> sendeof".to_string());
+                sess.send_eof()
+                    .map_err(|e| format!("line {line_num}: sendeof failed: {e}"))?;
+            }
+
+            "wait" => {
+                let sess = session
+                    .as_mut()
+                    .ok_or_else(|| format!("line {line_num}: wait before spawn"))?;
+                let expected_code = if let Some(val) = rest.strip_prefix("exitcode=") {
+                    Some(
+                        val.parse::<i32>()
+                            .map_err(|e| format!("line {line_num}: bad exitcode: {e}"))?,
+                    )
+                } else if rest.is_empty() {
+                    None
+                } else {
+                    return Err(format!("line {line_num}: unknown wait argument: {rest}"));
+                };
+                log.push(format!(">>> wait exitcode={:?}", expected_code));
+                match sess.wait_child(expected_code) {
+                    Ok(code) => {
+                        log.push(format!("<<< child exited with code {code}"));
+                    }
+                    Err(e) => {
+                        dump_log(&log);
+                        return Err(format!("line {line_num}: {e}"));
+                    }
+                }
+                session = None;
+            }
+
+            "sleep" => {
+                let dur = parse_timeout_value(rest)
+                    .map_err(|e| format!("line {line_num}: {e}"))?;
+                log.push(format!(">>> sleep {}ms", dur.as_millis()));
+                thread::sleep(dur);
+            }
+
+            _ => {
+                return Err(format!("line {line_num}: unknown command: {cmd}"));
+            }
+        }
+    }
+
+    if let Some(mut sess) = session {
+        let _ = sess.send_eof();
+        let _ = sess.wait_child(None);
+    }
+
+    Ok(())
+}
+
+fn dump_log(log: &[String]) {
+    eprintln!("--- expect_pty conversation log ---");
+    for entry in log {
+        eprintln!("{entry}");
+    }
+    eprintln!("--- end log ---");
+}
+
+// ── Suite runner ─────────────────────────────────────────────────────────────
+
+fn run_suite(suite: &TestSuite, shell_argv: &[String], shell_str: &str) -> Vec<TestReport> {
+    let mut reports = Vec::new();
+    for test in &suite.tests {
+        let outcome = match run_suite_test(test, shell_argv, shell_str) {
+            Ok(()) => TestReport {
+                name: test.name.clone(),
+                outcome: TestOutcome::Pass,
+                error: None,
+            },
+            Err(e) => TestReport {
+                name: test.name.clone(),
+                outcome: TestOutcome::Fail,
+                error: Some(e),
+            },
+        };
+        reports.push(outcome);
+    }
+    reports
+}
+
+fn print_suite_report(suite: &TestSuite, reports: &[TestReport]) -> (usize, usize) {
+    eprintln!("=== {} ({}) ===", suite.name, suite.filename);
+    let mut passed = 0;
+    let mut failed = 0;
+    for r in reports {
+        match r.outcome {
+            TestOutcome::Pass => {
+                eprintln!("  PASS  {}", r.name);
+                passed += 1;
+            }
+            TestOutcome::Fail => {
+                eprintln!("  FAIL  {}", r.name);
+                if let Some(ref e) = r.error {
+                    for eline in e.lines() {
+                        eprintln!("        {eline}");
+                    }
+                }
+                failed += 1;
+            }
+        }
+    }
+    eprintln!("--- {passed} passed, {failed} failed ---");
+    eprintln!();
+    (passed, failed)
+}
+
+// ── CLI parsing ──────────────────────────────────────────────────────────────
+
+fn parse_shell_arg(s: &str) -> Vec<String> {
+    s.split_whitespace().map(String::from).collect()
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 fn main() {
     let args: Vec<String> = env::args().collect();
 
-    // Read script from file argument or stdin
-    let script_text = if args.len() > 1 {
-        fs::read_to_string(&args[1]).unwrap_or_else(|e| {
-            eprintln!("expect_pty: cannot read {}: {e}", args[1]);
-            std::process::exit(2);
-        })
-    } else {
-        let mut buf = String::new();
-        io::stdin().read_to_string(&mut buf).unwrap_or_else(|e| {
-            eprintln!("expect_pty: cannot read stdin: {e}");
-            std::process::exit(2);
-        });
-        buf
-    };
-
-    let lines: Vec<String> = script_text.lines().map(String::from).collect();
-
-    match run_script(&lines) {
-        Ok(()) => {
-            std::process::exit(0);
+    let mut shell_flag: Option<String> = None;
+    let mut files: Vec<String> = Vec::new();
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--shell" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("expect_pty: --shell requires an argument");
+                    std::process::exit(2);
+                }
+                shell_flag = Some(args[i].clone());
+            }
+            arg if arg.starts_with('-') && arg != "-" => {
+                eprintln!("expect_pty: unknown flag: {arg}");
+                std::process::exit(2);
+            }
+            _ => {
+                files.push(args[i].clone());
+            }
         }
-        Err(e) => {
-            eprintln!("expect_pty: FAIL: {e}");
+        i += 1;
+    }
+
+    let has_epty = files.iter().any(|f| f.ends_with(".epty"));
+
+    if has_epty {
+        // Suite mode
+        let shell_str = shell_flag
+            .or_else(|| env::var("TARGET_SHELL").ok())
+            .unwrap_or_else(|| "/bin/sh".to_string());
+        let shell_argv = parse_shell_arg(&shell_str);
+        if shell_argv.is_empty() || !shell_argv[0].starts_with('/') {
+            eprintln!(
+                "expect_pty: --shell must be an absolute path, got: {}",
+                shell_argv.first().map(|s| s.as_str()).unwrap_or("<empty>")
+            );
+            std::process::exit(2);
+        }
+
+        let mut total_passed: usize = 0;
+        let mut total_failed: usize = 0;
+        let mut suites_passed: usize = 0;
+        let mut suites_failed: usize = 0;
+
+        for file in &files {
+            let text = fs::read_to_string(file).unwrap_or_else(|e| {
+                eprintln!("expect_pty: cannot read {file}: {e}");
+                std::process::exit(2);
+            });
+            let filename = file
+                .rsplit('/')
+                .next()
+                .unwrap_or(file);
+            let suite = match parse_suite(&text, filename) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("expect_pty: parse error in {file}: {e}");
+                    std::process::exit(2);
+                }
+            };
+            let reports = run_suite(&suite, &shell_argv, &shell_str);
+            let (p, f) = print_suite_report(&suite, &reports);
+            total_passed += p;
+            total_failed += f;
+            if f == 0 {
+                suites_passed += 1;
+            } else {
+                suites_failed += 1;
+            }
+        }
+
+        let total_suites = suites_passed + suites_failed;
+        let total_tests = total_passed + total_failed;
+        eprintln!("=== Summary ===");
+        eprintln!(
+            "Suites: {suites_passed} passed, {suites_failed} failed (of {total_suites})"
+        );
+        eprintln!(
+            "Tests:  {total_passed} passed, {total_failed} failed (of {total_tests})"
+        );
+
+        if total_failed > 0 {
             std::process::exit(1);
+        }
+    } else {
+        // Legacy mode: read from file or stdin
+        let script_text = if files.len() == 1 {
+            fs::read_to_string(&files[0]).unwrap_or_else(|e| {
+                eprintln!("expect_pty: cannot read {}: {e}", files[0]);
+                std::process::exit(2);
+            })
+        } else if files.is_empty() {
+            let mut buf = String::new();
+            io::stdin().read_to_string(&mut buf).unwrap_or_else(|e| {
+                eprintln!("expect_pty: cannot read stdin: {e}");
+                std::process::exit(2);
+            });
+            buf
+        } else {
+            eprintln!("expect_pty: multiple files require .epty extension for suite mode");
+            std::process::exit(2);
+        };
+
+        // Apply {{SHELL}} substitution if --shell was given
+        let script_text = if let Some(ref shell) = shell_flag {
+            script_text.replace("{{SHELL}}", shell)
+        } else if let Ok(shell) = env::var("TARGET_SHELL") {
+            script_text.replace("{{SHELL}}", &shell)
+        } else {
+            script_text
+        };
+
+        let lines: Vec<String> = script_text.lines().map(String::from).collect();
+
+        match run_script(&lines) {
+            Ok(()) => {
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("expect_pty: FAIL: {e}");
+                std::process::exit(1);
+            }
         }
     }
 }
@@ -1352,5 +2184,174 @@ mod tests {
     #[test]
     fn timeout_no_suffix_fails() {
         assert!(parse_timeout_value("500").is_err());
+    }
+
+    // -- extract_quoted --
+
+    #[test]
+    fn quoted_simple() {
+        assert_eq!(extract_quoted(r#""hello""#).unwrap(), "hello");
+    }
+
+    #[test]
+    fn quoted_escaped_quote() {
+        assert_eq!(extract_quoted(r#""say \"hi\"""#).unwrap(), r#"say "hi""#);
+    }
+
+    #[test]
+    fn quoted_escaped_backslash() {
+        assert_eq!(extract_quoted(r#""a\\b""#).unwrap(), r#"a\b"#);
+    }
+
+    #[test]
+    fn quoted_escape_sequences() {
+        assert_eq!(extract_quoted(r#""a\nb\t""#).unwrap(), "a\nb\t");
+    }
+
+    #[test]
+    fn quoted_mixed() {
+        assert_eq!(
+            extract_quoted(r#""alias foo=\"echo aliased\"""#).unwrap(),
+            r#"alias foo="echo aliased""#
+        );
+    }
+
+    #[test]
+    fn quoted_unterminated() {
+        assert!(extract_quoted(r#""hello"#).is_err());
+    }
+
+    #[test]
+    fn quoted_not_quoted() {
+        assert!(extract_quoted("hello").is_err());
+    }
+
+    // -- .epty parser --
+
+    #[test]
+    fn parse_suite_basic() {
+        let input = r#"
+testsuite "My Suite"
+
+requirement "REQ-001" doc="Some requirement"
+
+begin test "first test"
+  run "echo hello"
+  expect_stdout "hello"
+end test "first test"
+
+begin test "second test"
+  run "true"
+  expect_exit_code 0
+end test "second test"
+"#;
+        let suite = parse_suite(input, "test.epty").unwrap();
+        assert_eq!(suite.name, "My Suite");
+        assert_eq!(suite.tests.len(), 2);
+        assert_eq!(suite.tests[0].name, "first test");
+        assert_eq!(suite.tests[0].requirements.len(), 1);
+        assert_eq!(suite.tests[0].requirements[0].id, "REQ-001");
+        assert_eq!(suite.tests[1].name, "second test");
+        assert_eq!(suite.tests[1].requirements.len(), 0);
+    }
+
+    #[test]
+    fn parse_suite_setenv() {
+        let input = r#"
+testsuite "Env Suite"
+
+begin test "with env"
+  setenv "FOO" "bar"
+  setenv "BAZ" "qux"
+  run "echo $FOO"
+  expect_stdout "bar"
+end test "with env"
+"#;
+        let suite = parse_suite(input, "env.epty").unwrap();
+        assert_eq!(suite.tests[0].env_overrides.len(), 2);
+        assert_eq!(suite.tests[0].env_overrides[0], ("FOO".into(), "bar".into()));
+        assert_eq!(suite.tests[0].env_overrides[1], ("BAZ".into(), "qux".into()));
+    }
+
+    #[test]
+    fn parse_suite_mismatched_end() {
+        let input = r#"
+testsuite "Bad"
+begin test "alpha"
+  run "true"
+end test "beta"
+"#;
+        assert!(parse_suite(input, "bad.epty").is_err());
+    }
+
+    #[test]
+    fn parse_suite_unterminated_test() {
+        let input = r#"
+testsuite "Bad"
+begin test "alpha"
+  run "true"
+"#;
+        assert!(parse_suite(input, "bad.epty").is_err());
+    }
+
+    #[test]
+    fn parse_suite_nested_test() {
+        let input = r#"
+testsuite "Bad"
+begin test "alpha"
+  begin test "beta"
+  end test "beta"
+end test "alpha"
+"#;
+        assert!(parse_suite(input, "bad.epty").is_err());
+    }
+
+    #[test]
+    fn parse_suite_no_testsuite_uses_filename() {
+        let input = r#"
+begin test "lone"
+  run "true"
+end test "lone"
+"#;
+        let suite = parse_suite(input, "my_file.epty").unwrap();
+        assert_eq!(suite.name, "my_file.epty");
+    }
+
+    #[test]
+    fn parse_suite_multiple_requirements() {
+        let input = r#"
+testsuite "Multi Req"
+
+requirement "REQ-001"
+requirement "REQ-002" doc="Something"
+
+begin test "covered"
+  run "true"
+end test "covered"
+"#;
+        let suite = parse_suite(input, "test.epty").unwrap();
+        assert_eq!(suite.tests[0].requirements.len(), 2);
+        assert_eq!(suite.tests[0].requirements[0].id, "REQ-001");
+        assert!(suite.tests[0].requirements[0].doc.is_none());
+        assert_eq!(suite.tests[0].requirements[1].id, "REQ-002");
+        assert_eq!(suite.tests[0].requirements[1].doc.as_deref(), Some("Something"));
+    }
+
+    // -- find_closing_quote --
+
+    #[test]
+    fn closing_quote_simple() {
+        assert_eq!(find_closing_quote(r#""hello""#).unwrap(), 6);
+    }
+
+    #[test]
+    fn closing_quote_escaped() {
+        // "say \"hi\"" — the closing " is at byte index 11
+        assert_eq!(find_closing_quote(r#""say \"hi\"""#).unwrap(), 11);
+    }
+
+    #[test]
+    fn closing_quote_unterminated() {
+        assert!(find_closing_quote(r#""hello"#).is_err());
     }
 }
