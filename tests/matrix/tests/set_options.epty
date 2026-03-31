@@ -13,7 +13,7 @@ requirement "SHALL-DESCRIPTION-612" doc="The special parameter # shall be set to
 begin test "set output is suitable for reinput with quoting"
   begin script
     my_weird_var="space and literal and \"quotes\""
-    output=$(set | grep "my_weird_var=")
+    output=$(set | grep "^my_weird_var=")
     unset my_weird_var
     eval "$output"
     echo "$my_weird_var"

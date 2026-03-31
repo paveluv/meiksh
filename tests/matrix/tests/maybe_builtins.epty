@@ -216,12 +216,12 @@ begin test "test false exit code is 1"
   expect_stdout "1"
 end test "test false exit code is 1"
 
-begin test "test error exit code via missing operand"
+begin test "test with single non-null argument exits 0"
   begin script
-    test -f 2>/dev/null; rc=$?; [ $rc -ge 1 ] && echo "non_zero"
+    test -f; echo $?
   end script
-  expect_stdout "non_zero"
-end test "test error exit code via missing operand"
+  expect_stdout "0"
+end test "test with single non-null argument exits 0"
 
 begin test "[ ] with no arguments returns non-zero"
   begin script
