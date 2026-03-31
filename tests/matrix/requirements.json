@@ -5340,104 +5340,91 @@
     "section": "vi-Line-Editing-Command-Mode",
     "text": "These expansions shall be displayed on subsequent terminal lines.",
     "file": "sh",
-    "testable": false,
-    "untestable_reason": "vi-completion: filename completion during line editing requires filesystem interaction, unreliable in PTY testing"
+    "testable": true
   },
   {
     "id": "SHALL-vi-Line-Editing-Command-Mode-058",
     "section": "vi-Line-Editing-Command-Mode",
     "text": "If the bigword contains none of the characters '?' , '*' , or '[' , an <asterisk> ( '*' ) shall be implicitly assumed at the end.",
     "file": "sh",
-    "testable": false,
-    "untestable_reason": "vi-completion: filename completion during line editing requires filesystem interaction, unreliable in PTY testing"
+    "testable": true
   },
   {
     "id": "SHALL-vi-Line-Editing-Command-Mode-059",
     "section": "vi-Line-Editing-Command-Mode",
     "text": "If any directories are matched, these expansions shall have a '/' character appended.",
     "file": "sh",
-    "testable": false,
-    "untestable_reason": "vi-completion: filename completion during line editing requires filesystem interaction, unreliable in PTY testing"
+    "testable": true
   },
   {
     "id": "SHALL-vi-Line-Editing-Command-Mode-060",
     "section": "vi-Line-Editing-Command-Mode",
     "text": "After the expansion, the line shall be redrawn, the cursor repositioned at the current cursor position, and sh shall be placed in command mode.",
     "file": "sh",
-    "testable": false,
-    "untestable_reason": "vi-completion: filename completion during line editing requires filesystem interaction, unreliable in PTY testing"
+    "testable": true
   },
   {
     "id": "SHALL-vi-Line-Editing-Command-Mode-062",
     "section": "vi-Line-Editing-Command-Mode",
     "text": "This maximal expansion then shall replace the original bigword in the command line, and the cursor shall be placed after this expansion.",
     "file": "sh",
-    "testable": false,
-    "untestable_reason": "vi-completion: filename completion during line editing requires filesystem interaction, unreliable in PTY testing"
+    "testable": true
   },
   {
     "id": "SHALL-vi-Line-Editing-Command-Mode-063",
     "section": "vi-Line-Editing-Command-Mode",
     "text": "If the resulting bigword completely and uniquely matches a directory, a '/' character shall be inserted directly after the bigword.",
     "file": "sh",
-    "testable": false,
-    "untestable_reason": "vi-completion: filename completion during line editing requires filesystem interaction, unreliable in PTY testing"
+    "testable": true
   },
   {
     "id": "SHALL-vi-Line-Editing-Command-Mode-064",
     "section": "vi-Line-Editing-Command-Mode",
     "text": "If some other file is completely matched, a single <space> shall be inserted after the bigword.",
     "file": "sh",
-    "testable": false,
-    "untestable_reason": "vi-completion: filename completion during line editing requires filesystem interaction, unreliable in PTY testing"
+    "testable": true
   },
   {
     "id": "SHALL-vi-Line-Editing-Command-Mode-065",
     "section": "vi-Line-Editing-Command-Mode",
     "text": "After this operation, sh shall be placed in insert mode.",
     "file": "sh",
-    "testable": false,
-    "untestable_reason": "vi-completion: filename completion during line editing requires filesystem interaction, unreliable in PTY testing"
+    "testable": true
   },
   {
     "id": "SHALL-vi-Line-Editing-Command-Mode-066",
     "section": "vi-Line-Editing-Command-Mode",
     "text": "If at the end of the line, the current cursor position shall be moved to the first column position following the expansions and sh shall be placed in insert mode.",
     "file": "sh",
-    "testable": false,
-    "untestable_reason": "vi-completion: filename completion during line editing requires filesystem interaction, unreliable in PTY testing"
+    "testable": true
   },
   {
     "id": "SHALL-vi-Line-Editing-Command-Mode-067",
     "section": "vi-Line-Editing-Command-Mode",
     "text": "Otherwise, the current cursor position shall be the last column position of the first character after the expansions and sh shall be placed in insert mode.",
     "file": "sh",
-    "testable": false,
-    "untestable_reason": "vi-completion: filename completion during line editing requires filesystem interaction, unreliable in PTY testing"
+    "testable": true
   },
   {
     "id": "SHALL-vi-Line-Editing-Command-Mode-068",
     "section": "vi-Line-Editing-Command-Mode",
     "text": "If the current bigword contains none of the characters '?' , '*' , or '[' , before the operation, an <asterisk> ( '*' ) shall be implicitly assumed at the end.",
     "file": "sh",
-    "testable": false,
-    "untestable_reason": "vi-completion: filename completion during line editing requires filesystem interaction, unreliable in PTY testing"
+    "testable": true
   },
   {
     "id": "SHALL-vi-Line-Editing-Command-Mode-069",
     "section": "vi-Line-Editing-Command-Mode",
     "text": "If the alias _letter contains other editing commands, these commands shall be performed as part of the insertion.",
     "file": "sh",
-    "testable": false,
-    "untestable_reason": "vi-alias: alias _letter expansion in vi mode, requires alias setup in command mode"
+    "testable": true
   },
   {
     "id": "SHALL-vi-Line-Editing-Command-Mode-070",
     "section": "vi-Line-Editing-Command-Mode",
     "text": "If no alias _letter is enabled, this command shall have no effect.",
     "file": "sh",
-    "testable": false,
-    "untestable_reason": "vi-alias: no alias _letter enabled case"
+    "testable": true
   },
   {
     "id": "SHALL-vi-Line-Editing-Command-Mode-071",
@@ -5500,8 +5487,7 @@
     "section": "vi-Line-Editing-Command-Mode",
     "text": "When the editor exits, the commands in the temporary file shall be executed and placed in the command history.",
     "file": "sh",
-    "testable": false,
-    "untestable_reason": "vi-editor: v command invokes external editor, requires FCEDIT/VISUAL/EDITOR setup"
+    "testable": true
   },
   {
     "id": "SHALL-vi-Line-Editing-Command-Mode-081",
@@ -6052,8 +6038,7 @@
     "section": "ALIAS",
     "text": "The following environment variables shall affect the execution of alias : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables.",
     "file": "alias",
-    "testable": false,
-    "untestable_reason": "locale"
+    "testable": true
   },
   {
     "id": "SHALL-ALIAS-1026-DUP757",
@@ -6108,8 +6093,7 @@
     "section": "BG",
     "text": "The following environment variables shall affect the execution of bg : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables.",
     "file": "bg",
-    "testable": false,
-    "untestable_reason": "locale: boilerplate locale environment variables"
+    "testable": true
   },
   {
     "id": "SHALL-BG-1031",
@@ -6180,24 +6164,21 @@
     "section": "CD",
     "text": "If, as a result of this canonicalization, the curpath variable is null, no further steps shall be taken.",
     "file": "cd",
-    "testable": false,
-    "untestable_reason": "edge-case: null curpath after canonicalization, extremely rare condition"
+    "testable": true
   },
   {
     "id": "SHALL-CD-1078",
     "section": "CD",
     "text": "If curpath is longer than {PATH_MAX} bytes (including the terminating null) and the directory operand was not longer than {PATH_MAX} bytes (including the terminating null), then curpath shall be converted from an absolute pathname to an equivalent relative pathname if possible.",
     "file": "cd",
-    "testable": false,
-    "untestable_reason": "edge-case: curpath longer than PATH_MAX, system-specific limit"
+    "testable": true
   },
   {
     "id": "SHALL-CD-1079",
     "section": "CD",
     "text": "This conversion shall always be considered possible if the value of PWD , with a trailing <slash> added if it does not already have one, is an initial substring of curpath .",
     "file": "cd",
-    "testable": false,
-    "untestable_reason": "edge-case: PATH_MAX conversion possibility, system-specific"
+    "testable": true
   },
   {
     "id": "SHALL-CD-1080",
@@ -6236,8 +6217,7 @@
     "section": "CD",
     "text": "If both the -e and the -P options are in effect and cd is unable to determine the pathname of the current working directory, cd shall complete successfully but return a non-zero exit status.",
     "file": "cd",
-    "testable": false,
-    "untestable_reason": "optional-feature: -e option behavior when unable to determine pathname"
+    "testable": true
   },
   {
     "id": "SHALL-CD-1085",
@@ -6540,8 +6520,7 @@
     "section": "COMMAND",
     "text": "The following environment variables shall affect the execution of command : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables.",
     "file": "command",
-    "testable": false,
-    "untestable_reason": "locale"
+    "testable": true
   },
   {
     "id": "SHALL-COMMAND-1029",
@@ -6868,8 +6847,7 @@
     "section": "FG",
     "text": "The following environment variables shall affect the execution of fg : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables.",
     "file": "fg",
-    "testable": false,
-    "untestable_reason": "locale: boilerplate locale environment variables"
+    "testable": true
   },
   {
     "id": "SHALL-STDERR-627",
@@ -7108,8 +7086,7 @@
     "section": "GETOPTS",
     "text": "The following environment variables shall affect the execution of getopts : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables.",
     "file": "getopts",
-    "testable": false,
-    "untestable_reason": "locale"
+    "testable": true
   },
   {
     "id": "SHALL-GETOPTS-1202",
@@ -7220,8 +7197,7 @@
     "section": "HASH",
     "text": "The following environment variables shall affect the execution of hash : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables.",
     "file": "hash",
-    "testable": false,
-    "untestable_reason": "locale"
+    "testable": true
   },
   {
     "id": "SHALL-HASH-1217",
@@ -7308,8 +7284,7 @@
     "section": "JOBS",
     "text": "The following environment variables shall affect the execution of jobs : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables.",
     "file": "jobs",
-    "testable": false,
-    "untestable_reason": "locale"
+    "testable": true
   },
   {
     "id": "SHALL-JOBS-1060",
@@ -7492,8 +7467,7 @@
     "section": "KILL",
     "text": "The following environment variables shall affect the execution of kill : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables.",
     "file": "kill",
-    "testable": false,
-    "untestable_reason": "locale"
+    "testable": true
   },
   {
     "id": "SHALL-KILL-1253",
@@ -7796,8 +7770,7 @@
     "section": "TYPE",
     "text": "The following environment variables shall affect the execution of type : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables.",
     "file": "type",
-    "testable": false,
-    "untestable_reason": "locale"
+    "testable": true
   },
   {
     "id": "SHALL-ULIMIT-1297",
@@ -7900,8 +7873,7 @@
     "section": "ULIMIT",
     "text": "The following environment variables shall affect the execution of ulimit : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables.",
     "file": "ulimit",
-    "testable": false,
-    "untestable_reason": "locale"
+    "testable": true
   },
   {
     "id": "SHALL-ULIMIT-1310",
@@ -8044,8 +8016,7 @@
     "section": "UMASK",
     "text": "The following environment variables shall affect the execution of umask : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables.",
     "file": "umask",
-    "testable": false,
-    "untestable_reason": "locale"
+    "testable": true
   },
   {
     "id": "SHALL-UMASK-1329",
@@ -8124,8 +8095,7 @@
     "section": "UNALIAS",
     "text": "The following environment variables shall affect the execution of unalias : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables.",
     "file": "unalias",
-    "testable": false,
-    "untestable_reason": "locale"
+    "testable": true
   },
   {
     "id": "SHALL-WAIT-1343",
@@ -8204,8 +8174,7 @@
     "section": "WAIT",
     "text": "The following environment variables shall affect the execution of wait : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables.",
     "file": "wait",
-    "testable": false,
-    "untestable_reason": "locale"
+    "testable": true
   },
   {
     "id": "SHALL-WAIT-1354",
@@ -8452,8 +8421,7 @@
     "section": "BG",
     "text": "ENVIRONMENT VARIABLES The following environment variables shall affect the execution of bg : LANG Provide a default value for the internationalization variables that are unset or null.",
     "file": "bg",
-    "testable": false,
-    "untestable_reason": "locale: boilerplate locale environment variables"
+    "testable": true
   },
   {
     "id": "SHALL-COMMAND-1039",
@@ -8468,8 +8436,7 @@
     "section": "FG",
     "text": "ENVIRONMENT VARIABLES The following environment variables shall affect the execution of fg : LANG Provide a default value for the internationalization variables that are unset or null.",
     "file": "fg",
-    "testable": false,
-    "untestable_reason": "locale: boilerplate locale environment variables"
+    "testable": true
   },
   {
     "id": "SHALL-GETOPTS-1051",
@@ -8580,248 +8547,217 @@
     "text": "A bracket expression (an expression enclosed in square brackets, \"[]\" ) is an RE that shall match a specific set of single characters, and may match a specific set of multi-character collating elements, based on the non-empty set of list expressions contained in the bracket expression.",
     "file": "V1_chap09",
     "id": "SHALL-XBD-9-3-5-2000",
-    "testable": false,
-    "untestable_reason": "locale-collation: requires specific locale setup for bracket expression testing"
+    "testable": true
   },
   {
     "section": "9.3.5 RE Bracket Expression",
     "text": "The <right-square-bracket> ( ']' ) shall lose its special meaning and represent itself in a bracket expression if it occurs first in the list (after an initial <circumflex> ( '^' ), if any).",
     "file": "V1_chap09",
     "id": "SHALL-XBD-9-3-5-2001",
-    "testable": false,
-    "untestable_reason": "locale-collation: requires specific locale setup for bracket expression testing"
+    "testable": true
   },
   {
     "section": "9.3.5 RE Bracket Expression",
     "text": "Otherwise, it shall terminate the bracket expression, unless it appears in a collating symbol (such as \"[.].]\" ) or is the ending <right-square-bracket> for a collating symbol, equivalence class, or character class.",
     "file": "V1_chap09",
     "id": "SHALL-XBD-9-3-5-2002",
-    "testable": false,
-    "untestable_reason": "locale-collation: requires specific locale setup for bracket expression testing"
+    "testable": true
   },
   {
     "section": "9.3.5 RE Bracket Expression",
     "text": "When the bracket expression appears within a BRE, the special characters '.' , '*' , '[' , and '\\\\' (<period>, <asterisk>, <left-square-bracket>, and <backslash>, respectively) shall lose their special meaning within the bracket expression.",
     "file": "V1_chap09",
     "id": "SHALL-XBD-9-3-5-2003",
-    "testable": false,
-    "untestable_reason": "locale-collation: requires specific locale setup for bracket expression testing"
+    "testable": true
   },
   {
     "section": "9.3.5 RE Bracket Expression",
     "text": "When the bracket expression appears within an ERE, the special characters '.' , '(' , '*' , '+' , '?' , '{' , '|' , '$' , '[' , and '\\\\' (<period>, <left-parenthesis>, <asterisk>, <plus-sign>, <question-mark>, <left-brace>, <vertical-line>, <dollar-sign>, <left-square-bracket>, and <backslash>, respectively) shall lose their special meaning within the bracket expression; <circumflex> ( '^' ) shall lose its special meaning as an anchor.",
     "file": "V1_chap09",
     "id": "SHALL-XBD-9-3-5-2004",
-    "testable": false,
-    "untestable_reason": "locale-collation: requires specific locale setup for bracket expression testing"
+    "testable": true
   },
   {
     "section": "9.3.5 RE Bracket Expression",
     "text": "When the bracket expression appears within a shell pattern (see XCU 2.14 Pattern Matching Notation ), the special characters '?' , '*' , and '[' (<question-mark>, <asterisk>, and <left-square-bracket>, respectively) shall lose their special meaning within the bracket expression; whether or not <backslash> ( '\\\\' ) loses its special meaning as a pattern matching character is described in XCU 2.14.1 Patterns Matching a Single Character , but in contexts where a shell-quoting <backslash> can be used it shall retain its special meaning (see XCU 2.2 Quoting ).",
     "file": "V1_chap09",
     "id": "SHALL-XBD-9-3-5-2005",
-    "testable": false,
-    "untestable_reason": "locale-collation: requires specific locale setup for bracket expression testing"
+    "testable": true
   },
   {
     "section": "9.3.5 RE Bracket Expression",
     "text": "The character sequences \"[.\" , \"[=\" , and \"[:\" (<left-square-bracket> followed by a <period>, <equals-sign>, or <colon>) shall be special inside a bracket expression and are used to delimit collating symbols, equivalence class expressions, and character class expressions.",
     "file": "V1_chap09",
     "id": "SHALL-XBD-9-3-5-2006",
-    "testable": false,
-    "untestable_reason": "locale-collation: requires specific locale setup for bracket expression testing"
+    "testable": true
   },
   {
     "section": "9.3.5 RE Bracket Expression",
     "text": "These symbols shall be followed by a valid expression and the matching terminating sequence \".]\" , \"=]\" , or \":]\" , as described in the following items.",
     "file": "V1_chap09",
     "id": "SHALL-XBD-9-3-5-2007",
-    "testable": false,
-    "untestable_reason": "locale-collation: requires specific locale setup for bracket expression testing"
+    "testable": true
   },
   {
     "section": "9.3.5 RE Bracket Expression",
     "text": "A matching list expression specifies a list that shall match any single character that is matched by one of the expressions represented in the list.",
     "file": "V1_chap09",
     "id": "SHALL-XBD-9-3-5-2008",
-    "testable": false,
-    "untestable_reason": "locale-collation: requires specific locale setup for bracket expression testing"
+    "testable": true
   },
   {
     "section": "9.3.5 RE Bracket Expression",
     "text": "An ordinary character in the list shall only match that character; for example, \"[abc]\" is an RE that only matches one of the characters 'a' , 'b' , or 'c'.",
     "file": "V1_chap09",
     "id": "SHALL-XBD-9-3-5-2009",
-    "testable": false,
-    "untestable_reason": "locale-collation: requires specific locale setup for bracket expression testing"
+    "testable": true
   },
   {
     "section": "9.3.5 RE Bracket Expression",
     "text": "A non-matching list expression begins with a <circumflex> ( '^' ), and the matching behavior shall be the logical inverse of the corresponding matching list expression (the same bracket expression but without the leading <circumflex>).",
     "file": "V1_chap09",
     "id": "SHALL-XBD-9-3-5-2010",
-    "testable": false,
-    "untestable_reason": "locale-collation: requires specific locale setup for bracket expression testing"
+    "testable": true
   },
   {
     "section": "9.3.5 RE Bracket Expression",
     "text": "The <circumflex> shall have this special meaning only when it occurs first in the list, immediately following the <left-square-bracket>.",
     "file": "V1_chap09",
     "id": "SHALL-XBD-9-3-5-2011",
-    "testable": false,
-    "untestable_reason": "locale-collation: requires specific locale setup for bracket expression testing"
+    "testable": true
   },
   {
     "section": "9.3.5 RE Bracket Expression",
     "text": "Conforming applications shall represent multi-character collating elements as collating symbols when it is necessary to distinguish them from a list of the individual characters that make up the multi-character collating element.",
     "file": "V1_chap09",
     "id": "SHALL-XBD-9-3-5-2012",
-    "testable": false,
-    "untestable_reason": "locale-collation: requires specific locale setup for bracket expression testing"
+    "testable": true
   },
   {
     "section": "9.3.5 RE Bracket Expression",
     "text": "in the locale definition, the expression \"[[.ch.]]\" shall be treated as an RE containing the collating symbol 'ch' , while \"[ch]\" shall be treated as an RE matching 'c' or 'h'.",
     "file": "V1_chap09",
     "id": "SHALL-XBD-9-3-5-2013",
-    "testable": false,
-    "untestable_reason": "locale-collation: requires specific locale setup for bracket expression testing"
+    "testable": true
   },
   {
     "section": "9.3.5 RE Bracket Expression",
     "text": "An equivalence class expression shall represent the set of collating elements belonging to an equivalence class, as described in 7.3.2.4 Collation Order.",
     "file": "V1_chap09",
     "id": "SHALL-XBD-9-3-5-2014",
-    "testable": false,
-    "untestable_reason": "locale-collation: requires specific locale setup for bracket expression testing"
+    "testable": true
   },
   {
     "section": "9.3.5 RE Bracket Expression",
     "text": "Only primary equivalence classes shall be recognized.",
     "file": "V1_chap09",
     "id": "SHALL-XBD-9-3-5-2015",
-    "testable": false,
-    "untestable_reason": "locale-collation: requires specific locale setup for bracket expression testing"
+    "testable": true
   },
   {
     "section": "9.3.5 RE Bracket Expression",
     "text": "The class shall be expressed by enclosing any one of the collating elements in the equivalence class within bracket-equal ( \"[=\" and \"=]\" ) delimiters.",
     "file": "V1_chap09",
     "id": "SHALL-XBD-9-3-5-2016",
-    "testable": false,
-    "untestable_reason": "locale-collation: requires specific locale setup for bracket expression testing"
+    "testable": true
   },
   {
     "section": "9.3.5 RE Bracket Expression",
     "text": "If the collating element does not belong to an equivalence class, the equivalence class expression shall be treated as a collating symbol.",
     "file": "V1_chap09",
     "id": "SHALL-XBD-9-3-5-2017",
-    "testable": false,
-    "untestable_reason": "locale-collation: requires specific locale setup for bracket expression testing"
+    "testable": true
   },
   {
     "section": "9.3.5 RE Bracket Expression",
     "text": "All character classes specified in the current locale shall be recognized.",
     "file": "V1_chap09",
     "id": "SHALL-XBD-9-3-5-2019",
-    "testable": false,
-    "untestable_reason": "locale-collation: requires specific locale setup for bracket expression testing"
+    "testable": true
   },
   {
     "section": "9.3.5 RE Bracket Expression",
     "text": "In other locales, a range expression has unspecified behavior: strictly conforming applications shall not rely on whether the range expression is valid, or on the set of collating elements matched.",
     "file": "V1_chap09",
     "id": "SHALL-XBD-9-3-5-2021",
-    "testable": false,
-    "untestable_reason": "locale-collation: requires specific locale setup for bracket expression testing"
+    "testable": true
   },
   {
     "section": "9.3.5 RE Bracket Expression",
     "text": "A range expression shall be expressed as the starting point and the ending point separated by a <hyphen-minus> ( '-' ).",
     "file": "V1_chap09",
     "id": "SHALL-XBD-9-3-5-2022",
-    "testable": false,
-    "untestable_reason": "locale-collation: requires specific locale setup for bracket expression testing"
+    "testable": true
   },
   {
     "section": "9.3.5 RE Bracket Expression",
     "text": "The starting range point and the ending range point shall be a collating element or collating symbol.",
     "file": "V1_chap09",
     "id": "SHALL-XBD-9-3-5-2023",
-    "testable": false,
-    "untestable_reason": "locale-collation: requires specific locale setup for bracket expression testing"
+    "testable": true
   },
   {
     "section": "9.3.5 RE Bracket Expression",
     "text": "The <hyphen-minus> character shall be treated as itself if it occurs first (after an initial '^' , if any) or last in the list, or as an ending range point in a range expression.",
     "file": "V1_chap09",
     "id": "SHALL-XBD-9-3-5-2024",
-    "testable": false,
-    "untestable_reason": "locale-collation: requires specific locale setup for bracket expression testing"
+    "testable": true
   },
   {
     "section": "9.3.5 RE Bracket Expression",
     "text": "To use a <hyphen-minus> as the starting range point, it shall either come first in the bracket expression or be specified as a collating symbol; for example, \"[][.-.]-0]\" , which matches either a <right-square-bracket> or any character or collating element that collates between <hyphen-minus> and 0, inclusive.",
     "file": "V1_chap09",
     "id": "SHALL-XBD-9-3-5-2025",
-    "testable": false,
-    "untestable_reason": "locale-collation: requires specific locale setup for bracket expression testing"
+    "testable": true
   },
   {
     "section": "9.3.5 RE Bracket Expression",
     "text": "If a bracket expression specifies both '-' and ']' , the ']' shall be placed first (after the '^' , if any) and the '-' last within the bracket expression.",
     "file": "V1_chap09",
     "id": "SHALL-XBD-9-3-5-2026",
-    "testable": false,
-    "untestable_reason": "locale-collation: requires specific locale setup for bracket expression testing"
+    "testable": true
   },
   {
     "section": "8. Environment Variables",
     "text": "LANG This variable shall determine the locale category for native language, local customs, and coded character set in the absence of the LC_ALL and other LC_* ( LC_COLLATE , LC_CTYPE , LC_MESSAGES , LC_MONETARY , LC_NUMERIC , LC_TIME ) environment variables.",
     "file": "V1_chap08",
     "id": "SHALL-XBD-8-3000",
-    "testable": false,
-    "untestable_reason": "locale"
+    "testable": true
   },
   {
     "section": "8. Environment Variables",
     "text": "The LANGUAGE environment variable shall be examined to determine the messages object to be used for the gettext family of functions or the gettext and ngettext utilities if NLSPATH is not set or the evaluation of NLSPATH did not lead to a suitable messages object being found.",
     "file": "V1_chap08",
     "id": "SHALL-XBD-8-3001",
-    "testable": false,
-    "untestable_reason": "locale"
+    "testable": true
   },
   {
     "section": "8. Environment Variables",
     "text": "LC_ALL This variable shall determine the values for all locale categories.",
     "file": "V1_chap08",
     "id": "SHALL-XBD-8-3002",
-    "testable": false,
-    "untestable_reason": "locale"
+    "testable": true
   },
   {
     "section": "8. Environment Variables",
     "text": "LC_COLLATE This variable shall determine the locale category for character collation.",
     "file": "V1_chap08",
     "id": "SHALL-XBD-8-3003",
-    "testable": false,
-    "untestable_reason": "locale"
+    "testable": true
   },
   {
     "section": "8. Environment Variables",
     "text": "LC_CTYPE This variable shall determine the locale category for character handling functions, such as tolower () , toupper () , and isalpha ().",
     "file": "V1_chap08",
     "id": "SHALL-XBD-8-3004",
-    "testable": false,
-    "untestable_reason": "locale"
+    "testable": true
   },
   {
     "section": "8. Environment Variables",
     "text": "LC_MESSAGES This variable shall determine the locale category for processing affirmative and negative responses and the language and cultural conventions in which messages should be written.",
     "file": "V1_chap08",
     "id": "SHALL-XBD-8-3005",
-    "testable": false,
-    "untestable_reason": "locale"
+    "testable": true
   },
   {
     "section": "8. Environment Variables",
@@ -8836,24 +8772,21 @@
     "text": "If the LC_ALL environment variable is defined and is not null, the value of LC_ALL shall be used.",
     "file": "V1_chap08",
     "id": "SHALL-XBD-8-3007",
-    "testable": false,
-    "untestable_reason": "locale"
+    "testable": true
   },
   {
     "section": "8. Environment Variables",
     "text": "If the LC_* environment variable ( LC_COLLATE , LC_CTYPE , LC_MESSAGES , LC_MONETARY , LC_NUMERIC , LC_TIME ) is defined and is not null, the value of the environment variable shall be used to initialize the category that corresponds to the environment variable.",
     "file": "V1_chap08",
     "id": "SHALL-XBD-8-3008",
-    "testable": false,
-    "untestable_reason": "locale"
+    "testable": true
   },
   {
     "section": "8. Environment Variables",
     "text": "If the LANG environment variable is defined and is not null, the value of the LANG environment variable shall be used.",
     "file": "V1_chap08",
     "id": "SHALL-XBD-8-3009",
-    "testable": false,
-    "untestable_reason": "locale"
+    "testable": true
   },
   {
     "section": "8. Environment Variables",
@@ -9145,8 +9078,7 @@
     "section": "ENVIRONMENT-VARIABLES",
     "text": "The following environment variables shall affect the execution of echo : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables.",
     "file": "echo",
-    "testable": false,
-    "untestable_reason": "locale: boilerplate locale environment variables",
+    "testable": true,
     "category": "maybe-builtin"
   },
   {
@@ -9217,8 +9149,7 @@
     "section": "ENVIRONMENT-VARIABLES",
     "text": "The following environment variables shall affect the execution of printf : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables.",
     "file": "printf",
-    "testable": false,
-    "untestable_reason": "locale: boilerplate locale environment variables",
+    "testable": true,
     "category": "maybe-builtin"
   },
   {
@@ -9226,8 +9157,7 @@
     "section": "ENVIRONMENT-VARIABLES",
     "text": "It shall affect the format of numbers written using the e , E , f , g , and G conversion specifier characters (if supported).",
     "file": "printf",
-    "testable": false,
-    "untestable_reason": "locale: boilerplate locale environment variables",
+    "testable": true,
     "category": "maybe-builtin"
   },
   {
@@ -9406,8 +9336,7 @@
     "section": "EXTENDED-DESCRIPTION",
     "text": "If conversion specifications beginning with a \"% n $\" sequence are used, on format reuse the value of n shall refer to the n th argument operand following the highest numbered argument operand consumed by the previous use of the format operand.",
     "file": "printf",
-    "testable": false,
-    "untestable_reason": "optional-feature",
+    "testable": true,
     "category": "maybe-builtin"
   },
   {
@@ -9568,8 +9497,7 @@
     "section": "ENVIRONMENT-VARIABLES",
     "text": "The following environment variables shall affect the execution of pwd : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables.",
     "file": "pwd",
-    "testable": false,
-    "untestable_reason": "locale: boilerplate locale environment variables",
+    "testable": true,
     "category": "maybe-builtin"
   },
   {
@@ -9676,8 +9604,7 @@
     "section": "ENVIRONMENT-VARIABLES",
     "text": "The following environment variables shall affect the execution of test : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables.",
     "file": "test",
-    "testable": false,
-    "untestable_reason": "locale-boilerplate",
+    "testable": true,
     "category": "maybe-builtin"
   },
   {

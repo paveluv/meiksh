@@ -1560,7 +1560,7 @@ fn strip_inline_comment(line: &str) -> &str {
 
 // ── Test isolation ───────────────────────────────────────────────────────────
 
-fn baseline_env(tmpdir: &str, shell_str: &str) -> HashMap<String, String> {
+fn baseline_env(tmpdir: &str, shell_str: &str, locale_dir: Option<&str>) -> HashMap<String, String> {
     let mut env = HashMap::new();
     env.insert("PATH".into(), "/usr/bin:/bin".into());
     env.insert("HOME".into(), tmpdir.into());
@@ -1568,12 +1568,51 @@ fn baseline_env(tmpdir: &str, shell_str: &str) -> HashMap<String, String> {
     env.insert("TERM".into(), "xterm".into());
     env.insert("LANG".into(), "C".into());
     env.insert("LC_ALL".into(), "C".into());
+    if let Some(dir) = locale_dir {
+        env.insert("LOCPATH".into(), dir.into());
+    }
     env.insert("PS1".into(), "$ ".into());
     env.insert("PS2".into(), "> ".into());
     env.insert("ENV".into(), String::new());
     env.insert("HISTFILE".into(), "/dev/null".into());
     env.insert("SHELL".into(), shell_str.into());
     env
+}
+
+fn compile_test_locale() -> Option<String> {
+    let locale_dir = "/tmp/epty_locale";
+    let out_path = format!("{locale_dir}/test_EPTY.UTF-8");
+
+    if std::path::Path::new(&out_path).is_dir() {
+        return Some(locale_dir.to_string());
+    }
+
+    let _ = fs::create_dir_all(locale_dir);
+
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let def_path = format!("{manifest_dir}/tests/matrix/locale/test_EPTY.def");
+
+    if !std::path::Path::new(&def_path).exists() {
+        eprintln!("expect_pty: locale definition not found at {def_path}, skipping locale setup");
+        return None;
+    }
+
+    let status = Command::new("localedef")
+        .args(["-f", "UTF-8", "-i", &def_path, &out_path])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    match status {
+        Ok(s) if s.success() => {
+            eprintln!("expect_pty: compiled test locale to {out_path}");
+            Some(locale_dir.to_string())
+        }
+        _ => {
+            eprintln!("expect_pty: localedef not available or failed, skipping locale tests");
+            None
+        }
+    }
 }
 
 fn make_test_tmpdir() -> io::Result<String> {
@@ -1673,11 +1712,12 @@ fn run_suite_test(
     shell_argv: &[String],
     shell_str: &str,
     script_modes: &[ScriptMode],
+    locale_dir: Option<&str>,
 ) -> Result<(), String> {
     let tmpdir = make_test_tmpdir()
         .map_err(|e| format!("failed to create tmpdir: {e}"))?;
 
-    let result = run_suite_test_inner(test, shell_argv, shell_str, &tmpdir, script_modes);
+    let result = run_suite_test_inner(test, shell_argv, shell_str, &tmpdir, script_modes, locale_dir);
     remove_dir_all(&tmpdir);
     result
 }
@@ -1688,8 +1728,9 @@ fn run_suite_test_inner(
     shell_str: &str,
     tmpdir: &str,
     script_modes: &[ScriptMode],
+    locale_dir: Option<&str>,
 ) -> Result<(), String> {
-    let mut test_env = baseline_env(tmpdir, shell_str);
+    let mut test_env = baseline_env(tmpdir, shell_str, locale_dir);
     for (k, v) in &test.env_overrides {
         test_env.insert(k.clone(), v.clone());
     }
@@ -2022,10 +2063,10 @@ fn dump_log(log: &[String]) {
 
 // ── Suite runner ─────────────────────────────────────────────────────────────
 
-fn run_suite(suite: &TestSuite, shell_argv: &[String], shell_str: &str, script_modes: &[ScriptMode]) -> Vec<TestReport> {
+fn run_suite(suite: &TestSuite, shell_argv: &[String], shell_str: &str, script_modes: &[ScriptMode], locale_dir: Option<&str>) -> Vec<TestReport> {
     let mut reports = Vec::new();
     for test in &suite.tests {
-        let outcome = match run_suite_test(test, shell_argv, shell_str, script_modes) {
+        let outcome = match run_suite_test(test, shell_argv, shell_str, script_modes, locale_dir) {
             Ok(()) => TestReport {
                 name: test.name.clone(),
                 outcome: TestOutcome::Pass,
@@ -2138,6 +2179,10 @@ fn main() {
             None => vec![ScriptMode::DashC],
         };
 
+        // Attempt to compile the test locale for locale-dependent tests
+        let locale_dir = compile_test_locale();
+        let locale_dir_ref = locale_dir.as_deref();
+
         let mut total_passed: usize = 0;
         let mut total_failed: usize = 0;
         let mut suites_passed: usize = 0;
@@ -2159,7 +2204,7 @@ fn main() {
                     std::process::exit(2);
                 }
             };
-            let reports = run_suite(&suite, &shell_argv, &shell_str, &script_modes);
+            let reports = run_suite(&suite, &shell_argv, &shell_str, &script_modes, locale_dir_ref);
             let (p, f) = print_suite_report(&suite, &reports);
             total_passed += p;
             total_failed += f;

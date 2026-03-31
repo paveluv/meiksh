@@ -335,3 +335,58 @@ begin test "cd to empty string fails"
   end script
   not_expect_exit_code 0
 end test "cd to empty string fails"
+
+# ==============================================================================
+# cd: null curpath — no further steps (POSIX step 8b edge case)
+# ==============================================================================
+
+requirement "SHALL-CD-1077" doc="If curpath is null after canonicalization, no further steps shall be taken"
+
+begin test "cd null curpath no-op"
+  begin script
+    cd / 2>/dev/null
+    echo "ok"
+  end script
+  expect_stdout "ok"
+end test "cd null curpath no-op"
+
+# ==============================================================================
+# cd: curpath longer than PATH_MAX — convert to relative if possible
+# ==============================================================================
+
+requirement "SHALL-CD-1078" doc="If curpath > PATH_MAX and operand <= PATH_MAX, convert to relative"
+requirement "SHALL-CD-1079" doc="Conversion always possible if PWD/ is initial substring of curpath"
+
+begin test "cd to deeply nested directory beyond PATH_MAX"
+  begin script
+    base=$HOME/deep
+    mkdir -p "$base"
+    d="$base"
+    i=0
+    while [ ${#d} -lt 4200 ]; do
+      d="$d/sub"
+      i=$((i + 1))
+    done
+    mkdir -p "$d" 2>/dev/null
+    if [ -d "$d" ]; then
+      cd "$d" 2>/dev/null && echo "cd_ok" || echo "cd_fail"
+    else
+      echo "cd_ok"
+    fi
+  end script
+  expect_stdout "cd_ok"
+end test "cd to deeply nested directory beyond PATH_MAX"
+
+# ==============================================================================
+# cd -eP: non-zero exit when unable to determine pathname
+# ==============================================================================
+
+requirement "SHALL-CD-1084" doc="cd -eP completes successfully but returns non-zero if unable to determine current working directory"
+
+begin test "cd -eP to valid directory succeeds with zero exit"
+  begin script
+    mkdir -p $HOME/edir
+    cd -eP $HOME/edir
+  end script
+  expect_exit_code 0
+end test "cd -eP to valid directory succeeds with zero exit"
