@@ -65,6 +65,10 @@
 //! - $SHELL env var is set to the --shell value (including flags, e.g. "/usr/bin/bash --posix").
 //! - All pattern matching uses the built-in regex engine (no external deps).
 
+#[path = "json.rs"]
+#[allow(dead_code)]
+mod json;
+
 use std::collections::HashMap;
 use std::env;
 use std::fs;
@@ -1235,12 +1239,14 @@ fn parse_script_modes(s: &str) -> Result<Vec<ScriptMode>, String> {
     Ok(modes)
 }
 
+#[derive(Debug)]
 #[allow(dead_code)]
 struct Requirement {
     id: String,
-    doc: Option<String>,
+    doc: String,
 }
 
+#[derive(Debug)]
 struct TestCase {
     name: String,
     interactive: bool,
@@ -1253,6 +1259,7 @@ struct TestCase {
     script: Option<String>,
 }
 
+#[derive(Debug)]
 struct TestSuite {
     name: String,
     filename: String,
@@ -1374,13 +1381,33 @@ fn parse_suite(text: &str, filename: &str) -> Result<TestSuite, String> {
             let id = extract_quoted(id_part)
                 .map_err(|e| format!("line {line_num}: {e}"))?;
             let doc = if let Some(doc_rest) = remainder.strip_prefix("doc=") {
-                Some(
-                    extract_quoted(doc_rest.trim())
-                        .map_err(|e| format!("line {line_num}: {e}"))?,
-                )
+                extract_quoted(doc_rest.trim())
+                    .map_err(|e| format!("line {line_num}: {e}"))?
             } else {
-                None
+                return Err(format!(
+                    "line {line_num}: requirement {:?} is missing doc parameter",
+                    id
+                ));
             };
+            if !doc.starts_with(|c: char| c.is_ascii_uppercase()) {
+                return Err(format!(
+                    "line {line_num}: requirement {:?} doc must start with a capital letter",
+                    id
+                ));
+            }
+            if !doc.ends_with('.') {
+                return Err(format!(
+                    "line {line_num}: requirement {:?} doc must end with a period",
+                    id
+                ));
+            }
+            if doc.ends_with(":.") {
+                return Err(format!(
+                    "line {line_num}: requirement {:?} doc must not end with \":.\"; \
+                     trim the trailing colon or complete the sentence",
+                    id
+                ));
+            }
             pending_reqs.push(Requirement { id, doc });
             continue;
         }
@@ -1406,6 +1433,18 @@ fn parse_suite(text: &str, filename: &str) -> Result<TestSuite, String> {
             test_env.clear();
             test_lines.clear();
             test_reqs = std::mem::take(&mut pending_reqs);
+            if test_reqs.is_empty() {
+                return Err(format!(
+                    "line {line_num}: test {:?} has no requirement linked to it",
+                    test_name
+                ));
+            }
+            if test_reqs.len() > 3 {
+                return Err(format!(
+                    "line {line_num}: test {:?} has {} requirements (max 3)",
+                    test_name, test_reqs.len()
+                ));
+            }
             continue;
         }
 
@@ -1509,6 +1548,194 @@ fn parse_suite(text: &str, filename: &str) -> Result<TestSuite, String> {
         filename: filename.to_string(),
         tests,
     })
+}
+
+// ── Requirements integrity check ─────────────────────────────────────────────
+
+struct ReqEntry {
+    id: String,
+    text: String,
+    testable: bool,
+    tests: Vec<(String, String)>,
+}
+
+fn load_requirements(path: &str) -> Result<Vec<ReqEntry>, String> {
+    let content = fs::read_to_string(path)
+        .map_err(|e| format!("cannot read {path}: {e}"))?;
+    let root = json::parse_json(&content)
+        .map_err(|e| format!("{path}: {e}"))?;
+    let arr = root.as_array()
+        .ok_or_else(|| format!("{path}: expected top-level JSON array"))?;
+    let mut entries = Vec::with_capacity(arr.len());
+    for (i, item) in arr.iter().enumerate() {
+        let id = item.get("id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| format!("{path}[{i}]: missing or non-string \"id\""))?
+            .to_string();
+        let text = item.get("text")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| format!("{path}[{i}] ({id}): missing or non-string \"text\""))?
+            .to_string();
+        let testable = item.get("testable")
+            .and_then(|v| v.as_bool())
+            .ok_or_else(|| format!("{path}[{i}] ({id}): missing or non-bool \"testable\""))?;
+        let tests = match item.get("tests") {
+            Some(json::JsonValue::Array(arr)) => {
+                let mut pairs = Vec::new();
+                for (j, entry) in arr.iter().enumerate() {
+                    let suite = entry.get("suite")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| format!("{path}[{i}].tests[{j}]: missing \"suite\""))?
+                        .to_string();
+                    let test = entry.get("test")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| format!("{path}[{i}].tests[{j}]: missing \"test\""))?
+                        .to_string();
+                    pairs.push((suite, test));
+                }
+                pairs
+            }
+            Some(json::JsonValue::Null) | None => Vec::new(),
+            _ => return Err(format!("{path}[{i}] ({id}): \"tests\" must be an array or null")),
+        };
+        entries.push(ReqEntry { id, text, testable, tests });
+    }
+    Ok(entries)
+}
+
+fn check_requirements_integrity(
+    req_entries: &[ReqEntry],
+    suites: &[(String, TestSuite)],
+) -> Vec<String> {
+    let mut errors: Vec<String> = Vec::new();
+
+    // Build lookup from requirement id -> ReqEntry index
+    let mut req_by_id: HashMap<&str, usize> = HashMap::new();
+
+    // Check: no duplicate requirement ids in JSON
+    {
+        let mut seen_ids: HashMap<&str, usize> = HashMap::new();
+        for (i, entry) in req_entries.iter().enumerate() {
+            if let Some(&prev) = seen_ids.get(entry.id.as_str()) {
+                errors.push(format!(
+                    "requirements.json: duplicate id {:?} at indices {} and {}",
+                    entry.id, prev, i
+                ));
+            } else {
+                seen_ids.insert(&entry.id, i);
+            }
+            req_by_id.insert(&entry.id, i);
+        }
+    }
+
+    // Check: no duplicate requirement texts in JSON
+    {
+        let mut seen_texts: HashMap<&str, &str> = HashMap::new();
+        for entry in req_entries {
+            if let Some(prev_id) = seen_texts.get(entry.text.as_str()) {
+                errors.push(format!(
+                    "requirements.json: duplicate text shared by {:?} and {:?}",
+                    prev_id, entry.id
+                ));
+            } else {
+                seen_texts.insert(&entry.text, &entry.id);
+            }
+        }
+    }
+
+    // Build the actual mapping: req_id -> set of (suite_name, test_name) from .epty files
+    let mut actual_tests: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    for (_file, suite) in suites {
+        for test in &suite.tests {
+            for req in &test.requirements {
+                actual_tests
+                    .entry(req.id.clone())
+                    .or_default()
+                    .push((suite.name.clone(), test.name.clone()));
+            }
+        }
+    }
+
+    // Per-requirement checks
+    for (_file, suite) in suites {
+        for test in &suite.tests {
+            for req in &test.requirements {
+                let Some(&idx) = req_by_id.get(req.id.as_str()) else {
+                    errors.push(format!(
+                        "{}: test {:?}: requirement {:?} not found in requirements.json",
+                        suite.filename, test.name, req.id
+                    ));
+                    continue;
+                };
+                let entry = &req_entries[idx];
+
+                // Doc text must match
+                if req.doc != entry.text {
+                    let epty_trunc: String = req.doc.chars().take(80).collect();
+                    let json_trunc: String = entry.text.chars().take(80).collect();
+                    errors.push(format!(
+                        "{}: test {:?}: requirement {:?} doc mismatch\n  \
+                         epty: {:?}{}\n  json: {:?}{}",
+                        suite.filename,
+                        test.name,
+                        req.id,
+                        epty_trunc,
+                        if req.doc.len() > 80 { "..." } else { "" },
+                        json_trunc,
+                        if entry.text.len() > 80 { "..." } else { "" },
+                    ));
+                }
+
+                // Must be testable
+                if !entry.testable {
+                    errors.push(format!(
+                        "{}: test {:?}: requirement {:?} is marked untestable in requirements.json",
+                        suite.filename, test.name, req.id
+                    ));
+                }
+            }
+        }
+    }
+
+    // Check "tests" field in JSON matches actual (suite, test) pairs
+    for entry in req_entries {
+        let actual = actual_tests.get(&entry.id);
+        let actual_set: std::collections::HashSet<(&str, &str)> = actual
+            .map(|v| v.iter().map(|(s, t)| (s.as_str(), t.as_str())).collect())
+            .unwrap_or_default();
+        let json_set: std::collections::HashSet<(&str, &str)> = entry
+            .tests
+            .iter()
+            .map(|(s, t)| (s.as_str(), t.as_str()))
+            .collect();
+
+        for &(suite, test) in &json_set {
+            if !actual_set.contains(&(suite, test)) {
+                errors.push(format!(
+                    "requirements.json: {:?} lists test ({:?}, {:?}) but no such link exists in .epty files",
+                    entry.id, suite, test
+                ));
+            }
+        }
+        for &(suite, test) in &actual_set {
+            if !json_set.contains(&(suite, test)) {
+                errors.push(format!(
+                    "requirements.json: {:?} is missing test ({:?}, {:?}) from its \"tests\" list",
+                    entry.id, suite, test
+                ));
+            }
+        }
+
+        // Every testable requirement must have at least one test
+        if entry.testable && actual_set.is_empty() {
+            errors.push(format!(
+                "requirements.json: testable requirement {:?} has no tests linked",
+                entry.id
+            ));
+        }
+    }
+
+    errors
 }
 
 fn find_closing_quote(s: &str) -> Result<usize, String> {
@@ -2122,6 +2349,8 @@ fn main() {
 
     let mut shell_flag: Option<String> = None;
     let mut script_modes_flag: Option<String> = None;
+    let mut requirements_flag: Option<String> = None;
+    let mut parse_only = false;
     let mut files: Vec<String> = Vec::new();
     let mut i = 1;
     while i < args.len() {
@@ -2141,6 +2370,17 @@ fn main() {
                     std::process::exit(2);
                 }
                 script_modes_flag = Some(args[i].clone());
+            }
+            "--requirements" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("expect_pty: --requirements requires an argument");
+                    std::process::exit(2);
+                }
+                requirements_flag = Some(args[i].clone());
+            }
+            "--parse-only" => {
+                parse_only = true;
             }
             arg if arg.starts_with('-') && arg != "-" => {
                 eprintln!("expect_pty: unknown flag: {arg}");
@@ -2188,6 +2428,9 @@ fn main() {
         let mut suites_passed: usize = 0;
         let mut suites_failed: usize = 0;
 
+        let mut suites: Vec<(String, TestSuite)> = Vec::new();
+        let mut parse_errors = 0;
+
         for file in &files {
             let text = fs::read_to_string(file).unwrap_or_else(|e| {
                 eprintln!("expect_pty: cannot read {file}: {e}");
@@ -2197,15 +2440,66 @@ fn main() {
                 .rsplit('/')
                 .next()
                 .unwrap_or(file);
-            let suite = match parse_suite(&text, filename) {
-                Ok(s) => s,
+            match parse_suite(&text, filename) {
+                Ok(s) => {
+                    suites.push((file.clone(), s));
+                }
                 Err(e) => {
                     eprintln!("expect_pty: parse error in {file}: {e}");
-                    std::process::exit(2);
+                    parse_errors += 1;
                 }
-            };
-            let reports = run_suite(&suite, &shell_argv, &shell_str, &script_modes, locale_dir_ref);
-            let (p, f) = print_suite_report(&suite, &reports);
+            }
+        }
+
+        if parse_errors > 0 && (parse_only || requirements_flag.is_none()) {
+            if parse_only {
+                eprintln!("{parse_errors} file(s) had parse errors");
+            }
+            std::process::exit(if parse_only { 1 } else { 2 });
+        }
+
+        let mut integrity_errors = 0;
+        if let Some(ref req_path) = requirements_flag {
+            if parse_errors > 0 {
+                eprintln!("skipping requirements integrity check due to {parse_errors} parse error(s)");
+            } else {
+                let req_entries = match load_requirements(req_path) {
+                    Ok(e) => e,
+                    Err(e) => {
+                        eprintln!("expect_pty: {e}");
+                        std::process::exit(2);
+                    }
+                };
+                let errs = check_requirements_integrity(&req_entries, &suites);
+                integrity_errors = errs.len();
+                for e in &errs {
+                    eprintln!("integrity: {e}");
+                }
+            }
+        }
+
+        if parse_only {
+            let total_errs = parse_errors + integrity_errors;
+            if total_errs > 0 {
+                eprintln!("{total_errs} integrity/parse error(s)");
+                std::process::exit(1);
+            }
+            eprintln!(
+                "all {} file(s) parsed OK ({} tests)",
+                files.len(),
+                suites.iter().map(|(_, s)| s.tests.len()).sum::<usize>()
+            );
+            std::process::exit(0);
+        }
+
+        if parse_errors > 0 || integrity_errors > 0 {
+            std::process::exit(2);
+        }
+
+        for (file, suite) in &suites {
+            let _ = file;
+            let reports = run_suite(suite, &shell_argv, &shell_str, &script_modes, locale_dir_ref);
+            let (p, f) = print_suite_report(suite, &reports);
             total_passed += p;
             total_failed += f;
             if f == 0 {
@@ -2563,7 +2857,7 @@ mod tests {
         let input = "\
 testsuite \"My Suite\"
 
-requirement \"REQ-001\" doc=\"Some requirement\"
+requirement \"REQ-001\" doc=\"Some requirement.\"
 
 begin test \"first test\"
   begin script
@@ -2571,6 +2865,8 @@ begin test \"first test\"
   end script
   expect_stdout \"hello\"
 end test \"first test\"
+
+requirement \"REQ-002\" doc=\"Another requirement.\"
 
 begin interactive test \"second test\"
   spawn -i
@@ -2590,13 +2886,15 @@ end interactive test \"second test\"
         assert_eq!(suite.tests[1].name, "second test");
         assert!(suite.tests[1].interactive);
         assert!(suite.tests[1].script.is_none());
-        assert_eq!(suite.tests[1].requirements.len(), 0);
+        assert_eq!(suite.tests[1].requirements.len(), 1);
     }
 
     #[test]
     fn parse_suite_setenv() {
         let input = "\
 testsuite \"Env Suite\"
+
+requirement \"REQ-001\" doc=\"Test requirement.\"
 
 begin test \"with env\"
   setenv \"FOO\" \"bar\"
@@ -2617,6 +2915,7 @@ end test \"with env\"
     fn parse_suite_mismatched_end() {
         let input = "\
 testsuite \"Bad\"
+requirement \"REQ-001\" doc=\"Test requirement.\"
 begin test \"alpha\"
   begin script
     true
@@ -2630,6 +2929,7 @@ end test \"beta\"
     fn parse_suite_unterminated_test() {
         let input = "\
 testsuite \"Bad\"
+requirement \"REQ-001\" doc=\"Test requirement.\"
 begin test \"alpha\"
   begin script
     true
@@ -2642,6 +2942,7 @@ begin test \"alpha\"
     fn parse_suite_nested_test() {
         let input = "\
 testsuite \"Bad\"
+requirement \"REQ-001\" doc=\"Test requirement.\"
 begin test \"alpha\"
   begin test \"beta\"
   end test \"beta\"
@@ -2653,6 +2954,7 @@ end test \"alpha\"
     #[test]
     fn parse_suite_mismatched_interactive() {
         let input = "\
+requirement \"REQ-001\" doc=\"Test requirement.\"
 begin interactive test \"alpha\"
   spawn -i
 end test \"alpha\"
@@ -2663,6 +2965,7 @@ end test \"alpha\"
     #[test]
     fn parse_suite_no_testsuite_uses_filename() {
         let input = "\
+requirement \"REQ-001\" doc=\"Test requirement.\"
 begin test \"lone\"
   begin script
     true
@@ -2678,8 +2981,8 @@ end test \"lone\"
         let input = "\
 testsuite \"Multi Req\"
 
-requirement \"REQ-001\"
-requirement \"REQ-002\" doc=\"Something\"
+requirement \"REQ-001\" doc=\"First requirement.\"
+requirement \"REQ-002\" doc=\"Something.\"
 
 begin test \"covered\"
   begin script
@@ -2690,14 +2993,117 @@ end test \"covered\"
         let suite = parse_suite(input, "test.epty").unwrap();
         assert_eq!(suite.tests[0].requirements.len(), 2);
         assert_eq!(suite.tests[0].requirements[0].id, "REQ-001");
-        assert!(suite.tests[0].requirements[0].doc.is_none());
+        assert_eq!(suite.tests[0].requirements[0].doc, "First requirement.");
         assert_eq!(suite.tests[0].requirements[1].id, "REQ-002");
-        assert_eq!(suite.tests[0].requirements[1].doc.as_deref(), Some("Something"));
+        assert_eq!(suite.tests[0].requirements[1].doc, "Something.");
+    }
+
+    #[test]
+    fn parse_suite_requirement_missing_doc_fails() {
+        let input = "\
+requirement \"REQ-001\"
+begin test \"bare\"
+  begin script
+    true
+  end script
+end test \"bare\"
+";
+        let err = parse_suite(input, "bad.epty").unwrap_err();
+        assert!(err.contains("missing doc"), "expected 'missing doc' error, got: {err}");
+    }
+
+    #[test]
+    fn parse_suite_doc_must_start_uppercase() {
+        let input = "\
+requirement \"REQ-001\" doc=\"lowercase start.\"
+begin test \"t\"
+  begin script
+    true
+  end script
+end test \"t\"
+";
+        let err = parse_suite(input, "bad.epty").unwrap_err();
+        assert!(err.contains("capital letter"), "expected 'capital letter' error, got: {err}");
+    }
+
+    #[test]
+    fn parse_suite_doc_must_end_with_period() {
+        let input = "\
+requirement \"REQ-001\" doc=\"No period at end\"
+begin test \"t\"
+  begin script
+    true
+  end script
+end test \"t\"
+";
+        let err = parse_suite(input, "bad.epty").unwrap_err();
+        assert!(err.contains("end with a period"), "expected 'period' error, got: {err}");
+    }
+
+    #[test]
+    fn parse_suite_doc_must_not_end_with_colon_dot() {
+        let input = "\
+requirement \"REQ-001\" doc=\"Trailing colon:.\"
+begin test \"t\"
+  begin script
+    true
+  end script
+end test \"t\"
+";
+        let err = parse_suite(input, "bad.epty").unwrap_err();
+        assert!(err.contains("must not end with"), "expected colon-dot error, got: {err}");
+    }
+
+    #[test]
+    fn parse_suite_no_requirement_fails() {
+        let input = "\
+begin test \"bare\"
+  begin script
+    true
+  end script
+end test \"bare\"
+";
+        let err = parse_suite(input, "bad.epty").unwrap_err();
+        assert!(err.contains("no requirement"), "expected 'no requirement' error, got: {err}");
+    }
+
+    #[test]
+    fn parse_suite_too_many_requirements_fails() {
+        let input = "\
+requirement \"REQ-001\" doc=\"Test requirement.\"
+requirement \"REQ-002\" doc=\"Test requirement.\"
+requirement \"REQ-003\" doc=\"Test requirement.\"
+requirement \"REQ-004\" doc=\"Test requirement.\"
+begin test \"overloaded\"
+  begin script
+    true
+  end script
+end test \"overloaded\"
+";
+        let err = parse_suite(input, "bad.epty").unwrap_err();
+        assert!(err.contains("4 requirements (max 3)"), "expected max-3 error, got: {err}");
+    }
+
+    #[test]
+    fn parse_suite_three_requirements_ok() {
+        let input = "\
+requirement \"REQ-001\" doc=\"Test requirement.\"
+requirement \"REQ-002\" doc=\"Test requirement.\"
+requirement \"REQ-003\" doc=\"Test requirement.\"
+begin test \"three\"
+  begin script
+    true
+  end script
+end test \"three\"
+";
+        let suite = parse_suite(input, "test.epty").unwrap();
+        assert_eq!(suite.tests[0].requirements.len(), 3);
     }
 
     #[test]
     fn parse_suite_multiline_script() {
         let input = "\
+requirement \"REQ-001\" doc=\"Test requirement.\"
 begin test \"multi\"
   begin script
     echo line1
@@ -2714,6 +3120,7 @@ end test \"multi\"
     #[test]
     fn parse_suite_script_with_blank_lines() {
         let input = "\
+requirement \"REQ-001\" doc=\"Test requirement.\"
 begin test \"blanks\"
   begin script
     echo before
@@ -2729,6 +3136,7 @@ end test \"blanks\"
     #[test]
     fn parse_suite_script_no_quoting_needed() {
         let input = "\
+requirement \"REQ-001\" doc=\"Test requirement.\"
 begin test \"quotes\"
   begin script
     echo \"hello world\" '$var' $(cmd)
@@ -2742,6 +3150,7 @@ end test \"quotes\"
     #[test]
     fn parse_suite_no_script_in_noninteractive_fails() {
         let input = "\
+requirement \"REQ-001\" doc=\"Test requirement.\"
 begin test \"no script\"
   expect_exit_code 0
 end test \"no script\"
@@ -2752,6 +3161,7 @@ end test \"no script\"
     #[test]
     fn parse_suite_script_in_interactive_fails() {
         let input = "\
+requirement \"REQ-001\" doc=\"Test requirement.\"
 begin interactive test \"bad\"
   begin script
     echo hello
@@ -2770,6 +3180,7 @@ end interactive test \"bad\"
     #[test]
     fn parse_suite_unterminated_script_fails() {
         let input = "\
+requirement \"REQ-001\" doc=\"Test requirement.\"
 begin test \"bad\"
   begin script
     echo hello
@@ -2810,5 +3221,132 @@ end test \"bad\"
     #[test]
     fn closing_quote_unterminated() {
         assert!(find_closing_quote(r#""hello"#).is_err());
+    }
+
+    // -- requirements integrity --
+
+    fn make_req_entry(id: &str, text: &str, testable: bool, tests: &[(&str, &str)]) -> ReqEntry {
+        ReqEntry {
+            id: id.to_string(),
+            text: text.to_string(),
+            testable,
+            tests: tests.iter().map(|(s, t)| (s.to_string(), t.to_string())).collect(),
+        }
+    }
+
+    fn make_suite(name: &str, filename: &str, tests: Vec<(&str, Vec<(&str, &str)>)>) -> TestSuite {
+        TestSuite {
+            name: name.to_string(),
+            filename: filename.to_string(),
+            tests: tests
+                .into_iter()
+                .map(|(tname, reqs)| TestCase {
+                    name: tname.to_string(),
+                    interactive: false,
+                    line_num: 1,
+                    requirements: reqs
+                        .into_iter()
+                        .map(|(id, doc)| Requirement {
+                            id: id.to_string(),
+                            doc: doc.to_string(),
+                        })
+                        .collect(),
+                    env_overrides: vec![],
+                    script_lines: vec![],
+                    script: Some("true".to_string()),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn integrity_ok() {
+        let reqs = vec![make_req_entry(
+            "REQ-1",
+            "Some text.",
+            true,
+            &[("Suite A", "test one")],
+        )];
+        let suite = make_suite(
+            "Suite A",
+            "a.epty",
+            vec![("test one", vec![("REQ-1", "Some text.")])],
+        );
+        let errs = check_requirements_integrity(&reqs, &[("a.epty".into(), suite)]);
+        assert!(errs.is_empty(), "expected no errors, got: {errs:?}");
+    }
+
+    #[test]
+    fn integrity_doc_mismatch() {
+        let reqs = vec![make_req_entry("REQ-1", "Correct text.", true, &[("S", "t")])];
+        let suite = make_suite("S", "s.epty", vec![("t", vec![("REQ-1", "Wrong text.")])]);
+        let errs = check_requirements_integrity(&reqs, &[("s.epty".into(), suite)]);
+        assert!(errs.iter().any(|e| e.contains("doc mismatch")), "got: {errs:?}");
+    }
+
+    #[test]
+    fn integrity_untestable() {
+        let reqs = vec![make_req_entry("REQ-1", "Text.", false, &[])];
+        let suite = make_suite("S", "s.epty", vec![("t", vec![("REQ-1", "Text.")])]);
+        let errs = check_requirements_integrity(&reqs, &[("s.epty".into(), suite)]);
+        assert!(errs.iter().any(|e| e.contains("untestable")), "got: {errs:?}");
+    }
+
+    #[test]
+    fn integrity_req_not_in_json() {
+        let reqs = vec![];
+        let suite = make_suite("S", "s.epty", vec![("t", vec![("REQ-X", "Text.")])]);
+        let errs = check_requirements_integrity(&reqs, &[("s.epty".into(), suite)]);
+        assert!(errs.iter().any(|e| e.contains("not found in requirements.json")), "got: {errs:?}");
+    }
+
+    #[test]
+    fn integrity_duplicate_ids() {
+        let reqs = vec![
+            make_req_entry("REQ-1", "First.", true, &[]),
+            make_req_entry("REQ-1", "Second.", true, &[]),
+        ];
+        let errs = check_requirements_integrity(&reqs, &[]);
+        assert!(errs.iter().any(|e| e.contains("duplicate id")), "got: {errs:?}");
+    }
+
+    #[test]
+    fn integrity_duplicate_texts() {
+        let reqs = vec![
+            make_req_entry("REQ-1", "Same text.", true, &[]),
+            make_req_entry("REQ-2", "Same text.", true, &[]),
+        ];
+        let errs = check_requirements_integrity(&reqs, &[]);
+        assert!(errs.iter().any(|e| e.contains("duplicate text")), "got: {errs:?}");
+    }
+
+    #[test]
+    fn integrity_testable_no_tests() {
+        let reqs = vec![make_req_entry("REQ-1", "Text.", true, &[])];
+        let errs = check_requirements_integrity(&reqs, &[]);
+        assert!(errs.iter().any(|e| e.contains("has no tests linked")), "got: {errs:?}");
+    }
+
+    #[test]
+    fn integrity_untestable_no_tests_ok() {
+        let reqs = vec![make_req_entry("REQ-1", "Text.", false, &[])];
+        let errs = check_requirements_integrity(&reqs, &[]);
+        assert!(!errs.iter().any(|e| e.contains("has no tests linked")), "got: {errs:?}");
+    }
+
+    #[test]
+    fn integrity_json_extra_test_pair() {
+        let reqs = vec![make_req_entry("REQ-1", "Text.", true, &[("S", "t"), ("S", "ghost")])];
+        let suite = make_suite("S", "s.epty", vec![("t", vec![("REQ-1", "Text.")])]);
+        let errs = check_requirements_integrity(&reqs, &[("s.epty".into(), suite)]);
+        assert!(errs.iter().any(|e| e.contains("ghost") && e.contains("no such link")), "got: {errs:?}");
+    }
+
+    #[test]
+    fn integrity_json_missing_test_pair() {
+        let reqs = vec![make_req_entry("REQ-1", "Text.", true, &[])];
+        let suite = make_suite("S", "s.epty", vec![("t", vec![("REQ-1", "Text.")])]);
+        let errs = check_requirements_integrity(&reqs, &[("s.epty".into(), suite)]);
+        assert!(errs.iter().any(|e| e.contains("is missing test")), "got: {errs:?}");
     }
 }
