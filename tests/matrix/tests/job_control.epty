@@ -39,7 +39,7 @@ requirement "SHALL-ASYNCHRONOUS-EVENTS-028" doc="With -m, SIGTTIN SIGTTOU SIGTST
 requirement "SHALL-ASYNCHRONOUS-EVENTS-029" doc="If caught, signal-catching function sets default and re-raises"
 
 begin interactive test "background job and jobs listing"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "sleep 10 &"
   expect "\[[[:digit:]]+\] [[:digit:]]+"
@@ -58,7 +58,7 @@ end interactive test "background job and jobs listing"
 requirement "SHALL-Command-History-List-031" doc="When used interactively, shell shall maintain command history in HISTFILE"
 
 begin interactive test "history maintained interactively"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "echo histcheck_1"
   expect "histcheck_1"
@@ -81,7 +81,7 @@ end interactive test "history maintained interactively"
 requirement "SHALL-DESCRIPTION-602" doc="A user shall explicitly exit to leave the interactive shell"
 
 begin interactive test "user must explicitly exit interactive shell"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "echo still_here"
   expect "still_here"
@@ -100,7 +100,7 @@ requirement "SHALL-2-11-456" doc="fg shall send SIGCONT after setting foreground
 requirement "SHALL-2-11-457" doc="fg shall restore terminal settings before sending SIGCONT"
 
 begin interactive test "fg/bg send SIGCONT to stopped job"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -128,7 +128,7 @@ requirement "SHALL-2-11-459" doc="When background job completes, interactive she
 requirement "SHALL-2-11-454" doc="If set -b disabled, message written prior to next prompt"
 
 begin interactive test "background job completion notification"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -167,7 +167,7 @@ begin test "exported variable inherited by child"
   begin script
     MYVAR=hello
     export MYVAR
-    {{SHELL}} -c 'echo $MYVAR'
+    $SHELL -c 'echo $MYVAR'
   end script
   expect_stdout "hello"
 end test "exported variable inherited by child"
@@ -222,7 +222,7 @@ begin test "exported variable visible in child"
   begin script
     MYVAR=hello
     export MYVAR
-    {{SHELL}} -c 'echo $MYVAR'
+    $SHELL -c 'echo $MYVAR'
   end script
   expect_stdout "hello"
 end test "exported variable visible in child"
@@ -230,7 +230,7 @@ end test "exported variable visible in child"
 begin test "non-exported variable not visible in child"
   begin script
     MYVAR=secret
-    {{SHELL}} -c 'echo ${MYVAR:-empty}'
+    $SHELL -c 'echo ${MYVAR:-empty}'
   end script
   expect_stdout "empty"
 end test "non-exported variable not visible in child"
@@ -246,7 +246,7 @@ begin test "trap inheritance in shell scripts"
   begin script
     s=$TMPDIR/_trap_inherit_$$.sh
     printf 'trap
-    ' > $s; chmod +x $s; trap 'echo caught' USR1; {{SHELL}} $s; rc=$?; rm -f $s; exit $rc
+    ' > $s; chmod +x $s; trap 'echo caught' USR1; $SHELL $s; rc=$?; rm -f $s; exit $rc
   end script
   not_expect_stdout ".*USR1.*"
   not_expect_stdout ".*caught.*"
@@ -438,7 +438,7 @@ end test "set -- positional parameters"
 requirement "SHALL-2-11-453" doc="If set -b enabled, message written immediately or prior to next prompt"
 
 begin interactive test "set -b immediate background job notification"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -462,7 +462,7 @@ end interactive test "set -b immediate background job notification"
 requirement "SHALL-2-11-432" doc="List with multiple async AND-OR lists treated as split into separate lists"
 
 begin interactive test "multiple async commands in one list"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "

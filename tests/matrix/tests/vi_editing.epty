@@ -12,7 +12,7 @@ requirement "SHALL-Command-Line-Editing-vi-mode-036" doc="Upon entering sh and a
 requirement "SHALL-vi-Line-Editing-Insert-Mode-042" doc="While in insert mode, any character typed shall be inserted in the current command line"
 
 begin interactive test "vi mode basic insert"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -33,7 +33,7 @@ requirement "SHALL-Command-Line-Editing-vi-mode-038" doc="In command mode, an en
 requirement "SHALL-SH-1023-DUP665" doc="The following commands shall be recognized in command mode: <newline> Execute the current command line"
 
 begin interactive test "ESC switches to command mode"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -58,7 +58,7 @@ end interactive test "ESC switches to command mode"
 requirement "SHALL-vi-Line-Editing-Command-Mode-096" doc="Replace the current character with the character c"
 
 begin interactive test "replace character r"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -84,7 +84,7 @@ requirement "SHALL-vi-Line-Editing-Command-Mode-072" doc="If the cursor was posi
 requirement "SHALL-vi-Line-Editing-Command-Mode-073" doc="If the ~ command is preceded by a count, that number of characters shall be converted"
 
 begin interactive test "case inversion tilde"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -111,7 +111,7 @@ requirement "SHALL-vi-Line-Editing-Command-Mode-079" doc="If the cursor was posi
 requirement "SHALL-vi-Line-Editing-Command-Mode-081" doc="If the cursor was positioned on the last character of the line, the terminal shall be alerted and the cursor shall not be advanced"
 
 begin interactive test "cursor movement h and l"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -136,7 +136,7 @@ requirement "SHALL-vi-Line-Editing-Command-Mode-082" doc="If the count is larger
 requirement "SHALL-vi-Line-Editing-Command-Mode-090" doc="If the count is larger than the number of words preceding the cursor, this shall not be considered an error"
 
 begin interactive test "word movement w and b"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -162,7 +162,7 @@ requirement "SHALL-vi-Line-Editing-Command-Mode-117" doc="If the cursor was posi
 requirement "SHALL-vi-Line-Editing-Command-Mode-121" doc="The deleted characters shall be placed in the save buffer"
 
 begin interactive test "delete character x"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -188,7 +188,7 @@ requirement "SHALL-vi-Line-Editing-Command-Mode-051" doc="Any command that is pr
 requirement "SHALL-vi-Line-Editing-Command-Mode-052" doc="Unless otherwise noted, this count shall cause the specified operation to repeat by the number of times specified by the count"
 
 begin interactive test "count prefix 3x"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -213,7 +213,7 @@ requirement "SHALL-vi-Line-Editing-Command-Mode-105" doc="Characters that are en
 requirement "SHALL-vi-Line-Editing-Command-Mode-106" doc="Characters that are entered shall be inserted before the current character"
 
 begin interactive test "append a inserts after cursor"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -244,7 +244,7 @@ requirement "SHALL-vi-Line-Editing-Command-Mode-108" doc="If the motion command 
 requirement "SHALL-vi-Line-Editing-Command-Mode-111" doc="If the motion command is invalid, the terminal shall be alerted, the cursor shall not be moved, and no text shall be deleted"
 
 begin interactive test "delete with motion dw"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -271,7 +271,7 @@ requirement "SHALL-vi-Line-Editing-Command-Mode-107" doc="If the motion command 
 requirement "SHALL-vi-Line-Editing-Command-Mode-112" doc="After this command, the current cursor position shall be on the last character that was changed"
 
 begin interactive test "change with motion cc"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -297,7 +297,7 @@ requirement "SHALL-vi-Line-Editing-Command-Mode-129" doc="If count is not specif
 requirement "SHALL-vi-Line-Editing-Command-Mode-130" doc="The cursor shall be positioned on the first character of the new command"
 
 begin interactive test "history navigation k"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -323,7 +323,7 @@ end interactive test "history navigation k"
 requirement "SHALL-vi-Line-Editing-Command-Mode-093" doc="The first character position shall be numbered 1"
 
 begin interactive test "go to beginning 0 and end dollar"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -351,7 +351,7 @@ end interactive test "go to beginning 0 and end dollar"
 requirement "SHALL-vi-Line-Editing-Command-Mode-127" doc="This operation shall not undo the copy of any command line to the edit line"
 
 begin interactive test "undo u"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -378,7 +378,7 @@ requirement "SHALL-vi-Line-Editing-Command-Mode-075" doc="If the previous comman
 requirement "SHALL-vi-Line-Editing-Command-Mode-076" doc="If the '.' command is preceded by a count, this shall override any count argument to the previous command"
 
 begin interactive test "dot repeat"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -406,7 +406,7 @@ requirement "SHALL-vi-Line-Editing-Command-Mode-124" doc="A count shall indicate
 requirement "SHALL-vi-Line-Editing-Command-Mode-125" doc="The current cursor position shall be moved to the last character put from the save buffer"
 
 begin interactive test "put p after delete"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -436,7 +436,7 @@ requirement "SHALL-ASYNCHRONOUS-EVENTS-026" doc="SIGINT signals received during 
 requirement "SHALL-vi-Line-Editing-Insert-Mode-045" doc="If sh receives a SIGINT signal in insert mode, it shall terminate command line editing with the same effects"
 
 begin interactive test "SIGINT in command mode"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -461,7 +461,7 @@ requirement "SHALL-vi-Line-Editing-Insert-Mode-043" doc="If the current command 
 requirement "SHALL-vi-Line-Editing-Command-Mode-056" doc="This line shall be entered into the command history; see fc"
 
 begin interactive test "insert mode enters commands into history"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -487,7 +487,7 @@ end interactive test "insert mode enters commands into history"
 requirement "SHALL-Command-Line-Editing-vi-mode-039" doc="A character that is not recognized as part of an editing command shall terminate any specific editing command and shall alert the terminal"
 
 begin interactive test "unrecognized command alerts terminal"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -511,7 +511,7 @@ end interactive test "unrecognized command alerts terminal"
 requirement "SHALL-vi-Line-Editing-Insert-Mode-044" doc="In insert mode, characters shall be erased from both the screen and the buffer when backspacing"
 
 begin interactive test "insert mode backspace erases"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -532,7 +532,7 @@ end interactive test "insert mode backspace erases"
 requirement "SHALL-vi-Line-Editing-Insert-Mode-046" doc="This interpretation shall occur only at the beginning of an input line"
 
 begin interactive test "EOF interpretation at beginning of line"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -553,7 +553,7 @@ requirement "SHALL-vi-Line-Editing-Command-Mode-049" doc="The modification reque
 requirement "SHALL-vi-Line-Editing-Command-Mode-050" doc="When the current line is the edit line, the modification shall be done directly to the edit line"
 
 begin interactive test "edit line semantics modify from history"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -583,7 +583,7 @@ end interactive test "edit line semantics modify from history"
 requirement "SHALL-vi-Line-Editing-Command-Mode-053" doc="A count that is out of range is considered an error condition and shall alert the terminal, but neither the cursor position, nor the command line, shall change"
 
 begin interactive test "count out of range alerts terminal"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -607,7 +607,7 @@ end interactive test "count out of range alerts terminal"
 requirement "SHALL-vi-Line-Editing-Command-Mode-074" doc="If the count is larger than the number of characters after the cursor, this shall not be considered an error; the cursor shall advance to the last character on the line"
 
 begin interactive test "tilde count overflow"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -633,7 +633,7 @@ end interactive test "tilde count overflow"
 requirement "SHALL-vi-Line-Editing-Command-Mode-077" doc="The count specified in the '.' command shall become the count for subsequent '.' commands issued without a count"
 
 begin interactive test "dot repeat count propagation"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -659,7 +659,7 @@ end interactive test "dot repeat count propagation"
 requirement "SHALL-vi-Line-Editing-Command-Mode-080" doc="If the count is larger than the number of characters before the cursor, this shall not be considered an error; the cursor shall move to the first character on the line"
 
 begin interactive test "h count overflow"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -688,7 +688,7 @@ requirement "SHALL-vi-Line-Editing-Command-Mode-084" doc="If the count is larger
 requirement "SHALL-vi-Line-Editing-Command-Mode-092" doc="If the count is larger than the number of bigwords preceding the cursor, this shall not be considered an error; the cursor shall return to the first character on the line"
 
 begin interactive test "bigword forward W"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -709,7 +709,7 @@ begin interactive test "bigword forward W"
 end interactive test "bigword forward W"
 
 begin interactive test "bigword backward B"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -736,7 +736,7 @@ end interactive test "bigword backward B"
 requirement "SHALL-vi-Line-Editing-Command-Mode-094" doc="If the count is larger than the number of characters on the line, this shall not be considered an error; the cursor shall be placed on the last character on the line"
 
 begin interactive test "pipe column movement"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -762,7 +762,7 @@ end interactive test "pipe column movement"
 requirement "SHALL-vi-Line-Editing-Command-Mode-098" doc="If the character 'c' does not occur in the line before the current cursor position, the terminal shall be alerted and the cursor shall not be moved"
 
 begin interactive test "find forward f"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -783,7 +783,7 @@ begin interactive test "find forward f"
 end interactive test "find forward f"
 
 begin interactive test "find backward F"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -802,7 +802,7 @@ begin interactive test "find backward F"
 end interactive test "find backward F"
 
 begin interactive test "find forward stop before t"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -823,7 +823,7 @@ begin interactive test "find forward stop before t"
 end interactive test "find forward stop before t"
 
 begin interactive test "find backward stop after T"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -849,7 +849,7 @@ end interactive test "find backward stop after T"
 requirement "SHALL-vi-Line-Editing-Command-Mode-103" doc="Any number argument on that previous command shall be ignored"
 
 begin interactive test "repeat find semicolon"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -872,7 +872,7 @@ begin interactive test "repeat find semicolon"
 end interactive test "repeat find semicolon"
 
 begin interactive test "reverse repeat find comma"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -905,7 +905,7 @@ requirement "SHALL-vi-Line-Editing-Command-Mode-109" doc="If the motion command 
 requirement "SHALL-vi-Line-Editing-Command-Mode-110" doc="If the count is larger than the number of characters between the current cursor position and the end of the command line toward which the motion command would move the cursor, this shall not be considered an error; all of the remaining characters in the aforementioned range shall be deleted and insert mode shall be entered"
 
 begin interactive test "change word cw"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -929,7 +929,7 @@ end interactive test "change word cw"
 requirement "SHALL-vi-Line-Editing-Command-Mode-113" doc="If the count is larger than the number of characters after the cursor, this shall not be considered an error; all of the remaining characters shall be changed"
 
 begin interactive test "change word count overflow 9cw"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -959,7 +959,7 @@ end interactive test "change word count overflow 9cw"
 requirement "SHALL-vi-Line-Editing-Command-Mode-115" doc="If the count is larger than the number of characters after the cursor, this shall not be considered an error; all the characters from the cursor to the end of the line shall be deleted"
 
 begin interactive test "delete x count overflow 9x"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -979,7 +979,7 @@ end interactive test "delete x count overflow 9x"
 requirement "SHALL-vi-Line-Editing-Command-Mode-116" doc="The character under the current cursor position shall not change"
 
 begin interactive test "X deletes before cursor"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -1004,7 +1004,7 @@ requirement "SHALL-vi-Line-Editing-Command-Mode-119" doc="If the line contained 
 requirement "SHALL-vi-Line-Editing-Command-Mode-118" doc="If the line contained a single character, the X command shall have no effect"
 
 begin interactive test "X on first char no effect"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -1025,7 +1025,7 @@ end interactive test "X on first char no effect"
 requirement "SHALL-vi-Line-Editing-Command-Mode-120" doc="If the count is larger than the number of characters before the cursor, this shall not be considered an error; all the characters from before the cursor to the beginning of the line shall be deleted"
 
 begin interactive test "X count overflow 99X"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -1053,7 +1053,7 @@ requirement "SHALL-SH-1045" doc="If the count is larger than the number of chara
 requirement "SHALL-vi-Line-Editing-Command-Mode-122" doc="The current character position shall be unchanged"
 
 begin interactive test "yank yw cursor unchanged"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -1081,7 +1081,7 @@ end interactive test "yank yw cursor unchanged"
 requirement "SHALL-vi-Line-Editing-Command-Mode-131" doc="If a k or - command would retreat past the maximum number of commands in effect for this shell, the terminal shall be alerted, and the command shall have no effect"
 
 begin interactive test "history k past HISTSIZE boundary"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -1109,7 +1109,7 @@ end interactive test "history k past HISTSIZE boundary"
 requirement "SHALL-vi-Line-Editing-Command-Mode-134" doc="If a j or + command advances past the edit line, the current command line shall be restored to the edit line and the terminal shall be alerted"
 
 begin interactive test "history j past edit line"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -1136,7 +1136,7 @@ end interactive test "history j past edit line"
 requirement "SHALL-vi-Line-Editing-Command-Mode-135" doc="If command line number does not exist, the terminal shall be alerted and the command line shall not be changed"
 
 begin interactive test "history G nonexistent line"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -1161,7 +1161,7 @@ end interactive test "history G nonexistent line"
 requirement "SHALL-vi-Line-Editing-Command-Mode-136" doc="If this variable is unset, an unspecified default greater than or equal to 128 shall be used"
 
 begin interactive test "HISTSIZE unset default"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -1196,7 +1196,7 @@ requirement "SHALL-vi-Line-Editing-Command-Mode-138" doc="If pattern is empty, t
 requirement "SHALL-vi-Line-Editing-Command-Mode-140" doc="If there is no previous / or ?, the terminal shall be alerted and the current command line shall remain unchanged"
 
 begin interactive test "history search forward slash"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -1220,7 +1220,7 @@ end interactive test "history search forward slash"
 requirement "SHALL-vi-Line-Editing-Command-Mode-139" doc="If no matching command line is found, the terminal shall be alerted and the current command line shall remain unchanged"
 
 begin interactive test "history search nonexistent pattern"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -1245,7 +1245,7 @@ end interactive test "history search nonexistent pattern"
 requirement "SHALL-vi-Line-Editing-Command-Mode-086" doc="[count]e — move cursor to end of current word"
 
 begin interactive test "move to end of word e"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -1268,7 +1268,7 @@ begin interactive test "move to end of word e"
 end interactive test "move to end of word e"
 
 begin interactive test "move to end of word 2e"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -1296,7 +1296,7 @@ end interactive test "move to end of word 2e"
 requirement "SHALL-vi-Line-Editing-Command-Mode-088" doc="[count]E — move cursor to end of current bigword"
 
 begin interactive test "move to end of bigword E"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -1319,7 +1319,7 @@ begin interactive test "move to end of bigword E"
 end interactive test "move to end of bigword E"
 
 begin interactive test "E treats punctuation as part of word"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -1345,7 +1345,7 @@ end interactive test "E treats punctuation as part of word"
 # ==============================================================================
 
 begin interactive test "put before cursor P"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -1371,7 +1371,7 @@ end interactive test "put before cursor P"
 # ==============================================================================
 
 begin interactive test "search backward question mark"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -1398,7 +1398,7 @@ end interactive test "search backward question mark"
 # ==============================================================================
 
 begin interactive test "repeat search n"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -1428,7 +1428,7 @@ end interactive test "repeat search n"
 # ==============================================================================
 
 begin interactive test "repeat search opposite direction N"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -1460,7 +1460,7 @@ end interactive test "repeat search opposite direction N"
 # ==============================================================================
 
 begin interactive test "replace mode R"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -1490,7 +1490,7 @@ end interactive test "replace mode R"
 # ==============================================================================
 
 begin interactive test "comment out hash"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -1511,7 +1511,7 @@ end interactive test "comment out hash"
 # ==============================================================================
 
 begin interactive test "delete to end of line D"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -1536,7 +1536,7 @@ end interactive test "delete to end of line D"
 # ==============================================================================
 
 begin interactive test "change to end of line C"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -1566,7 +1566,7 @@ end interactive test "change to end of line C"
 # ==============================================================================
 
 begin interactive test "substitute entire line S"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
@@ -1595,7 +1595,7 @@ end interactive test "substitute entire line S"
 requirement "SHALL-vi-Line-Editing-Command-Mode-128" doc="Y — yank (copy) the entire edit line into the save buffer"
 
 begin interactive test "yank entire line Y"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "

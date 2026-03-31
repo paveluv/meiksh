@@ -21,7 +21,7 @@ requirement "SHALL-FG-1173" doc="If job control is disabled, the fg utility shal
 requirement "SHALL-JOBS-1234" doc="The jobs utility shall display the status of jobs that were started in the current shell environment"
 
 begin interactive test "bg: suspend with Ctrl-Z then bg"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -43,7 +43,7 @@ end interactive test "bg: suspend with Ctrl-Z then bg"
 # ==============================================================================
 
 begin interactive test "bg: job already running in background"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -62,7 +62,7 @@ end interactive test "bg: job already running in background"
 # ==============================================================================
 
 begin interactive test "bg: with explicit job_id operand"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -84,7 +84,7 @@ end interactive test "bg: with explicit job_id operand"
 # ==============================================================================
 
 begin interactive test "fg: bring background job to foreground"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -104,7 +104,7 @@ end interactive test "fg: bring background job to foreground"
 # ==============================================================================
 
 begin interactive test "fg: with explicit job_id"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -124,7 +124,7 @@ end interactive test "fg: with explicit job_id"
 # ==============================================================================
 
 begin interactive test "fg: removes job from known process list"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -147,7 +147,7 @@ end interactive test "fg: removes job from known process list"
 # ==============================================================================
 
 begin interactive test "suspend -> bg -> fg cycle"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -190,7 +190,7 @@ end test "fg: error when job control is disabled"
 # ==============================================================================
 
 begin interactive test "multiple suspended jobs with +/- marking"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -216,7 +216,7 @@ end interactive test "multiple suspended jobs with +/- marking"
 # ==============================================================================
 
 begin interactive test "bg: output format POSIX [%d] %s"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -238,7 +238,7 @@ end interactive test "bg: output format POSIX [%d] %s"
 # ==============================================================================
 
 begin interactive test "bg/fg: explicit %N job IDs with multiple jobs"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "

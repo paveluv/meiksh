@@ -56,7 +56,7 @@ begin test "readonly -p generates eval-able output"
     readonly RO_VAR="protected"
     output=$(readonly -p | grep "RO_VAR=")
     echo "$output; echo \"$RO_VAR\"" > tmp_ro.sh
-    {{SHELL}} tmp_ro.sh
+    $SHELL tmp_ro.sh
   end script
   expect_stdout "protected"
 end test "readonly -p generates eval-able output"

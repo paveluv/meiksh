@@ -17,7 +17,7 @@ requirement "SHALL-SH-1048" doc="Commands in the command history shall be treate
 # ==============================================================================
 
 begin interactive test "FCEDIT can be set and fc uses it"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "HISTSIZE=100"
   expect "$ "
@@ -36,7 +36,7 @@ end interactive test "FCEDIT can be set and fc uses it"
 # ==============================================================================
 
 begin interactive test "History list supports at least 128 entries"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "HISTSIZE=128"
   expect "$ "
@@ -56,7 +56,7 @@ end interactive test "History list supports at least 128 entries"
 # ==============================================================================
 
 begin interactive test "Oldest history entries are deleted first"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "HISTSIZE=3"
   expect "$ "
@@ -86,7 +86,7 @@ end interactive test "Oldest history entries are deleted first"
 # ==============================================================================
 
 begin interactive test "History works when HISTFILE is unwritable"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "HISTFILE=/dev/null/impossible"
   expect "$ "
@@ -103,7 +103,7 @@ end interactive test "History works when HISTFILE is unwritable"
 # ==============================================================================
 
 begin interactive test "History treats commands as strings not filenames"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "HISTSIZE=100"
   expect "$ "

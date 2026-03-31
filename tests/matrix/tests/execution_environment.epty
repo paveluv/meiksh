@@ -14,7 +14,7 @@ begin test "blank lines and comments exit zero"
     # just a comment
 
 
-    ' > tmp_empty.sh; {{SHELL}} tmp_empty.sh
+    ' > tmp_empty.sh; $SHELL tmp_empty.sh
   end script
   expect_exit_code 0
 end test "blank lines and comments exit zero"
@@ -64,7 +64,7 @@ requirement "SHALL-2-9-1-4-287" doc="Simple Commands: a simple command is a sequ
 
 begin test "prefix variable assignment passed to command"
   begin script
-    FOO=bar {{SHELL}} -c 'echo $FOO'
+    FOO=bar $SHELL -c 'echo $FOO'
   end script
   expect_stdout "bar"
 end test "prefix variable assignment passed to command"

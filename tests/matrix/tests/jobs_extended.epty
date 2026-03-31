@@ -9,7 +9,7 @@ requirement "SHALL-JOBS-1235" doc="The -l option provides additional information
 requirement "SHALL-JOBS-1223" doc="The output shall include the job number, current job, process group ID, state, and command"
 
 begin interactive test "jobs -l shows long listing"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -24,7 +24,7 @@ begin interactive test "jobs -l shows long listing"
 end interactive test "jobs -l shows long listing"
 
 begin interactive test "jobs -l shows numeric PID"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -47,7 +47,7 @@ requirement "SHALL-JOBS-1060" doc="The -p option shall display only the process 
 requirement "SHALL-JOBS-1221" doc="The jobs utility shall display the status of jobs started in the current session"
 
 begin interactive test "jobs -p returns PID"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -62,7 +62,7 @@ begin interactive test "jobs -p returns PID"
 end interactive test "jobs -p returns PID"
 
 begin interactive test "jobs -p output is numeric"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -84,7 +84,7 @@ end interactive test "jobs -p output is numeric"
 requirement "SHALL-JOBS-1039" doc="The default output format shall include job_number, current status, and command"
 
 begin interactive test "running job shows Running state"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -106,7 +106,7 @@ end interactive test "running job shows Running state"
 requirement "SHALL-JOBS-1222" doc="When a background command exits, the shell shall include exit status in the completion notification"
 
 begin interactive test "completed job shows Done state"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -128,7 +128,7 @@ requirement "SHALL-JOBS-1232" doc="A job that has been suspended shall be report
 requirement "SHALL-JOBS-1237" doc="POSIX permits Suspended as an alternative to Stopped"
 
 begin interactive test "stopped job shows Stopped or Suspended state"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -150,7 +150,7 @@ end interactive test "stopped job shows Stopped or Suspended state"
 # ==============================================================================
 
 begin interactive test "output format includes job number status command"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -173,7 +173,7 @@ requirement "SHALL-JOBS-1058" doc="If job_id is given, the output shall be infor
 requirement "SHALL-JOBS-1061" doc="If there are no current jobs, jobs shall produce no output"
 
 begin interactive test "jobs with job_id shows only that job"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -199,7 +199,7 @@ requirement "SHALL-JOBS-1225" doc="If no job_id operands are given, all current 
 requirement "SHALL-JOBS-1227" doc="The jobs utility shall display information about each job"
 
 begin interactive test "jobs with no args lists all jobs"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -224,7 +224,7 @@ end interactive test "jobs with no args lists all jobs"
 requirement "SHALL-JOBS-1236" doc="jobs -l on a stopped job shall show the PID and the state"
 
 begin interactive test "jobs -l with stopped job shows PID and state"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -248,7 +248,7 @@ end interactive test "jobs -l with stopped job shows PID and state"
 requirement "SHALL-JOBS-1233" doc="The current job shall be indicated with a + marker"
 
 begin interactive test "current job marker +"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -272,7 +272,7 @@ end interactive test "current job marker +"
 requirement "SHALL-JOBS-1234" doc="The previous job shall be indicated with a - marker"
 
 begin interactive test "previous job marker -"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -294,7 +294,7 @@ end interactive test "previous job marker -"
 # ==============================================================================
 
 begin interactive test "jobs with no background jobs produces no output"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "jobs; echo end_of_jobs"
   expect "end_of_jobs"
@@ -310,7 +310,7 @@ end interactive test "jobs with no background jobs produces no output"
 # ==============================================================================
 
 begin interactive test "signal-terminated job no longer Running"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -332,7 +332,7 @@ end interactive test "signal-terminated job no longer Running"
 # ==============================================================================
 
 begin interactive test "Done(N) for non-zero exit"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -351,7 +351,7 @@ end interactive test "Done(N) for non-zero exit"
 # ==============================================================================
 
 begin interactive test "jobs -p with multiple jobs"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "

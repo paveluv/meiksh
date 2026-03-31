@@ -801,7 +801,7 @@ requirement "SHALL-V3CHAP02-1012" doc="Interactive shell + async list: write job
 requirement "SHALL-V3CHAP02-1016" doc="When job control is enabled, shell creates jobs from lists."
 
 begin interactive test "background job notification"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "sleep 0 &"
   expect "\[[[:digit:]]+\] [[:digit:]]+"

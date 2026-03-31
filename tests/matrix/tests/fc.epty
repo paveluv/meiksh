@@ -31,7 +31,7 @@ requirement "SHALL-FC-1046" doc="The following exit values shall be returned: 0 
 # ==============================================================================
 
 begin interactive test "fc -l lists command history"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "echo fc_test_1"
   expect "fc_test_1"
@@ -52,7 +52,7 @@ end interactive test "fc -l lists command history"
 # ==============================================================================
 
 begin interactive test "fc -ln suppresses line numbers"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "echo ln_test"
   expect "ln_test"
@@ -69,7 +69,7 @@ end interactive test "fc -ln suppresses line numbers"
 # ==============================================================================
 
 begin interactive test "fc -s re-executes previous command"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "echo reexec_target"
   expect "reexec_target"
@@ -86,7 +86,7 @@ end interactive test "fc -s re-executes previous command"
 # ==============================================================================
 
 begin interactive test "fc -s old=new substitution"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "echo old_value"
   expect "old_value"
@@ -103,7 +103,7 @@ end interactive test "fc -s old=new substitution"
 # ==============================================================================
 
 begin interactive test "fc -l with first/last range"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "echo range_a"
   expect "range_a"
@@ -127,7 +127,7 @@ end interactive test "fc -l with first/last range"
 # ==============================================================================
 
 begin interactive test "fc with FCEDIT editor invocation"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "echo original_cmd"
   expect "original_cmd"
@@ -147,7 +147,7 @@ end interactive test "fc with FCEDIT editor invocation"
 # ==============================================================================
 
 begin interactive test "fc -e editor option"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "echo fe_original"
   expect "fe_original"
@@ -169,7 +169,7 @@ end interactive test "fc -e editor option"
 # ==============================================================================
 
 begin interactive test "fc -e non-zero exit suppresses re-execution"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "echo should_not_reexec"
   expect "should_not_reexec"
@@ -187,7 +187,7 @@ end interactive test "fc -e non-zero exit suppresses re-execution"
 # ==============================================================================
 
 begin interactive test "fc -l with string pattern operand"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "echo unique_pat_cmd"
   expect "unique_pat_cmd"
@@ -208,7 +208,7 @@ end interactive test "fc -l with string pattern operand"
 # ==============================================================================
 
 begin interactive test "fc -l reverse order"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "echo rev_first"
   expect "rev_first"
@@ -229,7 +229,7 @@ end interactive test "fc -l reverse order"
 # ==============================================================================
 
 begin interactive test "HISTSIZE controls accessible history"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "HISTSIZE=3"
   expect "$ "
@@ -254,7 +254,7 @@ end interactive test "HISTSIZE controls accessible history"
 # ==============================================================================
 
 begin interactive test "fc -l exit status is zero"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "echo status_test"
   expect "status_test"
@@ -271,7 +271,7 @@ end interactive test "fc -l exit status is zero"
 # ==============================================================================
 
 begin interactive test "fc -l with absolute line numbers"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "echo a"
   expect "a"
@@ -296,7 +296,7 @@ end interactive test "fc -l with absolute line numbers"
 # ==============================================================================
 
 begin interactive test "fc -l with out-of-range line number"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "fc -l 9999; echo fc_done"
   expect "fc_done"
@@ -310,7 +310,7 @@ end interactive test "fc -l with out-of-range line number"
 # ==============================================================================
 
 begin interactive test "fc -s old=new with string-pattern operand"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "echo OLD_VALUE"
   expect "OLD_VALUE"

@@ -8,7 +8,7 @@ requirement "SHALL-JOBS-1234" doc="The jobs utility shall display the status of 
 requirement "SHALL-JOBS-1057" doc="By default, the jobs utility shall display the status of all stopped jobs, running background jobs, and all jobs whose status has changed and have not been reported by the shell"
 
 begin interactive test "jobs output goes to stdout"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -36,7 +36,7 @@ end interactive test "jobs output goes to stdout"
 requirement "SHALL-BG-1031" doc="The output of bg shall consist of a line in the format: [%d] %s\n, <job-number>, <command>"
 
 begin interactive test "bg output goes to stdout"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -65,7 +65,7 @@ requirement "SHALL-FG-1035" doc="The fg utility shall write the command line of 
 requirement "SHALL-STDERR-627" doc="The fg utility shall write the command line of the job to standard output"
 
 begin interactive test "fg output goes to stdout"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -93,7 +93,7 @@ end interactive test "fg output goes to stdout"
 requirement "SHALL-2-9-3-1-353" doc="When an asynchronous list is started by the shell, the format of the job-related message written to standard error is: [%d] %d\n. The async [N] PID notification must go to stderr, not stdout"
 
 begin interactive test "async launch notification goes to stderr"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
@@ -113,7 +113,7 @@ end interactive test "async launch notification goes to stderr"
 requirement "SHALL-2-11-443" doc="When the shell is interactive, it shall write a message to standard error reporting the termination status of each job that was started asynchronously and has since changed state"
 
 begin interactive test "shell job-state notifications go to stderr"
-  spawn {{SHELL}} -i
+  spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
