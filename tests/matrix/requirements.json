@@ -63,6 +63,14 @@
       {
         "suite": "Quoting and Token Recognition",
         "test": "backslash preserves literal value of following character"
+      },
+      {
+        "suite": "Quoting and Token Recognition",
+        "test": "backslash escapes semicolon so it is literal"
+      },
+      {
+        "suite": "Quoting and Token Recognition",
+        "test": "backslash escapes space preventing field split"
       }
     ],
     "section_path": [
@@ -70,7 +78,7 @@
       "2.2 Quoting",
       "2.2.1 Escape Character (Backslash)"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This requirement comes from section 2.2.1 (Escape Character) in the shell command language. When a backslash is unquoted, it quotes exactly the next character so that character is treated literally, except when the next character is newline.\n\nTest objective:\n\nConfirm that an unquoted backslash preserves the literal value of the immediately following non-newline character during token recognition.\n\nWhat to test:\n\n1. Escaped shell control/operator characters are literal\n   - Use an unquoted backslash before characters such as ';', '|', '&', '<', '>', '(', ')', and '#' and verify they are handled as ordinary data characters in a word, not as syntax.\n   - Observable result: output contains the literal character and no operator side effect occurs (no command split, pipeline, redirection, grouping, or comment start caused by that escaped character).\n\n2. Escaped expansion introducers are literal\n   - Use an unquoted backslash before '$' and '`' and verify parameter expansion and command substitution are not triggered by that escaped character.\n   - Observable result: output includes the literal '$' or '`' character where escaped.\n\n3. Escaped blanks stay within one token\n   - Use an unquoted backslash before a space (and optionally tab) and verify the escaped blank is part of the same argument rather than delimiting words.\n   - Observable result: argument count/content demonstrates a single token containing the blank.\n\n4. Escaped backslash yields literal backslash\n   - Verify that '\\\\' in unquoted context yields a literal backslash character.\n\nScope notes:\n\n- Do not use backslash-newline behavior as evidence for this requirement; that exception is covered by the separate line-continuation requirement.\n- Prefer assertions on observable parsing outcomes (stdout/stderr text, argument boundaries, control-flow side effects), not implementation internals."
   },
   {
     "id": "SHALL-2-2-1-003",

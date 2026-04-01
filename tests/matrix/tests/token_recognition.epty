@@ -138,6 +138,23 @@ begin test "backslash preserves literal value of following character"
   expect_stdout "a\\\*b"
 end test "backslash preserves literal value of following character"
 
+requirement "SHALL-2-2-1-002" doc="A <backslash> that is not quoted shall preserve the literal value of the following character, with the exception of a <newline>."
+begin test "backslash escapes semicolon so it is literal"
+  begin script
+    echo foo\;bar
+  end script
+  expect_stdout "foo;bar"
+end test "backslash escapes semicolon so it is literal"
+
+requirement "SHALL-2-2-1-002" doc="A <backslash> that is not quoted shall preserve the literal value of the following character, with the exception of a <newline>."
+begin test "backslash escapes space preventing field split"
+  begin script
+    set -- foo\ bar
+    printf "%s:%s\n" "$#" "$1"
+  end script
+  expect_stdout "1:foo bar"
+end test "backslash escapes space preventing field split"
+
 requirement "SHALL-2-3-036" doc="If the current character is an unquoted <backslash>, single-quote, or double-quote or is the first character of an unquoted <dollar-sign> single-quote sequence, it shall affect quoting for subsequent characters up to the end of the quoted text."
 begin test "backslash preserves dollar sign literally"
   begin script
