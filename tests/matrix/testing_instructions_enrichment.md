@@ -107,13 +107,11 @@ directives and test blocks in the appropriate `.epty` file(s).
 
 ### 7. Validate integrity
 
-Run the parser in parse-only mode to verify that `requirements.json` and
-all `.epty` files are consistent:
+Run the dedicated matrix integrity checker to verify syntax and consistency
+between `requirements.json` and all `.epty` files:
 
 ```
-cargo run --bin expect_pty -- --parse-only \
-  --requirements tests/matrix/requirements.json \
-  tests/matrix/tests/*.epty
+cargo run --bin check_integrity -- tests/matrix
 ```
 
 This checks that every test referenced in a requirement's `tests` array

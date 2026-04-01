@@ -199,12 +199,10 @@ tests.
 
 ## Integrity checking
 
-After writing tests, always validate:
+After writing tests, always validate syntax and matrix integrity:
 
 ```
-cargo run --bin expect_pty -- --parse-only \
-  --requirements tests/matrix/requirements.json \
-  tests/matrix/tests/*.epty
+cargo run --bin check_integrity -- tests/matrix
 ```
 
 This checks:
