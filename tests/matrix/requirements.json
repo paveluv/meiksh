@@ -1549,7 +1549,7 @@
     "tests": [
       {
         "suite": "Parameters and Variables",
-        "test": "ENV file processed for interactive shell"
+        "test": "parameters preserve representative non-null bytes"
       }
     ],
     "section_path": [
@@ -1956,7 +1956,7 @@
     "tests": [
       {
         "suite": "Parameters and Variables",
-        "test": "ENV file processed for interactive shell"
+        "test": "$- includes options enabled by set"
       }
     ],
     "section_path": [
@@ -1976,10 +1976,6 @@
       {
         "suite": "Parameters and Variables",
         "test": "$$ same in subshell"
-      },
-      {
-        "suite": "Parameters and Variables",
-        "test": "ENV file processed for interactive shell"
       }
     ],
     "section_path": [
@@ -2149,8 +2145,8 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "Job Control",
-        "test": "assignment before special built-in persists"
+        "suite": "command — Extended Tests",
+        "test": "variable references expand in assignment values"
       },
       {
         "suite": "Job Control",
@@ -2169,12 +2165,12 @@
         "test": "special built-in: shift exists"
       },
       {
-        "suite": "Parameters and Variables",
-        "test": "environment variable is visible via env"
+        "suite": "Job Control",
+        "test": "assignment before special built-in persists"
       },
       {
-        "suite": "command — Extended Tests",
-        "test": "variable references expand in assignment values"
+        "suite": "Parameters and Variables",
+        "test": "environment variable is visible via env"
       }
     ],
     "section_path": [
@@ -2182,7 +2178,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify shell variables are initialized from valid environment entries, assignment commands can set values, and environment-derived variables are available as shell variables."
   },
   {
     "id": "SHALL-2-5-3-075",
@@ -2193,6 +2189,10 @@
     "tests": [
       {
         "suite": "Parameters and Variables",
+        "test": "invalid environment names are not initialized as shell variables"
+      },
+      {
+        "suite": "Parameters and Variables",
         "test": "ENV set to valid file does not crash non-interactive shell"
       }
     ],
@@ -2201,7 +2201,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify only valid environment variable names become shell variables during initialization."
   },
   {
     "id": "SHALL-2-5-3-076",
@@ -2213,6 +2213,10 @@
       {
         "suite": "Parameters and Variables",
         "test": "environment variable is visible via env"
+      },
+      {
+        "suite": "Parameters and Variables",
+        "test": "environment-initialized variable is exported to child process"
       }
     ],
     "section_path": [
@@ -2220,7 +2224,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify variables initialized from the environment are exported immediately to child utility environments."
   },
   {
     "id": "SHALL-V3CHAP02-1002-DUP75",
@@ -2232,6 +2236,10 @@
       {
         "suite": "Parameters and Variables",
         "test": "$? is 0 at shell startup"
+      },
+      {
+        "suite": "Parameters and Variables",
+        "test": "ENV file processed for interactive shell"
       }
     ],
     "section_path": [
@@ -2239,7 +2247,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify ENV processing support by exercising interactive-shell ENV loading behavior when supported."
   },
   {
     "id": "SHALL-2-5-3-078",
@@ -2250,11 +2258,11 @@
     "tests": [
       {
         "suite": "Parameters and Variables",
-        "test": "quoted $* is single string, quoted $@ is distinct args"
+        "test": "ENV file processed for interactive shell"
       },
       {
-        "suite": "Word Expansions",
-        "test": "pathname expansion with glob"
+        "suite": "Parameters and Variables",
+        "test": "ENV is ignored for non-interactive shell"
       }
     ],
     "section_path": [
@@ -2262,7 +2270,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify ENV is used only for interactive shells, is parameter-expanded to a pathname, and ignored in non-interactive invocation."
   },
   {
     "id": "SHALL-2-5-3-079",
@@ -2273,7 +2281,7 @@
     "tests": [
       {
         "suite": "Parameters and Variables",
-        "test": "set -x traces commands with default PS4 prefix"
+        "test": "ENV file processed for interactive shell"
       }
     ],
     "section_path": [
@@ -2281,26 +2289,21 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify the ENV file is tokenized, parsed, and executed as shell program input before interactive command reading."
   },
   {
     "id": "SHALL-2-5-3-080",
     "text": "ENV shall be ignored if the user's real and effective user IDs or real and effective group IDs are different.",
     "file": "utilities/V3_chap02.html",
-    "testable": true,
-    "untestable_reason": null,
-    "tests": [
-      {
-        "suite": "Parameters and Variables",
-        "test": "$# counts positional parameters not including $0"
-      }
-    ],
+    "testable": false,
+    "untestable_reason": "Requires differing real/effective uid or gid credentials; this security boundary is not reliably reproducible in the portable matrix harness.",
+    "tests": [],
     "section_path": [
       "2. Shell Command Language",
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Treat as untestable in this harness unless privileged test environments can deliberately create real/effective uid or gid mismatch and assert ENV suppression."
   },
   {
     "id": "SHALL-2-5-3-081",
@@ -2310,12 +2313,12 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "Parameters and Variables",
-        "test": "IFS default splits on space, tab, and newline"
-      },
-      {
         "suite": "Word Expansions",
         "test": "unset IFS splits on space tab newline"
+      },
+      {
+        "suite": "Parameters and Variables",
+        "test": "IFS default splits on space, tab, and newline"
       }
     ],
     "section_path": [
@@ -2323,7 +2326,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify unset IFS behaves as default <space><tab><newline> for shell field splitting and read-style line splitting semantics."
   },
   {
     "id": "SHALL-2-5-3-082",
@@ -2342,7 +2345,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify shell invocation initializes IFS to <space><tab><newline> behavior."
   },
   {
     "id": "SHALL-2-5-3-083",
@@ -2361,7 +2364,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify changing LC_CTYPE after shell startup does not alter lexical processing in the current shell or subshells."
   },
   {
     "id": "SHALL-V3CHAP02-1003-DUP82",
@@ -2380,7 +2383,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify LINENO variable processing is supported by checking line-number style updates while executing script lines."
   },
   {
     "id": "SHALL-2-5-3-084",
@@ -2390,20 +2393,20 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "Extended umask Built-in",
-        "test": "subshell and parent masks are independent"
-      },
-      {
         "suite": "Parameters and Variables",
         "test": "PPID same in subshell"
+      },
+      {
+        "suite": "Extended umask Built-in",
+        "test": "subshell and parent masks are independent"
       }
     ],
     "section_path": [
       "2. Shell Command Language",
       "2.5 Parameters and Variables",
-      "2.5.2 Special Parameters"
+      "2.5.3 Shell Variables"
     ],
-    "testing_instructions": "(Currently mapped to 2.5.2 in requirements.json.) Verify PPID value in subshell remains the parent-of-current-shell value, not the subshell process's immediate parent id in conflicting interpretation. Assert parent/subshell PPID equality under harness conditions."
+    "testing_instructions": "Verify PPID in a subshell matches the parent-of-current-shell value as specified for subshell environments."
   },
   {
     "id": "SHALL-V3CHAP02-1004-DUP84",
@@ -2422,7 +2425,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify PS1 variable processing is supported in interactive mode."
   },
   {
     "id": "SHALL-2-5-3-085",
@@ -2445,7 +2448,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify each interactive prompt subjects PS1 to parameter expansion and exclamation-mark expansion."
   },
   {
     "id": "SHALL-2-5-3-086",
@@ -2455,16 +2458,16 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "Parameters and Variables",
-        "test": "PS1 parameter and exclamation-mark expansion"
-      },
-      {
         "suite": "Interactive Features",
         "test": "PS1 parameter expansion replaces variable references"
       },
       {
         "suite": "Interactive Features",
         "test": "PS1 expanded value is written to stderr"
+      },
+      {
+        "suite": "Parameters and Variables",
+        "test": "PS1 parameter and exclamation-mark expansion"
       }
     ],
     "section_path": [
@@ -2472,7 +2475,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify expanded PS1 prompt text is written to standard error."
   },
   {
     "id": "SHALL-2-5-3-087",
@@ -2491,7 +2494,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify PS1 expansion is performed in two passes with first-pass output feeding the second pass."
   },
   {
     "id": "SHALL-2-5-3-088",
@@ -2501,12 +2504,12 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "Parameters and Variables",
-        "test": "$* and $@ without quotes split on IFS"
-      },
-      {
         "suite": "command — Extended Tests",
         "test": "command does not perform alias expansion"
+      },
+      {
+        "suite": "Parameters and Variables",
+        "test": "$* and $@ without quotes split on IFS"
       }
     ],
     "section_path": [
@@ -2514,7 +2517,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify one PS1 expansion pass performs only exclamation-mark expansion."
   },
   {
     "id": "SHALL-2-5-3-089",
@@ -2545,7 +2548,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify the non-exclamation PS1 pass follows normal word expansion rules required by section 2.6."
   },
   {
     "id": "SHALL-2-5-3-090",
@@ -2564,7 +2567,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify default PS1 prompt value is \"$ \" before user customization."
   },
   {
     "id": "SHALL-2-5-3-091",
@@ -2583,7 +2586,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify exclamation-mark in PS1 expands to the next command history number in interactive mode."
   },
   {
     "id": "SHALL-2-5-3-092",
@@ -2592,6 +2595,10 @@
     "testable": true,
     "untestable_reason": null,
     "tests": [
+      {
+        "suite": "Interactive Features",
+        "test": "PS1 double exclamation becomes single literal exclamation"
+      },
       {
         "suite": "Parameters and Variables",
         "test": "quoted $* is single string, quoted $@ is distinct args"
@@ -2602,7 +2609,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify \"!!\" in PS1 yields a single literal exclamation mark after expansion."
   },
   {
     "id": "SHALL-V3CHAP02-1005",
@@ -2614,6 +2621,14 @@
       {
         "suite": "Word Expansions",
         "test": "PS4 used for xtrace prefix"
+      },
+      {
+        "suite": "Interactive Features",
+        "test": "PS2 default continuation prompt is greater-than space"
+      },
+      {
+        "suite": "Interactive Features",
+        "test": "PS2 parameter expansion is used for continuation prompt"
       }
     ],
     "section_path": [
@@ -2621,7 +2636,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify PS2 processing support in interactive continuation prompts."
   },
   {
     "id": "SHALL-2-5-3-093",
@@ -2630,6 +2645,10 @@
     "testable": true,
     "untestable_reason": null,
     "tests": [
+      {
+        "suite": "Interactive Features",
+        "test": "PS2 parameter expansion is used for continuation prompt"
+      },
       {
         "suite": "Parameters and Variables",
         "test": "$01 is $0 followed by literal 1, and ${10} expands to 10th arg"
@@ -2640,7 +2659,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify when a newline is entered before command completion, PS2 is parameter-expanded for the continuation prompt."
   },
   {
     "id": "SHALL-2-5-3-095",
@@ -2649,6 +2668,10 @@
     "testable": true,
     "untestable_reason": null,
     "tests": [
+      {
+        "suite": "Interactive Features",
+        "test": "PS2 default continuation prompt is greater-than space"
+      },
       {
         "suite": "Parameters and Variables",
         "test": "IFS default splits on space, tab, and newline"
@@ -2659,7 +2682,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify default PS2 continuation prompt value is \"> \" ."
   },
   {
     "id": "SHALL-V3CHAP02-1006",
@@ -2678,7 +2701,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify PS4 processing support for execution trace prefixes."
   },
   {
     "id": "SHALL-2-5-3-096",
@@ -2689,11 +2712,11 @@
     "tests": [
       {
         "suite": "Parameters and Variables",
-        "test": "changing PS4 alters trace prefix"
+        "test": "set -x traces commands with default PS4 prefix"
       },
       {
         "suite": "Parameters and Variables",
-        "test": "set -x traces commands with default PS4 prefix"
+        "test": "changing PS4 alters trace prefix"
       }
     ],
     "section_path": [
@@ -2701,7 +2724,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify each xtrace line applies parameter expansion to PS4 before output."
   },
   {
     "id": "SHALL-2-5-3-098",
@@ -2720,7 +2743,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify default PS4 value is \"+ \" in xtrace output."
   },
   {
     "id": "SHALL-2-5-3-099",
@@ -2732,6 +2755,10 @@
       {
         "suite": "Parameters and Variables",
         "test": "$? is 0 at shell startup"
+      },
+      {
+        "suite": "Parameters and Variables",
+        "test": "PWD is initialized from valid environment value"
       }
     ],
     "section_path": [
@@ -2739,7 +2766,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify shell PWD initialization follows environment-based initialization rules at startup."
   },
   {
     "id": "SHALL-2-5-3-100",
@@ -2750,15 +2777,19 @@
     "tests": [
       {
         "suite": "Maybe-Builtin — pwd (Print Working Directory)",
-        "test": "pwd -L outputs absolute path"
+        "test": "pwd -L with symlink PWD outputs absolute path"
       },
       {
         "suite": "Maybe-Builtin — pwd (Print Working Directory)",
-        "test": "pwd -L with symlink PWD outputs absolute path"
+        "test": "pwd -L outputs absolute path"
       },
       {
         "suite": "Parameters and Variables",
         "test": "PWD is set to current working directory"
+      },
+      {
+        "suite": "Parameters and Variables",
+        "test": "PWD is initialized from valid environment value"
       }
     ],
     "section_path": [
@@ -2766,7 +2797,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify when startup PWD is absolute, within PATH_MAX, and has no dot/dot-dot components, shell adopts that environment value."
   },
   {
     "id": "SHALL-2-6-102",
@@ -11300,7 +11331,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify set -b option support when User Portability Utilities option is available."
   },
   {
     "id": "SHALL-DESCRIPTION-589",
@@ -11502,7 +11533,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify set -m option support when User Portability Utilities option is available."
   },
   {
     "id": "SHALL-DESCRIPTION-599",
@@ -24793,5 +24824,61 @@
       "DESCRIPTION"
     ],
     "testing_instructions": null
+  },
+  {
+    "id": "SHALL-2-5-3-077",
+    "text": "If the expanded value of ENV is not an absolute pathname, the results are unspecified.",
+    "file": "utilities/V3_chap02.html",
+    "testable": false,
+    "untestable_reason": "POSIX explicitly marks this behavior unspecified; no single portable expected outcome can be asserted.",
+    "tests": [],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.5 Parameters and Variables",
+      "2.5.3 Shell Variables"
+    ],
+    "testing_instructions": "Treat non-absolute ENV pathname behavior as unspecified and avoid asserting a single conforming outcome across shells."
+  },
+  {
+    "id": "SHALL-2-5-3-094",
+    "text": "For PS2, after expansion, the value shall be written to standard error.",
+    "file": "utilities/V3_chap02.html",
+    "testable": true,
+    "untestable_reason": null,
+    "tests": [
+      {
+        "suite": "Interactive Features",
+        "test": "PS2 parameter expansion is used for continuation prompt"
+      },
+      {
+        "suite": "Interactive Features",
+        "test": "PS2 prompt text is emitted to stderr stream"
+      }
+    ],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.5 Parameters and Variables",
+      "2.5.3 Shell Variables"
+    ],
+    "testing_instructions": "Verify expanded PS2 continuation prompt text is written to standard error before reading continuation input lines."
+  },
+  {
+    "id": "SHALL-2-5-3-097",
+    "text": "For PS4, after expansion, the value shall be written to standard error.",
+    "file": "utilities/V3_chap02.html",
+    "testable": true,
+    "untestable_reason": null,
+    "tests": [
+      {
+        "suite": "Parameters and Variables",
+        "test": "set -x traces commands with default PS4 prefix"
+      }
+    ],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.5 Parameters and Variables",
+      "2.5.3 Shell Variables"
+    ],
+    "testing_instructions": "Verify expanded PS4 trace prefixes are emitted on standard error during set -x execution tracing."
   }
 ]
