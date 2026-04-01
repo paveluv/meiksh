@@ -3,9 +3,6 @@
 This document is the top-level conformance ledger for `meiksh`. The local pages under `docs/posix/` are the only requirements source of truth for entries in this matrix.
 
 Supporting docs:
-- `docs/requirements/conventions.md`
-- `docs/requirements/standards-inventory.md`
-- `docs/requirements/gap-register.md`
 - `docs/implementation-policy.md`
 
 ## Standards Baseline
@@ -22,7 +19,7 @@ Supporting docs:
 | `REQ-DOCS-MIRROR-001` | `docs/posix-manifest.txt` | Required local shell-conformance mirror is defined by an explicit manifest. | implemented | covered | `docs/posix-manifest.txt`, `docs/README.md` | The manifest now defines the expected local standards set instead of relying on ad-hoc fetch commands. |
 | `REQ-DOCS-MIRROR-002` | `docs/posix-manifest.txt` | Local mirror can be fetched from a single manifest-driven workflow. | implemented | covered | `docs/fetch-posix-docs.sh` | Fetch script now reads the manifest, and the current local mirror matches the manifest-defined set. |
 | `REQ-DOCS-MIRROR-003` | `docs/posix-manifest.txt` | Local mirror completeness is defined by a single upstream archive manifest entry. | implemented | covered | `docs/posix-manifest.txt`, `docs/fetch-posix-docs.sh` | The mirror contract is now a single archive source instead of a per-page checklist; `GAP-DOCS-001` remains closed. |
-| `REQ-DOCS-LEDGER-001` | `docs/posix/issue8/sh-utility.html`, `docs/posix/issue8/shell-command-language.html` | Conformance tracking uses stable REQ IDs and separate normative/test status. | implemented | covered | `docs/spec-matrix.md`, `docs/requirements/conventions.md` | Milestone 0 converts the matrix from a prose-heavy summary into a requirement ledger. |
+| `REQ-DOCS-LEDGER-001` | `docs/posix/issue8/sh-utility.html`, `docs/posix/issue8/shell-command-language.html` | Conformance tracking uses stable REQ IDs and separate normative/test status. | implemented | covered | `docs/spec-matrix.md` | Milestone 0 converts the matrix from a prose-heavy summary into a requirement ledger. |
 
 ## Utility Entry And Startup
 
@@ -146,4 +143,4 @@ Supporting docs:
 
 ## Gap Register
 
-The milestone-oriented open backlog now lives in `docs/requirements/gap-register.md`.
+Remaining gaps are tracked inline in the sections above.

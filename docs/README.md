@@ -43,10 +43,6 @@ That script reads `docs/posix-manifest.txt`, downloads the POSIX tarball, and un
 
 The conformance docs are organized as follows:
 - `docs/spec-matrix.md`: top-level POSIX conformance ledger and status summary
-- `docs/requirements/README.md`: requirements-doc index and update rules
-- `docs/requirements/conventions.md`: REQ-ID scheme and status vocabulary
-- `docs/requirements/standards-inventory.md`: inventory of the local shell-conformance standards mirror
-- `docs/requirements/gap-register.md`: tracked remaining gaps and milestone-oriented backlog items
 - `docs/implementation-policy.md`: implementation-defined and temporary project choices that should reference the requirement ledger instead of replacing it
 
 ## Source URLs
@@ -75,5 +71,5 @@ Issue 7 `sh` utility:
 ## Notes
 
 - `docs/posix-manifest.txt` is the mirror contract, and `docs/fetch-posix-docs.sh` is expected to stay in sync with it.
-- `docs/spec-matrix.md` and the files under `docs/requirements/` should reference exact local `docs/posix/...` paths and anchors when recording conformance status.
+- `docs/spec-matrix.md` should reference exact local `docs/posix/...` paths and anchors when recording conformance status.
 - Keep the downloaded material untracked.
