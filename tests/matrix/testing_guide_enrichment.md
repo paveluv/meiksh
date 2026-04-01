@@ -23,6 +23,11 @@ Open the HTML file referenced by the requirement's `file` field, relative
 to `docs/posix/susv5-html/`. For example, if `file` is
 `utilities/V3_chap02.html`, open `docs/posix/susv5-html/utilities/V3_chap02.html`.
 
+Markdown versions of the specification are also available at `docs/posix/md/`
+(converted from the HTML sources using `html_to_md.rs`) and can be used
+for reference as well. The directory structure mirrors `docs/posix/susv5-html/`,
+so `utilities/V3_chap02.html` corresponds to `docs/posix/md/utilities/V3_chap02.md`.
+
 ### 2. Find the requirement's section
 
 Use the `section_path` array to navigate to the section that contains the
@@ -83,3 +88,16 @@ what needs to be tested. The description should:
 
 Set the `testing_guide` field to the resulting description string. The
 field is `null` when not yet enriched.
+
+### 6. Write or update tests
+
+Using the `testing_guide` as a specification, write new tests that cover
+exactly what the guide describes. If the requirement already has tests
+linked in its `tests` array, review them first — only add new tests for
+behavior that is not already covered. If the existing tests are
+incorrect or insufficient (e.g. testing unrelated behavior), replace
+them.
+
+Update the requirement's `tests` array in `requirements.json` to
+reference the new tests, and add the corresponding `requirement`
+directives and test blocks in the appropriate `.epty` file(s).
