@@ -336,11 +336,12 @@ requirement "SHALL-2-6-2-131" doc="If parameter is '#' and the colon is omitted,
 begin test "colon-plus substitutes alternative value"
   begin script
     foo=set
-    echo "${foo+alt}"
+    v1="${foo+alt}"
     unset foo
-    echo "${foo+alt}"
+    v2="${foo+alt}"
+    [ "$v1" = "alt" ] && [ -z "$v2" ] && echo ok
   end script
-  expect_stdout "alt\n"
+  expect_stdout "ok"
 end test "colon-plus substitutes alternative value"
 
 # ==============================================================================
@@ -571,7 +572,7 @@ begin test "IFS non-whitespace delimiter produces empty fields"
     foo=":a::b:"
     for i in $foo; do echo "[$i]"; done
   end script
-  expect_stdout "[]\n[a]\n[]\n[b]"
+  expect_stdout "\[\]\n\[a\]\n\[\]\n\[b\]"
 end test "IFS non-whitespace delimiter produces empty fields"
 
 # ==============================================================================

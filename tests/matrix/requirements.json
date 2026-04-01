@@ -5938,7 +5938,7 @@
     "tests": [
       {
         "suite": "Simple Commands - Executing Utilities and Functions",
-        "test": "function call with var assignment permanently modifies environment"
+        "test": "function call with var assignment affects function environment"
       }
     ],
     "section_path": [
@@ -6018,7 +6018,7 @@
     "tests": [
       {
         "suite": "Simple Commands - Executing Utilities and Functions",
-        "test": "function call with var assignment permanently modifies environment"
+        "test": "function call with var assignment affects function environment"
       }
     ],
     "section_path": [
@@ -6182,7 +6182,7 @@
     "tests": [
       {
         "suite": "Simple Commands - Executing Utilities and Functions",
-        "test": "function call with var assignment permanently modifies environment"
+        "test": "function call with var assignment affects function environment"
       }
     ],
     "section_path": [

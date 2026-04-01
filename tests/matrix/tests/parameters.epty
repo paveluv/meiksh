@@ -104,7 +104,7 @@ begin test "parameters can be referenced by name number and special character"
   begin script
     $SHELL -c 'set -- p1 p2; var=NAME; echo "$var|$1|$#"'
   end script
-  expect_stdout "NAME|p1|2"
+  expect_stdout "NAME\|p1\|2"
 end test "parameters can be referenced by name number and special character"
 
 requirement "SHALL-2-5-061" doc="A variable is a parameter denoted by a name."

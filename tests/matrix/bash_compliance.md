@@ -1,199 +1,145 @@
-# Bash POSIX Compliance Report
+# Bash POSIX Compliance Report (Verified Non-Compliances Only)
 
-**Shell tested:** GNU bash 5.2.37(1)-release (x86_64-pc-linux-gnu)
-**Standard:** POSIX.1-2024 (Issue 8)
-**Test suite:** `tests/matrix` (65 `.epty` test suites, 1011 tests)
-**Date:** 2026-03-30
+**Shell tested:** GNU bash 5.2.37(1)-release (x86_64-pc-linux-gnu)  
+**Standard:** POSIX.1-2024 (Issue 8)  
+**Date:** 2026-04-01
 
-| Result | Count |
-|--------|-------|
-| Passed | 992 |
-| Failed | 19 |
-
-The 19 failures fall into 6 distinct issues documented below.
-All are genuine non-compliances in bash 5.2.
+This document intentionally lists **only verified bash non-compliances** that can be reproduced directly with standard shell usage.
 
 ---
 
-## 1. `cd ""` does not produce an error
+## 1) `cd ""` returns success instead of failing
 
-**Severity:** Low
-**Suites:** `cd`, `cd_extended` (2 tests)
-**POSIX reference:** XCU §cd, OPERANDS
+**POSIX passage (exact quote)**  
+From `docs/posix/md/utilities/cd.md`:
 
-> If *directory* is an empty string, `cd` **shall** write a diagnostic
-> message to standard error and exit with non-zero status.
+> "If *directory* is an empty string, *cd* shall write a diagnostic message to standard error and exit with non-zero status."
+
+**Why this is non-compliant**  
+Bash in POSIX mode returns success (`0`) and emits no diagnostic for `cd ""`.
+
+**Reproduction (portable shell commands)**
 
 ```sh
-/usr/bin/bash --posix -c 'cd ""; echo "exit=$?"'
-# Expected: diagnostic on stderr, non-zero exit
-# Actual:   exit=0 (silently succeeds)
+/usr/bin/bash --posix -c 'cd ""; printf "exit=%s\n" "$?"'
 ```
+
+Expected:
+- non-zero exit status
+- diagnostic text on stderr
+
+Observed:
+- `exit=0`
+- no stderr diagnostic
 
 ---
 
-## 2. `echo` does not process XSI escape sequences
+## 2) `echo` does not implement XSI backslash escapes in `--posix` mode
 
-**Severity:** Medium
-**Suite:** `maybe_builtins_echo` (11 tests)
-**POSIX reference:** XCU §echo, OPERANDS (SHALL-OPERANDS-5003, SHALL-OPERANDS-5004)
+**POSIX passage (exact quotes)**  
+From `docs/posix/md/utilities/echo.md`:
 
-> The following character sequences shall be recognized within any of
-> the arguments: `\a`, `\b`, `\c`, `\f`, `\n`, `\r`, `\t`, `\v`,
-> `\\`, `\0num`
+> "On XSI-conformant systems, if the first operand consists of a `'-'` followed by one or more characters from the set {`'e'`, `'E'`, `'n'`}, it shall be treated as a string to be written. The following character sequences shall be recognized on XSI-conformant systems within any of the arguments:"
+
+> - `\a` Write an `<alert>`.
+> - `\b` Write a `<backspace>`.
+> - `\c` Suppress the `<newline>` that otherwise follows the final argument in the output. All characters following the `\c` in the arguments shall be ignored.
+
+**Why this is non-compliant**  
+In bash `--posix` mode, these escape sequences are emitted literally unless non-POSIX toggles (like `-e` or shell options) are used.
+
+**Reproduction (portable shell commands)**
 
 ```sh
-/usr/bin/bash --posix -c 'echo "\a" | od -An -tx1 | tr -d " "'
-# Expected: 070a   (BEL + newline)
-# Actual:   5c610a (literal \a + newline)
-
-/usr/bin/bash --posix -c 'echo "\0101"'
-# Expected: A
-# Actual:   \0101
-
-/usr/bin/bash --posix -c 'printf "%s" "hello\c world" | wc -c'
-# echo \c should suppress trailing output; bash outputs it literally
+/usr/bin/bash --posix -c 'echo "\a" | od -An -tx1 | tr -d " \n"'
+/usr/bin/bash --posix -c 'echo "hello\c world" | od -An -tx1 | tr -d " \n"'
 ```
 
-Bash requires `-e` or `shopt -s xpg_echo` to enable escape processing.
-Even `--posix` mode does not activate XSI `echo` behavior.
+Expected:
+- first command contains `07` byte before trailing newline (`070a`)
+- second command outputs only `hello` bytes (`68656c6c6f`) with no remainder
+
+Observed:
+- first command outputs literal `\a` bytes (`5c610a`)
+- second command outputs literal `\c world` bytes (`68656c6c6f5c6320776f726c640a`)
 
 ---
 
-## 3. Variable assignment before function call is temporary
+## 3) `sh` vi-mode command `t`/`T` cursor semantics are wrong
 
-**Severity:** Medium
-**Suite:** `simple_commands_2` (1 test)
-**POSIX reference:** §2.9.1 Simple Commands (SHALL-2-9-1-2-280)
+**POSIX passage (exact quotes)**  
+From `docs/posix/md/utilities/sh.md`:
 
-> If the command name is a function that is not a standard utility
-> implemented as a function, variable assignments shall affect the
-> current execution environment.
+> "- **[***count***]t***c*: Move to the character before the first occurrence of the character `'c'` that occurs after the current cursor position."
 
-```sh
-/usr/bin/bash --posix -c '
-f() { echo "func"; }
-x="old"
-x="new" f >/dev/null
-echo "$x"'
-# Expected: new
-# Actual:   old
-```
+> "- **[***count***]T***c*: Move to the character after the first occurrence of the character `'c'` that occurs before the current cursor position."
 
-Bash scopes prefix assignments to the function call as temporary,
-reverting on return.
+**Why this is non-compliant**  
+In bash vi mode, `t`/`T` behave like `f`/`F` (cursor lands on target character), not one character before/after as required.
 
----
+**Reproduction (manual, no harness required)**
 
-## 4. Vi editing mode: `t`/`T` (find character) broken
+1. Start interactive shell:
 
-**Severity:** Low
-**Suite:** `vi_editing` (2 tests)
-**POSIX reference:** XCU §sh, Vi Line Editing (Command Mode)
+   ```sh
+   /usr/bin/bash --posix -i
+   ```
 
-> `[count]tc` — Move the cursor to the character **before** the first
-> occurrence of `c` that has not already been found [...] after the
-> cursor.
->
-> `[count]Tc` — Move the cursor to the character **after** the first
-> occurrence of `c` that has not already been found [...] before the
-> cursor.
+2. Enable vi mode:
 
-Both `t` and `T` position the cursor on the target character itself
-(like `f`/`F`) rather than one character before/after it.
+   ```sh
+   set -o vi
+   ```
 
-**Reproduction** (interactive — run `/usr/bin/bash --posix -i`):
+3. Type `echo abc`, then press keys: `ESC 0 t c r Z Enter`
 
-```
-$ set -o vi
-$ echo abc        # type "echo abc", then:
-                   # ESC  0  tc  rZ  Enter
-```
+Expected behavior:
+- `t c` lands on `b` (one char before `c`)
+- `r Z` changes `b` → `Z`
+- command output is `aZc`
 
-Step by step: type `echo abc`, press **Escape**, press **0** (go to
-`e`), press **t** then **c** (should move cursor to `b`, one *before*
-`c`), press **r** then **Z** (replace character under cursor with `Z`).
+Observed in bash:
+- cursor lands on `c`
+- resulting command line/edit behavior is inconsistent with POSIX `t` semantics
 
-Expected output: `aZc` (`b` was replaced).
-Actual output: bash runs `Zcho abc` — cursor landed on `c` (the target
-itself, not one before it), so `rZ` replaced `c` and the line became
-`echo abZ`, then the `0` repositioned and the replacement hit the wrong
-spot.
-
-The same issue affects `T`: with cursor at end of `echo abc`, pressing
-**T** then **a** should move to `b` (one *after* `a`), but bash moves
-to `a` itself.
+Repeat for reverse case:
+- Type `echo abc`, then `ESC $ T a r Z Enter`
+- POSIX requires landing one char after `a` (on `b`), but bash lands on `a`
 
 ---
 
-## 5. Vi editing mode: `[count]~` (tilde case toggle) ignores count
+## 4) `sh` vi-mode `[count]~` does not apply the count correctly
 
-**Severity:** Low
-**Suite:** `vi_editing` (1 test)
-**POSIX reference:** XCU §sh, Vi Line Editing (Command Mode)
+**POSIX passage (exact quote)**  
+From `docs/posix/md/utilities/sh.md`:
 
-> `[count]~` — If the count is larger than the number of characters
-> after the cursor, this shall not be considered an error; the cursor
-> shall advance to the last character on the line.
+> "- **[***count***]~**: ... If the `'~'` command is preceded by a *count*, that number of characters shall be converted, and the cursor shall be advanced to the character position after the last character converted. If the *count* is larger than the number of characters after the cursor, this shall not be considered an error; the cursor shall advance to the last character on the line."
 
-**Reproduction** (interactive — run `/usr/bin/bash --posix -i`):
+**Why this is non-compliant**  
+Bash toggles only one character in this scenario instead of applying the count over remaining characters.
 
-```
-$ set -o vi
-$ echo aB          # type "echo aB", then:
-                    # ESC  0w  9~  Enter
-```
+**Reproduction (manual, no harness required)**
 
-Step by step: type `echo aB`, press **Escape**, press **0** then **w**
-(cursor on `a`), press **9** then **~** (toggle case of up to 9
-characters — only 2 remain: `aB`).
+1. Start interactive shell:
 
-Expected output: `Ab` (both characters toggled).
-Actual output: `AB` — bash ignores the count and toggles only the
-character under the cursor (`a` → `A`), advancing by one. The `B`
-is untouched.
+   ```sh
+   /usr/bin/bash --posix -i
+   ```
 
----
+2. Enable vi mode:
 
-## 6. `wait -l` not implemented
+   ```sh
+   set -o vi
+   ```
 
-**Severity:** Low
-**Suite:** `wait` (2 tests)
-**POSIX reference:** XCU §wait (SHALL-WAIT-1353)
+3. Type `echo aB`, then press keys: `ESC 0 w 9 ~ Enter`
 
-> When both the `-l` option and *exit_status* operand are specified,
-> the symbolic name of the corresponding signal **shall** be written
-> to standard output.
+Expected:
+- both remaining characters (`aB`) are toggled -> output `Ab`
 
-`wait -l 143` should output a line containing `TERM` (128 + 15 =
-SIGTERM). Bash 5.2 does not implement the `-l` option — it was added
-in POSIX.1-2024 (Issue 8).
-
-```sh
-/usr/bin/bash --posix -c 'wait -l 143 2>&1'
-# Expected: line containing "TERM"
-# Actual:   bash: wait: -l: invalid option
-#           wait: usage: wait [-fn] [-p var] [id ...]
-```
+Observed:
+- only first character toggled -> output `AB`
 
 ---
 
-## Summary
-
-| # | Area | POSIX Section | Impact | Tests | Status |
-|---|------|---------------|--------|-------|--------|
-| 1 | `cd ""` error handling | XCU §cd OPERANDS | Low | 2 | Broken |
-| 2 | `echo` XSI escapes | XCU §echo SHALL-OPERANDS-5003 | Medium | 11 | Broken |
-| 3 | Function prefix assignment | §2.9.1 SHALL-2-9-1-2-280 | Medium | 1 | Broken |
-| 4 | Vi editing: `t`/`T` | XCU §sh Vi Editing | Low | 2 | Broken |
-| 5 | Vi editing: `[count]~` | XCU §sh Vi Editing | Low | 1 | Broken |
-| 6 | `wait -l` | XCU §wait SHALL-WAIT-1353 | Low | 2 | Broken (Issue 8 feature) |
-|   | **Total** | | | **19** | |
-
-The `echo` issue (item 2, 11 tests) accounts for over half of all
-failures. Bash requires `-e` or `shopt -s xpg_echo` to enable POSIX
-`echo` escape processing, even in `--posix` mode.
-
-Item 6 (`wait -l`) is a POSIX.1-2024 (Issue 8) addition that bash 5.2
-has not yet implemented. All other items represent deviations from
-requirements that existed in earlier POSIX versions.
+This file is intentionally strict: only independently reproducible, standards-backed bash deviations are included.

@@ -108,7 +108,7 @@ begin test "ulimit produces no stderr on valid usage"
   begin script
     $SHELL -c 'ulimit -f 2>/tmp/ulimit_stderr_test; cat /tmp/ulimit_stderr_test; rm -f /tmp/ulimit_stderr_test'
   end script
-  expect_stdout_line "[0-9].*"
+  expect_stdout_line "([0-9].*|unlimited)"
   expect_stderr ""
 end test "ulimit produces no stderr on valid usage"
 
