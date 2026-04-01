@@ -91,6 +91,9 @@ field is `null` when not yet enriched.
 
 ### 6. Write or update tests
 
+Read `tests/matrix/epty_test_format.md` for the complete `.epty` syntax
+reference before writing any tests.
+
 Using the `testing_guide` as a specification, write new tests that cover
 exactly what the guide describes. If the requirement already has tests
 linked in its `tests` array, review them first — only add new tests for
