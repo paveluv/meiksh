@@ -119,7 +119,6 @@ begin test "here-doc nested in command substitution"
   expect_stdout "nested_heredoc"
 end test "here-doc nested in command substitution"
 
-requirement "SHALL-2-2-3-015" doc="Outside of \"$(...)\" and \"${...}\" the <backslash> shall retain its special meaning as an escape character (see 2.2.1 Escape Character (Backslash)) only when immediately followed by one of the following characters: $ ` \" \\ <newline>."
 requirement "SHALL-2-2-4-021" doc="However, implementations shall not replace an unsupported character with bytes that do not form valid characters in that locale's character set."
 requirement "SHALL-V3CHAP02-1002" doc="After a token has been categorized as type TOKEN (see 2.10.1 Shell Grammar Lexical Conventions ), including (recursively) any token resulting from an alias substitution, the TOKEN shall be subject to alias substitution if all of the following conditions are true: The TOKEN does not contain any quoting characters."
 begin test "backslash quoting of special characters"
@@ -255,6 +254,7 @@ begin test "backquote inside double quotes executes"
 end test "backquote inside double quotes executes"
 
 requirement "SHALL-2-2-3-007" doc="Enclosing characters in double-quotes ( \"\" ) shall preserve the literal value of all characters within the double-quotes, with the exception of the characters backquote, <dollar-sign>, and <backslash>, as follows: $ The <dollar-sign> shall retain its special meaning introducing parameter expansion (see 2.6.2 Parameter Expansion ), a form of command substitution (see 2.6.3 Command Substitution ), and arithmetic expansion (see 2.6.4 Arithmetic Expansion ), but shall not retain its special meaning introducing the dollar-single-quotes form of quoting (see 2.2.4 Dollar-Single-Quotes )."
+requirement "SHALL-2-2-3-015" doc="Outside of \"$(...)\" and \"${...}\" the <backslash> shall retain its special meaning as an escape character (see 2.2.1 Escape Character (Backslash)) only when immediately followed by one of the following characters: $ ` \" \\ <newline>."
 begin test "backslash in double quotes special only before certain chars"
   begin script
     printf "%s\n" "\n \$ \` \\"
@@ -292,6 +292,8 @@ begin test "backslash dollar and backquote inside braces"
 end test "backslash dollar and backquote inside braces"
 
 requirement "SHALL-V3CHAP02-1008" doc="The format for arithmetic expansion shall be as follows: $(( expression )) The expression shall be treated as if it were in double-quotes, except that a double-quote inside the expression is not treated specially."
+requirement "SHALL-2-2-3-015" doc="Outside of \"$(...)\" and \"${...}\" the <backslash> shall retain its special meaning as an escape character (see 2.2.1 Escape Character (Backslash)) only when immediately followed by one of the following characters: $ ` \" \\ <newline>."
+requirement "SHALL-2-2-3-017" doc="The application shall ensure that a double-quote that is not within \"$(...)\" nor within \"${...}\" is immediately preceded by a <backslash> in order to be included within double-quotes."
 begin test "escaped double quote inside double quotes"
   begin script
     echo "\""
