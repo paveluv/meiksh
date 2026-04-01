@@ -446,6 +446,10 @@
       {
         "suite": "Quoting and Token Recognition",
         "test": "dollar-single-quote hex escape"
+      },
+      {
+        "suite": "Quoting and Token Recognition",
+        "test": "dollar-single-quote basic support"
       }
     ],
     "section_path": [
@@ -453,7 +457,7 @@
       "2.2 Quoting",
       "2.2.4 Dollar-Single-Quotes"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This requirement is from section 2.2.4 (Dollar-Single-Quotes). It defines the base behavior of the $'...' quoting form: text is literal up to the terminating unescaped single-quote, except for the listed backslash-escape sequences.\n\nTest objective:\n\nVerify that $'...' forms one quoted word, preserves literal characters generally, and applies the documented escape-sequence exceptions.\n\nWhat to test:\n\n1. Base quoting behavior\n   - Characters inside $'...' are preserved as data until the terminating unescaped single-quote.\n   - Observable result: output matches literal content when no escape processing applies.\n\n2. Escapes exception path is active\n   - Include a documented escape (for example \\\" or \\n) and verify converted output appears.\n   - Observable result: converted bytes/characters are emitted instead of raw backslash-sequence text.\n\n3. Tokenization/word behavior\n   - Ensure $'...' contributes a single shell word in command input.\n\nScope note:\n\n- Detailed per-escape obligations are covered by the individual requirements in this section; this requirement is the umbrella rule introducing the construct."
   },
   {
     "id": "SHALL-2-2-4-019",
@@ -464,7 +468,7 @@
     "tests": [
       {
         "suite": "Quoting and Token Recognition",
-        "test": "reserved word in variable value not recognized"
+        "test": "dollar-single-quote variable-length escapes terminate correctly"
       }
     ],
     "section_path": [
@@ -472,7 +476,7 @@
       "2.2 Quoting",
       "2.2.4 Dollar-Single-Quotes"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This requirement is from section 2.2.4. For variable-length escape forms (\\xXX and \\ddd), parsing of the escape must stop at the first non-matching character, or at the octal maximum length for \\ddd.\n\nTest objective:\n\nVerify correct termination boundaries for variable-length escapes in $'...'.\n\nWhat to test:\n\n1. Hex termination by first non-hex character\n   - Example shape: $'\\x41Z'.\n   - Observable result: yields 'A' followed by literal 'Z'.\n\n2. Octal termination by max length\n   - Example shape: $'\\1012'.\n   - Observable result: \\101 yields 'A', with trailing '2' left as regular text.\n\n3. Correct value generation and boundary preservation\n   - Verify both converted byte and leftover suffix bytes are correct."
   },
   {
     "id": "SHALL-2-2-4-020",
@@ -484,6 +488,10 @@
       {
         "suite": "Quoting and Token Recognition",
         "test": "single quotes preserve all characters literally"
+      },
+      {
+        "suite": "Quoting and Token Recognition",
+        "test": "dollar-single-quote basic support"
       }
     ],
     "section_path": [
@@ -491,26 +499,21 @@
       "2.2 Quoting",
       "2.2.4 Dollar-Single-Quotes"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This requirement is from section 2.2.4 and references 2.6 Word Expansions. Documented $'...' escape sequences are processed immediately before word expansion of the containing word.\n\nTest objective:\n\nVerify escape replacement occurs at the required phase and that resulting bytes participate in normal subsequent word processing.\n\nWhat to test:\n\n1. Escape replacement occurs for $'...'\n   - Use sequences such as \\n and \\x41 and verify converted output.\n\n2. Processing order consistency\n   - Ensure behavior matches an already-converted word by the time expansion effects are observable.\n\n3. Observable outputs only\n   - Validate via stdout/byte checks rather than implementation internals."
   },
   {
     "id": "SHALL-2-2-4-021",
     "text": "However, implementations shall not replace an unsupported character with bytes that do not form valid characters in that locale's character set.",
     "file": "utilities/V3_chap02.html",
-    "testable": true,
-    "untestable_reason": null,
-    "tests": [
-      {
-        "suite": "Quoting and Token Recognition",
-        "test": "backslash quoting of special characters"
-      }
-    ],
+    "testable": false,
+    "untestable_reason": "Portable verification requires locale-dependent unsupported-character scenarios and encoding-validity checks that are implementation-specific.",
+    "tests": [],
     "section_path": [
       "2. Shell Command Language",
       "2.2 Quoting",
       "2.2.4 Dollar-Single-Quotes"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This requirement is locale- and implementation-dependent. If an escape (notably \\e or \\cX) denotes a character unsupported in the active locale, implementations must not emit byte sequences that are invalid characters in that locale.\n\nTesting guidance:\n\n- This is not portable for conformance automation in this matrix because unsupported-character cases and validity checks vary by locale/implementation.\n- If tested locally, use implementation-specific locale fixtures and byte-validation tooling."
   },
   {
     "id": "SHALL-2-2-4-022",
@@ -521,7 +524,7 @@
     "tests": [
       {
         "suite": "Quoting and Token Recognition",
-        "test": "dollar-single-quote newline escape"
+        "test": "dollar-single-quote escaped single quote"
       }
     ],
     "section_path": [
@@ -529,7 +532,63 @@
       "2.2 Quoting",
       "2.2.4 Dollar-Single-Quotes"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This requirement is from section 2.2.4. An escape sequence that denotes a single-quote (for example \\\\') must not terminate the enclosing $'...' quote.\n\nTest objective:\n\nVerify escaped apostrophe remains data and parsing continues within the same dollar-single-quote sequence.\n\nWhat to test:\n\n1. Internal escaped apostrophe\n   - Example shape: $'can\\'t'.\n   - Observable result: output contains apostrophe and following characters from same quoted sequence.\n\n2. No premature quote termination\n   - Ensure parser does not end $'...' at the escaped quote."
+  },
+  {
+    "id": "SHALL-2-2-4-036",
+    "text": "The behavior of an unescaped <backslash> immediately followed by any other character, including <newline>, is unspecified.",
+    "file": "utilities/V3_chap02.html",
+    "testable": false,
+    "untestable_reason": "POSIX marks behavior unspecified; no portable expected output exists.",
+    "tests": [],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.2 Quoting",
+      "2.2.4 Dollar-Single-Quotes"
+    ],
+    "testing_instructions": "No conformance assertion should be made; behavior is intentionally unspecified."
+  },
+  {
+    "id": "SHALL-2-2-4-037",
+    "text": "If a \\xXX or \\ddd escape sequence yields a byte whose value is 0, it is unspecified whether that null byte is included in the result or if that byte and any following regular characters and escape sequences up to the terminating unescaped single-quote are evaluated and discarded.",
+    "file": "utilities/V3_chap02.html",
+    "testable": false,
+    "untestable_reason": "POSIX marks null-byte handling in this case unspecified; portable pass/fail is not possible.",
+    "tests": [],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.2 Quoting",
+      "2.2.4 Dollar-Single-Quotes"
+    ],
+    "testing_instructions": "No conformance assertion should be made; behavior is intentionally unspecified."
+  },
+  {
+    "id": "SHALL-2-2-4-038",
+    "text": "If the octal value specified by \\ddd will not fit in a byte, the results are unspecified.",
+    "file": "utilities/V3_chap02.html",
+    "testable": false,
+    "untestable_reason": "POSIX marks overflow handling unspecified; portable expected behavior is not defined.",
+    "tests": [],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.2 Quoting",
+      "2.2.4 Dollar-Single-Quotes"
+    ],
+    "testing_instructions": "No conformance assertion should be made; behavior is intentionally unspecified."
+  },
+  {
+    "id": "SHALL-2-2-4-039",
+    "text": "If a \\e or \\cX escape sequence specifies a character that does not have an encoding in the locale in effect when these <backslash>-escape sequences are processed, the result is implementation-defined.",
+    "file": "utilities/V3_chap02.html",
+    "testable": false,
+    "untestable_reason": "Outcome is implementation-defined and locale-dependent; no single portable expectation can be asserted.",
+    "tests": [],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.2 Quoting",
+      "2.2.4 Dollar-Single-Quotes"
+    ],
+    "testing_instructions": "Treat this as implementation-defined behavior. Any checks must be implementation-specific and should not be used as strict cross-shell conformance assertions."
   },
   {
     "id": "SHALL-2-3-023",
@@ -547,7 +606,7 @@
       "2. Shell Command Language",
       "2.3 Token Recognition"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This requirement establishes line-oriented shell input in token recognition mode. Test with multi-line scripts and confirm each physical line is read and processed in sequence, including final lines without extra delimiters. Observable behavior should come from command outputs and parsing outcomes, not implementation internals."
   },
   {
     "id": "SHALL-2-3-024",
@@ -565,7 +624,7 @@
       "2. Shell Command Language",
       "2.3 Token Recognition"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify that token recognition alternates between ordinary token parsing and here-document processing when appropriate. Use scripts that contain both ordinary commands and here-documents, and confirm parsing follows the correct mode for each region. Observable behavior is successful command execution with expected here-document handling."
   },
   {
     "id": "SHALL-2-3-025",
@@ -587,7 +646,7 @@
       "2. Shell Command Language",
       "2.3 Token Recognition"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Test that after recognizing an io_here token, lines after the next NEWLINE are treated as here-document body and parsed under 2.7.4 rules. Include delimiter matching and body content with quoting/expansion variations. Confirm resulting command input and output match here-document semantics."
   },
   {
     "id": "SHALL-2-3-026",
@@ -605,7 +664,7 @@
       "2. Shell Command Language",
       "2.3 Token Recognition"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify non-NEWLINE tokens discovered while searching for the NEWLINE that starts here-document processing are deferred for later processing. Use commands containing additional tokens and multiple here-documents on one line. Confirm deferred tokens are interpreted after the proper here-document body is consumed."
   },
   {
     "id": "SHALL-2-3-027",
@@ -623,7 +682,7 @@
       "2. Shell Command Language",
       "2.3 Token Recognition"
     ],
-    "testing_instructions": null
+    "testing_instructions": "For multiple saved io_here tokens, verify each subsequent here-document starts immediately after the previous here-document trailing delimiter line. Use chained here-doc redirections in one command line. Confirm ordering and body association are preserved."
   },
   {
     "id": "SHALL-2-3-028",
@@ -641,7 +700,7 @@
       "2. Shell Command Language",
       "2.3 Token Recognition"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Outside io_here mode, verify input is tokenized by applying the first applicable token-recognition rule character-by-character. Use inputs where different rule precedence choices would change parsing. Confirm observed command structure follows POSIX rule ordering."
   },
   {
     "id": "SHALL-2-3-029",
@@ -659,7 +718,7 @@
       "2. Shell Command Language",
       "2.3 Token Recognition"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify token start positions at beginning of input and after delimiters use the first not-yet-consumed, not-discarded character. Use cases with discarded blanks/comments and adjacent operators/words. Confirm resulting token boundaries and command behavior are correct."
   },
   {
     "id": "SHALL-2-3-030",
@@ -693,7 +752,7 @@
       "2. Shell Command Language",
       "2.3 Token Recognition"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Test that once a token starts, characters keep appending until a delimiting rule applies. Use suffix-attachment cases (for example substitution result followed by literal suffix) and verify they stay in one token where required. Confirm output reflects intact token construction."
   },
   {
     "id": "SHALL-2-3-031",
@@ -715,7 +774,7 @@
       "2. Shell Command Language",
       "2.3 Token Recognition"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify a delimited token contains exactly the original input span between token start and end delimiters, including quoting characters. Use cases with embedded quotes/substitution syntax and confirm token content is preserved for later phases as specified."
   },
   {
     "id": "SHALL-2-3-032",
@@ -733,7 +792,7 @@
       "2. Shell Command Language",
       "2.3 Token Recognition"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Test that delimiter events with zero collected token characters produce a discarded empty token. Use repeated delimiters/blanks and verify no empty argument/word is created solely by token recognition. Confirm observable argument counts and outputs."
   },
   {
     "id": "SHALL-2-3-033",
@@ -751,7 +810,7 @@
       "2. Shell Command Language",
       "2.3 Token Recognition"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify end-of-input delimits the current token if one is in progress. Use inputs where final token has no trailing blank/operator. Confirm final word is still recognized and executed correctly."
   },
   {
     "id": "SHALL-2-3-034",
@@ -773,7 +832,7 @@
       "2. Shell Command Language",
       "2.3 Token Recognition"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Test operator growth: when current character can extend an operator token, it is appended to that operator. Use constructs like >> and verify they are recognized as single multi-character operators. Confirm redirection/operator behavior matches combined token semantics."
   },
   {
     "id": "SHALL-2-3-035",
@@ -791,7 +850,7 @@
       "2. Shell Command Language",
       "2.3 Token Recognition"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify operator delimiting when the next character cannot continue the current operator token. Use boundaries where operator and following token must split. Confirm parser treats operator and subsequent token separately."
   },
   {
     "id": "SHALL-2-3-036",
@@ -825,7 +884,7 @@
       "2. Shell Command Language",
       "2.3 Token Recognition"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Test that unquoted backslash/single-quote/double-quote and unquoted $' start affect quoting state until quoted text ends. Use each quoting form and confirm subsequent characters are interpreted under the corresponding quoting rules. Observable outcomes should include literal preservation/expansion behavior expected for each quote context."
   },
   {
     "id": "SHALL-2-3-037",
@@ -855,7 +914,7 @@
       "2. Shell Command Language",
       "2.3 Token Recognition"
     ],
-    "testing_instructions": null
+    "testing_instructions": "During token recognition, verify substitutions are not executed while scanning quoted regions; token text should preserve original input bytes/operators unchanged through recognition. Use substitution syntax inside quoted spans and confirm lexing boundaries are correct before expansion phase behavior appears."
   },
   {
     "id": "SHALL-2-3-038",
@@ -873,7 +932,7 @@
       "2. Shell Command Language",
       "2.3 Token Recognition"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify reaching end of quoted field does not itself delimit the token. Use quoted text immediately followed by unquoted suffix and confirm resulting token remains contiguous. Output should demonstrate single-token concatenation."
   },
   {
     "id": "SHALL-2-3-039",
@@ -891,7 +950,7 @@
       "2. Shell Command Language",
       "2.3 Token Recognition"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Test detection of expansion candidates from unquoted '$' and '`' introducers. Include parameter, command, and arithmetic forms and verify parser identifies correct construct starts. Confirm later expansion behavior reflects recognized construct type."
   },
   {
     "id": "SHALL-2-3-040",
@@ -909,7 +968,7 @@
       "2. Shell Command Language",
       "2.3 Token Recognition"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify the shell reads enough input to find the full extent of each expansion unit before continuing tokenization. Use nested/complex expansions requiring lookahead. Confirm parsing succeeds with correct closing delimiters and boundaries."
   },
   {
     "id": "SHALL-2-3-041",
@@ -927,7 +986,7 @@
       "2. Shell Command Language",
       "2.3 Token Recognition"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Test recursive processing when expansions/quoting are nested inside substitution text. Use nested command substitutions and mixed quoting. Confirm resolved output and parsing order match recursive construct handling."
   },
   {
     "id": "SHALL-2-3-042",
@@ -945,7 +1004,7 @@
       "2. Shell Command Language",
       "2.3 Token Recognition"
     ],
-    "testing_instructions": null
+    "testing_instructions": "For nested io_here inside $(...) or backquotes, verify here-document parsing follows 2.7.4; additionally treat the specified early-terminator case as unspecified (no strict portable assertion). Focus conformance checks on defined nested here-doc behavior and avoid requiring a single outcome for unspecified branch."
   },
   {
     "id": "SHALL-2-3-043",
@@ -963,7 +1022,7 @@
       "2. Shell Command Language",
       "2.3 Token Recognition"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify characters spanning a substitution construct are included unmodified in the token during recognition, including embedded operators/quotes. Use nested substitution examples and confirm token-level preservation before later expansion steps."
   },
   {
     "id": "SHALL-2-3-044",
@@ -981,7 +1040,7 @@
       "2. Shell Command Language",
       "2.3 Token Recognition"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Test that reaching substitution end does not delimit the surrounding token. Use substitution immediately adjacent to literal suffix/prefix text and confirm single-token concatenation behavior."
   },
   {
     "id": "SHALL-2-3-045",
@@ -999,7 +1058,7 @@
       "2. Shell Command Language",
       "2.3 Token Recognition"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify when an unquoted character can start a new operator, current token is delimited first. Use word-then-operator cases and confirm parser splits at operator start appropriately."
   },
   {
     "id": "SHALL-2-3-046",
@@ -1017,7 +1076,7 @@
       "2. Shell Command Language",
       "2.3 Token Recognition"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Test that the operator-starting character itself becomes the first character of the next operator token. Confirm resulting operator semantics (for example redirection) match correct operator tokenization."
   },
   {
     "id": "SHALL-2-3-047",
@@ -1035,7 +1094,7 @@
       "2. Shell Command Language",
       "2.3 Token Recognition"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify unquoted blank characters delimit any current token and are discarded, not retained as token data. Use multiple-blank separations and confirm resulting arguments/words are separated as expected."
   },
   {
     "id": "SHALL-2-3-048",
@@ -1057,7 +1116,7 @@
       "2. Shell Command Language",
       "2.3 Token Recognition"
     ],
-    "testing_instructions": null
+    "testing_instructions": "When prior character is part of a word, verify current character appends to that word. Use contiguous non-delimiter characters and confirm they remain in one word token."
   },
   {
     "id": "SHALL-2-3-049",
@@ -1075,7 +1134,7 @@
       "2. Shell Command Language",
       "2.3 Token Recognition"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Test comment recognition at unquoted '#': characters up to but excluding next newline are discarded. Confirm preceding token content remains, comment text is ignored, and parsing resumes on next line."
   },
   {
     "id": "SHALL-2-3-050",
@@ -1093,7 +1152,74 @@
       "2. Shell Command Language",
       "2.3 Token Recognition"
     ],
-    "testing_instructions": null
+    "testing_instructions": "In program parsing mode, verify each recognized complete_command executes before tokenization/parsing of the next complete_command. Use sequential commands where earlier execution affects later parsing/expansion context. Confirm observed ordering matches this rule."
+  },
+  {
+    "id": "SHALL-2-3-051",
+    "text": "If any saved token includes a <newline> character, the behavior is unspecified.",
+    "file": "utilities/V3_chap02.html",
+    "testable": false,
+    "untestable_reason": "POSIX explicitly marks behavior unspecified; no single portable expected outcome can be asserted.",
+    "tests": [],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.3 Token Recognition"
+    ],
+    "testing_instructions": "Treat this clause as unspecified behavior: do not enforce one required result across shells."
+  },
+  {
+    "id": "SHALL-2-3-052",
+    "text": "The <newline> that ends the line is not considered part of the comment.",
+    "file": "utilities/V3_chap02.html",
+    "testable": true,
+    "untestable_reason": null,
+    "tests": [
+      {
+        "suite": "Token Recognition Rules",
+        "test": "comments ignored up to newline"
+      }
+    ],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.3 Token Recognition"
+    ],
+    "testing_instructions": "Verify comment stripping stops before the terminating newline and parsing resumes at the next line. Use a command with trailing comment followed by another command on the next line; confirm second command executes normally."
+  },
+  {
+    "id": "SHALL-2-3-053",
+    "text": "The current character is used as the start of a new word.",
+    "file": "utilities/V3_chap02.html",
+    "testable": true,
+    "untestable_reason": null,
+    "tests": [
+      {
+        "suite": "Token Recognition Rules",
+        "test": "multiple blanks between words"
+      }
+    ],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.3 Token Recognition"
+    ],
+    "testing_instructions": "Verify rule-10 fallback behavior: when no earlier token-recognition rule applies, the current character begins a new word token. Use simple adjacent word/operator scenarios and confirm expected word starts and argument boundaries."
+  },
+  {
+    "id": "SHALL-2-3-054",
+    "text": "Once a token is delimited, it is categorized as required by the grammar in 2.10 Shell Grammar.",
+    "file": "utilities/V3_chap02.html",
+    "testable": true,
+    "untestable_reason": null,
+    "tests": [
+      {
+        "suite": "Quoting and Token Recognition",
+        "test": "case/esac reserved words"
+      }
+    ],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.3 Token Recognition"
+    ],
+    "testing_instructions": "Verify delimited tokens are categorized per shell grammar (for example reserved words/operators/words) after token recognition. Use grammar-sensitive constructs such as case/esac and confirm parser category decisions match expected command structure."
   },
   {
     "id": "SHALL-V3CHAP02-1002",
@@ -1116,7 +1242,7 @@
       "2.3 Token Recognition",
       "2.3.1 Alias Substitution"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This requirement is from 2.3.1 Alias Substitution. After token categorization to TOKEN (including recursively produced tokens), alias substitution is applied when the listed conditions are satisfied.\n\nTest objective:\n\nVerify alias substitution eligibility is decided at TOKEN stage and that quoting/no-quoting and command-position context affect whether substitution occurs.\n\nWhat to test:\n\n1. TOKEN-level substitution context\n   - Use alias names in command-name position and verify substitution happens.\n\n2. Quoting prevents substitution\n   - Use quoted/escaped alias name and verify no substitution.\n\n3. Recursive token flow\n   - Use alias values that produce further tokens and verify subsequent TOKENs are considered per 2.3.1 rules.\n\nObservable behavior should be asserted via command output and execution path (expanded alias vs literal token)."
   },
   {
     "id": "SHALL-2-3-1-052",
@@ -1139,7 +1265,7 @@
       "2.3 Token Recognition",
       "2.3.1 Alias Substitution"
     ],
-    "testing_instructions": null
+    "testing_instructions": "When a TOKEN is subject to alias substitution, its alias value is processed as if read from input and token recognition resumes at the start of that alias text.\n\nTest objective:\n\nVerify substituted alias text is re-tokenized and interpreted as fresh shell input.\n\nWhat to test:\n\n1. Basic alias replacement and execution\n   - Define alias to command text and verify resulting command runs.\n\n2. Token recognition restart at replacement start\n   - Use alias value containing multiple tokens/operators and verify they are recognized normally as if typed directly.\n\n3. Follow-on parsing continuity\n   - Confirm tokens after the replaced TOKEN are still processed correctly in sequence."
   },
   {
     "id": "SHALL-V3CHAP02-1001-DUP51",
@@ -1170,7 +1296,7 @@
       "2.3 Token Recognition",
       "2.3.1 Alias Substitution"
     ],
-    "testing_instructions": null
+    "testing_instructions": "If an alias replacement ends in an applicable <blank>, the shell continues checking the next TOKEN for alias substitution, repeating until conditions stop.\n\nTest objective:\n\nVerify trailing-blank chaining of alias substitutions.\n\nWhat to test:\n\n1. Single-step chain\n   - Alias A ends with blank and next TOKEN B is alias; verify B is substituted.\n\n2. Multi-step chain\n   - Continue chaining through more than one alias and verify process stops at first non-alias or replacement without trailing blank.\n\n3. Non-chain control\n   - Confirm behavior when replacement does not end in qualifying blank does not force alias check of next token by this rule."
   },
   {
     "id": "SHALL-2-3-1-053",
@@ -1193,7 +1319,7 @@
       "2.3 Token Recognition",
       "2.3.1 Alias Substitution"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This clause allows deferred visibility of alias changes but requires they take effect no later than completion of the currently executing complete_command.\n\nTest objective:\n\nVerify alias updates become effective by the required boundary.\n\nWhat to test:\n\n1. Change within a complete_command\n   - In contexts where timing matters, confirm effect may be deferred during current complete_command.\n\n2. Post-boundary effect\n   - Verify updated alias behavior is visible no later than next complete_command."
   },
   {
     "id": "SHALL-2-3-1-054",
@@ -1212,21 +1338,105 @@
       "2.3 Token Recognition",
       "2.3.1 Alias Substitution"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Alias changes shall not take effect out of order.\n\nTest objective:\n\nVerify multiple alias changes are observed in program order.\n\nWhat to test:\n\n1. Sequential alias redefinitions\n   - Apply several alias changes and execute commands at checkpoints.\n\n2. Order preservation\n   - Confirm observed substitutions reflect the most recent in-order change, without reordering anomalies."
   },
   {
     "id": "SHALL-2-3-1-055",
     "text": "When used as specified by this volume of POSIX.1-2024, alias definitions shall not be inherited by separate invocations of the shell or by the utility execution environments invoked by the shell; see 2.13 Shell Execution Environment .",
     "file": "utilities/V3_chap02.html",
     "testable": false,
-    "untestable_reason": "no-tests-yet",
+    "untestable_reason": "Requires cross-invocation environment boundaries and utility execution environments that are not covered by current matrix harness topology.",
     "tests": [],
     "section_path": [
       "2. Shell Command Language",
       "2.3 Token Recognition",
       "2.3.1 Alias Substitution"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This requirement states alias definitions are not inherited by separate shell invocations nor by utility execution environments.\n\nTesting guidance:\n\n- Treat as currently untestable in this matrix harness due to cross-process inheritance boundary constraints.\n- If tested in future, use explicit parent/child shell invocation checks and utility execution environment probes."
+  },
+  {
+    "id": "SHALL-2-3-1-056",
+    "text": "The TOKEN is a valid alias name (see XBD 3.10 Alias Name).",
+    "file": "utilities/V3_chap02.html",
+    "testable": false,
+    "untestable_reason": "Requires dedicated alias-name validity matrix that is not yet modeled in current tests.",
+    "tests": [],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.3 Token Recognition",
+      "2.3.1 Alias Substitution"
+    ],
+    "testing_instructions": "Verify alias substitution eligibility requires TOKEN to be a syntactically valid alias name. Use valid and invalid alias-name-shaped tokens and confirm only valid alias-name tokens are considered for substitution."
+  },
+  {
+    "id": "SHALL-2-3-1-057",
+    "text": "An alias with that name is in effect.",
+    "file": "utilities/V3_chap02.html",
+    "testable": false,
+    "untestable_reason": "Needs explicit in-effect/out-of-effect transition assertions not yet covered by stable portable tests.",
+    "tests": [],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.3 Token Recognition",
+      "2.3.1 Alias Substitution"
+    ],
+    "testing_instructions": "Verify substitution occurs only when an alias definition for the TOKEN currently exists. Compare behavior before/after defining and unsetting aliases."
+  },
+  {
+    "id": "SHALL-2-3-1-058",
+    "text": "The TOKEN did not either fully or, optionally, partially result from an alias substitution of the same alias name at any earlier recursion level.",
+    "file": "utilities/V3_chap02.html",
+    "testable": false,
+    "untestable_reason": "Portable recursion-level alias-substitution behavior is difficult to assert without shell-specific recursion controls.",
+    "tests": [],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.3 Token Recognition",
+      "2.3.1 Alias Substitution"
+    ],
+    "testing_instructions": "Verify the same alias name is not recursively re-applied at earlier recursion level in a way forbidden by this rule. Use self-referential/recursive alias setups and confirm behavior avoids prohibited re-substitution of same alias name."
+  },
+  {
+    "id": "SHALL-2-3-1-059",
+    "text": "Either the TOKEN is being considered for alias substitution because it follows an alias substitution whose replacement value ended with a <blank> (see below) or the TOKEN could be parsed as the command name word of a simple command (see 2.10 Shell Grammar), based on this TOKEN and the tokens (if any) that preceded it, but ignoring whether any subsequent characters would allow that.",
+    "file": "utilities/V3_chap02.html",
+    "testable": false,
+    "untestable_reason": "Requires fine-grained parser-position probes beyond current matrix test granularity.",
+    "tests": [],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.3 Token Recognition",
+      "2.3.1 Alias Substitution"
+    ],
+    "testing_instructions": "Verify alias consideration is limited to command-name position unless enabled by prior trailing-blank alias chaining. Use tokens in command-name and non-command-name positions and confirm substitution follows this eligibility rule."
+  },
+  {
+    "id": "SHALL-2-3-1-060",
+    "text": "Except that if the TOKEN meets the above conditions and would be recognized as a reserved word (see 2.4 Reserved Words) if it occurred in an appropriate place in the input, it is unspecified whether the TOKEN is subject to alias substitution.",
+    "file": "utilities/V3_chap02.html",
+    "testable": false,
+    "untestable_reason": "POSIX explicitly marks this case unspecified; no single portable expectation is valid.",
+    "tests": [],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.3 Token Recognition",
+      "2.3.1 Alias Substitution"
+    ],
+    "testing_instructions": "Treat this as unspecified behavior; do not enforce a single cross-shell conformance result."
+  },
+  {
+    "id": "SHALL-2-3-1-061",
+    "text": "If it does not add this <space>, it is unspecified whether the current token is delimited before token recognition is applied to the character (if any) that followed the TOKEN in the input.",
+    "file": "utilities/V3_chap02.html",
+    "testable": false,
+    "untestable_reason": "POSIX explicitly marks this no-added-space branch unspecified.",
+    "tests": [],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.3 Token Recognition",
+      "2.3.1 Alias Substitution"
+    ],
+    "testing_instructions": "Treat this as unspecified behavior; avoid strict pass/fail assertions for shells that choose not to add an extra space after alias replacement."
   },
   {
     "id": "SHALL-V3CHAP02-1003",
