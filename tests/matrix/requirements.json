@@ -1466,7 +1466,7 @@
       "2. Shell Command Language",
       "2.4 Reserved Words"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This requirement defines the core reserved-word set in 2.4. Test that these words are recognized as reserved words only in grammar-appropriate positions.\n\nWhat to test:\n\n1. Positive recognition for representative words\n   - Verify words like if/then/fi and case/esac are recognized in syntactic positions where reserved words are valid.\n\n2. Effect on parse structure\n   - Confirm recognition changes parse behavior (for example building compound command syntax rather than invoking an external command with the same text).\n\n3. Interaction with quoting\n   - Pair with quoted forms to confirm reserved-word recognition depends on unquoted usage (full rule details in the companion recognition-context requirement).\n\nObservable checks should focus on command behavior and parse outcomes (stdout/stderr/exit status)."
   },
   {
     "id": "SHALL-V3CHAP02-1004",
@@ -1484,7 +1484,7 @@
       "2. Shell Command Language",
       "2.4 Reserved Words"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This requirement constrains where reserved-word recognition occurs.\n\nTest objective:\n\nVerify reserved words are recognized only when unquoted and in the allowed grammar positions.\n\nWhat to test:\n\n1. Allowed positions\n   - First word of a command.\n   - First word following reserved words other than case/for/in.\n   - Third word in case (only in valid there).\n   - Third word in for (only in and do valid there).\n\n2. Disallowed positions / quoted forms\n   - Same lexemes when quoted or in other positions should not be treated as reserved words.\n\n3. Grammar-consistent behavior\n   - Confirm parse success/failure and resulting execution match the 2.10 grammar constraints."
   },
   {
     "id": "SHALL-2-4-058",
@@ -1510,7 +1510,20 @@
       "2. Shell Command Language",
       "2.4 Reserved Words"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This clause has two parts: (a) optional reserved-word recognition for [[, ]], function, namespace, select, and time with generally unspecified results, and (b) a defined rule for time when recognized as a reserved word in qualifying command-name circumstances.\n\nTest objective:\n\nVerify the defined time behavior while treating optional/unspecified keywords as non-portable.\n\nWhat to test:\n\n1. time reserved-word behavior (defined part)\n   - In contexts where time is recognized as reserved word and would otherwise execute the time utility in a specified mode, verify behavior follows the time utility specification.\n\n2. Optional keywords\n   - For [[, ]], function, namespace, select (and time in optional-recognition sense), avoid strict conformance assertions across shells because recognition/results are unspecified.\n\n3. Quoted vs unquoted context\n   - Confirm quoted forms are not treated as reserved words by this clause."
+  },
+  {
+    "id": "SHALL-2-4-059",
+    "text": "When used in circumstances where reserved words are recognized (described above), all words whose final character is a <colon> (':') are reserved; their use in those circumstances produces unspecified results.",
+    "file": "utilities/V3_chap02.html",
+    "testable": false,
+    "untestable_reason": "POSIX explicitly states resulting behavior is unspecified.",
+    "tests": [],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.4 Reserved Words"
+    ],
+    "testing_instructions": "Treat this as unspecified behavior for conformance purposes; do not require a single portable result for colon-suffixed reserved words."
   },
   {
     "id": "SHALL-2-5-059",
@@ -1528,7 +1541,72 @@
       "2. Shell Command Language",
       "2.5 Parameters and Variables"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This requirement constrains interpretation mode for parameter values.\n\nTest objective:\n\nVerify parameter values are treated as character data only in operations specified in character terms, rather than being globally reinterpreted outside those operations.\n\nWhat to test:\n\n1. Character-oriented operations\n   - Use operations that explicitly process characters and verify expected character-based behavior.\n\n2. Non-character-oriented contexts\n   - Confirm ordinary parameter storage/transport does not impose extra character reinterpretation semantics beyond what the invoked operation defines.\n\n3. Observable outcomes\n   - Assert via stdout/stderr/exit behavior of commands using parameter values."
+  },
+  {
+    "id": "SHALL-2-5-060",
+    "text": "A parameter can be denoted by a name, a number, or one of the special characters listed in 2.5.2 Special Parameters.",
+    "file": "utilities/V3_chap02.html",
+    "testable": false,
+    "untestable_reason": "Terminology/notation definition; covered indirectly by many downstream expansion requirements.",
+    "tests": [],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.5 Parameters and Variables"
+    ],
+    "testing_instructions": "Definition-level clause describing parameter forms (name/number/special character). Treat as foundational terminology rather than standalone executable conformance assertion."
+  },
+  {
+    "id": "SHALL-2-5-061",
+    "text": "A variable is a parameter denoted by a name.",
+    "file": "utilities/V3_chap02.html",
+    "testable": false,
+    "untestable_reason": "Terminology definition; not an independent runtime behavioral contract.",
+    "tests": [],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.5 Parameters and Variables"
+    ],
+    "testing_instructions": "Definition-level clause. Use as interpretive context for variable-related requirements rather than direct standalone testing."
+  },
+  {
+    "id": "SHALL-2-5-062",
+    "text": "A parameter is set if it has an assigned value (null is a valid value).",
+    "file": "utilities/V3_chap02.html",
+    "testable": false,
+    "untestable_reason": "State-definition clause; operationally exercised through parameter-expansion semantics in downstream sections.",
+    "tests": [],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.5 Parameters and Variables"
+    ],
+    "testing_instructions": "Interpretive rule for set/unset state, including null validity. Validate indirectly through parameter-expansion operators that distinguish unset vs null."
+  },
+  {
+    "id": "SHALL-2-5-063",
+    "text": "Once a variable is set, it can only be unset by using the unset special built-in command.",
+    "file": "utilities/V3_chap02.html",
+    "testable": false,
+    "untestable_reason": "Global exclusivity claim (\"only\") is difficult to prove exhaustively in matrix tests; covered indirectly by unset semantics tests.",
+    "tests": [],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.5 Parameters and Variables"
+    ],
+    "testing_instructions": "Normative exclusivity rule for unsetting variables. In this matrix, treat as indirectly covered by unset behavior tests; exhaustive proof of absence of alternate unsetting paths is not practical."
+  },
+  {
+    "id": "SHALL-2-5-064",
+    "text": "Parameters can contain arbitrary byte sequences, except for the null byte.",
+    "file": "utilities/V3_chap02.html",
+    "testable": false,
+    "untestable_reason": "Requires comprehensive byte-domain and null-byte transport validation across shell internals; not practical in current harness.",
+    "tests": [],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.5 Parameters and Variables"
+    ],
+    "testing_instructions": "Constraint on parameter value domain. Treat null-byte exclusion and arbitrary-byte allowance as foundational limits referenced by later behavior; standalone exhaustive byte-domain conformance testing is out of scope for current matrix."
   },
   {
     "id": "SHALL-2-5-1-060",
@@ -1551,7 +1629,7 @@
       "2.5 Parameters and Variables",
       "2.5.1 Positional Parameters"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This requirement in 2.5.1 states positional-parameter digits are interpreted as decimal, including with leading zero.\n\nTest objective:\n\nVerify numeric interpretation of positional parameter references is decimal, not octal, when digits include leading zero.\n\nWhat to test:\n\n1. Decimal interpretation with leading zero\n   - Use positional expansions that include leading zeros (for example ${08} where valid context applies) and verify they target decimal parameter index.\n\n2. Distinguish from special parameter 0 behavior\n   - Confirm cases like $01 behave as special-parameter 0 followed by literal digit where brace syntax is not used, consistent with POSIX examples.\n\n3. Observable checks\n   - Assert by comparing expanded values against known argument lists."
   },
   {
     "id": "SHALL-2-5-1-061",
@@ -1578,7 +1656,35 @@
       "2.5 Parameters and Variables",
       "2.5.1 Positional Parameters"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This requirement mandates braces when referencing positional parameters with more than one digit.\n\nTest objective:\n\nVerify portable usage requires brace form for multi-digit positional parameters.\n\nWhat to test:\n\n1. Braced multi-digit expansion\n   - Use ${10} (and similar) and verify it expands to the intended positional parameter.\n\n2. Non-braced contrast\n   - Compare with $10 and verify it is interpreted as $1 followed by literal 0, matching POSIX examples.\n\n3. Observable checks\n   - Provide argument vectors where the two forms produce distinct outputs to confirm parsing difference."
+  },
+  {
+    "id": "SHALL-2-5-1-062",
+    "text": "A positional parameter is a parameter denoted by a decimal representation of a positive integer.",
+    "file": "utilities/V3_chap02.html",
+    "testable": false,
+    "untestable_reason": "Terminology/definition clause; exercised indirectly by positional-parameter expansion behavior.",
+    "tests": [],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.5 Parameters and Variables",
+      "2.5.1 Positional Parameters"
+    ],
+    "testing_instructions": "Definition-level clause describing what counts as a positional parameter. Use as interpretive context for executable positional-expansion requirements."
+  },
+  {
+    "id": "SHALL-2-5-1-063",
+    "text": "Positional parameters are initially assigned when the shell is invoked (see sh), temporarily replaced when a shell function is invoked (see 2.9.5 Function Definition Command), and can be reassigned with the set special built-in command.",
+    "file": "utilities/V3_chap02.html",
+    "testable": false,
+    "untestable_reason": "Composite lifecycle clause spanning invocation, function call, and set semantics; currently covered indirectly by multiple section-specific tests.",
+    "tests": [],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.5 Parameters and Variables",
+      "2.5.1 Positional Parameters"
+    ],
+    "testing_instructions": "Lifecycle rule for positional parameters across shell invocation, function scope, and set-based reassignment. Treat as a cross-cutting constraint that is validated indirectly by dedicated tests in sh options, functions, and set behavior sections."
   },
   {
     "id": "SHALL-2-5-2-062",
@@ -1601,7 +1707,7 @@
       "2.5 Parameters and Variables",
       "2.5.2 Special Parameters"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Umbrella clause for special parameters in 2.5.2. Verify that each listed special parameter expands according to its dedicated rule; this entry is validated through coverage of the per-parameter requirements below."
   },
   {
     "id": "SHALL-2-5-2-063",
@@ -1620,7 +1726,7 @@
       "2.5 Parameters and Variables",
       "2.5.2 Special Parameters"
     ],
-    "testing_instructions": null
+    "testing_instructions": "For special parameters that initially produce fields from positional parameters in field-splitting contexts, verify empty fields may be discarded and non-empty fields are split per 2.6.5. Use crafted positional values containing IFS separators and confirm resulting field set."
   },
   {
     "id": "SHALL-2-5-2-064",
@@ -1651,7 +1757,7 @@
       "2.5 Parameters and Variables",
       "2.5.2 Special Parameters"
     ],
-    "testing_instructions": null
+    "testing_instructions": "When the specified double-quote conditions for '@' hold, verify initial fields remain separate, with first/last field joining behavior when embedded within surrounding word text. Assert resulting argument boundaries precisely."
   },
   {
     "id": "SHALL-2-5-2-065",
@@ -1682,7 +1788,7 @@
       "2.5 Parameters and Variables",
       "2.5.2 Special Parameters"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify '@' with no positional parameters yields zero fields, including double-quoted contexts, and cover the quoted-null-string embedding exception/unspecified branch without enforcing unspecified outcomes."
   },
   {
     "id": "SHALL-2-5-2-067",
@@ -1709,7 +1815,7 @@
       "2.5 Parameters and Variables",
       "2.5.2 Special Parameters"
     ],
-    "testing_instructions": null
+    "testing_instructions": "In contexts without field splitting, verify '*' joins positional parameters into one field using IFS first char, or space when IFS unset, or no separator when IFS is null. Assert exact joined output."
   },
   {
     "id": "SHALL-2-5-2-068",
@@ -1728,7 +1834,7 @@
       "2.5 Parameters and Variables",
       "2.5.2 Special Parameters"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify '#' reports the decimal count of positional parameters and excludes parameter 0. Use controlled argument vectors and assert exact numeric stdout."
   },
   {
     "id": "SHALL-2-5-2-069",
@@ -1751,7 +1857,7 @@
       "2.5 Parameters and Variables",
       "2.5.2 Special Parameters"
     ],
-    "testing_instructions": null
+    "testing_instructions": "For '?' status semantics, verify terminated pipeline cases map to the pipeline exit status. Where signal-stopped pipeline behavior is optional/interactive-specific, avoid strict portable assertions unless environment guarantees it."
   },
   {
     "id": "SHALL-2-5-2-070",
@@ -1770,7 +1876,7 @@
       "2.5 Parameters and Variables",
       "2.5.2 Special Parameters"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify special parameter '?' is initialized to 0 at shell startup before commands run. Use minimal shell invocations and assert initial value."
   },
   {
     "id": "SHALL-2-5-2-071",
@@ -1789,7 +1895,7 @@
       "2.5 Parameters and Variables",
       "2.5.2 Special Parameters"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify subshell creation preserves '?' value from invoking shell environment. Set a known status before subshell entry and assert matching value inside subshell."
   },
   {
     "id": "SHALL-2-5-2-072",
@@ -1808,7 +1914,7 @@
       "2.5 Parameters and Variables",
       "2.5.2 Special Parameters"
     ],
-    "testing_instructions": null
+    "testing_instructions": "For interactive shells, verify '$-' includes option flag i regardless of explicit invocation flags. Use interactive-mode test harness and assert presence of 'i' in expansion."
   },
   {
     "id": "SHALL-2-5-2-073",
@@ -1831,7 +1937,159 @@
       "2.5 Parameters and Variables",
       "2.5.2 Special Parameters"
     ],
-    "testing_instructions": null
+    "testing_instructions": "Verify '$' expands to same value in subshell as in current shell, per 2.13 subshell semantics. Compare parent and subshell expansions directly."
+  },
+  {
+    "id": "SHALL-2-5-2-074",
+    "text": "'@' expands to the positional parameters, starting from one, initially producing one field for each positional parameter that is set.",
+    "file": "utilities/V3_chap02.html",
+    "testable": true,
+    "untestable_reason": null,
+    "tests": [
+      {
+        "suite": "Parameters and Variables",
+        "test": "@ expands positional parameters in order"
+      }
+    ],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.5 Parameters and Variables",
+      "2.5.2 Special Parameters"
+    ],
+    "testing_instructions": "Core '@' baseline: positional parameters map to fields in order from 1. Validate indirectly via detailed @ expansion rules and field-shape tests."
+  },
+  {
+    "id": "SHALL-2-5-2-075",
+    "text": "'*' expands to the positional parameters, starting from one, initially producing one field for each positional parameter that is set.",
+    "file": "utilities/V3_chap02.html",
+    "testable": true,
+    "untestable_reason": null,
+    "tests": [
+      {
+        "suite": "Parameters and Variables",
+        "test": "* expands positional parameters in order"
+      }
+    ],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.5 Parameters and Variables",
+      "2.5.2 Special Parameters"
+    ],
+    "testing_instructions": "Core '*' baseline: positional parameters are source fields in order from 1, with final behavior determined by splitting context rules."
+  },
+  {
+    "id": "SHALL-2-5-2-076",
+    "text": "'#' expands to the shortest representation of the decimal number of positional parameters.",
+    "file": "utilities/V3_chap02.html",
+    "testable": true,
+    "untestable_reason": null,
+    "tests": [
+      {
+        "suite": "Parameters and Variables",
+        "test": "# expands to decimal positional count"
+      }
+    ],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.5 Parameters and Variables",
+      "2.5.2 Special Parameters"
+    ],
+    "testing_instructions": "Verify '#' yields decimal positional-parameter count string; treated as baseline companion to the explicit 'exclude parameter 0' clause."
+  },
+  {
+    "id": "SHALL-2-5-2-077",
+    "text": "'?' expands to the shortest representation of the decimal exit status of the pipeline executed from the current shell execution environment that most recently either terminated or, optionally but only if the shell is interactive and job control is enabled, was stopped by a signal.",
+    "file": "utilities/V3_chap02.html",
+    "testable": true,
+    "untestable_reason": null,
+    "tests": [
+      {
+        "suite": "Parameters and Variables",
+        "test": "? reflects most recent pipeline status"
+      }
+    ],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.5 Parameters and Variables",
+      "2.5.2 Special Parameters"
+    ],
+    "testing_instructions": "Composite '?' baseline clause; validate through narrower requirements for initialization, pipeline termination mapping, and subshell preservation."
+  },
+  {
+    "id": "SHALL-2-5-2-078",
+    "text": "'-' (hyphen) expands to the current option flags as single-letter option names concatenated into a string as specified on invocation, by set, or implicitly by the shell; it is unspecified whether -c and -s are included in '$-'.",
+    "file": "utilities/V3_chap02.html",
+    "testable": true,
+    "untestable_reason": null,
+    "tests": [
+      {
+        "suite": "Parameters and Variables",
+        "test": "$- includes options enabled by set"
+      }
+    ],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.5 Parameters and Variables",
+      "2.5.2 Special Parameters"
+    ],
+    "testing_instructions": "Validate '$-' option-flag expansion cautiously; do not assert -c/-s inclusion because POSIX marks that portion unspecified."
+  },
+  {
+    "id": "SHALL-2-5-2-079",
+    "text": "'$' expands to the shortest representation of the decimal process ID of the invoked shell.",
+    "file": "utilities/V3_chap02.html",
+    "testable": true,
+    "untestable_reason": null,
+    "tests": [
+      {
+        "suite": "Parameters and Variables",
+        "test": "$$ is decimal process id"
+      }
+    ],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.5 Parameters and Variables",
+      "2.5.2 Special Parameters"
+    ],
+    "testing_instructions": "Verify '$' yields current shell PID string in decimal form; treat as baseline companion to subshell-preservation rule."
+  },
+  {
+    "id": "SHALL-2-5-2-080",
+    "text": "'!' expands to the shortest representation of the decimal process ID associated with the most recent asynchronous AND-OR list executed from the current shell execution environment, or the last command in the most recently resumed job-control background pipeline via bg, whichever is most recent.",
+    "file": "utilities/V3_chap02.html",
+    "testable": true,
+    "untestable_reason": null,
+    "tests": [
+      {
+        "suite": "Parameters and Variables",
+        "test": "$! gives pid of most recent async list"
+      }
+    ],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.5 Parameters and Variables",
+      "2.5.2 Special Parameters"
+    ],
+    "testing_instructions": "Async/job-control dependent '!'-PID behavior; defer strict conformance assertion unless harness provides deterministic background-job control timing."
+  },
+  {
+    "id": "SHALL-2-5-2-081",
+    "text": "0 expands to the name of the shell or shell script.",
+    "file": "utilities/V3_chap02.html",
+    "testable": true,
+    "untestable_reason": null,
+    "tests": [
+      {
+        "suite": "Parameters and Variables",
+        "test": "$0 expands to shell or script name"
+      }
+    ],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.5 Parameters and Variables",
+      "2.5.2 Special Parameters"
+    ],
+    "testing_instructions": "Validate '$0' meaning through sh invocation-form tests; this clause serves as high-level contract with derivation defined in sh utility description."
   },
   {
     "id": "SHALL-2-5-3-074",
@@ -2095,7 +2353,7 @@
       "2.5 Parameters and Variables",
       "2.5.2 Special Parameters"
     ],
-    "testing_instructions": null
+    "testing_instructions": "(Currently mapped to 2.5.2 in requirements.json.) Verify PPID value in subshell remains the parent-of-current-shell value, not the subshell process's immediate parent id in conflicting interpretation. Assert parent/subshell PPID equality under harness conditions."
   },
   {
     "id": "SHALL-V3CHAP02-1004-DUP84",
