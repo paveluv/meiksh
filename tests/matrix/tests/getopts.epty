@@ -330,7 +330,7 @@ requirement "SHALL-GETOPTS-1205" doc="The invoking program name shall be the val
 
 begin test "diagnostic message written to stderr for unknown option"
   begin script
-    $SHELL -c 'OPTIND=1; set -- -z; getopts ab name' 2>&1
+    $SHELL -c 'OPTIND=1; set -- -z; getopts ab name'
   end script
   not_expect_stderr ""
 end test "diagnostic message written to stderr for unknown option"
@@ -339,7 +339,7 @@ requirement "SHALL-GETOPTS-1204" doc="Whenever an error is detected and the firs
 
 begin test "diagnostic message written to stderr for missing argument"
   begin script
-    $SHELL -c 'OPTIND=1; set -- -f; getopts f: name' 2>&1
+    $SHELL -c 'OPTIND=1; set -- -f; getopts f: name'
   end script
   not_expect_stderr ""
 end test "diagnostic message written to stderr for missing argument"

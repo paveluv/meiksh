@@ -314,7 +314,7 @@ begin test "backslash-quoting preserves literal special characters"
   begin script
     echo \| \& \; \< \> \( \) \$ \` \\ \"
   end script
-  expect_stdout "| & ; < > ( ) $ ` \\ \""
+  expect_stdout "\| & ; < > \( \) \$ ` \\ """
 end test "backslash-quoting preserves literal special characters"
 
 requirement "SHALL-V3CHAP02-1000" doc="The application shall quote the following characters if they are to represent themselves: | & ; < > ( ) $ ` \\ \" ' <space> <tab> <newline> and the following might need to be quoted under certain circumstances."
@@ -323,7 +323,7 @@ begin test "single-quoting preserves literal special characters"
   begin script
     echo '| & ; < > ( ) $ ` \ "'
   end script
-  expect_stdout "| & ; < > ( ) $ ` \\ \""
+  expect_stdout "\| & ; < > \( \) \$ ` \\ """
 end test "single-quoting preserves literal special characters"
 
 requirement "SHALL-V3CHAP02-1000" doc="The application shall quote the following characters if they are to represent themselves: | & ; < > ( ) $ ` \\ \" ' <space> <tab> <newline> and the following might need to be quoted under certain circumstances."
@@ -332,7 +332,7 @@ begin test "double-quoting preserves literal pipe semicolon angle parens"
   begin script
     echo "| & ; < > ( )"
   end script
-  expect_stdout "| & ; < > ( )"
+  expect_stdout "\| & ; < > \( \)"
 end test "double-quoting preserves literal pipe semicolon angle parens"
 
 requirement "SHALL-V3CHAP02-1000" doc="The application shall quote the following characters if they are to represent themselves: | & ; < > ( ) $ ` \\ \" ' <space> <tab> <newline> and the following might need to be quoted under certain circumstances."
@@ -341,7 +341,7 @@ begin test "quoting preserves literal space and tab in single argument"
   begin script
     $SHELL -c 'for a in "$@"; do echo "[$a]"; done' sh "hello world" "a	b"
   end script
-  expect_stdout "[hello world]\n[a	b]"
+  expect_stdout "\[hello world\]\n\[a	b\]"
 end test "quoting preserves literal space and tab in single argument"
 
 requirement "SHALL-V3CHAP02-1000" doc="The application shall quote the following characters if they are to represent themselves: | & ; < > ( ) $ ` \\ \" ' <space> <tab> <newline> and the following might need to be quoted under certain circumstances."
@@ -360,7 +360,7 @@ begin test "quoting prevents glob expansion of * ? [ ]"
   begin script
     echo '*' '?' '[abc]'
   end script
-  expect_stdout "* ? [abc]"
+  expect_stdout "\* \? \[abc\]"
 end test "quoting prevents glob expansion of * ? [ ]"
 
 requirement "SHALL-V3CHAP02-1000" doc="The application shall quote the following characters if they are to represent themselves: | & ; < > ( ) $ ` \\ \" ' <space> <tab> <newline> and the following might need to be quoted under certain circumstances."
@@ -411,7 +411,7 @@ begin test "dollar-single-quote variable-length escapes terminate correctly"
   begin script
     printf "%s|%s|%s|%s\n" $'\x41' $'\x41Z' $'\101' $'\1012'
   end script
-  expect_stdout "A|AZ|A|A2"
+  expect_stdout "A\|AZ\|A\|A2"
 end test "dollar-single-quote variable-length escapes terminate correctly"
 
 requirement "SHALL-V3CHAP02-1003" doc="The following words shall be recognized as reserved words: ! { } case do done elif else esac fi for if in then until while."

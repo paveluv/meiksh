@@ -8,15 +8,14 @@ testsuite "Simple Commands - Executing Utilities and Functions"
 requirement "SHALL-2-9-1-4-289" doc="If the implementation has provided a standard utility in the form of a function, and that function definition still exists (i.e. has not been removed using unset -f or replaced via another function definition with the same name), it shall not be recognized at this point."
 requirement "SHALL-2-9-1-4-293" doc="Environment Variables : If the search is successful: If the system has implemented the utility as a built-in or as a shell function, and the built-in or function is associated with the directory that was most recently tested during the successful PATH search, that built-in or function shall be invoked."
 requirement "SHALL-2-9-1-6-300" doc="If the current shell environment is a subshell environment, the new process image shall replace the subshell environment and the shell shall continue in the environment from which that subshell environment was invoked."
-begin test "function call with var assignment permanently modifies environment"
+begin test "function call with var assignment affects function environment"
   begin script
-    my_func() { echo "func"; }
+    my_func() { echo "$my_var"; }
     my_var="old"
-    my_var="new" my_func >/dev/null
-    echo "$my_var"
+    my_var="new" my_func
   end script
   expect_stdout "new"
-end test "function call with var assignment permanently modifies environment"
+end test "function call with var assignment affects function environment"
 
 requirement "SHALL-2-9-1-2-276" doc="Variable assignments shall be performed as follows: If no command name results, variable assignments shall affect the current execution environment."
 requirement "SHALL-2-9-1-1-274" doc="Each variable assignment shall be expanded for tilde expansion, parameter expansion, command substitution, arithmetic expansion, and quote removal prior to assigning the value."
