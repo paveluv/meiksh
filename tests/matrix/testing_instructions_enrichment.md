@@ -1,11 +1,11 @@
-# Testing Guide Enrichment
+# Testing Instructions Enrichment Procedure
 
-This document describes the procedure for populating the `testing_guide`
+This document describes the procedure for populating the `testing_instructions`
 field in `requirements.json`.
 
 ## Field purpose
 
-The `testing_guide` field contains a detailed description of what needs to
+The `testing_instructions` field contains a detailed description of what needs to
 be tested for a given requirement. The requirement's `text` field alone
 often lacks sufficient context because it is extracted from a larger section
 of the POSIX specification. The testing guide bridges that gap by reading
@@ -14,7 +14,7 @@ description of the expected behavior.
 
 ## Enrichment procedure
 
-When asked to enrich `testing_guide` for a particular requirement, follow
+When asked to enrich `testing_instructions` for a particular requirement, follow
 these steps:
 
 ### 1. Locate the source file
@@ -86,7 +86,7 @@ what needs to be tested. The description should:
 
 ### 5. Store the result
 
-Set the `testing_guide` field to the resulting description string. The
+Set the `testing_instructions` field to the resulting description string. The
 field is `null` when not yet enriched.
 
 ### 6. Write or update tests
@@ -94,7 +94,7 @@ field is `null` when not yet enriched.
 Read `tests/matrix/epty_test_format.md` for the complete `.epty` syntax
 reference before writing any tests.
 
-Using the `testing_guide` as a specification, write new tests that cover
+Using the `testing_instructions` as a specification, write new tests that cover
 exactly what the guide describes. If the requirement already has tests
 linked in its `tests` array, review them first — only add new tests for
 behavior that is not already covered. If the existing tests are
