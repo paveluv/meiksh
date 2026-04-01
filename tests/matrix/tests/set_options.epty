@@ -44,12 +44,11 @@ requirement "SHALL-DESCRIPTION-592" doc="The -C option shall prevent existing re
 requirement "SHALL-DESCRIPTION-599" doc="When this option is enabled, the shell shall perform job control actions as described in 2.11 Job Control ."
 begin test "noclobber prevents overwrite with >"
   begin script
-    _f=${TMPDIR:-/tmp}/_noclobber_test_$$
+    _f=_noclobber_test
     echo original > $_f
     set -C
     echo overwritten > $_f 2>/dev/null
     cat $_f
-    rm -f $_f
   end script
   expect_stdout_line ".*original.*"
 end test "noclobber prevents overwrite with >"
@@ -57,12 +56,11 @@ end test "noclobber prevents overwrite with >"
 requirement "SHALL-DESCRIPTION-592" doc="The -C option shall prevent existing regular files from being overwritten by the shell's '>' redirection operator; the \">|\" redirection operator shall override this noclobber option for an individual file."
 begin test ">| overrides noclobber"
   begin script
-    _f=${TMPDIR:-/tmp}/_noclobber_test2_$$
+    _f=_noclobber_test2
     echo original > $_f
     set -C
     echo forced >| $_f
     cat $_f
-    rm -f $_f
   end script
   expect_stdout_line ".*forced.*"
 end test ">| overrides noclobber"

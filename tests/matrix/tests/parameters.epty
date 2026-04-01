@@ -323,16 +323,13 @@ requirement "SHALL-2-5-3-078" doc="This variable, when and only when an interact
 requirement "SHALL-2-5-3-079" doc="Before any interactive commands are read, the shell shall tokenize (see 2.3 Token Recognition ) the contents of the file, parse the tokens as a program (see 2.10 Shell Grammar ), and execute the resulting commands in the current environment. (In other words, the contents of the ENV file are not parsed as a single compound_list ."
 begin test "ENV file processed for interactive shell"
   begin script
-    _env_file=${TMPDIR:-/tmp}/_test_env_$$.sh
+    _env_file=_test_env.sh
     echo 'ENVMARKER=loaded' > $_env_file
     EFILE=$_env_file
     export EFILE
     ENV=$EFILE
     export ENV
     $SHELL -i -c 'echo $ENVMARKER' 2>/dev/null
-    rc=$?
-    rm -f $_env_file
-    exit $rc
   end script
   expect_stdout_line ".*loaded.*"
 end test "ENV file processed for interactive shell"
@@ -340,12 +337,9 @@ end test "ENV file processed for interactive shell"
 requirement "SHALL-2-5-3-078" doc="This variable, when and only when an interactive shell is invoked, shall be subjected to parameter expansion (see 2.6.2 Parameter Expansion ) by the shell and the resulting value shall be used as a pathname of a file."
 begin test "ENV is ignored for non-interactive shell"
   begin script
-    _env_file=${TMPDIR:-/tmp}/_test_env_noninteractive_$$.sh
+    _env_file=_test_env_noninteractive.sh
     echo 'echo env_ran_noninteractive' > "$_env_file"
     ENV=$_env_file $SHELL -c 'echo done'
-    rc=$?
-    rm -f "$_env_file"
-    exit $rc
   end script
   expect_stdout "done"
 end test "ENV is ignored for non-interactive shell"
@@ -355,12 +349,9 @@ requirement "SHALL-2-5-2-070" doc="The value of the special parameter '?' shall 
 requirement "SHALL-2-5-3-075" doc="Shell variables shall be initialized only from environment variables that have valid names."
 begin test "ENV set to valid file does not crash non-interactive shell"
   begin script
-    _env_file=${TMPDIR:-/tmp}/_test_env2_$$.sh
+    _env_file=_test_env2.sh
     echo 'echo env_ran' > $_env_file
     ENV=$_env_file $SHELL -c true 2>/dev/null
-    rc=$?
-    rm -f $_env_file
-    exit $rc
   end script
   expect_exit_code 0
 end test "ENV set to valid file does not crash non-interactive shell"

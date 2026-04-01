@@ -29,6 +29,9 @@
 //!
 //!   The script body is taken verbatim (no quoting/escaping needed).
 //!   $SHELL is set to the --shell value. Executed via --script-modes (default: dash-c).
+//!   Tests run in an isolated sandbox directory; prefer local relative file paths
+//!   (for example, `_tmp_file`) instead of `${TMPDIR:-/tmp}` indirections, and
+//!   do not add explicit cleanup-only commands unless cleanup behavior itself is tested.
 //!
 //! ### Non-interactive assertions (after end script):
 //!   expect_stdout "pattern"               — assert stdout matches regex
