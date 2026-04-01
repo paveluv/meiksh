@@ -156,6 +156,25 @@ begin test "backslash-newline is line continuation"
   expect_stdout "line continuation"
 end test "backslash-newline is line continuation"
 
+requirement "SHALL-2-2-1-003" doc="If a <newline> immediately follows the <backslash>, the shell shall interpret this as line continuation."
+begin test "backslash-newline line continuation between tokens"
+  begin script
+    echo \
+    hello
+  end script
+  expect_stdout "hello"
+end test "backslash-newline line continuation between tokens"
+
+requirement "SHALL-2-2-1-003" doc="If a <newline> immediately follows the <backslash>, the shell shall interpret this as line continuation."
+begin test "multiple consecutive backslash-newline continuations"
+  begin script
+    ec\
+    \
+    ho multi
+  end script
+  expect_stdout "multi"
+end test "multiple consecutive backslash-newline continuations"
+
 requirement "SHALL-2-2-2-005" doc="Enclosing characters in single-quotes ( '' ) shall preserve the literal value of each character within the single-quotes."
 requirement "SHALL-2-2-4-020" doc="These <backslash>-escape sequences shall be processed (replaced with the bytes or characters they yield) immediately prior to word expansion (see 2.6 Word Expansions ) of the word in which the dollar-single-quotes sequence occurs."
 begin test "single quotes preserve all characters literally"
