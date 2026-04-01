@@ -82,6 +82,14 @@
       {
         "suite": "Quoting and Token Recognition",
         "test": "backslash-newline is line continuation"
+      },
+      {
+        "suite": "Quoting and Token Recognition",
+        "test": "backslash-newline line continuation between tokens"
+      },
+      {
+        "suite": "Quoting and Token Recognition",
+        "test": "multiple consecutive backslash-newline continuations"
       }
     ],
     "section_path": [
@@ -89,7 +97,7 @@
       "2.2 Quoting",
       "2.2.1 Escape Character (Backslash)"
     ],
-    "testing_guide": null
+    "testing_guide": "This requirement comes from section 2.2.1 Escape Character (Backslash) of the Shell Command Language. Section 2.2 (Quoting) introduces quoting as the mechanism to remove the special meaning of certain characters or words to the shell. The various quoting mechanisms are the escape character, single-quotes, double-quotes, and dollar-single-quotes. Section 2.2.1 specifies that an unquoted backslash preserves the literal value of the following character, with one exception: when a newline immediately follows the backslash, the shell shall interpret this as line continuation rather than preserving the newline literally.\n\nThe behavioral obligation for this requirement is: when an unquoted backslash is immediately followed by a newline character, the shell treats the backslash-newline pair as a line continuation directive. The backslash and newline are both removed from the input (per the related requirement SHALL-2-2-1-004), and input continues on the next line as if no line break occurred. Because the pair is removed entirely (not replaced by whitespace), it cannot serve as a token separator (per SHALL-2-2-1-005).\n\nWhat to test:\n\n1. Basic line continuation in the middle of a word: A backslash-newline appearing within a simple word (e.g. splitting a command name or argument across two lines) should result in the two fragments being joined into a single token. For example, \"ec\" followed by backslash-newline followed by \"ho hello\" should execute \"echo hello\" and produce \"hello\" on stdout.\n\n2. Line continuation between tokens: A backslash-newline between separate words (e.g. between the command name and its argument) should act as if the two lines were joined. The continuation should not introduce any whitespace or token separation beyond what is already present. For example, \"echo \" followed by backslash-newline followed by \"hello\" should produce \"hello\" on stdout.\n\n3. Multiple consecutive line continuations: Two or more backslash-newline sequences in a row should each be removed, allowing a single logical line to span three or more physical lines.\n\n4. Line continuation does not apply when backslash is quoted: A backslash inside single-quotes or inside double-quotes (where backslash does not retain escape meaning) followed by a literal newline should NOT be treated as line continuation. The backslash and newline should be preserved literally in those contexts. Note: inside double-quotes, backslash-newline IS a line continuation (since backslash retains its escape meaning when followed by newline per section 2.2.3), so this test point only applies to single-quotes.\n\nObservable behavior: all tests verify by comparing stdout output. The shell should produce the expected joined output, confirming that line continuation was applied (or not applied, in quoted contexts)."
   },
   {
     "id": "SHALL-2-2-1-004",
