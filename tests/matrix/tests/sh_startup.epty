@@ -55,14 +55,11 @@ requirement "SHALL-SH-1018" doc="ENV shall be ignored if the real and effective 
 
 begin test "ENV file processed for interactive shell"
   begin script
-    _env_file=${TMPDIR:-/tmp}/_test_env_$$.sh
+    _env_file=_test_env.sh
     echo 'ENV_LOADED=yes' > $_env_file
     ENV=$_env_file
     export ENV
     $SHELL -i -c 'echo $ENV_LOADED' 2>/dev/null
-    rc=$?
-    rm -f $_env_file
-    exit $rc
   end script
   expect_stdout_line ".*yes.*"
 end test "ENV file processed for interactive shell"

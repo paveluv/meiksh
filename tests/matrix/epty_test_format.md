@@ -59,6 +59,10 @@ end test "name"
 - `$SHELL` is set to the target shell (e.g. `/usr/bin/bash --posix`).
 - The script runs in a clean environment with `HOME`, `TMPDIR`, `PATH`,
   `SHELL`, `LANG=C`, `LC_ALL=C`, etc.
+- Tests run in an isolated sandbox working directory; prefer simple relative
+  paths (for example `_temp_file`) over `${TMPDIR:-/tmp}` path construction.
+- Avoid explicit cleanup-only commands (`rm -f ...`) unless cleanup behavior
+  itself is the subject under test; the runner handles sandbox cleanup.
 
 ### Available assertions
 
