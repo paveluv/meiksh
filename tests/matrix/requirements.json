@@ -47,7 +47,7 @@
       "2. Shell Command Language",
       "2.2 Quoting"
     ],
-    "testing_guide": "This requirement is from section 2.2 Quoting of the Shell Command Language. It specifies two sets of characters with respect to quoting:\n\nSet 1 — Characters that SHALL be quoted to represent themselves:\n  |  &  ;  <  >  (  )  $  `  \\  \"  '  <space>  <tab>  <newline>\n\nSet 2 — Characters that MIGHT need quoting under certain circumstances:\n  *  ?  [  ]  ^  -  !  #  ~  =  %  {  ,  }\n\nThe spec note says a future version may extend when Set 2 characters are special, so applications should quote them when literal meaning is intended (except '-' which is in the portable filename character set).\n\nSection 2.2 describes four quoting mechanisms: backslash escape, single-quotes, double-quotes, and dollar-single-quotes. The here-document is another form of quoting.\n\nWhat to test:\n\n1. Each Set 1 character, when quoted (via any quoting mechanism), should pass through literally rather than being interpreted as a special character. For each character, verify that:\n   a) Backslash-quoting preserves the literal value (e.g. \\| produces literal |)\n   b) Single-quoting preserves the literal value (e.g. '|' produces literal |)\n   c) Double-quoting preserves the literal value where applicable (e.g. \"|\" produces literal |). Note that $, `, and \\ retain special meaning inside double-quotes per 2.2.3.\n\n2. Each Set 1 character, when NOT quoted, should trigger its special meaning (to confirm that quoting is indeed necessary). For example:\n   - Unquoted | creates a pipeline\n   - Unquoted & creates an asynchronous list\n   - Unquoted ; separates commands\n   - Unquoted < and > perform redirection\n   - Unquoted ( and ) create a subshell\n   - Unquoted $ introduces parameter expansion\n   - Unquoted ` introduces command substitution\n   - Unquoted \\ escapes the next character\n   - Unquoted space/tab perform word splitting\n   - Unquoted newline terminates a command\n\n3. Set 2 characters that are sometimes special should be passable literally when quoted:\n   - # when quoted is not a comment\n   - * and ? when quoted are not glob patterns\n   - [ ] when quoted are not bracket expressions\n   - ~ when quoted is not tilde expansion\n   - ! when quoted in interactive shells is not history expansion\n\nObservable behavior: Use echo or printf to output each character and verify stdout contains exactly the literal character. For characters that affect control flow (|, &, ;, newline), verify the quoting prevents the control flow behavior by checking that the character appears in the output.\n\nPreconditions: None beyond a working POSIX shell. Some Set 2 tests (! for history expansion) require an interactive shell."
+    "testing_guide": "This requirement is from section 2.2 Quoting of the Shell Command Language. It specifies two sets of characters with respect to quoting:\n\nSet 1 \u2014 Characters that SHALL be quoted to represent themselves:\n  |  &  ;  <  >  (  )  $  `  \\  \"  '  <space>  <tab>  <newline>\n\nSet 2 \u2014 Characters that MIGHT need quoting under certain circumstances:\n  *  ?  [  ]  ^  -  !  #  ~  =  %  {  ,  }\n\nThe spec note says a future version may extend when Set 2 characters are special, so applications should quote them when literal meaning is intended (except '-' which is in the portable filename character set).\n\nSection 2.2 describes four quoting mechanisms: backslash escape, single-quotes, double-quotes, and dollar-single-quotes. The here-document is another form of quoting.\n\nWhat to test:\n\n1. Each Set 1 character, when quoted (via any quoting mechanism), should pass through literally rather than being interpreted as a special character. For each character, verify that:\n   a) Backslash-quoting preserves the literal value (e.g. \\| produces literal |)\n   b) Single-quoting preserves the literal value (e.g. '|' produces literal |)\n   c) Double-quoting preserves the literal value where applicable (e.g. \"|\" produces literal |). Note that $, `, and \\ retain special meaning inside double-quotes per 2.2.3.\n\n2. Each Set 1 character, when NOT quoted, should trigger its special meaning (to confirm that quoting is indeed necessary). For example:\n   - Unquoted | creates a pipeline\n   - Unquoted & creates an asynchronous list\n   - Unquoted ; separates commands\n   - Unquoted < and > perform redirection\n   - Unquoted ( and ) create a subshell\n   - Unquoted $ introduces parameter expansion\n   - Unquoted ` introduces command substitution\n   - Unquoted \\ escapes the next character\n   - Unquoted space/tab perform word splitting\n   - Unquoted newline terminates a command\n\n3. Set 2 characters that are sometimes special should be passable literally when quoted:\n   - # when quoted is not a comment\n   - * and ? when quoted are not glob patterns\n   - [ ] when quoted are not bracket expressions\n   - ~ when quoted is not tilde expansion\n   - ! when quoted in interactive shells is not history expansion\n\nObservable behavior: Use echo or printf to output each character and verify stdout contains exactly the literal character. For characters that affect control flow (|, &, ;, newline), verify the quoting prevents the control flow behavior by checking that the character appears in the output.\n\nPreconditions: None beyond a working POSIX shell. Some Set 2 tests (! for history expansion) require an interactive shell."
   },
   {
     "id": "SHALL-2-2-1-002",
@@ -57,7 +57,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo \\\\ produces literal backslash"
       },
       {
@@ -70,7 +70,7 @@
       "2.2 Quoting",
       "2.2.1 Escape Character (Backslash)"
     ],
-    "testing_guide": "This requirement comes from section 2.2.1 Escape Character (Backslash) of the Shell Command Language. Section 2.2 (Quoting) introduces quoting as the mechanism to remove the special meaning of certain characters or words to the shell. Section 2.2.1 specifies the behavior of the backslash as an escape character.\n\nThe behavioral obligation is: when a backslash is not itself quoted (i.e., it is not inside single-quotes, not inside double-quotes except in the special cases defined by 2.2.3, and not inside dollar-single-quotes), it shall preserve the literal value of the character immediately following it. The one exception is newline, which triggers line continuation instead (covered by SHALL-2-2-1-003).\n\nWhat to test:\n\n1. Backslash before shell special characters: Each of the characters that have special meaning to the shell (|, &, ;, <, >, (, ), $, `, \\, \", ', space, tab) should pass through literally when preceded by an unquoted backslash. Verify by capturing stdout and comparing to the expected literal character.\n\n2. Backslash before glob/pattern characters: Characters like *, ?, [, ], #, ~ should be preserved literally when escaped with a backslash. For example, \\* should not trigger pathname expansion.\n\n3. Backslash before ordinary characters: When a backslash precedes a character that has no special meaning (e.g., a letter like 'a'), the backslash is consumed and the following character is preserved literally. The result is just the ordinary character.\n\n4. The 'not quoted' precondition: The backslash escape behavior only applies when the backslash itself is not quoted. A backslash inside single-quotes has no special meaning (it is literal). Inside double-quotes, backslash only escapes $, `, \\, newline, and \" (per 2.2.3). These interactions confirm the 'not quoted' clause but are primarily covered by SHALL-2-2-2-005 and SHALL-2-2-3 requirements.\n\n5. Multiple consecutive backslashes: Two unquoted backslashes (\\\\) should produce a single literal backslash, since the first backslash escapes the second.\n\n6. Newline exception: An unquoted backslash followed by a newline does NOT preserve the newline literally — it triggers line continuation. This is the explicit exception stated in the requirement and is covered in more detail by SHALL-2-2-1-003.\n\nObservable behavior: Use printf or variable assignment to capture the result of backslash-escaped characters in stdout. Verify that the output matches the expected literal character. For characters that affect control flow (|, &, ;), confirm that escaping prevents the control-flow interpretation. Exit status should be 0 for all successful cases.\n\nPreconditions: A POSIX-conforming shell. No special environment setup required. Tests should ensure that no files match glob patterns used (e.g., test in an empty directory or use patterns unlikely to match)."
+    "testing_guide": "This requirement comes from section 2.2.1 Escape Character (Backslash) of the Shell Command Language. Section 2.2 (Quoting) introduces quoting as the mechanism to remove the special meaning of certain characters or words to the shell. Section 2.2.1 specifies the behavior of the backslash as an escape character.\n\nThe behavioral obligation is: when a backslash is not itself quoted (i.e., it is not inside single-quotes, not inside double-quotes except in the special cases defined by 2.2.3, and not inside dollar-single-quotes), it shall preserve the literal value of the character immediately following it. The one exception is newline, which triggers line continuation instead (covered by SHALL-2-2-1-003).\n\nWhat to test:\n\n1. Backslash before shell special characters: Each of the characters that have special meaning to the shell (|, &, ;, <, >, (, ), $, `, \\, \", ', space, tab) should pass through literally when preceded by an unquoted backslash. Verify by capturing stdout and comparing to the expected literal character.\n\n2. Backslash before glob/pattern characters: Characters like *, ?, [, ], #, ~ should be preserved literally when escaped with a backslash. For example, \\* should not trigger pathname expansion.\n\n3. Backslash before ordinary characters: When a backslash precedes a character that has no special meaning (e.g., a letter like 'a'), the backslash is consumed and the following character is preserved literally. The result is just the ordinary character.\n\n4. The 'not quoted' precondition: The backslash escape behavior only applies when the backslash itself is not quoted. A backslash inside single-quotes has no special meaning (it is literal). Inside double-quotes, backslash only escapes $, `, \\, newline, and \" (per 2.2.3). These interactions confirm the 'not quoted' clause but are primarily covered by SHALL-2-2-2-005 and SHALL-2-2-3 requirements.\n\n5. Multiple consecutive backslashes: Two unquoted backslashes (\\\\) should produce a single literal backslash, since the first backslash escapes the second.\n\n6. Newline exception: An unquoted backslash followed by a newline does NOT preserve the newline literally \u2014 it triggers line continuation. This is the explicit exception stated in the requirement and is covered in more detail by SHALL-2-2-1-003.\n\nObservable behavior: Use printf or variable assignment to capture the result of backslash-escaped characters in stdout. Verify that the output matches the expected literal character. For characters that affect control flow (|, &, ;), confirm that escaping prevents the control-flow interpretation. Exit status should be 0 for all successful cases.\n\nPreconditions: A POSIX-conforming shell. No special environment setup required. Tests should ensure that no files match glob patterns used (e.g., test in an empty directory or use patterns unlikely to match)."
   },
   {
     "id": "SHALL-2-2-1-003",
@@ -116,7 +116,7 @@
       "2.2 Quoting",
       "2.2.1 Escape Character (Backslash)"
     ],
-    "testing_guide": null
+    "testing_guide": "This requirement comes from section 2.2.1 Escape Character (Backslash) of the Shell Command Language. Section 2.2 (Quoting) introduces quoting as the mechanism to remove the special meaning of certain characters or words to the shell; the various quoting mechanisms are the escape character, single-quotes, double-quotes, and dollar-single-quotes. Section 2.2.1 specifies that an unquoted backslash preserves the literal value of the following character, except when the following character is a newline \u2014 in that case, the backslash-newline pair is treated as line continuation.\n\nThe behavioral obligation for this requirement is: when an unquoted backslash is immediately followed by a newline, both characters shall be removed from the input before the shell splits the input into tokens. This has several important consequences:\n\n1. Token joining: If the backslash-newline appears within what would otherwise be a single token, the characters on either side are concatenated. For example, \"echo a\\\n b\" must produce \"ab\" because the backslash-newline is removed and \"a\" joins directly with \"b\" before tokenization.\n\n2. Cannot serve as a token separator: Because the backslash-newline is removed entirely (not replaced by whitespace), it cannot act as a boundary between tokens. This means \"echo a\\\n b\" is the same as \"echo ab\", not \"echo a b\".\n\n3. Command name joining: The removal happens before tokenization, so a backslash-newline in the middle of a command name must still produce the correct command. For example, \"ec\\\nho hello\" must execute \"echo hello\".\n\n4. Keyword and operator joining: Since removal happens before token recognition, a backslash-newline within a shell keyword (e.g., \"wh\\\nile\") or within the characters of a multi-character operator should still be recognized. However, backslash-newline between the characters of an operator like \"||\" is less commonly tested.\n\n5. Multiple consecutive continuations: Multiple backslash-newline pairs in a row should all be removed. For example, \"ec\\\n\\\nho multi\" should execute as \"echo multi\".\n\n6. Interaction with quoting: A backslash inside single quotes or double quotes does not trigger line continuation \u2014 only an unquoted backslash followed by a newline does. Inside double quotes, backslash-newline is still a line continuation (since backslash retains its escape meaning before newline in double quotes). Inside single quotes, the backslash is literal and no line continuation occurs.\n\n7. Interaction with here-documents: Inside a here-document with an unquoted delimiter, backslash-newline is a line continuation and the pair is removed. With a quoted delimiter, backslash-newline is preserved literally.\n\n8. Ordering: The removal of backslash-newline happens in the initial input reading phase, prior to any tokenization, parsing, or word expansion. This is step 2 of the general shell processing overview in section 2.1.\n\nObservable behaviors to test:\n- Exit status: Commands formed via line continuation should exit 0 when the equivalent single-line command would.\n- Stdout: Output should match what the joined (continuation-removed) command would produce.\n- Stderr: No errors should be produced when backslash-newline is used in valid positions.\n- Side effects: Variable assignments, redirections, and other operations split across continuation lines should behave identically to their single-line equivalents.\n\nEdge cases:\n- Backslash-newline at the very start of input (before any command characters).\n- Backslash-newline between a variable name and its value in an assignment (e.g., \"x=\\\nhello\").\n- Backslash-newline in the middle of a quoted string within double quotes.\n- Backslash-newline after the last visible character on a line (with trailing whitespace \u2014 the newline must immediately follow the backslash for continuation to apply).\n- Backslash-newline inside command substitution $(...) and backtick substitution.\n- Multiple backslash-newline pairs immediately adjacent."
   },
   {
     "id": "SHALL-2-2-2-005",
@@ -321,7 +321,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf newline escape"
       },
       {
@@ -611,19 +611,19 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %d zero"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %o zero"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %u zero"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf zero-padded hex %04x"
       },
       {
@@ -645,7 +645,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %b two arguments"
       },
       {
@@ -743,11 +743,11 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "Maybe-Builtin — pwd (Print Working Directory)",
+        "suite": "Maybe-Builtin \u2014 pwd (Print Working Directory)",
         "test": "pwd -L has no unnecessary double slashes"
       },
       {
-        "suite": "Maybe-Builtin — pwd (Print Working Directory)",
+        "suite": "Maybe-Builtin \u2014 pwd (Print Working Directory)",
         "test": "pwd -P from deep dir has no unnecessary double slashes"
       },
       {
@@ -1270,7 +1270,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %#o with leading zero"
       },
       {
@@ -1597,7 +1597,7 @@
         "test": "environment variable is visible via env"
       },
       {
-        "suite": "command — Extended Tests",
+        "suite": "command \u2014 Extended Tests",
         "test": "variable references expand in assignment values"
       }
     ],
@@ -1929,7 +1929,7 @@
         "test": "$* and $@ without quotes split on IFS"
       },
       {
-        "suite": "command — Extended Tests",
+        "suite": "command \u2014 Extended Tests",
         "test": "command does not perform alias expansion"
       }
     ],
@@ -1969,7 +1969,7 @@
       "2.5 Parameters and Variables",
       "2.5.3 Shell Variables"
     ],
-    "testing_guide": "This requirement concerns the expansion of the PS1 shell variable in interactive shells. PS1 is expanded in two passes before being written to standard error as the prompt. One pass performs exclamation-mark expansion (replacing '!' with the history number). The other pass — the one this requirement addresses — shall perform the standard word expansions defined in section 2.6: tilde expansion, parameter expansion, command substitution, and arithmetic expansion (the specification leaves it unspecified whether command substitution and arithmetic expansion are actually performed). The order of the two passes is unspecified.\n\nWhat to test:\n\n1. Parameter expansion in PS1: Set PS1 to a value containing a parameter reference (e.g. PS1='$HOME> ') and verify the prompt written to stderr contains the expanded value of the variable, not the literal string '$HOME> '.\n\n2. Tilde expansion in PS1: Set PS1='~/ ' and verify the prompt contains the expanded home directory path.\n\n3. Arithmetic expansion in PS1 (if supported): Set PS1='$((1+1))> ' and check whether the prompt shows '2> '. Note that the specification says it is unspecified whether arithmetic expansion is performed, so both '2> ' and '$((1+1))> ' are conforming results.\n\n4. Command substitution in PS1 (if supported): Set PS1='$(echo hi)> ' and check whether the prompt shows 'hi> '. Again, it is unspecified whether command substitution is performed.\n\n5. Interaction between the two passes: Since the pass order is unspecified, verify that if PS1 contains both '!' (for history number) and parameter references, both are expanded. For example, PS1='!:$USER> ' should produce something like '42:alice> '.\n\n6. The expanded PS1 value must be written to standard error, not standard output.\n\nPreconditions:\n- The shell must be interactive (PS1 processing only occurs in interactive shells).\n- The User Portability Utilities option must be supported (PS1 processing is conditional on this).\n\nContext from parent sections:\n- Section 2.5 defines that a variable is a parameter denoted by a name, and variables are initialized from the environment.\n- Section 2.6 specifies the word expansion order: tilde expansion, parameter expansion, command substitution, and arithmetic expansion (step 1), then field splitting (step 2), then pathname expansion (step 3), then quote removal (step 4). For PS1, the specification only refers to 'the other expansion(s) according to the rules in 2.6 Word Expansions' without limiting which of these sub-steps apply. However, since the result is written to stderr (not used as a command word), field splitting and pathname expansion are not expected to apply in the usual sense.\n- The default value of PS1 is '$ ' (or an implementation-defined value for privileged users)."
+    "testing_guide": "This requirement concerns the expansion of the PS1 shell variable in interactive shells. PS1 is expanded in two passes before being written to standard error as the prompt. One pass performs exclamation-mark expansion (replacing '!' with the history number). The other pass \u2014 the one this requirement addresses \u2014 shall perform the standard word expansions defined in section 2.6: tilde expansion, parameter expansion, command substitution, and arithmetic expansion (the specification leaves it unspecified whether command substitution and arithmetic expansion are actually performed). The order of the two passes is unspecified.\n\nWhat to test:\n\n1. Parameter expansion in PS1: Set PS1 to a value containing a parameter reference (e.g. PS1='$HOME> ') and verify the prompt written to stderr contains the expanded value of the variable, not the literal string '$HOME> '.\n\n2. Tilde expansion in PS1: Set PS1='~/ ' and verify the prompt contains the expanded home directory path.\n\n3. Arithmetic expansion in PS1 (if supported): Set PS1='$((1+1))> ' and check whether the prompt shows '2> '. Note that the specification says it is unspecified whether arithmetic expansion is performed, so both '2> ' and '$((1+1))> ' are conforming results.\n\n4. Command substitution in PS1 (if supported): Set PS1='$(echo hi)> ' and check whether the prompt shows 'hi> '. Again, it is unspecified whether command substitution is performed.\n\n5. Interaction between the two passes: Since the pass order is unspecified, verify that if PS1 contains both '!' (for history number) and parameter references, both are expanded. For example, PS1='!:$USER> ' should produce something like '42:alice> '.\n\n6. The expanded PS1 value must be written to standard error, not standard output.\n\nPreconditions:\n- The shell must be interactive (PS1 processing only occurs in interactive shells).\n- The User Portability Utilities option must be supported (PS1 processing is conditional on this).\n\nContext from parent sections:\n- Section 2.5 defines that a variable is a parameter denoted by a name, and variables are initialized from the environment.\n- Section 2.6 specifies the word expansion order: tilde expansion, parameter expansion, command substitution, and arithmetic expansion (step 1), then field splitting (step 2), then pathname expansion (step 3), then quote removal (step 4). For PS1, the specification only refers to 'the other expansion(s) according to the rules in 2.6 Word Expansions' without limiting which of these sub-steps apply. However, since the result is written to stderr (not used as a command word), field splitting and pathname expansion are not expected to apply in the usual sense.\n- The default value of PS1 is '$ ' (or an implementation-defined value for privileged users)."
   },
   {
     "id": "SHALL-2-5-3-090",
@@ -2173,11 +2173,11 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "Maybe-Builtin — pwd (Print Working Directory)",
+        "suite": "Maybe-Builtin \u2014 pwd (Print Working Directory)",
         "test": "pwd -L outputs absolute path"
       },
       {
-        "suite": "Maybe-Builtin — pwd (Print Working Directory)",
+        "suite": "Maybe-Builtin \u2014 pwd (Print Working Directory)",
         "test": "pwd -L with symlink PWD outputs absolute path"
       },
       {
@@ -2700,19 +2700,19 @@
         "test": "kill -s NONEXISTENT exits non-zero"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %d with trailing non-numeric exits non-zero"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %o with non-numeric arg exits non-zero"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %u with non-numeric arg exits non-zero"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %x with non-numeric arg exits non-zero"
       },
       {
@@ -3055,11 +3055,11 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo --version prints --version"
       },
       {
-        "suite": "Maybe-Builtin — pwd (Print Working Directory)",
+        "suite": "Maybe-Builtin \u2014 pwd (Print Working Directory)",
         "test": "pwd output ends with exactly one trailing newline"
       },
       {
@@ -3410,7 +3410,7 @@
         "test": "division by zero fails"
       },
       {
-        "suite": "command — Extended Tests",
+        "suite": "command \u2014 Extended Tests",
         "test": "command -v for nonexistent command fails"
       }
     ],
@@ -3441,7 +3441,7 @@
         "test": "quoted tilde does not expand"
       },
       {
-        "suite": "command — Extended Tests",
+        "suite": "command \u2014 Extended Tests",
         "test": "multiple assignments in one command export"
       }
     ],
@@ -3707,7 +3707,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo AB\\c produces exactly 2 bytes"
       },
       {
@@ -4229,7 +4229,7 @@
         "test": "multiple here-documents on one line are read in order"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %b newline"
       }
     ],
@@ -4986,7 +4986,7 @@
         "test": "colon-equals assignment on unset"
       },
       {
-        "suite": "command — Extended Tests",
+        "suite": "command \u2014 Extended Tests",
         "test": "tilde expansion in assignment context"
       }
     ],
@@ -5026,7 +5026,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %b \\c stops subsequent %b arguments"
       },
       {
@@ -5908,27 +5908,27 @@
         "test": "if true branch"
       },
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo -- -- prints both double dashes"
       },
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo --help prints --help"
       },
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo -abc prints -abc"
       },
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo -x prints -x"
       },
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo hello produces 6 bytes (with trailing newline)"
       },
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo with no args produces 1 byte (newline only)"
       },
       {
@@ -7190,7 +7190,7 @@
         "test": "redirection error on function call yields non-zero exit"
       },
       {
-        "suite": "command — Extended Tests",
+        "suite": "command \u2014 Extended Tests",
         "test": "function itself works without command prefix"
       }
     ],
@@ -9424,7 +9424,7 @@
         "test": "break n greater than enclosing loops"
       },
       {
-        "suite": "command — Extended Tests",
+        "suite": "command \u2014 Extended Tests",
         "test": "command break outside loop does not abort shell"
       }
     ],
@@ -9550,7 +9550,7 @@
         "test": "cd empty string fails"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd to a regular file fails"
       }
     ],
@@ -10426,7 +10426,7 @@
         "test": "special built-in: readonly exists"
       },
       {
-        "suite": "command — Extended Tests",
+        "suite": "command \u2014 Extended Tests",
         "test": "command readonly behaves as declaration utility"
       }
     ],
@@ -10525,7 +10525,7 @@
         "test": "return with explicit n sets exit status"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf carriage return escape"
       }
     ],
@@ -12231,7 +12231,7 @@
         "test": "single hyphen-minus operand treated as first operand"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd with absolute pathname operand"
       }
     ],
@@ -15175,15 +15175,15 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "bg/fg — Interactive Job Control Utilities",
+        "suite": "bg/fg \u2014 Interactive Job Control Utilities",
         "test": "bg: suspend with Ctrl-Z then bg"
       },
       {
-        "suite": "bg/fg — Interactive Job Control Utilities",
+        "suite": "bg/fg \u2014 Interactive Job Control Utilities",
         "test": "bg: with explicit job_id operand"
       },
       {
-        "suite": "bg/fg — Interactive Job Control Utilities",
+        "suite": "bg/fg \u2014 Interactive Job Control Utilities",
         "test": "suspend -> bg -> fg cycle"
       }
     ],
@@ -15201,7 +15201,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "bg/fg — Interactive Job Control Utilities",
+        "suite": "bg/fg \u2014 Interactive Job Control Utilities",
         "test": "bg: job already running in background"
       }
     ],
@@ -15219,11 +15219,11 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "bg/fg — Interactive Job Control Utilities",
+        "suite": "bg/fg \u2014 Interactive Job Control Utilities",
         "test": "bg/fg: explicit %N job IDs with multiple jobs"
       },
       {
-        "suite": "bg/fg — Interactive Job Control Utilities",
+        "suite": "bg/fg \u2014 Interactive Job Control Utilities",
         "test": "bg: with explicit job_id operand"
       }
     ],
@@ -15241,7 +15241,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "bg/fg — Interactive Job Control Utilities",
+        "suite": "bg/fg \u2014 Interactive Job Control Utilities",
         "test": "bg: suspend with Ctrl-Z then bg"
       }
     ],
@@ -15296,7 +15296,7 @@
         "test": "kill -s KILL with job ID %1"
       },
       {
-        "suite": "bg/fg — Interactive Job Control Utilities",
+        "suite": "bg/fg \u2014 Interactive Job Control Utilities",
         "test": "bg: output format POSIX [%d] %s"
       }
     ],
@@ -15314,7 +15314,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "bg/fg — Interactive Job Control Utilities",
+        "suite": "bg/fg \u2014 Interactive Job Control Utilities",
         "test": "bg: error when job control is disabled"
       }
     ],
@@ -15332,7 +15332,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd -L keeps logical symlink path in PWD"
       }
     ],
@@ -15350,7 +15350,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd with unset HOME fails"
       }
     ],
@@ -15372,7 +15372,7 @@
         "test": "non-exported variable not visible in child"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd with no args goes to HOME"
       }
     ],
@@ -15390,15 +15390,15 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf form feed escape"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd -P resolves symlink to real path"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd . stays in current directory"
       }
     ],
@@ -15416,7 +15416,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd -P .. resolves real path first"
       }
     ],
@@ -15434,11 +15434,11 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd -P .. resolves real path first"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd .. goes to parent directory"
       }
     ],
@@ -15455,7 +15455,7 @@
     "testable": true,
     "tests": [
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd null curpath no-op"
       }
     ],
@@ -15472,7 +15472,7 @@
     "testable": true,
     "tests": [
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd to deeply nested directory beyond PATH_MAX"
       }
     ],
@@ -15489,11 +15489,11 @@
     "testable": true,
     "tests": [
       {
-        "suite": "Maybe-Builtin — pwd (Print Working Directory)",
+        "suite": "Maybe-Builtin \u2014 pwd (Print Working Directory)",
         "test": "pwd -P has no trailing slash"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd to deeply nested directory beyond PATH_MAX"
       }
     ],
@@ -15511,7 +15511,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd -L into symlink subdirectory"
       }
     ],
@@ -15529,15 +15529,15 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd to a regular file fails"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd to directory with no execute permission fails"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd to nonexistent path fails"
       }
     ],
@@ -15555,7 +15555,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd -L keeps logical symlink path in PWD"
       }
     ],
@@ -15577,7 +15577,7 @@
         "test": "cd -P is physical (symlink)"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd -P resolves symlink to real path"
       }
     ],
@@ -15594,7 +15594,7 @@
     "testable": true,
     "tests": [
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd -eP to valid directory succeeds with zero exit"
       }
     ],
@@ -15612,11 +15612,11 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd - returns to previous directory"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd - updates OLDPWD"
       }
     ],
@@ -15638,7 +15638,7 @@
         "test": "cd conforms to utility syntax guidelines"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd accepts -- to end options"
       }
     ],
@@ -15660,7 +15660,7 @@
         "test": "cd -eP to valid directory succeeds"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd -eP to valid directory succeeds with zero exit"
       }
     ],
@@ -15682,11 +15682,11 @@
         "test": "cd default is logical (symlink)"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd -L .. goes to logical parent"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd -L keeps logical symlink path in PWD"
       }
     ],
@@ -15708,7 +15708,7 @@
         "test": "cd -P is physical (symlink)"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd -P resolves symlink to real path"
       }
     ],
@@ -15730,11 +15730,11 @@
         "test": "cd -L -P last option wins"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "-L -P last option P wins"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "-P -L last option L wins"
       }
     ],
@@ -15756,7 +15756,7 @@
         "test": "cd default is logical (symlink)"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "dot and dot-dot navigation"
       }
     ],
@@ -15778,7 +15778,7 @@
         "test": "cd into directory and cd - toggle"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd with absolute pathname operand"
       }
     ],
@@ -15804,11 +15804,11 @@
         "test": "cd empty string fails"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd - with unset OLDPWD fails"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd to empty string fails"
       }
     ],
@@ -15834,7 +15834,7 @@
         "test": "cd into directory and cd - toggle"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd - returns to previous directory"
       }
     ],
@@ -15852,11 +15852,11 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "CDPATH finds target directory"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "CDPATH with multiple colon-separated entries"
       }
     ],
@@ -15878,7 +15878,7 @@
         "test": "CDPATH search finds directory"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "CDPATH finds target directory"
       }
     ],
@@ -15900,7 +15900,7 @@
         "test": "CDPATH search finds directory"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "CDPATH finds target directory"
       }
     ],
@@ -15922,7 +15922,7 @@
         "test": "cd into directory and cd - toggle"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd -L into symlink subdirectory"
       }
     ],
@@ -15944,7 +15944,7 @@
         "test": "cd - output prints old directory"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "CDPATH match prints new directory to stdout"
       }
     ],
@@ -15970,7 +15970,7 @@
         "test": "cd without CDPATH produces no stdout"
       },
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "cd without CDPATH produces no output"
       }
     ],
@@ -15988,7 +15988,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "PWD unchanged after failed cd"
       }
     ],
@@ -16006,7 +16006,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "cd Utility — Extended Coverage",
+        "suite": "cd Utility \u2014 Extended Coverage",
         "test": "PWD unchanged after failed cd"
       }
     ],
@@ -16024,15 +16024,15 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "command — Extended Tests",
+        "suite": "command \u2014 Extended Tests",
         "test": "command bypasses function shadowing cat"
       },
       {
-        "suite": "command — Extended Tests",
+        "suite": "command \u2014 Extended Tests",
         "test": "command bypasses function shadowing echo"
       },
       {
-        "suite": "command — Extended Tests",
+        "suite": "command \u2014 Extended Tests",
         "test": "command local inside function"
       }
     ],
@@ -16050,11 +16050,11 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "command — Extended Tests",
+        "suite": "command \u2014 Extended Tests",
         "test": "command -v cd prints builtin name"
       },
       {
-        "suite": "command — Extended Tests",
+        "suite": "command \u2014 Extended Tests",
         "test": "command export does not abort shell"
       }
     ],
@@ -16080,15 +16080,15 @@
         "test": "function invocation by name"
       },
       {
-        "suite": "command — Extended Tests",
+        "suite": "command \u2014 Extended Tests",
         "test": "command -v for alias or no alias"
       },
       {
-        "suite": "command — Extended Tests",
+        "suite": "command \u2014 Extended Tests",
         "test": "command -v for defined function prints function name"
       },
       {
-        "suite": "command — Extended Tests",
+        "suite": "command \u2014 Extended Tests",
         "test": "command executes utility normally"
       }
     ],
@@ -16106,7 +16106,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "command — Extended Tests",
+        "suite": "command \u2014 Extended Tests",
         "test": "command -v ls prints path or name"
       }
     ],
@@ -16124,7 +16124,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "command — Extended Tests",
+        "suite": "command \u2014 Extended Tests",
         "test": "command export behaves as declaration utility"
       }
     ],
@@ -16142,7 +16142,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "command — Extended Tests",
+        "suite": "command \u2014 Extended Tests",
         "test": "command export assigns variable"
       }
     ],
@@ -16245,7 +16245,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "command — Extended Tests",
+        "suite": "command \u2014 Extended Tests",
         "test": "command -V cd produces output mentioning cd"
       }
     ],
@@ -16341,7 +16341,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "command — Extended Tests",
+        "suite": "command \u2014 Extended Tests",
         "test": "arguments after command_name are passed through"
       }
     ],
@@ -16450,7 +16450,7 @@
         "test": "fc -s with negative number re-executes offset command"
       },
       {
-        "suite": "fc — Command History Editing",
+        "suite": "fc \u2014 Command History Editing",
         "test": "fc -s re-executes previous command"
       }
     ],
@@ -16472,7 +16472,7 @@
         "test": "fc -l output contains command text"
       },
       {
-        "suite": "fc — Command History Editing",
+        "suite": "fc \u2014 Command History Editing",
         "test": "fc -l lists command history"
       }
     ],
@@ -16520,7 +16520,7 @@
         "test": "fc -ln suppresses line numbers"
       },
       {
-        "suite": "fc — Command History Editing",
+        "suite": "fc \u2014 Command History Editing",
         "test": "fc -l with absolute line numbers"
       }
     ],
@@ -16560,7 +16560,7 @@
         "test": "fc -l shows recently entered command"
       },
       {
-        "suite": "fc — Command History Editing",
+        "suite": "fc \u2014 Command History Editing",
         "test": "fc -e editor option"
       }
     ],
@@ -16578,7 +16578,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "fc — Command History Editing",
+        "suite": "fc \u2014 Command History Editing",
         "test": "fc -l lists command history"
       }
     ],
@@ -16620,7 +16620,7 @@
         "test": "zero arguments returns non-zero"
       },
       {
-        "suite": "fc — Command History Editing",
+        "suite": "fc \u2014 Command History Editing",
         "test": "fc -e non-zero exit suppresses re-execution"
       },
       {
@@ -16678,7 +16678,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "fc — Command History Editing",
+        "suite": "fc \u2014 Command History Editing",
         "test": "fc -e editor option"
       }
     ],
@@ -16696,7 +16696,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "fc — Command History Editing",
+        "suite": "fc \u2014 Command History Editing",
         "test": "fc with FCEDIT editor invocation"
       }
     ],
@@ -16732,7 +16732,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "fc — Command History Editing",
+        "suite": "fc \u2014 Command History Editing",
         "test": "fc -l with first/last range"
       }
     ],
@@ -16754,7 +16754,7 @@
         "test": "fc -l with no operands lists recent commands"
       },
       {
-        "suite": "fc — Command History Editing",
+        "suite": "fc \u2014 Command History Editing",
         "test": "HISTSIZE controls accessible history"
       }
     ],
@@ -16776,7 +16776,7 @@
         "test": "reversed range with positive numbers"
       },
       {
-        "suite": "fc — Command History Editing",
+        "suite": "fc \u2014 Command History Editing",
         "test": "fc -l with first/last range"
       }
     ],
@@ -16798,7 +16798,7 @@
         "test": "fc -s re-executes and enters result into history"
       },
       {
-        "suite": "fc — Command History Editing",
+        "suite": "fc \u2014 Command History Editing",
         "test": "fc -s re-executes previous command"
       }
     ],
@@ -16838,7 +16838,7 @@
         "test": "fc -l shows recently entered command"
       },
       {
-        "suite": "fc — Command History Editing",
+        "suite": "fc \u2014 Command History Editing",
         "test": "fc -s re-executes previous command"
       }
     ],
@@ -16860,7 +16860,7 @@
         "test": "fc -l with no operands lists recent commands"
       },
       {
-        "suite": "fc — Command History Editing",
+        "suite": "fc \u2014 Command History Editing",
         "test": "fc -l with first/last range"
       }
     ],
@@ -16878,11 +16878,11 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "fc — Command History Editing",
+        "suite": "fc \u2014 Command History Editing",
         "test": "fc -s old=new substitution"
       },
       {
-        "suite": "fc — Command History Editing",
+        "suite": "fc \u2014 Command History Editing",
         "test": "fc -s old=new with string-pattern operand"
       }
     ],
@@ -16908,7 +16908,7 @@
         "test": "fc -lr lists in reverse order"
       },
       {
-        "suite": "fc — Command History Editing",
+        "suite": "fc \u2014 Command History Editing",
         "test": "fc -l reverse order"
       }
     ],
@@ -16962,7 +16962,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "fc — Command History Editing",
+        "suite": "fc \u2014 Command History Editing",
         "test": "fc -e editor option"
       }
     ],
@@ -16984,7 +16984,7 @@
         "test": "fc -l output contains command text"
       },
       {
-        "suite": "fc — Command History Editing",
+        "suite": "fc \u2014 Command History Editing",
         "test": "fc -l with out-of-range line number"
       }
     ],
@@ -17006,11 +17006,11 @@
         "test": "fc -l output contains command text"
       },
       {
-        "suite": "fc — Command History Editing",
+        "suite": "fc \u2014 Command History Editing",
         "test": "fc -l lists command history"
       },
       {
-        "suite": "fc — Command History Editing",
+        "suite": "fc \u2014 Command History Editing",
         "test": "fc -ln suppresses line numbers"
       }
     ],
@@ -17050,7 +17050,7 @@
         "test": "fc -l -r with explicit range reverses listing"
       },
       {
-        "suite": "fc — Command History Editing",
+        "suite": "fc \u2014 Command History Editing",
         "test": "fc -e non-zero exit suppresses re-execution"
       }
     ],
@@ -17068,7 +17068,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "fc — Command History Editing",
+        "suite": "fc \u2014 Command History Editing",
         "test": "fc -l exit status is zero"
       }
     ],
@@ -17099,15 +17099,15 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "bg/fg — Interactive Job Control Utilities",
+        "suite": "bg/fg \u2014 Interactive Job Control Utilities",
         "test": "fg: bring background job to foreground"
       },
       {
-        "suite": "bg/fg — Interactive Job Control Utilities",
+        "suite": "bg/fg \u2014 Interactive Job Control Utilities",
         "test": "fg: with explicit job_id"
       },
       {
-        "suite": "bg/fg — Interactive Job Control Utilities",
+        "suite": "bg/fg \u2014 Interactive Job Control Utilities",
         "test": "suspend -> bg -> fg cycle"
       }
     ],
@@ -17125,7 +17125,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "bg/fg — Interactive Job Control Utilities",
+        "suite": "bg/fg \u2014 Interactive Job Control Utilities",
         "test": "fg: removes job from known process list"
       }
     ],
@@ -17143,11 +17143,11 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "bg/fg — Interactive Job Control Utilities",
+        "suite": "bg/fg \u2014 Interactive Job Control Utilities",
         "test": "bg/fg: explicit %N job IDs with multiple jobs"
       },
       {
-        "suite": "bg/fg — Interactive Job Control Utilities",
+        "suite": "bg/fg \u2014 Interactive Job Control Utilities",
         "test": "fg: with explicit job_id"
       }
     ],
@@ -17165,7 +17165,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "bg/fg — Interactive Job Control Utilities",
+        "suite": "bg/fg \u2014 Interactive Job Control Utilities",
         "test": "fg: bring background job to foreground"
       }
     ],
@@ -17208,7 +17208,7 @@
         "test": "fg produces no stderr with valid job"
       },
       {
-        "suite": "bg/fg — Interactive Job Control Utilities",
+        "suite": "bg/fg \u2014 Interactive Job Control Utilities",
         "test": "fg: error when job control is disabled"
       }
     ],
@@ -17244,7 +17244,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "bg/fg — Interactive Job Control Utilities",
+        "suite": "bg/fg \u2014 Interactive Job Control Utilities",
         "test": "fg: error when job control is disabled"
       }
     ],
@@ -17374,7 +17374,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %d integer"
       }
     ],
@@ -17605,7 +17605,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %b tab in argument"
       },
       {
@@ -18446,7 +18446,7 @@
         "test": "stopped job shows Stopped or Suspended state"
       },
       {
-        "suite": "bg/fg — Interactive Job Control Utilities",
+        "suite": "bg/fg \u2014 Interactive Job Control Utilities",
         "test": "multiple suspended jobs with +/- marking"
       }
     ],
@@ -18508,7 +18508,7 @@
         "test": "previous job marker -"
       },
       {
-        "suite": "bg/fg — Interactive Job Control Utilities",
+        "suite": "bg/fg \u2014 Interactive Job Control Utilities",
         "test": "multiple suspended jobs with +/- marking"
       }
     ],
@@ -19193,7 +19193,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf bell escape produces a byte"
       },
       {
@@ -20969,11 +20969,11 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "command — Extended Tests",
+        "suite": "command \u2014 Extended Tests",
         "test": "command -V echo produces output mentioning echo"
       },
       {
-        "suite": "command — Extended Tests",
+        "suite": "command \u2014 Extended Tests",
         "test": "command -V for nonexistent command fails"
       }
     ],
@@ -21013,7 +21013,7 @@
         "test": "fg output goes to stdout"
       },
       {
-        "suite": "bg/fg — Interactive Job Control Utilities",
+        "suite": "bg/fg \u2014 Interactive Job Control Utilities",
         "test": "fg: bring background job to foreground"
       }
     ],
@@ -22522,7 +22522,7 @@
     "untestable_reason": null,
     "tests": [
       {
-        "suite": "command — Extended Tests",
+        "suite": "command \u2014 Extended Tests",
         "test": "multiple arguments forwarded correctly"
       }
     ],
@@ -22681,15 +22681,15 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo -- hello prints both"
       },
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo -- prints double dash"
       },
       {
-        "suite": "fc — Command History Editing",
+        "suite": "fc \u2014 Command History Editing",
         "test": "fc -l with string pattern operand"
       }
     ],
@@ -22708,7 +22708,7 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo hello"
       }
     ],
@@ -22727,7 +22727,7 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo -n does not crash"
       }
     ],
@@ -22746,7 +22746,7 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo \\a produces BEL (0x07)"
       }
     ],
@@ -22765,7 +22765,7 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo \\c suppresses text after it"
       }
     ],
@@ -22787,55 +22787,55 @@
         "test": "echo respects locale env vars"
       },
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo -E does not crash"
       },
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo -e does not crash"
       },
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo -neE does not crash"
       },
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo -nee does not crash"
       },
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo \\0101 produces ASCII A"
       },
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo \\065 produces ASCII 5"
       },
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo \\b produces BS (0x08)"
       },
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo \\f produces FF (0x0c)"
       },
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo \\n produces two newlines"
       },
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo \\r produces CR (0x0d)"
       },
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo \\t produces HT (0x09)"
       },
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo \\v produces VT (0x0b)"
       },
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo with no arguments produces empty line"
       },
       {
@@ -22866,19 +22866,19 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo a b c joins with single spaces"
       },
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo hello world joins with space"
       },
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo many arguments"
       },
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo single character"
       }
     ],
@@ -22897,7 +22897,7 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo -- hello treats -- as operand"
       }
     ],
@@ -22978,87 +22978,87 @@
         "test": "printf with %s format"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %.2s truncation"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %.3s output correct despite truncation"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %.3s truncation"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %.3s with truncation exits 0"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %b \\0060 produces 0"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %b tab"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %b with long arg exits 0"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %c output correct despite partial use"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %d negative"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %u no surrounding blanks"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf backspace escape"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf left-justified width %-4d"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf mixed %d %s %d"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf octal \\060 produces 0"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf octal \\101 produces A"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf precision %.5s truncates"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf right-justified width %4d"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf tab escape"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf three %d specs"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf three %s specs"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf vertical tab escape"
       }
     ],
@@ -23096,7 +23096,7 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf plain string"
       }
     ],
@@ -23118,15 +23118,15 @@
         "test": "printf respects locale env vars"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %c with empty arg produces null/empty"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %d non-numeric produces stderr diagnostic"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %s long string no truncation"
       }
     ],
@@ -23163,11 +23163,11 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %s preserves shift state"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf mixed %s%d shift state"
       }
     ],
@@ -23186,7 +23186,7 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf format %s %s"
       }
     ],
@@ -23212,7 +23212,7 @@
   },
   {
     "id": "SHALL-EXTENDED-DESCRIPTION-5028",
-    "text": "A 'Δ' character in the format string shall be treated as a 'Δ' character, not as a <space>.",
+    "text": "A '\u0394' character in the format string shall be treated as a '\u0394' character, not as a <space>.",
     "file": "utilities/printf.html",
     "testable": false,
     "untestable_reason": "format-notation: delta character handling, implementation-specific",
@@ -23233,11 +23233,11 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe Built-in — echo",
+        "suite": "Maybe Built-in \u2014 echo",
         "test": "echo one two three joins with spaces"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf backslash escape"
       }
     ],
@@ -23256,7 +23256,7 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %d no surrounding blanks"
       }
     ],
@@ -23275,11 +23275,11 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %o without leading zero"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %s with two arguments"
       }
     ],
@@ -23298,7 +23298,7 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %b plain string"
       }
     ],
@@ -23317,7 +23317,7 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %b newline in argument"
       }
     ],
@@ -23336,7 +23336,7 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %b hello newline world"
       }
     ],
@@ -23355,7 +23355,7 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %b backslash"
       }
     ],
@@ -23374,7 +23374,7 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %b \\0101 produces A"
       }
     ],
@@ -23393,23 +23393,23 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %b \\c stops format reuse"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %b \\c stops output"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf format num=%d"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf format reuse with %d newline"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf format reuse with %s newline"
       }
     ],
@@ -23428,7 +23428,7 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %s full string"
       }
     ],
@@ -23447,7 +23447,7 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %s without precision prints full string"
       }
     ],
@@ -23466,11 +23466,11 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %s %d two specs two args"
       },
       {
-        "suite": "command — Extended Tests",
+        "suite": "command \u2014 Extended Tests",
         "test": "command -V echo describes command type"
       }
     ],
@@ -23489,7 +23489,7 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf positional n$ specifiers (optional)"
       }
     ],
@@ -23508,7 +23508,7 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf sequential argument consumption"
       },
       {
@@ -23549,7 +23549,7 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %n$ format reuse"
       }
     ],
@@ -23568,23 +23568,23 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "extra %b gets null string"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "extra %d gets zero"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "extra %o gets zero"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "extra %s gets null string"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "extra %x gets zero"
       }
     ],
@@ -23603,15 +23603,15 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %c takes first byte of 123"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %c takes first byte of abc"
       },
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %c takes first byte of xyz"
       }
     ],
@@ -23687,7 +23687,7 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %d with non-numeric arg exits non-zero"
       }
     ],
@@ -23706,7 +23706,7 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe-Builtin — printf (Write Formatted Output)",
+        "suite": "Maybe-Builtin \u2014 printf (Write Formatted Output)",
         "test": "printf %c with multi-char arg exits 0"
       }
     ],
@@ -23777,15 +23777,15 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe-Builtin — pwd (Print Working Directory)",
+        "suite": "Maybe-Builtin \u2014 pwd (Print Working Directory)",
         "test": "pwd -L rejects PWD containing dot-dot"
       },
       {
-        "suite": "Maybe-Builtin — pwd (Print Working Directory)",
+        "suite": "Maybe-Builtin \u2014 pwd (Print Working Directory)",
         "test": "pwd -L with clean PWD uses it"
       },
       {
-        "suite": "Maybe-Builtin — pwd (Print Working Directory)",
+        "suite": "Maybe-Builtin \u2014 pwd (Print Working Directory)",
         "test": "pwd with no options outputs absolute path"
       }
     ],
@@ -23804,7 +23804,7 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe-Builtin — pwd (Print Working Directory)",
+        "suite": "Maybe-Builtin \u2014 pwd (Print Working Directory)",
         "test": "pwd -L with bogus PWD falls back to physical"
       }
     ],
@@ -23842,7 +23842,7 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe-Builtin — pwd (Print Working Directory)",
+        "suite": "Maybe-Builtin \u2014 pwd (Print Working Directory)",
         "test": "pwd -P outputs absolute path"
       }
     ],
@@ -23861,7 +23861,7 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe-Builtin — pwd (Print Working Directory)",
+        "suite": "Maybe-Builtin \u2014 pwd (Print Working Directory)",
         "test": "pwd -P from root has no unnecessary double slashes"
       }
     ],
@@ -23936,19 +23936,19 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe-Builtin — pwd (Print Working Directory)",
+        "suite": "Maybe-Builtin \u2014 pwd (Print Working Directory)",
         "test": "pwd -L produces no stderr on success"
       },
       {
-        "suite": "Maybe-Builtin — pwd (Print Working Directory)",
+        "suite": "Maybe-Builtin \u2014 pwd (Print Working Directory)",
         "test": "pwd -P produces no stderr on success"
       },
       {
-        "suite": "Maybe-Builtin — pwd (Print Working Directory)",
+        "suite": "Maybe-Builtin \u2014 pwd (Print Working Directory)",
         "test": "pwd produces exactly one line"
       },
       {
-        "suite": "Maybe-Builtin — pwd (Print Working Directory)",
+        "suite": "Maybe-Builtin \u2014 pwd (Print Working Directory)",
         "test": "pwd produces no stderr on success"
       }
     ],
@@ -23967,7 +23967,7 @@
     "category": "maybe-builtin",
     "tests": [
       {
-        "suite": "Maybe-Builtin — pwd (Print Working Directory)",
+        "suite": "Maybe-Builtin \u2014 pwd (Print Working Directory)",
         "test": "pwd -P in deleted directory either succeeds with absolute path or fails silently"
       }
     ],
