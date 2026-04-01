@@ -81,9 +81,10 @@ requirement "SHALL-STDERR-518" doc="For the cd utility, the standard error shall
 
 begin test "cd empty string fails"
   begin script
-    cd "" 2>/dev/null
+    cd ""
   end script
   not_expect_exit_code 0
+  not_expect_stderr ""
 end test "cd empty string fails"
 
 # ==============================================================================

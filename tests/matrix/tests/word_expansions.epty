@@ -236,6 +236,7 @@ requirement "SHALL-2-6-2-126" doc="In all cases, the final value of parameter sh
 # We test `:?` error generation.
 
 requirement "SHALL-GETOPTS-1184" doc="In this case, if the first character in optstring is a <colon> ( ':' ), the shell variable OPTARG shall be set to the option character found, but no output shall be written to standard error; otherwise, the shell variable OPTARG shall be unset and a diagnostic message shall be written to standard error."
+requirement "SHALL-2-6-2-127" doc="If parameter is unset or null, the expansion of word (or a message indicating it is unset if word is omitted) shall be written to standard error and the shell exits with a non-zero exit status."
 begin test "colon-question generates error on unset"
   begin script
     unset foo
@@ -244,8 +245,6 @@ begin test "colon-question generates error on unset"
   expect_stderr_line ".*error message.*"
   not_expect_exit_code 0
 end test "colon-question generates error on unset"
-
-requirement "SHALL-2-6-2-127" doc="If parameter is unset or null, the expansion of word (or a message indicating it is unset if word is omitted) shall be written to standard error and the shell exits with a non-zero exit status."
 
 # We test `:+` alternative value substitution.
 
@@ -515,6 +514,7 @@ begin test "division by zero fails"
   begin script
     echo $((1 / 0))
   end script
+  not_expect_stderr ""
   not_expect_exit_code 0
 end test "division by zero fails"
 
