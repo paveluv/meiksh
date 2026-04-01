@@ -17,3 +17,7 @@ path = "tests/integration/basic.rs"
 [[bin]]
 name = "expect_pty"
 path = "tests/expect_pty.rs"
+
+[[bin]]
+name = "check_integrity"
+path = "tests/check_matrix_integrity.rs"

@@ -85,9 +85,7 @@ for r in reqs:
 "
 
 # Does integrity still pass?
-cargo run --bin expect_pty -- --parse-only \
-  --requirements tests/matrix/requirements.json \
-  tests/matrix/tests/*.epty
+cargo run --bin check_integrity -- tests/matrix
 ```
 
 If the subagent enriched the requirement and integrity passes, proceed
