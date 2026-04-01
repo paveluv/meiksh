@@ -35,6 +35,70 @@ begin test "quoted $* is single string, quoted $@ is distinct args"
   expect_stdout "a b c\na\nb\nc"
 end test "quoted $* is single string, quoted $@ is distinct args"
 
+requirement "SHALL-2-5-2-074" doc="'@' expands to the positional parameters, starting from one, initially producing one field for each positional parameter that is set."
+begin test "@ expands positional parameters in order"
+  begin script
+    $SHELL -c 'set -- a b c; for i in "$@"; do printf "<%s>" "$i"; done'
+  end script
+  expect_stdout "<a><b><c>"
+end test "@ expands positional parameters in order"
+
+requirement "SHALL-2-5-2-075" doc="'*' expands to the positional parameters, starting from one, initially producing one field for each positional parameter that is set."
+begin test "* expands positional parameters in order"
+  begin script
+    $SHELL -c 'set -- a b c; for i in $*; do printf "<%s>" "$i"; done'
+  end script
+  expect_stdout "<a><b><c>"
+end test "* expands positional parameters in order"
+
+requirement "SHALL-2-5-2-076" doc="'#' expands to the shortest representation of the decimal number of positional parameters."
+begin test "# expands to decimal positional count"
+  begin script
+    $SHELL -c 'set -- a b c d; echo "$#"'
+  end script
+  expect_stdout "4"
+end test "# expands to decimal positional count"
+
+requirement "SHALL-2-5-2-077" doc="'?' expands to the shortest representation of the decimal exit status of the pipeline executed from the current shell execution environment that most recently either terminated or, optionally but only if the shell is interactive and job control is enabled, was stopped by a signal."
+begin test "? reflects most recent pipeline status"
+  begin script
+    $SHELL -c 'false; echo "$?"'
+  end script
+  expect_stdout "1"
+end test "? reflects most recent pipeline status"
+
+requirement "SHALL-2-5-2-078" doc="'-' (hyphen) expands to the current option flags as single-letter option names concatenated into a string as specified on invocation, by set, or implicitly by the shell; it is unspecified whether -c and -s are included in '$-'."
+begin test "$- includes options enabled by set"
+  begin script
+    $SHELL -c 'set -u; case "$-" in (*u*) echo has_u;; (*) echo missing;; esac'
+  end script
+  expect_stdout "has_u"
+end test "$- includes options enabled by set"
+
+requirement "SHALL-2-5-2-079" doc="'$' expands to the shortest representation of the decimal process ID of the invoked shell."
+begin test "$$ is decimal process id"
+  begin script
+    $SHELL -c 'case "$$" in (""|*[!0-9]*) echo bad;; (*) echo ok;; esac'
+  end script
+  expect_stdout "ok"
+end test "$$ is decimal process id"
+
+requirement "SHALL-2-5-2-080" doc="'!' expands to the shortest representation of the decimal process ID associated with the most recent asynchronous AND-OR list executed from the current shell execution environment, or the last command in the most recently resumed job-control background pipeline via bg, whichever is most recent."
+begin test "$! gives pid of most recent async list"
+  begin script
+    $SHELL -c 'sleep 0.1 & p=$!; wait "$p"; case "$p" in (""|*[!0-9]*) echo bad;; (*) echo ok;; esac'
+  end script
+  expect_stdout "ok"
+end test "$! gives pid of most recent async list"
+
+requirement "SHALL-2-5-2-081" doc="0 expands to the name of the shell or shell script."
+begin test "$0 expands to shell or script name"
+  begin script
+    $SHELL -c 'echo "$0"' custom_name
+  end script
+  expect_stdout "custom_name"
+end test "$0 expands to shell or script name"
+
 requirement "SHALL-2-5-1-060" doc="The digits denoting the positional parameters shall always be interpreted as a decimal value, even if there is a leading zero."
 requirement "SHALL-2-5-2-064" doc="If one of these conditions is true, the initial fields shall be retained as separate fields, except that if the parameter being expanded was embedded within a word, the first field shall be joined with the beginning part of the original word and the last field shall be joined with the end part of the original word."
 requirement "SHALL-2-5-2-065" doc="If there are no positional parameters, the expansion of '@' shall generate zero fields, even when '@' is within double-quotes; however, if the expansion is embedded within a word which contains one or more other parts that expand to a quoted null string, these null string(s) shall still produce an empty field, except that if the other parts are all within the same double-quotes as the '@' , it is unspecified whether the result is zero fields or one empty field."

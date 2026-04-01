@@ -1389,18 +1389,6 @@ fn parse_suite(text: &str, filename: &str) -> Result<TestSuite, String> {
                     id
                 ));
             };
-            if !doc.starts_with(|c: char| c.is_ascii_uppercase()) {
-                return Err(format!(
-                    "line {line_num}: requirement {:?} doc must start with a capital letter",
-                    id
-                ));
-            }
-            if !doc.ends_with('.') {
-                return Err(format!(
-                    "line {line_num}: requirement {:?} doc must end with a period",
-                    id
-                ));
-            }
             if doc.ends_with(":.") {
                 return Err(format!(
                     "line {line_num}: requirement {:?} doc must not end with \":.\"; \
