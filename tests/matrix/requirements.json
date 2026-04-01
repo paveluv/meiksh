@@ -13,13 +13,41 @@
       {
         "suite": "Token Recognition Rules",
         "test": "quoted # is not a comment"
+      },
+      {
+        "suite": "Quoting and Token Recognition",
+        "test": "backslash-quoting preserves literal special characters"
+      },
+      {
+        "suite": "Quoting and Token Recognition",
+        "test": "single-quoting preserves literal special characters"
+      },
+      {
+        "suite": "Quoting and Token Recognition",
+        "test": "double-quoting preserves literal pipe semicolon angle parens"
+      },
+      {
+        "suite": "Quoting and Token Recognition",
+        "test": "quoting preserves literal space and tab in single argument"
+      },
+      {
+        "suite": "Quoting and Token Recognition",
+        "test": "backslash-newline is line continuation not literal newline"
+      },
+      {
+        "suite": "Quoting and Token Recognition",
+        "test": "quoting prevents glob expansion of * ? [ ]"
+      },
+      {
+        "suite": "Quoting and Token Recognition",
+        "test": "quoting preserves literal ~ = % { } characters"
       }
     ],
     "section_path": [
       "2. Shell Command Language",
       "2.2 Quoting"
     ],
-    "testing_guide": null
+    "testing_guide": "This requirement is from section 2.2 Quoting of the Shell Command Language. It specifies two sets of characters with respect to quoting:\n\nSet 1 — Characters that SHALL be quoted to represent themselves:\n  |  &  ;  <  >  (  )  $  `  \\  \"  '  <space>  <tab>  <newline>\n\nSet 2 — Characters that MIGHT need quoting under certain circumstances:\n  *  ?  [  ]  ^  -  !  #  ~  =  %  {  ,  }\n\nThe spec note says a future version may extend when Set 2 characters are special, so applications should quote them when literal meaning is intended (except '-' which is in the portable filename character set).\n\nSection 2.2 describes four quoting mechanisms: backslash escape, single-quotes, double-quotes, and dollar-single-quotes. The here-document is another form of quoting.\n\nWhat to test:\n\n1. Each Set 1 character, when quoted (via any quoting mechanism), should pass through literally rather than being interpreted as a special character. For each character, verify that:\n   a) Backslash-quoting preserves the literal value (e.g. \\| produces literal |)\n   b) Single-quoting preserves the literal value (e.g. '|' produces literal |)\n   c) Double-quoting preserves the literal value where applicable (e.g. \"|\" produces literal |). Note that $, `, and \\ retain special meaning inside double-quotes per 2.2.3.\n\n2. Each Set 1 character, when NOT quoted, should trigger its special meaning (to confirm that quoting is indeed necessary). For example:\n   - Unquoted | creates a pipeline\n   - Unquoted & creates an asynchronous list\n   - Unquoted ; separates commands\n   - Unquoted < and > perform redirection\n   - Unquoted ( and ) create a subshell\n   - Unquoted $ introduces parameter expansion\n   - Unquoted ` introduces command substitution\n   - Unquoted \\ escapes the next character\n   - Unquoted space/tab perform word splitting\n   - Unquoted newline terminates a command\n\n3. Set 2 characters that are sometimes special should be passable literally when quoted:\n   - # when quoted is not a comment\n   - * and ? when quoted are not glob patterns\n   - [ ] when quoted are not bracket expressions\n   - ~ when quoted is not tilde expansion\n   - ! when quoted in interactive shells is not history expansion\n\nObservable behavior: Use echo or printf to output each character and verify stdout contains exactly the literal character. For characters that affect control flow (|, &, ;, newline), verify the quoting prevents the control flow behavior by checking that the character appears in the output.\n\nPreconditions: None beyond a working POSIX shell. Some Set 2 tests (! for history expansion) require an interactive shell."
   },
   {
     "id": "SHALL-2-2-1-002",
