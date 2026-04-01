@@ -4,8 +4,8 @@ testsuite "Token Recognition Rules"
 # Operators vs Words
 # ==============================================================================
 
-requirement "SHALL-2-3-045" doc="If the current character is not quoted and can be used as the first character of a new operator, the current token shall be delimited"
-requirement "SHALL-2-3-046" doc="The current character shall be used as the beginning of the next operator token"
+requirement "SHALL-2-3-045" doc="If the current character is not quoted and can be used as the first character of a new operator, the current token (if any) shall be delimited."
+requirement "SHALL-2-3-046" doc="The current character shall be used as the beginning of the next (operator) token."
 
 begin test "unquoted > is a control operator"
   begin script
@@ -15,8 +15,8 @@ begin test "unquoted > is a control operator"
   expect_stdout "a"
 end test "unquoted > is a control operator"
 
-requirement "SHALL-2-3-034" doc="If the previous character was part of an operator and the current character can form an operator with it, it shall be used as part of that token"
-requirement "SHALL-2-3-035" doc="If the previous character was part of an operator and the current character cannot form an operator, the operator shall be delimited"
+requirement "SHALL-2-3-034" doc="If the previous character was used as part of an operator and the current character is not quoted and can be used with the previous characters to form an operator, it shall be used as part of that (operator) token."
+requirement "SHALL-2-3-035" doc="If the previous character was used as part of an operator and the current character cannot be used with the previous characters to form an operator, the operator containing the previous character shall be delimited."
 
 begin test ">> forms a single append operator"
   begin script
@@ -32,8 +32,8 @@ end test ">> forms a single append operator"
 # Blanks and Words
 # ==============================================================================
 
-requirement "SHALL-2-3-047" doc="If the current character is an unquoted blank, any token containing the previous character is delimited"
-requirement "SHALL-2-3-048" doc="If the previous character was part of a word, the current character shall be appended to that word"
+requirement "SHALL-2-3-047" doc="If the current character is an unquoted <blank>, any token containing the previous character is delimited and the current character shall be discarded."
+requirement "SHALL-2-3-048" doc="If the previous character was part of a word, the current character shall be appended to that word."
 
 begin test "multiple blanks between words"
   begin script
@@ -47,7 +47,7 @@ end test "multiple blanks between words"
 # Comments
 # ==============================================================================
 
-requirement "SHALL-2-3-049" doc="If the current character is # it and all subsequent characters up to the next newline shall be discarded as a comment"
+requirement "SHALL-2-3-049" doc="If the current character is a '#' , it and all subsequent characters up to, but excluding, the next <newline> shall be discarded as a comment."
 
 begin test "comments ignored up to newline"
   begin script
@@ -57,6 +57,7 @@ begin test "comments ignored up to newline"
   expect_stdout "a\nb"
 end test "comments ignored up to newline"
 
+requirement "SHALL-V3CHAP02-1000" doc="The application shall quote the following characters if they are to represent themselves: | & ; < > ( ) $ ` \\ \" ' <space> <tab> <newline> and the following might need to be quoted under certain circumstances."
 begin test "quoted # is not a comment"
   begin script
     echo "a # not a comment"
@@ -64,6 +65,7 @@ begin test "quoted # is not a comment"
   expect_stdout "a # not a comment"
 end test "quoted # is not a comment"
 
+requirement "SHALL-2-5-2-064" doc="If one of these conditions is true, the initial fields shall be retained as separate fields, except that if the parameter being expanded was embedded within a word, the first field shall be joined with the beginning part of the original word and the last field shall be joined with the end part of the original word."
 begin test "# in middle of word is not a comment"
   begin script
     echo a#b
@@ -76,10 +78,9 @@ end test "# in middle of word is not a comment"
 # Alias Substitution
 # ==============================================================================
 
-requirement "SHALL-2-3-1-052" doc="When a TOKEN is subject to alias substitution, the value of the alias shall be processed as if read from input"
-requirement "SHALL-2-3-1-053" doc="An implementation may defer alias changes but they shall take effect by completion of the current complete_command"
-requirement "SHALL-2-3-1-054" doc="Changes to aliases shall not take effect out of order"
-requirement "SHALL-2-3-1-055" doc="Alias definitions shall not be inherited by separate invocations of the shell"
+requirement "SHALL-2-3-1-052" doc="When a TOKEN is subject to alias substitution, the value of the alias shall be processed as if it had been read from the input instead of the TOKEN , with token recognition (see 2.3 Token Recognition ) resuming at the start of the alias value."
+requirement "SHALL-2-3-1-053" doc="An implementation may defer the effect of a change to an alias but the change shall take effect no later than the completion of the currently executing complete_command (see 2.10 Shell Grammar )."
+requirement "SHALL-2-3-1-054" doc="Changes to aliases shall not take effect out of order."
 
 begin interactive test "alias substitution"
   spawn -i
@@ -92,6 +93,7 @@ begin interactive test "alias substitution"
   wait
 end interactive test "alias substitution"
 
+requirement "SHALL-V3CHAP02-1001-DUP51" doc="If the value of the alias replacing the TOKEN ends in a <blank> that would be unquoted after substitution, and optionally if it ends in a <blank> that would be quoted after substitution, the shell shall check the next token in the input, if it is a TOKEN , for alias substitution; this process shall continue until a TOKEN is found that is not a valid alias or an alias value does not end in such a <blank>."
 begin interactive test "alias with trailing space chains to next word"
   spawn -i
   expect "$ "

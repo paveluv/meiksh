@@ -4,7 +4,7 @@ testsuite "Wait for Process Completion"
 # wait with no operands — exit 0 when all known PIDs have terminated
 # ==============================================================================
 
-requirement "SHALL-WAIT-1089" doc="Exit 0 with no operands when all known PIDs terminated; >128 for signal death"
+requirement "SHALL-WAIT-1089" doc="The wait utility shall exit with one of the following values: 0 if invoked with no operands and all process IDs known by the invoking shell have terminated."
 
 begin test "all background jobs finish normally: wait exits 0"
   begin script
@@ -13,6 +13,7 @@ begin test "all background jobs finish normally: wait exits 0"
   expect_exit_code 0
 end test "all background jobs finish normally: wait exits 0"
 
+requirement "SHALL-WAIT-1344" doc="If the wait utility is invoked with no operands, it shall wait until all process IDs known to the invoking shell have terminated and exit with a zero exit status."
 begin test "single background job finishes: wait exits 0"
   begin script
     sleep 0.1 & wait
@@ -24,7 +25,7 @@ end test "single background job finishes: wait exits 0"
 # wait shall wait for child processes to terminate
 # ==============================================================================
 
-requirement "SHALL-WAIT-1343" doc="wait shall wait for child processes to terminate"
+requirement "SHALL-WAIT-1343" doc="The wait utility shall wait for one or more child processes whose process IDs are known in the current shell execution environment (see 2.13 Shell Execution Environment ) to terminate."
 
 begin test "background job writes file; after wait file must exist"
   begin script
@@ -36,6 +37,7 @@ begin test "background job writes file; after wait file must exist"
   expect_stdout "done"
 end test "background job writes file; after wait file must exist"
 
+requirement "SHALL-WAIT-1343" doc="The wait utility shall wait for one or more child processes whose process IDs are known in the current shell execution environment (see 2.13 Shell Execution Environment ) to terminate."
 begin test "wait actually blocks until child is finished"
   begin script
     start=$(date +%s)
@@ -51,7 +53,7 @@ end test "wait actually blocks until child is finished"
 # wait with pid operands — wait until all specified PIDs terminate
 # ==============================================================================
 
-requirement "SHALL-WAIT-1345" doc="If pid operands specified, wait until all terminated"
+requirement "SHALL-WAIT-1345" doc="If one or more pid operands are specified that represent known process IDs, the wait utility shall wait until all of them have terminated."
 
 begin test "wait for two PIDs"
   begin script
@@ -63,6 +65,7 @@ begin test "wait for two PIDs"
   expect_stdout "both_done"
 end test "wait for two PIDs"
 
+requirement "SHALL-WAIT-1345" doc="If one or more pid operands are specified that represent known process IDs, the wait utility shall wait until all of them have terminated."
 begin test "wait for a single PID"
   begin script
     sleep 0.1 & p=$!
@@ -76,7 +79,7 @@ end test "wait for a single PID"
 # Unknown process IDs treated as exit status 127
 # ==============================================================================
 
-requirement "SHALL-WAIT-1346" doc="Unknown process IDs treated as exit status 127"
+requirement "SHALL-WAIT-1346" doc="If one or more pid operands are specified that represent unknown process IDs, wait shall treat them as if they were known process IDs that exited with exit status 127."
 
 begin test "unknown PID returns 127"
   begin script
@@ -85,6 +88,7 @@ begin test "unknown PID returns 127"
   expect_exit_code 127
 end test "unknown PID returns 127"
 
+requirement "SHALL-WAIT-1346" doc="If one or more pid operands are specified that represent unknown process IDs, wait shall treat them as if they were known process IDs that exited with exit status 127."
 begin test "PID 1 (init) not a child returns 127"
   begin script
     wait 1
@@ -96,7 +100,7 @@ end test "PID 1 (init) not a child returns 127"
 # Successfully waited PID removed from known PIDs
 # ==============================================================================
 
-requirement "SHALL-WAIT-1348" doc="Successfully waited PID removed from known PIDs"
+requirement "SHALL-WAIT-1348" doc="Once a process ID that is known in the current shell execution environment (see 2.13 Shell Execution Environment ) has been successfully waited for, it shall be removed from the list of process IDs that are known in the current shell execution environment."
 
 begin test "second wait on same PID returns 127"
   begin script
@@ -112,7 +116,7 @@ end test "second wait on same PID returns 127"
 # PID associated with background job removed from jobs list after wait
 # ==============================================================================
 
-requirement "SHALL-WAIT-1349" doc="If PID associated with bg job, job removed"
+requirement "SHALL-WAIT-1349" doc="If the process ID is associated with a background job, the corresponding job shall also be removed from the list of background jobs."
 
 begin interactive test "waited job removed from jobs list"
   spawn -i
@@ -133,7 +137,7 @@ end interactive test "waited job removed from jobs list"
 # Exit status determined by last pipeline
 # ==============================================================================
 
-requirement "SHALL-WAIT-1351" doc="Exit status determined by last pipeline"
+requirement "SHALL-WAIT-1351" doc="The exit status of wait shall be determined by the exit status of the last pipeline to be executed."
 
 begin test "wait with no operands after failing background pipeline"
   begin script
@@ -143,6 +147,7 @@ begin test "wait with no operands after failing background pipeline"
   expect_stdout "0"
 end test "wait with no operands after failing background pipeline"
 
+requirement "SHALL-2-11-453" doc="When a process associated with a background job is stopped by a SIGSTOP, SIGTSTP, SIGTTIN, or SIGTTOU signal, the shell shall convert the (non-suspended) background job into a suspended job and an interactive shell shall write a message to standard error, formatted as described by the jobs utility (without the -l option) for a suspended job, at the following time: If set -b is enabled, the message shall be written either immediately after the job became suspended or immediately prior to writing the next prompt for input."
 begin test "wait after all background jobs succeed"
   begin script
     true & true & wait
@@ -155,7 +160,7 @@ end test "wait after all background jobs succeed"
 # Exit status of wait equals exit status of last operand
 # ==============================================================================
 
-requirement "SHALL-WAIT-1354" doc="Exit status of wait equals exit status of last operand"
+requirement "SHALL-WAIT-1354" doc="If one or more operands were specified, all of them have terminated or were not known in the invoking shell execution environment, and the status of the last operand specified is known, then the exit status of wait shall be the status of the last operand specified."
 
 begin test "single operand: wait returns that process exit status"
   begin script
@@ -166,6 +171,7 @@ begin test "single operand: wait returns that process exit status"
   expect_stdout "42"
 end test "single operand: wait returns that process exit status"
 
+requirement "SHALL-WAIT-1354" doc="If one or more operands were specified, all of them have terminated or were not known in the invoking shell execution environment, and the status of the last operand specified is known, then the exit status of wait shall be the status of the last operand specified."
 begin test "multiple operands: wait returns exit status of last"
   begin script
     (exit 7) & p1=$!
@@ -176,6 +182,7 @@ begin test "multiple operands: wait returns exit status of last"
   expect_stdout "13"
 end test "multiple operands: wait returns exit status of last"
 
+requirement "SHALL-WAIT-1347" doc="The exit status returned by the wait utility shall be the exit status of the process requested by the last pid operand."
 begin test "last operand exits 0 even if earlier ones fail"
   begin script
     (exit 5) & p1=$!
@@ -186,6 +193,7 @@ begin test "last operand exits 0 even if earlier ones fail"
   expect_stdout "0"
 end test "last operand exits 0 even if earlier ones fail"
 
+requirement "SHALL-2-6-2-127" doc="If parameter is unset or null, the expansion of word (or a message indicating it is unset if word is omitted) shall be written to standard error and the shell exits with a non-zero exit status."
 begin test "first operand exits 0, last exits non-zero"
   begin script
     (exit 0) & p1=$!
@@ -200,7 +208,7 @@ end test "first operand exits 0, last exits non-zero"
 # Process terminated by signal: exit status >128, distinct per signal
 # ==============================================================================
 
-requirement "SHALL-WAIT-1355" doc="Process terminated by signal: exit status >128, distinct per signal"
+requirement "SHALL-WAIT-1355" doc="If the process terminated abnormally due to the receipt of a signal, the exit status shall be greater than 128 and shall be distinct from the exit status generated by other signals, but the exact value is unspecified. (See the kill -l option.) Otherwise, the wait utility shall exit with one of the following values: 0 The wait utility was invoked with no operands and all process IDs known by the invoking shell have terminated."
 
 begin test "SIGTERM exit status >128"
   begin script
@@ -213,6 +221,7 @@ begin test "SIGTERM exit status >128"
   expect_stdout "sigterm_ok"
 end test "SIGTERM exit status >128"
 
+requirement "SHALL-WAIT-1355" doc="If the process terminated abnormally due to the receipt of a signal, the exit status shall be greater than 128 and shall be distinct from the exit status generated by other signals, but the exact value is unspecified. (See the kill -l option.) Otherwise, the wait utility shall exit with one of the following values: 0 The wait utility was invoked with no operands and all process IDs known by the invoking shell have terminated."
 begin test "SIGKILL exit status >128"
   begin script
     sleep 60 & p=$!
@@ -224,6 +233,7 @@ begin test "SIGKILL exit status >128"
   expect_stdout "sigkill_ok"
 end test "SIGKILL exit status >128"
 
+requirement "SHALL-WAIT-1355" doc="If the process terminated abnormally due to the receipt of a signal, the exit status shall be greater than 128 and shall be distinct from the exit status generated by other signals, but the exact value is unspecified. (See the kill -l option.) Otherwise, the wait utility shall exit with one of the following values: 0 The wait utility was invoked with no operands and all process IDs known by the invoking shell have terminated."
 begin test "different signals produce distinct exit statuses"
   begin script
     sleep 60 & p1=$!
@@ -239,6 +249,7 @@ begin test "different signals produce distinct exit statuses"
   expect_stdout "distinct_ok"
 end test "different signals produce distinct exit statuses"
 
+requirement "SHALL-WAIT-1355" doc="If the process terminated abnormally due to the receipt of a signal, the exit status shall be greater than 128 and shall be distinct from the exit status generated by other signals, but the exact value is unspecified. (See the kill -l option.) Otherwise, the wait utility shall exit with one of the following values: 0 The wait utility was invoked with no operands and all process IDs known by the invoking shell have terminated."
 begin test "signal death >128 with no-operand wait"
   begin script
     sleep 60 & p=$!
@@ -254,7 +265,7 @@ end test "signal death >128 with no-operand wait"
 # wait -l: symbolic signal name output
 # ==============================================================================
 
-requirement "SHALL-WAIT-1353" doc="When both the -l option and exit_status operand are specified, the symbolic name of the corresponding signal shall be written."
+requirement "SHALL-WAIT-1353" doc="When both the -l option and exit_status operand are specified, the symbolic name of the corresponding signal shall be written in the following format: \"%s\\n\", < signal_name > STDERR The standard error shall be used only for diagnostic messages."
 
 begin test "wait -l 143 prints TERM signal name"
   begin script
@@ -263,6 +274,7 @@ begin test "wait -l 143 prints TERM signal name"
   expect_stdout_line ".*(TERM|Term|term).*"
 end test "wait -l 143 prints TERM signal name"
 
+requirement "SHALL-WAIT-1355" doc="If the process terminated abnormally due to the receipt of a signal, the exit status shall be greater than 128 and shall be distinct from the exit status generated by other signals, but the exact value is unspecified. (See the kill -l option.) Otherwise, the wait utility shall exit with one of the following values: 0 The wait utility was invoked with no operands and all process IDs known by the invoking shell have terminated."
 begin test "wait -l 137 prints KILL signal name"
   begin script
     wait -l 137 2>/dev/null || true

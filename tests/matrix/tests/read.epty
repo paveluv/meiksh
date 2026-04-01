@@ -4,8 +4,8 @@ testsuite "read Built-in Utility"
 # Basic Line Reading
 # ==============================================================================
 
-requirement "SHALL-READ-1259" doc="read shall read a single logical line from stdin."
-requirement "SHALL-READ-1266" doc="Terminating logical line delimiter shall be removed."
+requirement "SHALL-READ-1259" doc="The read utility shall read a single logical line from standard input into one or more shell variables."
+requirement "SHALL-READ-1266" doc="The terminating logical line delimiter (if any) shall be removed from the input."
 
 begin test "basic single word"
   begin script
@@ -14,6 +14,7 @@ begin test "basic single word"
   expect_stdout "hello"
 end test "basic single word"
 
+requirement "SHALL-READ-1270" doc="If IFS is unset, or is set to any non-empty value, then a modified version of the field splitting algorithm specified in 2.6.5 Field Splitting shall be applied, with the modifications as follows: The input to the algorithm shall be the logical line (minus terminating delimiter) that was read from standard input, and shall be considered as a single initial field, all of which resulted from expansions, with any escaped byte and the preceding <backslash> escape character treated as if they were the result of a quoted expansion, and all other bytes treated as if they were the results of unquoted expansions."
 begin test "basic multi-word"
   begin script
     echo 'hello world' | { read line; echo "$line"; }
@@ -21,6 +22,7 @@ begin test "basic multi-word"
   expect_stdout "hello world"
 end test "basic multi-word"
 
+requirement "SHALL-READ-1259" doc="The read utility shall read a single logical line from standard input into one or more shell variables."
 begin test "only first line consumed by single read"
   begin script
     printf 'first
@@ -34,9 +36,9 @@ end test "only first line consumed by single read"
 # Backslash Escape Processing (no -r)
 # ==============================================================================
 
-requirement "SHALL-READ-1260" doc="If -r not specified, backslash shall act as escape character."
-requirement "SHALL-READ-1261" doc="Unescaped backslash preserves literal value of following backslash."
-requirement "SHALL-READ-1264" doc="All other unescaped backslash characters removed after splitting."
+requirement "SHALL-READ-1260" doc="If the -r option is not specified, <backslash> shall act as an escape character."
+requirement "SHALL-READ-1261" doc="An unescaped <backslash> shall preserve the literal value of a following <backslash> and shall prevent a following byte (if any) from being used to split fields, with the exception of either <newline> or the logical line delimiter specified with the -d delim option (if it is used and delim is not <newline>); it is unspecified which."
+requirement "SHALL-READ-1264" doc="All other unescaped <backslash> characters shall be removed after splitting the input into fields."
 
 begin test "backslash-space preserves literal space"
   begin script
@@ -46,6 +48,7 @@ begin test "backslash-space preserves literal space"
   expect_stdout "hello world"
 end test "backslash-space preserves literal space"
 
+requirement "SHALL-READ-1270" doc="If IFS is unset, or is set to any non-empty value, then a modified version of the field splitting algorithm specified in 2.6.5 Field Splitting shall be applied, with the modifications as follows: The input to the algorithm shall be the logical line (minus terminating delimiter) that was read from standard input, and shall be considered as a single initial field, all of which resulted from expansions, with any escaped byte and the preceding <backslash> escape character treated as if they were the result of a quoted expansion, and all other bytes treated as if they were the results of unquoted expansions."
 begin test "backslash-backslash produces single backslash"
   begin script
     printf '%s
@@ -54,6 +57,7 @@ begin test "backslash-backslash produces single backslash"
   expect_stdout "a\\b"
 end test "backslash-backslash produces single backslash"
 
+requirement "SHALL-READ-1263" doc="The <backslash> and the excepted character shall be removed before splitting the input into fields."
 begin test "backslash before regular char removes backslash"
   begin script
     printf '%s
@@ -62,8 +66,8 @@ begin test "backslash before regular char removes backslash"
   expect_stdout "ab"
 end test "backslash before regular char removes backslash"
 
-requirement "SHALL-READ-1262" doc="If excepted character follows backslash, read interprets as line continuation."
-requirement "SHALL-READ-1263" doc="Backslash and excepted character removed before splitting."
+requirement "SHALL-READ-1262" doc="If this excepted character follows the <backslash>, the read utility shall interpret this as line continuation."
+requirement "SHALL-READ-1263" doc="The <backslash> and the excepted character shall be removed before splitting the input into fields."
 
 begin test "backslash-newline joins lines (line continuation)"
   begin script
@@ -78,7 +82,7 @@ end test "backslash-newline joins lines (line continuation)"
 # The -r Option (Raw Mode)
 # ==============================================================================
 
-requirement "SHALL-READ-1282" doc="read shall conform to XBD 12.2 Utility Syntax Guidelines."
+requirement "SHALL-READ-1282" doc="The read utility shall conform to XBD 12.2 Utility Syntax Guidelines ."
 
 begin test "read -r treats backslashes literally"
   begin script
@@ -88,6 +92,7 @@ begin test "read -r treats backslashes literally"
   expect_stdout "hello\\world"
 end test "read -r treats backslashes literally"
 
+requirement "SHALL-READ-1265" doc="If standard input is a terminal device and the invoking shell is interactive, read shall prompt for a continuation line when it reads an input line ending with a <backslash> <newline>, unless the -r option is specified."
 begin test "read -r backslash-newline does not join lines"
   begin script
     printf 'hello\\
@@ -97,6 +102,7 @@ begin test "read -r backslash-newline does not join lines"
   expect_stdout "hello\\"
 end test "read -r backslash-newline does not join lines"
 
+requirement "SHALL-READ-1262" doc="If this excepted character follows the <backslash>, the read utility shall interpret this as line continuation."
 begin test "read -r preserves double backslash"
   begin script
     printf '%s
@@ -109,10 +115,9 @@ end test "read -r preserves double backslash"
 # Field Splitting with Default IFS
 # ==============================================================================
 
-requirement "SHALL-READ-1270" doc="If IFS unset or non-empty, modified field splitting algorithm applied."
-requirement "SHALL-READ-1274" doc="Var operands processed in order; output fields assigned in order."
-requirement "SHALL-READ-1271" doc="Loop ceases when input empty or n output fields generated (n = vars - 1)."
-requirement "SHALL-READ-1272" doc="Remaining input returned unsplit, with leading/trailing IFS whitespace removed."
+requirement "SHALL-READ-1270" doc="If IFS is unset, or is set to any non-empty value, then a modified version of the field splitting algorithm specified in 2.6.5 Field Splitting shall be applied, with the modifications as follows: The input to the algorithm shall be the logical line (minus terminating delimiter) that was read from standard input, and shall be considered as a single initial field, all of which resulted from expansions, with any escaped byte and the preceding <backslash> escape character treated as if they were the result of a quoted expansion, and all other bytes treated as if they were the results of unquoted expansions."
+requirement "SHALL-READ-1274" doc="The specified var operands shall be processed in the order they appear on the command line, and the output fields generated by the field splitting algorithm shall be used in the order they were generated, by repeating the following checks until neither is true: If more than one var operand is yet to be processed and one or more output fields are yet to be used, the variable named by the first unprocessed var operand shall be assigned the value of the first unused output field."
+requirement "SHALL-READ-1271" doc="The loop over the contents of that initial field shall cease when either the input is empty or n output fields have been generated, where n is one less than the number of var operands passed to the read utility."
 
 begin test "two variables two fields"
   begin script
@@ -121,6 +126,7 @@ begin test "two variables two fields"
   expect_stdout "hello world"
 end test "two variables two fields"
 
+requirement "SHALL-READ-1270" doc="If IFS is unset, or is set to any non-empty value, then a modified version of the field splitting algorithm specified in 2.6.5 Field Splitting shall be applied, with the modifications as follows: The input to the algorithm shall be the logical line (minus terminating delimiter) that was read from standard input, and shall be considered as a single initial field, all of which resulted from expansions, with any escaped byte and the preceding <backslash> escape character treated as if they were the result of a quoted expansion, and all other bytes treated as if they were the results of unquoted expansions."
 begin test "multiple spaces treated as single delimiter"
   begin script
     echo 'hello    world' | { read a b; echo "$a $b"; }
@@ -128,6 +134,7 @@ begin test "multiple spaces treated as single delimiter"
   expect_stdout "hello world"
 end test "multiple spaces treated as single delimiter"
 
+requirement "SHALL-2-7-4-216" doc="If the redirection operator is \"<<-\" , all leading <tab> characters shall be stripped from input lines after <backslash><newline> line continuation (when it applies) has been performed, and from the line containing the trailing delimiter."
 begin test "leading whitespace stripped"
   begin script
     echo '   hello world' | { read a b; echo "$a $b"; }
@@ -135,6 +142,7 @@ begin test "leading whitespace stripped"
   expect_stdout "hello world"
 end test "leading whitespace stripped"
 
+requirement "SHALL-READ-1272" doc="Any remaining input in the original field being processed shall be returned to the read utility \"unsplit\"; that is, unmodified except that any leading or trailing IFS white space, as defined in 2.6.5 Field Splitting , shall be removed."
 begin test "trailing whitespace stripped from last field"
   begin script
     echo 'hello world   ' | { read a b; echo "$a $b"; }
@@ -142,7 +150,7 @@ begin test "trailing whitespace stripped from last field"
   expect_stdout "hello world"
 end test "trailing whitespace stripped from last field"
 
-requirement "SHALL-READ-1275" doc="If exactly one var remains and there was unsplit input, assign unsplit input."
+requirement "SHALL-READ-1275" doc="If exactly one var operand is yet to be processed and there was some remaining unsplit input returned from the modified field splitting algorithm, the variable named by the unprocessed var operand shall be assigned the unsplit input."
 
 begin test "fewer vars than fields: last gets remainder"
   begin script
@@ -151,6 +159,7 @@ begin test "fewer vars than fields: last gets remainder"
   expect_stdout "a b c d"
 end test "fewer vars than fields: last gets remainder"
 
+requirement "SHALL-READ-1067" doc="The following environment variables shall affect the execution of read : IFS Determine the internal field separators used to delimit fields; see 2.5.3 Shell Variables ."
 begin test "remainder preserves internal spacing"
   begin script
     echo 'a b   c   d' | { read first rest; echo "$first $rest"; }
@@ -158,7 +167,7 @@ begin test "remainder preserves internal spacing"
   expect_stdout "a b   c   d"
 end test "remainder preserves internal spacing"
 
-requirement "SHALL-READ-1276" doc="If unprocessed var operands remain, each set to empty string."
+requirement "SHALL-READ-1276" doc="If there are still one or more unprocessed var operands, each of the variables names by those operands shall be assigned an empty string."
 
 begin test "more vars than fields: extras get empty"
   begin script
@@ -167,6 +176,7 @@ begin test "more vars than fields: extras get empty"
   expect_stdout "hello::"
 end test "more vars than fields: extras get empty"
 
+requirement "SHALL-READ-1274" doc="The specified var operands shall be processed in the order they appear on the command line, and the output fields generated by the field splitting algorithm shall be used in the order they were generated, by repeating the following checks until neither is true: If more than one var operand is yet to be processed and one or more output fields are yet to be used, the variable named by the first unprocessed var operand shall be assigned the value of the first unused output field."
 begin test "more vars than fields: two words three vars"
   begin script
     echo 'hello world' | { read a b c; echo "$a:$b:$c"; }
@@ -178,7 +188,7 @@ end test "more vars than fields: two words three vars"
 # Custom IFS
 # ==============================================================================
 
-requirement "SHALL-READ-1067" doc="IFS determines internal field separators."
+requirement "SHALL-READ-1067" doc="The following environment variables shall affect the execution of read : IFS Determine the internal field separators used to delimit fields; see 2.5.3 Shell Variables ."
 
 begin test "colon as IFS"
   begin script
@@ -187,6 +197,7 @@ begin test "colon as IFS"
   expect_stdout "a:b:c"
 end test "colon as IFS"
 
+requirement "SHALL-READ-1270" doc="If IFS is unset, or is set to any non-empty value, then a modified version of the field splitting algorithm specified in 2.6.5 Field Splitting shall be applied, with the modifications as follows: The input to the algorithm shall be the logical line (minus terminating delimiter) that was read from standard input, and shall be considered as a single initial field, all of which resulted from expansions, with any escaped byte and the preceding <backslash> escape character treated as if they were the result of a quoted expansion, and all other bytes treated as if they were the results of unquoted expansions."
 begin test "comma as IFS"
   begin script
     echo 'x,y' | { IFS=, read a b; echo "$a $b"; }
@@ -194,6 +205,7 @@ begin test "comma as IFS"
   expect_stdout "x y"
 end test "comma as IFS"
 
+requirement "SHALL-READ-1270" doc="If IFS is unset, or is set to any non-empty value, then a modified version of the field splitting algorithm specified in 2.6.5 Field Splitting shall be applied, with the modifications as follows: The input to the algorithm shall be the logical line (minus terminating delimiter) that was read from standard input, and shall be considered as a single initial field, all of which resulted from expansions, with any escaped byte and the preceding <backslash> escape character treated as if they were the result of a quoted expansion, and all other bytes treated as if they were the results of unquoted expansions."
 begin test "multi-character IFS: colon and comma"
   begin script
     echo 'a:b,c' | { IFS=:, read a b c; echo "$a $b $c"; }
@@ -201,6 +213,7 @@ begin test "multi-character IFS: colon and comma"
   expect_stdout "a b c"
 end test "multi-character IFS: colon and comma"
 
+requirement "SHALL-READ-1270" doc="If IFS is unset, or is set to any non-empty value, then a modified version of the field splitting algorithm specified in 2.6.5 Field Splitting shall be applied, with the modifications as follows: The input to the algorithm shall be the logical line (minus terminating delimiter) that was read from standard input, and shall be considered as a single initial field, all of which resulted from expansions, with any escaped byte and the preceding <backslash> escape character treated as if they were the result of a quoted expansion, and all other bytes treated as if they were the results of unquoted expansions."
 begin test "non-whitespace IFS preserves leading/trailing delimiters as empty fields"
   begin script
     echo ':b:' | { IFS=: read a b c; echo "$a:$b:$c"; }
@@ -212,8 +225,8 @@ end test "non-whitespace IFS preserves leading/trailing delimiters as empty fiel
 # Empty IFS
 # ==============================================================================
 
-requirement "SHALL-READ-1267" doc="If IFS is empty string, data assigned to first var, others set empty."
-requirement "SHALL-READ-1268" doc="No other processing in that case."
+requirement "SHALL-READ-1267" doc="Then, if the shell variable IFS (see 2.5.3 Shell Variables ) is set, and its value is an empty string, the resulting data shall be assigned to the variable named by the first var operand, and the variables named by other var operands (if any) shall be set to the empty string."
+requirement "SHALL-READ-1268" doc="No other processing shall be performed in this case."
 
 begin test "empty IFS: entire line goes into first variable"
   begin script
@@ -222,6 +235,7 @@ begin test "empty IFS: entire line goes into first variable"
   expect_stdout "hello world:"
 end test "empty IFS: entire line goes into first variable"
 
+requirement "SHALL-READ-1270" doc="If IFS is unset, or is set to any non-empty value, then a modified version of the field splitting algorithm specified in 2.6.5 Field Splitting shall be applied, with the modifications as follows: The input to the algorithm shall be the logical line (minus terminating delimiter) that was read from standard input, and shall be considered as a single initial field, all of which resulted from expansions, with any escaped byte and the preceding <backslash> escape character treated as if they were the result of a quoted expansion, and all other bytes treated as if they were the results of unquoted expansions."
 begin test "empty IFS: no field splitting"
   begin script
     echo 'a:b:c' | { IFS= read x y; echo "$x:$y"; }
@@ -229,6 +243,7 @@ begin test "empty IFS: no field splitting"
   expect_stdout "a:b:c:"
 end test "empty IFS: no field splitting"
 
+requirement "SHALL-READ-1270" doc="If IFS is unset, or is set to any non-empty value, then a modified version of the field splitting algorithm specified in 2.6.5 Field Splitting shall be applied, with the modifications as follows: The input to the algorithm shall be the logical line (minus terminating delimiter) that was read from standard input, and shall be considered as a single initial field, all of which resulted from expansions, with any escaped byte and the preceding <backslash> escape character treated as if they were the result of a quoted expansion, and all other bytes treated as if they were the results of unquoted expansions."
 begin test "empty IFS with single variable: entire line assigned"
   begin script
     printf '  hello  world  
@@ -241,7 +256,7 @@ end test "empty IFS with single variable: entire line assigned"
 # Variable Operand: Existing or Nonexisting
 # ==============================================================================
 
-requirement "SHALL-READ-1066" doc="Operand: var - name of existing or nonexisting shell variable."
+requirement "SHALL-READ-1066" doc="The following operand shall be supported: var The name of an existing or nonexisting shell variable."
 
 begin test "reading into unset variable creates it"
   begin script
@@ -250,6 +265,7 @@ begin test "reading into unset variable creates it"
   expect_stdout "created"
 end test "reading into unset variable creates it"
 
+requirement "SHALL-READ-1066" doc="The following operand shall be supported: var The name of an existing or nonexisting shell variable."
 begin test "reading into existing variable overwrites it"
   begin script
     echo 'new' | { existing=old; read existing; echo "$existing"; }
@@ -261,7 +277,7 @@ end test "reading into existing variable overwrites it"
 # Current Shell Environment
 # ==============================================================================
 
-requirement "SHALL-READ-1277" doc="Setting variables affects current shell execution environment."
+requirement "SHALL-READ-1277" doc="The setting of variables specified by the var operands shall affect the current shell execution environment; see 2.13 Shell Execution Environment ."
 
 begin test "variable set by read persists"
   begin script
@@ -270,6 +286,7 @@ begin test "variable set by read persists"
   expect_stdout "hello:world"
 end test "variable set by read persists"
 
+requirement "SHALL-READ-1267" doc="Then, if the shell variable IFS (see 2.5.3 Shell Variables ) is set, and its value is an empty string, the resulting data shall be assigned to the variable named by the first var operand, and the variables named by other var operands (if any) shall be set to the empty string."
 begin test "read at EOF clears variable to empty"
   begin script
     val=init
@@ -286,7 +303,7 @@ end test "read at EOF clears variable to empty"
 # Subshell Isolation
 # ==============================================================================
 
-requirement "SHALL-READ-1280" doc="read in subshell shall not affect caller's environment."
+requirement "SHALL-READ-1280" doc="If read is called in a subshell or separate utility execution environment, such as one of the following: (read foo) nohup read ... find . -exec read ... \\; it shall not affect the shell variables in the caller's environment."
 
 begin test "read in explicit subshell does not affect parent"
   begin script
@@ -297,6 +314,7 @@ begin test "read in explicit subshell does not affect parent"
   expect_stdout "parent"
 end test "read in explicit subshell does not affect parent"
 
+requirement "SHALL-READ-1280" doc="If read is called in a subshell or separate utility execution environment, such as one of the following: (read foo) nohup read ... find . -exec read ... \\; it shall not affect the shell variables in the caller's environment."
 begin test "read in pipeline subshell does not affect parent"
   begin script
     x=parent
@@ -310,8 +328,8 @@ end test "read in pipeline subshell does not affect parent"
 # Readonly Variable Error
 # ==============================================================================
 
-requirement "SHALL-READ-1278" doc="Error in setting any variable (readonly) results in return >1."
-requirement "SHALL-READ-1279" doc="It is unspecified whether variables named after the error-generating one are set."
+requirement "SHALL-READ-1278" doc="An error in setting any variable (such as if a var has previously been marked readonly ) shall be considered an error of read processing, and shall result in a return value greater than one."
+requirement "SHALL-READ-1279" doc="Variables named before the one generating the error shall be set as described above; it is unspecified whether variables named later shall be set as above, or read simply ceases processing when the error occurs, leaving later named variables unaltered."
 
 begin test "read into readonly variable returns non-zero"
   begin script
@@ -320,6 +338,7 @@ begin test "read into readonly variable returns non-zero"
   not_expect_exit_code 0
 end test "read into readonly variable returns non-zero"
 
+requirement "SHALL-FC-1135" doc="If the editor returns a non-zero exit status, this shall suppress the entry into the history list and the command re-execution."
 begin test "partial assignment with readonly second var returns non-zero"
   begin script
     echo 'a b' | { readonly second=locked; read first second; }
@@ -331,7 +350,7 @@ end test "partial assignment with readonly second var returns non-zero"
 # EOF Handling
 # ==============================================================================
 
-requirement "SHALL-READ-1281" doc="If EOF before terminating delimiter, vars set and exit status 1."
+requirement "SHALL-READ-1281" doc="If end-of-file is detected before a terminating logical line delimiter is encountered, the variables specified by the var operands shall be set as described above and the exit status shall be 1."
 
 begin test "EOF with no trailing newline: exit code 1"
   begin script
@@ -340,6 +359,7 @@ begin test "EOF with no trailing newline: exit code 1"
   expect_exit_code 1
 end test "EOF with no trailing newline: exit code 1"
 
+requirement "SHALL-READ-1267" doc="Then, if the shell variable IFS (see 2.5.3 Shell Variables ) is set, and its value is an empty string, the resulting data shall be assigned to the variable named by the first var operand, and the variables named by other var operands (if any) shall be set to the empty string."
 begin test "EOF with no trailing newline: variable still assigned"
   begin script
     printf 'no newline' | { read var; echo "$var"; }
@@ -347,6 +367,7 @@ begin test "EOF with no trailing newline: variable still assigned"
   expect_stdout "no newline"
 end test "EOF with no trailing newline: variable still assigned"
 
+requirement "SHALL-READ-1271" doc="The loop over the contents of that initial field shall cease when either the input is empty or n output fields have been generated, where n is one less than the number of var operands passed to the read utility."
 begin test "completely empty input: exit code 1"
   begin script
     printf '' | { read var; exit $?; }
@@ -354,6 +375,7 @@ begin test "completely empty input: exit code 1"
   expect_exit_code 1
 end test "completely empty input: exit code 1"
 
+requirement "SHALL-READ-1267" doc="Then, if the shell variable IFS (see 2.5.3 Shell Variables ) is set, and its value is an empty string, the resulting data shall be assigned to the variable named by the first var operand, and the variables named by other var operands (if any) shall be set to the empty string."
 begin test "completely empty input: variable set to empty"
   begin script
     printf '' | { read var; echo "$var"; }
@@ -361,6 +383,7 @@ begin test "completely empty input: variable set to empty"
   expect_stdout ""
 end test "completely empty input: variable set to empty"
 
+requirement "SHALL-EXTENDED-DESCRIPTION-5042" doc="Otherwise, the evaluated operand shall be the next argument operand after the one evaluated by the previous conversion specification that consumed an argument; if there is no such previous conversion specification the first argument operand shall be evaluated."
 begin test "next read after all lines consumed hits EOF"
   begin script
     echo 'only' | { read line1; read line2; exit $?; }
@@ -372,12 +395,13 @@ end test "next read after all lines consumed hits EOF"
 # Prompt on Terminal (SHALL-READ-1265)
 # ==============================================================================
 
-requirement "SHALL-READ-1265" doc="If stdin is terminal and shell interactive, read shall prompt for continuation on backslash-newline."
+requirement "SHALL-READ-1265" doc="If standard input is a terminal device and the invoking shell is interactive, read shall prompt for a continuation line when it reads an input line ending with a <backslash> <newline>, unless the -r option is specified."
 
 # ==============================================================================
 # read with No Variables (REPLY)
 # ==============================================================================
 
+requirement "SHALL-READ-1259" doc="The read utility shall read a single logical line from standard input into one or more shell variables."
 begin test "single variable captures entire line"
   begin script
     echo 'entire line' | { read line; echo "$line"; }
@@ -389,6 +413,7 @@ end test "single variable captures entire line"
 # Interaction of -r with IFS Splitting
 # ==============================================================================
 
+requirement "SHALL-READ-1270" doc="If IFS is unset, or is set to any non-empty value, then a modified version of the field splitting algorithm specified in 2.6.5 Field Splitting shall be applied, with the modifications as follows: The input to the algorithm shall be the logical line (minus terminating delimiter) that was read from standard input, and shall be considered as a single initial field, all of which resulted from expansions, with any escaped byte and the preceding <backslash> escape character treated as if they were the result of a quoted expansion, and all other bytes treated as if they were the results of unquoted expansions."
 begin test "read -r with custom IFS: backslashes literal and splitting on IFS"
   begin script
     printf '%s
@@ -397,6 +422,7 @@ begin test "read -r with custom IFS: backslashes literal and splitting on IFS"
   expect_stdout "a\\b:c"
 end test "read -r with custom IFS: backslashes literal and splitting on IFS"
 
+requirement "SHALL-READ-1067" doc="The following environment variables shall affect the execution of read : IFS Determine the internal field separators used to delimit fields; see 2.5.3 Shell Variables ."
 begin test "read -r with multiple IFS fields"
   begin script
     echo 'one:two:three four' | { IFS=: read -r a b c; echo "$a:$b:$c"; }
@@ -408,6 +434,7 @@ end test "read -r with multiple IFS fields"
 # Whitespace IFS Trimming Details
 # ==============================================================================
 
+requirement "SHALL-READ-1270" doc="If IFS is unset, or is set to any non-empty value, then a modified version of the field splitting algorithm specified in 2.6.5 Field Splitting shall be applied, with the modifications as follows: The input to the algorithm shall be the logical line (minus terminating delimiter) that was read from standard input, and shall be considered as a single initial field, all of which resulted from expansions, with any escaped byte and the preceding <backslash> escape character treated as if they were the result of a quoted expansion, and all other bytes treated as if they were the results of unquoted expansions."
 begin test "tabs in input treated as whitespace delimiters"
   begin script
     printf 'a	b
@@ -416,6 +443,7 @@ begin test "tabs in input treated as whitespace delimiters"
   expect_stdout "a b"
 end test "tabs in input treated as whitespace delimiters"
 
+requirement "SHALL-2-9-5-379" doc="The implementation shall maintain separate name spaces for functions and variables."
 begin test "mixed tabs and spaces"
   begin script
     printf '  	hello	  world  	
@@ -424,6 +452,7 @@ begin test "mixed tabs and spaces"
   expect_stdout "hello world"
 end test "mixed tabs and spaces"
 
+requirement "SHALL-READ-1067" doc="The following environment variables shall affect the execution of read : IFS Determine the internal field separators used to delimit fields; see 2.5.3 Shell Variables ."
 begin test "remainder preserves internal tabs"
   begin script
     printf 'a	b	c
@@ -436,6 +465,7 @@ end test "remainder preserves internal tabs"
 # Multiple Reads from Same Stream
 # ==============================================================================
 
+requirement "SHALL-READ-1259" doc="The read utility shall read a single logical line from standard input into one or more shell variables."
 begin test "each read consumes next line"
   begin script
     printf 'first
@@ -450,6 +480,7 @@ end test "each read consumes next line"
 # Empty Lines
 # ==============================================================================
 
+requirement "SHALL-READ-1270" doc="If IFS is unset, or is set to any non-empty value, then a modified version of the field splitting algorithm specified in 2.6.5 Field Splitting shall be applied, with the modifications as follows: The input to the algorithm shall be the logical line (minus terminating delimiter) that was read from standard input, and shall be considered as a single initial field, all of which resulted from expansions, with any escaped byte and the preceding <backslash> escape character treated as if they were the result of a quoted expansion, and all other bytes treated as if they were the results of unquoted expansions."
 begin test "empty line results in empty variable"
   begin script
     echo '' | { read var; echo "$var"; }
@@ -457,6 +488,7 @@ begin test "empty line results in empty variable"
   expect_stdout ""
 end test "empty line results in empty variable"
 
+requirement "SHALL-READ-1281" doc="If end-of-file is detected before a terminating logical line delimiter is encountered, the variables specified by the var operands shall be set as described above and the exit status shall be 1."
 begin test "empty line exit code 0"
   begin script
     echo '' | { read var; }
@@ -464,6 +496,7 @@ begin test "empty line exit code 0"
   expect_exit_code 0
 end test "empty line exit code 0"
 
+requirement "SHALL-READ-1270" doc="If IFS is unset, or is set to any non-empty value, then a modified version of the field splitting algorithm specified in 2.6.5 Field Splitting shall be applied, with the modifications as follows: The input to the algorithm shall be the logical line (minus terminating delimiter) that was read from standard input, and shall be considered as a single initial field, all of which resulted from expansions, with any escaped byte and the preceding <backslash> escape character treated as if they were the result of a quoted expansion, and all other bytes treated as if they were the results of unquoted expansions."
 begin test "multiple vars with empty input all set to empty"
   begin script
     echo '' | { read a b c; echo "$a:$b:$c"; }

@@ -4,40 +4,10 @@ testsuite "Job Control"
 # The Maestro: Managing Processes
 # ==============================================================================
 
-requirement "SHALL-2-11-435" doc="Job control allows users to selectively stop (suspend) the execution of processes"
-requirement "SHALL-ASYNCHRONOUS-EVENTS-025" doc="The sh utility shall take the standard action for all signals with exceptions"
-requirement "SHALL-2-11-425" doc="Shell shall initially set foreground process group ID to its own"
-requirement "SHALL-2-11-427" doc="If it has a controlling terminal, it shall initially perform steps if interactive"
-requirement "SHALL-2-11-428" doc="If process group is not foreground, shell shall stop itself or attempt read"
-requirement "SHALL-2-11-429" doc="If stopped, when it continues it shall repeat these steps"
-requirement "SHALL-2-11-430" doc="Shell shall change foreground process group when foreground job is running"
-requirement "SHALL-2-11-448" doc="When job control is enabled, the shell shall create one or more jobs"
-requirement "SHALL-2-11-432" doc="A list with more than one async AND-OR list treated as split into multiple lists"
-requirement "SHALL-2-11-433" doc="Single async AND-OR list forms background job with process group leader"
-requirement "SHALL-2-11-434" doc="Sequential AND-OR lists followed by async one form single foreground then background"
-requirement "SHALL-2-11-435" doc="Processes in foreground pipeline share process group"
-requirement "SHALL-2-11-436" doc="Background job can be brought to foreground by fg utility"
-requirement "SHALL-2-11-437" doc="Stopped foreground process causes entire job to become suspended"
-requirement "SHALL-2-11-439" doc="When foreground job created or brought to foreground, shell sets process group"
-requirement "SHALL-2-11-440" doc="Foreground process group ID set when each pipeline in job is executed"
-requirement "SHALL-2-11-441" doc="If all commands in pipeline executed by shell, foreground group set to shell's"
-requirement "SHALL-2-11-442" doc="When foreground job terminates, shell sets foreground process group to shell's"
-requirement "SHALL-2-11-443" doc="Each background job has associated job number and process ID"
-requirement "SHALL-2-11-444" doc="When background job brought to foreground, job number removed from list"
-requirement "SHALL-2-11-445" doc="If foreground process stopped by catchable signal, entire job becomes suspended"
-requirement "SHALL-2-11-446" doc="Otherwise, shell creates suspended job from unspecified set including stopped pipeline"
-requirement "SHALL-2-11-447" doc="Commands not completed and not in suspended job shall be discarded"
-requirement "SHALL-2-11-448" doc="If foreground process stopped by SIGSTOP, behavior as for catchable signal"
-requirement "SHALL-2-11-449" doc="Suspended job assigned job number and shell writes message"
-requirement "SHALL-2-11-450" doc="Message may indicate completed commands which shall not be repeated on continue"
-requirement "SHALL-2-11-451" doc="Interactive shell shall save terminal settings before changing them"
-requirement "SHALL-2-11-453" doc="Background job stopped by signal, shell converts to suspended job"
-requirement "SHALL-2-11-454" doc="If set -b disabled, message written prior to next prompt"
-requirement "SHALL-ASYNCHRONOUS-EVENTS-026" doc="Interactive shell SIGINT during editing handled per EXTENDED DESCRIPTION"
-requirement "SHALL-ASYNCHRONOUS-EVENTS-027" doc="Interactive shell: SIGQUIT and SIGTERM shall be ignored"
-requirement "SHALL-ASYNCHRONOUS-EVENTS-028" doc="With -m, SIGTTIN SIGTTOU SIGTSTP shall be ignored"
-requirement "SHALL-ASYNCHRONOUS-EVENTS-029" doc="If caught, signal-catching function sets default and re-raises"
 
+requirement "SHALL-2-11-433" doc="When a job consisting of a single asynchronous AND-OR list is created, it shall form a background job and the associated process ID shall be that of a child process that is made a process group leader, with all other processes (if any) that the shell creates to execute the AND-OR list initially having this process ID as their process group ID."
+requirement "SHALL-2-11-434" doc="For a list consisting of one or more sequentially executed AND-OR lists followed by at most one asynchronous AND-OR list, the whole list shall form a single foreground job up until the sequentially executed AND-OR lists have all completed execution, at which point the asynchronous AND-OR list (if any) shall form a background job as described above."
+requirement "SHALL-2-11-437" doc="If a process that the shell subsequently waits for is part of this foreground job and is stopped by a signal, the entire job shall become a suspended job and the behavior shall be as if the process had been stopped while the job was running in the background."
 begin interactive test "background job and jobs listing"
   spawn -i
   expect "$ "
@@ -50,13 +20,9 @@ begin interactive test "background job and jobs listing"
   wait
 end interactive test "background job and jobs listing"
 
-
-# ==============================================================================
-# History maintained interactively
-# ==============================================================================
-
-requirement "SHALL-Command-History-List-031" doc="When used interactively, shell shall maintain command history in HISTFILE"
-
+requirement "SHALL-ASYNCHRONOUS-EVENTS-028" doc="If the -m option is in effect, SIGTTIN, SIGTTOU, and SIGTSTP signals shall be ignored."
+requirement "SHALL-Command-History-List-031" doc="When the sh utility is being used interactively, it shall maintain a list of commands previously entered from the terminal in the file named by the HISTFILE environment variable."
+requirement "SHALL-2-15-511" doc="For those that are not, the requirement in 1.4 Utility Description Defaults that \"--\" be recognized as a first argument to be discarded does not apply and a conforming application shall not use that argument."
 begin interactive test "history maintained interactively"
   spawn -i
   expect "$ "
@@ -73,13 +39,9 @@ begin interactive test "history maintained interactively"
   wait
 end interactive test "history maintained interactively"
 
-
-# ==============================================================================
-# User must explicitly exit interactive shell
-# ==============================================================================
-
-requirement "SHALL-DESCRIPTION-602" doc="A user shall explicitly exit to leave the interactive shell"
-
+requirement "SHALL-2-11-427" doc="Otherwise, if it has a controlling terminal, it shall initially perform the following steps if interactive and may perform them if non-interactive: If its process group is the foreground process group associated with the terminal, the shell shall set its process group ID to its process ID (if they are not already equal) and set the foreground process group ID associated with the terminal to its process group ID."
+requirement "SHALL-2-11-449" doc="When a suspended job is created as a result of a foreground job being stopped, it shall be assigned a job number, and an interactive shell shall write, and a non-interactive shell may write, a message to standard error, formatted as described by the jobs utility (without the -l option) for a suspended job."
+requirement "SHALL-2-11-451" doc="If the shell is interactive, it shall save the terminal settings before changing them to the settings it needs to read further commands."
 begin interactive test "user must explicitly exit interactive shell"
   spawn -i
   expect "$ "
@@ -90,15 +52,9 @@ begin interactive test "user must explicitly exit interactive shell"
   wait
 end interactive test "user must explicitly exit interactive shell"
 
-
-# ==============================================================================
-# fg/bg send SIGCONT to stopped job
-# ==============================================================================
-
-requirement "SHALL-2-11-455" doc="fg and bg shall send SIGCONT to stopped process group"
-requirement "SHALL-2-11-456" doc="fg shall send SIGCONT after setting foreground process group"
-requirement "SHALL-2-11-457" doc="fg shall restore terminal settings before sending SIGCONT"
-
+requirement "SHALL-2-11-429" doc="If it is stopped, then when it continues execution (after receiving a SIGCONT signal) it shall repeat these steps."
+requirement "SHALL-2-11-448" doc="If a process that the shell is waiting for is part of a foreground job that was started as a foreground job and is stopped by a SIGSTOP signal, the behavior shall be as described above for a catchable signal unless the shell was executing a built-in utility in the current shell execution environment when the SIGSTOP was delivered, resulting in the shell itself being stopped by the signal, in which case if the shell subsequently receives a SIGCONT signal and has one or more child processes that remain stopped, the shell shall create a suspended job as if only those child processes had been stopped."
+requirement "SHALL-2-11-436" doc="A background job that was created on execution of an asynchronous AND-OR list can be brought into the foreground by means of the fg utility (if supported); in this case the entire job shall become a single foreground job."
 begin interactive test "fg/bg send SIGCONT to stopped job"
   spawn -i
   expect "$ "
@@ -119,14 +75,9 @@ begin interactive test "fg/bg send SIGCONT to stopped job"
   wait
 end interactive test "fg/bg send SIGCONT to stopped job"
 
-
-# ==============================================================================
-# Background job completion notification
-# ==============================================================================
-
-requirement "SHALL-2-11-459" doc="When background job completes, interactive shell writes message to stderr"
-requirement "SHALL-2-11-454" doc="If set -b disabled, message written prior to next prompt"
-
+requirement "SHALL-2-11-443" doc="Each background job (whether suspended or not) shall have associated with it a job number and a process ID that is known in the current shell execution environment."
+requirement "SHALL-2-11-444" doc="When a background job is brought into the foreground by means of the fg utility, the associated job number shall be removed from the shell's background jobs list and the associated process ID shall be removed from the list of process IDs known in the current shell execution environment."
+requirement "SHALL-2-11-447" doc="Commands in the foreground job that have not already completed and are not included in the suspended job shall be discarded."
 begin interactive test "background job completion notification"
   spawn -i
   expect "$ "
@@ -141,13 +92,9 @@ begin interactive test "background job completion notification"
   wait
 end interactive test "background job completion notification"
 
-
-# ==============================================================================
-# Signal inheritance with job control disabled
-# ==============================================================================
-
-requirement "SHALL-2-12-461" doc="If job control disabled, async commands inherit SIG_IGN for SIGINT and SIGQUIT"
-
+requirement "SHALL-2-11-428" doc="If its process group is not the foreground process group associated with the terminal (which would result from it being started by a job-control shell as a background job), the shell shall either stop itself by sending itself a SIGTTIN signal or, if interactive, attempt to read from standard input (which generates a SIGTTIN signal if standard input is the controlling terminal)."
+requirement "SHALL-2-11-445" doc="If a process that the shell is waiting for is part of a foreground job that was started as a foreground job and is stopped by a catchable signal (SIGTSTP, SIGTTIN, or SIGTTOU): If the currently executing AND-OR list within the list comprising the foreground job consists of a single pipeline in which all of the commands are simple commands, the shell shall either create a suspended job consisting of at least that AND-OR list and the remaining (if any) AND-OR lists in the same list, or create a suspended job consisting of just that AND-OR list and discard the remaining (if any) AND-OR lists in the same list."
+requirement "SHALL-2-11-450" doc="The message may indicate that the commands comprising the job include commands that have already completed; in this case the completed commands shall not be repeated if execution of the job is subsequently continued."
 begin test "signal inheritance with job control disabled"
   begin script
     trap "" INT
@@ -156,13 +103,8 @@ begin test "signal inheritance with job control disabled"
   expect_exit_code 0
 end test "signal inheritance with job control disabled"
 
-
-# ==============================================================================
-# Signal inheritance — default case
-# ==============================================================================
-
-requirement "SHALL-2-12-462" doc="Commands shall inherit same signal actions as those inherited by shell from parent"
-
+requirement "SHALL-ASYNCHRONOUS-EVENTS-027" doc="If the shell is interactive: SIGQUIT and SIGTERM signals shall be ignored."
+requirement "SHALL-2-13-466" doc="The initial value of these objects shall be the same as that for the parent shell, except as noted below."
 begin test "exported variable inherited by child"
   begin script
     MYVAR=hello
@@ -172,13 +114,9 @@ begin test "exported variable inherited by child"
   expect_stdout "hello"
 end test "exported variable inherited by child"
 
-
-# ==============================================================================
-# Trap deferred during foreground command
-# ==============================================================================
-
-requirement "SHALL-2-12-463" doc="Trap shall not execute until foreground command has completed"
-
+requirement "SHALL-ASYNCHRONOUS-EVENTS-026" doc="If the shell is interactive, SIGINT signals received during command line editing shall be handled as described in the EXTENDED DESCRIPTION, and SIGINT signals received at other times shall be caught but no action performed."
+requirement "SHALL-2-11-457" doc="If the fg utility is used from an interactive shell to bring into the foreground a suspended job that was created from a foreground job, before it sends the SIGCONT signal the fg utility shall restore the terminal settings to the ones that the shell saved when the job was suspended."
+requirement "SHALL-2-12-463" doc="When a signal for which a trap has been set is received while the shell is waiting for the completion of a utility executing a foreground command, the trap associated with that signal shall not be executed until after the foreground command has completed."
 begin test "trap deferred during foreground command"
   begin script
     trap 'echo TRAP_FIRED' USR1
@@ -188,13 +126,9 @@ begin test "trap deferred during foreground command"
   expect_stdout_line "FOREGROUND_DONE"
 end test "trap deferred during foreground command"
 
-
-# ==============================================================================
-# wait interrupted by trapped signal
-# ==============================================================================
-
-requirement "SHALL-2-12-464" doc="When shell waiting via wait, trapped signal causes wait to return >128"
-
+requirement "SHALL-ASYNCHRONOUS-EVENTS-025" doc="The sh utility shall take the standard action for all signals (see 1.4 Utility Description Defaults ) with the following exceptions."
+requirement "SHALL-2-11-455" doc="The fg and bg utilities shall send a SIGCONT signal to the process group of the process(es) whose stopped wait status caused the shell to suspend the job."
+requirement "SHALL-2-12-464" doc="When the shell is waiting, by means of the wait utility, for asynchronous commands to complete, the reception of a signal for which a trap has been set shall cause the wait utility to return immediately with an exit status >128, immediately after which the trap associated with that signal shall be taken."
 begin test "wait interrupted by trapped signal"
   begin script
     trap 'echo GOT_USR1' USR1
@@ -209,15 +143,7 @@ begin test "wait interrupted by trapped signal"
   expect_stdout_line "wait_rc=(129|1[3-9][0-9]|2[0-4][0-9]|25[0-5])"
 end test "wait interrupted by trapped signal"
 
-
-# ==============================================================================
-# Utility execution environment
-# ==============================================================================
-
-requirement "SHALL-2-13-465" doc="Utilities other than special built-ins invoked in separate environment"
-requirement "SHALL-2-13-466" doc="Initial value of objects same as parent shell except as noted"
-requirement "SHALL-2-13-468" doc="Variables with export attribute passed as environment variables"
-
+requirement "SHALL-2-13-468" doc="Variables with the export attribute, along with those explicitly exported for the duration of the command, shall be passed to the utility environment variables."
 begin test "exported variable visible in child"
   begin script
     MYVAR=hello
@@ -227,6 +153,7 @@ begin test "exported variable visible in child"
   expect_stdout "hello"
 end test "exported variable visible in child"
 
+requirement "SHALL-CD-1072" doc="If no directory operand is given and the HOME environment variable is set to a non-empty value, the cd utility shall behave as if the directory named in the HOME environment variable was specified as the directory operand."
 begin test "non-exported variable not visible in child"
   begin script
     MYVAR=secret
@@ -235,13 +162,9 @@ begin test "non-exported variable not visible in child"
   expect_stdout "empty"
 end test "non-exported variable not visible in child"
 
-
-# ==============================================================================
-# Trap inheritance in shell scripts
-# ==============================================================================
-
-requirement "SHALL-2-13-467" doc="Shell script traps caught by parent set to default, ignored remain ignored"
-
+requirement "SHALL-2-11-425" doc="If the shell has a controlling terminal and it is the controlling process for the terminal session, it shall initially set the foreground process group ID associated with the terminal to its own process group ID."
+requirement "SHALL-2-11-430" doc="Subsequently, the shell shall change the foreground process group associated with its controlling terminal when a foreground job is running as noted in the description below."
+requirement "SHALL-2-11-441" doc="If all of the commands in the pipeline are being executed by the shell itself in the current shell execution environment, the foreground process group ID shall be set to the process group ID of the shell."
 begin test "trap inheritance in shell scripts"
   begin script
     s=$TMPDIR/_trap_inherit_$$.sh
@@ -252,14 +175,8 @@ begin test "trap inheritance in shell scripts"
   not_expect_stdout ".*caught.*"
 end test "trap inheritance in shell scripts"
 
-
-# ==============================================================================
-# Subshell environment
-# ==============================================================================
-
-requirement "SHALL-2-13-471" doc="Subshell environment duplicate of shell except traps set to default"
-requirement "SHALL-2-13-472" doc="If interactive, subshell behaves as non-interactive"
-
+requirement "SHALL-2-13-467" doc="If the utility is a shell script, traps caught by the shell shall be set to the default values and traps ignored by the shell shall be set to be ignored by the utility; if the utility is not a shell script, the trap actions (default or ignore) shall be mapped into the appropriate signal handling actions for the utility."
+requirement "SHALL-2-13-471" doc="A subshell environment shall be created as a duplicate of the shell environment, except that: Unless specified otherwise (see trap ), traps that are not being ignored shall be set to the default action."
 begin test "subshell traps reset to default"
   begin script
     trap "echo parent_trap" USR1
@@ -269,6 +186,7 @@ begin test "subshell traps reset to default"
   expect_stdout_line ".*subshell_trap.*"
 end test "subshell traps reset to default"
 
+requirement "SHALL-READ-1280" doc="If read is called in a subshell or separate utility execution environment, such as one of the following: (read foo) nohup read ... find . -exec read ... \\; it shall not affect the shell variables in the caller's environment."
 begin test "subshell inherits variables"
   begin script
     FOO=bar
@@ -277,13 +195,9 @@ begin test "subshell inherits variables"
   expect_stdout "bar"
 end test "subshell inherits variables"
 
-
-# ==============================================================================
-# Special built-in utilities
-# ==============================================================================
-
-requirement "SHALL-2-15-506" doc="Special built-in utilities shall be supported"
-
+requirement "SHALL-2-13-465" doc="See 2.9.3.1 Asynchronous AND-OR Lists Shell aliases; see 2.3.1 Alias Substitution Utilities other than the special built-ins (see 2.15 Special Built-In Utilities ) shall be invoked in a separate environment that consists of the following."
+requirement "SHALL-2-15-506" doc="The following \"special built-in\" utilities shall be supported in the shell command language."
+requirement "SHALL-2-15-510" doc="As described in 2.9.1 Simple Commands , variable assignments preceding the invocation of a special built-in utility affect the current execution environment; this shall not be the case with a regular built-in or other utility."
 begin test "special built-in: break exists"
   begin script
     command -v break >/dev/null 2>&1 || true
@@ -291,6 +205,7 @@ begin test "special built-in: break exists"
   expect_exit_code 0
 end test "special built-in: break exists"
 
+requirement "SHALL-2-5-3-074" doc="Variables shall be initialized from the environment (as defined by XBD 8. Environment Variables and the exec function in the System Interfaces volume of POSIX.1-2024) and can be given new values with variable assignment commands. Shell variables shall be initialized only from environment variables that have valid names. If a variable is initialized from the environment, it shall be marked for export immediately; see the export special built-in."
 begin test "special built-in: colon exists"
   begin script
     command -v : >/dev/null 2>&1 || true
@@ -298,6 +213,7 @@ begin test "special built-in: colon exists"
   expect_exit_code 0
 end test "special built-in: colon exists"
 
+requirement "SHALL-2-13-472" doc="If the shell is interactive, the subshell shall behave as a non-interactive shell in all respects except: The expansion of the special parameter '-' may continue to indicate that it is interactive."
 begin test "special built-in: continue exists"
   begin script
     command -v continue >/dev/null 2>&1 || true
@@ -305,6 +221,7 @@ begin test "special built-in: continue exists"
   expect_exit_code 0
 end test "special built-in: continue exists"
 
+requirement "SHALL-2-8-1-254" doc="If an unrecoverable read error occurs when reading commands, other than from the file operand of the dot special built-in, the shell shall execute no further commands (including any already successfully read but not yet executed) other than any specified in a previously defined EXIT trap action."
 begin test "special built-in: dot exists"
   begin script
     command -v . >/dev/null 2>&1 || true
@@ -312,6 +229,7 @@ begin test "special built-in: dot exists"
   expect_exit_code 0
 end test "special built-in: dot exists"
 
+requirement "SHALL-2-5-3-074" doc="Variables shall be initialized from the environment (as defined by XBD 8. Environment Variables and the exec function in the System Interfaces volume of POSIX.1-2024) and can be given new values with variable assignment commands. Shell variables shall be initialized only from environment variables that have valid names. If a variable is initialized from the environment, it shall be marked for export immediately; see the export special built-in."
 begin test "special built-in: eval exists"
   begin script
     command -v eval >/dev/null 2>&1 || true
@@ -319,6 +237,7 @@ begin test "special built-in: eval exists"
   expect_exit_code 0
 end test "special built-in: eval exists"
 
+requirement "SHALL-2-5-3-074" doc="Variables shall be initialized from the environment (as defined by XBD 8. Environment Variables and the exec function in the System Interfaces volume of POSIX.1-2024) and can be given new values with variable assignment commands. Shell variables shall be initialized only from environment variables that have valid names. If a variable is initialized from the environment, it shall be marked for export immediately; see the export special built-in."
 begin test "special built-in: exec exists"
   begin script
     command -v exec >/dev/null 2>&1 || true
@@ -326,6 +245,7 @@ begin test "special built-in: exec exists"
   expect_exit_code 0
 end test "special built-in: exec exists"
 
+requirement "SHALL-DESCRIPTION-602" doc="A user shall explicitly exit to leave the interactive shell."
 begin test "special built-in: exit exists"
   begin script
     command -v exit >/dev/null 2>&1 || true
@@ -333,6 +253,7 @@ begin test "special built-in: exit exists"
   expect_exit_code 0
 end test "special built-in: exit exists"
 
+requirement "SHALL-2-13-468" doc="Variables with the export attribute, along with those explicitly exported for the duration of the command, shall be passed to the utility environment variables."
 begin test "special built-in: export exists"
   begin script
     command -v export >/dev/null 2>&1 || true
@@ -340,6 +261,7 @@ begin test "special built-in: export exists"
   expect_exit_code 0
 end test "special built-in: export exists"
 
+requirement "SHALL-DESCRIPTION-570" doc="The readonly special built-in shall be a declaration utility."
 begin test "special built-in: readonly exists"
   begin script
     command -v readonly >/dev/null 2>&1 || true
@@ -347,6 +269,7 @@ begin test "special built-in: readonly exists"
   expect_exit_code 0
 end test "special built-in: readonly exists"
 
+requirement "SHALL-2-9-5-387" doc="If the special built-in return (see return ) is executed in the compound-command , the function completes and execution shall resume with the next command after the function call."
 begin test "special built-in: return exists"
   begin script
     command -v return >/dev/null 2>&1 || true
@@ -354,6 +277,9 @@ begin test "special built-in: return exists"
   expect_exit_code 0
 end test "special built-in: return exists"
 
+requirement "SHALL-ASYNCHRONOUS-EVENTS-029" doc="If they are caught, the shell shall, in the signal-catching function, set the signal to the default action and raise the signal (after taking any appropriate steps, such as restoring terminal settings)."
+requirement "SHALL-2-11-456" doc="If the shell has a controlling terminal, the fg utility shall send the SIGCONT signal after it has set the foreground process group ID associated with the terminal (see above)."
+requirement "SHALL-2-12-461" doc="If job control is disabled (see the description of set -m ) when the shell executes an asynchronous AND-OR list, the commands in the list shall inherit from the shell a signal action of ignored (SIG_IGN) for the SIGINT and SIGQUIT signals."
 begin test "special built-in: set exists"
   begin script
     command -v set >/dev/null 2>&1 || true
@@ -361,6 +287,7 @@ begin test "special built-in: set exists"
   expect_exit_code 0
 end test "special built-in: set exists"
 
+requirement "SHALL-2-5-3-074" doc="Variables shall be initialized from the environment (as defined by XBD 8. Environment Variables and the exec function in the System Interfaces volume of POSIX.1-2024) and can be given new values with variable assignment commands. Shell variables shall be initialized only from environment variables that have valid names. If a variable is initialized from the environment, it shall be marked for export immediately; see the export special built-in."
 begin test "special built-in: shift exists"
   begin script
     command -v shift >/dev/null 2>&1 || true
@@ -368,6 +295,7 @@ begin test "special built-in: shift exists"
   expect_exit_code 0
 end test "special built-in: shift exists"
 
+requirement "SHALL-2-12-462" doc="In all other cases, commands executed by the shell shall inherit the same signal actions as those inherited by the shell from its parent unless a signal action is modified by the trap special built-in."
 begin test "special built-in: trap exists"
   begin script
     command -v trap >/dev/null 2>&1 || true
@@ -375,6 +303,7 @@ begin test "special built-in: trap exists"
   expect_exit_code 0
 end test "special built-in: trap exists"
 
+requirement "SHALL-DESCRIPTION-651" doc="The unset utility shall unset each variable or function definition specified by name that does not have the readonly attribute and remove any attributes other than readonly that have been given to name (see 2.15 Special Built-In Utilities export and readonly )."
 begin test "special built-in: unset exists"
   begin script
     command -v unset >/dev/null 2>&1 || true
@@ -382,8 +311,7 @@ begin test "special built-in: unset exists"
   expect_exit_code 0
 end test "special built-in: unset exists"
 
-requirement "SHALL-2-15-507" doc="Output of special built-in written to stdout, subject to redirection"
-
+requirement "SHALL-2-15-507" doc="The output of each command, if any, shall be written to standard output, subject to the normal redirection and piping possible with all commands."
 begin test "special built-in output goes to stdout"
   begin script
     export FOO=bar
@@ -393,9 +321,9 @@ begin test "special built-in output goes to stdout"
   expect_stdout "ok"
 end test "special built-in output goes to stdout"
 
-requirement "SHALL-2-15-508" doc="Error in special built-in may cause shell to abort"
-requirement "SHALL-2-15-509" doc="If special built-in error does not abort, exit value non-zero"
-
+requirement "SHALL-2-11-453" doc="When a process associated with a background job is stopped by a SIGSTOP, SIGTSTP, SIGTTIN, or SIGTTOU signal, the shell shall convert the (non-suspended) background job into a suspended job and an interactive shell shall write a message to standard error, formatted as described by the jobs utility (without the -l option) for a suspended job, at the following time: If set -b is enabled, the message shall be written either immediately after the job became suspended or immediately prior to writing the next prompt for input."
+requirement "SHALL-2-15-508" doc="An implementation may choose to make any utility a built-in; however, the special built-in utilities described here differ from regular built-in utilities in two respects: An error in a special built-in utility may cause a shell executing that utility to abort, while an error in a regular built-in utility shall not cause a shell executing that utility to abort. (See 2.8.1 Consequences of Shell Errors for the consequences of errors on interactive and non-interactive shells.) If a special built-in utility encountering an error does not abort the shell, its exit value shall be non-zero."
+requirement "SHALL-2-15-509" doc="If a special built-in utility encountering an error does not abort the shell, its exit value shall be non-zero."
 begin test "error in special built-in produces non-zero exit"
   begin script
     shift 999 2>/dev/null
@@ -403,8 +331,7 @@ begin test "error in special built-in produces non-zero exit"
   not_expect_exit_code 0
 end test "error in special built-in produces non-zero exit"
 
-requirement "SHALL-2-15-510" doc="Variable assignments preceding special built-in affect current environment"
-
+requirement "SHALL-2-5-3-074" doc="Variables shall be initialized from the environment (as defined by XBD 8. Environment Variables and the exec function in the System Interfaces volume of POSIX.1-2024) and can be given new values with variable assignment commands. Shell variables shall be initialized only from environment variables that have valid names. If a variable is initialized from the environment, it shall be marked for export immediately; see the export special built-in."
 begin test "assignment before special built-in persists"
   begin script
     FOO=bar eval 'echo $FOO'
@@ -412,6 +339,7 @@ begin test "assignment before special built-in persists"
   expect_stdout "bar"
 end test "assignment before special built-in persists"
 
+requirement "SHALL-2-6-5-168" doc="After parameter expansion ( 2.6.2 Parameter Expansion ), command substitution ( 2.6.3 Command Substitution ), and arithmetic expansion ( 2.6.4 Arithmetic Expansion ), if the shell variable IFS (see 2.5.3 Shell Variables ) is set and its value is not empty, or if IFS is unset, the shell shall scan each field containing results of expansions and substitutions that did not occur in double-quotes for field splitting; zero, one or multiple fields can result."
 begin test "variable persists after eval completes"
   begin script
     FOO=bar eval true
@@ -420,8 +348,8 @@ begin test "variable persists after eval completes"
   expect_stdout "bar"
 end test "variable persists after eval completes"
 
-requirement "SHALL-2-15-511" doc="For special built-ins not in syntax guidelines, -- need not be recognized"
-
+requirement "SHALL-2-11-454" doc="If set -b is disabled, the message shall be written immediately prior to writing the next prompt for input."
+requirement "SHALL-2-11-459" doc="When a background job completes or is terminated by a signal, an interactive shell shall write a message to standard error, formatted as described by the jobs utility (without the -l option) for a job that completed or was terminated by a signal, respectively, at the following time: If set -b is enabled, the message shall be written immediately after the job completes or is terminated."
 begin test "set -- positional parameters"
   begin script
     set -- a b c
@@ -430,13 +358,9 @@ begin test "set -- positional parameters"
   expect_stdout "count=3"
 end test "set -- positional parameters"
 
-
-# ==============================================================================
-# set -b immediate background job notification
-# ==============================================================================
-
-requirement "SHALL-2-11-453" doc="If set -b enabled, message written immediately or prior to next prompt"
-
+requirement "SHALL-2-11-439" doc="When a foreground job is created, or a background job is brought into the foreground by the fg utility, if the shell has a controlling terminal it shall set the foreground process group ID associated with the terminal as follows: If the job was originally created as a background job, the foreground process group ID shall be set to the process ID of the process that the shell made a process group leader when it executed the asynchronous AND-OR list."
+requirement "SHALL-2-11-440" doc="If the job was originally created as a foreground job, the foreground process group ID shall be set as follows when each pipeline in the job is executed: If the shell is not itself executing, in the current shell execution environment, all of the commands in the pipeline, the foreground process group ID shall be set to the process group ID that is shared by the other processes executing the pipeline (see above)."
+requirement "SHALL-2-11-442" doc="When a foreground job terminates, or becomes a suspended job (see below), if the shell has a controlling terminal it shall set the foreground process group ID associated with the terminal to the process group ID of the shell."
 begin interactive test "set -b immediate background job notification"
   spawn -i
   expect "$ "
@@ -454,13 +378,9 @@ begin interactive test "set -b immediate background job notification"
   wait
 end interactive test "set -b immediate background job notification"
 
-
-# ==============================================================================
-# Multiple async commands in one list
-# ==============================================================================
-
-requirement "SHALL-2-11-432" doc="List with multiple async AND-OR lists treated as split into separate lists"
-
+requirement "SHALL-2-11-435" doc="For each pipeline in a foreground job, if the pipeline is executed while the list is still a foreground job, the set of processes comprising the pipeline, and any processes descended from it, shall all be in the same process group, unless the shell executes some of the commands in the pipeline in the current shell execution environment and others in a subshell environment; in this case the process group ID of the current shell need not change (or cannot change if it is the session leader), and consequently the process group ID that the other processes all share may differ from the process group ID of the current shell (which means that a SIGSTOP, SIGTSTP, SIGTTIN, or SIGTTOU signal sent to one of those process groups does not cause the whole pipeline to stop)."
+requirement "SHALL-2-11-432" doc="For the purposes of job control, a list that includes more than one asynchronous AND-OR list shall be treated as if it were split into multiple separate lists, each ending with an asynchronous AND-OR list."
+requirement "SHALL-2-11-446" doc="Otherwise, the shell shall create a suspended job consisting of a set of commands, from within the list comprising the foreground job, that is unspecified except that the set shall include at least the pipeline to which the stopped process belongs."
 begin interactive test "multiple async commands in one list"
   spawn -i
   expect "$ "

@@ -4,11 +4,10 @@ testsuite "Additional Special Built-in Requirements"
 # The 'export' and 'readonly' Utilities
 # ==============================================================================
 
-requirement "SHALL-DESCRIPTION-560" doc="The export special built-in shall be a declaration utility."
-requirement "SHALL-DESCRIPTION-561" doc="If export is recognized as the command name, subsequent words of the form name = word shall be expanded in an assignment context."
-requirement "SHALL-DESCRIPTION-570" doc="The readonly special built-in shall be a declaration utility."
-requirement "SHALL-DESCRIPTION-571" doc="If readonly is recognized as the command name, subsequent words of the form name = word shall be expanded in an assignment context."
 
+requirement "SHALL-DESCRIPTION-560" doc="The export special built-in shall be a declaration utility."
+requirement "SHALL-DESCRIPTION-561" doc="Therefore, if export is recognized as the command name of a simple command, then subsequent words of the form name = word shall be expanded in an assignment context."
+requirement "SHALL-DESCRIPTION-570" doc="The readonly special built-in shall be a declaration utility."
 begin test "export as declaration utility"
   begin script
     export decl_var="~"
@@ -17,14 +16,9 @@ begin test "export as declaration utility"
   expect_exit_code 0
 end test "export as declaration utility"
 
-
-# ==============================================================================
-# The 'exit' and 'wait' Utilities
-# ==============================================================================
-
-requirement "SHALL-DESCRIPTION-552" doc="If n has a value between 0 and 255 inclusive, the wait status shall indicate it exited with exit status n."
-requirement "SHALL-DESCRIPTION-553" doc="If n has a value greater than 256 corresponding to a signal exit status, the wait status shall indicate termination by that signal."
-
+requirement "SHALL-DESCRIPTION-571" doc="Therefore, if readonly is recognized as the command name of a simple command, then subsequent words of the form name = word shall be expanded in an assignment context."
+requirement "SHALL-DESCRIPTION-553" doc="If n is specified and has a value greater than 256 that corresponds to an exit status the shell assigns to commands terminated by a valid signal (see 2.8.2 Exit Status for Commands ), the wait status of the shell or subshell shall indicate that it was terminated by that signal."
+requirement "SHALL-DESCRIPTION-586" doc="Implementations shall support the options in the following list in both their <hyphen-minus> and <plus-sign> forms."
 begin test "exit with value 200"
   begin script
     (exit 200)
@@ -33,8 +27,8 @@ begin test "exit with value 200"
   expect_stdout "200"
 end test "exit with value 200"
 
-requirement "SHALL-DESCRIPTION-556" doc="A trap action on EXIT shall be executed before the shell terminates, except when exit is invoked in that trap action itself."
-
+requirement "SHALL-DESCRIPTION-552" doc="If n is specified and has a value between 0 and 255 inclusive, the wait status of the shell or subshell shall indicate that it exited with exit status n ."
+requirement "SHALL-DESCRIPTION-556" doc="A trap action on EXIT shall be executed before the shell terminates, except when the exit utility is invoked in that trap action itself, in which case the shell shall exit immediately."
 begin test "EXIT trap fires before shell terminates"
   begin script
     trap "echo exit_action" EXIT
@@ -43,14 +37,8 @@ begin test "EXIT trap fires before shell terminates"
   expect_stdout "exit_action"
 end test "EXIT trap fires before shell terminates"
 
-# ==============================================================================
-# The 'set' Utility
-# ==============================================================================
-
-requirement "SHALL-DESCRIPTION-584" doc="When options are specified, they shall set or unset attributes of the shell."
-requirement "SHALL-DESCRIPTION-586" doc="Implementations shall support the options in both their hyphen-minus and plus-sign forms."
-requirement "SHALL-DESCRIPTION-597" doc="-f The shell shall disable pathname expansion."
-
+requirement "SHALL-DESCRIPTION-584" doc="When options are specified, they shall set or unset attributes of the shell, as described below."
+requirement "SHALL-DESCRIPTION-597" doc="The -f option shall disable pathname expansion."
 begin test "set -f disables pathname expansion"
   begin script
     set -f
@@ -61,7 +49,6 @@ begin test "set -f disables pathname expansion"
 end test "set -f disables pathname expansion"
 
 requirement "SHALL-DESCRIPTION-611" doc="The remaining arguments shall be assigned in order to the positional parameters."
-
 begin test "set -- assigns positional parameters"
   begin script
     set -- a b c

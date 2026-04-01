@@ -1,20 +1,11 @@
 testsuite "Shell History Management"
 
 # ==============================================================================
-# Requirements
-# ==============================================================================
-
-requirement "SHALL-SH-1019" doc="The FCEDIT variable, when expanded by the shell, shall determine the default value for the -e editor option's editor option-argument"
-requirement "SHALL-SH-1020" doc="If FCEDIT is null or unset, ed shall be used as the editor"
-requirement "SHALL-SH-1024" doc="The maximum number of commands in the history list is unspecified, but shall be at least 128"
-requirement "SHALL-SH-1023" doc="As entries are deleted from the history file, they shall be deleted oldest first"
-requirement "SHALL-SH-1021-DUP621" doc="If the shell cannot obtain both read and write access to, or create, the history file, it shall use an unspecified mechanism that allows the history to operate properly"
-requirement "SHALL-SH-1048" doc="Commands in the command history shall be treated as strings, not as filenames"
-
-
-# ==============================================================================
 # FCEDIT default editor
 # ==============================================================================
+
+requirement "SHALL-SH-1019" doc="This variable, when expanded by the shell, shall determine the default value for the -e editor option's editor option-argument."
+requirement "SHALL-SH-1020" doc="If FCEDIT is null or unset, ed shall be used as the editor."
 
 begin interactive test "FCEDIT can be set and fc uses it"
   spawn -i
@@ -35,6 +26,8 @@ end interactive test "FCEDIT can be set and fc uses it"
 # History list minimum size
 # ==============================================================================
 
+requirement "SHALL-SH-1024" doc="The maximum number of commands in the history list is unspecified, but shall be at least 128."
+
 begin interactive test "History list supports at least 128 entries"
   spawn -i
   expect "$ "
@@ -54,6 +47,8 @@ end interactive test "History list supports at least 128 entries"
 # ==============================================================================
 # History deletion order
 # ==============================================================================
+
+requirement "SHALL-SH-1023" doc="As entries are deleted from the history file, they shall be deleted oldest first."
 
 begin interactive test "Oldest history entries are deleted first"
   spawn -i
@@ -85,6 +80,8 @@ end interactive test "Oldest history entries are deleted first"
 # History file fallback
 # ==============================================================================
 
+requirement "SHALL-SH-1021-DUP621" doc="If the shell cannot obtain both read and write access to, or create, the history file, it shall use an unspecified mechanism that allows the history to operate properly. (References to history \"file\" in this section shall be understood to mean this unspecified mechanism in such cases.) An implementation may choose to access this variable only when initializing the history file; this initialization shall occur when fc or sh first attempt to retrieve entries from, or add entries to, the file, as the result of commands issued by the user, the file named by the ENV variable, or implementation-defined system start-up files."
+
 begin interactive test "History works when HISTFILE is unwritable"
   spawn -i
   expect "$ "
@@ -101,6 +98,8 @@ end interactive test "History works when HISTFILE is unwritable"
 # ==============================================================================
 # Commands treated as strings, not filenames
 # ==============================================================================
+
+requirement "SHALL-SH-1048" doc="Commands in the command history shall be treated as strings, not as filenames."
 
 begin interactive test "History treats commands as strings not filenames"
   spawn -i

@@ -4,8 +4,8 @@ testsuite "Shell Grammar and Lexical Conventions"
 # Grammar Token Identification
 # ==============================================================================
 
-requirement "SHALL-2-10-1-396" doc="If the string consists solely of digits and the delimiter character is one of '<' or '>', the token identifier IO_NUMBER shall result."
-requirement "SHALL-2-10-1-397" doc="If the string contains at least three characters, begins with a '{' and ends with a '}', and the delimiter character is one of '<' or '>', the token identifier IO_LOCATION may result; if not, TOKEN shall result."
+requirement "SHALL-2-10-1-396" doc="If the string consists solely of digits and the delimiter character is one of '<' or '>' , the token identifier IO_NUMBER shall result."
+requirement "SHALL-2-10-1-397" doc="If the string contains at least three characters, begins with a <left-curly-bracket> ( '{' ) and ends with a <right-curly-bracket> ( '}' ), and the delimiter character is one of '<' or '>' , the token identifier IO_LOCATION may result; if the result is not IO_LOCATION , the token identifier TOKEN shall result."
 
 begin test "digit before redirection parsed as IO_NUMBER"
   begin script
@@ -15,6 +15,7 @@ begin test "digit before redirection parsed as IO_NUMBER"
   expect_exit_code 0
 end test "digit before redirection parsed as IO_NUMBER"
 
+requirement "SHALL-2-10-1-396" doc="If the string consists solely of digits and the delimiter character is one of '<' or '>' , the token identifier IO_NUMBER shall result."
 begin test "space before redirection not parsed as IO_NUMBER"
   begin script
     echo content > tmp_grammar.txt
@@ -28,10 +29,9 @@ end test "space before redirection not parsed as IO_NUMBER"
 # Assignment Parsing Rules
 # ==============================================================================
 
-requirement "SHALL-2-10-2-415" doc="If the TOKEN is exactly a reserved word, the token identifier for that reserved word shall result."
+requirement "SHALL-2-10-2-415" doc="In the Assignment preceding command name rule, when the first word, if the TOKEN is exactly a reserved word, the token identifier for that reserved word shall result."
 requirement "SHALL-2-10-2-416" doc="Otherwise, 7b shall be applied."
-requirement "SHALL-2-10-2-417" doc="If the TOKEN contains an unquoted equals-sign not part of an embedded expansion: if the TOKEN begins with '=', then the token WORD shall be returned."
-requirement "SHALL-2-10-2-418" doc="If all characters preceding the first such equals-sign form a valid name, the token ASSIGNMENT_WORD shall be returned."
+requirement "SHALL-2-10-2-417" doc="In the Assignment preceding command name rule, when not the first word, if the TOKEN contains an unquoted <equals-sign> character that is not part of an embedded parameter expansion, command substitution, or arithmetic expansion construct, the token shall be split into two parts."
 
 begin test "valid assignment prefix scopes to command"
   begin script
@@ -40,6 +40,7 @@ begin test "valid assignment prefix scopes to command"
   expect_stdout "assigned"
 end test "valid assignment prefix scopes to command"
 
+requirement "SHALL-2-9-1-1-270" doc="If there is a command name and it is recognized as a declaration utility, then any remaining words after the word that expanded to produce the command name, that would be recognized as a variable assignment in isolation, shall be expanded as a variable assignment (tilde expansion after the first <equals-sign> and after any unquoted <colon>, parameter expansion, command substitution, arithmetic expansion, and quote removal, but no field splitting or pathname expansion); while remaining words that would not be a variable assignment in isolation shall be subject to regular expansion (tilde expansion for only a leading <tilde>, parameter expansion, command substitution, arithmetic expansion, field splitting, pathname expansion, and quote removal)."
 begin test "invalid name cannot be assignment"
   begin script
     1invalid=true sh -c "echo executed"
@@ -47,6 +48,7 @@ begin test "invalid name cannot be assignment"
   not_expect_exit_code 0
 end test "invalid name cannot be assignment"
 
+requirement "SHALL-2-2-3-008" doc="The input characters within the quoted string that are also enclosed between \"$(\" and the matching ')' shall not be affected by the double-quotes, but rather shall define the command(s) whose output replaces the \"$(...)\" when the word is expanded."
 begin test "string starting with = is just a WORD"
   begin script
     =foo
@@ -58,9 +60,9 @@ end test "string starting with = is just a WORD"
 # "in" and "do" parsing in Loops
 # ==============================================================================
 
-requirement "SHALL-2-10-2-409" doc="When the TOKEN meets the requirements for a name, the token identifier NAME shall result."
+requirement "SHALL-2-10-2-409" doc="In the NAME in for rule, when the TOKEN meets the requirements for a name (see XBD 3.216 Name), the token identifier NAME shall result."
 requirement "SHALL-2-10-2-404" doc="Otherwise, the token WORD shall be returned."
-requirement "SHALL-2-10-2-413" doc="When the TOKEN is exactly the reserved word in or do, the token identifier for in or do shall result, respectively."
+requirement "SHALL-2-10-2-413" doc="In the Third word of for and case rule (for only), when the TOKEN is exactly the reserved word in or do, the token identifier for in or do shall result, respectively."
 
 begin test "invalid identifier in for loop causes syntax error"
   begin script
@@ -71,6 +73,7 @@ begin test "invalid identifier in for loop causes syntax error"
   not_expect_exit_code 0
 end test "invalid identifier in for loop causes syntax error"
 
+requirement "SHALL-V3CHAP02-1001-DUP51" doc="If the value of the alias replacing the TOKEN ends in a <blank> that would be unquoted after substitution, and optionally if it ends in a <blank> that would be quoted after substitution, the shell shall check the next token in the input, if it is a TOKEN , for alias substitution; this process shall continue until a TOKEN is found that is not a valid alias or an alias value does not end in such a <blank>."
 begin test "for-in loop with valid identifier"
   begin script
     for i in a; do
@@ -84,8 +87,8 @@ end test "for-in loop with valid identifier"
 # "case" statement parsing
 # ==============================================================================
 
-requirement "SHALL-2-10-2-407" doc="When the TOKEN is exactly the reserved word esac, the token identifier for esac shall result."
-requirement "SHALL-2-10-2-411" doc="When the TOKEN is exactly the reserved word in, the token identifier for in shall result."
+requirement "SHALL-2-10-2-407" doc="In the Case statement termination rule, when the TOKEN is exactly the reserved word esac, the token identifier for esac shall result."
+requirement "SHALL-2-10-2-411" doc="In the Third word of for and case rule (case only), when the TOKEN is exactly the reserved word in, the token identifier for in shall result."
 
 begin test "case statement with in and esac"
   begin script

@@ -18,7 +18,7 @@ end test "true returns exit code 0"
 # ==============================================================================
 
 requirement "SHALL-DESCRIPTION-5018" doc="The false utility shall return with a non-zero exit code."
-requirement "SHALL-EXIT-STATUS-5019" doc="The false utility shall always exit with a value between 1 and 125."
+requirement "SHALL-EXIT-STATUS-5019" doc="The false utility shall always exit with a value between 1 and 125, inclusive."
 
 begin test "false returns non-zero exit code"
   begin script
@@ -27,6 +27,7 @@ begin test "false returns non-zero exit code"
   not_expect_exit_code 0
 end test "false returns non-zero exit code"
 
+requirement "SHALL-EXIT-STATUS-5019" doc="The false utility shall always exit with a value between 1 and 125, inclusive."
 begin test "false exit code is between 1 and 125"
   begin script
     false
@@ -41,9 +42,8 @@ end test "false exit code is between 1 and 125"
 # ==============================================================================
 
 requirement "SHALL-DESCRIPTION-5065" doc="The test utility shall evaluate the expression and indicate the result of the evaluation by its exit status."
-requirement "SHALL-DESCRIPTION-5066" doc="In the second form where the utility name is [ rather than test, the application shall ensure that the closing square bracket is a separate argument."
-requirement "SHALL-OPERANDS-5070" doc="The application shall ensure that all operators and elements of primaries are presented as separate arguments to test."
-requirement "SHALL-OPERANDS-5071" doc="The test utility operands."
+requirement "SHALL-DESCRIPTION-5066" doc="In the second form of the utility, where the utility name used is [ rather than test , the application shall ensure that the closing square bracket is a separate argument."
+requirement "SHALL-OPERANDS-5070" doc="The application shall ensure that all operators and elements of primaries are presented as separate arguments to the test utility."
 
 begin test "test 1 -eq 1 returns 0"
   begin script
@@ -52,6 +52,7 @@ begin test "test 1 -eq 1 returns 0"
   expect_exit_code 0
 end test "test 1 -eq 1 returns 0"
 
+requirement "SHALL-FC-1135" doc="If the editor returns a non-zero exit status, this shall suppress the entry into the history list and the command re-execution."
 begin test "test 1 -eq 2 returns non-zero"
   begin script
     test 1 -eq 2
@@ -59,6 +60,7 @@ begin test "test 1 -eq 2 returns non-zero"
   not_expect_exit_code 0
 end test "test 1 -eq 2 returns non-zero"
 
+requirement "SHALL-FC-1135" doc="If the editor returns a non-zero exit status, this shall suppress the entry into the history list and the command re-execution."
 begin test "[ 1 -eq 1 ] returns 0"
   begin script
     [ 1 -eq 1 ]
@@ -66,6 +68,7 @@ begin test "[ 1 -eq 1 ] returns 0"
   expect_exit_code 0
 end test "[ 1 -eq 1 ] returns 0"
 
+requirement "SHALL-FC-1135" doc="If the editor returns a non-zero exit status, this shall suppress the entry into the history list and the command re-execution."
 begin test "[ 1 -eq 2 ] returns non-zero"
   begin script
     [ 1 -eq 2 ]
@@ -77,7 +80,7 @@ end test "[ 1 -eq 2 ] returns non-zero"
 # test does not recognize --
 # ==============================================================================
 
-requirement "SHALL-OPTIONS-5068" doc="The test utility shall not recognize the \"--\" argument."
+requirement "SHALL-OPTIONS-5068" doc="The test utility shall not recognize the \"--\" argument in the manner specified by Guideline 10 in XBD 12.2 Utility Syntax Guidelines ."
 requirement "SHALL-OPTIONS-5069" doc="No options shall be supported."
 
 begin test "test does not consume -- as end-of-options"
@@ -91,6 +94,7 @@ end test "test does not consume -- as end-of-options"
 # test file and string primaries
 # ==============================================================================
 
+requirement "SHALL-2-14-3-498" doc="If a specified pattern contains any '*' , '?' or '[' characters that will be treated as special (see 2.14.1 Patterns Matching a Single Character ), it shall be matched against existing filenames and pathnames, as appropriate; if directory entries for dot and dot-dot exist, they may be ignored."
 begin test "test -d on existing directory"
   begin script
     test -d /
@@ -98,6 +102,7 @@ begin test "test -d on existing directory"
   expect_exit_code 0
 end test "test -d on existing directory"
 
+requirement "SHALL-2-6-2-130" doc="In the parameter expansions shown previously, use of the <colon> in the format shall result in a test for a parameter that is unset or null; omission of the <colon> shall result in a test for a parameter that is only unset."
 begin test "test -d on nonexistent directory"
   begin script
     test -d /nonexistent_dir_99999
@@ -105,6 +110,7 @@ begin test "test -d on nonexistent directory"
   not_expect_exit_code 0
 end test "test -d on nonexistent directory"
 
+requirement "SHALL-ENVIRONMENT-VARIABLES-5074" doc="The following environment variables shall affect the execution of test : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 begin test "test -n on non-empty string"
   begin script
     test -n "hello"
@@ -112,6 +118,7 @@ begin test "test -n on non-empty string"
   expect_exit_code 0
 end test "test -n on non-empty string"
 
+requirement "SHALL-ENVIRONMENT-VARIABLES-5074" doc="The following environment variables shall affect the execution of test : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 begin test "test -z on empty string"
   begin script
     test -z ""
@@ -119,6 +126,7 @@ begin test "test -z on empty string"
   expect_exit_code 0
 end test "test -z on empty string"
 
+requirement "SHALL-ENVIRONMENT-VARIABLES-5074" doc="The following environment variables shall affect the execution of test : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 begin test "test -z on non-empty string returns non-zero"
   begin script
     test -z "hello"
@@ -130,9 +138,9 @@ end test "test -z on non-empty string returns non-zero"
 # test operand form and precedence
 # ==============================================================================
 
-requirement "SHALL-OPERANDS-5072" doc="test operands shall be of the form -operator where the first character of operator is not a digit."
-requirement "SHALL-OPERANDS-5073" doc="The algorithm for determining precedence is based on the number of arguments presented to test. When using \"[...]\" form, the final ] is not counted."
-requirement "SHALL-EXIT-STATUS-5075" doc="Exit values: 0 = expression evaluated to true. 1 = expression evaluated to false or missing. >1 = error occurred."
+requirement "SHALL-OPERANDS-5072" doc="They shall be of the form - operator where the first character of operator is not a digit."
+requirement "SHALL-OPERANDS-5073" doc="The algorithm for determining the precedence of the operators and the return value that shall be generated is based on the number of arguments presented to test."
+requirement "SHALL-EXIT-STATUS-5075" doc="The following exit values shall be returned: 0 expression evaluated to true."
 
 begin test "unary -n on non-empty string"
   begin script
@@ -141,6 +149,7 @@ begin test "unary -n on non-empty string"
   expect_exit_code 0
 end test "unary -n on non-empty string"
 
+requirement "SHALL-ENVIRONMENT-VARIABLES-5074" doc="The following environment variables shall affect the execution of test : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 begin test "unary -z on empty string"
   begin script
     test -z ""
@@ -148,6 +157,7 @@ begin test "unary -z on empty string"
   expect_exit_code 0
 end test "unary -z on empty string"
 
+requirement "SHALL-CD-1094" doc="If directory is an empty string, cd shall write a diagnostic message to standard error and exit with non-zero status."
 begin test "unary -n on empty string returns non-zero"
   begin script
     test -n ""
@@ -155,6 +165,7 @@ begin test "unary -n on empty string returns non-zero"
   not_expect_exit_code 0
 end test "unary -n on empty string returns non-zero"
 
+requirement "SHALL-V3CHAP02-1010" doc="Each field containing the results from an expansion shall be processed in order, intermixed with fields not containing the results of expansions, processed as described above, as if by using the following algorithm, examining bytes in the input field, from beginning to end: Begin with an empty candidate field and the input as specified above."
 begin test "binary = equality"
   begin script
     test hello = hello
@@ -162,6 +173,7 @@ begin test "binary = equality"
   expect_exit_code 0
 end test "binary = equality"
 
+requirement "SHALL-V3CHAP02-1010" doc="Each field containing the results from an expansion shall be processed in order, intermixed with fields not containing the results of expansions, processed as described above, as if by using the following algorithm, examining bytes in the input field, from beginning to end: Begin with an empty candidate field and the input as specified above."
 begin test "binary = inequality"
   begin script
     test hello = world
@@ -169,6 +181,7 @@ begin test "binary = inequality"
   not_expect_exit_code 0
 end test "binary = inequality"
 
+requirement "SHALL-2-5-2-064" doc="If one of these conditions is true, the initial fields shall be retained as separate fields, except that if the parameter being expanded was embedded within a word, the first field shall be joined with the beginning part of the original word and the last field shall be joined with the end part of the original word."
 begin test "binary -gt true"
   begin script
     test 5 -gt 3
@@ -176,6 +189,7 @@ begin test "binary -gt true"
   expect_exit_code 0
 end test "binary -gt true"
 
+requirement "SHALL-2-9-3-319" doc="For example, both of the following commands write solely bar to standard output: false && echo foo || echo bar true || echo foo && echo bar A ';' separator or a ';' or <newline> terminator shall cause the preceding AND-OR list to be executed sequentially; an '&' separator or terminator shall cause asynchronous execution of the preceding AND-OR list."
 begin test "binary -gt false"
   begin script
     test 3 -gt 5
@@ -183,6 +197,7 @@ begin test "binary -gt false"
   not_expect_exit_code 0
 end test "binary -gt false"
 
+requirement "SHALL-FC-1135" doc="If the editor returns a non-zero exit status, this shall suppress the entry into the history list and the command re-execution."
 begin test "zero arguments returns non-zero"
   begin script
     test
@@ -190,6 +205,7 @@ begin test "zero arguments returns non-zero"
   not_expect_exit_code 0
 end test "zero arguments returns non-zero"
 
+requirement "SHALL-CD-1101" doc="If a non-empty directory name from CDPATH is not used, and the directory argument is not '-' , there shall be no output."
 begin test "one non-empty argument returns 0"
   begin script
     test something
@@ -197,6 +213,7 @@ begin test "one non-empty argument returns 0"
   expect_exit_code 0
 end test "one non-empty argument returns 0"
 
+requirement "SHALL-2-5-2-065" doc="If there are no positional parameters, the expansion of '@' shall generate zero fields, even when '@' is within double-quotes; however, if the expansion is embedded within a word which contains one or more other parts that expand to a quoted null string, these null string(s) shall still produce an empty field, except that if the other parts are all within the same double-quotes as the '@' , it is unspecified whether the result is zero fields or one empty field."
 begin test "one empty argument returns non-zero"
   begin script
     test ""
@@ -204,6 +221,7 @@ begin test "one empty argument returns non-zero"
   not_expect_exit_code 0
 end test "one empty argument returns non-zero"
 
+requirement "SHALL-DESCRIPTION-5076" doc="The true utility shall return with exit code zero."
 begin test "test true exit code is 0"
   begin script
     test 1 -eq 1
@@ -212,6 +230,7 @@ begin test "test true exit code is 0"
   expect_stdout "0"
 end test "test true exit code is 0"
 
+requirement "SHALL-DESCRIPTION-5018" doc="The false utility shall return with a non-zero exit code."
 begin test "test false exit code is 1"
   begin script
     test 1 -eq 2
@@ -220,6 +239,7 @@ begin test "test false exit code is 1"
   expect_stdout "1"
 end test "test false exit code is 1"
 
+requirement "SHALL-ENVIRONMENT-VARIABLES-5074" doc="The following environment variables shall affect the execution of test : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 begin test "test with single non-null argument exits 0"
   begin script
     test -f
@@ -228,6 +248,7 @@ begin test "test with single non-null argument exits 0"
   expect_stdout "0"
 end test "test with single non-null argument exits 0"
 
+requirement "SHALL-FC-1135" doc="If the editor returns a non-zero exit status, this shall suppress the entry into the history list and the command re-execution."
 begin test "[ ] with no arguments returns non-zero"
   begin script
     [ ]
@@ -235,6 +256,7 @@ begin test "[ ] with no arguments returns non-zero"
   not_expect_exit_code 0
 end test "[ ] with no arguments returns non-zero"
 
+requirement "SHALL-FC-1135" doc="If the editor returns a non-zero exit status, this shall suppress the entry into the history list and the command re-execution."
 begin test "[ hello ] returns 0"
   begin script
     [ hello ]
@@ -246,8 +268,8 @@ end test "[ hello ] returns 0"
 # pwd utility
 # ==============================================================================
 
-requirement "SHALL-DESCRIPTION-5053" doc="The pwd utility shall write to standard output an absolute pathname of the current working directory."
-requirement "SHALL-OPTIONS-5054" doc="The pwd utility shall conform to XBD 12.2 Utility Syntax Guidelines."
+requirement "SHALL-DESCRIPTION-5053" doc="The pwd utility shall write to standard output an absolute pathname of the current working directory, which does not contain the filenames dot or dot-dot."
+requirement "SHALL-OPTIONS-5054" doc="The pwd utility shall conform to XBD 12.2 Utility Syntax Guidelines ."
 
 begin test "pwd after cd / writes /"
   begin script
@@ -256,7 +278,7 @@ begin test "pwd after cd / writes /"
   expect_stdout "/"
 end test "pwd after cd / writes /"
 
-requirement "SHALL-OPTIONS-5057" doc="-P The pathname written shall not contain any components that refer to files of type symbolic link."
+requirement "SHALL-OPTIONS-5057" doc="The -P option shall cause the pathname written to standard output to not contain any components that refer to files of type symbolic link."
 
 begin test "pwd -P returns non-empty path"
   begin script
@@ -274,7 +296,7 @@ begin test "pwd -L -P succeeds"
   expect_exit_code 0
 end test "pwd -L -P succeeds"
 
-requirement "SHALL-OPTIONS-5061" doc="If neither -L nor -P is specified, pwd shall behave as if -L had been specified."
+requirement "SHALL-OPTIONS-5061" doc="If neither -L nor -P is specified, the pwd utility shall behave as if -L had been specified."
 
 begin test "pwd default matches pwd -L"
   begin script
@@ -308,7 +330,7 @@ begin test "printf reuses format for multiple arguments"
   expect_stdout "a\nb\nc"
 end test "printf reuses format for multiple arguments"
 
-requirement "SHALL-EXTENDED-DESCRIPTION-5047" doc="The argument operands shall be treated as strings if the corresponding conversion specifier is b, c, or s."
+requirement "SHALL-EXTENDED-DESCRIPTION-5047" doc="The argument operands shall be treated as strings if the corresponding conversion specifier is b , c , or s , and shall be evaluated as if by the strtod () function if the corresponding conversion specifier is a , A , e , E , f , F , g , or G ."
 
 begin test "printf %s treats argument as string"
   begin script
@@ -318,7 +340,7 @@ begin test "printf %s treats argument as string"
   expect_stdout "test"
 end test "printf %s treats argument as string"
 
-requirement "SHALL-EXTENDED-DESCRIPTION-5048" doc="Otherwise, they shall be evaluated as unsuffixed C integer constants."
+requirement "SHALL-EXTENDED-DESCRIPTION-5048" doc="Otherwise, they shall be evaluated as unsuffixed C integer constants, as described by the ISO C standard, with the following extensions: A leading <plus-sign> or <hyphen-minus> shall be allowed."
 
 begin test "printf %d treats argument as integer"
   begin script
@@ -328,7 +350,7 @@ begin test "printf %d treats argument as integer"
   expect_stdout "42"
 end test "printf %d treats argument as integer"
 
-requirement "SHALL-EXTENDED-DESCRIPTION-5049" doc="If the leading character is a single-quote or double-quote, the value shall be the numeric value in the underlying codeset."
+requirement "SHALL-EXTENDED-DESCRIPTION-5049" doc="If the leading character is a single-quote or double-quote, the value shall be the numeric value in the underlying codeset of the character following the single-quote or double-quote."
 
 begin test "printf %d with leading quote gives character value"
   begin script

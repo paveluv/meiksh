@@ -4,8 +4,8 @@ testsuite "FD Routing"
 # jobs output goes to stdout (POSIX jobs STDOUT section)
 # ==============================================================================
 
-requirement "SHALL-JOBS-1234" doc="The jobs utility shall display the status of jobs that were started in the current shell environment"
-requirement "SHALL-JOBS-1057" doc="By default, the jobs utility shall display the status of all stopped jobs, running background jobs, and all jobs whose status has changed and have not been reported by the shell"
+requirement "SHALL-JOBS-1234" doc="If the job was terminated by a signal, the format of < state > is unspecified, but it shall be visibly distinct from all of the other < state > formats shown here and shall indicate the name or description of the signal causing the termination."
+requirement "SHALL-JOBS-1057" doc="The following options shall be supported: -l (The letter ell.) Provide more information about each job listed."
 
 begin interactive test "jobs output goes to stdout"
   spawn -i
@@ -33,7 +33,7 @@ end interactive test "jobs output goes to stdout"
 # bg output goes to stdout (POSIX bg STDOUT section)
 # ==============================================================================
 
-requirement "SHALL-BG-1031" doc="The output of bg shall consist of a line in the format: [%d] %s\n, <job-number>, <command>"
+requirement "SHALL-BG-1031" doc="The output of bg shall consist of a line in the format: \"[%d] %s\\n\", < job-number >, < command > where the fields are as follows: < job-number > A number that can be used to identify the job to the wait , fg , and kill utilities."
 
 begin interactive test "bg output goes to stdout"
   spawn -i
@@ -61,8 +61,8 @@ end interactive test "bg output goes to stdout"
 # fg output goes to stdout (POSIX fg STDOUT section)
 # ==============================================================================
 
-requirement "SHALL-FG-1035" doc="The fg utility shall write the command line of the job to standard output in the following format: %s\n, <command>"
-requirement "SHALL-STDERR-627" doc="The fg utility shall write the command line of the job to standard output"
+requirement "SHALL-FG-1035" doc="The fg utility shall write the command line of the job to standard output in the following format: \"%s\\n\", <command>."
+requirement "SHALL-STDERR-627" doc="For the fg utility, the standard error shall be used only for diagnostic messages."
 
 begin interactive test "fg output goes to stdout"
   spawn -i
@@ -90,7 +90,7 @@ end interactive test "fg output goes to stdout"
 # Async launch notification goes to stderr (POSIX 2.9.3.1)
 # ==============================================================================
 
-requirement "SHALL-V3CHAP02-1012" doc="When an asynchronous list is started by the shell, the format of the job-related message written to standard error is: [%d] %d\n. The async [N] PID notification must go to stderr, not stdout"
+requirement "SHALL-V3CHAP02-1012" doc="If the shell is interactive and the asynchronous AND-OR list became a background job, the job number and the process ID associated with the job shall be written to standard error using the format: \"[%d] %d\\n\", < job-number >, < process-id > If the shell is interactive and the asynchronous AND-OR list did not become a background job, the process ID associated with the asynchronous AND-OR list shall be written to standard error in an unspecified format."
 
 begin interactive test "async launch notification goes to stderr"
   spawn -i
@@ -110,7 +110,7 @@ end interactive test "async launch notification goes to stderr"
 # Shell job-state notifications go to stderr (POSIX 2.11)
 # ==============================================================================
 
-requirement "SHALL-2-11-443" doc="When the shell is interactive, it shall write a message to standard error reporting the termination status of each job that was started asynchronously and has since changed state"
+requirement "SHALL-2-11-443" doc="Each background job (whether suspended or not) shall have associated with it a job number and a process ID that is known in the current shell execution environment."
 
 begin interactive test "shell job-state notifications go to stderr"
   spawn -i

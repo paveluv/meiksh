@@ -5,7 +5,7 @@ testsuite "trap Built-in"
 # ==============================================================================
 
 requirement "SHALL-V3CHAP02-1021" doc="The following option shall be supported: -p Write to standard output a list of commands associated with each condition operand."
-requirement "SHALL-V3CHAP02-1020-DUP577" doc="trap -p output format: trap -- %s %s ...\n, <action>, <condition>"
+requirement "SHALL-V3CHAP02-1020-DUP577" doc="The format shall be: \"trap -- %s %s ...\\n\", < action >, < condition > ..."
 
 begin test "trap -p shows trap -- format"
   begin script
@@ -15,7 +15,7 @@ begin test "trap -p shows trap -- format"
   expect_stdout_line ".*trap -- .*INT.*"
 end test "trap -p shows trap -- format"
 
-requirement "SHALL-V3CHAP02-1015-DUP505" doc="When trap -p is used without arguments, it shall list all traps"
+requirement "SHALL-V3CHAP02-1015-DUP505" doc="When -p is specified, export shall write to the standard output the names and values of all exported variables, in the following format: \"export %s=%s\\n\", < name >, < value > if name is set, and: \"export %s\\n\", < name > if name is unset."
 
 begin test "trap -p lists all traps"
   begin script
@@ -31,7 +31,7 @@ end test "trap -p lists all traps"
 # trap with action
 # ==============================================================================
 
-requirement "SHALL-V3CHAP02-1019-DUP571" doc="If action is neither '-' nor empty, action shall be executed via eval action"
+requirement "SHALL-V3CHAP02-1019-DUP571" doc="If action is neither '-' nor the empty string, then each time a matching condition arises, the action shall be executed in a manner equivalent to: eval action Signals that were ignored on entry to a non-interactive shell cannot be trapped or reset, although no error need be reported when attempting to do so."
 
 begin test "EXIT trap fires on exit"
   begin script
@@ -42,6 +42,7 @@ begin test "EXIT trap fires on exit"
 end test "EXIT trap fires on exit"
 
 # trap with - (reset to default)
+requirement "SHALL-DESCRIPTION-631" doc="If action is '-' , the shell shall reset each condition to the default value."
 begin test "trap - resets EXIT trap"
   begin script
     trap "echo bad" EXIT
@@ -55,7 +56,7 @@ end test "trap - resets EXIT trap"
 # trap exit status
 # ==============================================================================
 
-requirement "SHALL-V3CHAP02-1013-DUP585" doc="If the trap name or number is invalid, a non-zero exit status shall be returned; otherwise zero."
+requirement "SHALL-V3CHAP02-1013-DUP585" doc="If the trap name or number is invalid, a non-zero exit status shall be returned; otherwise, zero shall be returned."
 
 begin test "trap with valid signal returns zero"
   begin script
@@ -64,9 +65,10 @@ begin test "trap with valid signal returns zero"
   expect_exit_code 0
 end test "trap with valid signal returns zero"
 
-requirement "SHALL-V3CHAP02-1014-DUP586" doc="Invalid signal names/numbers shall not be considered a syntax error and shall not cause the shell to abort."
+requirement "SHALL-V3CHAP02-1014-DUP586" doc="For both interactive and non-interactive shells, invalid signal names or numbers shall not be considered an error and shall not cause the shell to abort."
 
 # trap with invalid signal shall return non-zero, but the shell must continue.
+requirement "SHALL-V3CHAP02-1013-DUP585" doc="If the trap name or number is invalid, a non-zero exit status shall be returned; otherwise, zero shall be returned."
 begin test "trap with invalid signal returns non-zero"
   begin script
     trap "" INVALID_SIGNAL_NAME_XYZ 2>/dev/null
@@ -77,6 +79,7 @@ begin test "trap with invalid signal returns non-zero"
 end test "trap with invalid signal returns non-zero"
 
 # Verify shell doesn't abort on invalid signal
+requirement "SHALL-V3CHAP02-1011-DUP580" doc="For example: save_traps=$(trap -p) ... eval \"$save_traps\" or: save_traps=$(trap -p INT QUIT) trap \"some command\" INT QUIT ... eval \"$save_traps\" XSI-conformant systems also allow numeric signal numbers for the conditions corresponding to the following signal names: 1 SIGHUP 2 SIGINT 3 SIGQUIT 6 SIGABRT 9 SIGKILL 14 SIGALRM 15 SIGTERM If an invalid signal name or number is specified, the trap utility shall write a warning message to standard error."
 begin test "shell survives invalid signal name"
   begin script
     trap "" INVALID_SIGNAL_NAME_XYZ 2>/dev/null
@@ -89,10 +92,11 @@ end test "shell survives invalid signal name"
 # trap stderr on invalid signals
 # ==============================================================================
 
-requirement "SHALL-V3CHAP02-1012-DUP584" doc="Standard error shall be used only for diagnostic/warning messages about invalid signal names or numbers."
-requirement "SHALL-V3CHAP02-1011-DUP580" doc="Warning on invalid signal name/number"
+requirement "SHALL-V3CHAP02-1012-DUP584" doc="The standard error shall be used only for diagnostic messages and warning messages about invalid signal names or numbers."
+requirement "SHALL-V3CHAP02-1011-DUP580" doc="For example: save_traps=$(trap -p) ... eval \"$save_traps\" or: save_traps=$(trap -p INT QUIT) trap \"some command\" INT QUIT ... eval \"$save_traps\" XSI-conformant systems also allow numeric signal numbers for the conditions corresponding to the following signal names: 1 SIGHUP 2 SIGINT 3 SIGQUIT 6 SIGABRT 9 SIGKILL 14 SIGALRM 15 SIGTERM If an invalid signal name or number is specified, the trap utility shall write a warning message to standard error."
 
 # This test always passes in original — just verify command doesn't crash
+requirement "SHALL-V3CHAP02-1011-DUP580" doc="For example: save_traps=$(trap -p) ... eval \"$save_traps\" or: save_traps=$(trap -p INT QUIT) trap \"some command\" INT QUIT ... eval \"$save_traps\" XSI-conformant systems also allow numeric signal numbers for the conditions corresponding to the following signal names: 1 SIGHUP 2 SIGINT 3 SIGQUIT 6 SIGABRT 9 SIGKILL 14 SIGALRM 15 SIGTERM If an invalid signal name or number is specified, the trap utility shall write a warning message to standard error."
 begin test "trap with invalid signal produces diagnostic"
   begin script
     trap "" NOSUCHSIGNAL 2>&1 || true

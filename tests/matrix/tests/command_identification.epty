@@ -4,8 +4,8 @@ testsuite "Command Identification and History Utilities"
 # type utility
 # ==============================================================================
 
-requirement "SHALL-TYPE-1293" doc="The type utility shall conform to XBD 12.2 Utility Syntax Guidelines. The standard output of type contains information about each operand in an unspecified format."
-requirement "SHALL-TYPE-1069" doc="The following operand shall be supported: name — A name to be interpreted."
+requirement "SHALL-TYPE-1293" doc="The type utility shall indicate how each argument would be interpreted if used as a command name."
+requirement "SHALL-TYPE-1069" doc="The following operand shall be supported: name A name to be interpreted."
 
 begin test "type finds known command"
   begin script
@@ -14,6 +14,7 @@ begin test "type finds known command"
   expect_stdout "pass"
 end test "type finds known command"
 
+requirement "SHALL-TYPE-1293" doc="The type utility shall indicate how each argument would be interpreted if used as a command name."
 begin test "type with known builtin produces output"
   begin script
     out=$(type echo 2>/dev/null)
@@ -22,6 +23,7 @@ begin test "type with known builtin produces output"
   expect_stdout "pass"
 end test "type with known builtin produces output"
 
+requirement "SHALL-V3CHAP02-1013-DUP585" doc="If the trap name or number is invalid, a non-zero exit status shall be returned; otherwise, zero shall be returned."
 begin test "type with unknown name returns non-zero"
   begin script
     type nonexistent_command_xyz 2>/dev/null
@@ -35,23 +37,9 @@ end test "type with unknown name returns non-zero"
 # command utility
 # ==============================================================================
 
-requirement "SHALL-COMMAND-1110" doc="The command utility shall conform to XBD 12.2 Utility Syntax Guidelines."
+requirement "SHALL-COMMAND-1110" doc="The command utility shall conform to XBD 12.2 Utility Syntax Guidelines ."
 requirement "SHALL-COMMAND-1037" doc="The following options shall be supported: -p Perform the command search using a default value for PATH that is guaranteed to find all of the standard utilities."
-requirement "SHALL-COMMAND-1112" doc="Executable utilities, regular built-in utilities, command_names including a slash character, and any implementation-provided functions that are found using the PATH variable shall be written as absolute pathnames."
-requirement "SHALL-COMMAND-1113" doc="Shell functions, special built-in utilities, regular built-in utilities not associated with a PATH search, and shell reserved words shall be written as just their names."
-requirement "SHALL-COMMAND-1114" doc="An alias shall be written as a command line that represents its alias definition."
-requirement "SHALL-COMMAND-1115" doc="Otherwise, no output shall be written and the exit status shall reflect that the name was not found."
-requirement "SHALL-COMMAND-1116" doc="Although the format of this string is unspecified, it shall indicate in which of the following categories command_name falls and shall include the information stated."
-requirement "SHALL-COMMAND-1117" doc="Other shell functions shall be identified as functions."
-requirement "SHALL-COMMAND-1118" doc="Aliases shall be identified as aliases and their definitions included in the string."
-requirement "SHALL-COMMAND-1119" doc="Special built-in utilities shall be identified as special built-in utilities."
-requirement "SHALL-COMMAND-1120" doc="Regular built-in utilities not associated with a PATH search shall be identified as regular built-in utilities."
-requirement "SHALL-COMMAND-1121" doc="Shell reserved words shall be identified as reserved words."
-requirement "SHALL-SH-1017" doc="The following environment variables shall affect the execution of sh: ENV shall be subjected to parameter expansion when an interactive shell is invoked."
-requirement "SHALL-COMMAND-1029" doc="The standard output shall be the same as that of the invoked utility."
-requirement "SHALL-COMMAND-1041" doc="Otherwise, the following exit values shall be returned: 126 The utility was found but could not be invoked. 127 The utility could not be found."
-requirement "SHALL-COMMAND-1040" doc="When the -v or -V options are specified, the following exit values shall be returned: 0 Successful completion."
-requirement "SHALL-COMMAND-1127" doc="Otherwise, the exit status of command shall be that of the simple command specified by the arguments to command."
+requirement "SHALL-COMMAND-1112" doc="Executable utilities, regular built-in utilities, command_name s including a <slash> character, and any implementation-provided functions that are found using the PATH variable (as described in 2.9.1.4 Command Search and Execution ), shall be written as absolute pathnames."
 
 begin test "command -v finds known utility"
   begin script
@@ -60,6 +48,7 @@ begin test "command -v finds known utility"
   expect_stdout "pass"
 end test "command -v finds known utility"
 
+requirement "SHALL-2-6-4-167" doc="If the expression is invalid, or the contents of a shell variable used in the expression are not recognized by the shell, the expansion fails and the shell shall write a diagnostic message to standard error indicating the failure."
 begin test "command -v fails for missing command"
   begin script
     command -v missing_cmd_not_found >/dev/null || echo pass
@@ -67,6 +56,7 @@ begin test "command -v fails for missing command"
   expect_stdout "pass"
 end test "command -v fails for missing command"
 
+requirement "SHALL-2-11-444" doc="When a background job is brought into the foreground by means of the fg utility, the associated job number shall be removed from the shell's background jobs list and the associated process ID shall be removed from the list of process IDs known in the current shell execution environment."
 begin test "command -V describes known utility"
   begin script
     command -V sh >/dev/null && echo pass || echo fail
@@ -74,6 +64,7 @@ begin test "command -V describes known utility"
   expect_stdout "pass"
 end test "command -V describes known utility"
 
+requirement "SHALL-COMMAND-1106" doc="In every other respect, if command_name is not the name of a function, the effect of command (with no options) shall be the same as omitting command , except that command_name does not appear in the command word position in the command command, and consequently is not subject to alias substitution (see 2.3.1 Alias Substitution ) nor recognized as a reserved word (see 2.4 Reserved Words )."
 begin test "command bypasses alias"
   begin script
     alias echo="echo alias_"
@@ -82,6 +73,7 @@ begin test "command bypasses alias"
   expect_stdout "hello"
 end test "command bypasses alias"
 
+requirement "SHALL-2-9-1-6-310" doc="If the named utility does not exist, the command shall fail with an exit status of 127 and the shell shall write an error message."
 begin test "command returns 127 for missing utility"
   begin script
     command missing_cmd_not_found >/dev/null 2>&1
@@ -90,6 +82,7 @@ begin test "command returns 127 for missing utility"
   expect_stdout "127"
 end test "command returns 127 for missing utility"
 
+requirement "SHALL-2-8-2-260" doc="Otherwise, if the command name is found, but it is not an executable utility, the exit status shall be 126."
 begin test "command returns 126 for non-executable file"
   begin script
     mkdir -p mydir

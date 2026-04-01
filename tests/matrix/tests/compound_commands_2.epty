@@ -4,8 +4,8 @@ testsuite "Compound Commands (Part 2)"
 # Compound Lists and Exit Statuses
 # ==============================================================================
 
-requirement "SHALL-2-9-4-345" doc="The exit status of a compound-list shall be the value that the special parameter '?' would have immediately after execution of the compound-list"
-requirement "SHALL-2-9-4-2-350" doc="First, the list of words following in shall be expanded to generate a list of items"
+requirement "SHALL-2-9-4-345" doc="The exit status of a compound-list shall be the value that the special parameter '?' (see 2.5.2 Special Parameters ) would have immediately after execution of the compound-list ."
+requirement "SHALL-2-9-4-2-350" doc="First, the list of words following in shall be expanded to generate a list of items."
 
 begin test "for-in expands word list correctly"
   begin script
@@ -22,9 +22,9 @@ end test "for-in expands word list correctly"
 # Case Statement Extensions
 # ==============================================================================
 
-requirement "SHALL-2-9-4-3-358" doc="Each case statement clause, with the possible exception of the last, shall be terminated with either \";;\" or \";&\""
-requirement "SHALL-2-9-4-3-359" doc="In order from the beginning to the end of the case statement, each pattern that labels a compound-list shall be subjected to tilde expansion, parameter expansion, command substitution, and arithmetic expansion"
-requirement "SHALL-2-9-4-3-362" doc="If the case statement clause is terminated by \";&\", then the compound-list (if any) of each subsequent clause shall be executed, in order, until either a clause terminated by \";;\" is reached or there are no further clauses"
+requirement "SHALL-2-9-4-3-358" doc="Each case statement clause, with the possible exception of the last, shall be terminated with either \";;\" or \";&\" ."
+requirement "SHALL-2-9-4-3-359" doc="In order from the beginning to the end of the case statement, each pattern that labels a compound-list shall be subjected to tilde expansion, parameter expansion, command substitution, and arithmetic expansion, and the result of these expansions shall be compared against the expansion of word , according to the rules described in 2.14 Pattern Matching Notation (which also describes the effect of quoting parts of the pattern)."
+requirement "SHALL-2-9-4-3-362" doc="If the case statement clause is terminated by \";&\" , then the compound-list (if any) of each subsequent clause shall be executed, in order, until either a clause terminated by \";;\" is reached and its compound-list (if any) executed or there are no further clauses in the case statement."
 
 begin test "case ;; termination"
   begin script
@@ -38,6 +38,7 @@ begin test "case ;; termination"
   expect_stdout "yes"
 end test "case ;; termination"
 
+requirement "SHALL-2-9-4-3-355" doc="The conditional construct case shall execute the compound-list corresponding to the first pattern (see 2.14 Pattern Matching Notation ), if any are present, that is matched by the string resulting from the tilde expansion, parameter expansion, command substitution, arithmetic expansion, and quote removal of the given word."
 begin test "pattern expansion in case labels"
   begin script
     X=hello
@@ -50,6 +51,7 @@ begin test "pattern expansion in case labels"
   expect_stdout "matched"
 end test "pattern expansion in case labels"
 
+requirement "SHALL-2-9-4-3-359" doc="In order from the beginning to the end of the case statement, each pattern that labels a compound-list shall be subjected to tilde expansion, parameter expansion, command substitution, and arithmetic expansion, and the result of these expansions shall be compared against the expansion of word , according to the rules described in 2.14 Pattern Matching Notation (which also describes the effect of quoting parts of the pattern)."
 begin test "pattern with command substitution in case label"
   begin script
     case "3" in
@@ -61,6 +63,7 @@ begin test "pattern with command substitution in case label"
   expect_stdout "three"
 end test "pattern with command substitution in case label"
 
+requirement "SHALL-2-9-4-3-359" doc="In order from the beginning to the end of the case statement, each pattern that labels a compound-list shall be subjected to tilde expansion, parameter expansion, command substitution, and arithmetic expansion, and the result of these expansions shall be compared against the expansion of word , according to the rules described in 2.14 Pattern Matching Notation (which also describes the effect of quoting parts of the pattern)."
 begin test "pattern with arithmetic expansion in case label"
   begin script
     case "6" in
@@ -72,6 +75,7 @@ begin test "pattern with arithmetic expansion in case label"
   expect_stdout "six"
 end test "pattern with arithmetic expansion in case label"
 
+requirement "SHALL-2-9-4-3-355" doc="The conditional construct case shall execute the compound-list corresponding to the first pattern (see 2.14 Pattern Matching Notation ), if any are present, that is matched by the string resulting from the tilde expansion, parameter expansion, command substitution, arithmetic expansion, and quote removal of the given word."
 begin test "case ;& fallthrough"
   begin script
     case a in a) echo first ;& b) echo second ;; c) echo third ;; esac
@@ -80,6 +84,7 @@ begin test "case ;& fallthrough"
   expect_stdout "first\nsecond"
 end test "case ;& fallthrough"
 
+requirement "SHALL-2-9-4-3-362" doc="If the case statement clause is terminated by \";&\" , then the compound-list (if any) of each subsequent clause shall be executed, in order, until either a clause terminated by \";;\" is reached and its compound-list (if any) executed or there are no further clauses in the case statement."
 begin test "case ;& multi-fallthrough until ;;"
   begin script
     case x in x) echo one ;& y) echo two ;& z) echo three ;; w) echo four ;; esac
@@ -93,7 +98,7 @@ end test "case ;& multi-fallthrough until ;;"
 # Syntax Spacing
 # ==============================================================================
 
-requirement "SHALL-2-9-4-1-347" doc="A conforming application shall ensure that it separates the two leading '(' characters with white space to prevent the shell from performing an arithmetic evaluation"
+requirement "SHALL-2-9-4-1-347" doc="A conforming application shall ensure that it separates the two leading '(' characters with white space to prevent the shell from performing an arithmetic evaluation."
 
 begin test "nested subshells with spaced parens"
   begin script
@@ -103,7 +108,7 @@ begin test "nested subshells with spaced parens"
   expect_stdout "hello"
 end test "nested subshells with spaced parens"
 
-requirement "SHALL-2-9-2-312" doc="If the pipeline begins with the reserved word ! and command1 is a subshell command, the application shall ensure that the ( operator at the beginning of command1 is separated from the ! by one or more blank characters"
+requirement "SHALL-2-9-2-312" doc="The format for a pipeline is: [ ! ] command1 [ | command2 ... ] If the pipeline begins with the reserved word ! and command1 is a subshell command, the application shall ensure that the ( operator at the beginning of command1 is separated from the ! by one or more <blank> characters."
 
 begin test "! ( false ) succeeds with blank separation"
   begin script

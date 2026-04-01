@@ -4,7 +4,7 @@ testsuite "Extended ulimit Built-in"
 # ulimit reports/sets resource limits
 # ==============================================================================
 
-requirement "SHALL-ULIMIT-1297" doc="ulimit reports and sets resource limits in effect."
+requirement "SHALL-ULIMIT-1297" doc="The ulimit utility shall report or set the resource limits in effect in the process in which it is executed."
 
 begin test "ulimit -f produces output"
   begin script
@@ -14,6 +14,7 @@ begin test "ulimit -f produces output"
   expect_stdout "pass"
 end test "ulimit -f produces output"
 
+requirement "SHALL-ULIMIT-1297" doc="The ulimit utility shall report or set the resource limits in effect in the process in which it is executed."
 begin test "ulimit -a lists multiple limits"
   begin script
     lines=$(ulimit -a | wc -l)
@@ -26,7 +27,7 @@ end test "ulimit -a lists multiple limits"
 # "unlimited\n" format for resources without numeric limit
 # ==============================================================================
 
-requirement "SHALL-ULIMIT-1044" doc="The format for the value of a resource that has no enforced numeric limit shall be \"unlimited\\n\"."
+requirement "SHALL-ULIMIT-1044" doc="If the resource being reported does not have a numeric limit, in the POSIX locale the following format shall be used: \"unlimited\\n\"."
 
 begin test "ulimit -f reports unlimited after setting unlimited"
   begin script
@@ -40,7 +41,7 @@ end test "ulimit -f reports unlimited after setting unlimited"
 # -H option reports/sets hard limit
 # ==============================================================================
 
-requirement "SHALL-ULIMIT-1073" doc="-H option shall report or set the hard resource limit."
+requirement "SHALL-ULIMIT-1073" doc="The following options shall be supported: -H Report hard limit(s) or set only a hard limit."
 
 begin test "ulimit -Hf produces output"
   begin script
@@ -50,6 +51,7 @@ begin test "ulimit -Hf produces output"
   expect_stdout "pass"
 end test "ulimit -Hf produces output"
 
+requirement "SHALL-ULIMIT-1297" doc="The ulimit utility shall report or set the resource limits in effect in the process in which it is executed."
 begin test "ulimit -Hf returns number or unlimited"
   begin script
     val=$(ulimit -Hf)
@@ -62,7 +64,7 @@ end test "ulimit -Hf returns number or unlimited"
 # newlimit operand - integer or unlimited
 # ==============================================================================
 
-requirement "SHALL-ULIMIT-1074" doc="The newlimit operand shall be an integer or the string \"unlimited\"."
+requirement "SHALL-ULIMIT-1074" doc="The following operand shall be supported: newlimit Either an integer value to use as the new limit(s) for the specified resource, in the units specified in OPTIONS, or a non-numeric string indicating no limit, as described in the DESCRIPTION section."
 
 begin test "setting soft limit to its current value succeeds"
   begin script
@@ -71,6 +73,7 @@ begin test "setting soft limit to its current value succeeds"
   expect_exit_code 0
 end test "setting soft limit to its current value succeeds"
 
+requirement "SHALL-ULIMIT-1298" doc="The value unlimited for a resource shall be considered to be larger than any other limit value."
 begin test "setting soft limit to unlimited succeeds when hard is unlimited"
   begin script
     hard=$(ulimit -Hf)
@@ -83,6 +86,7 @@ begin test "setting soft limit to unlimited succeeds when hard is unlimited"
   expect_stdout "pass"
 end test "setting soft limit to unlimited succeeds when hard is unlimited"
 
+requirement "SHALL-ULIMIT-1074" doc="The following operand shall be supported: newlimit Either an integer value to use as the new limit(s) for the specified resource, in the units specified in OPTIONS, or a non-numeric string indicating no limit, as described in the DESCRIPTION section."
 begin test "setting limit to non-numeric string fails"
   begin script
     ulimit -f notanumber 2>/dev/null
@@ -94,7 +98,7 @@ end test "setting limit to non-numeric string fails"
 # Single limit value written in specified format
 # ==============================================================================
 
-requirement "SHALL-ULIMIT-1077" doc="A single limit value shall be written in the specified format."
+requirement "SHALL-ULIMIT-1077" doc="If a single limit value is to be written; that is, the -a option is not specified and at most one option other than -H or -S is specified: If the resource being reported has a numeric limit, the limit value shall be written in the following format: \"%1d\\n\", < limit value > where < limit value > is the value of the limit in the units specified in OPTIONS."
 
 begin test "ulimit -f returns numeric or unlimited"
   begin script
@@ -108,7 +112,7 @@ end test "ulimit -f returns numeric or unlimited"
 # unlimited considered larger than any other limit
 # ==============================================================================
 
-requirement "SHALL-ULIMIT-1298" doc="The value \"unlimited\" shall be considered to be larger than any other limit value."
+requirement "SHALL-ULIMIT-1298" doc="The value unlimited for a resource shall be considered to be larger than any other limit value."
 
 begin test "unlimited hard limit allows setting arbitrary soft limit"
   begin script
@@ -126,7 +130,7 @@ end test "unlimited hard limit allows setting arbitrary soft limit"
 # unlimited means no enforcement of limits
 # ==============================================================================
 
-requirement "SHALL-ULIMIT-1299" doc="The value \"unlimited\" shall mean that there is no enforcement of the associated resource limit."
+requirement "SHALL-ULIMIT-1299" doc="When a resource has this limit value, the implementation shall not enforce limits on that resource."
 
 begin test "unlimited means no enforcement"
   begin script
@@ -144,7 +148,7 @@ end test "unlimited means no enforcement"
 # Numerals 0 to max recognized as numeric values
 # ==============================================================================
 
-requirement "SHALL-ULIMIT-1308" doc="Numerals from 0 to the maximum value shall be recognized as numeric values for the newlimit operand."
+requirement "SHALL-ULIMIT-1308" doc="Numerals in the range 0 to the maximum limit value supported by the implementation for any resource shall be syntactically recognized as numeric values."
 
 begin test "0 is a valid limit"
   begin script
@@ -153,6 +157,7 @@ begin test "0 is a valid limit"
   expect_exit_code 0
 end test "0 is a valid limit"
 
+requirement "SHALL-ULIMIT-1297" doc="The ulimit utility shall report or set the resource limits in effect in the process in which it is executed."
 begin test "setting soft limit to 0 takes effect"
   begin script
     ulimit -Sf 0
@@ -161,6 +166,7 @@ begin test "setting soft limit to 0 takes effect"
   expect_stdout "0"
 end test "setting soft limit to 0 takes effect"
 
+requirement "SHALL-ULIMIT-1044" doc="If the resource being reported does not have a numeric limit, in the POSIX locale the following format shall be used: \"unlimited\\n\"."
 begin test "current soft limit is a valid numeric value to re-set"
   begin script
     cur=$(ulimit -Sf)
@@ -177,7 +183,7 @@ end test "current soft limit is a valid numeric value to re-set"
 # Format within each line is unspecified, except limit value format
 # ==============================================================================
 
-requirement "SHALL-ULIMIT-1312" doc="The format of the output within each line is otherwise unspecified, except that the limit value format is as specified."
+requirement "SHALL-ULIMIT-1312" doc="The format used within each line is unspecified, except that the format used for the limit value shall be as described below for the case where a single limit value is written."
 
 begin test "ulimit -a lines each contain a limit value"
   begin script

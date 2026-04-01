@@ -4,7 +4,7 @@ testsuite "Shell Mail Notification"
 # MAIL notification on file creation
 # ==============================================================================
 
-requirement "SHALL-SH-1025" doc="If MAIL is set, the shell shall inform the user if the file named by the variable is created or if its modification time has changed."
+requirement "SHALL-SH-1025" doc="If this variable is set, the shell shall inform the user if the file named by the variable is created or if its modification time has changed."
 requirement "SHALL-SH-1026" doc="Informing the user shall be accomplished by writing a string of unspecified format to standard error prior to the writing of the next primary prompt string."
 requirement "SHALL-SH-1027" doc="Such check shall be performed only after the completion of the interval defined by the MAILCHECK variable after the last such check."
 
@@ -54,7 +54,7 @@ end interactive test "MAIL not checked if MAILPATH is set"
 # MAILCHECK=0 checks at every prompt
 # ==============================================================================
 
-requirement "SHALL-SH-1029" doc="MAILCHECK specifies how often (in seconds) the shell shall check for the arrival of mail."
+requirement "SHALL-SH-1029" doc="Establish Establish a decimal integer value that specifies how often (in seconds) the shell shall check for the arrival of mail in the files specified by the MAILPATH or MAIL variables."
 requirement "SHALL-SH-1031" doc="If set to zero, the shell shall check before issuing each primary prompt."
 
 begin interactive test "MAILCHECK=0 checks at every prompt"
@@ -80,8 +80,8 @@ end interactive test "MAILCHECK=0 checks at every prompt"
 # MAILPATH with multiple paths and custom messages
 # ==============================================================================
 
-requirement "SHALL-SH-1032" doc="If MAILPATH is set, the shell shall inform the user if any of the files named by the variable are created or if any of their modification times change."
-requirement "SHALL-SH-1033" doc="Each pathname can be followed by '%' and a string that shall be subjected to parameter expansion and written to standard error."
+requirement "SHALL-SH-1032" doc="If this variable is set, the shell shall inform the user if any of the files named by the variable are created or if any of their modification times change. (See the preceding entry for MAIL for descriptions of mail arrival and user informing.) Each pathname can be followed by '%' and a string that shall be subjected to parameter expansion and written to standard error when the modification time changes."
+requirement "SHALL-SH-1033" doc="Each pathname can be followed by '%' and a string that shall be subjected to parameter expansion and written to standard error when the modification time changes."
 
 begin interactive test "MAILPATH with custom message"
   spawn -i
@@ -106,7 +106,7 @@ end interactive test "MAILPATH with custom message"
 # MAILPATH percent escaping
 # ==============================================================================
 
-requirement "SHALL-SH-1034" doc="If a '%' character in the pathname is preceded by a backslash, it shall be treated as a literal '%' in the pathname."
+requirement "SHALL-SH-1034" doc="If a '%' character in the pathname is preceded by a <backslash>, it shall be treated as a literal '%' in the pathname."
 
 begin interactive test "MAILPATH percent escaping"
   spawn -i

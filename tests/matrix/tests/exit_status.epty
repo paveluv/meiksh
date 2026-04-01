@@ -4,9 +4,9 @@ testsuite "Exit Status and Error Consequences"
 # Command Search Exit Statuses
 # ==============================================================================
 
-requirement "SHALL-2-9-1-4-296" doc="If the search is unsuccessful, the command shall fail with an exit status of 127 and the shell shall write an error message"
-requirement "SHALL-2-9-1-6-310" doc="If the search is unsuccessful, the command shall fail with an exit status of 127 and the shell shall write an error"
-requirement "SHALL-2-8-2-259" doc="If the command is not found, the exit status shall be 127"
+requirement "SHALL-2-9-1-4-296" doc="If the search is unsuccessful, the command shall fail with an exit status of 127 and the shell shall write an error message."
+requirement "SHALL-2-9-1-6-310" doc="If the named utility does not exist, the command shall fail with an exit status of 127 and the shell shall write an error message."
+requirement "SHALL-2-8-2-259" doc="The exit status of a command shall be determined as follows: If the command is not found, the exit status shall be 127."
 
 begin test "non-existent command returns 127"
   begin script
@@ -16,9 +16,9 @@ begin test "non-existent command returns 127"
   expect_stdout "127"
 end test "non-existent command returns 127"
 
-requirement "SHALL-2-9-1-6-304" doc="If execl fails due to ENOEXEC, shell shall execute a command equivalent to having a shell invoked with the pathname"
-requirement "SHALL-2-9-1-6-305" doc="In this case, it shall write an error message, and the command shall fail with an exit status of 126"
-requirement "SHALL-2-8-2-260" doc="If the command name is found but it is not an executable utility, the exit status shall be 126"
+requirement "SHALL-2-9-1-6-304" doc="If the execl () function fails due to an error equivalent to the [ENOEXEC] error defined in the System Interfaces volume of POSIX.1-2024, the shell shall execute a command equivalent to having a shell invoked with the pathname resulting from the search as its first operand, with any remaining arguments passed to the new shell, except that the value of \"$0\" in the new shell may be set to the command name."
+requirement "SHALL-2-9-1-6-305" doc="In this case, it shall write an error message, and the command shall fail with an exit status of 126."
+requirement "SHALL-2-8-2-260" doc="Otherwise, if the command name is found, but it is not an executable utility, the exit status shall be 126."
 
 begin test "non-executable file returns 126"
   begin script
@@ -35,7 +35,7 @@ end test "non-executable file returns 126"
 # Built-in Utility Exit Statuses
 # ==============================================================================
 
-requirement "SHALL-EXIT-STATUS-537" doc="If there are no arguments, or only null arguments, eval shall return a zero exit status"
+requirement "SHALL-EXIT-STATUS-537" doc="If there are no argument s, or only null argument s, eval shall return a zero exit status; otherwise, it shall return the exit status of the command defined by the string of concatenated argument s separated by <space> characters, or a non-zero exit status if the concatenation could not be parsed as a command and the shell is interactive (and therefore did not abort)."
 
 begin test "eval with no arguments returns 0"
   begin script
@@ -44,6 +44,7 @@ begin test "eval with no arguments returns 0"
   expect_exit_code 0
 end test "eval with no arguments returns 0"
 
+requirement "SHALL-DESCRIPTION-534" doc="The eval utility shall construct a command string by concatenating argument s together, separating each with a <space> character."
 begin test "eval with empty string returns 0"
   begin script
     eval ""
@@ -51,7 +52,7 @@ begin test "eval with empty string returns 0"
   expect_exit_code 0
 end test "eval with empty string returns 0"
 
-requirement "SHALL-EXIT-STATUS-548" doc="Otherwise, exec shall return a zero exit status"
+requirement "SHALL-EXIT-STATUS-548" doc="Otherwise, exec shall return a zero exit status."
 
 begin test "exec with no utility returns 0"
   begin script
@@ -60,8 +61,8 @@ begin test "exec with no utility returns 0"
   expect_exit_code 0
 end test "exec with no utility returns 0"
 
-requirement "SHALL-EXIT-STATUS-578" doc="The exit status shall be n, if specified, except that the behavior is unspecified if n is not an unsigned decimal integer or is greater than 255"
-requirement "SHALL-EXIT-STATUS-579" doc="If n is not specified, the result shall be as if n were specified with the current value of $?"
+requirement "SHALL-EXIT-STATUS-578" doc="The exit status shall be n , if specified, except that the behavior is unspecified if n is not an unsigned decimal integer or is greater than 255."
+requirement "SHALL-EXIT-STATUS-579" doc="If n is not specified, the result shall be as if n were specified with the current value of the special parameter '?' (see 2.5.2 Special Parameters ), except that if the return command would cause the end of execution of a trap action, the value for the special parameter '?' that is considered \"current\" shall be the value it had immediately preceding the trap action."
 
 begin test "return without n inherits previous exit status"
   begin script
@@ -72,7 +73,7 @@ begin test "return without n inherits previous exit status"
   expect_stdout "1"
 end test "return without n inherits previous exit status"
 
-requirement "SHALL-DESCRIPTION-576" doc="The return utility shall cause the shell to stop executing the current function or dot script"
+requirement "SHALL-DESCRIPTION-576" doc="The return utility shall cause the shell to stop executing the current function or dot script."
 
 begin test "return with explicit n sets exit status"
   begin script
@@ -83,8 +84,8 @@ begin test "return with explicit n sets exit status"
   expect_stdout "5"
 end test "return with explicit n sets exit status"
 
-requirement "SHALL-EXIT-STATUS-623" doc="If the n operand is invalid or is greater than $#, this may be treated as an error; if the shell does not exit, a non-zero exit status shall be returned"
-requirement "SHALL-EXIT-STATUS-624" doc="Otherwise, zero shall be returned"
+requirement "SHALL-EXIT-STATUS-623" doc="If the n operand is invalid or is greater than \"$#\" , this may be treated as an error and a non-interactive shell may exit; if the shell does not exit in this case, a non-zero exit status shall be returned and a warning message shall be written to standard error."
+requirement "SHALL-EXIT-STATUS-624" doc="Otherwise, zero shall be returned."
 
 begin test "shift with valid bounds returns 0"
   begin script
@@ -98,7 +99,7 @@ end test "shift with valid bounds returns 0"
 # The 'sh' Utility Exit Status
 # ==============================================================================
 
-requirement "SHALL-EXIT-STATUS-143" doc="The shell shall terminate in the same manner as for an exit command with no operands, unless the last command was executed without forking"
+requirement "SHALL-EXIT-STATUS-143" doc="Otherwise, the shell shall terminate in the same manner as for an exit command with no operands, unless the last command the shell invoked was executed without forking, in which case the wait status seen by the parent process of the shell shall be the wait status of the last command the shell invoked."
 
 begin test "shell script inherits exit status of last command"
   begin script
@@ -114,8 +115,8 @@ end test "shell script inherits exit status of last command"
 # Signals and Exit Status
 # ==============================================================================
 
-requirement "SHALL-2-8-2-261" doc="If the command terminated due to receipt of a signal, the shell shall assign it an exit status greater than 128"
-requirement "SHALL-2-8-2-262" doc="The exit status shall identify, in an implementation-defined manner, which signal terminated the command"
+requirement "SHALL-2-8-2-261" doc="Otherwise, if the command terminated due to the receipt of a signal, the shell shall assign it an exit status greater than 128."
+requirement "SHALL-2-8-2-262" doc="The exit status shall identify, in an implementation-defined manner, which signal terminated the command."
 
 begin test "signal-terminated process has exit status > 128"
   begin script
