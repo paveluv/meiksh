@@ -452,8 +452,7 @@ begin test "dollar-single-quote basic support"
   begin script
     printf '%s\n' $'hello\nworld'
   end script
-  expect_stdout_line ".*hello.*"
-  expect_stdout_line ".*world.*"
+  expect_stdout "hello\nworld"
 end test "dollar-single-quote basic support"
 
 requirement "SHALL-2-2-3-007" doc="Enclosing characters in double-quotes ( \"\" ) shall preserve the literal value of all characters within the double-quotes, with the exception of the characters backquote, <dollar-sign>, and <backslash>, as follows: $ The <dollar-sign> shall retain its special meaning introducing parameter expansion (see 2.6.2 Parameter Expansion ), a form of command substitution (see 2.6.3 Command Substitution ), and arithmetic expansion (see 2.6.4 Arithmetic Expansion ), but shall not retain its special meaning introducing the dollar-single-quotes form of quoting (see 2.2.4 Dollar-Single-Quotes )."
