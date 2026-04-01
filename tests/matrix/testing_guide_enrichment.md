@@ -101,3 +101,19 @@ them.
 Update the requirement's `tests` array in `requirements.json` to
 reference the new tests, and add the corresponding `requirement`
 directives and test blocks in the appropriate `.epty` file(s).
+
+### 7. Validate integrity
+
+Run the parser in parse-only mode to verify that `requirements.json` and
+all `.epty` files are consistent:
+
+```
+cargo run --bin expect_pty -- --parse-only \
+  --requirements tests/matrix/requirements.json \
+  tests/matrix/tests/*.epty
+```
+
+This checks that every test referenced in a requirement's `tests` array
+exists in the `.epty` files, and that every `requirement` directive in
+the `.epty` files has a matching entry in `requirements.json`. Fix any
+errors before considering the enrichment complete.
