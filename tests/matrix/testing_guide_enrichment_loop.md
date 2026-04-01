@@ -45,18 +45,24 @@ Repeat the following cycle until no unenriched requirements remain:
 ### 1. Spawn a subagent for one requirement
 
 Spawn exactly **one** subagent (Task tool, `subagent_type: generalPurpose`)
-and ask it to apply the full enrichment procedure from
-`tests/matrix/testing_guide_enrichment.md` to the next unenriched
-requirement.
+for the next unenriched requirement.
 
 The subagent prompt must include:
 - The full JSON of the requirement to enrich.
-- The enrichment procedure steps (or a reference to read the doc).
-- Explicit instructions on how to update `requirements.json` (Python
-  snippet for the JSON update).
-- The `.epty` format rules (4-space indent, requirement directives
-  before tests, suite name matching, etc.).
-- The validation command to run at the end.
+- An instruction to **read `tests/matrix/testing_guide_enrichment.md`
+  first** and follow its steps 1–7 exactly. Do not paraphrase the
+  procedure in the prompt — the subagent must read it from the file.
+- The validation command to run at the end (step 7 in the procedure).
+
+The subagent is responsible for **all** deliverables before it finishes:
+1. Writing the `testing_guide` field in `requirements.json`.
+2. Writing or updating **all** tests described by the testing guide in
+   the appropriate `.epty` file(s).
+3. Updating the `tests` array in `requirements.json` to reference every
+   test.
+4. Running the integrity check and confirming it passes.
+
+If any of these are incomplete the enrichment is considered failed.
 
 Do **not** spawn multiple subagents concurrently. One at a time ensures
 focus and avoids file conflicts.
