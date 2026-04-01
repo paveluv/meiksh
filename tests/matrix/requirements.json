@@ -2468,6 +2468,10 @@
       {
         "suite": "Parameters and Variables",
         "test": "PS1 parameter and exclamation-mark expansion"
+      },
+      {
+        "suite": "Interactive Features",
+        "test": "PS1 prompt text is emitted to stderr stream"
       }
     ],
     "section_path": [
@@ -3328,7 +3332,7 @@
       },
       {
         "suite": "Word Expansions",
-        "test": "colon-plus empty when unset"
+        "test": "colon-question generates error on unset"
       }
     ],
     "section_path": [
@@ -5063,6 +5067,10 @@
       {
         "suite": "Advanced Redirections",
         "test": "multiple here-documents on one line are read in order"
+      },
+      {
+        "suite": "Advanced Redirections",
+        "test": "interactive here-document prompt goes to stderr stream"
       }
     ],
     "section_path": [
@@ -6347,6 +6355,10 @@
       {
         "suite": "Pipelines and Lists",
         "test": "pipeline exit status is last command"
+      },
+      {
+        "suite": "Pipelines and Lists",
+        "test": "basic pipe stdout flows into stdin"
       }
     ],
     "section_path": [

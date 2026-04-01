@@ -99,6 +99,22 @@ begin test "multiple here-documents on one line are read in order"
   expect_stdout "first\nsecond"
 end test "multiple here-documents on one line are read in order"
 
+requirement "SHALL-2-7-4-219" doc="When a here-document is read from a terminal device and the shell is interactive, it shall write the contents of the variable PS2 , processed as described in 2.5.3 Shell Variables , to standard error before reading each line of input until the delimiter has been recognized."
+begin test "interactive here-document prompt goes to stderr stream"
+  begin script
+    $SHELL -i > hd_stdout.txt 2> hd_stderr.txt <<'EOF'
+    PS2='heredoc> '
+    cat <<EOT
+    first
+    EOT
+    exit
+    EOF
+    grep -q 'heredoc> ' hd_stderr.txt && echo stderr_ok || echo stderr_missing
+    grep -q 'heredoc> ' hd_stdout.txt && echo stdout_leak || echo stdout_clean
+  end script
+  expect_stdout "stderr_ok\nstdout_clean"
+end test "interactive here-document prompt goes to stderr stream"
+
 requirement "SHALL-2-7-4-216" doc="If the redirection operator is \"<<-\" , all leading <tab> characters shall be stripped from input lines after <backslash><newline> line continuation (when it applies) has been performed, and from the line containing the trailing delimiter."
 requirement "SHALL-2-7-4-217" doc="Stripping of leading <tab> characters shall occur as the here-document is read from the shell input (and consequently does not affect any <tab> characters that result from expansions)."
 begin test "here-document with <<- strips leading tabs"

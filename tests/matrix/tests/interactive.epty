@@ -85,6 +85,20 @@ begin interactive test "PS1 expanded value is written to stderr"
   wait
 end interactive test "PS1 expanded value is written to stderr"
 
+requirement "SHALL-2-5-3-086" doc="After expansion, the value shall be written to standard error."
+begin test "PS1 prompt text is emitted to stderr stream"
+  begin script
+    $SHELL -i > ps1_stdout.txt 2> ps1_stderr.txt <<'EOF'
+    PS1='ps1_stream_marker> '
+    :
+    exit
+    EOF
+    grep -q 'ps1_stream_marker> ' ps1_stderr.txt && echo stderr_ok || echo stderr_missing
+    grep -q 'ps1_stream_marker> ' ps1_stdout.txt && echo stdout_leak || echo stdout_clean
+  end script
+  expect_stdout "stderr_ok\nstdout_clean"
+end test "PS1 prompt text is emitted to stderr stream"
+
 requirement "SHALL-2-5-3-092" doc="An <exclamation-mark> character escaped by another <exclamation-mark> character (that is, \"!!\" ) shall expand to a single <exclamation-mark> character."
 begin interactive test "PS1 double exclamation becomes single literal exclamation"
   spawn -i

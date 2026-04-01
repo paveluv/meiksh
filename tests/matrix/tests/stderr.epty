@@ -71,7 +71,8 @@ begin interactive test "fc produces no stderr on valid usage"
   send "fc -l -1 -1 2>/tmp/fc_stderr_test"
   expect "echo fc_test"
   expect "$ "
-  send "cat /tmp/fc_stderr_test; rm -f /tmp/fc_stderr_test"
+  send "[ ! -s /tmp/fc_stderr_test ] && echo fc_stderr_empty || echo fc_stderr_nonempty; rm -f /tmp/fc_stderr_test"
+  expect "fc_stderr_empty"
   expect "$ "
   sendeof
   wait
@@ -90,7 +91,8 @@ begin interactive test "fg produces no stderr with valid job"
   expect "$ "
   send "fg 2>/tmp/fg_stderr_test"
   expect "$ "
-  send "cat /tmp/fg_stderr_test; rm -f /tmp/fg_stderr_test"
+  send "[ ! -s /tmp/fg_stderr_test ] && echo fg_stderr_empty || echo fg_stderr_nonempty; rm -f /tmp/fg_stderr_test"
+  expect "fg_stderr_empty"
   expect "$ "
   sendeof
   wait

@@ -6,6 +6,7 @@ testsuite "Pipelines and Lists"
 
 
 requirement "SHALL-2-9-2-313" doc="The standard output of command1 shall be connected to the standard input of command2 ."
+requirement "SHALL-2-9-2-311" doc="For each command but the last, the shell shall connect the standard output of the command to the standard input of the next command as if by creating a pipe and passing the write end of the pipe as the standard output of the command and the read end of the pipe as the standard input of the next command."
 requirement "SHALL-2-9-3-4-340" doc="The format shall be: command1 [ && command2 ] ..."
 begin test "basic pipe stdout flows into stdin"
   begin script
