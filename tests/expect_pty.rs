@@ -1555,6 +1555,8 @@ fn parse_suite(text: &str, filename: &str) -> Result<TestSuite, String> {
 struct ReqEntry {
     id: String,
     text: String,
+    file: String,
+    section_path: Vec<String>,
     testable: bool,
     tests: Vec<(String, String)>,
 }
@@ -1576,6 +1578,24 @@ fn load_requirements(path: &str) -> Result<Vec<ReqEntry>, String> {
             .and_then(|v| v.as_str())
             .ok_or_else(|| format!("{path}[{i}] ({id}): missing or non-string \"text\""))?
             .to_string();
+        let file = item.get("file")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| format!("{path}[{i}] ({id}): missing or non-string \"file\""))?
+            .to_string();
+        let section_path = match item.get("section_path") {
+            Some(json::JsonValue::Array(arr)) => {
+                let mut path_vec = Vec::new();
+                for (j, elem) in arr.iter().enumerate() {
+                    let s = elem.as_str()
+                        .ok_or_else(|| format!("{path}[{i}].section_path[{j}]: expected string"))?
+                        .to_string();
+                    path_vec.push(s);
+                }
+                path_vec
+            }
+            Some(json::JsonValue::Null) | None => Vec::new(),
+            _ => return Err(format!("{path}[{i}] ({id}): \"section_path\" must be an array or null")),
+        };
         let testable = item.get("testable")
             .and_then(|v| v.as_bool())
             .ok_or_else(|| format!("{path}[{i}] ({id}): missing or non-bool \"testable\""))?;
@@ -1598,14 +1618,194 @@ fn load_requirements(path: &str) -> Result<Vec<ReqEntry>, String> {
             Some(json::JsonValue::Null) | None => Vec::new(),
             _ => return Err(format!("{path}[{i}] ({id}): \"tests\" must be an array or null")),
         };
-        entries.push(ReqEntry { id, text, testable, tests });
+        entries.push(ReqEntry { id, text, file, section_path, testable, tests });
     }
     Ok(entries)
+}
+
+struct HtmlSection {
+    heading: String,
+    text: String,
+}
+
+fn parse_html_sections(path: &str) -> Result<Vec<HtmlSection>, String> {
+    let content = fs::read_to_string(path)
+        .map_err(|e| format!("cannot read {path}: {e}"))?;
+
+    let mut headings: Vec<(usize, String)> = Vec::new();
+    let mut line_num = 0usize;
+    for line in content.lines() {
+        line_num += 1;
+        let trimmed = line.trim();
+        if let Some(text) = extract_heading_text(trimmed) {
+            if !text.is_empty() {
+                headings.push((line_num, text));
+            }
+        }
+    }
+
+    let lines: Vec<&str> = content.lines().collect();
+    let mut sections = Vec::with_capacity(headings.len());
+
+    for (i, (start_line, heading)) in headings.iter().enumerate() {
+        let end_line = if i + 1 < headings.len() {
+            headings[i + 1].0
+        } else {
+            lines.len() + 1
+        };
+
+        let mut text = String::new();
+        for line_idx in (*start_line)..end_line.min(lines.len() + 1) {
+            if line_idx == 0 || line_idx > lines.len() {
+                continue;
+            }
+            let raw = strip_html_tags_inline(lines[line_idx - 1]);
+            let decoded = decode_html_entities_inline(&raw);
+            text.push(' ');
+            text.push_str(&decoded);
+        }
+
+        let normalized = collapse_whitespace(&text);
+        sections.push(HtmlSection {
+            heading: heading.clone(),
+            text: normalized,
+        });
+    }
+
+    Ok(sections)
+}
+
+fn extract_heading_text(line: &str) -> Option<String> {
+    let lower = line.to_ascii_lowercase();
+    let starts_heading = lower.starts_with("<h2")
+        || lower.starts_with("<h3")
+        || lower.starts_with("<h4")
+        || lower.starts_with("<h5");
+    if !starts_heading {
+        return None;
+    }
+    let stripped = strip_html_tags_inline(line);
+    let decoded = decode_html_entities_inline(&stripped);
+    let text = decoded.trim().to_string();
+    if text.is_empty() { None } else { Some(text) }
+}
+
+fn strip_html_tags_inline(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for ch in s.chars() {
+        if ch == '<' {
+            in_tag = true;
+        } else if ch == '>' {
+            in_tag = false;
+            out.push(' ');
+        } else if !in_tag {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+fn decode_html_entities_inline(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.char_indices().peekable();
+    while let Some((i, ch)) = chars.next() {
+        if ch != '&' {
+            out.push(ch);
+            continue;
+        }
+        let mut end = None;
+        let mut probe = chars.clone();
+        while let Some((pi, pc)) = probe.next() {
+            if pc == ';' {
+                end = Some(pi);
+                break;
+            }
+            if pc.is_whitespace() || pi - i > 16 {
+                break;
+            }
+        }
+        let Some(end_idx) = end else {
+            out.push('&');
+            continue;
+        };
+        let entity = &s[i + 1..end_idx];
+        let decoded = match entity {
+            "amp" => '&',
+            "lt" => '<',
+            "gt" => '>',
+            "quot" => '"',
+            "apos" => '\'',
+            "nbsp" => ' ',
+            _ => {
+                out.push('&');
+                continue;
+            }
+        };
+        out.push(decoded);
+        while let Some((pi, _)) = chars.peek() {
+            if *pi <= end_idx {
+                chars.next();
+            } else {
+                break;
+            }
+        }
+    }
+    out
+}
+
+fn collapse_whitespace(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut prev_space = true;
+    for ch in s.chars() {
+        if ch.is_whitespace() {
+            if !prev_space {
+                out.push(' ');
+                prev_space = true;
+            }
+        } else {
+            out.push(ch);
+            prev_space = false;
+        }
+    }
+    out.trim().to_string()
+}
+
+fn text_found_in_section(req_text: &str, section_text: &str) -> bool {
+    // Try exact prefix match at progressively shorter lengths
+    for needle_len in [60, 40, 30, 20] {
+        if req_text.len() >= needle_len {
+            if section_text.contains(&req_text[..needle_len]) {
+                return true;
+            }
+        }
+    }
+    if section_text.contains(req_text) {
+        return true;
+    }
+
+    // Fuzzy: check that at least half of 3-word windows from the requirement
+    // appear somewhere in the section text
+    let words: Vec<&str> = req_text.split_whitespace().collect();
+    if words.len() < 3 {
+        return false;
+    }
+    let window_count = words.len().saturating_sub(2).min(15);
+    let mut hits = 0usize;
+    let section_lower = section_text.to_ascii_lowercase();
+    for i in 0..window_count {
+        let phrase: String = words[i..i + 3].join(" ").to_ascii_lowercase();
+        if section_lower.contains(&phrase) {
+            hits += 1;
+        }
+    }
+    hits * 4 >= window_count
 }
 
 fn check_requirements_integrity(
     req_entries: &[ReqEntry],
     suites: &[(String, TestSuite)],
+    html_root: Option<&str>,
 ) -> Vec<String> {
     let mut errors: Vec<String> = Vec::new();
 
@@ -1732,6 +1932,48 @@ fn check_requirements_integrity(
                 "requirements.json: testable requirement {:?} has no tests linked",
                 entry.id
             ));
+        }
+    }
+
+    if let Some(html_root) = html_root {
+        let mut file_cache: HashMap<String, Option<Vec<HtmlSection>>> = HashMap::new();
+
+        for entry in req_entries {
+            if entry.section_path.is_empty() || entry.file.is_empty() {
+                continue;
+            }
+
+            let sections = file_cache.entry(entry.file.clone()).or_insert_with(|| {
+                let html_path = format!("{html_root}/{}", entry.file);
+                parse_html_sections(&html_path).ok()
+            });
+
+            let Some(sections) = sections else {
+                continue;
+            };
+
+            let leaf = &entry.section_path[entry.section_path.len() - 1];
+
+            let matching_sections: Vec<&HtmlSection> =
+                sections.iter().filter(|s| s.heading == *leaf).collect();
+            if matching_sections.is_empty() {
+                errors.push(format!(
+                    "requirements.json: {:?} section_path leaf {:?} not found as heading in {}",
+                    entry.id, leaf, entry.file
+                ));
+                continue;
+            }
+
+            let normalized_req = collapse_whitespace(&entry.text);
+            let found = matching_sections.iter().any(|s| {
+                text_found_in_section(&normalized_req, &s.text)
+            });
+            if !found {
+                errors.push(format!(
+                    "requirements.json: {:?} text not found under section {:?} in {}",
+                    entry.id, leaf, entry.file
+                ));
+            }
         }
     }
 
@@ -2470,7 +2712,20 @@ fn main() {
                         std::process::exit(2);
                     }
                 };
-                let errs = check_requirements_integrity(&req_entries, &suites);
+                let html_root = {
+                    let p = std::path::Path::new(req_path);
+                    let mut base = p.to_path_buf();
+                    for _ in 0..3 {
+                        if !base.pop() { break; }
+                    }
+                    if base.as_os_str().is_empty() {
+                        std::path::PathBuf::from("docs/posix/susv5-html")
+                    } else {
+                        base.join("docs/posix/susv5-html")
+                    }
+                };
+                let html_root_str = html_root.to_str();
+                let errs = check_requirements_integrity(&req_entries, &suites, html_root_str);
                 integrity_errors = errs.len();
                 for e in &errs {
                     eprintln!("integrity: {e}");
@@ -3229,6 +3484,8 @@ end test \"bad\"
         ReqEntry {
             id: id.to_string(),
             text: text.to_string(),
+            file: String::new(),
+            section_path: Vec::new(),
             testable,
             tests: tests.iter().map(|(s, t)| (s.to_string(), t.to_string())).collect(),
         }
@@ -3272,7 +3529,7 @@ end test \"bad\"
             "a.epty",
             vec![("test one", vec![("REQ-1", "Some text.")])],
         );
-        let errs = check_requirements_integrity(&reqs, &[("a.epty".into(), suite)]);
+        let errs = check_requirements_integrity(&reqs, &[("a.epty".into(), suite)], None);
         assert!(errs.is_empty(), "expected no errors, got: {errs:?}");
     }
 
@@ -3280,7 +3537,7 @@ end test \"bad\"
     fn integrity_doc_mismatch() {
         let reqs = vec![make_req_entry("REQ-1", "Correct text.", true, &[("S", "t")])];
         let suite = make_suite("S", "s.epty", vec![("t", vec![("REQ-1", "Wrong text.")])]);
-        let errs = check_requirements_integrity(&reqs, &[("s.epty".into(), suite)]);
+        let errs = check_requirements_integrity(&reqs, &[("s.epty".into(), suite)], None);
         assert!(errs.iter().any(|e| e.contains("doc mismatch")), "got: {errs:?}");
     }
 
@@ -3288,7 +3545,7 @@ end test \"bad\"
     fn integrity_untestable() {
         let reqs = vec![make_req_entry("REQ-1", "Text.", false, &[])];
         let suite = make_suite("S", "s.epty", vec![("t", vec![("REQ-1", "Text.")])]);
-        let errs = check_requirements_integrity(&reqs, &[("s.epty".into(), suite)]);
+        let errs = check_requirements_integrity(&reqs, &[("s.epty".into(), suite)], None);
         assert!(errs.iter().any(|e| e.contains("untestable")), "got: {errs:?}");
     }
 
@@ -3296,7 +3553,7 @@ end test \"bad\"
     fn integrity_req_not_in_json() {
         let reqs = vec![];
         let suite = make_suite("S", "s.epty", vec![("t", vec![("REQ-X", "Text.")])]);
-        let errs = check_requirements_integrity(&reqs, &[("s.epty".into(), suite)]);
+        let errs = check_requirements_integrity(&reqs, &[("s.epty".into(), suite)], None);
         assert!(errs.iter().any(|e| e.contains("not found in requirements.json")), "got: {errs:?}");
     }
 
@@ -3306,7 +3563,7 @@ end test \"bad\"
             make_req_entry("REQ-1", "First.", true, &[]),
             make_req_entry("REQ-1", "Second.", true, &[]),
         ];
-        let errs = check_requirements_integrity(&reqs, &[]);
+        let errs = check_requirements_integrity(&reqs, &[], None);
         assert!(errs.iter().any(|e| e.contains("duplicate id")), "got: {errs:?}");
     }
 
@@ -3316,21 +3573,21 @@ end test \"bad\"
             make_req_entry("REQ-1", "Same text.", true, &[]),
             make_req_entry("REQ-2", "Same text.", true, &[]),
         ];
-        let errs = check_requirements_integrity(&reqs, &[]);
+        let errs = check_requirements_integrity(&reqs, &[], None);
         assert!(errs.iter().any(|e| e.contains("duplicate text")), "got: {errs:?}");
     }
 
     #[test]
     fn integrity_testable_no_tests() {
         let reqs = vec![make_req_entry("REQ-1", "Text.", true, &[])];
-        let errs = check_requirements_integrity(&reqs, &[]);
+        let errs = check_requirements_integrity(&reqs, &[], None);
         assert!(errs.iter().any(|e| e.contains("has no tests linked")), "got: {errs:?}");
     }
 
     #[test]
     fn integrity_untestable_no_tests_ok() {
         let reqs = vec![make_req_entry("REQ-1", "Text.", false, &[])];
-        let errs = check_requirements_integrity(&reqs, &[]);
+        let errs = check_requirements_integrity(&reqs, &[], None);
         assert!(!errs.iter().any(|e| e.contains("has no tests linked")), "got: {errs:?}");
     }
 
@@ -3338,7 +3595,7 @@ end test \"bad\"
     fn integrity_json_extra_test_pair() {
         let reqs = vec![make_req_entry("REQ-1", "Text.", true, &[("S", "t"), ("S", "ghost")])];
         let suite = make_suite("S", "s.epty", vec![("t", vec![("REQ-1", "Text.")])]);
-        let errs = check_requirements_integrity(&reqs, &[("s.epty".into(), suite)]);
+        let errs = check_requirements_integrity(&reqs, &[("s.epty".into(), suite)], None);
         assert!(errs.iter().any(|e| e.contains("ghost") && e.contains("no such link")), "got: {errs:?}");
     }
 
@@ -3346,7 +3603,7 @@ end test \"bad\"
     fn integrity_json_missing_test_pair() {
         let reqs = vec![make_req_entry("REQ-1", "Text.", true, &[])];
         let suite = make_suite("S", "s.epty", vec![("t", vec![("REQ-1", "Text.")])]);
-        let errs = check_requirements_integrity(&reqs, &[("s.epty".into(), suite)]);
+        let errs = check_requirements_integrity(&reqs, &[("s.epty".into(), suite)], None);
         assert!(errs.iter().any(|e| e.contains("is missing test")), "got: {errs:?}");
     }
 }
