@@ -14,11 +14,6 @@ libc = "0.2.183"
 name = "integration_basic"
 path = "tests/integration/basic.rs"
 
-[[test]]
-name = "spec_compliance"
-path = "tests/spec/runner.rs"
-test = false
-
 [[bin]]
 name = "expect_pty"
 path = "tests/expect_pty.rs"

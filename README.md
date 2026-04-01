@@ -31,7 +31,7 @@ The current semantic target is POSIX Issue 8, with Issue 7 behavior still tracke
 - utility-specific progress on recent builtin fidelity work and shell-language closure, including parser-aware alias behavior, grammar-faithful `for`/`case` reserved-word handling, brace-group reserved-word parsing, linebreak-sensitive pipelines and AND-OR lists, `${parameter%word}` / `${parameter##word}`-style pattern trimming, `command -p/-v/-V`, `cd -L/-P/-e` with full POSIX 10-step algorithm (`CDPATH`, `-`, `OLDPWD`, logical path canonicalization), `.` `PATH` search for readable slashless files, `jobs -l/-p` with `+`/`-` markers, `pwd -L/-P`, `export -p`, `readonly -p`, `unalias -a`, `unset -f/-v`, `read` with `REPLY` default / `-r` / `-d` / IFS splitting, syscall-backed `times` and `umask` (full symbolic mode including `s`/`X`), `trap -p` with 18 signals / SIG prefix / ignored-on-entry tracking, `kill` with `-l`/`-s`/numeric shorthand/`%job`/`--`, and `wait` support for both `%job` and numeric pid operands
 - interactive startup via parameter-expanded `ENV`, prompt handling, simple history in `HISTFILE` or `$HOME/.sh_history`, interactive command-error reporting without exiting the prompt loop, POSIX-compliant interactive signal handling (SIGQUIT/SIGTERM ignored, SIGINT discards current line), full POSIX job control with `set -m` (shell process group setup, terminal foreground ownership, `WUNTRACED`/`wifstopped` stopped-job detection, terminal attribute save/restore via `tcgetattr`/`tcsetattr`, complete job-id grammar, `fg`/`bg` with `SIGCONT` and terminal handoff, `kill` builtin, async signal inheritance)
 
-The project does **not** yet claim full POSIX conformance. Remaining gaps are tracked in `docs/spec-matrix.md` and `docs/requirements/gap-register.md`. The largest open areas are currently:
+The project does **not** yet claim full POSIX conformance. Remaining gaps are tracked in `docs/spec-matrix.md`. The largest open areas are currently:
 
 - missing mirrored utility pages such as `hash`, `getopts`, `ulimit`, and `fc`
 - interactive editing (vi-mode) and command history list semantics
@@ -52,7 +52,7 @@ The project does **not** yet claim full POSIX conformance. Remaining gaps are tr
 
 ## POSIX References
 
-The implementation is driven by local POSIX reference material under `docs/posix/`, which is intentionally not committed for copyright reasons. The required local mirror is defined by `docs/posix-manifest.txt`; `docs/fetch-posix-docs.sh` populates it and `scripts/check-posix-docs.sh` validates completeness. See `docs/README.md` for the workflow and expected local layout.
+The implementation is driven by local POSIX reference material under `docs/posix/`, which is intentionally not committed for copyright reasons. The required local mirror is defined by `docs/posix-manifest.txt`, and `docs/fetch-posix-docs.sh` populates it from the upstream archive. See `docs/README.md` for the workflow and expected local layout.
 
 ## Coverage
 

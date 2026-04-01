@@ -1,7 +1,7 @@
 # POSIX Shell Test Suite
 
 This document translates normative POSIX requirements into an actionable test plan for `meiksh`.
-The generated `SHALL-XX-YY-ZZZ` identifiers map directly to test scripts (e.g., `tests/spec/SHALL-19-09-001.sh`).
+The generated `SHALL-XX-YY-ZZZ` identifiers map to normative POSIX requirements.
 
 ---
 
