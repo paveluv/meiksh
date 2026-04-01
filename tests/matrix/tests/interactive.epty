@@ -4,9 +4,9 @@ testsuite "Interactive Features"
 # The Face of the Shell: Prompt Strings ($PS1)
 # ==============================================================================
 
-requirement "SHALL-Command-History-List-031" doc="When used interactively, shell shall maintain command history in HISTFILE"
-requirement "SHALL-DESCRIPTION-602" doc="A user shall explicitly exit to leave the interactive shell"
-requirement "SHALL-2-5-3-085" doc="Parameters: PS1: Each time an interactive shell is ready to read a command, the value of this variable shall be subjected to parameter expansion"
+requirement "SHALL-Command-History-List-031" doc="When the sh utility is being used interactively, it shall maintain a list of commands previously entered from the terminal in the file named by the HISTFILE environment variable."
+requirement "SHALL-DESCRIPTION-602" doc="A user shall explicitly exit to leave the interactive shell."
+requirement "SHALL-2-5-3-085" doc="Each time an interactive shell is ready to read a command, the value of this variable shall be subjected to parameter expansion (see 2.6.2 Parameter Expansion ) and exclamation-mark expansion (see below)."
 
 begin interactive test "PS1 prompt expansion"
   spawn -i
@@ -19,10 +19,76 @@ begin interactive test "PS1 prompt expansion"
   wait
 end interactive test "PS1 prompt expansion"
 
+requirement "SHALL-2-5-3-089" doc="The other pass shall perform the other expansion(s) according to the rules in 2.6 Word Expansions ."
+requirement "SHALL-2-5-3-086" doc="After expansion, the value shall be written to standard error."
+
+begin interactive test "PS1 parameter expansion replaces variable references"
+  spawn -i
+  expect "$ "
+  send "MYVAR=hello"
+  expect "$ "
+  send "PS1='${MYVAR}> '"
+  expect "hello> "
+  send "MYVAR=world"
+  expect "hello> "
+  send "PS1='${MYVAR}> '"
+  expect "world> "
+  sendeof
+  wait
+end interactive test "PS1 parameter expansion replaces variable references"
+
+requirement "SHALL-2-5-3-089" doc="The other pass shall perform the other expansion(s) according to the rules in 2.6 Word Expansions ."
+
+begin interactive test "PS1 expansion re-evaluates on each prompt"
+  spawn -i
+  expect "$ "
+  send "COUNTER=1"
+  expect "$ "
+  send "PS1='[$COUNTER]> '"
+  expect "[1]> "
+  send "COUNTER=2"
+  expect "[2]> "
+  send "COUNTER=3"
+  expect "[3]> "
+  sendeof
+  wait
+end interactive test "PS1 expansion re-evaluates on each prompt"
+
+requirement "SHALL-2-5-3-089" doc="The other pass shall perform the other expansion(s) according to the rules in 2.6 Word Expansions ."
+
+begin interactive test "PS1 parameter expansion with default value syntax"
+  spawn -i
+  expect "$ "
+  send "unset NOVAR"
+  expect "$ "
+  send "PS1='${NOVAR:-fallback}> '"
+  expect "fallback> "
+  send "NOVAR=actual"
+  expect "fallback> "
+  send "PS1='${NOVAR:-fallback}> '"
+  expect "actual> "
+  sendeof
+  wait
+end interactive test "PS1 parameter expansion with default value syntax"
+
+requirement "SHALL-2-5-3-089" doc="The other pass shall perform the other expansion(s) according to the rules in 2.6 Word Expansions ."
+requirement "SHALL-2-5-3-086" doc="After expansion, the value shall be written to standard error."
+
+begin interactive test "PS1 expanded value is written to stderr"
+  spawn -i
+  expect "$ "
+  send "MARKER=stderr_test_ok"
+  expect "$ "
+  send "PS1='${MARKER}> '"
+  expect "stderr_test_ok> "
+  sendeof
+  wait
+end interactive test "PS1 expanded value is written to stderr"
+
 
 # ==============================================================================
 # Terminal Erase and Kill
 # ==============================================================================
 
-requirement "SHALL-RATIONALE-144" doc="Early proposals had the following list entry in vi Line Editing Insert Mode: backslash followed by erase or kill character, that character shall be inserted into the input line"
-requirement "SHALL-RATIONALE-145" doc="Otherwise, the backslash itself shall be inserted into the input line"
+requirement "SHALL-RATIONALE-144" doc="Early proposals had the following list entry in vi Line Editing Insert Mode : \\ If followed by the erase or kill character, that character shall be inserted into the input line."
+requirement "SHALL-RATIONALE-145" doc="Otherwise, the <backslash> itself shall be inserted into the input line."
