@@ -197,6 +197,13 @@ Multiple modes can be specified (`--script-modes dash-c,tempfile`). Each
 test runs once per mode. The default (`dash-c`) is sufficient for most
 tests.
 
+To run only one test by name from one or more `.epty` files, use
+`--test`:
+
+```
+cargo run --bin expect_pty -- --shell "/abs/path/to/sh -i" --test "test name" tests/matrix/tests/*.epty
+```
+
 ## Integrity checking
 
 After writing tests, always validate syntax and matrix integrity:

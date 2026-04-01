@@ -521,3 +521,130 @@ fn main() {
         suites.iter().map(|(_, s)| s.tests.len()).sum::<usize>()
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::epty_parser::{Requirement, TestCase};
+
+    fn make_req_entry(id: &str, text: &str, testable: bool, tests: &[(&str, &str)]) -> ReqEntry {
+        ReqEntry {
+            id: id.to_string(),
+            text: text.to_string(),
+            file: String::new(),
+            section_path: Vec::new(),
+            testable,
+            tests: tests
+                .iter()
+                .map(|(suite, test)| (suite.to_string(), test.to_string()))
+                .collect(),
+        }
+    }
+
+    fn make_suite(name: &str, filename: &str, tests: Vec<(&str, Vec<(&str, &str)>)>) -> TestSuite {
+        TestSuite {
+            name: name.to_string(),
+            filename: filename.to_string(),
+            tests: tests
+                .into_iter()
+                .map(|(test_name, reqs)| TestCase {
+                    name: test_name.to_string(),
+                    interactive: false,
+                    line_num: 1,
+                    requirements: reqs
+                        .into_iter()
+                        .map(|(id, doc)| Requirement {
+                            id: id.to_string(),
+                            doc: doc.to_string(),
+                        })
+                        .collect(),
+                    env_overrides: vec![],
+                    script_lines: vec![],
+                    script: Some("true".to_string()),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn integrity_ok() {
+        let reqs = vec![make_req_entry(
+            "REQ-1",
+            "Some text.",
+            true,
+            &[("Suite A", "test one")],
+        )];
+        let suite = make_suite(
+            "Suite A",
+            "a.epty",
+            vec![("test one", vec![("REQ-1", "Some text.")])],
+        );
+        let errs = check_requirements_integrity(&reqs, &[("a.epty".into(), suite)], Path::new("/"));
+        assert!(errs.is_empty(), "expected no errors, got: {errs:?}");
+    }
+
+    #[test]
+    fn integrity_doc_mismatch() {
+        let reqs = vec![make_req_entry("REQ-1", "Correct text.", true, &[("S", "t")])];
+        let suite = make_suite("S", "s.epty", vec![("t", vec![("REQ-1", "Wrong text.")])]);
+        let errs = check_requirements_integrity(&reqs, &[("s.epty".into(), suite)], Path::new("/"));
+        assert!(errs.iter().any(|e| e.contains("doc mismatch")), "got: {errs:?}");
+    }
+
+    #[test]
+    fn integrity_untestable() {
+        let reqs = vec![make_req_entry("REQ-1", "Text.", false, &[])];
+        let suite = make_suite("S", "s.epty", vec![("t", vec![("REQ-1", "Text.")])]);
+        let errs = check_requirements_integrity(&reqs, &[("s.epty".into(), suite)], Path::new("/"));
+        assert!(errs.iter().any(|e| e.contains("untestable")), "got: {errs:?}");
+    }
+
+    #[test]
+    fn integrity_req_not_in_json() {
+        let reqs = vec![];
+        let suite = make_suite("S", "s.epty", vec![("t", vec![("REQ-X", "Text.")])]);
+        let errs = check_requirements_integrity(&reqs, &[("s.epty".into(), suite)], Path::new("/"));
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("not found in requirements.json")),
+            "got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn integrity_duplicate_ids_and_texts() {
+        let reqs = vec![
+            make_req_entry("REQ-1", "Same text.", true, &[]),
+            make_req_entry("REQ-1", "Same text.", true, &[]),
+        ];
+        let errs = check_requirements_integrity(&reqs, &[], Path::new("/"));
+        assert!(errs.iter().any(|e| e.contains("duplicate id")), "got: {errs:?}");
+        assert!(errs.iter().any(|e| e.contains("duplicate text")), "got: {errs:?}");
+    }
+
+    #[test]
+    fn integrity_testable_no_tests() {
+        let reqs = vec![make_req_entry("REQ-1", "Text.", true, &[])];
+        let errs = check_requirements_integrity(&reqs, &[], Path::new("/"));
+        assert!(
+            errs.iter().any(|e| e.contains("has no tests linked")),
+            "got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn integrity_json_extra_and_missing_test_pairs() {
+        let reqs = vec![make_req_entry("REQ-1", "Text.", true, &[("S", "t"), ("S", "ghost")])];
+        let suite = make_suite("S", "s.epty", vec![("t", vec![("REQ-1", "Text.")])]);
+        let errs = check_requirements_integrity(&reqs, &[("s.epty".into(), suite)], Path::new("/"));
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("ghost") && e.contains("no such link")),
+            "got: {errs:?}"
+        );
+        assert!(
+            !errs.iter().any(|e| e.contains("is missing test")),
+            "unexpected missing-link error: {errs:?}"
+        );
+    }
+}
