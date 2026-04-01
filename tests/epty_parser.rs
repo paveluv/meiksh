@@ -303,3 +303,23 @@ fn extract_quoted(arg: &str) -> Result<String, String> {
     }
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn closing_quote_simple() {
+        assert_eq!(find_closing_quote(r#""hello""#).unwrap(), 6);
+    }
+
+    #[test]
+    fn closing_quote_escaped() {
+        assert_eq!(find_closing_quote(r#""say \"hi\"""#).unwrap(), 11);
+    }
+
+    #[test]
+    fn closing_quote_unterminated() {
+        assert!(find_closing_quote(r#""hello"#).is_err());
+    }
+}
