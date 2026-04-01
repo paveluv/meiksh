@@ -105,7 +105,7 @@
       "2.2 Quoting",
       "2.2.1 Escape Character (Backslash)"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This requirement is from section 2.2.1 (Escape Character) of the shell command language. It defines the special exception to ordinary backslash escaping: when an unquoted backslash is immediately followed by newline, the pair is treated as line continuation.\n\nTest objective:\n\nVerify that backslash-newline is interpreted as continuation of the same logical input line, not as a literal backslash/newline sequence.\n\nWhat to test:\n\n1. Command continuation across physical lines\n   - Split a command name or command text across a backslash-newline boundary and verify the shell parses and executes it as a single command line.\n   - Observable result: command executes successfully as if written on one line.\n\n2. Continuation between words/tokens in one command\n   - Place backslash-newline between command arguments/tokens and verify parsing continues with the next physical line as part of the same command.\n   - Observable result: stdout reflects the intended arguments with no command break introduced by the escaped newline.\n\n3. Repeated continuations\n   - Use multiple consecutive backslash-newline pairs and verify continuation semantics apply repeatedly.\n   - Observable result: shell still produces the same command/token sequence as the equivalent single-line form.\n\nScope and interaction notes:\n\n- This requirement is specifically about interpretation of backslash-newline as continuation; literal-preservation behavior for backslash followed by non-newline characters is covered separately.\n- Assertions should focus on observable parser behavior: command execution success, output text, and absence of an unintended command terminator at the escaped newline."
   },
   {
     "id": "SHALL-2-2-1-004",
@@ -124,7 +124,7 @@
       "2.2 Quoting",
       "2.2.1 Escape Character (Backslash)"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This requirement is from section 2.2.1 (Escape Character). When an unquoted backslash is immediately followed by newline, both characters are removed before tokenization.\n\nTest objective:\n\nVerify that the backslash-newline pair does not appear in token input and cannot influence token boundaries as a blank or separator.\n\nWhat to test:\n\n1. Removal before token splitting\n   - Place backslash-newline inside what should become one word (for example, splitting a word across physical lines).\n   - Observable result: the resulting token is the concatenation with no inserted character.\n\n2. No token separator introduced\n   - Use a form where token boundaries would change if whitespace/newline remained.\n   - Observable result: argument count and content match the equivalent single-line command.\n\n3. Works repeatedly\n   - Use multiple backslash-newline pairs in a row.\n   - Observable result: all pairs are removed, and parsing matches the same command written without those physical newlines.\n\nScope note:\n\n- This requirement concerns removal and tokenization effects of backslash-newline; the distinct requirement about interpreting it as line continuation is covered separately."
   },
   {
     "id": "SHALL-2-2-2-005",
@@ -143,7 +143,7 @@
       "2.2 Quoting",
       "2.2.2 Single-Quotes"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This requirement is from section 2.2.2 (Single-Quotes). Inside single-quotes, every character is literal.\n\nTest objective:\n\nVerify that characters enclosed in single-quotes are passed unchanged to the utility and are not interpreted by shell expansion, substitution, globbing, or escaping rules.\n\nWhat to test:\n\n1. Literal preservation of special characters\n   - Include characters that are normally special to the shell (for example '$', '*', '?', '[', ']', '#', and backslash) inside single-quotes.\n   - Observable result: output contains those exact literal characters.\n\n2. No expansion or substitution inside single-quotes\n   - Include parameter-like and command-substitution-like text (for example '$var' and '`cmd`') inside single-quotes.\n   - Observable result: no expansion/substitution occurs; literal text is preserved.\n\n3. Contrast with unquoted behavior\n   - Where practical, compare with an unquoted form that would expand or pattern-match.\n   - Observable result: quoted form remains literal while unquoted form shows shell interpretation.\n\nScope note:\n\n- This requirement only covers characters within single-quoted regions. Handling of an actual single-quote character itself requires leaving and re-entering quoting and is outside this exact sentence."
   },
   {
     "id": "SHALL-2-2-3-007",
@@ -178,7 +178,7 @@
       "2.2 Quoting",
       "2.2.3 Double-Quotes"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This requirement is from section 2.2.3 (Double-Quotes). Double-quotes preserve literal value of characters except backquote, dollar-sign, and backslash. In particular, '$' keeps its expansion-introducing roles (parameter expansion, command substitution, arithmetic expansion) but does not introduce dollar-single-quotes syntax.\n\nTest objective:\n\nVerify the baseline semantics of double-quotes: mostly literal preservation, with continued special handling for '$', backquote, and backslash as specified in 2.2.3.\n\nWhat to test:\n\n1. Literal preservation for ordinary characters\n   - Place whitespace and shell metacharacters that would otherwise split or glob inside double-quotes.\n   - Observable result: they are preserved literally in the produced argument(s).\n\n2. '$' remains special for expansions\n   - In double-quotes, exercise parameter expansion, '$(...)' command substitution, and '$((...))' arithmetic expansion.\n   - Observable result: all three expansions occur.\n\n3. '$' does not start dollar-single-quote quoting inside double-quotes\n   - Include text like $'...'\n   - Observable result: this is not treated as dollar-single-quote syntax in double-quoted context.\n\n4. Backquote/backslash exceptions are covered by their detailed sub-rules\n   - Ensure behavior remains consistent with section rules for backquote command substitution and backslash handling in double-quotes.\n\nScope note:\n\n- This is the umbrella obligation for double-quotes; more specific obligations in subsequent requirements (2.2.3-008 onward) refine exact behavior in nested contexts and escape cases."
   },
   {
     "id": "SHALL-2-2-3-008",
@@ -201,7 +201,7 @@
       "2.2 Quoting",
       "2.2.3 Double-Quotes"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This requirement is from section 2.2.3 (Double-Quotes). It states that characters inside a '$(...)' region that appears within double-quotes are governed by command-substitution parsing, not by the surrounding double-quotes.\n\nTest objective:\n\nVerify that the command text inside '$(...)' retains its own syntax and is not neutralized by outer double-quotes.\n\nWhat to test:\n\n1. Inner quoting and syntax inside '$(...)'\n   - Use double-quotes and other shell syntax inside the command substitution while the whole construct is inside outer double-quotes.\n   - Observable result: inner command executes according to normal command-substitution rules and produces expected output.\n\n2. Outer double-quotes still apply to substitution result\n   - Place substitution result where field-splitting/globbing could happen if unquoted.\n   - Observable result: result is inserted as part of a double-quoted word, preserving expected quoting behavior for the expanded text.\n\n3. Distinguish outer and inner quoting scopes\n   - Ensure syntax validity depends on matching/closing inside '$(...)', not on the outer quote context.\n\nScope note:\n\n- This requirement is specifically about interpretation of the command text between '$(' and matching ')' while nested in a double-quoted string."
   },
   {
     "id": "SHALL-2-2-3-009",
@@ -224,7 +224,7 @@
       "2.2 Quoting",
       "2.2.3 Double-Quotes"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This requirement is from section 2.2.3 and references section 2.3 token recognition. When parsing '$(...)', tokenizing must be applied recursively to locate the correct matching ')'.\n\nTest objective:\n\nVerify that matching of the closing ')' for command substitution is determined by recursive parsing, not by the first literal ')' byte encountered.\n\nWhat to test:\n\n1. Nested parentheses/constructs inside '$(...)'\n   - Use inner constructs that contain parentheses or nested substitutions.\n   - Observable result: parser selects the structurally correct closing ')' and command substitution succeeds.\n\n2. Quoted parentheses inside '$(...)'\n   - Include ')' characters in quoted strings within the substitution.\n   - Observable result: quoted ')' does not prematurely terminate the substitution.\n\n3. Correct boundary of substitution\n   - Append text immediately after the command substitution.\n   - Observable result: only text up to the true matching ')' belongs to substitution; following text remains outside.\n\nScope note:\n\n- This requirement concerns parsing of substitution boundaries, not the runtime behavior of the substituted command itself beyond being sufficient to confirm correct boundary detection."
   },
   {
     "id": "SHALL-2-2-3-010",
@@ -243,7 +243,7 @@
       "2.2 Quoting",
       "2.2.3 Double-Quotes"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This requirement is from section 2.2.3 and section 2.6.2 parameter expansion. For the four substring-processing parameter expansion forms, outer double-quotes do not affect handling of special characters within the '${...}' expression body.\n\nTest objective:\n\nVerify that special characters used by substring-processing parameter expansions are interpreted by parameter-expansion rules even when the expansion appears inside double-quotes.\n\nWhat to test:\n\n1. Substring-processing operator semantics under outer double-quotes\n   - Use representative substring-processing forms and patterns inside '${...}' while the whole expansion is inside double-quotes.\n   - Observable result: matching/removal behavior follows substring-processing rules, not literalization by outer double-quotes.\n\n2. Special characters within substring patterns\n   - Include pattern metacharacters in the substring-processing expression.\n   - Observable result: they retain their parameter-expansion meaning in that context.\n\n3. Contrast with non-substring forms\n   - Where practical, compare with parameter-expansion forms that are governed by the separate non-substring rule.\n\nScope note:\n\n- This requirement applies only to the four substring-processing varieties; other parameter expansion varieties are covered separately."
   },
   {
     "id": "SHALL-2-2-3-011",
@@ -262,7 +262,7 @@
       "2.2 Quoting",
       "2.2.3 Double-Quotes"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This requirement is from section 2.2.3 and applies to parameter expansions other than the four substring-processing varieties. In these cases, inside '${...}' and within outer double-quotes, characters are preserved literally except double-quote, backquote, dollar-sign, and backslash.\n\nTest objective:\n\nVerify that non-substring parameter expansion forms inside double-quotes preserve literal characters in expansion context except for the listed exceptions.\n\nWhat to test:\n\n1. Literal preservation of ordinary/special non-exception characters\n   - Use non-substring '${...}' forms with characters that might otherwise be treated specially.\n   - Observable result: those characters are treated literally in this context.\n\n2. Exception characters still active by rule\n   - Exercise cases involving '\"', '`', '$', and '\\\\' in relevant positions.\n   - Observable result: behavior follows their specified special handling, not blanket literal preservation.\n\n3. Expanded result remains quoted by outer double-quotes\n   - Validate observable output/argument preservation (for example no glob expansion or field splitting of expanded text).\n\nScope note:\n\n- This requirement excludes substring-processing varieties, which have distinct handling rules."
   },
   {
     "id": "SHALL-2-2-3-012",
@@ -281,7 +281,7 @@
       "2.2 Quoting",
       "2.2.3 Double-Quotes"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This requirement is from section 2.2.3 (Double-Quotes). It says backquote and dollar-sign follow the same rules already defined for characters in double-quotes.\n\nTest objective:\n\nVerify that within double-quotes, both '$' and backquote retain their command/expansion-related behavior according to the section rules.\n\nWhat to test:\n\n1. Dollar-sign behavior in double-quotes\n   - Exercise parameter expansion and '$(...)' command substitution in double-quoted context.\n   - Observable result: expansions occur as specified.\n\n2. Backquote behavior in double-quotes\n   - Use backquoted command substitution within double-quotes.\n   - Observable result: command substitution executes and its output is substituted.\n\n3. Quoting context consistency\n   - Ensure both forms behave according to double-quote semantics (for example resulting text remains in double-quoted word context).\n\nScope note:\n\n- This requirement is a linkage rule to the detailed '$' and backquote rules in the same section; tests should confirm those behaviors are active in double-quoted text."
   },
   {
     "id": "SHALL-2-2-3-013",
@@ -300,7 +300,7 @@
       "2.2 Quoting",
       "2.2.3 Double-Quotes"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This requirement is from section 2.2.3. In double-quotes, backslash generally follows double-quote backslash rules, and additionally escapes '}' so that an escaped '}' is ignored for determining the matching '}' of '${...}'.\n\nTest objective:\n\nVerify the special '\\}' behavior in double-quoted parameter expansion and ensure backslash handling aligns with the section's double-quote rules.\n\nWhat to test:\n\n1. Escaped closing brace inside '${...}'\n   - Construct a parameter expansion where '\\}' appears before the true closing brace while inside double-quotes.\n   - Observable result: escaped '}' does not terminate expansion; parser continues to the correct matching unescaped '}'.\n\n2. Boundary correctness and successful parse\n   - Include trailing text after the expansion to confirm where expansion ends.\n   - Observable result: expansion boundary is at the intended closing brace and command parses/executes as expected.\n\n3. General double-quote backslash behavior remains intact\n   - Verify no regression against normal backslash special-follow set in double-quotes.\n\nScope note:\n\n- This requirement is narrowly about the extra '\\}' rule for matching-brace determination in parameter expansion."
   },
   {
     "id": "SHALL-2-2-3-014",
@@ -319,7 +319,7 @@
       "2.2 Quoting",
       "2.2.3 Double-Quotes"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This requirement is from section 2.2.3 and 2.6.3. It states that backquote retains its role introducing the backquoted form of command substitution.\n\nTest objective:\n\nVerify that backquoted command substitution is recognized and executed where this section applies (including in double-quoted contexts).\n\nWhat to test:\n\n1. Basic backquoted substitution\n   - Use `...` command substitution and confirm output replacement behavior.\n   - Observable result: substituted text equals command stdout (subject to command substitution newline-trimming rules).\n\n2. Backquote remains special in double-quotes\n   - Place backquoted substitution inside double-quotes.\n   - Observable result: substitution still occurs and result participates in double-quoted word context.\n\n3. Interaction with nested shell syntax\n   - Use a representative nested form (for example with here-document or nested quoting where valid) to ensure parser still treats backquote as substitution introducer.\n\nScope note:\n\n- This requirement is about recognizing backquote as command-substitution introducer; detailed edge cases for undefined forms are covered by adjacent rules."
   },
   {
     "id": "SHALL-2-2-3-015",
@@ -334,7 +334,11 @@
       },
       {
         "suite": "Quoting and Token Recognition",
-        "test": "backslash quoting of special characters"
+        "test": "backslash in double quotes special only before certain chars"
+      },
+      {
+        "suite": "Quoting and Token Recognition",
+        "test": "escaped double quote inside double quotes"
       }
     ],
     "section_path": [
@@ -342,7 +346,7 @@
       "2.2 Quoting",
       "2.2.3 Double-Quotes"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This requirement is from section 2.2.3 (Double-Quotes), with references to 2.2.1, 2.6.4, and 2.7.4. In double-quoted context, outside \"$(...)\" and \"${...}\", backslash acts as an escape character only when immediately followed by '$', '`', '\\\\', newline, or by a double-quote that is special in the cited contexts.\n\nTest objective:\n\nVerify the restricted set of characters for which backslash is special inside double-quotes, and verify that for other following characters backslash is preserved literally.\n\nWhat to test:\n\n1. Special-follow set inside double-quotes\n   - Check backslash before '$', '`', '\"', '\\\\', and newline inside double-quotes.\n   - Observable result:\n     - '\\$' yields literal '$' (no parameter expansion trigger from that escaped character).\n     - '\\`' yields literal backquote (no backquote substitution trigger from that escaped character).\n     - '\\\\' yields a single literal backslash.\n     - '\\\"' yields a literal double-quote included in the quoted word.\n     - backslash-newline is treated as line continuation (pair removed), not literal data.\n\n2. Non-special following characters\n   - Use backslash before characters not in the allowed set (for example 'n' in \"\\n\").\n   - Observable result: backslash is not consumed as an escape; both characters are preserved (subject to normal quote removal semantics) and the utility receives literal text.\n\n3. Outside nested \"$(...)\" and \"${...}\" scope\n   - Ensure tested escapes are in double-quoted text not inside command substitution or parameter expansion braces.\n   - Observable result: behavior matches this rule's scope; nested contexts are governed by their own rules.\n\nScope note:\n\n- This requirement is about backslash behavior specifically in double-quoted text outside \"$(...)\" and \"${...}\". Detailed '${...}' brace-handling exceptions are covered by adjacent requirements."
   },
   {
     "id": "SHALL-2-2-3-016",
@@ -361,7 +365,7 @@
       "2.2 Quoting",
       "2.2.3 Double-Quotes"
     ],
-    "testing_instructions": null
+    "testing_instructions": "This requirement is from section 2.2.3 (Double-Quotes). It applies when a parameter expansion, command substitution, or arithmetic expansion occurs inside double-quotes: the resulting expanded text is preserved literally.\n\nTest objective:\n\nVerify that expansion results produced inside double-quotes do not undergo field splitting or pathname expansion, and remain a single quoted field (subject only to command substitution trailing-newline handling defined elsewhere).\n\nWhat to test:\n\n1. Parameter expansion result preservation\n   - Expand a variable whose value contains spaces and glob characters inside double-quotes.\n   - Observable result: output retains those characters literally and as part of one argument (no glob expansion / no split).\n\n2. Command substitution result preservation in double-quotes\n   - Use \"$(...)\" inside double-quotes with output containing spaces or wildcard characters.\n   - Observable result: substituted text is preserved literally in the quoted field.\n\n3. Arithmetic expansion in double-quotes\n   - Use \"$((...))\" inside double-quotes with surrounding text.\n   - Observable result: arithmetic result is inserted without causing additional token splitting.\n\n4. Contrast with unquoted expansion\n   - Where practical, compare with the same expansion unquoted.\n   - Observable result: unquoted form may split/expand while double-quoted form preserves literal value.\n\nScope note:\n\n- This requirement is about handling of expansion results in double-quoted context; it does not redefine the expansion-specific computation rules themselves."
   },
   {
     "id": "SHALL-2-2-3-017",
@@ -373,8 +377,54 @@
       {
         "suite": "Quoting and Token Recognition",
         "test": "double quotes backslash produces single backslash"
+      },
+      {
+        "suite": "Quoting and Token Recognition",
+        "test": "escaped double quote inside double quotes"
       }
     ],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.2 Quoting",
+      "2.2.3 Double-Quotes"
+    ],
+    "testing_instructions": "This requirement is from section 2.2.3 (Double-Quotes). To include a literal double-quote character within a double-quoted string (outside \"$(...)\" and \"${...}\"), the application must escape that quote with a preceding backslash.\n\nTest objective:\n\nVerify that an unescaped double-quote ends double-quote context, and that a backslash-escaped double-quote is included as literal data within the double-quoted word.\n\nWhat to test:\n\n1. Escaped double-quote inclusion\n   - Use \\\" inside double-quotes.\n   - Observable result: output contains a literal \" character and command parses successfully.\n\n2. Structural role of unescaped double-quote\n   - Demonstrate that an unescaped \" acts as a quoting delimiter, not a literal data byte.\n   - Observable result: quoted region boundaries follow unescaped quotes; include a negative/syntax-shape check where practical.\n\n3. Scope restriction\n   - Keep the tested quote outside nested \"$(...)\" and \"${...}\" contexts.\n   - Observable result: behavior matches this rule; nested contexts are covered by their own parsing rules.\n\nScope note:\n\n- This requirement imposes an application-side constraint for portable scripts; tests should emphasize the observable inclusion of literal quotes when escaped and delimiter behavior when not escaped."
+  },
+  {
+    "id": "SHALL-2-2-3-018",
+    "text": "If any unescaped double-quote characters occur within the string, other than in embedded command substitutions, the behavior is unspecified.",
+    "file": "utilities/V3_chap02.html",
+    "testable": false,
+    "untestable_reason": "Behavior is explicitly unspecified by POSIX; no single portable expected outcome can be asserted across conforming shells.",
+    "tests": [],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.2 Quoting",
+      "2.2.3 Double-Quotes"
+    ],
+    "testing_instructions": null
+  },
+  {
+    "id": "SHALL-2-2-3-019",
+    "text": "A quoted (single-quoted, double-quoted, or dollar-single-quoted) string that begins, but does not end, within the ``\"`...`\"`` sequence produces undefined results.",
+    "file": "utilities/V3_chap02.html",
+    "testable": false,
+    "untestable_reason": "Behavior is explicitly undefined by POSIX; portable pass/fail assertions are not possible.",
+    "tests": [],
+    "section_path": [
+      "2. Shell Command Language",
+      "2.2 Quoting",
+      "2.2.3 Double-Quotes"
+    ],
+    "testing_instructions": null
+  },
+  {
+    "id": "SHALL-2-2-3-020",
+    "text": "A ``\"`...`\"`` sequence that begins, but does not end, within the same double-quoted string produces undefined results.",
+    "file": "utilities/V3_chap02.html",
+    "testable": false,
+    "untestable_reason": "Behavior is explicitly undefined by POSIX; portable pass/fail assertions are not possible.",
+    "tests": [],
     "section_path": [
       "2. Shell Command Language",
       "2.2 Quoting",
