@@ -4,7 +4,7 @@ testsuite "Shell Startup and Invocation"
 # Special parameter 0 defaults to shell name
 # ==============================================================================
 
-requirement "SHALL-SH-1015" doc="If command_name is not specified, special parameter 0 shall be set to the value of the first argument passed to sh from its parent."
+requirement "SHALL-SH-1015" doc="If command_name is not specified, special parameter 0 shall be set to the value of the first argument passed to sh from its parent (for example, argv [0] for a C program), which is normally a pathname used to execute the sh utility."
 
 begin test "special parameter 0 defaults to shell name"
   begin script
@@ -17,7 +17,7 @@ end test "special parameter 0 defaults to shell name"
 # -c command_string
 # ==============================================================================
 
-requirement "SHALL-SH-1016" doc="command_string: A string that shall be interpreted by the shell as one or more commands, as if the string were the argument to the system() function."
+requirement "SHALL-SH-1016" doc="The command_string operand shall be a string that is interpreted by the shell as one or more commands."
 
 begin test "-c command_string executes command"
   begin script
@@ -26,6 +26,7 @@ begin test "-c command_string executes command"
   expect_stdout "hello"
 end test "-c command_string executes command"
 
+requirement "SHALL-SH-1016" doc="The command_string operand shall be a string that is interpreted by the shell as one or more commands."
 begin test "-c command_string multiple commands"
   begin script
     $SHELL -c 'echo first; echo second'

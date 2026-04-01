@@ -1,17 +1,10 @@
 testsuite "Standard Error Usage (Diagnostic Messages)"
 
 # ==============================================================================
-# Clean Standard Error from Built-ins
+# Shell (sh) stderr
 # ==============================================================================
 
-requirement "SHALL-STDERR-518" doc="The standard error shall be used only for diagnostic messages."
-requirement "SHALL-STDERR-557" doc="If the resource being reported does not have a numeric limit, in the POSIX locale the following format shall be used: unlimited. STDERR The standard error shall be used only for diagnostic messages."
-requirement "SHALL-STDERR-574" doc="When the -V option is specified, standard output shall be formatted as: %s, unspecified. STDERR The standard error shall be used only for diagnostic messages."
-requirement "SHALL-STDERR-577" doc="If the command consists of more than one line, the lines after the first shall be displayed as: tab %s, continued-command. STDERR The standard error shall be used only for diagnostic messages."
-requirement "SHALL-STDERR-622" doc="The standard error shall be used only for diagnostic messages and the warning message specified in EXIT STATUS."
-requirement "SHALL-STDERR-627" doc="The fg utility shall write the command line of the job to standard output. STDERR The standard error shall be used only for diagnostic messages."
-requirement "SHALL-STDERR-650" doc="The standard error shall be used only for diagnostic messages and warning messages about invalid signal names."
-requirement "SHALL-STDERR-030" doc="Except as otherwise stated, standard error shall be used only for diagnostic messages."
+requirement "SHALL-STDERR-030" doc="Except as otherwise stated (by the descriptions of any invoked utilities or in interactive mode), standard error shall be used only for diagnostic messages."
 
 begin test "special builtins produce no stderr on success"
   begin script
@@ -21,3 +14,111 @@ begin test "special builtins produce no stderr on success"
   expect_stderr ""
   expect_exit_code 0
 end test "special builtins produce no stderr on success"
+
+# ==============================================================================
+# V3_chap02 builtins stderr (general)
+# ==============================================================================
+
+requirement "SHALL-STDERR-518" doc="For the cd utility, the standard error shall be used only for diagnostic messages."
+
+begin test "cd produces no stderr on valid directory"
+  begin script
+    cd / 2>&1
+    echo "ok"
+  end script
+  expect_stderr ""
+  expect_stdout "ok"
+end test "cd produces no stderr on valid directory"
+
+requirement "SHALL-STDERR-622" doc="The standard error shall be used only for diagnostic messages and the warning message specified in EXIT STATUS."
+
+begin test "getopts produces no stderr in silent mode"
+  begin script
+    $SHELL -c 'OPTIND=1; set -- -z; getopts :ab name; echo ok'
+  end script
+  expect_stderr ""
+  expect_stdout "ok"
+end test "getopts produces no stderr in silent mode"
+
+# ==============================================================================
+# command utility stderr
+# ==============================================================================
+
+requirement "SHALL-STDERR-574" doc="For the command utility, the standard error shall be used only for diagnostic messages."
+
+begin test "command produces no stderr on success"
+  begin script
+    command echo "hello" 2>&1
+  end script
+  expect_stderr ""
+  expect_stdout "hello"
+end test "command produces no stderr on success"
+
+# ==============================================================================
+# fc utility stderr
+# ==============================================================================
+
+requirement "SHALL-STDERR-577" doc="For the fc utility, the standard error shall be used only for diagnostic messages."
+
+begin interactive test "fc produces no stderr on valid usage"
+  spawn -i
+  expect "$ "
+  send "HISTSIZE=100"
+  expect "$ "
+  send "echo fc_test"
+  expect "fc_test"
+  expect "$ "
+  send "fc -l -1 -1 2>/tmp/fc_stderr_test"
+  expect "echo fc_test"
+  expect "$ "
+  send "cat /tmp/fc_stderr_test; rm -f /tmp/fc_stderr_test"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "fc produces no stderr on valid usage"
+
+# ==============================================================================
+# fg utility stderr
+# ==============================================================================
+
+requirement "SHALL-STDERR-627" doc="For the fg utility, the standard error shall be used only for diagnostic messages."
+
+begin interactive test "fg produces no stderr with valid job"
+  spawn -im
+  expect "$ "
+  send "sleep 0.1 &"
+  expect "$ "
+  send "fg 2>/tmp/fg_stderr_test"
+  expect "$ "
+  send "cat /tmp/fg_stderr_test; rm -f /tmp/fg_stderr_test"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "fg produces no stderr with valid job"
+
+# ==============================================================================
+# ulimit utility stderr
+# ==============================================================================
+
+requirement "SHALL-STDERR-557" doc="For the ulimit utility, the standard error shall be used only for diagnostic messages."
+
+begin test "ulimit produces no stderr on valid usage"
+  begin script
+    $SHELL -c 'ulimit -f 2>/tmp/ulimit_stderr_test; cat /tmp/ulimit_stderr_test; rm -f /tmp/ulimit_stderr_test'
+  end script
+  expect_stdout_line "[0-9].*"
+  expect_stderr ""
+end test "ulimit produces no stderr on valid usage"
+
+# ==============================================================================
+# kill utility stderr
+# ==============================================================================
+
+requirement "SHALL-STDERR-650" doc="The standard error shall be used only for diagnostic messages and warning messages about invalid signal names."
+
+begin test "kill produces no stderr on valid signal"
+  begin script
+    $SHELL -c 'sh -c "kill -0 $$ 2>/tmp/kill_stderr_test; cat /tmp/kill_stderr_test; rm -f /tmp/kill_stderr_test"'
+  end script
+  expect_stderr ""
+end test "kill produces no stderr on valid signal"

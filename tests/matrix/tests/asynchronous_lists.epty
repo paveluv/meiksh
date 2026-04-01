@@ -6,7 +6,7 @@ testsuite "Asynchronous Lists"
 
 requirement "SHALL-2-9-3-1-320" doc="If an AND-OR list is terminated by the control operator <ampersand> ( '&' ), the shell shall execute the AND-OR list asynchronously in a subshell environment."
 requirement "SHALL-2-9-3-1-321" doc="This subshell shall execute in the background; that is, the shell shall not wait for the subshell to terminate before executing the next command (if any); if there are no further commands to execute, the shell shall not wait for the subshell to terminate before exiting."
-requirement "SHALL-2-9-3-1-324" doc="The process ID associated with the asynchronous AND-OR list shall become known in the current shell execution environment; see 2.13 Shell Execution Environment."
+requirement "SHALL-2-9-3-1-324" doc="The process ID associated with the asynchronous AND-OR list shall become known in the current shell execution environment; see 2.13 Shell Execution Environment ."
 
 begin test "background job PID and wait"
   begin script
@@ -19,6 +19,7 @@ begin test "background job PID and wait"
   expect_stdout "bg_test"
 end test "background job PID and wait"
 
+requirement "SHALL-2-9-3-1-320" doc="If an AND-OR list is terminated by the control operator <ampersand> ( '&' ), the shell shall execute the AND-OR list asynchronously in a subshell environment."
 begin test "background job runs in subshell"
   begin script
     my_var="parent"
@@ -48,6 +49,7 @@ begin test "background stdin from /dev/null"
   expect_stdout "done"
 end test "background stdin from /dev/null"
 
+requirement "SHALL-2-9-3-1-326" doc="If, and only if, job control is disabled, the standard input for the subshell in which an asynchronous AND-OR list is executed shall initially be assigned to an open file description that behaves as if /dev/null had been opened for reading only."
 begin test "explicit redirect overrides /dev/null"
   begin script
     echo "redirected" > tmp_in.txt

@@ -4,12 +4,10 @@ testsuite "The set Utility and Shell Options"
 # The 'set' Utility Formatting
 # ==============================================================================
 
-requirement "SHALL-V3CHAP02-1019" doc="Each name shall start on a separate line, using the format: name=value. The value string shall be written with appropriate quoting."
-requirement "SHALL-DESCRIPTION-585" doc="The set special built-in shall support XBD 12.2 Utility Syntax Guidelines except that options can be specified with either a leading hyphen-minus or plus-sign."
-requirement "SHALL-DESCRIPTION-582" doc="The value string shall be written with appropriate quoting."
-requirement "SHALL-DESCRIPTION-583" doc="The output shall be suitable for reinput to the shell."
-requirement "SHALL-DESCRIPTION-612" doc="The special parameter # shall be set to reflect the number of positional parameters."
 
+requirement "SHALL-DESCRIPTION-582" doc="The value string shall be written with appropriate quoting; see the description of shell quoting in 2.2 Quoting ."
+requirement "SHALL-DESCRIPTION-583" doc="The output shall be suitable for reinput to the shell, setting or resetting, as far as possible, the variables that are currently set; read-only variables cannot be reset."
+requirement "SHALL-DESCRIPTION-600" doc="This option shall be enabled by default for interactive shells."
 begin test "set output is suitable for reinput with quoting"
   begin script
     my_weird_var="space and literal and \"quotes\""
@@ -21,12 +19,7 @@ begin test "set output is suitable for reinput with quoting"
   expect_stdout "space and literal and ""quotes"""
 end test "set output is suitable for reinput with quoting"
 
-# ==============================================================================
-# The '-a' Option (allexport)
-# ==============================================================================
-
-requirement "SHALL-DESCRIPTION-587" doc="When this option is on, whenever a value is assigned to a variable in the current shell execution environment, the export attribute shall be set for the variable."
-
+requirement "SHALL-DESCRIPTION-591" doc="Asynchronous notification shall not be enabled by default."
 begin test "set -a causes variables to be auto-exported"
   begin script
     set -a
@@ -36,14 +29,9 @@ begin test "set -a causes variables to be auto-exported"
   expect_stdout "exported"
 end test "set -a causes variables to be auto-exported"
 
-# ==============================================================================
-# The '-b' Option (notify)
-# ==============================================================================
-
-requirement "SHALL-DESCRIPTION-588" doc="-b This option shall be supported if the implementation supports the User Portability Utilities option."
-requirement "SHALL-DESCRIPTION-589" doc="When job control and -b are both enabled, the shell shall write asynchronous notifications of background job completions."
+requirement "SHALL-DESCRIPTION-588" doc="The -b option shall be supported if the implementation supports the User Portability Utilities option."
+requirement "SHALL-DESCRIPTION-589" doc="When job control and -b are both enabled, the shell shall write asynchronous notifications of background job completions (including termination by a signal), and may write asynchronous notifications of background job suspensions."
 requirement "SHALL-DESCRIPTION-590" doc="When job control is disabled, the -b option shall have no effect."
-
 begin test "set -b is accepted without error"
   begin script
     set -b
@@ -52,12 +40,8 @@ begin test "set -b is accepted without error"
   expect_exit_code 0
 end test "set -b is accepted without error"
 
-# ==============================================================================
-# The '-C' Option (noclobber)
-# ==============================================================================
-
-requirement "SHALL-DESCRIPTION-592" doc="-C Prevent existing regular files from being overwritten by the shell > redirection operator; the >| redirection operator shall override this noclobber option for an individual file."
-
+requirement "SHALL-DESCRIPTION-592" doc="The -C option shall prevent existing regular files from being overwritten by the shell's '>' redirection operator; the \">|\" redirection operator shall override this noclobber option for an individual file."
+requirement "SHALL-DESCRIPTION-599" doc="When this option is enabled, the shell shall perform job control actions as described in 2.11 Job Control ."
 begin test "noclobber prevents overwrite with >"
   begin script
     _f=${TMPDIR:-/tmp}/_noclobber_test_$$
@@ -70,6 +54,7 @@ begin test "noclobber prevents overwrite with >"
   expect_stdout_line ".*original.*"
 end test "noclobber prevents overwrite with >"
 
+requirement "SHALL-DESCRIPTION-592" doc="The -C option shall prevent existing regular files from being overwritten by the shell's '>' redirection operator; the \">|\" redirection operator shall override this noclobber option for an individual file."
 begin test ">| overrides noclobber"
   begin script
     _f=${TMPDIR:-/tmp}/_noclobber_test2_$$
@@ -82,15 +67,8 @@ begin test ">| overrides noclobber"
   expect_stdout_line ".*forced.*"
 end test ">| overrides noclobber"
 
-# ==============================================================================
-# The '-e' Option (errexit)
-# ==============================================================================
-
-requirement "SHALL-DESCRIPTION-593" doc="-e When this option is on, when any command fails, the shell immediately shall exit."
-requirement "SHALL-DESCRIPTION-594" doc="Only the failure of the pipeline itself shall be considered."
-requirement "SHALL-DESCRIPTION-595" doc="The -e setting shall be ignored when executing the compound list following the while, until, if, or elif reserved word, a pipeline beginning with the ! reserved word, or any command of an AND-OR list other than the last."
-requirement "SHALL-DESCRIPTION-596" doc="If the exit status of a compound command other than a subshell command was the result of a failure while -e was being ignored, then -e shall not apply."
-
+requirement "SHALL-DESCRIPTION-593" doc="When the -e option is on, when any command fails (for any of the reasons listed in 2.8.1 Consequences of Shell Errors or by returning an exit status greater than zero), the shell immediately shall exit, as if by executing the exit special built-in utility with no arguments, with the following exceptions."
+requirement "SHALL-DESCRIPTION-596" doc="If the exit status of a compound command other than a subshell command was the result of a failure while -e was being ignored, then -e shall not apply to this command."
 begin test "errexit exits on command failure"
   begin script
     set -e
@@ -102,6 +80,7 @@ begin test "errexit exits on command failure"
   not_expect_exit_code 0
 end test "errexit exits on command failure"
 
+requirement "SHALL-DESCRIPTION-595" doc="The -e setting shall be ignored when executing the compound list following the while , until , if , or elif reserved word, a pipeline beginning with the ! reserved word, or any command of an AND-OR list other than the last."
 begin test "errexit ignores failures in if/while/until and AND-OR lists"
   begin script
     set -e
@@ -118,6 +97,7 @@ begin test "errexit ignores failures in if/while/until and AND-OR lists"
   expect_stdout "survived"
 end test "errexit ignores failures in if/while/until and AND-OR lists"
 
+requirement "SHALL-2-9-2-1-316" doc="The exit status of a pipeline shall depend on whether or not the pipefail option (see set ) is enabled and whether or not the pipeline begins with the ! reserved word, as described in the following table."
 begin test "errexit does not exit on ! pipeline"
   begin script
     set -e
@@ -127,6 +107,8 @@ begin test "errexit does not exit on ! pipeline"
   expect_stdout "survived_not"
 end test "errexit does not exit on ! pipeline"
 
+requirement "SHALL-DESCRIPTION-594" doc="Only the failure of the pipeline itself shall be considered."
+requirement "SHALL-DESCRIPTION-595" doc="The -e setting shall be ignored when executing the compound list following the while , until , if , or elif reserved word, a pipeline beginning with the ! reserved word, or any command of an AND-OR list other than the last."
 begin test "errexit triggers on pipeline failure (last command)"
   begin script
     set -e
@@ -136,12 +118,7 @@ begin test "errexit triggers on pipeline failure (last command)"
   not_expect_stdout_line ".*should_not_appear.*"
 end test "errexit triggers on pipeline failure (last command)"
 
-# ==============================================================================
-# The '-f' Option (noglob)
-# ==============================================================================
-
-requirement "SHALL-DESCRIPTION-597" doc="-f The shell shall disable pathname expansion."
-
+requirement "SHALL-DESCRIPTION-597" doc="The -f option shall disable pathname expansion."
 begin test "set -f disables pathname expansion"
   begin script
     set -f
@@ -151,14 +128,8 @@ begin test "set -f disables pathname expansion"
   expect_stdout "tmp_set_\*.txt"
 end test "set -f disables pathname expansion"
 
-# ==============================================================================
-# The '-m' Option (monitor/job control)
-# ==============================================================================
-
-requirement "SHALL-DESCRIPTION-598" doc="-m This option shall be supported if the implementation supports the User Portability Utilities option."
-requirement "SHALL-DESCRIPTION-599" doc="When this option is enabled, the shell shall perform job control actions."
-requirement "SHALL-DESCRIPTION-600" doc="This option shall be enabled by default for interactive shells."
-
+requirement "SHALL-DESCRIPTION-585" doc="The set special built-in shall support XBD 12.2 Utility Syntax Guidelines except that options can be specified with either a leading <hyphen-minus> (meaning enable the option) or <plus-sign> (meaning disable it) unless otherwise specified."
+requirement "SHALL-DESCRIPTION-598" doc="The -m option shall be supported if the implementation supports the User Portability Utilities option."
 begin test "set -m is accepted without error"
   begin script
     set -m 2>/dev/null
@@ -167,12 +138,9 @@ begin test "set -m is accepted without error"
   expect_exit_code 0
 end test "set -m is accepted without error"
 
-# ==============================================================================
-# The '-n' Option (noexec)
-# ==============================================================================
-
-requirement "SHALL-DESCRIPTION-601" doc="-n The shell shall read commands but not execute them; this can be used to check for shell script syntax errors."
-
+requirement "SHALL-V3CHAP02-1019" doc="Each name shall start on a separate line, using the format: \"%s=%s\\n\", < name >, < value > The value string shall be written with appropriate quoting; see the description of shell quoting in 2.2 Quoting ."
+requirement "SHALL-DESCRIPTION-587" doc="When this option is on, whenever a value is assigned to a variable in the current shell execution environment, the export attribute shall be set for the variable."
+requirement "SHALL-DESCRIPTION-601" doc="The -n option shall cause the shell to read commands but not execute them; this can be used to check for shell script syntax errors."
 begin test "set -n suppresses command execution"
   begin script
     set -n
@@ -181,12 +149,7 @@ begin test "set -n suppresses command execution"
   expect_stdout ""
 end test "set -n suppresses command execution"
 
-# ==============================================================================
-# The '-u' Option (nounset)
-# ==============================================================================
-
-requirement "SHALL-DESCRIPTION-607" doc="-u The shell shall write a message to standard error when it tries to expand a variable that is not set and immediately exit."
-
+requirement "SHALL-DESCRIPTION-607" doc="When the -u option is on and the shell tries to expand an unset parameter other than the '@' and '*' special parameters, it shall write a message to standard error and the expansion shall fail with the consequences specified in 2.8.1 Consequences of Shell Errors."
 begin test "nounset exits on unset variable expansion"
   begin script
     set -u
@@ -198,6 +161,7 @@ begin test "nounset exits on unset variable expansion"
   not_expect_exit_code 0
 end test "nounset exits on unset variable expansion"
 
+requirement "SHALL-OPTIONS-008" doc="If there are no operands and the -c option is not specified, the -s option shall be assumed."
 begin test "nounset does not trigger on $@ and $*"
   begin script
     set -u
@@ -209,12 +173,7 @@ begin test "nounset does not trigger on $@ and $*"
   expect_stdout "survived"
 end test "nounset does not trigger on $@ and $*"
 
-# ==============================================================================
-# The '-v' Option (verbose)
-# ==============================================================================
-
-requirement "SHALL-DESCRIPTION-608" doc="-v The shell shall write its input to standard error as it is read."
-
+requirement "SHALL-DESCRIPTION-608" doc="The -v option shall cause the shell to write its input to standard error as it is read."
 begin test "set -v echoes input to stderr"
   begin script
     set -v
@@ -223,12 +182,7 @@ begin test "set -v echoes input to stderr"
   expect_stderr_line ".*echo.*testing_verbose.*"
 end test "set -v echoes input to stderr"
 
-# ==============================================================================
-# The '-x' Option (xtrace)
-# ==============================================================================
-
-requirement "SHALL-DESCRIPTION-609" doc="-x The shell shall write to standard error a trace for each command after it expands the command and before it executes it."
-
+requirement "SHALL-DESCRIPTION-609" doc="The -x option shall cause the shell to write to standard error a trace for each command after it expands the command and before it executes it."
 begin test "set -x traces expanded commands to stderr"
   begin script
     set -x
@@ -237,12 +191,7 @@ begin test "set -x traces expanded commands to stderr"
   expect_stderr_line ".*echo testing_xtrace.*"
 end test "set -x traces expanded commands to stderr"
 
-# ==============================================================================
-# The '-o' Option
-# ==============================================================================
-
-requirement "SHALL-DESCRIPTION-591" doc="Asynchronous notification shall not be enabled by default."
-
+requirement "SHALL-OPTIONS-649" doc="The shell shall format the output, including the proper use of quoting, so that it is suitable for reinput to the shell as commands that achieve the same trapping results for the specified set of conditions."
 begin test "set -o succeeds"
   begin script
     set -o 2>/dev/null
@@ -251,13 +200,8 @@ begin test "set -o succeeds"
   expect_exit_code 0
 end test "set -o succeeds"
 
-# ==============================================================================
-# set -- for positional parameters
-# ==============================================================================
-
+requirement "SHALL-DESCRIPTION-612" doc="The special parameter '#' shall be set to reflect the number of positional parameters."
 requirement "SHALL-DESCRIPTION-613" doc="All positional parameters shall be unset before any new values are assigned."
-requirement "SHALL-DESCRIPTION-614" doc="set -- without argument shall unset all positional parameters and set # to zero."
-
 begin test "set -- assigns positional parameters"
   begin script
     set -- a b c
@@ -266,6 +210,7 @@ begin test "set -- assigns positional parameters"
   expect_stdout "3 a b c"
 end test "set -- assigns positional parameters"
 
+requirement "SHALL-DESCRIPTION-614" doc="The command set -- without argument shall unset all positional parameters and set the special parameter '#' to zero."
 begin test "set -- without args clears positional parameters"
   begin script
     set -- x y z

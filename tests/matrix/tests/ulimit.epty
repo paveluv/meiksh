@@ -1,12 +1,11 @@
 testsuite "The ulimit Utility"
 
-requirement "SHALL-ULIMIT-1072" doc="The ulimit utility shall conform to XBD 12.2 Utility Syntax Guidelines, except that the order in which options other than -H, -S, and -a are specified may be significant."
-requirement "SHALL-ULIMIT-1302" doc="Conforming applications shall specify each option separately; that is, grouping option letters (for example, -fH) need not be recognized by all implementations."
-requirement "SHALL-ULIMIT-1304" doc="If neither the -H nor -S option is specified and the newlimit operand is present, it shall be used as the new value for both the hard and soft limits."
-requirement "SHALL-ULIMIT-1305" doc="If the newlimit operand is not present, -S shall be the default."
-requirement "SHALL-ULIMIT-1306" doc="If no options other than -H or -S are specified, the behavior shall be as if the -f option was (also) specified."
-requirement "SHALL-ULIMIT-1310" doc="The standard output shall be used when no newlimit operand is present."
-requirement "SHALL-ULIMIT-1076" doc="If the -a option is specified, the output written for each resource shall consist of one line that includes a short phrase identifying the resource."
+# ==============================================================================
+# ulimit -f unlimited succeeds (sets both hard and soft)
+# ==============================================================================
+
+requirement "SHALL-ULIMIT-1072" doc="The ulimit utility shall conform to XBD 12.2 Utility Syntax Guidelines , except that: The order in which options other than -H , -S , and -a are specified may be significant."
+requirement "SHALL-ULIMIT-1304" doc="If neither the -H nor -S option is specified: If the newlimit operand is present, it shall be used as the new value for both the hard and soft limits."
 
 begin test "ulimit -f unlimited succeeds"
   begin script
@@ -16,6 +15,14 @@ begin test "ulimit -f unlimited succeeds"
   expect_stdout "pass"
 end test "ulimit -f unlimited succeeds"
 
+# ==============================================================================
+# ulimit -S -f prints the soft file-size limit
+# ==============================================================================
+
+requirement "SHALL-ULIMIT-1305" doc="If the newlimit operand is not present, -S shall be the default."
+requirement "SHALL-ULIMIT-1306" doc="If no options other than -H or -S are specified, the behavior shall be as if the -f option was (also) specified."
+requirement "SHALL-ULIMIT-1310" doc="The standard output shall be used when no newlimit operand is present."
+
 begin test "ulimit -S -f prints soft file-size limit"
   begin script
     ulimit -S -f >/dev/null
@@ -23,6 +30,12 @@ begin test "ulimit -S -f prints soft file-size limit"
   end script
   expect_stdout "pass"
 end test "ulimit -S -f prints soft file-size limit"
+
+# ==============================================================================
+# ulimit -a succeeds and identifies each resource
+# ==============================================================================
+
+requirement "SHALL-ULIMIT-1076" doc="If the -a option is specified, the output written for each resource shall consist of one line that includes: A short phrase identifying the resource (for example \"file size\")."
 
 begin test "ulimit -a succeeds"
   begin script
@@ -33,10 +46,23 @@ begin test "ulimit -a succeeds"
 end test "ulimit -a succeeds"
 
 # ==============================================================================
+# each option must be specified separately
+# ==============================================================================
+
+requirement "SHALL-ULIMIT-1302" doc="Conforming applications shall specify each option separately; that is, grouping option letters (for example, -fH ) need not be recognized by all implementations."
+
+begin test "ulimit options specified separately"
+  begin script
+    ulimit -S -f >/dev/null && echo pass
+  end script
+  expect_stdout "pass"
+end test "ulimit options specified separately"
+
+# ==============================================================================
 # ulimit diagnostic for invalid values (from command_identification)
 # ==============================================================================
 
-requirement "SHALL-XBD-12-4005" doc="If an error is generated, the utility's diagnostic message shall indicate that the value is out of the supported range."
+requirement "SHALL-XBD-12-4005" doc="If an error is generated, the utility's diagnostic message shall indicate that the value is out of the supported range, not that it is syntactically incorrect."
 
 begin test "ulimit with invalid value produces diagnostic"
   begin script

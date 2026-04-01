@@ -4,8 +4,8 @@ testsuite "bg/fg — Interactive Job Control Utilities"
 # bg: Resume a suspended job in the background
 # ==============================================================================
 
-requirement "SHALL-BG-1062" doc="If job control is enabled, the bg utility shall resume the execution of a currently suspended job in the background"
-requirement "SHALL-BG-1065" doc="If no job_id operand is given, the most recently suspended job shall be used"
+requirement "SHALL-BG-1062" doc="If job control is enabled (see the description of set -m ), the shell is interactive, and the current shell execution environment (see 2.13 Shell Execution Environment ) is not a subshell environment, the bg utility shall resume suspended jobs from the current shell execution environment by running them as background jobs, as described in 2.11 Job Control ; it may also do so if the shell is non-interactive or the current shell execution environment is a subshell environment."
+requirement "SHALL-BG-1065" doc="If no job_id operand is given, the most recently suspended job shall be used."
 
 begin interactive test "bg: suspend with Ctrl-Z then bg"
   spawn -i
@@ -29,7 +29,7 @@ end interactive test "bg: suspend with Ctrl-Z then bg"
 # bg: Job already running in background has no effect
 # ==============================================================================
 
-requirement "SHALL-BG-1063" doc="If the job specified by job_id is already a running background job, the bg utility shall have no effect and shall exit successfully"
+requirement "SHALL-BG-1063" doc="If the job specified by job_id is already a running background job, the bg utility shall have no effect and shall exit successfully."
 
 begin interactive test "bg: job already running in background"
   spawn -i
@@ -50,8 +50,8 @@ end interactive test "bg: job already running in background"
 # bg: With explicit job_id operand
 # ==============================================================================
 
-requirement "SHALL-BG-1029" doc="The following operand shall be supported: job_id"
-requirement "SHALL-BG-1062" doc="If job control is enabled, the bg utility shall resume the execution of a currently suspended job in the background"
+requirement "SHALL-BG-1029" doc="The following operand shall be supported: job_id Specify the job to be resumed as a background job."
+requirement "SHALL-BG-1062" doc="If job control is enabled (see the description of set -m ), the shell is interactive, and the current shell execution environment (see 2.13 Shell Execution Environment ) is not a subshell environment, the bg utility shall resume suspended jobs from the current shell execution environment by running them as background jobs, as described in 2.11 Job Control ; it may also do so if the shell is non-interactive or the current shell execution environment is a subshell environment."
 
 begin interactive test "bg: with explicit job_id operand"
   spawn -i
@@ -75,9 +75,9 @@ end interactive test "bg: with explicit job_id operand"
 # fg: Bring a background job to the foreground
 # ==============================================================================
 
-requirement "SHALL-FG-1166" doc="If job control is enabled, the fg utility shall move a background job into the foreground"
-requirement "SHALL-FG-1035" doc="The fg utility shall write the command line of the job to standard output in the following format: %s, <command>"
-requirement "SHALL-FG-1169" doc="If no job_id operand is given, the job most recently suspended, placed in the background, or run as a background job shall be used"
+requirement "SHALL-FG-1166" doc="If job control is enabled (see the description of set -m ), the shell is interactive, and the current shell execution environment (see 2.13 Shell Execution Environment ) is not a subshell environment, the fg utility shall move a background job in the current execution environment into the foreground, as described in 2.11 Job Control ; it may also do so if the shell is non-interactive or the current shell execution environment is a subshell environment."
+requirement "SHALL-FG-1035" doc="The fg utility shall write the command line of the job to standard output in the following format: \"%s\\n\", <command>."
+requirement "SHALL-FG-1169" doc="If no job_id operand is given, the job_id for the job that was most recently suspended, placed in the background, or run as a background job shall be used."
 
 begin interactive test "fg: bring background job to foreground"
   spawn -i
@@ -99,8 +99,8 @@ end interactive test "fg: bring background job to foreground"
 # fg: With explicit job_id
 # ==============================================================================
 
-requirement "SHALL-FG-1047" doc="The following operand shall be supported: job_id"
-requirement "SHALL-FG-1166" doc="If job control is enabled, the fg utility shall move a background job into the foreground"
+requirement "SHALL-FG-1047" doc="The following operand shall be supported: job_id Specify the job to be run as a foreground job."
+requirement "SHALL-FG-1166" doc="If job control is enabled (see the description of set -m ), the shell is interactive, and the current shell execution environment (see 2.13 Shell Execution Environment ) is not a subshell environment, the fg utility shall move a background job in the current execution environment into the foreground, as described in 2.11 Job Control ; it may also do so if the shell is non-interactive or the current shell execution environment is a subshell environment."
 
 begin interactive test "fg: with explicit job_id"
   spawn -i
@@ -122,7 +122,7 @@ end interactive test "fg: with explicit job_id"
 # fg: Removes job from known process list
 # ==============================================================================
 
-requirement "SHALL-FG-1167" doc="Using fg to place a job into the foreground shall remove its process ID from the list of those known in the current shell execution environment"
+requirement "SHALL-FG-1167" doc="Using fg to place a job into the foreground shall remove its process ID from the list of those \"known in the current shell execution environment\"; see 2.9.3.1 Asynchronous AND-OR Lists ."
 
 begin interactive test "fg: removes job from known process list"
   spawn -i
@@ -147,8 +147,8 @@ end interactive test "fg: removes job from known process list"
 # Suspend with Ctrl-Z and resume cycle
 # ==============================================================================
 
-requirement "SHALL-BG-1062" doc="If job control is enabled, the bg utility shall resume the execution of a currently suspended job in the background"
-requirement "SHALL-FG-1166" doc="If job control is enabled, the fg utility shall move a background job into the foreground"
+requirement "SHALL-BG-1062" doc="If job control is enabled (see the description of set -m ), the shell is interactive, and the current shell execution environment (see 2.13 Shell Execution Environment ) is not a subshell environment, the bg utility shall resume suspended jobs from the current shell execution environment by running them as background jobs, as described in 2.11 Job Control ; it may also do so if the shell is non-interactive or the current shell execution environment is a subshell environment."
+requirement "SHALL-FG-1166" doc="If job control is enabled (see the description of set -m ), the shell is interactive, and the current shell execution environment (see 2.13 Shell Execution Environment ) is not a subshell environment, the fg utility shall move a background job in the current execution environment into the foreground, as described in 2.11 Job Control ; it may also do so if the shell is non-interactive or the current shell execution environment is a subshell environment."
 
 begin interactive test "suspend -> bg -> fg cycle"
   spawn -i
@@ -175,7 +175,7 @@ end interactive test "suspend -> bg -> fg cycle"
 # bg: Error when job control is disabled
 # ==============================================================================
 
-requirement "SHALL-BG-1069" doc="If job control is disabled, the bg utility shall exit with an error"
+requirement "SHALL-BG-1069" doc="If job control is disabled, the bg utility shall exit with an error and no job shall be placed in the background."
 
 begin test "bg: error when job control is disabled"
   begin script
@@ -184,8 +184,8 @@ begin test "bg: error when job control is disabled"
   not_expect_exit_code 0
 end test "bg: error when job control is disabled"
 
-requirement "SHALL-FG-1173" doc="If job control is disabled, the fg utility shall exit with an error"
-requirement "SHALL-STDERR-627" doc="The standard error shall be used only for diagnostic messages"
+requirement "SHALL-FG-1173" doc="If job control is disabled, the fg utility shall exit with an error and no job shall be placed in the foreground."
+requirement "SHALL-STDERR-627" doc="For the fg utility, the standard error shall be used only for diagnostic messages."
 
 begin test "fg: error when job control is disabled"
   begin script
@@ -198,8 +198,8 @@ end test "fg: error when job control is disabled"
 # Multiple suspended jobs — +/- marking
 # ==============================================================================
 
-requirement "SHALL-JOBS-1237" doc="The implementation may substitute the string Suspended in place of Stopped"
-requirement "SHALL-JOBS-1234" doc="If the job was terminated by a signal, the format of the state is unspecified, but it shall be visibly distinct from the formats for other states"
+requirement "SHALL-JOBS-1237" doc="The implementation may substitute the string Suspended in place of Stopped."
+requirement "SHALL-JOBS-1234" doc="If the job was terminated by a signal, the format of < state > is unspecified, but it shall be visibly distinct from all of the other < state > formats shown here and shall indicate the name or description of the signal causing the termination."
 
 begin interactive test "multiple suspended jobs with +/- marking"
   spawn -i
@@ -227,7 +227,7 @@ end interactive test "multiple suspended jobs with +/- marking"
 # bg: Output format — POSIX "[%d] %s\n"
 # ==============================================================================
 
-requirement "SHALL-BG-1031" doc="The output of bg shall consist of a line in the format: [%d] %s, <job-number>, <command>"
+requirement "SHALL-BG-1031" doc="The output of bg shall consist of a line in the format: \"[%d] %s\\n\", < job-number >, < command > where the fields are as follows: < job-number > A number that can be used to identify the job to the wait , fg , and kill utilities."
 
 begin interactive test "bg: output format POSIX [%d] %s"
   spawn -i
@@ -251,8 +251,8 @@ end interactive test "bg: output format POSIX [%d] %s"
 # bg/fg: Explicit %N job IDs with multiple jobs
 # ==============================================================================
 
-requirement "SHALL-BG-1029" doc="The following operand shall be supported: job_id"
-requirement "SHALL-FG-1047" doc="The following operand shall be supported: job_id"
+requirement "SHALL-BG-1029" doc="The following operand shall be supported: job_id Specify the job to be resumed as a background job."
+requirement "SHALL-FG-1047" doc="The following operand shall be supported: job_id Specify the job to be run as a foreground job."
 
 begin interactive test "bg/fg: explicit %N job IDs with multiple jobs"
   spawn -i

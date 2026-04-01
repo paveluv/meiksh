@@ -4,20 +4,8 @@ testsuite "fc Extended"
 # fc -l with -r (reverse listing)
 # ==============================================================================
 
-requirement "SHALL-FC-1128" doc="fc shall list or edit and re-execute commands from the command history"
-requirement "SHALL-FC-1130" doc="The relationship of a number to its command shall not change"
-requirement "SHALL-FC-1131" doc="When the number reaches an implementation-defined upper limit, which shall be no smaller than the value of HISTSIZE, it shall wrap"
-requirement "SHALL-FC-1132" doc="fc shall maintain the time-ordering sequence of the history list"
-requirement "SHALL-FC-1137" doc="The fc utility shall conform to XBD 12.2 Utility Syntax Guidelines"
-requirement "SHALL-FC-1141" doc="The commands shall be written in the sequence indicated by first and last, as affected by -r"
-requirement "SHALL-FC-1146" doc="If last is omitted, last shall default to the previous command"
-requirement "SHALL-FC-1151" doc="It shall not be an error to specify first or last values that are out of range"
-requirement "SHALL-FC-1152" doc="For example, fc -l and fc 1 99 shall list all commands"
-requirement "SHALL-FC-1033" doc="If the command consists of more than one line, the lines after the first shall be displayed"
-requirement "SHALL-FC-1046" doc="Exit value 0 for listing"
-requirement "SHALL-FC-1042" doc="Any command line variable assignments or redirection operators used with fc shall affect both the fc built-in and the resulting command"
-requirement "SHALL-FC-1150" doc="If first represents a newer command than last, the commands shall be listed or edited in reverse sequence"
 
+requirement "SHALL-FC-1150" doc="If first represents a newer command than last , the commands shall be listed or edited in reverse sequence, equivalent to using -r ."
 begin interactive test "fc -lr lists in reverse order"
   spawn -i
   expect "$ "
@@ -38,6 +26,9 @@ begin interactive test "fc -lr lists in reverse order"
   wait
 end interactive test "fc -lr lists in reverse order"
 
+requirement "SHALL-FC-1151" doc="When a range of commands is used, it shall not be an error to specify first or last values that are not in the history list; fc shall substitute the value representing the oldest or newest command in the list, as appropriate."
+requirement "SHALL-FC-1046" doc="The following exit values shall be returned: 0 Successful completion of the listing."
+requirement "SHALL-FC-1150" doc="If first represents a newer command than last , the commands shall be listed or edited in reverse sequence, equivalent to using -r ."
 begin interactive test "fc -l -r with explicit range reverses listing"
   spawn -i
   expect "$ "
@@ -54,14 +45,9 @@ begin interactive test "fc -l -r with explicit range reverses listing"
   wait
 end interactive test "fc -l -r with explicit range reverses listing"
 
-
-# ==============================================================================
-# fc with negative numbers
-# ==============================================================================
-
-requirement "SHALL-FC-1045" doc="The value of first or last or both shall be a positive or negative number used as a command number; a negative number shall be used as an offset from the current command number"
-requirement "SHALL-FC-1148" doc="If first and last are both present, all of the commands from first to last shall be edited or listed"
-
+requirement "SHALL-FC-1130" doc="The relationship of a number to its command shall not change except when the user logs in and no other process is accessing the list, at which time the system may reset the numbering to start the oldest retained command at another number (usually 1)."
+requirement "SHALL-FC-1131" doc="When the number reaches an implementation-defined upper limit, which shall be no smaller than the value in HISTSIZE or 32767 (whichever is greater), the shell may wrap the numbers, starting the next command with a lower number (usually 1)."
+requirement "SHALL-FC-1152" doc="For example, if there are only ten commands in the history list, numbered 1 to 10: fc -l fc 1 99 shall list and edit, respectively, all ten commands."
 begin interactive test "fc -l -1 lists only the most recent command"
   spawn -i
   expect "$ "
@@ -74,6 +60,7 @@ begin interactive test "fc -l -1 lists only the most recent command"
   wait
 end interactive test "fc -l -1 lists only the most recent command"
 
+requirement "SHALL-FC-1137" doc="The fc utility shall conform to XBD 12.2 Utility Syntax Guidelines ."
 begin interactive test "fc -l -3 -2 lists a range by negative offsets"
   spawn -i
   expect "$ "
@@ -93,8 +80,9 @@ begin interactive test "fc -l -3 -2 lists a range by negative offsets"
   wait
 end interactive test "fc -l -3 -2 lists a range by negative offsets"
 
-requirement "SHALL-FC-1145" doc="If first is omitted, the previous command shall be used"
-
+requirement "SHALL-FC-1128" doc="The fc utility shall list, or shall edit and re-execute, commands previously entered to an interactive sh ."
+requirement "SHALL-FC-1033" doc="If the <command> consists of more than one line, the lines after the first shall be displayed as: \"\\t%s\\n\", <continued-command>."
+requirement "SHALL-FC-1042" doc="Any command line variable assignments or redirection operators used with fc shall affect both the fc command itself as well as the command that results; for example: fc -s -- -1 2>/dev/null reinvokes the previous command, suppressing standard error for both fc and the previous command."
 begin interactive test "fc -s with negative number re-executes offset command"
   spawn -i
   expect "$ "
@@ -110,11 +98,9 @@ begin interactive test "fc -s with negative number re-executes offset command"
   wait
 end interactive test "fc -s with negative number re-executes offset command"
 
-
-# ==============================================================================
-# fc range selection with first > last (reverse)
-# ==============================================================================
-
+requirement "SHALL-FC-1132" doc="However, despite this optional wrapping of numbers, fc shall maintain the time-ordering sequence of the commands."
+requirement "SHALL-FC-1141" doc="The commands shall be written in the sequence indicated by the first and last operands, as affected by -r , with each command preceded by the command number."
+requirement "SHALL-FC-1146" doc="For the synopsis forms without -s : If last is omitted, last shall default to the previous command when -l is specified; otherwise, it shall default to first ."
 begin interactive test "fc -l with first > last lists in reverse sequence"
   spawn -i
   expect "$ "
@@ -135,6 +121,7 @@ begin interactive test "fc -l with first > last lists in reverse sequence"
   wait
 end interactive test "fc -l with first > last lists in reverse sequence"
 
+requirement "SHALL-FC-1045" doc="The value of first or last or both shall be one of the following: [+] number A positive number representing a command number; command numbers can be displayed with the -l option."
 begin interactive test "reversed range with positive numbers"
   spawn -i
   expect "$ "
@@ -155,14 +142,9 @@ begin interactive test "reversed range with positive numbers"
   wait
 end interactive test "reversed range with positive numbers"
 
-
-# ==============================================================================
-# History number formatting in fc -l output
-# ==============================================================================
-
-requirement "SHALL-FC-1031" doc="When the -l option is used to list commands, the format of each command in the list shall be as follows: \"%d\\t%s\\n\", <line number>, <command>"
-requirement "SHALL-FC-1129" doc="The command history list shall reference commands by number"
-
+requirement "SHALL-FC-1031" doc="When the -l option is used to list commands, the format of each command in the list shall be as follows: \"%d\\t%s\\n\", <line number>, <command>."
+requirement "SHALL-FC-1129" doc="The command history list shall reference commands by number."
+requirement "SHALL-FC-1032" doc="If both the -l and -n options are specified, the format of each command shall be: \"\\t%s\\n\", <command>."
 begin interactive test "fc -l output contains command text"
   spawn -i
   expect "$ "
@@ -175,6 +157,7 @@ begin interactive test "fc -l output contains command text"
   wait
 end interactive test "fc -l output contains command text"
 
+requirement "SHALL-FC-1131" doc="When the number reaches an implementation-defined upper limit, which shall be no smaller than the value in HISTSIZE or 32767 (whichever is greater), the shell may wrap the numbers, starting the next command with a lower number (usually 1)."
 begin interactive test "fc -l line numbers are monotonically increasing"
   spawn -i
   expect "$ "
@@ -195,8 +178,7 @@ begin interactive test "fc -l line numbers are monotonically increasing"
   wait
 end interactive test "fc -l line numbers are monotonically increasing"
 
-requirement "SHALL-FC-1032" doc="If both the -l and -n options are specified, the format of each command shall be: \"\\t%s\\n\", <command>"
-
+requirement "SHALL-FC-1131" doc="When the number reaches an implementation-defined upper limit, which shall be no smaller than the value in HISTSIZE or 32767 (whichever is greater), the shell may wrap the numbers, starting the next command with a lower number (usually 1)."
 begin interactive test "fc -ln suppresses line numbers"
   spawn -i
   expect "$ "
@@ -209,13 +191,8 @@ begin interactive test "fc -ln suppresses line numbers"
   wait
 end interactive test "fc -ln suppresses line numbers"
 
-
-# ==============================================================================
-# fc interaction with HISTSIZE
-# ==============================================================================
-
-requirement "SHALL-FC-1143" doc="The number of previous commands that can be accessed shall be determined by the value of the HISTSIZE variable"
-
+requirement "SHALL-FC-1147" doc="If first and last are both omitted, the previous 16 commands shall be listed or the previous single command shall be edited (based on the -l option)."
+requirement "SHALL-FC-1133" doc="When commands are edited (when the -l option is not specified), the resulting lines shall be entered at the end of the history list and then re-executed by sh ."
 begin interactive test "fc -l shows recently entered command"
   spawn -i
   expect "$ "
@@ -228,13 +205,8 @@ begin interactive test "fc -l shows recently entered command"
   wait
 end interactive test "fc -l shows recently entered command"
 
-
-# ==============================================================================
-# fc -l with no operands lists previous 16 commands
-# ==============================================================================
-
-requirement "SHALL-FC-1147" doc="If first and last are both omitted, the previous 16 commands shall be listed or the previous single command shall be edited"
-
+requirement "SHALL-FC-1148" doc="If first and last are both present, all of the commands from first to last shall be edited (without -l ) or listed (with -l )."
+requirement "SHALL-FC-1143" doc="The number of previous commands that can be accessed shall be determined by the value of the HISTSIZE variable."
 begin interactive test "fc -l with no operands lists recent commands"
   spawn -i
   expect "$ "
@@ -247,13 +219,7 @@ begin interactive test "fc -l with no operands lists recent commands"
   wait
 end interactive test "fc -l with no operands lists recent commands"
 
-
-# ==============================================================================
-# fc -s re-executes and enters result into history
-# ==============================================================================
-
-requirement "SHALL-FC-1133" doc="When commands are edited, the resulting lines shall be entered at the end of the history list and then re-executed by sh"
-
+requirement "SHALL-FC-1145" doc="When the synopsis form with -s is used: If first is omitted, the previous command shall be used."
 begin interactive test "fc -s re-executes and enters result into history"
   spawn -i
   expect "$ "

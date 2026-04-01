@@ -1,19 +1,10 @@
 testsuite "Maybe-Builtin — pwd (Print Working Directory)"
 
 # ==============================================================================
-# Requirements
-# ==============================================================================
-
-requirement "SHALL-OPTIONS-5055" doc="If the PWD environment variable contains an absolute pathname of the current directory that does not contain dot or dot-dot or symlink components, pwd -L shall write this to stdout."
-requirement "SHALL-OPTIONS-5056" doc="Otherwise, -L behaves as -P."
-requirement "SHALL-OPTIONS-5058" doc="Multiple pathnames possible: one starting with single / and one with //. If the system distinguishes // from /, pwd might return either form."
-requirement "SHALL-OPTIONS-5059" doc="The pathname written to standard output shall not contain any unnecessary slash characters after the leading one (or two, if the implementation distinguishes //)."
-requirement "SHALL-STDERR-5063" doc="Output format shall be: \"%s\\n\", <directory pathname>. Exactly one newline after the pathname."
-requirement "SHALL-CONSEQUENCES-OF-ERRORS-5064" doc="On error (other than write error), no output to stdout shall be produced."
-
-# ==============================================================================
 # -L option: use PWD if it is an absolute pathname with no dot/dot-dot/symlink
 # ==============================================================================
+
+requirement "SHALL-OPTIONS-5055" doc="The following options shall be supported by the implementation: -L If the PWD environment variable contains an absolute pathname of the current directory and the pathname does not contain any components that are dot or dot-dot, pwd shall write this pathname to standard output, except that if the PWD environment variable is longer than {PATH_MAX} bytes including the terminating null, it is unspecified whether pwd writes this pathname to standard output or behaves as if the -P option had been specified."
 
 begin test "pwd -L with clean PWD uses it"
   begin script
@@ -28,6 +19,7 @@ begin test "pwd -L with clean PWD uses it"
   expect_stdout_line "/.*"
 end test "pwd -L with clean PWD uses it"
 
+requirement "SHALL-OPTIONS-5055" doc="The following options shall be supported by the implementation: -L If the PWD environment variable contains an absolute pathname of the current directory and the pathname does not contain any components that are dot or dot-dot, pwd shall write this pathname to standard output, except that if the PWD environment variable is longer than {PATH_MAX} bytes including the terminating null, it is unspecified whether pwd writes this pathname to standard output or behaves as if the -P option had been specified."
 begin test "pwd -L rejects PWD containing dot-dot"
   begin script
     _tmpdir="/tmp/pwd_test_$$"
@@ -43,6 +35,8 @@ end test "pwd -L rejects PWD containing dot-dot"
 # ==============================================================================
 # -L falls back to -P when PWD is invalid
 # ==============================================================================
+
+requirement "SHALL-OPTIONS-5056" doc="Otherwise, the -L option shall behave as the -P option."
 
 begin test "pwd -L with bogus PWD falls back to physical"
   begin script
@@ -61,6 +55,7 @@ begin test "pwd -L with bogus PWD falls back to physical"
   expect_stdout "MATCH"
 end test "pwd -L with bogus PWD falls back to physical"
 
+requirement "SHALL-2-5-3-100" doc="If a value for PWD is passed to the shell in the environment when it is executed, the value is an absolute pathname of the current working directory that is no longer than {PATH_MAX} bytes including the terminating null byte, and the value does not contain any components that are dot or dot-dot, then the shell shall set PWD to the value from the environment."
 begin test "pwd -L with symlink PWD outputs absolute path"
   begin script
     _tmpdir="/tmp/pwd_test_$$"
@@ -78,6 +73,8 @@ end test "pwd -L with symlink PWD outputs absolute path"
 # Multiple pathnames: one starting with / and one with //
 # ==============================================================================
 
+requirement "SHALL-OPTIONS-5058" doc="If there are multiple pathnames that the pwd utility could write to standard output, one beginning with a single <slash> character and one or more beginning with two <slash> characters, then it shall write the pathname beginning with a single <slash> character."
+
 begin test "pwd -P outputs absolute path"
   begin script
     pwd -P | grep -q '^/' && echo PASS || echo FAIL
@@ -85,6 +82,7 @@ begin test "pwd -P outputs absolute path"
   expect_stdout "PASS"
 end test "pwd -P outputs absolute path"
 
+requirement "SHALL-2-5-3-100" doc="If a value for PWD is passed to the shell in the environment when it is executed, the value is an absolute pathname of the current working directory that is no longer than {PATH_MAX} bytes including the terminating null byte, and the value does not contain any components that are dot or dot-dot, then the shell shall set PWD to the value from the environment."
 begin test "pwd -L outputs absolute path"
   begin script
     pwd -L | grep -q '^/' && echo PASS || echo FAIL
@@ -92,6 +90,7 @@ begin test "pwd -L outputs absolute path"
   expect_stdout "PASS"
 end test "pwd -L outputs absolute path"
 
+requirement "SHALL-OPTIONS-5055" doc="The following options shall be supported by the implementation: -L If the PWD environment variable contains an absolute pathname of the current directory and the pathname does not contain any components that are dot or dot-dot, pwd shall write this pathname to standard output, except that if the PWD environment variable is longer than {PATH_MAX} bytes including the terminating null, it is unspecified whether pwd writes this pathname to standard output or behaves as if the -P option had been specified."
 begin test "pwd with no options outputs absolute path"
   begin script
     pwd | grep -q '^/' && echo PASS || echo FAIL
@@ -103,6 +102,8 @@ end test "pwd with no options outputs absolute path"
 # Pathname shall not contain unnecessary slash characters
 # ==============================================================================
 
+requirement "SHALL-OPTIONS-5059" doc="The pathname shall not contain any unnecessary <slash> characters after the leading one or two <slash> characters."
+
 begin test "pwd -P from root has no unnecessary double slashes"
   begin script
     _out=$(cd / && pwd -P)
@@ -112,6 +113,7 @@ begin test "pwd -P from root has no unnecessary double slashes"
   expect_stdout "PASS"
 end test "pwd -P from root has no unnecessary double slashes"
 
+requirement "SHALL-2-3-036" doc="If the current character is an unquoted <backslash>, single-quote, or double-quote or is the first character of an unquoted <dollar-sign> single-quote sequence, it shall affect quoting for subsequent characters up to the end of the quoted text."
 begin test "pwd -P from deep dir has no unnecessary double slashes"
   begin script
     _tmpdir="/tmp/pwd_test_$$"
@@ -124,6 +126,7 @@ begin test "pwd -P from deep dir has no unnecessary double slashes"
   expect_stdout "PASS"
 end test "pwd -P from deep dir has no unnecessary double slashes"
 
+requirement "SHALL-2-3-036" doc="If the current character is an unquoted <backslash>, single-quote, or double-quote or is the first character of an unquoted <dollar-sign> single-quote sequence, it shall affect quoting for subsequent characters up to the end of the quoted text."
 begin test "pwd -L has no unnecessary double slashes"
   begin script
     _tmpdir="/tmp/pwd_test_$$"
@@ -136,6 +139,7 @@ begin test "pwd -L has no unnecessary double slashes"
   expect_stdout "PASS"
 end test "pwd -L has no unnecessary double slashes"
 
+requirement "SHALL-CD-1079" doc="This conversion shall always be considered possible if the value of PWD , with a trailing <slash> added if it does not already have one, is an initial substring of curpath ."
 begin test "pwd -P has no trailing slash"
   begin script
     _tmpdir="/tmp/pwd_test_$$"
@@ -151,6 +155,8 @@ end test "pwd -P has no trailing slash"
 # Output format: "%s\n", <directory pathname>
 # ==============================================================================
 
+requirement "SHALL-STDERR-5063" doc="The pwd utility output is an absolute pathname of the current working directory: \"%s\\n\", < directory pathname > STDERR  The standard error shall be used only for diagnostic messages."
+
 begin test "pwd produces exactly one line"
   begin script
     _lines=$(pwd | wc -l | tr -d ' ')
@@ -163,6 +169,7 @@ begin test "pwd produces exactly one line"
   expect_stdout "PASS"
 end test "pwd produces exactly one line"
 
+requirement "SHALL-V3CHAP02-1006-DUP143" doc="Command substitution shall occur when command(s) are enclosed as follows: $( commands ) or (backquoted version): ` commands ` The shell shall expand the command substitution by executing commands in a subshell environment (see 2.13 Shell Execution Environment ) and replacing the command substitution (the text of the commands string plus the enclosing \"$()\" or backquotes) with the standard output of the command(s); if the output ends with one or more bytes that have the encoded value of a <newline> character, they shall not be included in the replacement."
 begin test "pwd output ends with exactly one trailing newline"
   begin script
     _raw_len=$(pwd | wc -c | tr -d ' ')
@@ -177,6 +184,7 @@ begin test "pwd output ends with exactly one trailing newline"
   expect_stdout "PASS"
 end test "pwd output ends with exactly one trailing newline"
 
+requirement "SHALL-STDERR-5063" doc="The pwd utility output is an absolute pathname of the current working directory: \"%s\\n\", < directory pathname > STDERR  The standard error shall be used only for diagnostic messages."
 begin test "pwd produces no stderr on success"
   begin script
     _err=$(pwd 2>&1 1>/dev/null)
@@ -189,6 +197,7 @@ begin test "pwd produces no stderr on success"
   expect_stdout "PASS"
 end test "pwd produces no stderr on success"
 
+requirement "SHALL-STDERR-5063" doc="The pwd utility output is an absolute pathname of the current working directory: \"%s\\n\", < directory pathname > STDERR  The standard error shall be used only for diagnostic messages."
 begin test "pwd -L produces no stderr on success"
   begin script
     _err=$(pwd -L 2>&1 1>/dev/null)
@@ -201,6 +210,7 @@ begin test "pwd -L produces no stderr on success"
   expect_stdout "PASS"
 end test "pwd -L produces no stderr on success"
 
+requirement "SHALL-STDERR-5063" doc="The pwd utility output is an absolute pathname of the current working directory: \"%s\\n\", < directory pathname > STDERR  The standard error shall be used only for diagnostic messages."
 begin test "pwd -P produces no stderr on success"
   begin script
     _err=$(pwd -P 2>&1 1>/dev/null)
@@ -216,6 +226,8 @@ end test "pwd -P produces no stderr on success"
 # ==============================================================================
 # Consequences of errors: no output on error (other than write error)
 # ==============================================================================
+
+requirement "SHALL-CONSEQUENCES-OF-ERRORS-5064" doc="If an error is detected other than a write error when writing to standard output, no output shall be written to standard output, a diagnostic message shall be written to standard error, and the exit status shall be non-zero."
 
 begin test "pwd -P in deleted directory either succeeds with absolute path or fails silently"
   begin script

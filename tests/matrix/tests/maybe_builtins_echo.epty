@@ -4,7 +4,7 @@ testsuite "Maybe Built-in — echo"
 # echo shall not recognize "--" argument
 # ==============================================================================
 
-requirement "SHALL-OPTIONS-5000" doc="echo shall not recognize the \"--\" argument in that context; it shall be treated as a string operand."
+requirement "SHALL-OPTIONS-5000" doc="The echo utility shall not recognize the \"--\" argument in the manner specified by Guideline 10 of XBD 12.2 Utility Syntax Guidelines ; \"--\" shall be recognized as a string operand."
 
 begin test "echo -- prints double dash"
   begin script
@@ -13,6 +13,7 @@ begin test "echo -- prints double dash"
   expect_stdout "--"
 end test "echo -- prints double dash"
 
+requirement "SHALL-OPTIONS-5000" doc="The echo utility shall not recognize the \"--\" argument in the manner specified by Guideline 10 of XBD 12.2 Utility Syntax Guidelines ; \"--\" shall be recognized as a string operand."
 begin test "echo -- hello prints both"
   begin script
     echo -- hello
@@ -20,6 +21,7 @@ begin test "echo -- hello prints both"
   expect_stdout "-- hello"
 end test "echo -- hello prints both"
 
+requirement "SHALL-2-9-3-319" doc="For example, both of the following commands write solely bar to standard output: false && echo foo || echo bar true || echo foo && echo bar A ';' separator or a ';' or <newline> terminator shall cause the preceding AND-OR list to be executed sequentially; an '&' separator or terminator shall cause asynchronous execution of the preceding AND-OR list."
 begin test "echo -- -- prints both double dashes"
   begin script
     echo -- --
@@ -31,7 +33,7 @@ end test "echo -- -- prints both double dashes"
 # String operand shall be supported
 # ==============================================================================
 
-requirement "SHALL-OPERANDS-5001" doc="string operand shall be supported."
+requirement "SHALL-OPERANDS-5001" doc="The following operands shall be supported: string A string to be written to standard output."
 
 begin test "echo hello"
   begin script
@@ -40,6 +42,7 @@ begin test "echo hello"
   expect_stdout "hello"
 end test "echo hello"
 
+requirement "SHALL-ENVIRONMENT-VARIABLES-5005" doc="The following environment variables shall affect the execution of echo : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 begin test "echo with no arguments produces empty line"
   begin script
     echo
@@ -47,6 +50,7 @@ begin test "echo with no arguments produces empty line"
   expect_stdout ""
 end test "echo with no arguments produces empty line"
 
+requirement "SHALL-STDOUT-5006" doc="The echo utility arguments shall be separated by single <space> characters and a <newline> character shall follow the last argument. [ XSI ] Output transformations shall occur based on the escape sequences in the input."
 begin test "echo hello world joins with space"
   begin script
     echo hello world
@@ -54,6 +58,7 @@ begin test "echo hello world joins with space"
   expect_stdout "hello world"
 end test "echo hello world joins with space"
 
+requirement "SHALL-EXTENDED-DESCRIPTION-5029" doc="File Format Notation ( '\\\\' , '\\a' , '\\b' , '\\f' , '\\n' , '\\r' , '\\t' , '\\v' ), \"\\ddd\" , where ddd is a one, two, or three-digit octal number, shall be written as a byte with the numeric value specified by the octal number."
 begin test "echo one two three joins with spaces"
   begin script
     echo one two three
@@ -61,6 +66,7 @@ begin test "echo one two three joins with spaces"
   expect_stdout "one two three"
 end test "echo one two three joins with spaces"
 
+requirement "SHALL-STDOUT-5006" doc="The echo utility arguments shall be separated by single <space> characters and a <newline> character shall follow the last argument. [ XSI ] Output transformations shall occur based on the escape sequences in the input."
 begin test "echo single character"
   begin script
     echo x
@@ -72,7 +78,7 @@ end test "echo single character"
 # If first operand is - followed by e, E, n chars, behavior unspecified
 # ==============================================================================
 
-requirement "SHALL-OPERANDS-5002" doc="If the first operand is -n, -e, -E, or any combination of those characters following a hyphen, behavior is implementation-defined (unspecified)."
+requirement "SHALL-OPERANDS-5002" doc="If the first operand consists of a '-' followed by one or more characters from the set { 'e' , 'E' , 'n' }, or if any of the operands contain a <backslash> character, the results are implementation-defined. [ XSI ] On XSI-conformant systems, if the first operand consists of a '-' followed by one or more characters from the set { 'e' , 'E' , 'n' }, it shall be treated as a string to be written."
 
 begin test "echo -n does not crash"
   begin script
@@ -81,6 +87,7 @@ begin test "echo -n does not crash"
   expect_exit_code 0
 end test "echo -n does not crash"
 
+requirement "SHALL-ENVIRONMENT-VARIABLES-5005" doc="The following environment variables shall affect the execution of echo : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 begin test "echo -e does not crash"
   begin script
     echo -e test >/dev/null
@@ -88,6 +95,7 @@ begin test "echo -e does not crash"
   expect_exit_code 0
 end test "echo -e does not crash"
 
+requirement "SHALL-ENVIRONMENT-VARIABLES-5005" doc="The following environment variables shall affect the execution of echo : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 begin test "echo -E does not crash"
   begin script
     echo -E test >/dev/null
@@ -95,6 +103,7 @@ begin test "echo -E does not crash"
   expect_exit_code 0
 end test "echo -E does not crash"
 
+requirement "SHALL-ENVIRONMENT-VARIABLES-5005" doc="The following environment variables shall affect the execution of echo : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 begin test "echo -nee does not crash"
   begin script
     echo -nee test >/dev/null
@@ -102,6 +111,7 @@ begin test "echo -nee does not crash"
   expect_exit_code 0
 end test "echo -nee does not crash"
 
+requirement "SHALL-ENVIRONMENT-VARIABLES-5005" doc="The following environment variables shall affect the execution of echo : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 begin test "echo -neE does not crash"
   begin script
     echo -neE test >/dev/null
@@ -113,7 +123,7 @@ end test "echo -neE does not crash"
 # XSI escape sequences
 # ==============================================================================
 
-requirement "SHALL-OPERANDS-5003" doc="XSI escape sequences: \\a, \\b, \\c, \\f, \\n, \\r, \\t, \\v, \\\\, \\0num"
+requirement "SHALL-OPERANDS-5003" doc="The following character sequences shall be recognized on XSI-conformant systems within any of the arguments: \\a Write an <alert>."
 
 begin test "echo \\a produces BEL (0x07)"
   begin script
@@ -122,6 +132,7 @@ begin test "echo \\a produces BEL (0x07)"
   expect_stdout ".*07.*"
 end test "echo \\a produces BEL (0x07)"
 
+requirement "SHALL-ENVIRONMENT-VARIABLES-5005" doc="The following environment variables shall affect the execution of echo : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 begin test "echo \\b produces BS (0x08)"
   begin script
     echo "\b" 2>/dev/null | od -An -tx1 | tr -d ' \n'
@@ -129,6 +140,7 @@ begin test "echo \\b produces BS (0x08)"
   expect_stdout ".*08.*"
 end test "echo \\b produces BS (0x08)"
 
+requirement "SHALL-ENVIRONMENT-VARIABLES-5005" doc="The following environment variables shall affect the execution of echo : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 begin test "echo \\f produces FF (0x0c)"
   begin script
     echo "\f" 2>/dev/null | od -An -tx1 | tr -d ' \n'
@@ -136,6 +148,7 @@ begin test "echo \\f produces FF (0x0c)"
   expect_stdout ".*0c.*"
 end test "echo \\f produces FF (0x0c)"
 
+requirement "SHALL-ENVIRONMENT-VARIABLES-5005" doc="The following environment variables shall affect the execution of echo : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 begin test "echo \\n produces two newlines"
   begin script
     echo "\n" 2>/dev/null | od -An -tx1 | tr -d ' \n'
@@ -143,6 +156,7 @@ begin test "echo \\n produces two newlines"
   expect_stdout ".*0a0a.*"
 end test "echo \\n produces two newlines"
 
+requirement "SHALL-ENVIRONMENT-VARIABLES-5005" doc="The following environment variables shall affect the execution of echo : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 begin test "echo \\r produces CR (0x0d)"
   begin script
     echo "\r" 2>/dev/null | od -An -tx1 | tr -d ' \n'
@@ -150,6 +164,7 @@ begin test "echo \\r produces CR (0x0d)"
   expect_stdout ".*0d.*"
 end test "echo \\r produces CR (0x0d)"
 
+requirement "SHALL-ENVIRONMENT-VARIABLES-5005" doc="The following environment variables shall affect the execution of echo : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 begin test "echo \\t produces HT (0x09)"
   begin script
     echo "\t" 2>/dev/null | od -An -tx1 | tr -d ' \n'
@@ -157,6 +172,7 @@ begin test "echo \\t produces HT (0x09)"
   expect_stdout ".*09.*"
 end test "echo \\t produces HT (0x09)"
 
+requirement "SHALL-ENVIRONMENT-VARIABLES-5005" doc="The following environment variables shall affect the execution of echo : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 begin test "echo \\v produces VT (0x0b)"
   begin script
     echo "\v" 2>/dev/null | od -An -tx1 | tr -d ' \n'
@@ -164,6 +180,7 @@ begin test "echo \\v produces VT (0x0b)"
   expect_stdout ".*0b.*"
 end test "echo \\v produces VT (0x0b)"
 
+requirement "SHALL-2-2-1-002" doc="A <backslash> that is not quoted shall preserve the literal value of the following character, with the exception of a <newline>."
 begin test "echo \\\\ produces literal backslash"
   begin script
     echo "\\\\"
@@ -171,6 +188,7 @@ begin test "echo \\\\ produces literal backslash"
   expect_stdout "\\"
 end test "echo \\\\ produces literal backslash"
 
+requirement "SHALL-ENVIRONMENT-VARIABLES-5005" doc="The following environment variables shall affect the execution of echo : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 begin test "echo \\065 produces ASCII 5"
   begin script
     echo "\065" 2>/dev/null
@@ -178,6 +196,7 @@ begin test "echo \\065 produces ASCII 5"
   expect_stdout ".*5.*"
 end test "echo \\065 produces ASCII 5"
 
+requirement "SHALL-ENVIRONMENT-VARIABLES-5005" doc="The following environment variables shall affect the execution of echo : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 begin test "echo \\0101 produces ASCII A"
   begin script
     echo "\0101" 2>/dev/null
@@ -189,7 +208,7 @@ end test "echo \\0101 produces ASCII A"
 # All characters following \c shall be ignored
 # ==============================================================================
 
-requirement "SHALL-OPERANDS-5004" doc="All characters following \\c in the string shall be ignored. The trailing newline is also suppressed."
+requirement "SHALL-OPERANDS-5004" doc="All characters following the '\\c' in the arguments shall be ignored."
 
 begin test "echo \\c suppresses text after it"
   begin script
@@ -199,6 +218,7 @@ begin test "echo \\c suppresses text after it"
   not_expect_stdout ".*776f726c64.*"
 end test "echo \\c suppresses text after it"
 
+requirement "SHALL-V3CHAP02-1010" doc="Each field containing the results from an expansion shall be processed in order, intermixed with fields not containing the results of expansions, processed as described above, as if by using the following algorithm, examining bytes in the input field, from beginning to end: Begin with an empty candidate field and the input as specified above."
 begin test "echo AB\\c produces exactly 2 bytes"
   begin script
     echo "AB\c" 2>/dev/null | wc -c | tr -d ' '
@@ -210,7 +230,7 @@ end test "echo AB\\c produces exactly 2 bytes"
 # Arguments separated by single space, followed by newline
 # ==============================================================================
 
-requirement "SHALL-STDOUT-5006" doc="Arguments shall be separated by single <space> characters and followed by a <newline> character."
+requirement "SHALL-STDOUT-5006" doc="The echo utility arguments shall be separated by single <space> characters and a <newline> character shall follow the last argument. [ XSI ] Output transformations shall occur based on the escape sequences in the input."
 
 begin test "echo a b c joins with single spaces"
   begin script
@@ -219,6 +239,7 @@ begin test "echo a b c joins with single spaces"
   expect_stdout "a b c"
 end test "echo a b c joins with single spaces"
 
+requirement "SHALL-2-9-3-319" doc="For example, both of the following commands write solely bar to standard output: false && echo foo || echo bar true || echo foo && echo bar A ';' separator or a ';' or <newline> terminator shall cause the preceding AND-OR list to be executed sequentially; an '&' separator or terminator shall cause asynchronous execution of the preceding AND-OR list."
 begin test "echo hello produces 6 bytes (with trailing newline)"
   begin script
     echo hello 2>/dev/null | wc -c | tr -d ' '
@@ -226,6 +247,7 @@ begin test "echo hello produces 6 bytes (with trailing newline)"
   expect_stdout "6"
 end test "echo hello produces 6 bytes (with trailing newline)"
 
+requirement "SHALL-2-9-3-319" doc="For example, both of the following commands write solely bar to standard output: false && echo foo || echo bar true || echo foo && echo bar A ';' separator or a ';' or <newline> terminator shall cause the preceding AND-OR list to be executed sequentially; an '&' separator or terminator shall cause asynchronous execution of the preceding AND-OR list."
 begin test "echo with no args produces 1 byte (newline only)"
   begin script
     echo 2>/dev/null | wc -c | tr -d ' '
@@ -233,6 +255,7 @@ begin test "echo with no args produces 1 byte (newline only)"
   expect_stdout "1"
 end test "echo with no args produces 1 byte (newline only)"
 
+requirement "SHALL-STDOUT-5006" doc="The echo utility arguments shall be separated by single <space> characters and a <newline> character shall follow the last argument. [ XSI ] Output transformations shall occur based on the escape sequences in the input."
 begin test "echo many arguments"
   begin script
     echo 1 2 3 4 5
@@ -244,7 +267,7 @@ end test "echo many arguments"
 # Implementations shall not support any options
 # ==============================================================================
 
-requirement "SHALL-ISSUE-6-5007" doc="Implementations shall not support any options. All arguments, including those that look like options, are treated as string operands."
+requirement "SHALL-ISSUE-6-5007" doc="In the OPTIONS section, implementations shall not support any options."
 
 begin test "echo -- hello treats -- as operand"
   begin script
@@ -253,6 +276,7 @@ begin test "echo -- hello treats -- as operand"
   expect_stdout "-- hello"
 end test "echo -- hello treats -- as operand"
 
+requirement "SHALL-2-9-3-319" doc="For example, both of the following commands write solely bar to standard output: false && echo foo || echo bar true || echo foo && echo bar A ';' separator or a ';' or <newline> terminator shall cause the preceding AND-OR list to be executed sequentially; an '&' separator or terminator shall cause asynchronous execution of the preceding AND-OR list."
 begin test "echo -x prints -x"
   begin script
     echo -x
@@ -260,6 +284,7 @@ begin test "echo -x prints -x"
   expect_stdout "-x"
 end test "echo -x prints -x"
 
+requirement "SHALL-2-9-3-319" doc="For example, both of the following commands write solely bar to standard output: false && echo foo || echo bar true || echo foo && echo bar A ';' separator or a ';' or <newline> terminator shall cause the preceding AND-OR list to be executed sequentially; an '&' separator or terminator shall cause asynchronous execution of the preceding AND-OR list."
 begin test "echo -abc prints -abc"
   begin script
     echo -abc
@@ -267,6 +292,7 @@ begin test "echo -abc prints -abc"
   expect_stdout "-abc"
 end test "echo -abc prints -abc"
 
+requirement "SHALL-2-9-3-319" doc="For example, both of the following commands write solely bar to standard output: false && echo foo || echo bar true || echo foo && echo bar A ';' separator or a ';' or <newline> terminator shall cause the preceding AND-OR list to be executed sequentially; an '&' separator or terminator shall cause asynchronous execution of the preceding AND-OR list."
 begin test "echo --help prints --help"
   begin script
     echo --help
@@ -274,6 +300,7 @@ begin test "echo --help prints --help"
   expect_stdout "--help"
 end test "echo --help prints --help"
 
+requirement "SHALL-V3CHAP02-1006-DUP143" doc="Command substitution shall occur when command(s) are enclosed as follows: $( commands ) or (backquoted version): ` commands ` The shell shall expand the command substitution by executing commands in a subshell environment (see 2.13 Shell Execution Environment ) and replacing the command substitution (the text of the commands string plus the enclosing \"$()\" or backquotes) with the standard output of the command(s); if the output ends with one or more bytes that have the encoded value of a <newline> character, they shall not be included in the replacement."
 begin test "echo --version prints --version"
   begin script
     echo --version

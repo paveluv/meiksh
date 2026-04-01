@@ -4,7 +4,7 @@ testsuite "Locale"
 # XBD 8: Locale environment variables — LANG, LC_ALL, LC_* precedence
 # ==============================================================================
 
-requirement "SHALL-XBD-8-3000" doc="LANG determines locale in the absence of LC_ALL and other LC_* variables"
+requirement "SHALL-XBD-8-3000" doc="LANG This variable shall determine the locale category for native language, local customs, and coded character set in the absence of the LC_ALL and other LC_* ( LC_COLLATE , LC_CTYPE , LC_MESSAGES , LC_MONETARY , LC_NUMERIC , LC_TIME ) environment variables."
 
 begin test "LANG sets locale when LC_ALL and LC_* are unset"
   setenv "LANG" "test_EPTY.UTF-8"
@@ -18,7 +18,7 @@ begin test "LANG sets locale when LC_ALL and LC_* are unset"
   expect_stdout "alpha_match"
 end test "LANG sets locale when LC_ALL and LC_* are unset"
 
-requirement "SHALL-XBD-8-3002" doc="LC_ALL determines the values for all locale categories"
+requirement "SHALL-XBD-8-3002" doc="LC_ALL This variable shall determine the values for all locale categories."
 
 begin test "LC_ALL overrides LANG"
   setenv "LANG" "test_EPTY.UTF-8"
@@ -32,7 +32,7 @@ begin test "LC_ALL overrides LANG"
   expect_stdout "alpha_nomatch"
 end test "LC_ALL overrides LANG"
 
-requirement "SHALL-XBD-8-3003" doc="LC_COLLATE determines locale for character collation"
+requirement "SHALL-XBD-8-3003" doc="LC_COLLATE This variable shall determine the locale category for character collation."
 
 begin test "LC_COLLATE affects collation order"
   setenv "LC_ALL" ""
@@ -48,7 +48,7 @@ begin test "LC_COLLATE affects collation order"
   expect_stdout "range_match"
 end test "LC_COLLATE affects collation order"
 
-requirement "SHALL-XBD-8-3004" doc="LC_CTYPE determines locale for character handling functions"
+requirement "SHALL-XBD-8-3004" doc="LC_CTYPE This variable shall determine the locale category for character handling functions, such as tolower () , toupper () , and isalpha ()."
 
 begin test "LC_CTYPE affects character classification"
   setenv "LC_ALL" ""
@@ -63,7 +63,7 @@ begin test "LC_CTYPE affects character classification"
   expect_stdout "alpha_match"
 end test "LC_CTYPE affects character classification"
 
-requirement "SHALL-XBD-8-3005" doc="LC_MESSAGES determines locale for affirmative/negative responses"
+requirement "SHALL-XBD-8-3005" doc="LC_MESSAGES This variable shall determine the locale category for processing affirmative and negative responses and the language and cultural conventions in which messages should be written."
 
 begin test "LC_MESSAGES affects message processing"
   setenv "LC_ALL" "test_EPTY.UTF-8"
@@ -73,7 +73,7 @@ begin test "LC_MESSAGES affects message processing"
   expect_stdout "LC_MESSAGES=.*test_EPTY.UTF-8.*"
 end test "LC_MESSAGES affects message processing"
 
-requirement "SHALL-XBD-8-3007" doc="If LC_ALL is defined and not null, its value shall be used"
+requirement "SHALL-XBD-8-3007" doc="If the LC_ALL environment variable is defined and is not null, the value of LC_ALL shall be used."
 
 begin test "LC_ALL overrides all LC_* variables"
   setenv "LANG" "C"
@@ -90,7 +90,7 @@ begin test "LC_ALL overrides all LC_* variables"
   expect_stdout "alpha_match"
 end test "LC_ALL overrides all LC_* variables"
 
-requirement "SHALL-XBD-8-3008" doc="If LC_* is defined and not null, it shall be used for the corresponding category"
+requirement "SHALL-XBD-8-3008" doc="If the LC_* environment variable ( LC_COLLATE , LC_CTYPE , LC_MESSAGES , LC_MONETARY , LC_NUMERIC , LC_TIME ) is defined and is not null, the value of the environment variable shall be used to initialize the category that corresponds to the environment variable."
 
 begin test "individual LC_* variables override LANG"
   setenv "LC_ALL" ""
@@ -105,7 +105,7 @@ begin test "individual LC_* variables override LANG"
   expect_stdout "alpha_match"
 end test "individual LC_* variables override LANG"
 
-requirement "SHALL-XBD-8-3009" doc="If LANG is defined and not null, its value shall be used"
+requirement "SHALL-XBD-8-3009" doc="If the LANG environment variable is defined and is not null, the value of the LANG environment variable shall be used."
 
 begin test "LANG provides fallback locale"
   setenv "LC_ALL" ""
@@ -123,7 +123,7 @@ end test "LANG provides fallback locale"
 # XBD 8: LANGUAGE variable
 # ==============================================================================
 
-requirement "SHALL-XBD-8-3001" doc="LANGUAGE examined for gettext message object lookup"
+requirement "SHALL-XBD-8-3001" doc="The LANGUAGE environment variable shall be examined to determine the messages object to be used for the gettext family of functions or the gettext and ngettext utilities if NLSPATH is not set or the evaluation of NLSPATH did not lead to a suitable messages object being found."
 
 begin test "LANGUAGE variable is recognized"
   setenv "LC_ALL" "test_EPTY.UTF-8"
@@ -138,7 +138,7 @@ end test "LANGUAGE variable is recognized"
 # Builtin locale boilerplate — builtins respect locale environment variables
 # ==============================================================================
 
-requirement "SHALL-ALIAS-1025" doc="Locale environment variables affect alias execution"
+requirement "SHALL-ALIAS-1025" doc="The following environment variables shall affect the execution of alias : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 
 begin test "alias respects locale env vars"
   setenv "LC_ALL" "test_EPTY.UTF-8"
@@ -149,7 +149,7 @@ begin test "alias respects locale env vars"
   expect_stdout ".*foo=.*bar.*"
 end test "alias respects locale env vars"
 
-requirement "SHALL-COMMAND-1028" doc="Locale environment variables affect command execution"
+requirement "SHALL-COMMAND-1028" doc="The following environment variables shall affect the execution of command : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 
 begin test "command respects locale env vars"
   setenv "LC_ALL" "test_EPTY.UTF-8"
@@ -159,7 +159,7 @@ begin test "command respects locale env vars"
   expect_stdout "hello"
 end test "command respects locale env vars"
 
-requirement "SHALL-GETOPTS-1036" doc="Locale environment variables affect getopts execution"
+requirement "SHALL-GETOPTS-1036" doc="The following environment variables shall affect the execution of getopts : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 
 begin test "getopts respects locale env vars"
   setenv "LC_ALL" "test_EPTY.UTF-8"
@@ -171,7 +171,7 @@ begin test "getopts respects locale env vars"
   expect_stdout "a value"
 end test "getopts respects locale env vars"
 
-requirement "SHALL-HASH-1037" doc="Locale environment variables affect hash execution"
+requirement "SHALL-HASH-1037" doc="The following environment variables shall affect the execution of hash : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 
 begin test "hash respects locale env vars"
   setenv "LC_ALL" "test_EPTY.UTF-8"
@@ -182,7 +182,7 @@ begin test "hash respects locale env vars"
   expect_stdout "ok"
 end test "hash respects locale env vars"
 
-requirement "SHALL-JOBS-1038" doc="Locale environment variables affect jobs execution"
+requirement "SHALL-JOBS-1038" doc="The following environment variables shall affect the execution of jobs : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 
 begin interactive test "jobs respects locale env vars"
   spawn -i
@@ -198,7 +198,7 @@ begin interactive test "jobs respects locale env vars"
   wait
 end interactive test "jobs respects locale env vars"
 
-requirement "SHALL-KILL-1040" doc="Locale environment variables affect kill execution"
+requirement "SHALL-KILL-1040" doc="The following environment variables shall affect the execution of kill : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 
 begin test "kill respects locale env vars"
   setenv "LC_ALL" "test_EPTY.UTF-8"
@@ -208,7 +208,7 @@ begin test "kill respects locale env vars"
   expect_stdout ".*HUP.*"
 end test "kill respects locale env vars"
 
-requirement "SHALL-TYPE-1042" doc="Locale environment variables affect type execution"
+requirement "SHALL-TYPE-1042" doc="The following environment variables shall affect the execution of type : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 
 begin test "type respects locale env vars"
   setenv "LC_ALL" "test_EPTY.UTF-8"
@@ -218,7 +218,7 @@ begin test "type respects locale env vars"
   expect_stdout ".*echo.*"
 end test "type respects locale env vars"
 
-requirement "SHALL-ULIMIT-1043" doc="Locale environment variables affect ulimit execution"
+requirement "SHALL-ULIMIT-1043" doc="The following environment variables shall affect the execution of ulimit : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 
 begin test "ulimit respects locale env vars"
   setenv "LC_ALL" "test_EPTY.UTF-8"
@@ -228,7 +228,7 @@ begin test "ulimit respects locale env vars"
   expect_stdout_line "[0-9]+|unlimited"
 end test "ulimit respects locale env vars"
 
-requirement "SHALL-UMASK-1045" doc="Locale environment variables affect umask execution"
+requirement "SHALL-UMASK-1045" doc="The following environment variables shall affect the execution of umask : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 
 begin test "umask respects locale env vars"
   setenv "LC_ALL" "test_EPTY.UTF-8"
@@ -238,7 +238,7 @@ begin test "umask respects locale env vars"
   expect_stdout_line "[0-7][0-7][0-7][0-7]"
 end test "umask respects locale env vars"
 
-requirement "SHALL-UNALIAS-1046" doc="Locale environment variables affect unalias execution"
+requirement "SHALL-UNALIAS-1046" doc="The following environment variables shall affect the execution of unalias : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 
 begin test "unalias respects locale env vars"
   setenv "LC_ALL" "test_EPTY.UTF-8"
@@ -250,7 +250,7 @@ begin test "unalias respects locale env vars"
   expect_stdout "ok"
 end test "unalias respects locale env vars"
 
-requirement "SHALL-WAIT-1047" doc="Locale environment variables affect wait execution"
+requirement "SHALL-WAIT-1047" doc="The following environment variables shall affect the execution of wait : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 
 begin test "wait respects locale env vars"
   setenv "LC_ALL" "test_EPTY.UTF-8"
@@ -261,8 +261,8 @@ begin test "wait respects locale env vars"
   expect_stdout "ok"
 end test "wait respects locale env vars"
 
-requirement "SHALL-BG-1027" doc="Locale environment variables affect bg execution"
-requirement "SHALL-BG-1030" doc="Locale environment variables affect bg execution (XCU)"
+requirement "SHALL-BG-1027" doc="The following environment variables shall affect the execution of bg : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
+requirement "SHALL-BG-1030" doc="ENVIRONMENT VARIABLES The following environment variables shall affect the execution of bg : LANG Provide a default value for the internationalization variables that are unset or null."
 
 begin interactive test "bg respects locale env vars"
   spawn -i
@@ -282,8 +282,8 @@ begin interactive test "bg respects locale env vars"
   wait
 end interactive test "bg respects locale env vars"
 
-requirement "SHALL-FG-1034" doc="Locale environment variables affect fg execution"
-requirement "SHALL-FG-1048" doc="Locale environment variables affect fg execution (XCU)"
+requirement "SHALL-FG-1034" doc="The following environment variables shall affect the execution of fg : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
+requirement "SHALL-FG-1048" doc="ENVIRONMENT VARIABLES The following environment variables shall affect the execution of fg : LANG Provide a default value for the internationalization variables that are unset or null."
 
 begin interactive test "fg respects locale env vars"
   spawn -i
@@ -304,7 +304,7 @@ begin interactive test "fg respects locale env vars"
   wait
 end interactive test "fg respects locale env vars"
 
-requirement "SHALL-ENVIRONMENT-VARIABLES-5005" doc="Locale environment variables affect echo execution"
+requirement "SHALL-ENVIRONMENT-VARIABLES-5005" doc="The following environment variables shall affect the execution of echo : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 
 begin test "echo respects locale env vars"
   setenv "LC_ALL" "test_EPTY.UTF-8"
@@ -314,7 +314,7 @@ begin test "echo respects locale env vars"
   expect_stdout "hello world"
 end test "echo respects locale env vars"
 
-requirement "SHALL-ENVIRONMENT-VARIABLES-5023" doc="Locale environment variables affect printf execution"
+requirement "SHALL-ENVIRONMENT-VARIABLES-5023" doc="The following environment variables shall affect the execution of printf : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 
 begin test "printf respects locale env vars"
   setenv "LC_ALL" "test_EPTY.UTF-8"
@@ -324,7 +324,7 @@ begin test "printf respects locale env vars"
   expect_stdout "test"
 end test "printf respects locale env vars"
 
-requirement "SHALL-ENVIRONMENT-VARIABLES-5024" doc="LC_NUMERIC affects printf numeric formatting"
+requirement "SHALL-ENVIRONMENT-VARIABLES-5024" doc="It shall affect the format of numbers written using the e , E , f , g , and G conversion specifier characters (if supported)."
 
 begin test "printf numeric formatting with LC_NUMERIC"
   setenv "LC_ALL" "test_EPTY.UTF-8"
@@ -334,7 +334,7 @@ begin test "printf numeric formatting with LC_NUMERIC"
   expect_stdout_line "[0-9]+[.,][0-9]+"
 end test "printf numeric formatting with LC_NUMERIC"
 
-requirement "SHALL-ENVIRONMENT-VARIABLES-5062" doc="Locale environment variables affect pwd execution"
+requirement "SHALL-ENVIRONMENT-VARIABLES-5062" doc="The following environment variables shall affect the execution of pwd : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 
 begin test "pwd respects locale env vars"
   setenv "LC_ALL" "test_EPTY.UTF-8"
@@ -344,7 +344,7 @@ begin test "pwd respects locale env vars"
   expect_stdout "/.*"
 end test "pwd respects locale env vars"
 
-requirement "SHALL-ENVIRONMENT-VARIABLES-5074" doc="Locale environment variables affect test execution"
+requirement "SHALL-ENVIRONMENT-VARIABLES-5074" doc="The following environment variables shall affect the execution of test : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 
 begin test "test respects locale env vars"
   setenv "LC_ALL" "test_EPTY.UTF-8"

@@ -2,7 +2,9 @@ use std::env;
 use std::error::Error;
 use std::fmt::Write as _;
 use std::fs;
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 #[derive(Clone, Debug)]
 enum Node {
@@ -31,6 +33,9 @@ struct ParsedTag {
     self_closing: bool,
 }
 
+static CURRENT_INPUT_PATH: OnceLock<PathBuf> = OnceLock::new();
+static HEADING_SLUG_CACHE: OnceLock<Mutex<HashMap<PathBuf, HashMap<String, String>>>> = OnceLock::new();
+
 fn main() {
     if let Err(err) = run() {
         eprintln!("error: {err}");
@@ -45,6 +50,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     if args.next().is_some() {
         return Err("usage: html_to_md <input.html> <output.md>".into());
     }
+
+    let input_path = PathBuf::from(&input);
+    let _ = CURRENT_INPUT_PATH.set(input_path);
 
     let html = fs::read_to_string(&input)?;
     let document = parse_html(&html);
@@ -862,6 +870,116 @@ fn find_first_element<'a>(element: &'a Element, name: &str) -> Option<&'a Elemen
     None
 }
 
+fn extract_heading_anchor(element: &Element) -> Option<String> {
+    attr_value(element, "id")
+        .or_else(|| attr_value(element, "name"))
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            element.children.iter().find_map(|child| {
+                let Node::Element(child_element) = child else {
+                    return None;
+                };
+                if child_element.name != "a" {
+                    return None;
+                }
+                attr_value(child_element, "id")
+                    .or_else(|| attr_value(child_element, "name"))
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+        })
+}
+
+fn collect_heading_anchor_slugs(document: &Node) -> HashMap<String, String> {
+    let mut mappings = HashMap::new();
+    let mut slug_counts: HashMap<String, usize> = HashMap::new();
+    collect_heading_anchor_slugs_into(document, &mut mappings, &mut slug_counts);
+    mappings
+}
+
+fn collect_heading_anchor_slugs_into(
+    node: &Node,
+    mappings: &mut HashMap<String, String>,
+    slug_counts: &mut HashMap<String, usize>,
+) {
+    let Node::Element(element) = node else {
+        return;
+    };
+
+    if is_heading_tag(&element.name) {
+        if let Some(anchor) = extract_heading_anchor(element) {
+            let text = normalize_inline(&render_inline_children(&element.children));
+            if !text.is_empty() {
+                let base_slug = slugify_heading(&text);
+                if !base_slug.is_empty() {
+                    let count = slug_counts.entry(base_slug.clone()).or_insert(0);
+                    let slug = if *count == 0 {
+                        base_slug
+                    } else {
+                        format!("{}-{}", base_slug, *count)
+                    };
+                    *count += 1;
+                    mappings.insert(anchor, slug);
+                }
+            }
+        }
+    }
+
+    for child in &element.children {
+        collect_heading_anchor_slugs_into(child, mappings, slug_counts);
+    }
+}
+
+fn slugify_heading(text: &str) -> String {
+    let mut slug = String::new();
+    let mut last_was_dash = false;
+
+    for ch in text.chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch.to_ascii_lowercase());
+            last_was_dash = false;
+        } else if ch.is_whitespace() || ch == '-' {
+            if !slug.is_empty() && !last_was_dash {
+                slug.push('-');
+                last_was_dash = true;
+            }
+        }
+    }
+
+    slug.trim_matches('-').to_string()
+}
+
+fn heading_slug_for_href(href: &str) -> Option<String> {
+    let current_input = CURRENT_INPUT_PATH.get()?;
+    let (path_part, anchor) = match href.split_once('#') {
+        Some((path, anchor)) => (path, anchor),
+        None => ("", ""),
+    };
+    if anchor.is_empty() {
+        return None;
+    }
+
+    let target_path = if path_part.is_empty() {
+        current_input.clone()
+    } else if path_part.ends_with(".html") {
+        current_input.parent()?.join(path_part)
+    } else {
+        return None;
+    };
+
+    let cache = HEADING_SLUG_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cache = cache.lock().ok()?;
+    if !cache.contains_key(&target_path) {
+        let html = fs::read_to_string(&target_path).ok()?;
+        let document = parse_html(&html);
+        let mappings = collect_heading_anchor_slugs(&document);
+        cache.insert(target_path.clone(), mappings);
+    }
+
+    cache.get(&target_path)?.get(anchor).cloned()
+}
+
 fn find_first_element_text(node: &Node, name: &str) -> Option<String> {
     match node {
         Node::Text(_) => None,
@@ -1444,6 +1562,7 @@ fn rewrite_posix_href(href: &str) -> String {
         return href.to_string();
     };
 
+    let rewritten_anchor = heading_slug_for_href(href).unwrap_or_else(|| anchor.to_string());
     let rewritten_path = if path.ends_with(".html") {
         format!("{}{}", &path[..path.len() - 5], ".md")
     } else {
@@ -1451,9 +1570,9 @@ fn rewrite_posix_href(href: &str) -> String {
     };
 
     if rewritten_path.is_empty() {
-        format!("#{anchor}")
+        format!("#{rewritten_anchor}")
     } else {
-        format!("{rewritten_path}#{anchor}")
+        format!("{rewritten_path}#{rewritten_anchor}")
     }
 }
 

@@ -4,8 +4,8 @@ testsuite "Shell Execution Environment (Subshells)"
 # Subshell Parsing and Status
 # ==============================================================================
 
-requirement "SHALL-2-9-4-1-346" doc="Variable assignments and built-in commands that affect the environment shall not remain in effect after the list finishes"
-requirement "SHALL-2-9-4-1-1-348" doc="The exit status of a grouping command shall be the exit status of compound-list"
+requirement "SHALL-2-9-4-1-346" doc="Variable assignments and built-in commands that affect the environment shall not remain in effect after the list finishes."
+requirement "SHALL-2-9-4-1-1-348" doc="The exit status of a grouping command shall be the exit status of compound-list ."
 
 begin test "subshell false propagates exit status"
   begin script
@@ -19,9 +19,9 @@ end test "subshell false propagates exit status"
 # Subshell Isolation
 # ==============================================================================
 
-requirement "SHALL-2-13-471" doc="A subshell environment shall be created as a duplicate of the shell environment"
-requirement "SHALL-2-13-473" doc="Changes made to the subshell environment shall not affect the shell environment"
-requirement "SHALL-2-13-474" doc="Command substitution, commands that are grouped with parentheses, and asynchronous AND-OR lists shall be executed in a subshell environment"
+requirement "SHALL-2-13-471" doc="A subshell environment shall be created as a duplicate of the shell environment, except that: Unless specified otherwise (see trap ), traps that are not being ignored shall be set to the default action."
+requirement "SHALL-2-13-473" doc="Changes made to the subshell environment shall not affect the shell environment."
+requirement "SHALL-2-13-474" doc="Command substitution, commands that are grouped with parentheses, and asynchronous AND-OR lists shall be executed in a subshell environment."
 
 begin test "parent variable visible in subshell but changes do not propagate"
   begin script
@@ -32,6 +32,7 @@ begin test "parent variable visible in subshell but changes do not propagate"
   expect_stdout "parent\nchild\nparent"
 end test "parent variable visible in subshell but changes do not propagate"
 
+requirement "SHALL-2-13-471" doc="A subshell environment shall be created as a duplicate of the shell environment, except that: Unless specified otherwise (see trap ), traps that are not being ignored shall be set to the default action."
 begin test "command substitution isolation"
   begin script
     var="parent"
@@ -41,6 +42,7 @@ begin test "command substitution isolation"
   expect_stdout "child parent"
 end test "command substitution isolation"
 
+requirement "SHALL-2-9-3-319" doc="For example, both of the following commands write solely bar to standard output: false && echo foo || echo bar true || echo foo && echo bar A ';' separator or a ';' or <newline> terminator shall cause the preceding AND-OR list to be executed sequentially; an '&' separator or terminator shall cause asynchronous execution of the preceding AND-OR list."
 begin test "asynchronous list isolation"
   begin script
     var="parent"
@@ -55,7 +57,7 @@ end test "asynchronous list isolation"
 # Current Environment Execution
 # ==============================================================================
 
-requirement "SHALL-2-13-475" doc="Except where otherwise stated, all other commands shall be executed in the current shell environment"
+requirement "SHALL-2-13-475" doc="Except where otherwise stated, all other commands shall be executed in the current shell environment."
 
 begin test "group commands execute in current environment"
   begin script
@@ -66,6 +68,7 @@ begin test "group commands execute in current environment"
   expect_stdout "child\nchild"
 end test "group commands execute in current environment"
 
+requirement "SHALL-2-11-435" doc="For each pipeline in a foreground job, if the pipeline is executed while the list is still a foreground job, the set of processes comprising the pipeline, and any processes descended from it, shall all be in the same process group, unless the shell executes some of the commands in the pipeline in the current shell execution environment and others in a subshell environment; in this case the process group ID of the current shell need not change (or cannot change if it is the session leader), and consequently the process group ID that the other processes all share may differ from the process group ID of the current shell (which means that a SIGSTOP, SIGTSTP, SIGTTIN, or SIGTTOU signal sent to one of those process groups does not cause the whole pipeline to stop)."
 begin test "if construct executes in current environment"
   begin script
     var="parent"
@@ -81,7 +84,7 @@ end test "if construct executes in current environment"
 # Utility Invocations
 # ==============================================================================
 
-requirement "SHALL-2-13-469" doc="The environment of the shell process shall not be changed by the utility unless explicitly specified by the utility description"
+requirement "SHALL-2-13-469" doc="The environment of the shell process shall not be changed by the utility unless explicitly specified by the utility description (for example, cd and umask )."
 
 begin test "external cd does not change parent working directory"
   begin script
