@@ -38,6 +38,7 @@ requirement "SHALL-ALIAS-1053" doc="An alias definition provides a string value 
 # alias definition and usage into distinct complete_commands.
 
 requirement "SHALL-ALIAS-1053" doc="An alias definition provides a string value that shall replace a command name when it is encountered."
+requirement "SHALL-2-3-1-057" doc="An alias with that name is in effect."
 begin test "alias definition replaces command name"
   begin script
     alias greet="echo hello world"
@@ -96,6 +97,7 @@ begin test "alias in subshell does not leak to parent"
 end test "alias in subshell does not leak to parent"
 
 requirement "SHALL-ALIAS-1055" doc="When used as specified by this volume of POSIX.1-2024, the alias definition shall not affect the parent process of the current shell nor any utility environment invoked by the shell; see 2.13 Shell Execution Environment ."
+requirement "SHALL-2-3-1-055" doc="When used as specified by this volume of POSIX.1-2024, alias definitions shall not be inherited by separate invocations of the shell or by the utility execution environments invoked by the shell; see 2.13 Shell Execution Environment ."
 begin test "alias in child shell does not leak to parent"
   begin script
     $SHELL -c 'alias outer_leak="echo LEAKED"' 2>/dev/null

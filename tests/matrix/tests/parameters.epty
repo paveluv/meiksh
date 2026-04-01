@@ -99,6 +99,71 @@ begin test "$0 expands to shell or script name"
   expect_stdout "custom_name"
 end test "$0 expands to shell or script name"
 
+requirement "SHALL-2-5-060" doc="A parameter can be denoted by a name, a number, or one of the special characters listed in 2.5.2 Special Parameters."
+begin test "parameters can be referenced by name number and special character"
+  begin script
+    $SHELL -c 'set -- p1 p2; var=NAME; echo "$var|$1|$#"'
+  end script
+  expect_stdout "NAME|p1|2"
+end test "parameters can be referenced by name number and special character"
+
+requirement "SHALL-2-5-061" doc="A variable is a parameter denoted by a name."
+begin test "variable is parameter referenced by name"
+  begin script
+    named_value=abc
+    echo "$named_value"
+  end script
+  expect_stdout "abc"
+end test "variable is parameter referenced by name"
+
+requirement "SHALL-2-5-062" doc="A parameter is set if it has an assigned value (null is a valid value)."
+begin test "null assignment still means parameter is set"
+  begin script
+    empty=
+    unset missing
+    [ "${empty+SET}" = "SET" ] && echo empty_set
+    [ "${missing+SET}" = "SET" ] || echo missing_unset
+  end script
+  expect_stdout "empty_set\nmissing_unset"
+end test "null assignment still means parameter is set"
+
+requirement "SHALL-2-5-063" doc="Once a variable is set, it can only be unset by using the unset special built-in command."
+begin test "assigned variable remains set until unset is used"
+  begin script
+    v=hello
+    v=
+    [ "${v+SET}" = "SET" ] && echo still_set
+    unset v
+    [ "${v+SET}" = "SET" ] || echo now_unset
+  end script
+  expect_stdout "still_set\nnow_unset"
+end test "assigned variable remains set until unset is used"
+
+requirement "SHALL-2-5-064" doc="Parameters can contain arbitrary byte sequences, except for the null byte."
+begin test "parameters preserve representative non-null bytes"
+  begin script
+    value=$(printf 'A\tB\nC')
+    printf '%s' "$value" | od -An -t x1 | tr -d ' \n'
+  end script
+  expect_stdout "4109420a43"
+end test "parameters preserve representative non-null bytes"
+
+requirement "SHALL-2-5-1-062" doc="A positional parameter is a parameter denoted by a decimal representation of a positive integer."
+begin test "positional parameters use positive integer indices"
+  begin script
+    $SHELL -c 'set -- first second; echo "$1,$2"'
+  end script
+  expect_stdout "first,second"
+end test "positional parameters use positive integer indices"
+
+requirement "SHALL-2-5-1-063" doc="Positional parameters are initially assigned when the shell is invoked (see sh), temporarily replaced when a shell function is invoked (see 2.9.5 Function Definition Command), and can be reassigned with the set special built-in command."
+begin test "positional parameters follow invocation function and set lifecycle"
+  begin script
+    $SHELL -c 'echo "init:$1"; set -- reset1 reset2; echo "after_set:$1"; f(){ echo "in_func:$1"; }; f funcarg; echo "after_func:$1"' sh invoked1 invoked2
+  end script
+  expect_stdout "init:invoked1\nafter_set:reset1\nin_func:funcarg\nafter_func:reset1"
+end test "positional parameters follow invocation function and set lifecycle"
+
 requirement "SHALL-2-5-1-060" doc="The digits denoting the positional parameters shall always be interpreted as a decimal value, even if there is a leading zero."
 requirement "SHALL-2-5-2-064" doc="If one of these conditions is true, the initial fields shall be retained as separate fields, except that if the parameter being expanded was embedded within a word, the first field shall be joined with the beginning part of the original word and the last field shall be joined with the end part of the original word."
 requirement "SHALL-2-5-2-065" doc="If there are no positional parameters, the expansion of '@' shall generate zero fields, even when '@' is within double-quotes; however, if the expansion is embedded within a word which contains one or more other parts that expand to a quoted null string, these null string(s) shall still produce an empty field, except that if the other parts are all within the same double-quotes as the '@' , it is unspecified whether the result is zero fields or one empty field."

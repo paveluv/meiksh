@@ -436,6 +436,7 @@ end test "case/esac reserved words"
 
 requirement "SHALL-2-3-1-053" doc="An implementation may defer the effect of a change to an alias but the change shall take effect no later than the completion of the currently executing complete_command (see 2.10 Shell Grammar )."
 requirement "SHALL-V3CHAP02-1001-DUP51" doc="If the value of the alias replacing the TOKEN ends in a <blank> that would be unquoted after substitution, and optionally if it ends in a <blank> that would be quoted after substitution, the shell shall check the next token in the input, if it is a TOKEN , for alias substitution; this process shall continue until a TOKEN is found that is not a valid alias or an alias value does not end in such a <blank>."
+requirement "SHALL-2-3-1-059" doc="Either the TOKEN is being considered for alias substitution because it follows an alias substitution whose replacement value ended with a <blank> (see below) or the TOKEN could be parsed as the command name word of a simple command (see 2.10 Shell Grammar), based on this TOKEN and the tokens (if any) that preceded it, but ignoring whether any subsequent characters would allow that."
 begin test "alias trailing blank triggers expansion of next word"
   begin script
     alias myalias="echo "
