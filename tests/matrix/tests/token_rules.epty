@@ -34,6 +34,7 @@ end test ">> forms a single append operator"
 
 requirement "SHALL-2-3-047" doc="If the current character is an unquoted <blank>, any token containing the previous character is delimited and the current character shall be discarded."
 requirement "SHALL-2-3-048" doc="If the previous character was part of a word, the current character shall be appended to that word."
+requirement "SHALL-2-3-053" doc="The current character is used as the start of a new word."
 
 begin test "multiple blanks between words"
   begin script
@@ -48,6 +49,7 @@ end test "multiple blanks between words"
 # ==============================================================================
 
 requirement "SHALL-2-3-049" doc="If the current character is a '#' , it and all subsequent characters up to, but excluding, the next <newline> shall be discarded as a comment."
+requirement "SHALL-2-3-052" doc="The <newline> that ends the line is not considered part of the comment."
 
 begin test "comments ignored up to newline"
   begin script
