@@ -85,6 +85,62 @@ begin interactive test "PS1 expanded value is written to stderr"
   wait
 end interactive test "PS1 expanded value is written to stderr"
 
+requirement "SHALL-2-5-3-092" doc="An <exclamation-mark> character escaped by another <exclamation-mark> character (that is, \"!!\" ) shall expand to a single <exclamation-mark> character."
+begin interactive test "PS1 double exclamation becomes single literal exclamation"
+  spawn -i
+  expect "$ "
+  send "PS1='bang!!> '"
+  expect "bang!> "
+  sendeof
+  wait
+end interactive test "PS1 double exclamation becomes single literal exclamation"
+
+requirement "SHALL-V3CHAP02-1005" doc="The processing of the PS2 shell variable shall be supported if the system supports the User Portability Utilities option."
+requirement "SHALL-2-5-3-095" doc="The default value shall be \"> \" ."
+begin interactive test "PS2 default continuation prompt is greater-than space"
+  spawn -i
+  expect "$ "
+  send "echo \\\n"
+  expect "> "
+  send "ok\n"
+  expect "ok"
+  sendeof
+  wait
+end interactive test "PS2 default continuation prompt is greater-than space"
+
+requirement "SHALL-2-5-3-093" doc="Each time the user enters a <newline> prior to completing a command line in an interactive shell, the value of this variable shall be subjected to parameter expansion (see 2.6.2 Parameter Expansion )."
+requirement "SHALL-V3CHAP02-1005" doc="The processing of the PS2 shell variable shall be supported if the system supports the User Portability Utilities option."
+requirement "SHALL-2-5-3-094" doc="For PS2, after expansion, the value shall be written to standard error."
+begin interactive test "PS2 parameter expansion is used for continuation prompt"
+  spawn -i
+  expect "$ "
+  send "MYPS2=cont"
+  expect "$ "
+  send "PS2='${MYPS2}> '"
+  expect "$ "
+  send "echo \\\n"
+  expect "cont> "
+  send "ok\n"
+  expect "ok"
+  sendeof
+  wait
+end interactive test "PS2 parameter expansion is used for continuation prompt"
+
+requirement "SHALL-2-5-3-094" doc="For PS2, after expansion, the value shall be written to standard error."
+begin test "PS2 prompt text is emitted to stderr stream"
+  begin script
+    $SHELL -i > ps2_stdout.txt 2> ps2_stderr.txt <<'EOF'
+    PS2='cont> '
+    : \
+
+    exit
+    EOF
+    grep -q 'cont> ' ps2_stderr.txt && echo stderr_ok || echo stderr_missing
+    grep -q 'cont> ' ps2_stdout.txt && echo stdout_leak || echo stdout_clean
+  end script
+  expect_stdout "stderr_ok\nstdout_clean"
+end test "PS2 prompt text is emitted to stderr stream"
+
 
 # ==============================================================================
 # Terminal Erase and Kill

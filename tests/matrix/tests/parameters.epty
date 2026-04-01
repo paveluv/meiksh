@@ -27,7 +27,6 @@ end test "$* and $@ without quotes split on IFS"
 
 requirement "SHALL-2-5-2-067" doc="When the expansion occurs in a context where field splitting will not be performed, the initial fields shall be joined to form a single field with the value of each parameter separated by the first character of the IFS variable if IFS contains at least one character, or separated by a <space> if IFS is unset, or with no separation if IFS is set to a null string."
 requirement "SHALL-2-5-3-092" doc="An <exclamation-mark> character escaped by another <exclamation-mark> character (that is, \"!!\" ) shall expand to a single <exclamation-mark> character."
-requirement "SHALL-2-5-3-078" doc="This variable, when and only when an interactive shell is invoked, shall be subjected to parameter expansion (see 2.6.2 Parameter Expansion ) by the shell and the resulting value shall be used as a pathname of a file."
 begin test "quoted $* is single string, quoted $@ is distinct args"
   begin script
     $SHELL -c 'for i in "$*"; do echo "$i"; done; for i in "$@"; do echo "$i"; done' sh a b c
@@ -68,6 +67,7 @@ begin test "? reflects most recent pipeline status"
 end test "? reflects most recent pipeline status"
 
 requirement "SHALL-2-5-2-078" doc="'-' (hyphen) expands to the current option flags as single-letter option names concatenated into a string as specified on invocation, by set, or implicitly by the shell; it is unspecified whether -c and -s are included in '$-'."
+requirement "SHALL-2-5-2-072" doc="The -i option shall be included in \"$-\" if the shell is interactive, regardless of whether it was specified on invocation."
 begin test "$- includes options enabled by set"
   begin script
     $SHELL -c 'set -u; case "$-" in (*u*) echo has_u;; (*) echo missing;; esac'
@@ -140,6 +140,7 @@ begin test "assigned variable remains set until unset is used"
 end test "assigned variable remains set until unset is used"
 
 requirement "SHALL-2-5-064" doc="Parameters can contain arbitrary byte sequences, except for the null byte."
+requirement "SHALL-2-5-059" doc="The shell shall process their values as characters only when performing operations that are described in this standard in terms of characters."
 begin test "parameters preserve representative non-null bytes"
   begin script
     value=$(printf 'A\tB\nC')
@@ -176,7 +177,6 @@ end test "$@ with no positional params generates zero fields"
 
 requirement "SHALL-2-5-2-062" doc="Listed below are the special parameters and the values to which they shall expand."
 requirement "SHALL-2-5-2-068" doc="The command name (parameter 0) shall not be counted in the number given by '#' because it is a special parameter, not a positional parameter."
-requirement "SHALL-2-5-3-080" doc="ENV shall be ignored if the user's real and effective user IDs or real and effective group IDs are different."
 begin test "$# counts positional parameters not including $0"
   begin script
     $SHELL -c 'echo "$#"' sh a b c
@@ -225,6 +225,22 @@ begin test "environment variable is visible via env"
   expect_stdout "exported"
 end test "environment variable is visible via env"
 
+requirement "SHALL-2-5-3-075" doc="Shell variables shall be initialized only from environment variables that have valid names."
+begin test "invalid environment names are not initialized as shell variables"
+  begin script
+    env 'BAD-NAME=bad' GOOD_NAME=good $SHELL -c 'echo "$GOOD_NAME"; set | grep -q "^BAD-NAME=" && echo bad || echo ok'
+  end script
+  expect_stdout "good\nok"
+end test "invalid environment names are not initialized as shell variables"
+
+requirement "SHALL-2-5-3-076" doc="If a variable is initialized from the environment, it shall be marked for export immediately; see the export special built-in."
+begin test "environment-initialized variable is exported to child process"
+  begin script
+    FOO_FROM_ENV=bar $SHELL -c 'env | grep -q "^FOO_FROM_ENV=bar$" && echo exported'
+  end script
+  expect_stdout "exported"
+end test "environment-initialized variable is exported to child process"
+
 requirement "SHALL-2-5-3-090" doc="The default value shall be \"$ \" ."
 requirement "SHALL-2-5-3-095" doc="The default value shall be \"> \" ."
 requirement "SHALL-2-5-3-081" doc="If IFS is not set, it shall behave as normal for an unset variable, except that field splitting by the shell and line splitting by the read utility shall be performed as if the value of IFS is <space><tab><newline>; see 2.6.5 Field Splitting ."
@@ -248,7 +264,7 @@ end test "PPID same in subshell"
 
 requirement "SHALL-2-5-3-096" doc="When an execution trace ( set -x ) is being performed, before each line in the execution trace, the value of this variable shall be subjected to parameter expansion (see 2.6.2 Parameter Expansion )."
 requirement "SHALL-2-5-3-098" doc="The default value shall be \"+ \" ."
-requirement "SHALL-2-5-3-079" doc="Before any interactive commands are read, the shell shall tokenize (see 2.3 Token Recognition ) the contents of the file, parse the tokens as a program (see 2.10 Shell Grammar ), and execute the resulting commands in the current environment. (In other words, the contents of the ENV file are not parsed as a single compound_list ."
+requirement "SHALL-2-5-3-097" doc="For PS4, after expansion, the value shall be written to standard error."
 begin test "set -x traces commands with default PS4 prefix"
   begin script
     set -x
@@ -278,6 +294,16 @@ begin test "PWD is set to current working directory"
   expect_stdout "ok"
 end test "PWD is set to current working directory"
 
+requirement "SHALL-2-5-3-099" doc="In the shell the value shall be initialized from the environment as follows."
+requirement "SHALL-2-5-3-100" doc="If a value for PWD is passed to the shell in the environment when it is executed, the value is an absolute pathname of the current working directory that is no longer than {PATH_MAX} bytes including the terminating null byte, and the value does not contain any components that are dot or dot-dot, then the shell shall set PWD to the value from the environment."
+begin test "PWD is initialized from valid environment value"
+  begin script
+    cwd=$(pwd)
+    PWD="$cwd" $SHELL -c '[ "$PWD" = "$1" ] && echo from_env_ok' sh "$cwd"
+  end script
+  expect_stdout "from_env_ok"
+end test "PWD is initialized from valid environment value"
+
 requirement "SHALL-2-5-1-061" doc="When a positional parameter with more than one digit is specified, the application shall enclose the digits in braces (see 2.6.2 Parameter Expansion )."
 requirement "SHALL-2-5-3-085" doc="Each time an interactive shell is ready to read a command, the value of this variable shall be subjected to parameter expansion (see 2.6.2 Parameter Expansion ) and exclamation-mark expansion (see below)."
 requirement "SHALL-2-5-3-086" doc="After expansion, the value shall be written to standard error."
@@ -292,9 +318,9 @@ begin interactive test "PS1 parameter and exclamation-mark expansion"
   wait
 end interactive test "PS1 parameter and exclamation-mark expansion"
 
-requirement "SHALL-2-5-059" doc="The shell shall process their values as characters only when performing operations that are described in this standard in terms of characters."
-requirement "SHALL-2-5-2-072" doc="The -i option shall be included in \"$-\" if the shell is interactive, regardless of whether it was specified on invocation."
-requirement "SHALL-2-5-2-073" doc="In a subshell (see 2.13 Shell Execution Environment ), '$' shall expand to the same value as that of the current shell."
+requirement "SHALL-V3CHAP02-1002-DUP75" doc="The following variables shall affect the execution of the shell: ENV The processing of the ENV shell variable shall be supported if the system supports the User Portability Utilities option."
+requirement "SHALL-2-5-3-078" doc="This variable, when and only when an interactive shell is invoked, shall be subjected to parameter expansion (see 2.6.2 Parameter Expansion ) by the shell and the resulting value shall be used as a pathname of a file."
+requirement "SHALL-2-5-3-079" doc="Before any interactive commands are read, the shell shall tokenize (see 2.3 Token Recognition ) the contents of the file, parse the tokens as a program (see 2.10 Shell Grammar ), and execute the resulting commands in the current environment. (In other words, the contents of the ENV file are not parsed as a single compound_list ."
 begin test "ENV file processed for interactive shell"
   begin script
     _env_file=${TMPDIR:-/tmp}/_test_env_$$.sh
@@ -310,6 +336,19 @@ begin test "ENV file processed for interactive shell"
   end script
   expect_stdout_line ".*loaded.*"
 end test "ENV file processed for interactive shell"
+
+requirement "SHALL-2-5-3-078" doc="This variable, when and only when an interactive shell is invoked, shall be subjected to parameter expansion (see 2.6.2 Parameter Expansion ) by the shell and the resulting value shall be used as a pathname of a file."
+begin test "ENV is ignored for non-interactive shell"
+  begin script
+    _env_file=${TMPDIR:-/tmp}/_test_env_noninteractive_$$.sh
+    echo 'echo env_ran_noninteractive' > "$_env_file"
+    ENV=$_env_file $SHELL -c 'echo done'
+    rc=$?
+    rm -f "$_env_file"
+    exit $rc
+  end script
+  expect_stdout "done"
+end test "ENV is ignored for non-interactive shell"
 
 requirement "SHALL-2-5-2-063" doc="When the expansion occurs in a context where field splitting will be performed, any empty fields may be discarded and each of the non-empty fields shall be further split as described in 2.6.5 Field Splitting ."
 requirement "SHALL-2-5-2-070" doc="The value of the special parameter '?' shall be set to 0 during initialization of the shell."

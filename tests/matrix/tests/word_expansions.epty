@@ -673,7 +673,6 @@ requirement "SHALL-2-6-6-187" doc="After field splitting, if set -f is not in ef
 
 # We test that `*` expands to files.
 
-requirement "SHALL-2-5-3-078" doc="This variable, when and only when an interactive shell is invoked, shall be subjected to parameter expansion (see 2.6.2 Parameter Expansion ) by the shell and the resulting value shall be used as a pathname of a file."
 begin test "pathname expansion with glob"
   begin script
     touch tmp_path_exp.txt
