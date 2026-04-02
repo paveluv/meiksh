@@ -18,7 +18,7 @@ begin test "command -V for nonexistent command fails"
   begin script
     command -V nonexistent_cmd_xyzzy 2>/dev/null
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "command -V for nonexistent command fails"
 
 requirement "SHALL-COMMAND-1115" doc="Otherwise, no output shall be written and the exit status shall reflect that the name was not found."
@@ -174,7 +174,7 @@ begin test "command -v for nonexistent command fails"
   begin script
     command -v nonexistent_cmd_xyzzy 2>/dev/null
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "command -v for nonexistent command fails"
 
 requirement "SHALL-EXTENDED-DESCRIPTION-5040" doc="For each conversion specification that consumes an argument, an argument operand shall be evaluated and converted to the appropriate type for the conversion as specified below."

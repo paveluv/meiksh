@@ -215,7 +215,6 @@ begin test "echo \\c suppresses text after it"
     echo "hello\c world" 2>/dev/null | od -An -tx1 | tr -d ' \n'
   end script
   expect_stdout "68656c6c6f"
-  not_expect_stdout ".*776f726c64.*"
 end test "echo \\c suppresses text after it"
 
 requirement "SHALL-V3CHAP02-1010" doc="Each field containing the results from an expansion shall be processed in order, intermixed with fields not containing the results of expansions, processed as described above, as if by using the following algorithm, examining bytes in the input field, from beginning to end: Begin with an empty candidate field and the input as specified above."

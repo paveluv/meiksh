@@ -91,7 +91,7 @@ begin test "setting limit to non-numeric string fails"
   begin script
     ulimit -f notanumber 2>/dev/null
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "setting limit to non-numeric string fails"
 
 # ==============================================================================

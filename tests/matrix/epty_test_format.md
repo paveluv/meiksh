@@ -73,10 +73,24 @@ enclosed in double quotes.
 |---|---|
 | `expect_stdout "pattern"` | stdout matches regex (full match) |
 | `expect_stderr "pattern"` | stderr matches regex (full match) |
-| `expect_exit_code N` | exit code equals N |
-| `not_expect_stdout "pattern"` | stdout does NOT match regex |
-| `not_expect_stderr "pattern"` | stderr does NOT match regex |
-| `not_expect_exit_code N` | exit code does NOT equal N |
+| `expect_exit_code <expr>` | exit code satisfies expression (see below) |
+
+#### Exit code expressions
+
+`expect_exit_code` accepts an expression that the actual exit code is
+tested against:
+
+| Expression | Meaning |
+|---|---|
+| `0` | exit code equals 0 (bare integer = exact match) |
+| `!=0` | exit code is not 0 |
+| `>0` | exit code is greater than 0 |
+| `>=128` | exit code is 128 or above |
+| `(>128 && <256) \|\| 1` | between 129-255 inclusive, or exactly 1 |
+
+Supported operators: `==`, `!=`, `>`, `<`, `>=`, `<=`.
+Combinators: `&&` (and), `||` (or). Parentheses for grouping.
+`&&` binds tighter than `||`.
 
 ### Assertion tips
 
@@ -88,9 +102,10 @@ enclosed in double quotes.
 - To match a substring within multi-line output, use `(.|\n)*` to cross
   newlines: `expect_stdout "(.|\n)*pattern(.|\n)*"`.
 - `expect_exit_code 0` is implicit if omitted — tests pass if exit code
-  is 0 and all assertions match. Use `not_expect_exit_code 0` to assert
+  is 0 and all assertions match. Use `expect_exit_code !=0` to assert
   failure.
 - `expect_stderr ""` asserts stderr is empty.
+- `expect_stderr ".+"` asserts stderr is non-empty.
 
 ### setenv
 
@@ -140,8 +155,6 @@ Note: `begin interactive test` / `end interactive test` (not plain
 | `expect timeout=2s "regex"` | Wait with custom timeout. |
 | `expect_line "regex"` | Wait for a complete line matching regex. |
 | `expect_line timeout=1s "regex"` | With custom timeout. |
-| `not_expect "regex"` | Assert regex does NOT match current output buffer. |
-| `not_expect timeout=500ms "regex"` | Watch for duration, fail if matched. |
 | `signal SIGNAME` | Send a signal (e.g. `signal SIGTSTP`). |
 | `sendeof` | Close the write side of the PTY (sends EOF). |
 | `wait` | Wait for child to exit. |
@@ -239,8 +252,17 @@ begin test "false returns non-zero"
   begin script
     false
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "false returns non-zero"
+```
+
+```
+begin test "signal exit code range"
+  begin script
+    kill -TERM $$
+  end script
+  expect_exit_code >128
+end test "signal exit code range"
 ```
 
 ### Testing stderr
@@ -250,7 +272,7 @@ begin test "syntax error produces stderr"
   begin script
     $SHELL -c 'if then' 2>&1
   end script
-  not_expect_stderr ""
+  expect_stderr ".+"
 end test "syntax error produces stderr"
 ```
 

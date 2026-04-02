@@ -180,8 +180,7 @@ begin test "subshell traps reset to default"
     trap "echo parent_trap" USR1
     (trap "echo subshell_trap" USR1; trap -p USR1)
   end script
-  not_expect_stdout ".*parent_trap.*"
-  expect_stdout ".*subshell_trap.*"
+  expect_stdout "trap -- .*subshell_trap.* USR1"
 end test "subshell traps reset to default"
 
 requirement "SHALL-READ-1280" doc="If read is called in a subshell or separate utility execution environment, such as one of the following: (read foo) nohup read ... find . -exec read ... \\; it shall not affect the shell variables in the caller's environment."
@@ -326,7 +325,7 @@ begin test "error in special built-in produces non-zero exit"
   begin script
     shift 999 2>/dev/null
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "error in special built-in produces non-zero exit"
 
 requirement "SHALL-2-5-3-074" doc="Variables shall be initialized from the environment (as defined by XBD 8. Environment Variables and the exec function in the System Interfaces volume of POSIX.1-2024) and can be given new values with variable assignment commands. Shell variables shall be initialized only from environment variables that have valid names. If a variable is initialized from the environment, it shall be marked for export immediately; see the export special built-in."

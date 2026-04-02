@@ -67,9 +67,9 @@ begin interactive test "Oldest history entries are deleted first"
   send "echo cmd4"
   expect "cmd4"
   expect "$ "
-  send "fc -l -2 -1"
-  expect "cmd4"
-  not_expect "cmd1"
+  send "fc -l -2 -1 | grep -c cmd1 || true; echo end_hist_check"
+  expect "0"
+  expect "end_hist_check"
   expect "$ "
   sendeof
   wait

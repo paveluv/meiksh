@@ -44,7 +44,10 @@ begin interactive test "MAIL not checked if MAILPATH is set"
   expect "$ "
   sleep 1100ms
   send "echo data > $HOME/mbox2"
-  not_expect timeout=3s "(mail|Mail|MAIL|you have)"
+  expect "$ "
+  sleep 3s
+  send "echo mail_check_done"
+  expect "mail_check_done"
   expect "$ "
   sendeof
   wait

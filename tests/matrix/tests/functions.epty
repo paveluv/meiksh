@@ -28,7 +28,7 @@ begin test "redirection error on function call yields non-zero exit"
     myfunc > /invalid/dir/does/not/exist
     exit $?
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "redirection error on function call yields non-zero exit"
 
 requirement "SHALL-2-9-5-382" doc="When a function is executed, it shall have the syntax-error properties described for special built-in utilities in the first item in the enumerated list at the beginning of 2.15 Special Built-In Utilities ."
@@ -41,7 +41,7 @@ begin test "function with syntax error in body causes non-interactive shell to e
     myfunc 2>/dev/null
     echo "should not reach"
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "function with syntax error in body causes non-interactive shell to exit"
 
 # ==============================================================================

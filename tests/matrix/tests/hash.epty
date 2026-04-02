@@ -52,7 +52,7 @@ begin test "hash nonexistent utility fails"
   begin script
     hash nonexistent_utility_xyzzy 2>/dev/null
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "hash nonexistent utility fails"
 
 # ==============================================================================
@@ -143,9 +143,9 @@ begin test "function not in hash output"
   begin script
     myfunc() { echo hi; }
     hash -r
-    hash 2>&1
+    hash 2>&1 | grep -c myfunc || true
   end script
-  not_expect_stdout "(.|\n)*myfunc(.|\n)*"
+  expect_stdout "0"
 end test "function not in hash output"
 
 requirement "SHALL-HASH-1212" doc="Utilities provided as built-ins to the shell and functions shall not be reported by hash ."

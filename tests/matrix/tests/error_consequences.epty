@@ -13,7 +13,7 @@ begin test "syntax error causes non-interactive shell to exit"
     echo 'if true; echo "no_then"; fi; echo "survived"' > tmp_err1.sh
     $SHELL tmp_err1.sh 2>/dev/null
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "syntax error causes non-interactive shell to exit"
 
 requirement "SHALL-2-8-1-253" doc="The shell is not required to write a diagnostic message, but the utility itself shall write a diagnostic message if required to do so."

@@ -29,7 +29,7 @@ begin test "type with unknown name returns non-zero"
     type nonexistent_command_xyz 2>/dev/null
     echo $?
   end script
-  not_expect_stdout "0"
+  expect_stdout "[1-9][0-9]*"
 end test "type with unknown name returns non-zero"
 
 

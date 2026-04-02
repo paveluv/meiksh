@@ -335,7 +335,7 @@ begin test "read into readonly variable returns non-zero"
   begin script
     echo 'val' | { readonly rovar=locked; read rovar; }
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "read into readonly variable returns non-zero"
 
 requirement "SHALL-FC-1135" doc="If the editor returns a non-zero exit status, this shall suppress the entry into the history list and the command re-execution."
@@ -343,7 +343,7 @@ begin test "partial assignment with readonly second var returns non-zero"
   begin script
     echo 'a b' | { readonly second=locked; read first second; }
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "partial assignment with readonly second var returns non-zero"
 
 # ==============================================================================

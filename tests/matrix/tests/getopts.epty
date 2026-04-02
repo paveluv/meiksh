@@ -142,7 +142,7 @@ begin test "invalid option sets name to ?"
     $SHELL -c 'OPTIND=1; set -- -z; getopts ab name; echo "$name"'
   end script
   expect_stdout "\?"
-  not_expect_stderr ""
+  expect_stderr ".+"
 end test "invalid option sets name to ?"
 
 requirement "SHALL-GETOPTS-1206" doc="If an option is found that was not specified in optstring , this error is identified and the invalid option character shall be identified in the message."
@@ -167,7 +167,7 @@ begin test "missing argument sets name to ?"
     $SHELL -c 'OPTIND=1; set -- -f; getopts f: name; echo "$name"'
   end script
   expect_stdout "\?"
-  not_expect_stderr ""
+  expect_stderr ".+"
 end test "missing argument sets name to ?"
 
 requirement "SHALL-GETOPTS-1186" doc="If an option-argument is missing: If the first character of optstring is a <colon>, the shell variable specified by name shall be set to the <colon> character and the shell variable OPTARG shall be set to the option character found."
@@ -265,7 +265,7 @@ begin test "getopts returns non-zero with no options"
   begin script
     $SHELL -c 'OPTIND=1; set -- ; getopts a name'
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "getopts returns non-zero with no options"
 
 # ==============================================================================
@@ -332,7 +332,7 @@ begin test "diagnostic message written to stderr for unknown option"
   begin script
     $SHELL -c 'OPTIND=1; set -- -z; getopts ab name'
   end script
-  not_expect_stderr ""
+  expect_stderr ".+"
 end test "diagnostic message written to stderr for unknown option"
 
 requirement "SHALL-GETOPTS-1204" doc="Whenever an error is detected and the first character in the optstring operand is not a <colon> ( ':' ), a diagnostic message shall be written to standard error with the following information in an unspecified format: The invoking program name shall be identified in the message."
@@ -341,7 +341,7 @@ begin test "diagnostic message written to stderr for missing argument"
   begin script
     $SHELL -c 'OPTIND=1; set -- -f; getopts f: name'
   end script
-  not_expect_stderr ""
+  expect_stderr ".+"
 end test "diagnostic message written to stderr for missing argument"
 
 # ==============================================================================
@@ -465,8 +465,7 @@ begin test "readonly name variable causes return value greater than one"
   begin script
     $SHELL -c 'OPTIND=1; readonly name; set -- -a; getopts a name 2>/dev/null; echo $?'
   end script
-  not_expect_stdout "0"
-  not_expect_stdout "1"
+  expect_stdout "[2-9][0-9]*"
 end test "readonly name variable causes return value greater than one"
 
 # ==============================================================================

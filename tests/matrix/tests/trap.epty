@@ -73,7 +73,6 @@ begin test "trap with invalid signal returns non-zero"
     trap "" INVALID_SIGNAL_NAME_XYZ 2>/dev/null
     echo "rc=$?"
   end script
-  not_expect_stdout "rc=0"
   expect_stdout "rc=[1-9][0-9]*"
 end test "trap with invalid signal returns non-zero"
 

@@ -619,7 +619,7 @@ begin test "printf %d with non-numeric arg exits non-zero"
   begin script
     printf "%d" not_a_number 2>/dev/null
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "printf %d with non-numeric arg exits non-zero"
 
 requirement "SHALL-2-6-2-127" doc="If parameter is unset or null, the expansion of word (or a message indicating it is unset if word is omitted) shall be written to standard error and the shell exits with a non-zero exit status."
@@ -627,7 +627,7 @@ begin test "printf %d with trailing non-numeric exits non-zero"
   begin script
     printf "%d" 42abc 2>/dev/null
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "printf %d with trailing non-numeric exits non-zero"
 
 requirement "SHALL-2-6-2-127" doc="If parameter is unset or null, the expansion of word (or a message indicating it is unset if word is omitted) shall be written to standard error and the shell exits with a non-zero exit status."
@@ -635,7 +635,7 @@ begin test "printf %u with non-numeric arg exits non-zero"
   begin script
     printf "%u" xyz 2>/dev/null
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "printf %u with non-numeric arg exits non-zero"
 
 requirement "SHALL-2-6-2-127" doc="If parameter is unset or null, the expansion of word (or a message indicating it is unset if word is omitted) shall be written to standard error and the shell exits with a non-zero exit status."
@@ -643,7 +643,7 @@ begin test "printf %o with non-numeric arg exits non-zero"
   begin script
     printf "%o" xyz 2>/dev/null
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "printf %o with non-numeric arg exits non-zero"
 
 requirement "SHALL-2-6-2-127" doc="If parameter is unset or null, the expansion of word (or a message indicating it is unset if word is omitted) shall be written to standard error and the shell exits with a non-zero exit status."
@@ -651,7 +651,7 @@ begin test "printf %x with non-numeric arg exits non-zero"
   begin script
     printf "%x" xyz 2>/dev/null
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "printf %x with non-numeric arg exits non-zero"
 
 requirement "SHALL-ENVIRONMENT-VARIABLES-5023" doc="The following environment variables shall affect the execution of printf : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."

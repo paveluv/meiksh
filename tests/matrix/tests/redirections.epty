@@ -46,7 +46,7 @@ begin test "quoted fd number is not a redirection"
     echo content > tmp.txt
     "0"<tmp.txt
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "quoted fd number is not a redirection"
 
 
@@ -73,7 +73,7 @@ begin test "noclobber prevents overwriting existing file"
     echo a > tmp.txt
     echo b > tmp.txt
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "noclobber prevents overwriting existing file"
 
 

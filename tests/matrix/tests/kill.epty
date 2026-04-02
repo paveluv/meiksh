@@ -170,7 +170,7 @@ begin test "kill nonexistent PID exits non-zero"
   begin script
     kill 99999999 2>/dev/null
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "kill nonexistent PID exits non-zero"
 
 requirement "SHALL-KILL-1245" doc="Values of signal_name shall be recognized in a case-independent fashion, without the SIG prefix."
@@ -187,7 +187,7 @@ begin test "kill -s NONEXISTENT exits non-zero"
   begin script
     kill -s NONEXISTENT $$ 2>/dev/null
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "kill -s NONEXISTENT exits non-zero"
 
 requirement "SHALL-2-6-2-127" doc="If parameter is unset or null, the expansion of word (or a message indicating it is unset if word is omitted) shall be written to standard error and the shell exits with a non-zero exit status."
@@ -195,7 +195,7 @@ begin test "kill -NONEXISTENT exits non-zero"
   begin script
     kill -NONEXISTENT $$ 2>/dev/null
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "kill -NONEXISTENT exits non-zero"
 
 requirement "SHALL-BG-1031" doc="The output of bg shall consist of a line in the format: \"[%d] %s\\n\", < job-number >, < command > where the fields are as follows: < job-number > A number that can be used to identify the job to the wait , fg , and kill utilities."
@@ -211,7 +211,7 @@ begin test "kill -99999 invalid signal number exits non-zero"
   begin script
     kill -99999 $$ 2>/dev/null
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "kill -99999 invalid signal number exits non-zero"
 
 requirement "SHALL-KILL-1248" doc="If the first argument is a negative integer, it shall be interpreted as a - signal_number option, not as a negative pid operand specifying a process group."
@@ -237,7 +237,7 @@ begin test "kill -0 nonexistent PID fails"
   begin script
     kill -0 99999999 2>/dev/null
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "kill -0 nonexistent PID fails"
 
 requirement "SHALL-KILL-1240" doc="For each pid operand, the kill utility shall perform actions equivalent to the kill () function defined in the System Interfaces volume of POSIX.1-2024 called with the following arguments: The value of the pid operand shall be used as the pid argument."

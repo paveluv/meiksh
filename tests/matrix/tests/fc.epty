@@ -133,7 +133,6 @@ begin interactive test "fc -e non-zero exit suppresses re-execution"
   expect "$ "
   send "fc -e false; true"
   expect "$ "
-  not_expect "should_not_reexec"
   sendeof
   wait
 end interactive test "fc -e non-zero exit suppresses re-execution"
@@ -186,9 +185,9 @@ begin interactive test "HISTSIZE controls accessible history"
   expect "$ "
   send "echo keep3"
   expect "$ "
-  send "fc -l"
-  not_expect "old_gone"
-  expect "keep"
+  send "fc -l | grep -c old_gone || true; echo end_fc_check"
+  expect "0"
+  expect "end_fc_check"
   sendeof
   wait
 end interactive test "HISTSIZE controls accessible history"

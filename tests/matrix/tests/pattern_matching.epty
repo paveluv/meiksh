@@ -109,8 +109,7 @@ begin test "glob * does not match dotfiles"
     touch tmp_pattern/.hidden tmp_pattern/a.txt tmp_pattern/dir
     echo tmp_pattern/*
   end script
-  expect_stdout ".*a\.txt.*dir.*"
-  not_expect_stdout ".*\.hidden.*"
+  expect_stdout "tmp_pattern/a\.txt tmp_pattern/dir"
 end test "glob * does not match dotfiles"
 
 requirement "SHALL-2-14-3-502" doc="If the pattern matches any existing filenames or pathnames, the pattern shall be replaced with those filenames and pathnames, sorted according to the collating sequence in effect in the current locale."

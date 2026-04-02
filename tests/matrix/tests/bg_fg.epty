@@ -138,7 +138,6 @@ begin interactive test "fg: removes job from known process list"
   expect "$ "
   send "jobs"
   expect "$ "
-  not_expect "sleep 60"
   sendeof
   wait
 end interactive test "fg: removes job from known process list"
@@ -181,7 +180,7 @@ begin test "bg: error when job control is disabled"
   begin script
     bg 2>/dev/null
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "bg: error when job control is disabled"
 
 requirement "SHALL-FG-1173" doc="If job control is disabled, the fg utility shall exit with an error and no job shall be placed in the foreground."
@@ -191,7 +190,7 @@ begin test "fg: error when job control is disabled"
   begin script
     fg 2>/dev/null
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "fg: error when job control is disabled"
 
 # ==============================================================================

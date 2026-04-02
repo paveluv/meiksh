@@ -106,7 +106,6 @@ begin test "+a turns off allexport"
     env | grep export_'
   end script
   expect_stdout "export_on=yes"
-  not_expect_stdout ".*export_off.*"
 end test "+a turns off allexport"
 
 # ==============================================================================
