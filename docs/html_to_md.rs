@@ -214,9 +214,13 @@ fn render_blocks(nodes: &[Node], out: &mut String) {
                         }
                     }
                     "p" => {
-                        let text = normalize_inline(&render_inline_children(&element.children));
-                        if !text.is_empty() {
-                            append_block(out, &text);
+                        if let Some(code_block) = try_render_multiline_code(element) {
+                            append_block(out, &code_block);
+                        } else {
+                            let text = normalize_inline(&render_inline_children(&element.children));
+                            if !text.is_empty() {
+                                append_block(out, &text);
+                            }
                         }
                     }
                     "pre" => {
@@ -251,11 +255,16 @@ fn render_blocks(nodes: &[Node], out: &mut String) {
                         }
                     }
                     "blockquote" => {
-                        let mut nested = String::new();
-                        render_blocks(&element.children, &mut nested);
-                        let quoted = prefix_lines(nested.trim(), "> ");
-                        if !quoted.trim().is_empty() {
+                        if let Some(code_block) = try_render_multiline_code(element) {
+                            let quoted = prefix_lines(&code_block, "> ");
                             append_block(out, &quoted);
+                        } else {
+                            let mut nested = String::new();
+                            render_blocks(&element.children, &mut nested);
+                            let quoted = prefix_lines(nested.trim(), "> ");
+                            if !quoted.trim().is_empty() {
+                                append_block(out, &quoted);
+                            }
                         }
                     }
                     "hr" => append_block(out, "---"),
@@ -272,6 +281,50 @@ fn render_blocks(nodes: &[Node], out: &mut String) {
         }
         index += 1;
     }
+}
+
+fn try_render_multiline_code(p_element: &Element) -> Option<String> {
+    let code_el = find_nested_code_element(p_element)?;
+    let raw = render_raw_inline_children(&code_el.children);
+    if !raw.contains('\n') {
+        return None;
+    }
+    let lines: Vec<&str> = raw.split('\n').map(|l| l.trim()).collect();
+    let non_empty: Vec<&str> = lines.iter().copied().filter(|l| !l.is_empty()).collect();
+    if non_empty.len() <= 1 {
+        return None;
+    }
+    Some(format!("```\n{}\n```", non_empty.join("\n")))
+}
+
+fn find_nested_code_element(element: &Element) -> Option<&Element> {
+    for child in &element.children {
+        if let Node::Element(el) = child {
+            if matches!(el.name.as_str(), "code" | "tt" | "kbd" | "samp") {
+                if contains_br(el) {
+                    return Some(el);
+                }
+            }
+            if let Some(found) = find_nested_code_element(el) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+fn contains_br(element: &Element) -> bool {
+    for child in &element.children {
+        if let Node::Element(el) = child {
+            if el.name == "br" {
+                return true;
+            }
+            if contains_br(el) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn render_inline_run(nodes: &[Node], start: usize) -> Option<(usize, String)> {
@@ -926,6 +979,38 @@ fn collect_heading_anchor_slugs_into(
         }
     }
 
+    // Map <a name="tag_..."> anchors that precede a heading to that heading's slug.
+    // POSIX HTML commonly places anchors as siblings before headings.
+    let mut pending_anchors: Vec<String> = Vec::new();
+    for child in &element.children {
+        match child {
+            Node::Element(child_el) if child_el.name == "a" && !is_heading_tag(&child_el.name) => {
+                if let Some(id) = attr_value(child_el, "id")
+                    .or_else(|| attr_value(child_el, "name"))
+                    .filter(|v| !v.is_empty())
+                {
+                    pending_anchors.push(id.to_string());
+                }
+            }
+            Node::Element(child_el) if is_heading_tag(&child_el.name) => {
+                if !pending_anchors.is_empty() {
+                    let text = normalize_inline(&render_inline_children(&child_el.children));
+                    if !text.is_empty() {
+                        let slug = slugify_heading(&text);
+                        if !slug.is_empty() {
+                            for anchor in pending_anchors.drain(..) {
+                                mappings.entry(anchor).or_insert_with(|| slug.clone());
+                            }
+                        }
+                    }
+                }
+                pending_anchors.clear();
+            }
+            Node::Text(t) if t.trim().is_empty() => {}
+            _ => pending_anchors.clear(),
+        }
+    }
+
     for child in &element.children {
         collect_heading_anchor_slugs_into(child, mappings, slug_counts);
     }
@@ -1467,10 +1552,10 @@ fn format_plain_text(text: &str) -> String {
 
     while let Some((index, ch)) = chars.next() {
         if ch != '<' {
-            match ch {
-                '<' => out.push_str("&lt;"),
-                '>' => out.push_str("&gt;"),
-                _ => out.push(ch),
+            if ch == '>' {
+                out.push_str("\\>");
+            } else {
+                out.push(ch);
             }
             continue;
         }
@@ -1488,7 +1573,7 @@ fn format_plain_text(text: &str) -> String {
         }
 
         let Some(end_index) = end else {
-            out.push_str("&lt;");
+            out.push_str("\\<");
             continue;
         };
 
@@ -1507,7 +1592,7 @@ fn format_plain_text(text: &str) -> String {
                 }
             }
         } else {
-            out.push_str("&lt;");
+            out.push_str("\\<");
         }
     }
 
@@ -1569,7 +1654,13 @@ fn rewrite_posix_href(href: &str) -> String {
         path.to_string()
     };
 
-    if rewritten_path.is_empty() {
+    if rewritten_anchor.is_empty() {
+        if rewritten_path.is_empty() {
+            String::new()
+        } else {
+            rewritten_path
+        }
+    } else if rewritten_path.is_empty() {
         format!("#{rewritten_anchor}")
     } else {
         format!("{rewritten_path}#{rewritten_anchor}")
@@ -1650,7 +1741,11 @@ fn tidy_markdown(input: String) -> String {
     let mut out = String::new();
     let mut blank_count = 0;
     for line in input.lines() {
-        if line.trim().is_empty() {
+        let trimmed = line.trim();
+        if is_nav_line(trimmed) {
+            continue;
+        }
+        if trimmed.is_empty() {
             blank_count += 1;
             if blank_count <= 1 {
                 out.push('\n');
@@ -1661,7 +1756,41 @@ fn tidy_markdown(input: String) -> String {
             out.push('\n');
         }
     }
-    out.trim().to_string() + "\n"
+    let trimmed = strip_trailing_nav(&out);
+    trimmed.trim().to_string() + "\n"
+}
+
+fn is_nav_line(line: &str) -> bool {
+    line.contains("return to top of page")
+        || line.contains("registered Trademark of The Open Group")
+}
+
+fn strip_trailing_nav(input: &str) -> String {
+    let lines: Vec<&str> = input.lines().collect();
+    let mut end = lines.len();
+    while end > 0 && lines[end - 1].trim().is_empty() {
+        end -= 1;
+    }
+    while end > 0 {
+        let line = lines[end - 1].trim();
+        if line == "---"
+            || line.contains("return to top of page")
+            || line.contains("registered Trademark of The Open Group")
+        {
+            end -= 1;
+            while end > 0 && lines[end - 1].trim().is_empty() {
+                end -= 1;
+            }
+        } else {
+            break;
+        }
+    }
+    let mut out = String::new();
+    for line in &lines[..end] {
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
 }
 
 #[derive(Clone, Debug)]
