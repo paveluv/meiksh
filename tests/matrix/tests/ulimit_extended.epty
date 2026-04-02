@@ -141,7 +141,7 @@ begin test "unlimited means no enforcement"
       echo skip
     fi
   end script
-  expect_stdout_line ".*"
+  expect_stdout ".*"
 end test "unlimited means no enforcement"
 
 # ==============================================================================

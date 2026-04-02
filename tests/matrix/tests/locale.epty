@@ -131,7 +131,7 @@ begin test "LANGUAGE variable is recognized"
   begin script
     env | grep LANGUAGE
   end script
-  expect_stdout_line "LANGUAGE=en"
+  expect_stdout "LANGUAGE=en"
 end test "LANGUAGE variable is recognized"
 
 # ==============================================================================
@@ -225,7 +225,7 @@ begin test "ulimit respects locale env vars"
   begin script
     ulimit -f
   end script
-  expect_stdout_line "[0-9]+|unlimited"
+  expect_stdout "[0-9]+|unlimited"
 end test "ulimit respects locale env vars"
 
 requirement "SHALL-UMASK-1045" doc="The following environment variables shall affect the execution of umask : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
@@ -235,7 +235,7 @@ begin test "umask respects locale env vars"
   begin script
     umask
   end script
-  expect_stdout_line "[0-7][0-7][0-7][0-7]"
+  expect_stdout "[0-7][0-7][0-7][0-7]"
 end test "umask respects locale env vars"
 
 requirement "SHALL-UNALIAS-1046" doc="The following environment variables shall affect the execution of unalias : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
@@ -331,7 +331,7 @@ begin test "printf numeric formatting with LC_NUMERIC"
   begin script
     printf '%f\n' 1234.5
   end script
-  expect_stdout_line "[0-9]+[.,][0-9]+"
+  expect_stdout "[0-9]+[.,][0-9]+"
 end test "printf numeric formatting with LC_NUMERIC"
 
 requirement "SHALL-ENVIRONMENT-VARIABLES-5062" doc="The following environment variables shall affect the execution of pwd : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."

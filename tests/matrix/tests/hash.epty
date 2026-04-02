@@ -44,7 +44,7 @@ begin test "hash output mentions hashed utility"
     hash ls 2>/dev/null
     hash 2>&1
   end script
-  expect_stdout_line ".*ls.*"
+  expect_stdout "(.|\n)*ls(.|\n)*"
 end test "hash output mentions hashed utility"
 
 requirement "SHALL-HASH-1209" doc="The hash utility shall affect the way the current shell environment remembers the locations of utilities found as described in 2.9.1.4 Command Search and Execution ."
@@ -67,7 +67,7 @@ begin test "hash remembers utility location"
     hash ls 2>/dev/null
     hash 2>&1
   end script
-  expect_stdout_line ".*ls.*"
+  expect_stdout "(.|\n)*ls(.|\n)*"
 end test "hash remembers utility location"
 
 # ==============================================================================
@@ -82,7 +82,7 @@ begin test "hash with utility argument adds it"
     hash cat 2>/dev/null
     hash 2>&1
   end script
-  expect_stdout_line ".*cat.*"
+  expect_stdout "(.|\n)*cat(.|\n)*"
 end test "hash with utility argument adds it"
 
 requirement "SHALL-HASH-1218" doc="This list shall consist of those utilities named in previous hash invocations that have been invoked, and may contain those invoked and found through the normal command search process."
@@ -130,7 +130,7 @@ begin test "hash output contains paths for hashed utilities"
     hash ls 2>/dev/null
     hash 2>&1
   end script
-  expect_stdout_line ".*/.*"
+  expect_stdout "(.|\n)*/(.|\n)*"
 end test "hash output contains paths for hashed utilities"
 
 # ==============================================================================
@@ -145,7 +145,7 @@ begin test "function not in hash output"
     hash -r
     hash 2>&1
   end script
-  not_expect_stdout_line ".*myfunc.*"
+  not_expect_stdout "(.|\n)*myfunc(.|\n)*"
 end test "function not in hash output"
 
 requirement "SHALL-HASH-1212" doc="Utilities provided as built-ins to the shell and functions shall not be reported by hash ."
@@ -197,7 +197,7 @@ begin test "hash output goes to stdout"
     hash 2>/dev/null
     echo pass
   end script
-  expect_stdout_line "pass"
+  expect_stdout "(.|\n)*pass"
 end test "hash output goes to stdout"
 
 requirement "SHALL-HASH-1037" doc="The following environment variables shall affect the execution of hash : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
@@ -209,5 +209,5 @@ begin test "PATH change clears hash table"
     PATH="$PATH"
     hash 2>/dev/null | wc -l
   end script
-  expect_stdout_line ".*0.*"
+  expect_stdout " *0"
 end test "PATH change clears hash table"

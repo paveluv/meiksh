@@ -137,7 +137,7 @@ begin test "printf carriage return escape"
   begin script
     printf "a\rb" | cat -v
   end script
-  expect_stdout_line ".*\^M.*|.*b.*"
+  expect_stdout ".*\^M.*|.*b.*"
 end test "printf carriage return escape"
 
 requirement "SHALL-READ-1270" doc="If IFS is unset, or is set to any non-empty value, then a modified version of the field splitting algorithm specified in 2.6.5 Field Splitting shall be applied, with the modifications as follows: The input to the algorithm shall be the logical line (minus terminating delimiter) that was read from standard input, and shall be considered as a single initial field, all of which resulted from expansions, with any escaped byte and the preceding <backslash> escape character treated as if they were the result of a quoted expansion, and all other bytes treated as if they were the results of unquoted expansions."
@@ -145,7 +145,7 @@ begin test "printf bell escape produces a byte"
   begin script
     printf "\a" | wc -c | tr -d ' '
   end script
-  expect_stdout_line ".*[1-9].*"
+  expect_stdout ".*[1-9].*"
 end test "printf bell escape produces a byte"
 
 requirement "SHALL-DESCRIPTION-5020" doc="The printf utility shall write formatted operands to the standard output."
@@ -153,7 +153,7 @@ begin test "printf backspace escape"
   begin script
     printf "a\bb" | cat -v
   end script
-  expect_stdout_line ".*\^H.*|.*b.*"
+  expect_stdout ".*\^H.*|.*b.*"
 end test "printf backspace escape"
 
 requirement "SHALL-CD-1074" doc="The curpath value shall then be converted to canonical form as follows, considering each component from beginning to end, in sequence: Dot components and any <slash> characters that separate them from the next component shall be deleted."
@@ -161,7 +161,7 @@ begin test "printf form feed escape"
   begin script
     printf "a\fb" | cat -v
   end script
-  expect_stdout_line ".*\^L.*|.*b.*"
+  expect_stdout ".*\^L.*|.*b.*"
 end test "printf form feed escape"
 
 requirement "SHALL-DESCRIPTION-5020" doc="The printf utility shall write formatted operands to the standard output."
@@ -169,7 +169,7 @@ begin test "printf vertical tab escape"
   begin script
     printf "a\vb" | cat -v
   end script
-  expect_stdout_line ".*\^K.*|.*b.*"
+  expect_stdout ".*\^K.*|.*b.*"
 end test "printf vertical tab escape"
 
 requirement "SHALL-DESCRIPTION-5020" doc="The printf utility shall write formatted operands to the standard output."
@@ -659,7 +659,7 @@ begin test "printf %d non-numeric produces stderr diagnostic"
   begin script
     printf "%d" not_a_number 2>&1 >/dev/null
   end script
-  expect_stdout_line ".+"
+  expect_stdout ".+"
 end test "printf %d non-numeric produces stderr diagnostic"
 
 # ==============================================================================
@@ -717,6 +717,5 @@ begin test "printf %n$ format reuse"
   begin script
     /usr/bin/printf '%1$s %2$s\n' a b c d
   end script
-  expect_stdout_line "a b"
-  expect_stdout_line "c d"
+  expect_stdout "a b\nc d"
 end test "printf %n$ format reuse"

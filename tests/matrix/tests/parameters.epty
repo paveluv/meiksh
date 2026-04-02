@@ -12,8 +12,7 @@ begin test "$01 is $0 followed by literal 1, and ${10} expands to 10th arg"
   begin script
     $SHELL -c 'echo "$01"; echo "${10}"' '$SHELL' 1 2 3 4 5 6 7 8 9 10th
   end script
-  expect_stdout_line ".*1"
-  expect_stdout_line "10th"
+  expect_stdout ".*1\n10th"
 end test "$01 is $0 followed by literal 1, and ${10} expands to 10th arg"
 
 requirement "SHALL-2-5-3-082" doc="The shell shall set IFS to <space><tab><newline> when it is invoked."
@@ -271,7 +270,7 @@ begin test "set -x traces commands with default PS4 prefix"
     echo "traced"
     set +x
   end script
-  expect_stderr_line ".*\+ echo traced.*"
+  expect_stderr "(.|\n)*\+ echo traced(.|\n)*"
 end test "set -x traces commands with default PS4 prefix"
 
 requirement "SHALL-2-5-3-096" doc="When an execution trace ( set -x ) is being performed, before each line in the execution trace, the value of this variable shall be subjected to parameter expansion (see 2.6.2 Parameter Expansion )."
@@ -282,7 +281,7 @@ begin test "changing PS4 alters trace prefix"
     echo "traced"
     set +x
   end script
-  expect_stderr_line ".*TRACE:.*"
+  expect_stderr "(.|\n)*TRACE:(.|\n)*"
 end test "changing PS4 alters trace prefix"
 
 requirement "SHALL-2-5-3-100" doc="If a value for PWD is passed to the shell in the environment when it is executed, the value is an absolute pathname of the current working directory that is no longer than {PATH_MAX} bytes including the terminating null byte, and the value does not contain any components that are dot or dot-dot, then the shell shall set PWD to the value from the environment."
@@ -331,7 +330,7 @@ begin test "ENV file processed for interactive shell"
     export ENV
     $SHELL -i -c 'echo $ENVMARKER' 2>/dev/null
   end script
-  expect_stdout_line ".*loaded.*"
+  expect_stdout "loaded"
 end test "ENV file processed for interactive shell"
 
 requirement "SHALL-2-5-3-078" doc="This variable, when and only when an interactive shell is invoked, shall be subjected to parameter expansion (see 2.6.2 Parameter Expansion ) by the shell and the resulting value shall be used as a pathname of a file."

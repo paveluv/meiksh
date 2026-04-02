@@ -71,10 +71,8 @@ enclosed in double quotes.
 
 | Assertion | Meaning |
 |---|---|
-| `expect_stdout "pattern"` | stdout matches regex |
-| `expect_stderr "pattern"` | stderr matches regex |
-| `expect_stdout_line "pattern"` | at least one stdout line matches |
-| `expect_stderr_line "pattern"` | at least one stderr line matches |
+| `expect_stdout "pattern"` | stdout matches regex (full match) |
+| `expect_stderr "pattern"` | stderr matches regex (full match) |
 | `expect_exit_code N` | exit code equals N |
 | `not_expect_stdout "pattern"` | stdout does NOT match regex |
 | `not_expect_stderr "pattern"` | stderr does NOT match regex |
@@ -82,11 +80,13 @@ enclosed in double quotes.
 
 ### Assertion tips
 
-- `expect_stdout "hello"` succeeds if "hello" appears *anywhere* in stdout.
-- `expect_stdout "^hello$"` requires stdout to be exactly "hello" (with
-  `^` and `$` anchoring the start/end of the full output, **not**
-  individual lines).
-- Use `\n` in patterns to match across lines: `expect_stdout "line1\nline2"`.
+- `expect_stdout` does a **full match** — the pattern must match the
+  entire stdout (trailing whitespace is trimmed). `expect_stdout "hello"`
+  only passes if stdout is exactly `hello`.
+- `.` matches any character **except** newline. Use `\n` to match across
+  lines: `expect_stdout "line1\nline2"`.
+- To match a substring within multi-line output, use `(.|\n)*` to cross
+  newlines: `expect_stdout "(.|\n)*pattern(.|\n)*"`.
 - `expect_exit_code 0` is implicit if omitted — tests pass if exit code
   is 0 and all assertions match. Use `not_expect_exit_code 0` to assert
   failure.
@@ -166,7 +166,7 @@ The `.epty` runner uses a built-in regex engine. Supported syntax:
 
 | Syntax | Meaning |
 |---|---|
-| `.` | Any character |
+| `.` | Any character except newline |
 | `*` | Zero or more of preceding |
 | `+` | One or more of preceding |
 | `?` | Zero or one of preceding |

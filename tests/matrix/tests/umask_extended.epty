@@ -19,7 +19,7 @@ begin test "umask 0022 reports correct value"
     umask 0022
     umask
   end script
-  expect_stdout_line "0*022"
+  expect_stdout "0*022"
 end test "umask 0022 reports correct value"
 
 # ==============================================================================
@@ -54,7 +54,7 @@ begin test "umask with no operand produces output"
     umask 0027
     umask
   end script
-  expect_stdout_line ".+"
+  expect_stdout ".+"
 end test "umask with no operand produces output"
 
 requirement "SHALL-UMASK-1316" doc="The umask utility shall set the file mode creation mask of the current shell execution environment (see 2.13 Shell Execution Environment ) to the value specified by the mask operand."
@@ -63,7 +63,7 @@ begin test "umask with no operand reflects set value"
     umask 0027
     umask
   end script
-  expect_stdout_line "0*027"
+  expect_stdout "0*027"
 end test "umask with no operand reflects set value"
 
 # ==============================================================================
@@ -98,7 +98,7 @@ begin test "umask octal operand 0037"
     umask 0037
     umask
   end script
-  expect_stdout_line "0*037"
+  expect_stdout "0*037"
 end test "umask octal operand 0037"
 
 requirement "SHALL-UMASK-1316" doc="The umask utility shall set the file mode creation mask of the current shell execution environment (see 2.13 Shell Execution Environment ) to the value specified by the mask operand."
@@ -107,7 +107,7 @@ begin test "umask symbolic operand u=rwx,g=rx,o="
     umask u=rwx,g=rx,o=
     umask
   end script
-  expect_stdout_line "0*027"
+  expect_stdout "0*027"
 end test "umask symbolic operand u=rwx,g=rx,o="
 
 # ==============================================================================
@@ -121,7 +121,7 @@ begin test "umask -S produces symbolic output"
     umask 0022
     umask -S
   end script
-  expect_stdout_line ".*u=.*g=.*o=.*"
+  expect_stdout ".*u=.*g=.*o=.*"
 end test "umask -S produces symbolic output"
 
 requirement "SHALL-UMASK-1316" doc="The umask utility shall set the file mode creation mask of the current shell execution environment (see 2.13 Shell Execution Environment ) to the value specified by the mask operand."
@@ -130,7 +130,7 @@ begin test "umask -S reflects mask 0077"
     umask 0077
     umask -S
   end script
-  expect_stdout_line ".*u=rwx.*g=.*o=.*"
+  expect_stdout ".*u=rwx.*g=.*o=.*"
 end test "umask -S reflects mask 0077"
 
 requirement "SHALL-UMASK-1316" doc="The umask utility shall set the file mode creation mask of the current shell execution environment (see 2.13 Shell Execution Environment ) to the value specified by the mask operand."
@@ -139,7 +139,7 @@ begin test "umask -S with mask 0000 shows all permissions"
     umask 0000
     umask -S
   end script
-  expect_stdout_line ".*u=rwx.*g=rwx.*o=rwx.*"
+  expect_stdout ".*u=rwx.*g=rwx.*o=rwx.*"
 end test "umask -S with mask 0000 shows all permissions"
 
 # ==============================================================================
@@ -154,7 +154,7 @@ begin test "subshell umask does not affect parent"
     (umask 0077)
     umask
   end script
-  expect_stdout_line "0*022"
+  expect_stdout "0*022"
 end test "subshell umask does not affect parent"
 
 requirement "SHALL-2-5-3-084" doc="In a subshell (see 2.13 Shell Execution Environment ), PPID shall be set to the same value as that of the parent of the current shell."
@@ -164,8 +164,7 @@ begin test "subshell and parent masks are independent"
     (umask 0077; echo inner=$(umask))
     echo outer=$(umask)
   end script
-  expect_stdout_line ".*inner=.*077.*"
-  expect_stdout_line ".*outer=.*022.*"
+  expect_stdout ".*inner=.*077.*\n.*outer=.*022.*"
 end test "subshell and parent masks are independent"
 
 # ==============================================================================

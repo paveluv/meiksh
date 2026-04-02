@@ -10,7 +10,7 @@ begin test "special parameter 0 defaults to shell name"
   begin script
     echo 'echo $0' | $SHELL
   end script
-  expect_stdout_line ".*/.*sh.*"
+  expect_stdout ".*/.*sh.*"
 end test "special parameter 0 defaults to shell name"
 
 # ==============================================================================
@@ -61,7 +61,7 @@ begin test "ENV file processed for interactive shell"
     export ENV
     $SHELL -i -c 'echo $ENV_LOADED' 2>/dev/null
   end script
-  expect_stdout_line ".*yes.*"
+  expect_stdout ".*yes.*"
 end test "ENV file processed for interactive shell"
 
 # ==============================================================================

@@ -16,7 +16,7 @@ begin test "pwd -L with clean PWD uses it"
     PWD="$_real" pwd -L
     rm -rf "$_tmpdir"
   end script
-  expect_stdout_line "/.*"
+  expect_stdout "/.*"
 end test "pwd -L with clean PWD uses it"
 
 requirement "SHALL-OPTIONS-5055" doc="The following options shall be supported by the implementation: -L If the PWD environment variable contains an absolute pathname of the current directory and the pathname does not contain any components that are dot or dot-dot, pwd shall write this pathname to standard output, except that if the PWD environment variable is longer than {PATH_MAX} bytes including the terminating null, it is unspecified whether pwd writes this pathname to standard output or behaves as if the -P option had been specified."

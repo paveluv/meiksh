@@ -12,7 +12,7 @@ begin test "trap -p shows trap -- format"
     trap "echo caught" INT
     trap -p INT
   end script
-  expect_stdout_line ".*trap -- .*INT.*"
+  expect_stdout "trap -- .*INT.*"
 end test "trap -p shows trap -- format"
 
 requirement "SHALL-V3CHAP02-1015-DUP505" doc="When -p is specified, export shall write to the standard output the names and values of all exported variables, in the following format: \"export %s=%s\\n\", < name >, < value > if name is set, and: \"export %s\\n\", < name > if name is unset."
@@ -23,8 +23,7 @@ begin test "trap -p lists all traps"
     trap "echo b" TERM
     trap -p
   end script
-  expect_stdout_line ".*INT.*"
-  expect_stdout_line ".*TERM.*"
+  expect_stdout "(.|\n)*trap -- .*INT(.|\n)*trap -- .*TERM(.|\n)*"
 end test "trap -p lists all traps"
 
 # ==============================================================================
@@ -38,7 +37,7 @@ begin test "EXIT trap fires on exit"
     trap "echo trapped_exit" EXIT
     exit 0
   end script
-  expect_stdout_line ".*trapped_exit.*"
+  expect_stdout "trapped_exit"
 end test "EXIT trap fires on exit"
 
 # trap with - (reset to default)
@@ -49,7 +48,7 @@ begin test "trap - resets EXIT trap"
     trap - EXIT
     exit 0
   end script
-  not_expect_stdout_line ".*bad.*"
+  expect_stdout ""
 end test "trap - resets EXIT trap"
 
 # ==============================================================================
@@ -74,8 +73,8 @@ begin test "trap with invalid signal returns non-zero"
     trap "" INVALID_SIGNAL_NAME_XYZ 2>/dev/null
     echo "rc=$?"
   end script
-  not_expect_stdout_line "rc=0"
-  expect_stdout_line "rc=.*"
+  not_expect_stdout "rc=0"
+  expect_stdout "rc=[1-9][0-9]*"
 end test "trap with invalid signal returns non-zero"
 
 # Verify shell doesn't abort on invalid signal
@@ -85,7 +84,7 @@ begin test "shell survives invalid signal name"
     trap "" INVALID_SIGNAL_NAME_XYZ 2>/dev/null
     echo survived
   end script
-  expect_stdout_line ".*survived.*"
+  expect_stdout "survived"
 end test "shell survives invalid signal name"
 
 # ==============================================================================

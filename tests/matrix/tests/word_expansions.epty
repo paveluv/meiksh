@@ -242,7 +242,7 @@ begin test "colon-question generates error on unset"
     unset foo
     echo "${foo:?error message}"
   end script
-  expect_stderr_line ".*error message.*"
+  expect_stderr ".*error message.*"
   not_expect_exit_code 0
 end test "colon-question generates error on unset"
 
@@ -806,7 +806,7 @@ begin test "for loop without in iterates positional params"
     f() { for i do printf "%s " "$i"; done; }
     f x y
   end script
-  expect_stdout_line ".*x.*y.*"
+  expect_stdout "x y"
 end test "for loop without in iterates positional params"
 
 # ==============================================================================
@@ -855,7 +855,7 @@ begin test "times output format"
   begin script
     times
   end script
-  expect_stdout_line ".*m.*s.*"
+  expect_stdout ".*m.*s.*m.*s.*\n.*m.*s.*m.*s.*"
 end test "times output format"
 
 # ==============================================================================

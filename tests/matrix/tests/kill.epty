@@ -151,7 +151,7 @@ begin test "kill exits 0 on success with default signal"
     echo $?
     wait $p 2>/dev/null
   end script
-  expect_stdout_line "0.*"
+  expect_stdout "0.*"
 end test "kill exits 0 on success with default signal"
 
 requirement "SHALL-KILL-1040" doc="The following environment variables shall affect the execution of kill : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
@@ -162,7 +162,7 @@ begin test "kill -s KILL exits 0 on success"
     echo $?
     wait $p 2>/dev/null
   end script
-  expect_stdout_line "0.*"
+  expect_stdout "0.*"
 end test "kill -s KILL exits 0 on success"
 
 requirement "SHALL-KILL-1250" doc="The process or processes selected by positive, negative, and zero values of the pid operand shall be as described for the kill () function."

@@ -50,7 +50,7 @@ begin test "noclobber prevents overwrite with >"
     echo overwritten > $_f 2>/dev/null
     cat $_f
   end script
-  expect_stdout_line ".*original.*"
+  expect_stdout "original"
 end test "noclobber prevents overwrite with >"
 
 requirement "SHALL-DESCRIPTION-592" doc="The -C option shall prevent existing regular files from being overwritten by the shell's '>' redirection operator; the \">|\" redirection operator shall override this noclobber option for an individual file."
@@ -62,7 +62,7 @@ begin test ">| overrides noclobber"
     echo forced >| $_f
     cat $_f
   end script
-  expect_stdout_line ".*forced.*"
+  expect_stdout "forced"
 end test ">| overrides noclobber"
 
 requirement "SHALL-DESCRIPTION-593" doc="When the -e option is on, when any command fails (for any of the reasons listed in 2.8.1 Consequences of Shell Errors or by returning an exit status greater than zero), the shell immediately shall exit, as if by executing the exit special built-in utility with no arguments, with the following exceptions."
@@ -113,7 +113,7 @@ begin test "errexit triggers on pipeline failure (last command)"
     echo ok | false
     echo should_not_appear
   end script
-  not_expect_stdout_line ".*should_not_appear.*"
+  not_expect_stdout ".*should_not_appear.*"
 end test "errexit triggers on pipeline failure (last command)"
 
 requirement "SHALL-DESCRIPTION-597" doc="The -f option shall disable pathname expansion."
@@ -177,7 +177,7 @@ begin test "set -v echoes input to stderr"
     set -v
     echo "testing_verbose"
   end script
-  expect_stderr_line ".*echo.*testing_verbose.*"
+  expect_stderr "(.|\n)*echo.*testing_verbose(.|\n)*"
 end test "set -v echoes input to stderr"
 
 requirement "SHALL-DESCRIPTION-609" doc="The -x option shall cause the shell to write to standard error a trace for each command after it expands the command and before it executes it."
@@ -186,7 +186,7 @@ begin test "set -x traces expanded commands to stderr"
     set -x
     echo "testing_xtrace"
   end script
-  expect_stderr_line ".*echo testing_xtrace.*"
+  expect_stderr "(.|\n)*echo testing_xtrace(.|\n)*"
 end test "set -x traces expanded commands to stderr"
 
 requirement "SHALL-OPTIONS-649" doc="The shell shall format the output, including the proper use of quoting, so that it is suitable for reinput to the shell as commands that achieve the same trapping results for the specified set of conditions."

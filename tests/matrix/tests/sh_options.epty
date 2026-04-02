@@ -58,7 +58,7 @@ begin test "$0 is shell path when reading from stdin"
   begin script
     echo 'echo $0' | $SHELL
   end script
-  expect_stdout_line ".*/.*sh.*"
+  expect_stdout ".*/.*sh.*"
 end test "$0 is shell path when reading from stdin"
 
 # ==============================================================================
@@ -105,8 +105,8 @@ begin test "+a turns off allexport"
     export_off="no"
     env | grep export_'
   end script
-  expect_stdout_line "export_on=yes"
-  not_expect_stdout_line "export_off=.*"
+  expect_stdout "export_on=yes"
+  not_expect_stdout ".*export_off.*"
 end test "+a turns off allexport"
 
 # ==============================================================================

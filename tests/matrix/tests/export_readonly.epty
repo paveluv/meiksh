@@ -14,7 +14,7 @@ begin test "export -p shows exported variable"
     export -p | grep MYEXPORTVAR
   end script
   expect_exit_code 0
-  expect_stdout_line ".*export.*MYEXPORTVAR.*hello.*"
+  expect_stdout ".*export.*MYEXPORTVAR.*hello.*"
 end test "export -p shows exported variable"
 
 requirement "SHALL-V3CHAP02-1015-DUP505" doc="When -p is specified, export shall write to the standard output the names and values of all exported variables, in the following format: \"export %s=%s\\n\", < name >, < value > if name is set, and: \"export %s\\n\", < name > if name is unset."
@@ -25,7 +25,7 @@ begin test "export -p handles spaces in values"
     export -p | grep TESTV
   end script
   expect_exit_code 0
-  expect_stdout_line ".*export.*TESTV.*"
+  expect_stdout ".*export.*TESTV.*"
 end test "export -p handles spaces in values"
 
 # ==============================================================================
@@ -41,7 +41,7 @@ begin test "set -o allexport exports all assignments"
     env | grep ALLEXP_VAR
   end script
   expect_exit_code 0
-  expect_stdout_line ".*ALLEXP_VAR=allexp_val.*"
+  expect_stdout ".*ALLEXP_VAR=allexp_val.*"
 end test "set -o allexport exports all assignments"
 
 # ==============================================================================
@@ -57,5 +57,5 @@ begin test "readonly -p shows readonly variable"
     readonly -p | grep ROVAR
   end script
   expect_exit_code 0
-  expect_stdout_line ".*readonly.*ROVAR.*roval.*"
+  expect_stdout ".*readonly.*ROVAR.*roval.*"
 end test "readonly -p shows readonly variable"
