@@ -37,8 +37,6 @@
 //! ### Non-interactive assertions (after end script):
 //!   expect_stdout "pattern"               — assert stdout matches regex
 //!   expect_stderr "pattern"               — assert stderr matches regex
-//!   expect_stdout_line "pattern"          — assert a stdout line matches
-//!   expect_stderr_line "pattern"          — assert a stderr line matches
 //!   expect_exit_code N                    — assert exit code equals N
 //!   not_expect_stdout "pattern"           — assert stdout does NOT match
 //!   not_expect_stderr "pattern"           — assert stderr does NOT match
@@ -917,7 +915,7 @@ fn match_re_one(node: &RegexNode, text: &[char], pos: usize) -> Option<usize> {
             }
         }
         RegexNode::AnyChar => {
-            if pos < text.len() {
+            if pos < text.len() && text[pos] != '\n' {
                 Some(pos + 1)
             } else {
                 None
@@ -1559,9 +1557,8 @@ fn run_suite_test_inner(
                 );
             }
 
-            "expect_stdout" | "expect_stderr" | "expect_stdout_line"
-            | "expect_stderr_line" | "not_expect_stdout" | "not_expect_stderr"
-            | "not_expect_stdout_line" | "not_expect_stderr_line" => {
+            "expect_stdout" | "expect_stderr"
+            | "not_expect_stdout" | "not_expect_stderr" => {
                 let rr = last_run
                     .as_ref()
                     .ok_or_else(|| format!("line {line_num}: {cmd} before script"))?;
@@ -1577,39 +1574,19 @@ fn run_suite_test_inner(
                 log.push(format!(">>> {cmd} {:?}", pattern_str));
 
                 let negate = cmd.starts_with("not_");
-                let line_mode = cmd.contains("_line");
-
-                if line_mode {
-                    let found = haystack
-                        .lines()
-                        .any(|l| regex_full_match(&pattern, l));
-                    if !negate && !found {
-                        return Err(format!(
-                            "line {line_num}: {cmd}: no {label} line matched {:?}\n{label}:\n{}",
-                            pattern_str, haystack
-                        ));
-                    }
-                    if negate && found {
-                        return Err(format!(
-                            "line {line_num}: {cmd}: found {:?} in {label}\n{label}:\n{}",
-                            pattern_str, haystack
-                        ));
-                    }
-                } else {
-                    let trimmed = haystack.trim_end();
-                    let found = regex_full_match(&pattern, trimmed);
-                    if !negate && !found {
-                        return Err(format!(
-                            "line {line_num}: {cmd}: {label} did not match {:?}\n{label}:\n{}",
-                            pattern_str, haystack
-                        ));
-                    }
-                    if negate && found {
-                        return Err(format!(
-                            "line {line_num}: {cmd}: {label} matched {:?} (expected no match)\n{label}:\n{}",
-                            pattern_str, haystack
-                        ));
-                    }
+                let trimmed = haystack.trim_end();
+                let found = regex_full_match(&pattern, trimmed);
+                if !negate && !found {
+                    return Err(format!(
+                        "line {line_num}: {cmd}: {label} did not match {:?}\n{label}:\n{}",
+                        pattern_str, haystack
+                    ));
+                }
+                if negate && found {
+                    return Err(format!(
+                        "line {line_num}: {cmd}: {label} matched {:?} (expected no match)\n{label}:\n{}",
+                        pattern_str, haystack
+                    ));
                 }
             }
 

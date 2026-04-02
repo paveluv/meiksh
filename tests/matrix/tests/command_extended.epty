@@ -10,7 +10,7 @@ begin test "command -V echo produces output mentioning echo"
   begin script
     command -V echo 2>&1
   end script
-  expect_stdout_line ".*echo.*"
+  expect_stdout ".*echo.*"
 end test "command -V echo produces output mentioning echo"
 
 requirement "SHALL-COMMAND-1030" doc="When the -V option is specified, standard output shall be formatted as: \"%s\\n\", <unspecified>."
@@ -26,7 +26,7 @@ begin test "command -V cd produces output mentioning cd"
   begin script
     command -V cd 2>&1
   end script
-  expect_stdout_line ".*cd.*"
+  expect_stdout ".*cd.*"
 end test "command -V cd produces output mentioning cd"
 
 # ==============================================================================
@@ -95,7 +95,7 @@ begin test "command export does not abort shell"
     command export 2>/dev/null
     echo survived
   end script
-  expect_stdout_line ".*survived.*"
+  expect_stdout "(.|\n)*\nsurvived"
 end test "command export does not abort shell"
 
 requirement "SHALL-DESCRIPTION-512" doc="If n is specified, the break utility shall exit from the n th enclosing for , while , or until loop."
@@ -127,7 +127,7 @@ begin test "command does not perform alias expansion"
     command ls / >/dev/null 2>&1
     echo $?
   end script
-  not_expect_stdout ".*ALIASED.*"
+  expect_stdout "0"
 end test "command does not perform alias expansion"
 
 # ==============================================================================
@@ -140,7 +140,7 @@ begin test "command -v ls prints path or name"
   begin script
     command -v ls 2>&1
   end script
-  expect_stdout_line ".*((/.*ls)|ls).*"
+  expect_stdout ".*((/.*ls)|ls).*"
 end test "command -v ls prints path or name"
 
 requirement "SHALL-COMMAND-1105" doc="If the command_name is the same as the name of one of the special built-in utilities, the special properties in the enumerated list at the beginning of 2.15 Special Built-In Utilities shall not occur."
@@ -148,7 +148,7 @@ begin test "command -v cd prints builtin name"
   begin script
     command -v cd 2>&1
   end script
-  expect_stdout_line ".*cd.*"
+  expect_stdout ".*cd.*"
 end test "command -v cd prints builtin name"
 
 requirement "SHALL-COMMAND-1106" doc="In every other respect, if command_name is not the name of a function, the effect of command (with no options) shall be the same as omitting command , except that command_name does not appear in the command word position in the command command, and consequently is not subject to alias substitution (see 2.3.1 Alias Substitution ) nor recognized as a reserved word (see 2.4 Reserved Words )."
@@ -166,7 +166,7 @@ begin test "command -v for alias or no alias"
     alias greet="echo hi" 2>/dev/null
     command -v greet 2>/dev/null || echo NO_ALIAS
   end script
-  expect_stdout_line ".*(alias greet=.*|NO_ALIAS).*"
+  expect_stdout "(alias greet=.*|NO_ALIAS)"
 end test "command -v for alias or no alias"
 
 requirement "SHALL-2-6-4-167" doc="If the expression is invalid, or the contents of a shell variable used in the expression are not recognized by the shell, the expansion fails and the shell shall write a diagnostic message to standard error indicating the failure."
@@ -182,7 +182,7 @@ begin test "command -V echo describes command type"
   begin script
     command -V echo 2>&1
   end script
-  expect_stdout_line ".*echo.*"
+  expect_stdout ".*echo.*"
 end test "command -V echo describes command type"
 
 # ==============================================================================
@@ -215,7 +215,7 @@ begin test "command local inside function"
     f() { command local LV=hello 2>/dev/null && echo $LV || echo $LV; }
     f
   end script
-  expect_stdout_line ".*hello.*"
+  expect_stdout "hello"
 end test "command local inside function"
 
 # ==============================================================================

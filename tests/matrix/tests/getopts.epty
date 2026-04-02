@@ -127,7 +127,7 @@ begin test "OPTIND and OPTARG are not exported by default"
   begin script
     $SHELL -c 'env | grep -c "^OPTIND\|^OPTARG"; echo $?'
   end script
-  expect_stdout_line "0"
+  expect_stdout "0\n1"
 end test "OPTIND and OPTARG are not exported by default"
 
 # ==============================================================================
