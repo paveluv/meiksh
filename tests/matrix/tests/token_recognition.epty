@@ -41,7 +41,7 @@ begin test "bad expansion parameter error"
   begin script
     echo ${/} 2>/dev/null
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "bad expansion parameter error"
 
 requirement "SHALL-2-3-023" doc="The shell shall read its input in terms of lines. (For details about how the shell reads its input, see the description of sh .) The input lines can be of unlimited length."

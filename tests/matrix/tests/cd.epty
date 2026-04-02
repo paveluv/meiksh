@@ -83,8 +83,8 @@ begin test "cd empty string fails"
   begin script
     cd ""
   end script
-  not_expect_exit_code 0
-  not_expect_stderr ""
+  expect_exit_code !=0
+  expect_stderr ".+"
 end test "cd empty string fails"
 
 # ==============================================================================
@@ -98,7 +98,7 @@ begin test "cd - with unset OLDPWD fails"
     unset OLDPWD
     cd - 2>/dev/null
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "cd - with unset OLDPWD fails"
 
 # ==============================================================================

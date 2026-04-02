@@ -38,7 +38,7 @@ begin test "readonly prevents assignment"
     readonly RO_VAR="protected"
     RO_VAR="mutated"
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "readonly prevents assignment"
 
 requirement "SHALL-DESCRIPTION-645" doc="The shell shall format the output, including the proper use of quoting, so that it is suitable for reinput to the shell as commands that achieve the same trapping results for the set of conditions included in the output, except for signals that were ignored on entry to the shell as described above."

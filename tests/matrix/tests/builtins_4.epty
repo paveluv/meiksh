@@ -54,9 +54,9 @@ begin test "trap with signal number resets to default"
   begin script
     trap "echo trapped" INT
     trap 2
-    trap -p INT
+    trap -p INT | grep -c 'echo trapped' || true
   end script
-  not_expect_stdout ".*echo trapped.*"
+  expect_stdout "0"
 end test "trap with signal number resets to default"
 
 requirement "SHALL-DESCRIPTION-633" doc="Otherwise, the argument action shall be read and executed by the shell when one of the corresponding conditions arises."
@@ -155,8 +155,7 @@ begin test "subshell resets traps to default"
     trap "echo parent_trap" USR1
     (trap "echo child_trap" USR1; trap -p USR1)
   end script
-  not_expect_stdout ".*parent_trap.*"
-  expect_stdout ".*child_trap.*"
+  expect_stdout "trap -- .*child_trap.* USR1"
 end test "subshell resets traps to default"
 
 requirement "SHALL-DESCRIPTION-639" doc="Traps shall remain in place for a given shell until explicitly changed with another trap command."

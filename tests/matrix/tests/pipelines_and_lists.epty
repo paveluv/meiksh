@@ -148,7 +148,7 @@ begin test "exit status of true; false is non-zero"
     true
     false
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "exit status of true; false is non-zero"
 
 requirement "SHALL-DESCRIPTION-5018" doc="The false utility shall return with a non-zero exit code."

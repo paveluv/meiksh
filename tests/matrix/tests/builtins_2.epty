@@ -13,7 +13,7 @@ begin test "exec of nonexistent command causes non-interactive shell to exit"
     exec /invalid/does/not/exist
     echo "survived"
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "exec of nonexistent command causes non-interactive shell to exit"
 
 requirement "SHALL-ENVIRONMENT-VARIABLES-024" doc="This variable shall represent an absolute pathname of the current working directory."

@@ -24,7 +24,7 @@ begin test "false returns non-zero exit code"
   begin script
     false
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "false returns non-zero exit code"
 
 requirement "SHALL-EXIT-STATUS-5019" doc="The false utility shall always exit with a value between 1 and 125, inclusive."
@@ -57,7 +57,7 @@ begin test "test 1 -eq 2 returns non-zero"
   begin script
     test 1 -eq 2
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "test 1 -eq 2 returns non-zero"
 
 requirement "SHALL-FC-1135" doc="If the editor returns a non-zero exit status, this shall suppress the entry into the history list and the command re-execution."
@@ -73,7 +73,7 @@ begin test "[ 1 -eq 2 ] returns non-zero"
   begin script
     [ 1 -eq 2 ]
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "[ 1 -eq 2 ] returns non-zero"
 
 # ==============================================================================
@@ -107,7 +107,7 @@ begin test "test -d on nonexistent directory"
   begin script
     test -d /nonexistent_dir_99999
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "test -d on nonexistent directory"
 
 requirement "SHALL-ENVIRONMENT-VARIABLES-5074" doc="The following environment variables shall affect the execution of test : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
@@ -131,7 +131,7 @@ begin test "test -z on non-empty string returns non-zero"
   begin script
     test -z "hello"
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "test -z on non-empty string returns non-zero"
 
 # ==============================================================================
@@ -162,7 +162,7 @@ begin test "unary -n on empty string returns non-zero"
   begin script
     test -n ""
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "unary -n on empty string returns non-zero"
 
 requirement "SHALL-V3CHAP02-1010" doc="Each field containing the results from an expansion shall be processed in order, intermixed with fields not containing the results of expansions, processed as described above, as if by using the following algorithm, examining bytes in the input field, from beginning to end: Begin with an empty candidate field and the input as specified above."
@@ -178,7 +178,7 @@ begin test "binary = inequality"
   begin script
     test hello = world
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "binary = inequality"
 
 requirement "SHALL-2-5-2-064" doc="If one of these conditions is true, the initial fields shall be retained as separate fields, except that if the parameter being expanded was embedded within a word, the first field shall be joined with the beginning part of the original word and the last field shall be joined with the end part of the original word."
@@ -194,7 +194,7 @@ begin test "binary -gt false"
   begin script
     test 3 -gt 5
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "binary -gt false"
 
 requirement "SHALL-FC-1135" doc="If the editor returns a non-zero exit status, this shall suppress the entry into the history list and the command re-execution."
@@ -202,7 +202,7 @@ begin test "zero arguments returns non-zero"
   begin script
     test
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "zero arguments returns non-zero"
 
 requirement "SHALL-CD-1101" doc="If a non-empty directory name from CDPATH is not used, and the directory argument is not '-' , there shall be no output."
@@ -218,7 +218,7 @@ begin test "one empty argument returns non-zero"
   begin script
     test ""
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "one empty argument returns non-zero"
 
 requirement "SHALL-DESCRIPTION-5076" doc="The true utility shall return with exit code zero."
@@ -253,7 +253,7 @@ begin test "[ ] with no arguments returns non-zero"
   begin script
     [ ]
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "[ ] with no arguments returns non-zero"
 
 requirement "SHALL-FC-1135" doc="If the editor returns a non-zero exit status, this shall suppress the entry into the history list and the command re-execution."

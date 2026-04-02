@@ -75,7 +75,7 @@ begin test "errexit exits on command failure"
     echo "should not run"
   end script
   expect_stdout "start"
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "errexit exits on command failure"
 
 requirement "SHALL-DESCRIPTION-595" doc="The -e setting shall be ignored when executing the compound list following the while , until , if , or elif reserved word, a pipeline beginning with the ! reserved word, or any command of an AND-OR list other than the last."
@@ -113,7 +113,7 @@ begin test "errexit triggers on pipeline failure (last command)"
     echo ok | false
     echo should_not_appear
   end script
-  not_expect_stdout ".*should_not_appear.*"
+  expect_stdout ""
 end test "errexit triggers on pipeline failure (last command)"
 
 requirement "SHALL-DESCRIPTION-597" doc="The -f option shall disable pathname expansion."
@@ -156,7 +156,7 @@ begin test "nounset exits on unset variable expansion"
     echo "should not run"
   end script
   expect_stdout "start"
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "nounset exits on unset variable expansion"
 
 requirement "SHALL-OPTIONS-008" doc="If there are no operands and the -c option is not specified, the -s option shall be assumed."

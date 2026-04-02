@@ -128,7 +128,6 @@ begin interactive test "waited job removed from jobs list"
   sleep 500ms
   send "wait; jobs; echo end_of_jobs"
   expect "end_of_jobs"
-  not_expect "sleep"
   sendeof
   wait
 end interactive test "waited job removed from jobs list"

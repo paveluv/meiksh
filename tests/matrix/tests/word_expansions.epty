@@ -243,7 +243,7 @@ begin test "colon-question generates error on unset"
     echo "${foo:?error message}"
   end script
   expect_stderr ".*error message.*"
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "colon-question generates error on unset"
 
 # We test `:+` alternative value substitution.
@@ -293,7 +293,7 @@ begin test "set -u fails on unset variable"
     unset unset_var
     echo "${unset_var}"
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "set -u fails on unset variable"
 
 # Even with string length expansion, `set -u` forces a failure.
@@ -305,7 +305,7 @@ begin test "set -u fails on length of unset variable"
     unset unset_var
     echo "${#unset_var}"
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "set -u fails on length of unset variable"
 
 # ==============================================================================
@@ -515,8 +515,8 @@ begin test "division by zero fails"
   begin script
     echo $((1 / 0))
   end script
-  not_expect_stderr ""
-  not_expect_exit_code 0
+  expect_stderr ".+"
+  expect_exit_code !=0
 end test "division by zero fails"
 
 

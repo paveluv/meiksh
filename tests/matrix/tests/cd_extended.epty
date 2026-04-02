@@ -211,7 +211,7 @@ begin test "cd - with unset OLDPWD fails"
     unset OLDPWD
     cd - 2>/dev/null
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "cd - with unset OLDPWD fails"
 
 # ==============================================================================
@@ -241,7 +241,7 @@ begin test "cd with unset HOME fails"
     unset HOME
     cd 2>/dev/null
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "cd with unset HOME fails"
 
 requirement "SHALL-CD-1093" doc="The following operands shall be supported: directory An absolute or relative pathname of the directory that shall become the new working directory."
@@ -317,7 +317,7 @@ begin test "cd to a regular file fails"
     touch not_a_dir_file
     cd not_a_dir_file 2>/dev/null
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "cd to a regular file fails"
 
 requirement "SHALL-CD-1081" doc="If these actions fail for any reason, the cd utility shall display an appropriate error message and the remainder of this step shall not be executed."
@@ -326,7 +326,7 @@ begin test "cd to nonexistent path fails"
   begin script
     cd /nonexistent_path_xyz_12345 2>/dev/null
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "cd to nonexistent path fails"
 
 requirement "SHALL-CD-1081" doc="If these actions fail for any reason, the cd utility shall display an appropriate error message and the remainder of this step shall not be executed."
@@ -340,7 +340,7 @@ begin test "cd to directory with no execute permission fails"
     chmod 755 no_perm_dir
     exit $rc
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "cd to directory with no execute permission fails"
 
 requirement "SHALL-CD-1103" doc="The working directory shall remain unchanged."
@@ -365,7 +365,7 @@ begin test "cd to empty string fails"
   begin script
     cd "" 2>/dev/null
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "cd to empty string fails"
 
 # ==============================================================================

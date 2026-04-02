@@ -35,19 +35,16 @@
 //!   do not add explicit cleanup-only commands unless cleanup behavior itself is tested.
 //!
 //! ### Non-interactive assertions (after end script):
-//!   expect_stdout "pattern"               — assert stdout matches regex
-//!   expect_stderr "pattern"               — assert stderr matches regex
-//!   expect_exit_code N                    — assert exit code equals N
-//!   not_expect_stdout "pattern"           — assert stdout does NOT match
-//!   not_expect_stderr "pattern"           — assert stderr does NOT match
-//!   not_expect_exit_code N                — assert exit code does NOT equal N
+//!   expect_stdout "pattern"               — assert stdout matches regex (full match)
+//!   expect_stderr "pattern"               — assert stderr matches regex (full match)
+//!   expect_exit_code <expr>               — assert exit code satisfies expression
+//!                                           expr: literal (0), comparison (!=0, >128),
+//!                                           combinators (&& ||), parens: (>128 && <256) || 1
 //!
 //! ### Interactive (PTY) commands (inside begin/end interactive test):
 //!   spawn [flags...]                       — fork an interactive shell (shell from --shell, flags appended)
 //!   expect "regex"                        — wait for regex match in PTY output
 //!   expect timeout=2s "regex"             — with per-command timeout
-//!   not_expect "regex"                    — assert regex does NOT match
-//!   not_expect timeout=500ms "regex"      — timed negative assertion
 //!   expect_line "regex"                   — wait for matching line
 //!   expect_line timeout=1s "regex"        — with per-command timeout
 //!   send "text"                           — write text + newline to PTY
@@ -292,45 +289,6 @@ impl PtySession {
         }
     }
 
-    /// Assert that a regex does NOT match anywhere in the current buffer.
-    /// With timeout: watch for the given duration, fail if pattern appears.
-    /// Without timeout: instant check against current buffer contents.
-    fn not_expect(&self, pattern: &[RegexNode], pattern_str: &str, timeout: Option<Duration>) -> Result<(), String> {
-        match timeout {
-            None => {
-                let lock = self.buf.lock().unwrap();
-                let haystack = String::from_utf8_lossy(&lock).to_string();
-                if regex_find(pattern, &haystack).is_some() {
-                    Err(format!(
-                        "not_expect: found {:?} in output:\n{}",
-                        pattern_str, haystack
-                    ))
-                } else {
-                    Ok(())
-                }
-            }
-            Some(dur) => {
-                let start = Instant::now();
-                loop {
-                    {
-                        let lock = self.buf.lock().unwrap();
-                        let haystack = String::from_utf8_lossy(&lock).to_string();
-                        if regex_find(pattern, &haystack).is_some() {
-                            return Err(format!(
-                                "not_expect: found {:?} in output during {:.1}s watch:\n{}",
-                                pattern_str, dur.as_secs_f64(), haystack
-                            ));
-                        }
-                    }
-                    if start.elapsed() >= dur {
-                        return Ok(());
-                    }
-                    thread::sleep(Duration::from_millis(10));
-                }
-            }
-        }
-    }
-
     /// Wait for the next complete line matching a regex pattern.
     /// Consumes non-matching lines while scanning forward.
     fn expect_line(&self, pattern: &[RegexNode], pattern_str: &str, timeout: Duration) -> Result<String, String> {
@@ -550,6 +508,289 @@ fn parse_expect_args(rest: &str) -> Result<(Option<Duration>, &str), String> {
         Ok((Some(timeout), quoted))
     } else {
         Ok((None, rest))
+    }
+}
+
+// ── Exit code expression language ────────────────────────────────────────────
+//
+// Grammar:
+//   expr     = or_expr
+//   or_expr  = and_expr ("||" and_expr)*
+//   and_expr = atom ("&&" atom)*
+//   atom     = "(" expr ")" | comparison | literal
+//   comparison = ("<=" | ">=" | "!=" | "==" | "<" | ">") INTEGER
+//   literal  = INTEGER   (sugar for == INTEGER)
+
+#[derive(Debug, Clone)]
+enum ExitExpr {
+    Literal(i32),
+    Cmp(CmpOp, i32),
+    And(Vec<ExitExpr>),
+    Or(Vec<ExitExpr>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum CmpOp {
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+impl ExitExpr {
+    fn eval(&self, code: i32) -> bool {
+        match self {
+            ExitExpr::Literal(n) => code == *n,
+            ExitExpr::Cmp(op, n) => match op {
+                CmpOp::Eq => code == *n,
+                CmpOp::Ne => code != *n,
+                CmpOp::Lt => code < *n,
+                CmpOp::Le => code <= *n,
+                CmpOp::Gt => code > *n,
+                CmpOp::Ge => code >= *n,
+            },
+            ExitExpr::And(exprs) => exprs.iter().all(|e| e.eval(code)),
+            ExitExpr::Or(exprs) => exprs.iter().any(|e| e.eval(code)),
+        }
+    }
+
+    fn display(&self) -> String {
+        match self {
+            ExitExpr::Literal(n) => n.to_string(),
+            ExitExpr::Cmp(op, n) => {
+                let op_str = match op {
+                    CmpOp::Eq => "==",
+                    CmpOp::Ne => "!=",
+                    CmpOp::Lt => "<",
+                    CmpOp::Le => "<=",
+                    CmpOp::Gt => ">",
+                    CmpOp::Ge => ">=",
+                };
+                format!("{op_str}{n}")
+            }
+            ExitExpr::And(exprs) => exprs
+                .iter()
+                .map(|e| e.display())
+                .collect::<Vec<_>>()
+                .join(" && "),
+            ExitExpr::Or(exprs) => exprs
+                .iter()
+                .map(|e| {
+                    if matches!(e, ExitExpr::And(v) if v.len() > 1) {
+                        format!("({})", e.display())
+                    } else {
+                        e.display()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" || "),
+        }
+    }
+}
+
+fn parse_exit_expr(input: &str) -> Result<ExitExpr, String> {
+    let tokens = tokenize_exit_expr(input)?;
+    let mut pos = 0;
+    let expr = parse_or(&tokens, &mut pos)?;
+    if pos != tokens.len() {
+        return Err(format!(
+            "unexpected token {:?} at position {pos} in exit expression: {input}",
+            tokens[pos]
+        ));
+    }
+    Ok(expr)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum ExitToken {
+    Int(i32),
+    Op(CmpOp),
+    And,
+    Or,
+    LParen,
+    RParen,
+}
+
+fn tokenize_exit_expr(input: &str) -> Result<Vec<ExitToken>, String> {
+    let mut tokens = Vec::new();
+    let bytes = input.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b' ' | b'\t' => {
+                i += 1;
+            }
+            b'(' => {
+                tokens.push(ExitToken::LParen);
+                i += 1;
+            }
+            b')' => {
+                tokens.push(ExitToken::RParen);
+                i += 1;
+            }
+            b'&' => {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'&' {
+                    tokens.push(ExitToken::And);
+                    i += 2;
+                } else {
+                    return Err(format!("unexpected '&' in exit expression: {input}"));
+                }
+            }
+            b'|' => {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'|' {
+                    tokens.push(ExitToken::Or);
+                    i += 2;
+                } else {
+                    return Err(format!("unexpected '|' in exit expression: {input}"));
+                }
+            }
+            b'!' => {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
+                    i += 2;
+                    let (n, adv) = parse_int_at(bytes, i, input)?;
+                    tokens.push(ExitToken::Op(CmpOp::Ne));
+                    tokens.push(ExitToken::Int(n));
+                    i += adv;
+                } else {
+                    return Err(format!("unexpected '!' in exit expression: {input}"));
+                }
+            }
+            b'<' => {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
+                    i += 2;
+                    let (n, adv) = parse_int_at(bytes, i, input)?;
+                    tokens.push(ExitToken::Op(CmpOp::Le));
+                    tokens.push(ExitToken::Int(n));
+                    i += adv;
+                } else {
+                    i += 1;
+                    let (n, adv) = parse_int_at(bytes, i, input)?;
+                    tokens.push(ExitToken::Op(CmpOp::Lt));
+                    tokens.push(ExitToken::Int(n));
+                    i += adv;
+                }
+            }
+            b'>' => {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
+                    i += 2;
+                    let (n, adv) = parse_int_at(bytes, i, input)?;
+                    tokens.push(ExitToken::Op(CmpOp::Ge));
+                    tokens.push(ExitToken::Int(n));
+                    i += adv;
+                } else {
+                    i += 1;
+                    let (n, adv) = parse_int_at(bytes, i, input)?;
+                    tokens.push(ExitToken::Op(CmpOp::Gt));
+                    tokens.push(ExitToken::Int(n));
+                    i += adv;
+                }
+            }
+            b'=' => {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
+                    i += 2;
+                    let (n, adv) = parse_int_at(bytes, i, input)?;
+                    tokens.push(ExitToken::Op(CmpOp::Eq));
+                    tokens.push(ExitToken::Int(n));
+                    i += adv;
+                } else {
+                    return Err(format!("unexpected '=' in exit expression: {input}"));
+                }
+            }
+            b'0'..=b'9' => {
+                let (n, adv) = parse_int_at(bytes, i, input)?;
+                tokens.push(ExitToken::Int(n));
+                i += adv;
+            }
+            _ => {
+                return Err(format!(
+                    "unexpected character '{}' in exit expression: {input}",
+                    bytes[i] as char
+                ));
+            }
+        }
+    }
+    Ok(tokens)
+}
+
+fn parse_int_at(bytes: &[u8], start: usize, input: &str) -> Result<(i32, usize), String> {
+    let mut end = start;
+    if end < bytes.len() && bytes[end] == b'-' {
+        end += 1;
+    }
+    while end < bytes.len() && bytes[end].is_ascii_digit() {
+        end += 1;
+    }
+    if end == start || (end == start + 1 && bytes[start] == b'-') {
+        return Err(format!("expected integer in exit expression: {input}"));
+    }
+    let s = &input[start..end];
+    let n: i32 = s
+        .parse()
+        .map_err(|e| format!("bad integer in exit expression: {e}"))?;
+    Ok((n, end - start))
+}
+
+fn parse_or(tokens: &[ExitToken], pos: &mut usize) -> Result<ExitExpr, String> {
+    let mut exprs = vec![parse_and(tokens, pos)?];
+    while *pos < tokens.len() && tokens[*pos] == ExitToken::Or {
+        *pos += 1;
+        exprs.push(parse_and(tokens, pos)?);
+    }
+    if exprs.len() == 1 {
+        Ok(exprs.pop().unwrap())
+    } else {
+        Ok(ExitExpr::Or(exprs))
+    }
+}
+
+fn parse_and(tokens: &[ExitToken], pos: &mut usize) -> Result<ExitExpr, String> {
+    let mut exprs = vec![parse_atom(tokens, pos)?];
+    while *pos < tokens.len() && tokens[*pos] == ExitToken::And {
+        *pos += 1;
+        exprs.push(parse_atom(tokens, pos)?);
+    }
+    if exprs.len() == 1 {
+        Ok(exprs.pop().unwrap())
+    } else {
+        Ok(ExitExpr::And(exprs))
+    }
+}
+
+fn parse_atom(tokens: &[ExitToken], pos: &mut usize) -> Result<ExitExpr, String> {
+    if *pos >= tokens.len() {
+        return Err("unexpected end of exit expression".to_string());
+    }
+    match &tokens[*pos] {
+        ExitToken::LParen => {
+            *pos += 1;
+            let expr = parse_or(tokens, pos)?;
+            if *pos >= tokens.len() || tokens[*pos] != ExitToken::RParen {
+                return Err("missing ')' in exit expression".to_string());
+            }
+            *pos += 1;
+            Ok(expr)
+        }
+        ExitToken::Op(op) => {
+            let op = *op;
+            *pos += 1;
+            if *pos >= tokens.len() {
+                return Err("expected integer after comparison operator".to_string());
+            }
+            if let ExitToken::Int(n) = tokens[*pos] {
+                *pos += 1;
+                Ok(ExitExpr::Cmp(op, n))
+            } else {
+                Err("expected integer after comparison operator".to_string())
+            }
+        }
+        ExitToken::Int(n) => {
+            let n = *n;
+            *pos += 1;
+            Ok(ExitExpr::Literal(n))
+        }
+        other => Err(format!("unexpected token {other:?} in exit expression")),
     }
 }
 
@@ -1071,20 +1312,6 @@ fn run_script(script_lines: &[String]) -> Result<(), String> {
                 }
             }
 
-            "not_expect" => {
-                let sess = session
-                    .as_ref()
-                    .ok_or_else(|| format!("line {line_num}: not_expect before spawn"))?;
-                let (timeout, quoted_part) = parse_expect_args(rest)?;
-                let pattern_str = extract_pattern(quoted_part)
-                    .map_err(|e| format!("line {line_num}: {e}"))?;
-                let pattern = parse_regex(&pattern_str)
-                    .map_err(|e| format!("line {line_num}: bad regex: {e}"))?;
-                log.push(format!(">>> not_expect {:?} (timeout={:?})", pattern_str, timeout));
-                sess.not_expect(&pattern, &pattern_str, timeout)
-                    .map_err(|e| format!("line {line_num}: {e}"))?;
-            }
-
             "expect_line" => {
                 let sess = session
                     .as_ref()
@@ -1557,8 +1784,7 @@ fn run_suite_test_inner(
                 );
             }
 
-            "expect_stdout" | "expect_stderr"
-            | "not_expect_stdout" | "not_expect_stderr" => {
+            "expect_stdout" | "expect_stderr" => {
                 let rr = last_run
                     .as_ref()
                     .ok_or_else(|| format!("line {line_num}: {cmd} before script"))?;
@@ -1573,41 +1799,27 @@ fn run_suite_test_inner(
                 };
                 log.push(format!(">>> {cmd} {:?}", pattern_str));
 
-                let negate = cmd.starts_with("not_");
                 let trimmed = haystack.trim_end();
-                let found = regex_full_match(&pattern, trimmed);
-                if !negate && !found {
+                if !regex_full_match(&pattern, trimmed) {
                     return Err(format!(
                         "line {line_num}: {cmd}: {label} did not match {:?}\n{label}:\n{}",
                         pattern_str, haystack
                     ));
                 }
-                if negate && found {
-                    return Err(format!(
-                        "line {line_num}: {cmd}: {label} matched {:?} (expected no match)\n{label}:\n{}",
-                        pattern_str, haystack
-                    ));
-                }
             }
 
-            "expect_exit_code" | "not_expect_exit_code" => {
+            "expect_exit_code" => {
                 let rr = last_run
                     .as_ref()
                     .ok_or_else(|| format!("line {line_num}: {cmd} before script"))?;
-                let expected: i32 = rest
-                    .parse()
-                    .map_err(|e| format!("line {line_num}: bad exit code: {e}"))?;
-                log.push(format!(">>> {cmd} {expected}"));
-                let negate = cmd.starts_with("not_");
-                if !negate && rr.exit_code != expected {
+                let expr = parse_exit_expr(rest.trim())
+                    .map_err(|e| format!("line {line_num}: {e}"))?;
+                log.push(format!(">>> expect_exit_code {}", expr.display()));
+                if !expr.eval(rr.exit_code) {
                     return Err(format!(
-                        "line {line_num}: {cmd}: expected {expected}, got {}",
+                        "line {line_num}: expect_exit_code: expression `{}` not satisfied by exit code {}",
+                        expr.display(),
                         rr.exit_code
-                    ));
-                }
-                if negate && rr.exit_code == expected {
-                    return Err(format!(
-                        "line {line_num}: {cmd}: did not expect {expected}",
                     ));
                 }
             }
@@ -1637,20 +1849,6 @@ fn run_suite_test_inner(
                         return Err(format!("line {line_num}: {e}"));
                     }
                 }
-            }
-
-            "not_expect" => {
-                let sess = session
-                    .as_ref()
-                    .ok_or_else(|| format!("line {line_num}: not_expect before spawn"))?;
-                let (timeout, quoted_part) = parse_expect_args(rest)?;
-                let pattern_str = extract_pattern(quoted_part)
-                    .map_err(|e| format!("line {line_num}: {e}"))?;
-                let pattern = parse_regex(&pattern_str)
-                    .map_err(|e| format!("line {line_num}: bad regex: {e}"))?;
-                log.push(format!(">>> not_expect {:?} (timeout={:?})", pattern_str, timeout));
-                sess.not_expect(&pattern, &pattern_str, timeout)
-                    .map_err(|e| format!("line {line_num}: {e}"))?;
             }
 
             "expect_line" => {

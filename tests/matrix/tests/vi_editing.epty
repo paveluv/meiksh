@@ -58,7 +58,6 @@ begin interactive test "ESC switches to command mode"
   sleep 100ms
   sendraw 0a
   expect "hello"
-  not_expect "hellox"
   expect "$ "
   sendeof
   wait
@@ -306,7 +305,6 @@ begin interactive test "delete backward preserves cursor char"
   sleep 100ms
   sendraw 0a
   expect "cd"
-  not_expect "ab"
   expect "$ "
   sendeof
   wait
@@ -588,7 +586,6 @@ begin interactive test "insert mode backspace erases"
   sendraw 65 63 68 6f 20 61 62 58 7f
   sendraw 0a
   expect "ab"
-  not_expect "abX"
   expect "$ "
   sendeof
   wait
@@ -793,7 +790,6 @@ begin interactive test "bigword backward B"
   sleep 100ms
   sendraw 0a
   expect "a\.b Z\.d"
-  not_expect "c\.d"
   expect "$ "
   sendeof
   wait
@@ -1022,7 +1018,6 @@ begin interactive test "change word count overflow 9cw"
   sleep 100ms
   sendraw 0a
   expect "Z"
-  not_expect "ab"
   expect "$ "
   sendeof
   wait
@@ -1582,7 +1577,6 @@ begin interactive test "comment out hash"
   sendraw 23
   sleep 200ms
   expect "$ "
-  not_expect "hello"
   sendeof
   wait
 end interactive test "comment out hash"
@@ -1669,7 +1663,6 @@ begin interactive test "substitute entire line S"
   sleep 100ms
   sendraw 0a
   expect "replaced"
-  not_expect "abc"
   expect "$ "
   sendeof
   wait

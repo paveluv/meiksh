@@ -21,7 +21,7 @@ begin test "failed redirection to read-only directory fails the command"
     chmod -w tmp_ro_dir
     echo "fail" > tmp_ro_dir/file.txt
   end script
-  not_expect_exit_code 0
+  expect_exit_code !=0
 end test "failed redirection to read-only directory fails the command"
 
 requirement "SHALL-2-7-193" doc="If the redirection operator is \"<<\" or \"<<-\" , the word that follows the redirection operator shall be subjected to quote removal; it is unspecified whether any of the other expansions occur."
