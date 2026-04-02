@@ -9,14 +9,16 @@ requirement "SHALL-INPUT-FILES-021" doc="The shell shall not enforce any line le
 requirement "SHALL-INPUT-FILES-022" doc="If the input file consists solely of zero or more blank lines and comments, sh shall exit with a zero exit status."
 
 begin test "blank lines and comments exit zero"
-  begin script
+  script
     printf '
     # just a comment
 
 
     ' > tmp_empty.sh; $SHELL tmp_empty.sh
-  end script
-  expect_exit_code 0
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
 end test "blank lines and comments exit zero"
 
 
@@ -27,11 +29,12 @@ end test "blank lines and comments exit zero"
 requirement "SHALL-2-8-1-246" doc="As a consequence of shell errors, if the exec command fails, a non-interactive shell shall exit from the current shell execution environment with a non-zero exit status."
 
 begin test "pwd matches working directory"
-  begin script
+  script
     pwd
-  end script
-  expect_stdout ".*"
-  expect_exit_code 0
+  expect
+    stdout ".*"
+    stderr ""
+    exit_code 0
 end test "pwd matches working directory"
 
 
@@ -42,18 +45,22 @@ end test "pwd matches working directory"
 requirement "SHALL-2-8-2-259" doc="The exit status of a command shall be determined as follows: If the command is not found, the exit status shall be 127."
 
 begin test "true exits 0"
-  begin script
+  script
     true
-  end script
-  expect_exit_code 0
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
 end test "true exits 0"
 
 requirement "SHALL-EXIT-STATUS-5019" doc="The false utility shall always exit with a value between 1 and 125, inclusive."
 begin test "false exits 1"
-  begin script
+  script
     false
-  end script
-  expect_exit_code 1
+  expect
+    stdout ""
+    stderr ""
+    exit_code 1
 end test "false exits 1"
 
 
@@ -64,8 +71,10 @@ end test "false exits 1"
 requirement "SHALL-2-9-1-4-287" doc="If a simple command has a command name and an optional list of arguments after word expansion (see 2.9.1.1 Order of Processing ), the following actions shall be performed: If the command name does not contain any <slash> characters, the first successful step in the following sequence shall occur: If the command name matches the name of a special built-in utility, that special built-in utility shall be invoked."
 
 begin test "prefix variable assignment passed to command"
-  begin script
+  script
     FOO=bar $SHELL -c 'echo $FOO'
-  end script
-  expect_stdout "bar"
+  expect
+    stdout "bar"
+    stderr ""
+    exit_code 0
 end test "prefix variable assignment passed to command"

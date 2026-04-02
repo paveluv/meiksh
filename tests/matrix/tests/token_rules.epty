@@ -8,23 +8,27 @@ requirement "SHALL-2-3-045" doc="If the current character is not quoted and can 
 requirement "SHALL-2-3-046" doc="The current character shall be used as the beginning of the next (operator) token."
 
 begin test "unquoted > is a control operator"
-  begin script
+  script
     echo a>tmp_token.txt
     cat tmp_token.txt
-  end script
-  expect_stdout "a"
+  expect
+    stdout "a"
+    stderr ""
+    exit_code 0
 end test "unquoted > is a control operator"
 
 requirement "SHALL-2-3-034" doc="If the previous character was used as part of an operator and the current character is not quoted and can be used with the previous characters to form an operator, it shall be used as part of that (operator) token."
 requirement "SHALL-2-3-035" doc="If the previous character was used as part of an operator and the current character cannot be used with the previous characters to form an operator, the operator containing the previous character shall be delimited."
 
 begin test ">> forms a single append operator"
-  begin script
+  script
     echo a >tmp_token.txt
     echo b >>tmp_token.txt
     cat tmp_token.txt
-  end script
-  expect_stdout "a\nb"
+  expect
+    stdout "a\nb"
+    stderr ""
+    exit_code 0
 end test ">> forms a single append operator"
 
 
@@ -37,10 +41,12 @@ requirement "SHALL-2-3-048" doc="If the previous character was part of a word, t
 requirement "SHALL-2-3-053" doc="The current character is used as the start of a new word."
 
 begin test "multiple blanks between words"
-  begin script
+  script
     echo a      b
-  end script
-  expect_stdout "a b"
+  expect
+    stdout "a b"
+    stderr ""
+    exit_code 0
 end test "multiple blanks between words"
 
 
@@ -52,27 +58,33 @@ requirement "SHALL-2-3-049" doc="If the current character is a '#' , it and all 
 requirement "SHALL-2-3-052" doc="The <newline> that ends the line is not considered part of the comment."
 
 begin test "comments ignored up to newline"
-  begin script
+  script
     echo a # this is a comment
     echo b
-  end script
-  expect_stdout "a\nb"
+  expect
+    stdout "a\nb"
+    stderr ""
+    exit_code 0
 end test "comments ignored up to newline"
 
 requirement "SHALL-V3CHAP02-1000" doc="The application shall quote the following characters if they are to represent themselves: | & ; < > ( ) $ ` \\ \" ' <space> <tab> <newline> and the following might need to be quoted under certain circumstances."
 begin test "quoted # is not a comment"
-  begin script
+  script
     echo "a # not a comment"
-  end script
-  expect_stdout "a # not a comment"
+  expect
+    stdout "a # not a comment"
+    stderr ""
+    exit_code 0
 end test "quoted # is not a comment"
 
 requirement "SHALL-2-5-2-064" doc="If one of these conditions is true, the initial fields shall be retained as separate fields, except that if the parameter being expanded was embedded within a word, the first field shall be joined with the beginning part of the original word and the last field shall be joined with the end part of the original word."
 begin test "# in middle of word is not a comment"
-  begin script
+  script
     echo a#b
-  end script
-  expect_stdout "a#b"
+  expect
+    stdout "a#b"
+    stderr ""
+    exit_code 0
 end test "# in middle of word is not a comment"
 
 

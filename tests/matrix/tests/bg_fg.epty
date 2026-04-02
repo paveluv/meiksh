@@ -177,20 +177,24 @@ end interactive test "suspend -> bg -> fg cycle"
 requirement "SHALL-BG-1069" doc="If job control is disabled, the bg utility shall exit with an error and no job shall be placed in the background."
 
 begin test "bg: error when job control is disabled"
-  begin script
+  script
     bg 2>/dev/null
-  end script
-  expect_exit_code !=0
+  expect
+    stdout ""
+    stderr ""
+    exit_code !=0
 end test "bg: error when job control is disabled"
 
 requirement "SHALL-FG-1173" doc="If job control is disabled, the fg utility shall exit with an error and no job shall be placed in the foreground."
 requirement "SHALL-STDERR-627" doc="For the fg utility, the standard error shall be used only for diagnostic messages."
 
 begin test "fg: error when job control is disabled"
-  begin script
+  script
     fg 2>/dev/null
-  end script
-  expect_exit_code !=0
+  expect
+    stdout ""
+    stderr ""
+    exit_code !=0
 end test "fg: error when job control is disabled"
 
 # ==============================================================================

@@ -9,10 +9,12 @@ requirement "SHALL-SH-1021" doc="The following additional options shall be suppo
 requirement "SHALL-OPTIONS-007" doc="No commands shall be read from the standard input."
 
 begin test "-c runs command_string with $0 and positional params"
-  begin script
+  script
     $SHELL -c 'echo "args: $0 $1 $2"' zero one two
-  end script
-  expect_stdout "args: zero one two"
+  expect
+    stdout "args: zero one two"
+    stderr ""
+    exit_code 0
 end test "-c runs command_string with $0 and positional params"
 
 # ==============================================================================
@@ -23,10 +25,12 @@ requirement "SHALL-OPERANDS-011" doc="The positional parameters ($1, $2, and so 
 requirement "SHALL-OPERANDS-013" doc="Special parameter 0 (see 2.5.2 Special Parameters ) shall be set to the value of command_file ."
 
 begin test "-c sets $0 to command_name operand"
-  begin script
+  script
     $SHELL -c 'echo "$0"' myname
-  end script
-  expect_stdout "myname"
+  expect
+    stdout "myname"
+    stderr ""
+    exit_code 0
 end test "-c sets $0 to command_name operand"
 
 # ==============================================================================
@@ -36,29 +40,35 @@ end test "-c sets $0 to command_name operand"
 requirement "SHALL-OPTIONS-008" doc="If there are no operands and the -c option is not specified, the -s option shall be assumed."
 
 begin test "commands from stdin act like -s"
-  begin script
+  script
     echo 'echo stdin_test' | $SHELL
-  end script
-  expect_stdout "stdin_test"
+  expect
+    stdout "stdin_test"
+    stderr ""
+    exit_code 0
 end test "commands from stdin act like -s"
 
 requirement "SHALL-STDIN-016" doc="When the shell is using standard input and it invokes a command that also uses standard input, the shell shall ensure that the standard input file pointer points directly after the command it has read when the command begins execution."
 requirement "SHALL-STDIN-017" doc="It shall not read ahead in such a manner that any characters intended to be read by the invoked command are consumed by the shell (whether interpreted by the shell or not) or that characters that are not read by the invoked command are not seen by the shell."
 
 begin test "stdin not consumed entirely if a command needs it"
-  begin script
+  script
     (echo 'read line'; echo 'input_for_read'; echo 'echo "got: $line"') | $SHELL
-  end script
-  expect_stdout "got: input_for_read"
+  expect
+    stdout "got: input_for_read"
+    stderr ""
+    exit_code 0
 end test "stdin not consumed entirely if a command needs it"
 
 requirement "SHALL-OPERANDS-014" doc="If sh is called using a synopsis form that omits command_file , special parameter 0 shall be set to the value of the first argument passed to sh from its parent (for example, argv [0] for a C program), which is normally a pathname used to execute the sh utility."
 
 begin test "$0 is shell path when reading from stdin"
-  begin script
+  script
     echo 'echo $0' | $SHELL
-  end script
-  expect_stdout ".*/.*sh.*"
+  expect
+    stdout ".*/.*sh.*"
+    stderr ""
+    exit_code 0
 end test "$0 is shell path when reading from stdin"
 
 # ==============================================================================
@@ -69,13 +79,15 @@ requirement "SHALL-STDIN-018" doc="If the standard input to sh is a FIFO or term
 requirement "SHALL-STDIN-019" doc="This shall remain in effect when the command completes."
 
 begin test "shell enables blocking reads on FIFO stdin"
-  begin script
+  script
     mkfifo /tmp/test_fifo_$$
     (sleep 0.1; echo 'echo fifo_ok'; echo 'exit') > /tmp/test_fifo_$$ &
     $SHELL < /tmp/test_fifo_$$
     rm -f /tmp/test_fifo_$$
-  end script
-  expect_stdout "fifo_ok"
+  expect
+    stdout "fifo_ok"
+    stderr ""
+    exit_code 0
 end test "shell enables blocking reads on FIFO stdin"
 
 # ==============================================================================
@@ -85,10 +97,12 @@ end test "shell enables blocking reads on FIFO stdin"
 requirement "SHALL-OPERANDS-010" doc="The following operands shall be supported: - A single <hyphen-minus> shall be treated as the first operand and then ignored."
 
 begin test "sh - ignores the hyphen and reads from stdin"
-  begin script
+  script
     echo 'echo hyphen_test' | $SHELL -
-  end script
-  expect_stdout "hyphen_test"
+  expect
+    stdout "hyphen_test"
+    stderr ""
+    exit_code 0
 end test "sh - ignores the hyphen and reads from stdin"
 
 # ==============================================================================
@@ -98,14 +112,16 @@ end test "sh - ignores the hyphen and reads from stdin"
 requirement "SHALL-OPTIONS-005" doc="The option letters derived from the set special built-in shall also be accepted with a leading <plus-sign> ( '+' ) instead of a leading <hyphen-minus> (meaning the reverse case of the option as described in this volume of POSIX.1-2024)."
 
 begin test "+a turns off allexport"
-  begin script
+  script
     $SHELL -c 'set -a
     export_on="yes"
     set +a
     export_off="no"
     env | grep export_'
-  end script
-  expect_stdout "export_on=yes"
+  expect
+    stdout "export_on=yes"
+    stderr ""
+    exit_code 0
 end test "+a turns off allexport"
 
 # ==============================================================================
@@ -115,10 +131,12 @@ end test "+a turns off allexport"
 requirement "SHALL-OPERANDS-012" doc="If the pathname does not contain a <slash> character: The implementation shall attempt to read that file from the current working directory; the file need not be executable."
 
 begin test "sh reads script from current working directory without slash"
-  begin script
+  script
     echo 'echo "local_script_executed"' > tmp_local.sh
     $SHELL tmp_local.sh
     rm -f tmp_local.sh
-  end script
-  expect_stdout "local_script_executed"
+  expect
+    stdout "local_script_executed"
+    stderr ""
+    exit_code 0
 end test "sh reads script from current working directory without slash"

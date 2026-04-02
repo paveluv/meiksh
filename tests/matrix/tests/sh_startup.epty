@@ -7,10 +7,12 @@ testsuite "Shell Startup and Invocation"
 requirement "SHALL-SH-1015" doc="If command_name is not specified, special parameter 0 shall be set to the value of the first argument passed to sh from its parent (for example, argv [0] for a C program), which is normally a pathname used to execute the sh utility."
 
 begin test "special parameter 0 defaults to shell name"
-  begin script
+  script
     echo 'echo $0' | $SHELL
-  end script
-  expect_stdout ".*/.*sh.*"
+  expect
+    stdout ".*/.*sh.*"
+    stderr ""
+    exit_code 0
 end test "special parameter 0 defaults to shell name"
 
 # ==============================================================================
@@ -20,18 +22,22 @@ end test "special parameter 0 defaults to shell name"
 requirement "SHALL-SH-1016" doc="The command_string operand shall be a string that is interpreted by the shell as one or more commands."
 
 begin test "-c command_string executes command"
-  begin script
+  script
     $SHELL -c 'echo hello'
-  end script
-  expect_stdout "hello"
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
 end test "-c command_string executes command"
 
 requirement "SHALL-SH-1016" doc="The command_string operand shall be a string that is interpreted by the shell as one or more commands."
 begin test "-c command_string multiple commands"
-  begin script
+  script
     $SHELL -c 'echo first; echo second'
-  end script
-  expect_stdout "first\nsecond"
+  expect
+    stdout "first\nsecond"
+    stderr ""
+    exit_code 0
 end test "-c command_string multiple commands"
 
 # ==============================================================================
@@ -41,10 +47,12 @@ end test "-c command_string multiple commands"
 requirement "SHALL-SH-1022" doc="The standard input shall be used only if one of the following is true: The -s option is specified."
 
 begin test "-s reads commands from stdin"
-  begin script
+  script
     echo 'echo from_stdin' | $SHELL -s
-  end script
-  expect_stdout "from_stdin"
+  expect
+    stdout "from_stdin"
+    stderr ""
+    exit_code 0
 end test "-s reads commands from stdin"
 
 # ==============================================================================
@@ -54,14 +62,16 @@ end test "-s reads commands from stdin"
 requirement "SHALL-SH-1018" doc="ENV shall be ignored if the real and effective user IDs or real and effective group IDs of the process are different."
 
 begin test "ENV file processed for interactive shell"
-  begin script
+  script
     _env_file=_test_env.sh
     echo 'ENV_LOADED=yes' > $_env_file
     ENV=$_env_file
     export ENV
     $SHELL -i -c 'echo $ENV_LOADED' 2>/dev/null
-  end script
-  expect_stdout ".*yes.*"
+  expect
+    stdout ".*yes.*"
+    stderr ""
+    exit_code 0
 end test "ENV file processed for interactive shell"
 
 # ==============================================================================
@@ -71,8 +81,10 @@ end test "ENV file processed for interactive shell"
 requirement "SHALL-2-8-1-250" doc="If the command_string operand is an empty string, sh shall exit with a zero exit status."
 
 begin test "empty command_string exits zero"
-  begin script
+  script
     $SHELL -c ''
-  end script
-  expect_exit_code 0
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
 end test "empty command_string exits zero"

@@ -9,12 +9,14 @@ requirement "SHALL-UMASK-1326" doc="The file mode creation mask shall be set to 
 requirement "SHALL-UMASK-1329" doc="When the mask operand is not specified, the umask utility shall write a message to standard output that can later be used as a umask mask operand."
 
 begin test "umask set and query octal value"
-  begin script
+  script
     umask 022
     val=$(umask)
     echo "$val" | grep -q "022" && echo "pass" || echo "fail: $val"
-  end script
-  expect_stdout "pass"
+  expect
+    stdout "pass"
+    stderr ""
+    exit_code 0
 end test "umask set and query octal value"
 
 # ==============================================================================
@@ -24,12 +26,14 @@ end test "umask set and query octal value"
 requirement "SHALL-UMASK-1331" doc="If -S is specified, the message shall be in the following format: \"u=%s,g=%s,o=%s\\n\", < owner permissions >, < group permissions >, < other permissions > where the three values shall be combinations of letters from the set { r , w , x }; the presence of a letter shall indicate that the corresponding bit is clear in the file mode creation mask."
 
 begin test "umask -S prints symbolic mode"
-  begin script
+  script
     umask 022
     val=$(umask -S)
     echo "$val"
-  end script
-  expect_stdout "u=rwx,g=rx,o=rx"
+  expect
+    stdout "u=rwx,g=rx,o=rx"
+    stderr ""
+    exit_code 0
 end test "umask -S prints symbolic mode"
 
 # ==============================================================================
@@ -39,13 +43,15 @@ end test "umask -S prints symbolic mode"
 requirement "SHALL-UMASK-1324" doc="For a symbolic_mode value, the new value of the file mode creation mask shall be the logical complement of the file permission bits portion of the file mode specified by the symbolic_mode string."
 
 begin test "umask symbolic mode a=rx"
-  begin script
+  script
     umask 022
     umask a=rx
     val=$(umask)
     echo "$val" | grep -q "222" && echo "pass" || echo "fail: $val"
-  end script
-  expect_stdout "pass"
+  expect
+    stdout "pass"
+    stderr ""
+    exit_code 0
 end test "umask symbolic mode a=rx"
 
 # ==============================================================================
@@ -55,11 +61,13 @@ end test "umask symbolic mode a=rx"
 requirement "SHALL-UMASK-1325" doc="In a symbolic_mode value, the permissions op characters '+' and '-' shall be interpreted relative to the current file mode creation mask; '+' shall cause the bits for the indicated permissions to be cleared in the mask; '-' shall cause the bits for the indicated permissions to be set in the mask."
 
 begin test "umask symbolic relative g-w"
-  begin script
+  script
     umask 022
     umask g-w
     val=$(umask -S)
     echo "$val"
-  end script
-  expect_stdout "u=rwx,g=rx,o=rx"
+  expect
+    stdout "u=rwx,g=rx,o=rx"
+    stderr ""
+    exit_code 0
 end test "umask symbolic relative g-w"

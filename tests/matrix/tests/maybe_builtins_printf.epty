@@ -7,26 +7,32 @@ testsuite "Maybe-Builtin — printf (Write Formatted Output)"
 requirement "SHALL-OPERANDS-5022" doc="The following operands shall be supported: format A character string describing the format to use to write the remaining operands."
 
 begin test "printf plain string"
-  begin script
+  script
     printf hello
-  end script
-  expect_stdout "hello"
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
 end test "printf plain string"
 
 requirement "SHALL-EXTENDED-DESCRIPTION-5031" doc="The implementation shall not precede output from the o conversion specifier with zeros not specified by the format operand."
 begin test "printf %s with two arguments"
-  begin script
+  script
     printf "%s %s" hello world
-  end script
-  expect_stdout "hello world"
+  expect
+    stdout "hello world"
+    stderr ""
+    exit_code 0
 end test "printf %s with two arguments"
 
 requirement "SHALL-GETOPTS-1179" doc="When getopts reports end of options (that is, when exit status is 1), the value of OPTIND shall be the integer index of the next element of the parameter list (if any)."
 begin test "printf %d integer"
-  begin script
+  script
     printf "%d" 42
-  end script
-  expect_stdout "42"
+  expect
+    stdout "42"
+    stderr ""
+    exit_code 0
 end test "printf %d integer"
 
 # ==============================================================================
@@ -36,18 +42,22 @@ end test "printf %d integer"
 requirement "SHALL-EXTENDED-DESCRIPTION-5025" doc="The application shall ensure that the format operand is a character string, beginning and ending in its initial shift state, if any."
 
 begin test "printf %s preserves shift state"
-  begin script
+  script
     printf "%s" abc
-  end script
-  expect_stdout "abc"
+  expect
+    stdout "abc"
+    stderr ""
+    exit_code 0
 end test "printf %s preserves shift state"
 
 requirement "SHALL-EXTENDED-DESCRIPTION-5025" doc="The application shall ensure that the format operand is a character string, beginning and ending in its initial shift state, if any."
 begin test "printf mixed %s%d shift state"
-  begin script
+  script
     printf "%s%d" abc 123
-  end script
-  expect_stdout "abc123"
+  expect
+    stdout "abc123"
+    stderr ""
+    exit_code 0
 end test "printf mixed %s%d shift state"
 
 # ==============================================================================
@@ -57,50 +67,62 @@ end test "printf mixed %s%d shift state"
 requirement "SHALL-EXTENDED-DESCRIPTION-5026" doc="The format operand shall be used as the format string described in XBD 5."
 
 begin test "printf format %s %s"
-  begin script
+  script
     printf "%s %s" hello world
-  end script
-  expect_stdout "hello world"
+  expect
+    stdout "hello world"
+    stderr ""
+    exit_code 0
 end test "printf format %s %s"
 
 requirement "SHALL-EXTENDED-DESCRIPTION-5037" doc="The sequence '\\c' shall not be written and shall cause printf to ignore any remaining characters in the string operand containing it, any remaining string operands, and any additional characters in the format operand."
 begin test "printf format num=%d"
-  begin script
+  script
     printf "num=%d" 42
-  end script
-  expect_stdout "num=42"
+  expect
+    stdout "num=42"
+    stderr ""
+    exit_code 0
 end test "printf format num=%d"
 
 requirement "SHALL-DESCRIPTION-5020" doc="The printf utility shall write formatted operands to the standard output."
 begin test "printf right-justified width %4d"
-  begin script
+  script
     printf "%4d" 42
-  end script
-  expect_stdout "  42"
+  expect
+    stdout "  42"
+    stderr ""
+    exit_code 0
 end test "printf right-justified width %4d"
 
 requirement "SHALL-DESCRIPTION-5020" doc="The printf utility shall write formatted operands to the standard output."
 begin test "printf left-justified width %-4d"
-  begin script
+  script
     printf "%-4d" 42
-  end script
-  expect_stdout "42.*"
+  expect
+    stdout "42.*"
+    stderr ""
+    exit_code 0
 end test "printf left-justified width %-4d"
 
 requirement "SHALL-2-3-030" doc="Once a token has started, zero or more characters from the input shall be appended to the token until the end of the token is delimited according to one of the rules below."
 begin test "printf zero-padded hex %04x"
-  begin script
+  script
     printf "%04x" 42
-  end script
-  expect_stdout "002a"
+  expect
+    stdout "002a"
+    stderr ""
+    exit_code 0
 end test "printf zero-padded hex %04x"
 
 requirement "SHALL-DESCRIPTION-5020" doc="The printf utility shall write formatted operands to the standard output."
 begin test "printf precision %.5s truncates"
-  begin script
+  script
     printf "%.5s" helloworld
-  end script
-  expect_stdout "hello"
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
 end test "printf precision %.5s truncates"
 
 # ==============================================================================
@@ -110,82 +132,102 @@ end test "printf precision %.5s truncates"
 requirement "SHALL-EXTENDED-DESCRIPTION-5029" doc="File Format Notation ( '\\\\' , '\\a' , '\\b' , '\\f' , '\\n' , '\\r' , '\\t' , '\\v' ), \"\\ddd\" , where ddd is a one, two, or three-digit octal number, shall be written as a byte with the numeric value specified by the octal number."
 
 begin test "printf backslash escape"
-  begin script
+  script
     printf "\\\\"
-  end script
-  expect_stdout "\\"
+  expect
+    stdout "\\"
+    stderr ""
+    exit_code 0
 end test "printf backslash escape"
 
 requirement "SHALL-2-2-3-015" doc="Outside of \"$(...)\" and \"${...}\" the <backslash> shall retain its special meaning as an escape character (see 2.2.1 Escape Character (Backslash)) only when immediately followed by one of the following characters: $ ` \" \\ <newline>."
 begin test "printf newline escape"
-  begin script
+  script
     printf "a\nb"
-  end script
-  expect_stdout "a\nb"
+  expect
+    stdout "a\nb"
+    stderr ""
+    exit_code 0
 end test "printf newline escape"
 
 requirement "SHALL-DESCRIPTION-5020" doc="The printf utility shall write formatted operands to the standard output."
 begin test "printf tab escape"
-  begin script
+  script
     printf "a\tb"
-  end script
-  expect_stdout "a\tb"
+  expect
+    stdout "a\tb"
+    stderr ""
+    exit_code 0
 end test "printf tab escape"
 
 requirement "SHALL-DESCRIPTION-576" doc="The return utility shall cause the shell to stop executing the current function or dot script."
 begin test "printf carriage return escape"
-  begin script
+  script
     printf "a\rb" | cat -v
-  end script
-  expect_stdout ".*\^M.*|.*b.*"
+  expect
+    stdout ".*\^M.*|.*b.*"
+    stderr ""
+    exit_code 0
 end test "printf carriage return escape"
 
 requirement "SHALL-READ-1270" doc="If IFS is unset, or is set to any non-empty value, then a modified version of the field splitting algorithm specified in 2.6.5 Field Splitting shall be applied, with the modifications as follows: The input to the algorithm shall be the logical line (minus terminating delimiter) that was read from standard input, and shall be considered as a single initial field, all of which resulted from expansions, with any escaped byte and the preceding <backslash> escape character treated as if they were the result of a quoted expansion, and all other bytes treated as if they were the results of unquoted expansions."
 begin test "printf bell escape produces a byte"
-  begin script
+  script
     printf "\a" | wc -c | tr -d ' '
-  end script
-  expect_stdout ".*[1-9].*"
+  expect
+    stdout ".*[1-9].*"
+    stderr ""
+    exit_code 0
 end test "printf bell escape produces a byte"
 
 requirement "SHALL-DESCRIPTION-5020" doc="The printf utility shall write formatted operands to the standard output."
 begin test "printf backspace escape"
-  begin script
+  script
     printf "a\bb" | cat -v
-  end script
-  expect_stdout ".*\^H.*|.*b.*"
+  expect
+    stdout ".*\^H.*|.*b.*"
+    stderr ""
+    exit_code 0
 end test "printf backspace escape"
 
 requirement "SHALL-CD-1074" doc="The curpath value shall then be converted to canonical form as follows, considering each component from beginning to end, in sequence: Dot components and any <slash> characters that separate them from the next component shall be deleted."
 begin test "printf form feed escape"
-  begin script
+  script
     printf "a\fb" | cat -v
-  end script
-  expect_stdout ".*\^L.*|.*b.*"
+  expect
+    stdout ".*\^L.*|.*b.*"
+    stderr ""
+    exit_code 0
 end test "printf form feed escape"
 
 requirement "SHALL-DESCRIPTION-5020" doc="The printf utility shall write formatted operands to the standard output."
 begin test "printf vertical tab escape"
-  begin script
+  script
     printf "a\vb" | cat -v
-  end script
-  expect_stdout ".*\^K.*|.*b.*"
+  expect
+    stdout ".*\^K.*|.*b.*"
+    stderr ""
+    exit_code 0
 end test "printf vertical tab escape"
 
 requirement "SHALL-DESCRIPTION-5020" doc="The printf utility shall write formatted operands to the standard output."
 begin test "printf octal \\101 produces A"
-  begin script
+  script
     printf "\101"
-  end script
-  expect_stdout "A"
+  expect
+    stdout "A"
+    stderr ""
+    exit_code 0
 end test "printf octal \\101 produces A"
 
 requirement "SHALL-DESCRIPTION-5020" doc="The printf utility shall write formatted operands to the standard output."
 begin test "printf octal \\060 produces 0"
-  begin script
+  script
     printf "\060"
-  end script
-  expect_stdout "0"
+  expect
+    stdout "0"
+    stderr ""
+    exit_code 0
 end test "printf octal \\060 produces 0"
 
 # ==============================================================================
@@ -195,42 +237,52 @@ end test "printf octal \\060 produces 0"
 requirement "SHALL-EXTENDED-DESCRIPTION-5030" doc="The implementation shall not precede or follow output from the d or u conversion specifiers with <blank> characters not specified by the format operand."
 
 begin test "printf %d no surrounding blanks"
-  begin script
+  script
     printf "%d" 42
-  end script
-  expect_stdout "42"
+  expect
+    stdout "42"
+    stderr ""
+    exit_code 0
 end test "printf %d no surrounding blanks"
 
 requirement "SHALL-DESCRIPTION-5020" doc="The printf utility shall write formatted operands to the standard output."
 begin test "printf %d negative"
-  begin script
+  script
     printf "%d" -1
-  end script
-  expect_stdout "-1"
+  expect
+    stdout "-1"
+    stderr ""
+    exit_code 0
 end test "printf %d negative"
 
 requirement "SHALL-2-3-030" doc="Once a token has started, zero or more characters from the input shall be appended to the token until the end of the token is delimited according to one of the rules below."
 begin test "printf %d zero"
-  begin script
+  script
     printf "%d" 0
-  end script
-  expect_stdout "0"
+  expect
+    stdout "0"
+    stderr ""
+    exit_code 0
 end test "printf %d zero"
 
 requirement "SHALL-DESCRIPTION-5020" doc="The printf utility shall write formatted operands to the standard output."
 begin test "printf %u no surrounding blanks"
-  begin script
+  script
     printf "%u" 42
-  end script
-  expect_stdout "42"
+  expect
+    stdout "42"
+    stderr ""
+    exit_code 0
 end test "printf %u no surrounding blanks"
 
 requirement "SHALL-2-3-030" doc="Once a token has started, zero or more characters from the input shall be appended to the token until the end of the token is delimited according to one of the rules below."
 begin test "printf %u zero"
-  begin script
+  script
     printf "%u" 0
-  end script
-  expect_stdout "0"
+  expect
+    stdout "0"
+    stderr ""
+    exit_code 0
 end test "printf %u zero"
 
 # ==============================================================================
@@ -240,26 +292,32 @@ end test "printf %u zero"
 requirement "SHALL-EXTENDED-DESCRIPTION-5031" doc="The implementation shall not precede output from the o conversion specifier with zeros not specified by the format operand."
 
 begin test "printf %o without leading zero"
-  begin script
+  script
     printf "%o" 42
-  end script
-  expect_stdout "52"
+  expect
+    stdout "52"
+    stderr ""
+    exit_code 0
 end test "printf %o without leading zero"
 
 requirement "SHALL-2-3-030" doc="Once a token has started, zero or more characters from the input shall be appended to the token until the end of the token is delimited according to one of the rules below."
 begin test "printf %o zero"
-  begin script
+  script
     printf "%o" 0
-  end script
-  expect_stdout "0"
+  expect
+    stdout "0"
+    stderr ""
+    exit_code 0
 end test "printf %o zero"
 
 requirement "SHALL-2-5-1-060" doc="The digits denoting the positional parameters shall always be interpreted as a decimal value, even if there is a leading zero."
 begin test "printf %#o with leading zero"
-  begin script
+  script
     printf "%#o" 42
-  end script
-  expect_stdout "052"
+  expect
+    stdout "052"
+    stderr ""
+    exit_code 0
 end test "printf %#o with leading zero"
 
 # ==============================================================================
@@ -269,18 +327,22 @@ end test "printf %#o with leading zero"
 requirement "SHALL-EXTENDED-DESCRIPTION-5032" doc="An additional conversion specifier character, b , shall be supported as follows."
 
 begin test "printf %b plain string"
-  begin script
+  script
     printf "%b" hello
-  end script
-  expect_stdout "hello"
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
 end test "printf %b plain string"
 
 requirement "SHALL-2-3-031" doc="When both the start and end of a token have been delimited, the characters forming the token shall be exactly those in the input between the two delimiters, including any quoting characters."
 begin test "printf %b two arguments"
-  begin script
+  script
     printf "%b %b" hello world
-  end script
-  expect_stdout "hello world"
+  expect
+    stdout "hello world"
+    stderr ""
+    exit_code 0
 end test "printf %b two arguments"
 
 # ==============================================================================
@@ -290,18 +352,22 @@ end test "printf %b two arguments"
 requirement "SHALL-EXTENDED-DESCRIPTION-5033" doc="The argument shall be taken to be a string that can contain <backslash>-escape sequences."
 
 begin test "printf %b newline in argument"
-  begin script
+  script
     printf "%b" "a\nb"
-  end script
-  expect_stdout "a\nb"
+  expect
+    stdout "a\nb"
+    stderr ""
+    exit_code 0
 end test "printf %b newline in argument"
 
 requirement "SHALL-GETOPTS-1190" doc="Any of the following shall identify the end of options: the first \"--\" element of the parameter list that is not an option-argument, finding an element of the parameter list that is not an option-argument and does not begin with a '-' , or encountering an error."
 begin test "printf %b tab in argument"
-  begin script
+  script
     printf "%b" "a\tb"
-  end script
-  expect_stdout "a\tb"
+  expect
+    stdout "a\tb"
+    stderr ""
+    exit_code 0
 end test "printf %b tab in argument"
 
 # ==============================================================================
@@ -311,10 +377,12 @@ end test "printf %b tab in argument"
 requirement "SHALL-EXTENDED-DESCRIPTION-5034" doc="The following <backslash>-escape sequences shall be supported: The escape sequences listed in XBD 5."
 
 begin test "printf %b hello newline world"
-  begin script
+  script
     printf "%b" "hello\nworld"
-  end script
-  expect_stdout "hello\nworld"
+  expect
+    stdout "hello\nworld"
+    stderr ""
+    exit_code 0
 end test "printf %b hello newline world"
 
 # ==============================================================================
@@ -324,26 +392,32 @@ end test "printf %b hello newline world"
 requirement "SHALL-EXTENDED-DESCRIPTION-5035" doc="File Format Notation ( '\\\\' , '\\a' , '\\b' , '\\f' , '\\n' , '\\r' , '\\t' , '\\v' ), which shall be converted to the characters they represent."
 
 begin test "printf %b backslash"
-  begin script
+  script
     printf "%b" "\\\\"
-  end script
-  expect_stdout "\\"
+  expect
+    stdout "\\"
+    stderr ""
+    exit_code 0
 end test "printf %b backslash"
 
 requirement "SHALL-2-7-4-208" doc="For the purposes of locating this terminating line, the end of a command_string operand (see sh ) shall be treated as a <newline> character, and the end of the commands string in $( commands ) and ` commands ` may be treated as a <newline>."
 begin test "printf %b newline"
-  begin script
+  script
     printf "%b" "x\ny"
-  end script
-  expect_stdout "x\ny"
+  expect
+    stdout "x\ny"
+    stderr ""
+    exit_code 0
 end test "printf %b newline"
 
 requirement "SHALL-DESCRIPTION-5020" doc="The printf utility shall write formatted operands to the standard output."
 begin test "printf %b tab"
-  begin script
+  script
     printf "%b" "x\ty"
-  end script
-  expect_stdout "x\ty"
+  expect
+    stdout "x\ty"
+    stderr ""
+    exit_code 0
 end test "printf %b tab"
 
 # ==============================================================================
@@ -353,18 +427,22 @@ end test "printf %b tab"
 requirement "SHALL-EXTENDED-DESCRIPTION-5036" doc="The sequence \"\\0ddd\", where ddd is a zero, one, two, or three-digit octal number, shall be converted to a byte with the numeric value specified by the octal number."
 
 begin test "printf %b \\0101 produces A"
-  begin script
+  script
     printf "%b" "\0101"
-  end script
-  expect_stdout "A"
+  expect
+    stdout "A"
+    stderr ""
+    exit_code 0
 end test "printf %b \\0101 produces A"
 
 requirement "SHALL-DESCRIPTION-5020" doc="The printf utility shall write formatted operands to the standard output."
 begin test "printf %b \\0060 produces 0"
-  begin script
+  script
     printf "%b" "\0060"
-  end script
-  expect_stdout "0"
+  expect
+    stdout "0"
+    stderr ""
+    exit_code 0
 end test "printf %b \\0060 produces 0"
 
 # ==============================================================================
@@ -374,26 +452,32 @@ end test "printf %b \\0060 produces 0"
 requirement "SHALL-EXTENDED-DESCRIPTION-5037" doc="The sequence '\\c' shall not be written and shall cause printf to ignore any remaining characters in the string operand containing it, any remaining string operands, and any additional characters in the format operand."
 
 begin test "printf %b \\c stops output"
-  begin script
+  script
     printf "%b" "hello\cworld"
-  end script
-  expect_stdout "hello"
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
 end test "printf %b \\c stops output"
 
 requirement "SHALL-2-9-1-1-272" doc="All fields resulting from the expansion of the word that produced the command name and the subsequent words, except for the field containing the command name, shall be the arguments for the command."
 begin test "printf %b \\c stops subsequent %b arguments"
-  begin script
+  script
     printf "%b%b" "a\c" "b"
-  end script
-  expect_stdout "a"
+  expect
+    stdout "a"
+    stderr ""
+    exit_code 0
 end test "printf %b \\c stops subsequent %b arguments"
 
 requirement "SHALL-EXTENDED-DESCRIPTION-5037" doc="The sequence '\\c' shall not be written and shall cause printf to ignore any remaining characters in the string operand containing it, any remaining string operands, and any additional characters in the format operand."
 begin test "printf %b \\c stops format reuse"
-  begin script
+  script
     printf "%b" "first\csecond" third
-  end script
-  expect_stdout "first"
+  expect
+    stdout "first"
+    stderr ""
+    exit_code 0
 end test "printf %b \\c stops format reuse"
 
 # ==============================================================================
@@ -403,26 +487,32 @@ end test "printf %b \\c stops format reuse"
 requirement "SHALL-EXTENDED-DESCRIPTION-5038" doc="Bytes from the converted string shall be written until the end of the string or the number of bytes indicated by the precision specification is reached."
 
 begin test "printf %s full string"
-  begin script
+  script
     printf "%s" hello
-  end script
-  expect_stdout "hello"
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
 end test "printf %s full string"
 
 requirement "SHALL-DESCRIPTION-5020" doc="The printf utility shall write formatted operands to the standard output."
 begin test "printf %.3s truncation"
-  begin script
+  script
     printf "%.3s" hello
-  end script
-  expect_stdout "hel"
+  expect
+    stdout "hel"
+    stderr ""
+    exit_code 0
 end test "printf %.3s truncation"
 
 requirement "SHALL-DESCRIPTION-5020" doc="The printf utility shall write formatted operands to the standard output."
 begin test "printf %.2s truncation"
-  begin script
+  script
     printf "%.2s" hello
-  end script
-  expect_stdout "he"
+  expect
+    stdout "he"
+    stderr ""
+    exit_code 0
 end test "printf %.2s truncation"
 
 # ==============================================================================
@@ -432,18 +522,22 @@ end test "printf %.2s truncation"
 requirement "SHALL-EXTENDED-DESCRIPTION-5039" doc="If the precision is omitted, it shall be taken to be infinite, so all bytes up to the end of the converted string shall be written."
 
 begin test "printf %s without precision prints full string"
-  begin script
+  script
     printf "%s" "hello world this is a long string"
-  end script
-  expect_stdout "hello world this is a long string"
+  expect
+    stdout "hello world this is a long string"
+    stderr ""
+    exit_code 0
 end test "printf %s without precision prints full string"
 
 requirement "SHALL-ENVIRONMENT-VARIABLES-5023" doc="The following environment variables shall affect the execution of printf : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 begin test "printf %s long string no truncation"
-  begin script
+  script
     printf "%s" "abcdefghijklmnopqrstuvwxyz0123456789"
-  end script
-  expect_stdout "abcdefghijklmnopqrstuvwxyz0123456789"
+  expect
+    stdout "abcdefghijklmnopqrstuvwxyz0123456789"
+    stderr ""
+    exit_code 0
 end test "printf %s long string no truncation"
 
 # ==============================================================================
@@ -453,26 +547,32 @@ end test "printf %s long string no truncation"
 requirement "SHALL-EXTENDED-DESCRIPTION-5040" doc="For each conversion specification that consumes an argument, an argument operand shall be evaluated and converted to the appropriate type for the conversion as specified below."
 
 begin test "printf %s %d two specs two args"
-  begin script
+  script
     printf "%s %d" hello 42
-  end script
-  expect_stdout "hello 42"
+  expect
+    stdout "hello 42"
+    stderr ""
+    exit_code 0
 end test "printf %s %d two specs two args"
 
 requirement "SHALL-DESCRIPTION-5020" doc="The printf utility shall write formatted operands to the standard output."
 begin test "printf three %s specs"
-  begin script
+  script
     printf "%s %s %s" a b c
-  end script
-  expect_stdout "a b c"
+  expect
+    stdout "a b c"
+    stderr ""
+    exit_code 0
 end test "printf three %s specs"
 
 requirement "SHALL-DESCRIPTION-5020" doc="The printf utility shall write formatted operands to the standard output."
 begin test "printf three %d specs"
-  begin script
+  script
     printf "%d %d %d" 1 2 3
-  end script
-  expect_stdout "1 2 3"
+  expect
+    stdout "1 2 3"
+    stderr ""
+    exit_code 0
 end test "printf three %d specs"
 
 # ==============================================================================
@@ -482,11 +582,13 @@ end test "printf three %d specs"
 requirement "SHALL-EXTENDED-DESCRIPTION-5041" doc="The operand to be evaluated shall be determined as follows: If the conversion specification begins with a \"% n $\" sequence, the n th argument operand shall be evaluated."
 
 begin test "printf positional n$ specifiers (optional)"
-  begin script
+  script
     printf "%2\$s %1\$s\n" hello world 2>/dev/null
     true
-  end script
-  expect_exit_code 0
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
 end test "printf positional n$ specifiers (optional)"
 
 # ==============================================================================
@@ -496,34 +598,42 @@ end test "printf positional n$ specifiers (optional)"
 requirement "SHALL-EXTENDED-DESCRIPTION-5042" doc="Otherwise, the evaluated operand shall be the next argument operand after the one evaluated by the previous conversion specification that consumed an argument; if there is no such previous conversion specification the first argument operand shall be evaluated."
 
 begin test "printf sequential argument consumption"
-  begin script
+  script
     printf "%s %s %s" a b c
-  end script
-  expect_stdout "a b c"
+  expect
+    stdout "a b c"
+    stderr ""
+    exit_code 0
 end test "printf sequential argument consumption"
 
 requirement "SHALL-DESCRIPTION-5020" doc="The printf utility shall write formatted operands to the standard output."
 begin test "printf mixed %d %s %d"
-  begin script
+  script
     printf "%d %s %d" 1 hello 3
-  end script
-  expect_stdout "1 hello 3"
+  expect
+    stdout "1 hello 3"
+    stderr ""
+    exit_code 0
 end test "printf mixed %d %s %d"
 
 requirement "SHALL-EXTENDED-DESCRIPTION-5037" doc="The sequence '\\c' shall not be written and shall cause printf to ignore any remaining characters in the string operand containing it, any remaining string operands, and any additional characters in the format operand."
 begin test "printf format reuse with %d newline"
-  begin script
+  script
     printf "%d\n" 1 2 3
-  end script
-  expect_stdout "1\n2\n3"
+  expect
+    stdout "1\n2\n3"
+    stderr ""
+    exit_code 0
 end test "printf format reuse with %d newline"
 
 requirement "SHALL-EXTENDED-DESCRIPTION-5037" doc="The sequence '\\c' shall not be written and shall cause printf to ignore any remaining characters in the string operand containing it, any remaining string operands, and any additional characters in the format operand."
 begin test "printf format reuse with %s newline"
-  begin script
+  script
     printf "%s\n" a b c
-  end script
-  expect_stdout "a\nb\nc"
+  expect
+    stdout "a\nb\nc"
+    stderr ""
+    exit_code 0
 end test "printf format reuse with %s newline"
 
 # ==============================================================================
@@ -533,35 +643,43 @@ end test "printf format reuse with %s newline"
 requirement "SHALL-EXTENDED-DESCRIPTION-5046" doc="If it contains one or more bytes, the first byte shall be written and any additional bytes shall be ignored."
 
 begin test "printf %c takes first byte of abc"
-  begin script
+  script
     printf "%c" abc
-  end script
-  expect_stdout "a"
+  expect
+    stdout "a"
+    stderr ""
+    exit_code 0
 end test "printf %c takes first byte of abc"
 
 requirement "SHALL-EXTENDED-DESCRIPTION-5046" doc="If it contains one or more bytes, the first byte shall be written and any additional bytes shall be ignored."
 begin test "printf %c takes first byte of xyz"
-  begin script
+  script
     printf "%c" xyz
-  end script
-  expect_stdout "x"
+  expect
+    stdout "x"
+    stderr ""
+    exit_code 0
 end test "printf %c takes first byte of xyz"
 
 requirement "SHALL-EXTENDED-DESCRIPTION-5046" doc="If it contains one or more bytes, the first byte shall be written and any additional bytes shall be ignored."
 begin test "printf %c takes first byte of 123"
-  begin script
+  script
     printf "%c" 123
-  end script
-  expect_stdout "1"
+  expect
+    stdout "1"
+    stderr ""
+    exit_code 0
 end test "printf %c takes first byte of 123"
 
 requirement "SHALL-ENVIRONMENT-VARIABLES-5023" doc="The following environment variables shall affect the execution of printf : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 begin test "printf %c with empty arg produces null/empty"
-  begin script
+  script
     result=$(printf "%c" "")
     [ -z "$result" ] && echo "ok" || echo "fail"
-  end script
-  expect_stdout "ok"
+  expect
+    stdout "ok"
+    stderr ".+"
+    exit_code 0
 end test "printf %c with empty arg produces null/empty"
 
 # ==============================================================================
@@ -571,42 +689,52 @@ end test "printf %c with empty arg produces null/empty"
 requirement "SHALL-EXTENDED-DESCRIPTION-5045" doc="If it is an unnumbered argument conversion specification, any extra b , c , or s conversion specifiers shall be evaluated as if a null string argument were supplied and any other extra conversion specifiers shall be evaluated as if a zero argument were supplied."
 
 begin test "extra %s gets null string"
-  begin script
+  script
     printf "%s %s" hello
-  end script
-  expect_stdout "hello.*"
+  expect
+    stdout "hello.*"
+    stderr ""
+    exit_code 0
 end test "extra %s gets null string"
 
 requirement "SHALL-EXTENDED-DESCRIPTION-5045" doc="If it is an unnumbered argument conversion specification, any extra b , c , or s conversion specifiers shall be evaluated as if a null string argument were supplied and any other extra conversion specifiers shall be evaluated as if a zero argument were supplied."
 begin test "extra %d gets zero"
-  begin script
+  script
     printf "%d %d" 42
-  end script
-  expect_stdout "42 0"
+  expect
+    stdout "42 0"
+    stderr ""
+    exit_code 0
 end test "extra %d gets zero"
 
 requirement "SHALL-EXTENDED-DESCRIPTION-5045" doc="If it is an unnumbered argument conversion specification, any extra b , c , or s conversion specifiers shall be evaluated as if a null string argument were supplied and any other extra conversion specifiers shall be evaluated as if a zero argument were supplied."
 begin test "extra %o gets zero"
-  begin script
+  script
     printf "%o %o" 42
-  end script
-  expect_stdout "52 0"
+  expect
+    stdout "52 0"
+    stderr ""
+    exit_code 0
 end test "extra %o gets zero"
 
 requirement "SHALL-EXTENDED-DESCRIPTION-5045" doc="If it is an unnumbered argument conversion specification, any extra b , c , or s conversion specifiers shall be evaluated as if a null string argument were supplied and any other extra conversion specifiers shall be evaluated as if a zero argument were supplied."
 begin test "extra %x gets zero"
-  begin script
+  script
     printf "%x %x" 42
-  end script
-  expect_stdout "2a 0"
+  expect
+    stdout "2a 0"
+    stderr ""
+    exit_code 0
 end test "extra %x gets zero"
 
 requirement "SHALL-EXTENDED-DESCRIPTION-5045" doc="If it is an unnumbered argument conversion specification, any extra b , c , or s conversion specifiers shall be evaluated as if a null string argument were supplied and any other extra conversion specifiers shall be evaluated as if a zero argument were supplied."
 begin test "extra %b gets null string"
-  begin script
+  script
     printf "%b %b" hello
-  end script
-  expect_stdout "hello.*"
+  expect
+    stdout "hello.*"
+    stderr ""
+    exit_code 0
 end test "extra %b gets null string"
 
 # ==============================================================================
@@ -616,50 +744,62 @@ end test "extra %b gets null string"
 requirement "SHALL-EXTENDED-DESCRIPTION-5050" doc="If an argument operand cannot be completely converted into an internal value appropriate to the corresponding conversion specification, a diagnostic message shall be written to standard error and the utility shall not exit with a zero exit status, but shall continue processing any remaining operands and shall write the value accumulated at the time the error was detected to standard output."
 
 begin test "printf %d with non-numeric arg exits non-zero"
-  begin script
+  script
     printf "%d" not_a_number 2>/dev/null
-  end script
-  expect_exit_code !=0
+  expect
+    stdout "(.|\n)*"
+    stderr ""
+    exit_code !=0
 end test "printf %d with non-numeric arg exits non-zero"
 
 requirement "SHALL-2-6-2-127" doc="If parameter is unset or null, the expansion of word (or a message indicating it is unset if word is omitted) shall be written to standard error and the shell exits with a non-zero exit status."
 begin test "printf %d with trailing non-numeric exits non-zero"
-  begin script
+  script
     printf "%d" 42abc 2>/dev/null
-  end script
-  expect_exit_code !=0
+  expect
+    stdout "(.|\n)*"
+    stderr ""
+    exit_code !=0
 end test "printf %d with trailing non-numeric exits non-zero"
 
 requirement "SHALL-2-6-2-127" doc="If parameter is unset or null, the expansion of word (or a message indicating it is unset if word is omitted) shall be written to standard error and the shell exits with a non-zero exit status."
 begin test "printf %u with non-numeric arg exits non-zero"
-  begin script
+  script
     printf "%u" xyz 2>/dev/null
-  end script
-  expect_exit_code !=0
+  expect
+    stdout "(.|\n)*"
+    stderr ""
+    exit_code !=0
 end test "printf %u with non-numeric arg exits non-zero"
 
 requirement "SHALL-2-6-2-127" doc="If parameter is unset or null, the expansion of word (or a message indicating it is unset if word is omitted) shall be written to standard error and the shell exits with a non-zero exit status."
 begin test "printf %o with non-numeric arg exits non-zero"
-  begin script
+  script
     printf "%o" xyz 2>/dev/null
-  end script
-  expect_exit_code !=0
+  expect
+    stdout "(.|\n)*"
+    stderr ""
+    exit_code !=0
 end test "printf %o with non-numeric arg exits non-zero"
 
 requirement "SHALL-2-6-2-127" doc="If parameter is unset or null, the expansion of word (or a message indicating it is unset if word is omitted) shall be written to standard error and the shell exits with a non-zero exit status."
 begin test "printf %x with non-numeric arg exits non-zero"
-  begin script
+  script
     printf "%x" xyz 2>/dev/null
-  end script
-  expect_exit_code !=0
+  expect
+    stdout "(.|\n)*"
+    stderr ""
+    exit_code !=0
 end test "printf %x with non-numeric arg exits non-zero"
 
 requirement "SHALL-ENVIRONMENT-VARIABLES-5023" doc="The following environment variables shall affect the execution of printf : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 begin test "printf %d non-numeric produces stderr diagnostic"
-  begin script
+  script
     printf "%d" not_a_number 2>&1 >/dev/null
-  end script
-  expect_stdout ".+"
+  expect
+    stdout ".+"
+    stderr ""
+    exit_code !=0
 end test "printf %d non-numeric produces stderr diagnostic"
 
 # ==============================================================================
@@ -669,42 +809,52 @@ end test "printf %d non-numeric produces stderr diagnostic"
 requirement "SHALL-EXTENDED-DESCRIPTION-5051" doc="It shall not be considered an error if an argument operand is not completely used for a b , c , or s conversion."
 
 begin test "printf %c with multi-char arg exits 0"
-  begin script
+  script
     printf "%c" hello
-  end script
-  expect_exit_code 0
+  expect
+    stdout "(.|\n)*"
+    stderr ""
+    exit_code 0
 end test "printf %c with multi-char arg exits 0"
 
 requirement "SHALL-DESCRIPTION-5020" doc="The printf utility shall write formatted operands to the standard output."
 begin test "printf %.3s with truncation exits 0"
-  begin script
+  script
     printf "%.3s" hello
-  end script
-  expect_exit_code 0
+  expect
+    stdout "(.|\n)*"
+    stderr ""
+    exit_code 0
 end test "printf %.3s with truncation exits 0"
 
 requirement "SHALL-DESCRIPTION-5020" doc="The printf utility shall write formatted operands to the standard output."
 begin test "printf %b with long arg exits 0"
-  begin script
+  script
     printf "%b" "hello world"
-  end script
-  expect_exit_code 0
+  expect
+    stdout "(.|\n)*"
+    stderr ""
+    exit_code 0
 end test "printf %b with long arg exits 0"
 
 requirement "SHALL-DESCRIPTION-5020" doc="The printf utility shall write formatted operands to the standard output."
 begin test "printf %c output correct despite partial use"
-  begin script
+  script
     printf "%c" hello
-  end script
-  expect_stdout "h"
+  expect
+    stdout "h"
+    stderr ""
+    exit_code 0
 end test "printf %c output correct despite partial use"
 
 requirement "SHALL-DESCRIPTION-5020" doc="The printf utility shall write formatted operands to the standard output."
 begin test "printf %.3s output correct despite truncation"
-  begin script
+  script
     printf "%.3s" hello
-  end script
-  expect_stdout "hel"
+  expect
+    stdout "hel"
+    stderr ""
+    exit_code 0
 end test "printf %.3s output correct despite truncation"
 
 # ==============================================================================
@@ -714,8 +864,10 @@ end test "printf %.3s output correct despite truncation"
 requirement "SHALL-EXTENDED-DESCRIPTION-5044" doc="If conversion specifications beginning with a \"% n $\" sequence are used, on format reuse the value of n shall refer to the n th argument operand following the highest numbered argument operand consumed by the previous use of the format operand."
 
 begin test "printf %n$ format reuse"
-  begin script
+  script
     /usr/bin/printf '%1$s %2$s\n' a b c d
-  end script
-  expect_stdout "a b\nc d"
+  expect
+    stdout "a b\nc d"
+    stderr ""
+    exit_code 0
 end test "printf %n$ format reuse"

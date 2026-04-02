@@ -23,23 +23,20 @@
 //!   end test "name"                       — end a non-interactive test case
 //!   setenv "KEY" "VALUE"                  — set env var for the current test
 //!
-//! ### Non-interactive script block (inside begin/end test):
-//!   begin script                          — start a shell script block (col 2)
-//!     <shell code>                        — script body (col 4, stripped to col 0)
-//!   end script                            — end the script block (col 2)
+//! ### Non-interactive script and expect blocks (inside begin/end test):
+//!   script                                — start script block (col 2, body at col 4)
+//!     <shell code>                        — script body (stripped to col 0)
+//!   expect                                — start expect block (col 2, assertions at col 4)
+//!     stdout "pattern"                    — assert stdout matches regex (full match)
+//!     stderr "pattern"                    — assert stderr matches regex (full match)
+//!     exit_code <expr>                    — assert exit code satisfies expression
 //!
+//!   All three assertions required in order: stdout, stderr, exit_code.
 //!   The script body is taken verbatim (no quoting/escaping needed).
 //!   $SHELL is set to the --shell value. Executed via --script-modes (default: dash-c).
 //!   Tests run in an isolated sandbox directory; prefer local relative file paths
 //!   (for example, `_tmp_file`) instead of `${TMPDIR:-/tmp}` indirections, and
 //!   do not add explicit cleanup-only commands unless cleanup behavior itself is tested.
-//!
-//! ### Non-interactive assertions (after end script):
-//!   expect_stdout "pattern"               — assert stdout matches regex (full match)
-//!   expect_stderr "pattern"               — assert stderr matches regex (full match)
-//!   expect_exit_code <expr>               — assert exit code satisfies expression
-//!                                           expr: literal (0), comparison (!=0, >128),
-//!                                           combinators (&& ||), parens: (>128 && <256) || 1
 //!
 //! ### Interactive (PTY) commands (inside begin/end interactive test):
 //!   spawn [flags...]                       — fork an interactive shell (shell from --shell, flags appended)
@@ -1732,6 +1729,49 @@ fn run_suite_test_inner(
         last_run = reference;
     }
 
+    if let Some(ref rr) = last_run {
+        if let Some((line_num, ref raw_pattern)) = test.expect_stdout {
+            let pattern_str = extract_pattern(raw_pattern)
+                .map_err(|e| format!("line {line_num}: {e}"))?;
+            let pattern = parse_regex(&pattern_str)
+                .map_err(|e| format!("line {line_num}: bad regex: {e}"))?;
+            log.push(format!(">>> stdout {:?}", pattern_str));
+            let trimmed = rr.stdout.trim_end();
+            if !regex_full_match(&pattern, trimmed) {
+                return Err(format!(
+                    "line {line_num}: stdout did not match {:?}\nstdout:\n{}",
+                    pattern_str, rr.stdout
+                ));
+            }
+        }
+        if let Some((line_num, ref raw_pattern)) = test.expect_stderr {
+            let pattern_str = extract_pattern(raw_pattern)
+                .map_err(|e| format!("line {line_num}: {e}"))?;
+            let pattern = parse_regex(&pattern_str)
+                .map_err(|e| format!("line {line_num}: bad regex: {e}"))?;
+            log.push(format!(">>> stderr {:?}", pattern_str));
+            let trimmed = rr.stderr.trim_end();
+            if !regex_full_match(&pattern, trimmed) {
+                return Err(format!(
+                    "line {line_num}: stderr did not match {:?}\nstderr:\n{}",
+                    pattern_str, rr.stderr
+                ));
+            }
+        }
+        if let Some((line_num, ref raw_expr)) = test.expect_exit_code {
+            let expr = parse_exit_expr(raw_expr.trim())
+                .map_err(|e| format!("line {line_num}: {e}"))?;
+            log.push(format!(">>> exit_code {}", expr.display()));
+            if !expr.eval(rr.exit_code) {
+                return Err(format!(
+                    "line {line_num}: exit_code: expression `{}` not satisfied by exit code {}",
+                    expr.display(),
+                    rr.exit_code
+                ));
+            }
+        }
+    }
+
     let lines: Vec<(usize, &str)> = test
         .script_lines
         .iter()
@@ -1784,47 +1824,7 @@ fn run_suite_test_inner(
                 );
             }
 
-            "expect_stdout" | "expect_stderr" => {
-                let rr = last_run
-                    .as_ref()
-                    .ok_or_else(|| format!("line {line_num}: {cmd} before script"))?;
-                let pattern_str = extract_pattern(rest)
-                    .map_err(|e| format!("line {line_num}: {e}"))?;
-                let pattern = parse_regex(&pattern_str)
-                    .map_err(|e| format!("line {line_num}: bad regex: {e}"))?;
-                let (haystack, label) = if cmd.contains("stderr") {
-                    (&rr.stderr, "stderr")
-                } else {
-                    (&rr.stdout, "stdout")
-                };
-                log.push(format!(">>> {cmd} {:?}", pattern_str));
-
-                let trimmed = haystack.trim_end();
-                if !regex_full_match(&pattern, trimmed) {
-                    return Err(format!(
-                        "line {line_num}: {cmd}: {label} did not match {:?}\n{label}:\n{}",
-                        pattern_str, haystack
-                    ));
-                }
-            }
-
-            "expect_exit_code" => {
-                let rr = last_run
-                    .as_ref()
-                    .ok_or_else(|| format!("line {line_num}: {cmd} before script"))?;
-                let expr = parse_exit_expr(rest.trim())
-                    .map_err(|e| format!("line {line_num}: {e}"))?;
-                log.push(format!(">>> expect_exit_code {}", expr.display()));
-                if !expr.eval(rr.exit_code) {
-                    return Err(format!(
-                        "line {line_num}: expect_exit_code: expression `{}` not satisfied by exit code {}",
-                        expr.display(),
-                        rr.exit_code
-                    ));
-                }
-            }
-
-            // Interactive PTY commands — delegate to existing logic
+            // Interactive PTY commands
             "expect" => {
                 let sess = session
                     .as_ref()
