@@ -1,11 +1,19 @@
-# 2.2 Quoting
+# Introduction
 
 This test suite covers **Section 2.2 Quoting** of the POSIX Shell Command Language
 (POSIX.1-2024), which defines how the shell interprets special characters and the
 four quoting mechanisms: the escape character (backslash), single-quotes,
 double-quotes, and dollar-single-quotes.
 
-## Standard Text
+## Table of contents
+
+- [2.2 Quoting](#22-quoting)
+- [2.2.1 Escape Character (Backslash)](#221-escape-character-backslash)
+- [2.2.2 Single-Quotes](#222-single-quotes)
+- [2.2.3 Double-Quotes](#223-double-quotes)
+- [2.2.4 Dollar-Single-Quotes](#224-dollar-single-quotes)
+
+## 2.2 Quoting
 
 Quoting is used to remove the special meaning of certain characters or words to the shell. Quoting can be used to preserve the literal meaning of the special characters in the next paragraph, prevent reserved words from being recognized as such, and prevent parameter expansion and command substitution within here-document processing (see [2.7.4 Here-Document](#274-here-document) ).
 
@@ -25,13 +33,7 @@ and the following might need to be quoted under certain circumstances. That is, 
 
 The various quoting mechanisms are the escape character, single-quotes, double-quotes, and dollar-single-quotes. The here-document represents another form of quoting; see [2.7.4 Here-Document](#274-here-document).
 
-## Tests
-
-### 2.2 Quoting (General)
-
-The preamble lists characters that must be quoted to represent themselves. These
-tests verify that all three quoting mechanisms (backslash, single-quotes,
-double-quotes) correctly preserve these characters as literals.
+### Tests
 
 ##### Test: backslash-quoting preserves literal special characters
 
@@ -178,11 +180,11 @@ begin test "quoted # is not a comment"
 end test "quoted # is not a comment"
 ```
 
-### 2.2.1 Escape Character (Backslash)
+## 2.2.1 Escape Character (Backslash)
 
-An unquoted backslash preserves the literal value of the next character, except
-that backslash-newline is treated as line continuation (the pair is removed before
-tokenizing).
+A `<backslash>` that is not quoted shall preserve the literal value of the following character, with the exception of a `<newline>`. If a `<newline>` immediately follows the `<backslash>`, the shell shall interpret this as line continuation. The `<backslash>` and `<newline>` shall be removed before splitting the input into tokens. Since the escaped `<newline>` is removed entirely from the input and is not replaced by any white space, it cannot serve as a token separator.
+
+### Tests
 
 ##### Test: backslash preserves literal value of following character
 
@@ -302,10 +304,11 @@ begin test "line continuation: backslash-newline removed before tokenizing"
 end test "line continuation: backslash-newline removed before tokenizing"
 ```
 
-### 2.2.2 Single-Quotes
+## 2.2.2 Single-Quotes
 
-Single-quotes preserve the literal value of every character within them. A
-single-quote cannot occur within single-quotes.
+Enclosing characters in single-quotes (`''`) shall preserve the literal value of each character within the single-quotes. A single-quote cannot occur within single-quotes.
+
+### Tests
 
 ##### Test: single quotes preserve all characters literally
 
@@ -323,10 +326,28 @@ begin test "single quotes preserve all characters literally"
 end test "single quotes preserve all characters literally"
 ```
 
-### 2.2.3 Double-Quotes
+## 2.2.3 Double-Quotes
 
-Double-quotes preserve the literal value of all characters except backquote, `$`,
-and `\`, which retain their special meanings for expansions and escaping.
+Enclosing characters in double-quotes (`""`) shall preserve the literal value of all characters within the double-quotes, with the exception of the characters backquote, `<dollar-sign>`, and `<backslash>`, as follows:
+
+- `$`: The `<dollar-sign>` shall retain its special meaning introducing parameter expansion (see [2.6.2 Parameter Expansion](#262-parameter-expansion)), a form of command substitution (see [2.6.3 Command Substitution](#263-command-substitution)), and arithmetic expansion (see [2.6.4 Arithmetic Expansion](#264-arithmetic-expansion)), but shall not retain its special meaning introducing the dollar-single-quotes form of quoting (see [2.2.4 Dollar-Single-Quotes](#224-dollar-single-quotes)). The input characters within the quoted string that are also enclosed between `"$("` and the matching `')'` shall not be affected by the double-quotes, but rather shall define the command(s) whose output replaces the `"$(...)"` when the word is expanded. The tokenizing rules in [2.3 Token Recognition](#23-token-recognition) shall be applied recursively to find the matching `')'`. For the four varieties of parameter expansion that provide for substring processing (see [2.6.2 Parameter Expansion](#262-parameter-expansion)), within the string of characters from an enclosed `"${"` to the matching `'}'`, the double-quotes within which the expansion occurs shall have no effect on the handling of any special characters. For parameter expansions other than the four varieties that provide for substring processing, within the string of characters from an enclosed `"${"` to the matching `'}'`, the double-quotes within which the expansion occurs shall preserve the literal value of all characters, with the exception of the characters double-quote, backquote, `<dollar-sign>`, and `<backslash>`. If any unescaped double-quote characters occur within the string, other than in embedded command substitutions, the behavior is unspecified. The backquote and `<dollar-sign>` characters shall follow the same rules as for characters in double-quotes described in this section. The `<backslash>` character shall follow the same rules as for characters in double-quotes described in this section except that it shall additionally retain its special meaning as an escape character when followed by `'}'` and this shall prevent the escaped `'}'` from being considered when determining the matching `'}'` (using the rule in [2.6.2 Parameter Expansion](#262-parameter-expansion)).
+- `` ` ``: The backquote shall retain its special meaning introducing the other form of command substitution (see [2.6.3 Command Substitution](#263-command-substitution)). The portion of the quoted string from the initial backquote and the characters up to the next backquote that is not preceded by a `<backslash>`, having escape characters removed, defines that command whose output replaces ``"`...`"`` when the word is expanded. Either of the following cases produces undefined results:
+
+    - A quoted (single-quoted, double-quoted, or dollar-single-quoted) string that begins, but does not end, within the ``"`...`"`` sequence
+    - A ``"`...`"`` sequence that begins, but does not end, within the same double-quoted string
+- `\`: Outside of `"$(...)"` and `"${...}"` the `<backslash>` shall retain its special meaning as an escape character (see [2.2.1 Escape Character (Backslash)](#221-escape-character-backslash)) only when immediately followed by one of the following characters:
+
+  ```
+  $   `   \   <newline>
+  ```
+
+  or by a double-quote character that would otherwise be considered special (see [2.6.4 Arithmetic Expansion](#264-arithmetic-expansion) and [2.7.4 Here-Document](#274-here-document)).
+
+When double-quotes are used to quote a parameter expansion, command substitution, or arithmetic expansion, the literal value of all characters within the result of the expansion shall be preserved.
+
+The application shall ensure that a double-quote that is not within `"$(...)"` nor within `"${...}"` is immediately preceded by a `<backslash>` in order to be included within double-quotes. The parameter `'@'` has special meaning inside double-quotes and is described in [2.5.2 Special Parameters](#252-special-parameters).
+
+### Tests
 
 ##### Test: double quotes allow parameter and command and arithmetic expansion
 
@@ -528,10 +549,39 @@ begin test "dollar-paren command substitution"
 end test "dollar-paren command substitution"
 ```
 
-### 2.2.4 Dollar-Single-Quotes
+## 2.2.4 Dollar-Single-Quotes
 
-The `$'...'` quoting mechanism preserves all characters literally except for
-certain backslash-escape sequences (`\n`, `\t`, `\xHH`, `\ddd`, `\'`, etc.).
+A sequence of characters starting with a `<dollar-sign>` immediately followed by a single-quote (`$'`) shall preserve the literal value of all characters up to an unescaped terminating single-quote (`'`), with the exception of certain `<backslash>`-escape sequences, as follows:
+
+- `\"` yields a `<quotation-mark>` (double-quote) character, but note that `<quotation-mark>` can be included unescaped.
+- `\'` yields an `<apostrophe>` (single-quote) character.
+- `\\` yields a `<backslash>` character.
+- `\a` yields an `<alert>` character.
+- `\b` yields a `<backspace>` character.
+- `\e` yields an `<ESC>` character.
+- `\f` yields a `<form-feed>` character.
+- `\n` yields a `<newline>` character.
+- `\r` yields a `<carriage-return>` character.
+- `\t` yields a `<tab>` character.
+- `\v` yields a `<vertical-tab>` character.
+- `\c`*X* yields the control character listed in the **Value** column of [*Values for cpio c_mode Field*](../utilities/stty.md#tagtcjh_23) in the OPERANDS section of the [*stty*](../utilities/stty.md) utility when *X* is one of the characters listed in the **^c** column of the same table, except that `\c\\` yields the `<FS>` control character since the `<backslash>` character has to be escaped.
+- `\x`*XX* yields the byte whose value is the hexadecimal value *XX* (one or more hexadecimal digits). If more than two hexadecimal digits follow `\x`, the results are unspecified.
+- `\`*ddd* yields the byte whose value is the octal value *ddd* (one to three octal digits).
+- The behavior of an unescaped `<backslash>` immediately followed by any other character, including `<newline>`, is unspecified.
+
+In cases where a variable number of characters can be used to specify an escape sequence (`\x`*XX* and `\`*ddd*), the escape sequence shall be terminated by the first character that is not of the expected type or, for `\`*ddd* sequences, when the maximum number of characters specified has been found, whichever occurs first.
+
+These `<backslash>`-escape sequences shall be processed (replaced with the bytes or characters they yield) immediately prior to word expansion (see [2.6 Word Expansions](#26-word-expansions)) of the word in which the dollar-single-quotes sequence occurs.
+
+If a `\x`*XX* or `\`*ddd* escape sequence yields a byte whose value is 0, it is unspecified whether that null byte is included in the result or if that byte and any following regular characters and escape sequences up to the terminating unescaped single-quote are evaluated and discarded.
+
+If the octal value specified by `\`*ddd* will not fit in a byte, the results are unspecified.
+
+If a `\e` or `\c`*X* escape sequence specifies a character that does not have an encoding in the locale in effect when these `<backslash>`-escape sequences are processed, the result is implementation-defined. However, implementations shall not replace an unsupported character with bytes that do not form valid characters in that locale's character set.
+
+If a `<backslash>`-escape sequence represents a single-quote character (for example `\'`), that sequence shall not terminate the dollar-single-quote sequence.
+
+### Tests
 
 ##### Test: dollar-single-quote basic support
 
