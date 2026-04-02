@@ -7,12 +7,13 @@ testsuite "Standard Error Usage (Diagnostic Messages)"
 requirement "SHALL-STDERR-030" doc="Except as otherwise stated (by the descriptions of any invoked utilities or in interactive mode), standard error shall be used only for diagnostic messages."
 
 begin test "special builtins produce no stderr on success"
-  begin script
+  script
     myfunc() { for i in 1; do break >/dev/null; done; for i in 1; do continue >/dev/null; done; : >/dev/null; eval "true" >/dev/null; exec 3>&1 3>&- >/dev/null; export EXPORT_VAR=1 >/dev/null; readonly RO_VAR=1 >/dev/null; set -- a b c >/dev/null; shift 1 >/dev/null; unset EXPORT_VAR >/dev/null; return 0 >/dev/null; }
     myfunc
-  end script
-  expect_stderr ""
-  expect_exit_code 0
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
 end test "special builtins produce no stderr on success"
 
 # ==============================================================================
@@ -22,22 +23,24 @@ end test "special builtins produce no stderr on success"
 requirement "SHALL-STDERR-518" doc="For the cd utility, the standard error shall be used only for diagnostic messages."
 
 begin test "cd produces no stderr on valid directory"
-  begin script
+  script
     cd / 2>&1
     echo "ok"
-  end script
-  expect_stderr ""
-  expect_stdout "ok"
+  expect
+    stdout "ok"
+    stderr ""
+    exit_code 0
 end test "cd produces no stderr on valid directory"
 
 requirement "SHALL-STDERR-622" doc="The standard error shall be used only for diagnostic messages and the warning message specified in EXIT STATUS."
 
 begin test "getopts produces no stderr in silent mode"
-  begin script
+  script
     $SHELL -c 'OPTIND=1; set -- -z; getopts :ab name; echo ok'
-  end script
-  expect_stderr ""
-  expect_stdout "ok"
+  expect
+    stdout "ok"
+    stderr ""
+    exit_code 0
 end test "getopts produces no stderr in silent mode"
 
 # ==============================================================================
@@ -47,11 +50,12 @@ end test "getopts produces no stderr in silent mode"
 requirement "SHALL-STDERR-574" doc="For the command utility, the standard error shall be used only for diagnostic messages."
 
 begin test "command produces no stderr on success"
-  begin script
+  script
     command echo "hello" 2>&1
-  end script
-  expect_stderr ""
-  expect_stdout "hello"
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
 end test "command produces no stderr on success"
 
 # ==============================================================================
@@ -105,11 +109,12 @@ end interactive test "fg produces no stderr with valid job"
 requirement "SHALL-STDERR-557" doc="For the ulimit utility, the standard error shall be used only for diagnostic messages."
 
 begin test "ulimit produces no stderr on valid usage"
-  begin script
+  script
     $SHELL -c 'ulimit -f 2>/tmp/ulimit_stderr_test; cat /tmp/ulimit_stderr_test; rm -f /tmp/ulimit_stderr_test'
-  end script
-  expect_stdout "([0-9].*|unlimited)"
-  expect_stderr ""
+  expect
+    stdout "([0-9].*|unlimited)"
+    stderr ""
+    exit_code 0
 end test "ulimit produces no stderr on valid usage"
 
 # ==============================================================================
@@ -119,8 +124,10 @@ end test "ulimit produces no stderr on valid usage"
 requirement "SHALL-STDERR-650" doc="The standard error shall be used only for diagnostic messages and warning messages about invalid signal names."
 
 begin test "kill produces no stderr on valid signal"
-  begin script
+  script
     $SHELL -c 'sh -c "kill -0 $$ 2>/tmp/kill_stderr_test; cat /tmp/kill_stderr_test; rm -f /tmp/kill_stderr_test"'
-  end script
-  expect_stderr ""
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
 end test "kill produces no stderr on valid signal"

@@ -7,14 +7,16 @@ testsuite "XBD 8 Environment Variables"
 requirement "SHALL-XBD-8-3011" doc="PATH This variable shall represent the sequence of path prefixes that certain functions and utilities apply in searching for an executable file."
 
 begin test "PATH used to find executable"
-  begin script
+  script
     mkdir -p mybin
     printf '#!%s\necho mytool executed\n' "${SHELL%% *}" > mybin/mytool
     chmod +x mybin/mytool
     PATH="$PWD/mybin:$PATH" mytool
     rm -rf mybin
-  end script
-  expect_stdout "mytool executed"
+  expect
+    stdout "mytool executed"
+    stderr ""
+    exit_code 0
 end test "PATH used to find executable"
 
 # ==============================================================================
@@ -24,10 +26,12 @@ end test "PATH used to find executable"
 requirement "SHALL-XBD-8-3012" doc="PWD This variable shall represent an absolute pathname of the current working directory."
 
 begin test "PWD reflects current working directory"
-  begin script
+  script
     echo "$PWD"
-  end script
-  expect_stdout ".*"
+  expect
+    stdout ".*"
+    stderr ""
+    exit_code 0
 end test "PWD reflects current working directory"
 
 # ==============================================================================
@@ -37,13 +41,15 @@ end test "PWD reflects current working directory"
 requirement "SHALL-XBD-8-3010" doc="HOME The system shall initialize this variable at the time of login to be a pathname of the user's home directory."
 
 begin test "HOME used for tilde expansion"
-  begin script
+  script
     mkdir -p myhome
     HOME="$PWD/myhome"
     echo ~
     rm -rf myhome
-  end script
-  expect_stdout ".*/myhome"
+  expect
+    stdout ".*/myhome"
+    stderr ""
+    exit_code 0
 end test "HOME used for tilde expansion"
 
 # ==============================================================================
@@ -54,11 +60,13 @@ requirement "SHALL-XBD-8-3000" doc="LANG This variable shall determine the local
 requirement "SHALL-XBD-8-3009" doc="If the LANG environment variable is defined and is not null, the value of the LANG environment variable shall be used."
 
 begin test "LANG passed to child environment"
-  begin script
+  script
     export LANG=C
     env | grep "^LANG=C$" && echo pass || echo fail
-  end script
-  expect_stdout "LANG=C\npass"
+  expect
+    stdout "LANG=C\npass"
+    stderr ""
+    exit_code 0
 end test "LANG passed to child environment"
 
 # ==============================================================================
@@ -69,12 +77,14 @@ requirement "SHALL-XBD-8-3002" doc="LC_ALL This variable shall determine the val
 requirement "SHALL-XBD-8-3007" doc="If the LC_ALL environment variable is defined and is not null, the value of LC_ALL shall be used."
 
 begin test "LC_ALL overrides individual LC_* variables"
-  begin script
+  script
     export LC_ALL=C
     export LC_CTYPE=en_US.UTF-8
     env | grep "^LC_ALL=C$" && echo pass || echo fail
-  end script
-  expect_stdout "LC_ALL=C\npass"
+  expect
+    stdout "LC_ALL=C\npass"
+    stderr ""
+    exit_code 0
 end test "LC_ALL overrides individual LC_* variables"
 
 # ==============================================================================
@@ -86,12 +96,14 @@ requirement "SHALL-XBD-8-3004" doc="LC_CTYPE This variable shall determine the l
 requirement "SHALL-XBD-8-3008" doc="If the LC_* environment variable ( LC_COLLATE , LC_CTYPE , LC_MESSAGES , LC_MONETARY , LC_NUMERIC , LC_TIME ) is defined and is not null, the value of the environment variable shall be used to initialize the category that corresponds to the environment variable."
 
 begin test "LC_COLLATE and LC_CTYPE passed to child"
-  begin script
+  script
     export LC_COLLATE=C
     export LC_CTYPE=C
     env | grep -E "^(LC_COLLATE|LC_CTYPE)=C$" | sort
-  end script
-  expect_stdout "LC_COLLATE=C\nLC_CTYPE=C"
+  expect
+    stdout "LC_COLLATE=C\nLC_CTYPE=C"
+    stderr ""
+    exit_code 0
 end test "LC_COLLATE and LC_CTYPE passed to child"
 
 # ==============================================================================
@@ -101,11 +113,13 @@ end test "LC_COLLATE and LC_CTYPE passed to child"
 requirement "SHALL-XBD-8-3005" doc="LC_MESSAGES This variable shall determine the locale category for processing affirmative and negative responses and the language and cultural conventions in which messages should be written."
 
 begin test "LC_MESSAGES passed to child"
-  begin script
+  script
     export LC_MESSAGES=C
     env | grep "^LC_MESSAGES=C$" && echo pass || echo fail
-  end script
-  expect_stdout "LC_MESSAGES=C\npass"
+  expect
+    stdout "LC_MESSAGES=C\npass"
+    stderr ""
+    exit_code 0
 end test "LC_MESSAGES passed to child"
 
 # ==============================================================================
@@ -116,12 +130,14 @@ requirement "SHALL-XBD-8-3001" doc="The LANGUAGE environment variable shall be e
 requirement "SHALL-XBD-8-3006" doc="This variable shall contain a sequence of templates to be used by catopen () when attempting to locate message catalogs, and by the gettext family of functions when locating messages objects."
 
 begin test "LANGUAGE and NLSPATH passed to child"
-  begin script
+  script
     export LANGUAGE=C
     export NLSPATH=/dev/null
     env | grep -E "^(LANGUAGE|NLSPATH)=" | sort
-  end script
-  expect_stdout "LANGUAGE=C\nNLSPATH=/dev/null"
+  expect
+    stdout "LANGUAGE=C\nNLSPATH=/dev/null"
+    stderr ""
+    exit_code 0
 end test "LANGUAGE and NLSPATH passed to child"
 
 # ==============================================================================
@@ -130,7 +146,7 @@ end test "LANGUAGE and NLSPATH passed to child"
 
 requirement "SHALL-ENVIRONMENT-VARIABLES-5005" doc="The following environment variables shall affect the execution of echo : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 begin test "locale variables passed to child environment"
-  begin script
+  script
     export LANG=C
     export LC_ALL=C
     export LC_COLLATE=C
@@ -139,6 +155,8 @@ begin test "locale variables passed to child environment"
     export LANGUAGE=C
     export NLSPATH=/dev/null
     env | grep -E "^(LANG|LC_ALL|LC_COLLATE|LC_CTYPE|LC_MESSAGES|LANGUAGE|NLSPATH)=" | sort
-  end script
-  expect_stdout "LANG=C\nLANGUAGE=C\nLC_ALL=C\nLC_COLLATE=C\nLC_CTYPE=C\nLC_MESSAGES=C\nNLSPATH=/dev/null"
+  expect
+    stdout "LANG=C\nLANGUAGE=C\nLC_ALL=C\nLC_COLLATE=C\nLC_CTYPE=C\nLC_MESSAGES=C\nNLSPATH=/dev/null"
+    stderr ""
+    exit_code 0
 end test "locale variables passed to child environment"

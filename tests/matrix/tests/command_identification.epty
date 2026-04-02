@@ -8,28 +8,34 @@ requirement "SHALL-TYPE-1293" doc="The type utility shall indicate how each argu
 requirement "SHALL-TYPE-1069" doc="The following operand shall be supported: name A name to be interpreted."
 
 begin test "type finds known command"
-  begin script
+  script
     type sh >/dev/null && echo pass || echo fail
-  end script
-  expect_stdout "pass"
+  expect
+    stdout "pass"
+    stderr ""
+    exit_code 0
 end test "type finds known command"
 
 requirement "SHALL-TYPE-1293" doc="The type utility shall indicate how each argument would be interpreted if used as a command name."
 begin test "type with known builtin produces output"
-  begin script
+  script
     out=$(type echo 2>/dev/null)
     [ -n "$out" ] && echo pass || echo fail
-  end script
-  expect_stdout "pass"
+  expect
+    stdout "pass"
+    stderr ""
+    exit_code 0
 end test "type with known builtin produces output"
 
 requirement "SHALL-V3CHAP02-1013-DUP585" doc="If the trap name or number is invalid, a non-zero exit status shall be returned; otherwise, zero shall be returned."
 begin test "type with unknown name returns non-zero"
-  begin script
+  script
     type nonexistent_command_xyz 2>/dev/null
     echo $?
-  end script
-  expect_stdout "[1-9][0-9]*"
+  expect
+    stdout "[1-9][0-9]*"
+    stderr ""
+    exit_code 0
 end test "type with unknown name returns non-zero"
 
 
@@ -42,55 +48,67 @@ requirement "SHALL-COMMAND-1037" doc="The following options shall be supported: 
 requirement "SHALL-COMMAND-1112" doc="Executable utilities, regular built-in utilities, command_name s including a <slash> character, and any implementation-provided functions that are found using the PATH variable (as described in 2.9.1.4 Command Search and Execution ), shall be written as absolute pathnames."
 
 begin test "command -v finds known utility"
-  begin script
+  script
     command -v sh >/dev/null && echo pass || echo fail
-  end script
-  expect_stdout "pass"
+  expect
+    stdout "pass"
+    stderr ""
+    exit_code 0
 end test "command -v finds known utility"
 
 requirement "SHALL-2-6-4-167" doc="If the expression is invalid, or the contents of a shell variable used in the expression are not recognized by the shell, the expansion fails and the shell shall write a diagnostic message to standard error indicating the failure."
 begin test "command -v fails for missing command"
-  begin script
+  script
     command -v missing_cmd_not_found >/dev/null || echo pass
-  end script
-  expect_stdout "pass"
+  expect
+    stdout "pass"
+    stderr ""
+    exit_code 0
 end test "command -v fails for missing command"
 
 requirement "SHALL-2-11-444" doc="When a background job is brought into the foreground by means of the fg utility, the associated job number shall be removed from the shell's background jobs list and the associated process ID shall be removed from the list of process IDs known in the current shell execution environment."
 begin test "command -V describes known utility"
-  begin script
+  script
     command -V sh >/dev/null && echo pass || echo fail
-  end script
-  expect_stdout "pass"
+  expect
+    stdout "pass"
+    stderr ""
+    exit_code 0
 end test "command -V describes known utility"
 
 requirement "SHALL-COMMAND-1106" doc="In every other respect, if command_name is not the name of a function, the effect of command (with no options) shall be the same as omitting command , except that command_name does not appear in the command word position in the command command, and consequently is not subject to alias substitution (see 2.3.1 Alias Substitution ) nor recognized as a reserved word (see 2.4 Reserved Words )."
 begin test "command bypasses alias"
-  begin script
+  script
     alias echo="echo alias_"
     command echo "hello"
-  end script
-  expect_stdout "hello"
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
 end test "command bypasses alias"
 
 requirement "SHALL-2-9-1-6-310" doc="If the named utility does not exist, the command shall fail with an exit status of 127 and the shell shall write an error message."
 begin test "command returns 127 for missing utility"
-  begin script
+  script
     command missing_cmd_not_found >/dev/null 2>&1
     echo $?
-  end script
-  expect_stdout "127"
+  expect
+    stdout "127"
+    stderr ""
+    exit_code 0
 end test "command returns 127 for missing utility"
 
 requirement "SHALL-2-8-2-260" doc="Otherwise, if the command name is found, but it is not an executable utility, the exit status shall be 126."
 begin test "command returns 126 for non-executable file"
-  begin script
+  script
     mkdir -p mydir
     touch mydir/nonexec
     PATH="$PWD/mydir:$PATH" command nonexec >/dev/null 2>&1
     rc=$?
     rm -rf mydir
     echo $rc
-  end script
-  expect_stdout "126"
+  expect
+    stdout "126"
+    stderr ""
+    exit_code 0
 end test "command returns 126 for non-executable file"

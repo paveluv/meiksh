@@ -87,7 +87,7 @@ end interactive test "PS1 expanded value is written to stderr"
 
 requirement "SHALL-2-5-3-086" doc="After expansion, the value shall be written to standard error."
 begin test "PS1 prompt text is emitted to stderr stream"
-  begin script
+  script
     $SHELL -i > ps1_stdout.txt 2> ps1_stderr.txt <<'EOF'
     PS1='ps1_stream_marker> '
     :
@@ -95,8 +95,10 @@ begin test "PS1 prompt text is emitted to stderr stream"
     EOF
     grep -q 'ps1_stream_marker> ' ps1_stderr.txt && echo stderr_ok || echo stderr_missing
     grep -q 'ps1_stream_marker> ' ps1_stdout.txt && echo stdout_leak || echo stdout_clean
-  end script
-  expect_stdout "stderr_ok\nstdout_clean"
+  expect
+    stdout "stderr_ok\nstdout_clean"
+    stderr ""
+    exit_code 0
 end test "PS1 prompt text is emitted to stderr stream"
 
 requirement "SHALL-2-5-3-092" doc="An <exclamation-mark> character escaped by another <exclamation-mark> character (that is, \"!!\" ) shall expand to a single <exclamation-mark> character."
@@ -142,7 +144,7 @@ end interactive test "PS2 parameter expansion is used for continuation prompt"
 
 requirement "SHALL-2-5-3-094" doc="For PS2, after expansion, the value shall be written to standard error."
 begin test "PS2 prompt text is emitted to stderr stream"
-  begin script
+  script
     $SHELL -i > ps2_stdout.txt 2> ps2_stderr.txt <<'EOF'
     PS2='cont> '
     : \
@@ -151,8 +153,10 @@ begin test "PS2 prompt text is emitted to stderr stream"
     EOF
     grep -q 'cont> ' ps2_stderr.txt && echo stderr_ok || echo stderr_missing
     grep -q 'cont> ' ps2_stdout.txt && echo stdout_leak || echo stdout_clean
-  end script
-  expect_stdout "stderr_ok\nstdout_clean"
+  expect
+    stdout "stderr_ok\nstdout_clean"
+    stderr ""
+    exit_code 0
 end test "PS2 prompt text is emitted to stderr stream"
 
 

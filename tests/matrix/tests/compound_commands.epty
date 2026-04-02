@@ -8,13 +8,14 @@ requirement "SHALL-2-9-4-2-349" doc="The for loop shall execute a sequence of co
 requirement "SHALL-2-9-4-2-351" doc="Then, the variable name shall be set to each item, in turn, and the compound-list executed each time."
 
 begin test "for loop iterates over items"
-  begin script
+  script
     for i in a b c; do
       printf "%s " "$i"
     done
-  end script
-  expect_exit_code 0
-  expect_stdout "a b c"
+  expect
+    stdout "a b c"
+    stderr ""
+    exit_code 0
 end test "for loop iterates over items"
 
 requirement "SHALL-2-9-4-2-352" doc="If no items result from the expansion, the compound-list shall not be executed."
@@ -22,26 +23,29 @@ requirement "SHALL-2-9-4-2-1-353" doc="If there is at least one item in the list
 requirement "SHALL-2-9-4-2-1-354" doc="If there are no items, the exit status shall be zero."
 
 begin test "for loop exit status is last command"
-  begin script
+  script
     for i in 1 2; do
     false
     done
     exit $?
-  end script
-  expect_exit_code 1
+  expect
+    stdout ""
+    stderr ""
+    exit_code 1
 end test "for loop exit status is last command"
 
 requirement "SHALL-2-9-4-1-346" doc="Variable assignments and built-in commands that affect the environment shall not remain in effect after the list finishes."
 begin test "for loop with empty list does not execute body"
-  begin script
+  script
     x=1
     for i in; do
       x=2
     done
     echo "$x"
-  end script
-  expect_exit_code 0
-  expect_stdout "1"
+  expect
+    stdout "1"
+    stderr ""
+    exit_code 0
 end test "for loop with empty list does not execute body"
 
 
@@ -54,51 +58,57 @@ requirement "SHALL-2-9-4-3-356" doc="The reserved word in shall denote the begin
 requirement "SHALL-2-9-4-3-357" doc="Multiple patterns with the same compound-list shall be delimited by the '|' symbol."
 
 begin test "case exit status from matched clause"
-  begin script
+  script
     case "xyz" in
     abc) false ;;
     xyz) false ;;
     esac
     exit $?
-  end script
-  expect_exit_code 1
+  expect
+    stdout ""
+    stderr ""
+    exit_code 1
 end test "case exit status from matched clause"
 
 requirement "SHALL-2-9-4-3-1-363" doc="The exit status of case shall be zero if no patterns are matched."
 begin test "case exit status zero when no match"
-  begin script
+  script
     case "xyz" in
     abc) false ;;
     esac
     exit $?
-  end script
-  expect_exit_code 0
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
 end test "case exit status zero when no match"
 
 requirement "SHALL-2-9-4-3-361" doc="If the case statement clause is terminated by \";;\" , no further clauses shall be examined."
 
 begin test "case with pipe patterns and early exit"
-  begin script
+  script
     case "apple" in
     banana|orange) echo "no" ;;
     apple|pear) echo "yes" ;;
     *) echo "default" ;;
     esac
-  end script
-  expect_exit_code 0
-  expect_stdout "yes"
+  expect
+    stdout "yes"
+    stderr ""
+    exit_code 0
 end test "case with pipe patterns and early exit"
 
 requirement "SHALL-DESCRIPTION-640" doc="When a subshell is entered, traps that are not being ignored shall be set to the default actions, except in the case of a command substitution containing only a single trap command, when the traps need not be altered."
 begin test "case default wildcard match"
-  begin script
+  script
     case "grape" in
     apple) echo "no" ;;
     *) echo "default" ;;
     esac
-  end script
-  expect_exit_code 0
-  expect_stdout "default"
+  expect
+    stdout "default"
+    stderr ""
+    exit_code 0
 end test "case default wildcard match"
 
 
@@ -111,18 +121,20 @@ requirement "SHALL-2-9-4-4-366" doc="The format for the if construct is as follo
 requirement "SHALL-2-9-4-4-367" doc="Otherwise, each elif compound-list shall be executed, in turn, and if its exit status is zero, the then compound-list shall be executed and the command shall complete."
 
 begin test "if exit status from then clause"
-  begin script
+  script
     if true; then
     false
     fi
     exit $?
-  end script
-  expect_exit_code 1
+  expect
+    stdout ""
+    stderr ""
+    exit_code 1
 end test "if exit status from then clause"
 
 requirement "SHALL-2-9-3-319" doc="For example, both of the following commands write solely bar to standard output: false && echo foo || echo bar true || echo foo && echo bar A ';' separator or a ';' or <newline> terminator shall cause the preceding AND-OR list to be executed sequentially; an '&' separator or terminator shall cause asynchronous execution of the preceding AND-OR list."
 begin test "if true branch"
-  begin script
+  script
     if true; then
       echo "if"
     elif false; then
@@ -130,14 +142,15 @@ begin test "if true branch"
     else
       echo "else"
     fi
-  end script
-  expect_exit_code 0
-  expect_stdout "if"
+  expect
+    stdout "if"
+    stderr ""
+    exit_code 0
 end test "if true branch"
 
 requirement "SHALL-2-9-3-319" doc="For example, both of the following commands write solely bar to standard output: false && echo foo || echo bar true || echo foo && echo bar A ';' separator or a ';' or <newline> terminator shall cause the preceding AND-OR list to be executed sequentially; an '&' separator or terminator shall cause asynchronous execution of the preceding AND-OR list."
 begin test "elif true branch"
-  begin script
+  script
     if false; then
       echo "if"
     elif true; then
@@ -145,14 +158,15 @@ begin test "elif true branch"
     else
       echo "else"
     fi
-  end script
-  expect_exit_code 0
-  expect_stdout "elif"
+  expect
+    stdout "elif"
+    stderr ""
+    exit_code 0
 end test "elif true branch"
 
 requirement "SHALL-V3CHAP02-1003" doc="The following words shall be recognized as reserved words: ! { } case do done elif else esac fi for if in then until while."
 begin test "else branch"
-  begin script
+  script
     if false; then
       echo "if"
     elif false; then
@@ -160,9 +174,10 @@ begin test "else branch"
     else
       echo "else"
     fi
-  end script
-  expect_exit_code 0
-  expect_stdout "else"
+  expect
+    stdout "else"
+    stderr ""
+    exit_code 0
 end test "else branch"
 
 
@@ -175,52 +190,58 @@ requirement "SHALL-2-9-4-5-371" doc="The format of the while loop is as follows:
 requirement "SHALL-2-9-4-5-372" doc="Otherwise, the compound-list-2 shall be executed, and the process shall repeat."
 
 begin test "while loop exit status zero when body never executes"
-  begin script
+  script
     while false; do
     true
     done
     exit $?
-  end script
-  expect_exit_code 0
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
 end test "while loop exit status zero when body never executes"
 
 requirement "SHALL-2-9-4-5-1-373" doc="The exit status of the while loop shall be the exit status of the last compound-list-2 executed, or zero if none was executed."
 begin test "while loop exit status from last iteration"
-  begin script
+  script
     counter=0
     while [ "$counter" -lt 1 ]; do
     counter=$((counter + 1))
     false
     done
     exit $?
-  end script
-  expect_exit_code 1
+  expect
+    stdout ""
+    stderr ""
+    exit_code 1
 end test "while loop exit status from last iteration"
 
 requirement "SHALL-2-9-4-5-371" doc="The format of the while loop is as follows: while compound-list-1 do compound-list-2 done The compound-list-1 shall be executed, and if it has a non-zero exit status, the while command shall complete."
 begin test "while loop iterates correctly"
-  begin script
+  script
     x=0
     while [ $x -lt 3 ]; do
       x=$((x+1))
       printf "%s " "$x"
     done
-  end script
-  expect_exit_code 0
-  expect_stdout "1 2 3"
+  expect
+    stdout "1 2 3"
+    stderr ""
+    exit_code 0
 end test "while loop iterates correctly"
 
 requirement "SHALL-2-9-4-5-370" doc="The while loop shall continuously execute one compound-list as long as another compound-list has a zero exit status."
 begin test "while loop with false condition does not execute"
-  begin script
+  script
     x=0
     while false; do
       x=$((x+1))
     done
     echo "$x"
-  end script
-  expect_exit_code 0
-  expect_stdout "0"
+  expect
+    stdout "0"
+    stderr ""
+    exit_code 0
 end test "while loop with false condition does not execute"
 
 
@@ -233,28 +254,30 @@ requirement "SHALL-2-9-4-6-375" doc="The format of the until loop is as follows:
 requirement "SHALL-2-9-4-6-376" doc="Otherwise, the compound-list-2 shall be executed, and the process repeats."
 
 begin test "until loop iterates correctly"
-  begin script
+  script
     x=0
     until [ $x -eq 3 ]; do
       x=$((x+1))
       printf "%s " "$x"
     done
-  end script
-  expect_exit_code 0
-  expect_stdout "1 2 3"
+  expect
+    stdout "1 2 3"
+    stderr ""
+    exit_code 0
 end test "until loop iterates correctly"
 
 requirement "SHALL-2-9-4-6-374" doc="The until loop shall continuously execute one compound-list as long as another compound-list has a non-zero exit status."
 begin test "until loop with true condition does not execute"
-  begin script
+  script
     x=0
     until true; do
       x=$((x+1))
     done
     echo "$x"
-  end script
-  expect_exit_code 0
-  expect_stdout "0"
+  expect
+    stdout "0"
+    stderr ""
+    exit_code 0
 end test "until loop with true condition does not execute"
 
 
@@ -265,13 +288,14 @@ end test "until loop with true condition does not execute"
 requirement "SHALL-2-9-4-1-346" doc="Variable assignments and built-in commands that affect the environment shall not remain in effect after the list finishes."
 
 begin test "subshell variable isolation"
-  begin script
+  script
     FOO=parent
     (FOO=child)
     echo "$FOO"
-  end script
-  expect_exit_code 0
-  expect_stdout "parent"
+  expect
+    stdout "parent"
+    stderr ""
+    exit_code 0
 end test "subshell variable isolation"
 
 
@@ -282,10 +306,11 @@ end test "subshell variable isolation"
 requirement "SHALL-2-9-4-344" doc="Each redirection shall apply to all the commands within the compound command that do not explicitly override that redirection."
 
 begin test "redirection applies to all commands in group"
-  begin script
+  script
     { echo a; echo b; } > tmp_group.txt
     cat tmp_group.txt
-  end script
-  expect_exit_code 0
-  expect_stdout "a\nb"
+  expect
+    stdout "a\nb"
+    stderr ""
+    exit_code 0
 end test "redirection applies to all commands in group"

@@ -9,488 +9,594 @@ requirement "SHALL-2-3-030" doc="Once a token has started, zero or more characte
 requirement "SHALL-2-3-031" doc="When both the start and end of a token have been delimited, the characters forming the token shall be exactly those in the input between the two delimiters, including any quoting characters."
 requirement "SHALL-2-3-033" doc="If the end of input is recognized, the current token (if any) shall be delimited."
 begin test "end of substitution does not delimit token"
-  begin script
+  script
     echo $(echo hello)suffix
-  end script
-  expect_stdout "hellosuffix"
+  expect
+    stdout "hellosuffix"
+    stderr ""
+    exit_code 0
 end test "end of substitution does not delimit token"
 
 requirement "SHALL-2-3-050" doc="In situations where the shell parses its input as a program , once a complete_command has been recognized by the grammar (see 2.10 Shell Grammar ), the complete_command shall be executed before the next complete_command is tokenized and parsed."
 begin test "complete_command executed before next is tokenized"
-  begin script
+  script
     x=first
     echo $x
     x=second
     echo $x
-  end script
-  expect_stdout "first\nsecond"
+  expect
+    stdout "first\nsecond"
+    stderr ""
+    exit_code 0
 end test "complete_command executed before next is tokenized"
 
 requirement "SHALL-2-2-1-004" doc="The <backslash> and <newline> shall be removed before splitting the input into tokens."
 requirement "SHALL-V3CHAP02-1007" doc="To specify nesting within the backquoted version, the application shall precede the inner backquotes with <backslash> characters."
 begin test "line continuation: backslash-newline removed before tokenizing"
-  begin script
+  script
     echo a\
     b
-  end script
-  expect_stdout "ab"
+  expect
+    stdout "ab"
+    stderr ""
+    exit_code 0
 end test "line continuation: backslash-newline removed before tokenizing"
 
 requirement "SHALL-2-3-037" doc="During token recognition no substitutions shall be actually performed, and the result token shall contain exactly the characters that appear in the input unmodified, including any embedded or enclosing quotes or substitution operators, between the start and the end of the quoted text."
 begin test "bad expansion parameter error"
-  begin script
+  script
     echo ${/} 2>/dev/null
-  end script
-  expect_exit_code !=0
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
 end test "bad expansion parameter error"
 
 requirement "SHALL-2-3-023" doc="The shell shall read its input in terms of lines. (For details about how the shell reads its input, see the description of sh .) The input lines can be of unlimited length."
 requirement "SHALL-2-3-028" doc="When it is not processing an io_here , the shell shall break its input into tokens by applying the first applicable rule below to each character in turn in its input."
 requirement "SHALL-2-3-029" doc="At the start of input or after a previous token has just been delimited, the first or next token, respectively, shall start with the first character that has not already been included in a token and is not discarded according to the rules below."
 begin test "end of input delimits current token"
-  begin script
+  script
     printf '%s' 'echo lastword' | $SHELL
-  end script
-  expect_stdout "lastword"
+  expect
+    stdout "lastword"
+    stderr ""
+    exit_code 0
 end test "end of input delimits current token"
 
 requirement "SHALL-2-3-032" doc="If a rule below indicates that a token is delimited, and no characters have been included in the token, that empty token shall be discarded."
 requirement "SHALL-2-3-040" doc="The shell shall read sufficient input to determine the end of the unit to be expanded (as explained in the cited sections)."
 requirement "SHALL-V3CHAP02-1015" doc="When a TOKEN is seen where one of those annotated productions could be used to reduce the symbol, the applicable rule shall be applied to convert the token identifier type of the TOKEN to a token identifier acceptable at that point in the grammar."
 begin test "empty token discarded"
-  begin script
+  script
     $SHELL -c ';;' 2>/dev/null || true
-  end script
-  expect_exit_code 0
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
 end test "empty token discarded"
 
 requirement "SHALL-2-3-038" doc="The token shall not be delimited by the end of the quoted field."
 requirement "SHALL-2-3-034" doc="If the previous character was used as part of an operator and the current character is not quoted and can be used with the previous characters to form an operator, it shall be used as part of that (operator) token."
 begin test "quoted field does not delimit token"
-  begin script
+  script
     echo "hello"world
-  end script
-  expect_stdout "helloworld"
+  expect
+    stdout "helloworld"
+    stderr ""
+    exit_code 0
 end test "quoted field does not delimit token"
 
 requirement "SHALL-2-3-042" doc="For \"$(\" and '`' only, if instances of io_here tokens are found nested within the substitution, they shall be parsed according to the rules of 2.7.4 Here-Document ; if the terminating ')' or '`' of the substitution occurs before the NEWLINE token marking the start of the here-document, the behavior is unspecified."
 requirement "SHALL-2-3-044" doc="The token shall not be delimited by the end of the substitution."
 requirement "SHALL-2-3-1-052" doc="When a TOKEN is subject to alias substitution, the value of the alias shall be processed as if it had been read from the input instead of the TOKEN , with token recognition (see 2.3 Token Recognition ) resuming at the start of the alias value."
 begin test "substitution does not delimit token nested"
-  begin script
+  script
     echo prefix_$(echo inner)_suffix
-  end script
-  expect_stdout "prefix_inner_suffix"
+  expect
+    stdout "prefix_inner_suffix"
+    stderr ""
+    exit_code 0
 end test "substitution does not delimit token nested"
 
 requirement "SHALL-2-3-025" doc="When an io_here token has been recognized by the grammar (see 2.10 Shell Grammar ), one or more of the subsequent lines immediately following the next NEWLINE token form the body of a here-document and shall be parsed according to the rules of 2.7.4 Here-Document ."
 requirement "SHALL-2-3-026" doc="Any non- NEWLINE tokens (including more io_here tokens) that are recognized while searching for the next NEWLINE token shall be saved for processing after the here-document has been parsed."
 requirement "SHALL-2-3-027" doc="If a saved token is an io_here token, the corresponding here-document shall start on the line immediately following the line containing the trailing delimiter of the previous here-document."
 begin test "here-document body after io_here"
-  begin script
+  script
     cat <<EOF
     hello from heredoc
     EOF
-  end script
-  expect_stdout "hello from heredoc"
+  expect
+    stdout "hello from heredoc"
+    stderr ""
+    exit_code 0
 end test "here-document body after io_here"
 
 requirement "SHALL-2-3-024" doc="These lines shall be parsed using two major modes: ordinary token recognition and processing of here-documents."
 begin test "multiple here-documents on same line"
-  begin script
+  script
     cat <<A; cat <<B
     first
     A
     second
     B
-  end script
-  expect_stdout "first\nsecond"
+  expect
+    stdout "first\nsecond"
+    stderr ""
+    exit_code 0
 end test "multiple here-documents on same line"
 
 requirement "SHALL-2-2-3-014" doc="The backquote shall retain its special meaning introducing the other form of command substitution (see 2.6.3 Command Substitution)."
 requirement "SHALL-V3CHAP02-1006-DUP143" doc="Command substitution shall occur when command(s) are enclosed as follows: $( commands ) or (backquoted version): ` commands ` The shell shall expand the command substitution by executing commands in a subshell environment (see 2.13 Shell Execution Environment ) and replacing the command substitution (the text of the commands string plus the enclosing \"$()\" or backquotes) with the standard output of the command(s); if the output ends with one or more bytes that have the encoded value of a <newline> character, they shall not be included in the replacement."
 begin test "here-doc nested in command substitution"
-  begin script
+  script
     echo $(cat <<EOF
     nested_heredoc
     EOF
     )
-  end script
-  expect_stdout "nested_heredoc"
+  expect
+    stdout "nested_heredoc"
+    stderr ""
+    exit_code 0
 end test "here-doc nested in command substitution"
 
 requirement "SHALL-V3CHAP02-1002" doc="After a token has been categorized as type TOKEN (see 2.10.1 Shell Grammar Lexical Conventions ), including (recursively) any token resulting from an alias substitution, the TOKEN shall be subject to alias substitution if all of the following conditions are true: The TOKEN does not contain any quoting characters."
 begin test "backslash quoting of special characters"
-  begin script
+  script
     echo \| \& \;
-  end script
-  expect_stdout "\| & ;"
+  expect
+    stdout "\| & ;"
+    stderr ""
+    exit_code 0
 end test "backslash quoting of special characters"
 
 requirement "SHALL-2-2-1-002" doc="A <backslash> that is not quoted shall preserve the literal value of the following character, with the exception of a <newline>."
 requirement "SHALL-V3CHAP02-1001" doc="A sequence of characters starting with a <dollar-sign> immediately followed by a single-quote ( $' ) shall preserve the literal value of all characters up to an unescaped terminating single-quote ( ' ), with the exception of certain <backslash>-escape sequences, as follows: \\\" yields a <quotation-mark> (double-quote) character, but note that <quotation-mark> can be included unescaped."
 begin test "backslash preserves literal value of following character"
-  begin script
+  script
     echo a\\*b
-  end script
-  expect_stdout "a\\\*b"
+  expect
+    stdout "a\\\*b"
+    stderr ""
+    exit_code 0
 end test "backslash preserves literal value of following character"
 
 requirement "SHALL-2-2-1-002" doc="A <backslash> that is not quoted shall preserve the literal value of the following character, with the exception of a <newline>."
 begin test "backslash escapes semicolon so it is literal"
-  begin script
+  script
     echo foo\;bar
-  end script
-  expect_stdout "foo;bar"
+  expect
+    stdout "foo;bar"
+    stderr ""
+    exit_code 0
 end test "backslash escapes semicolon so it is literal"
 
 requirement "SHALL-2-2-1-002" doc="A <backslash> that is not quoted shall preserve the literal value of the following character, with the exception of a <newline>."
 begin test "backslash escapes space preventing field split"
-  begin script
+  script
     set -- foo\ bar
     printf "%s:%s\n" "$#" "$1"
-  end script
-  expect_stdout "1:foo bar"
+  expect
+    stdout "1:foo bar"
+    stderr ""
+    exit_code 0
 end test "backslash escapes space preventing field split"
 
 requirement "SHALL-2-3-036" doc="If the current character is an unquoted <backslash>, single-quote, or double-quote or is the first character of an unquoted <dollar-sign> single-quote sequence, it shall affect quoting for subsequent characters up to the end of the quoted text."
 begin test "backslash preserves dollar sign literally"
-  begin script
+  script
     echo \$foo
-  end script
-  expect_stdout "\$foo"
+  expect
+    stdout "\$foo"
+    stderr ""
+    exit_code 0
 end test "backslash preserves dollar sign literally"
 
 requirement "SHALL-DESCRIPTION-001" doc="The sh utility is a command language interpreter that shall execute commands read from a command line string, the standard input, or a specified file."
 requirement "SHALL-2-2-1-003" doc="If a <newline> immediately follows the <backslash>, the shell shall interpret this as line continuation."
 begin test "backslash-newline is line continuation"
-  begin script
+  script
     ec\
     ho line continuation
-  end script
-  expect_stdout "line continuation"
+  expect
+    stdout "line continuation"
+    stderr ""
+    exit_code 0
 end test "backslash-newline is line continuation"
 
 requirement "SHALL-2-2-1-003" doc="If a <newline> immediately follows the <backslash>, the shell shall interpret this as line continuation."
 begin test "backslash-newline line continuation between tokens"
-  begin script
+  script
     echo \
     hello
-  end script
-  expect_stdout "hello"
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
 end test "backslash-newline line continuation between tokens"
 
 requirement "SHALL-2-2-1-003" doc="If a <newline> immediately follows the <backslash>, the shell shall interpret this as line continuation."
 begin test "multiple consecutive backslash-newline continuations"
-  begin script
+  script
     ec\
     \
     ho multi
-  end script
-  expect_stdout "multi"
+  expect
+    stdout "multi"
+    stderr ""
+    exit_code 0
 end test "multiple consecutive backslash-newline continuations"
 
 requirement "SHALL-2-2-2-005" doc="Enclosing characters in single-quotes ( '' ) shall preserve the literal value of each character within the single-quotes."
 requirement "SHALL-2-2-4-020" doc="These <backslash>-escape sequences shall be processed (replaced with the bytes or characters they yield) immediately prior to word expansion (see 2.6 Word Expansions ) of the word in which the dollar-single-quotes sequence occurs."
 begin test "single quotes preserve all characters literally"
-  begin script
+  script
     echo '$foo *'
-  end script
-  expect_stdout "\$foo \*"
+  expect
+    stdout "\$foo \*"
+    stderr ""
+    exit_code 0
 end test "single quotes preserve all characters literally"
 
 requirement "SHALL-2-2-3-013" doc="The <backslash> character shall follow the same rules as for characters in double-quotes described in this section except that it shall additionally retain its special meaning as an escape character when followed by '}' and this shall prevent the escaped '}' from being considered when determining the matching '}' (using the rule in 2.6.2 Parameter Expansion )."
 begin test "double quotes prevent wildcard expansion"
-  begin script
+  script
     echo "a*b"
-  end script
-  expect_stdout "a\*b"
+  expect
+    stdout "a\*b"
+    stderr ""
+    exit_code 0
 end test "double quotes prevent wildcard expansion"
 
 requirement "SHALL-2-2-3-017" doc="The application shall ensure that a double-quote that is not within \"$(...)\" nor within \"${...}\" is immediately preceded by a <backslash> in order to be included within double-quotes."
 begin test "double quotes backslash produces single backslash"
-  begin script
+  script
     echo "\\"
-  end script
-  expect_stdout "\\"
+  expect
+    stdout "\\"
+    stderr ""
+    exit_code 0
 end test "double quotes backslash produces single backslash"
 
 requirement "SHALL-2-3-039" doc="If the current character is an unquoted '$' or '`' , the shell shall identify the start of any candidates for parameter expansion ( 2.6.2 Parameter Expansion ), command substitution ( 2.6.3 Command Substitution ), or arithmetic expansion ( 2.6.4 Arithmetic Expansion ) from their introductory unquoted character sequences: '$' or \"${\" , \"$(\" or '`' , and \"$((\" , respectively."
 requirement "SHALL-DESCRIPTION-002" doc="The application shall ensure that the commands to be executed are expressed in the language described in 2. Shell Command Language."
 requirement "SHALL-2-2-3-007" doc="Enclosing characters in double-quotes ( \"\" ) shall preserve the literal value of all characters within the double-quotes, with the exception of the characters backquote, <dollar-sign>, and <backslash>, as follows: $ The <dollar-sign> shall retain its special meaning introducing parameter expansion (see 2.6.2 Parameter Expansion ), a form of command substitution (see 2.6.3 Command Substitution ), and arithmetic expansion (see 2.6.4 Arithmetic Expansion ), but shall not retain its special meaning introducing the dollar-single-quotes form of quoting (see 2.2.4 Dollar-Single-Quotes )."
 begin test "double quotes allow parameter and command and arithmetic expansion"
-  begin script
+  script
     foo=bar
     echo "$foo $(echo sub) $((2+2)) $'literal'"
-  end script
-  expect_stdout "bar sub 4 \$'literal'"
+  expect
+    stdout "bar sub 4 \$'literal'"
+    stderr ""
+    exit_code 0
 end test "double quotes allow parameter and command and arithmetic expansion"
 
 requirement "SHALL-2-3-037" doc="During token recognition no substitutions shall be actually performed, and the result token shall contain exactly the characters that appear in the input unmodified, including any embedded or enclosing quotes or substitution operators, between the start and the end of the quoted text."
 requirement "SHALL-2-3-043" doc="The characters found from the beginning of the substitution to its end, allowing for any recursion necessary to recognize embedded constructs, shall be included unmodified in the result token, including any embedded or enclosing substitution operators or quotes."
 requirement "SHALL-2-2-3-008" doc="The input characters within the quoted string that are also enclosed between \"$(\" and the matching ')' shall not be affected by the double-quotes, but rather shall define the command(s) whose output replaces the \"$(...)\" when the word is expanded."
 begin test "inner double quotes inside command substitution"
-  begin script
+  script
     echo "$(echo "inner quotes")"
-  end script
-  expect_stdout "inner quotes"
+  expect
+    stdout "inner quotes"
+    stderr ""
+    exit_code 0
 end test "inner double quotes inside command substitution"
 
 requirement "SHALL-2-2-3-009" doc="The tokenizing rules in 2.3 Token Recognition shall be applied recursively to find the matching ')' ."
 begin test "recursive tokenizing finds matching paren"
-  begin script
+  script
     echo "$(echo "(recursive)")"
-  end script
-  expect_stdout "\(recursive\)"
+  expect
+    stdout "\(recursive\)"
+    stderr ""
+    exit_code 0
 end test "recursive tokenizing finds matching paren"
 
 requirement "SHALL-2-2-3-012" doc="The backquote and <dollar-sign> characters shall follow the same rules as for characters in double-quotes described in this section."
 begin test "backquote inside double quotes executes"
-  begin script
+  script
     echo "`echo sub`"
-  end script
-  expect_stdout "sub"
+  expect
+    stdout "sub"
+    stderr ""
+    exit_code 0
 end test "backquote inside double quotes executes"
 
 requirement "SHALL-2-2-3-007" doc="Enclosing characters in double-quotes ( \"\" ) shall preserve the literal value of all characters within the double-quotes, with the exception of the characters backquote, <dollar-sign>, and <backslash>, as follows: $ The <dollar-sign> shall retain its special meaning introducing parameter expansion (see 2.6.2 Parameter Expansion ), a form of command substitution (see 2.6.3 Command Substitution ), and arithmetic expansion (see 2.6.4 Arithmetic Expansion ), but shall not retain its special meaning introducing the dollar-single-quotes form of quoting (see 2.2.4 Dollar-Single-Quotes )."
 requirement "SHALL-2-2-3-015" doc="Outside of \"$(...)\" and \"${...}\" the <backslash> shall retain its special meaning as an escape character (see 2.2.1 Escape Character (Backslash)) only when immediately followed by one of the following characters: $ ` \" \\ <newline>."
 begin test "backslash in double quotes special only before certain chars"
-  begin script
+  script
     printf "%s\n" "\n \$ \` \\"
-  end script
-  expect_stdout "\\n \$ ` \\"
+  expect
+    stdout "\\n \$ ` \\"
+    stderr ""
+    exit_code 0
 end test "backslash in double quotes special only before certain chars"
 
 requirement "SHALL-2-2-3-011" doc="For parameter expansions other than the four varieties that provide for substring processing, within the string of characters from an enclosed \"${\" to the matching '}' , the double-quotes within which the expansion occurs shall preserve the literal value of all characters, with the exception of the characters double-quote, backquote, <dollar-sign>, and <backslash>."
 requirement "SHALL-2-2-3-016" doc="When double-quotes are used to quote a parameter expansion, command substitution, or arithmetic expansion, the literal value of all characters within the result of the expansion shall be preserved."
 begin test "double quotes preserve expansion result literally"
-  begin script
+  script
     foo='* * *'
     echo "$foo"
-  end script
-  expect_stdout "\* \* \*"
+  expect
+    stdout "\* \* \*"
+    stderr ""
+    exit_code 0
 end test "double quotes preserve expansion result literally"
 
 requirement "SHALL-2-2-3-010" doc="For the four varieties of parameter expansion that provide for substring processing (see 2.6.2 Parameter Expansion ), within the string of characters from an enclosed \"${\" to the matching '}' , the double-quotes within which the expansion occurs shall have no effect on the handling of any special characters."
 begin test "substring processing not affected by outer double quotes"
-  begin script
+  script
     foo="a*b"
     unset unset_var
     echo "${foo#a*}" "${unset_var:-*}"
-  end script
-  expect_stdout ".*\*b \*.*"
+  expect
+    stdout ".*\*b \*.*"
+    stderr ""
+    exit_code 0
 end test "substring processing not affected by outer double quotes"
 
 requirement "SHALL-2-2-3-007" doc="Enclosing characters in double-quotes ( \"\" ) shall preserve the literal value of all characters within the double-quotes, with the exception of the characters backquote, <dollar-sign>, and <backslash>, as follows: $ The <dollar-sign> shall retain its special meaning introducing parameter expansion (see 2.6.2 Parameter Expansion ), a form of command substitution (see 2.6.3 Command Substitution ), and arithmetic expansion (see 2.6.4 Arithmetic Expansion ), but shall not retain its special meaning introducing the dollar-single-quotes form of quoting (see 2.2.4 Dollar-Single-Quotes )."
 begin test "backslash dollar and backquote inside braces"
-  begin script
+  script
     unset foo
     printf "%s\n" "${foo:-`echo default` \$ \n \\ }"
-  end script
-  expect_stdout "default \$ \\n \\.*"
+  expect
+    stdout "default \$ \\n \\.*"
+    stderr ""
+    exit_code 0
 end test "backslash dollar and backquote inside braces"
 
 requirement "SHALL-V3CHAP02-1008" doc="The format for arithmetic expansion shall be as follows: $(( expression )) The expression shall be treated as if it were in double-quotes, except that a double-quote inside the expression is not treated specially."
 requirement "SHALL-2-2-3-015" doc="Outside of \"$(...)\" and \"${...}\" the <backslash> shall retain its special meaning as an escape character (see 2.2.1 Escape Character (Backslash)) only when immediately followed by one of the following characters: $ ` \" \\ <newline>."
 requirement "SHALL-2-2-3-017" doc="The application shall ensure that a double-quote that is not within \"$(...)\" nor within \"${...}\" is immediately preceded by a <backslash> in order to be included within double-quotes."
 begin test "escaped double quote inside double quotes"
-  begin script
+  script
     echo "\""
-  end script
-  expect_stdout """"
+  expect
+    stdout """"
+    stderr ""
+    exit_code 0
 end test "escaped double quote inside double quotes"
 
 requirement "SHALL-V3CHAP02-1000" doc="The application shall quote the following characters if they are to represent themselves: | & ; < > ( ) $ ` \\ \" ' <space> <tab> <newline> and the following might need to be quoted under certain circumstances."
 begin test "dollar-single-quote newline escape"
-  begin script
+  script
     echo $'a\nb'
-  end script
-  expect_stdout "a\nb"
+  expect
+    stdout "a\nb"
+    stderr ""
+    exit_code 0
 end test "dollar-single-quote newline escape"
 
 requirement "SHALL-V3CHAP02-1000" doc="The application shall quote the following characters if they are to represent themselves: | & ; < > ( ) $ ` \\ \" ' <space> <tab> <newline> and the following might need to be quoted under certain circumstances."
 
 begin test "backslash-quoting preserves literal special characters"
-  begin script
+  script
     echo \| \& \; \< \> \( \) \$ \` \\ \"
-  end script
-  expect_stdout "\| & ; < > \( \) \$ ` \\ """
+  expect
+    stdout "\| & ; < > \( \) \$ ` \\ """
+    stderr ""
+    exit_code 0
 end test "backslash-quoting preserves literal special characters"
 
 requirement "SHALL-V3CHAP02-1000" doc="The application shall quote the following characters if they are to represent themselves: | & ; < > ( ) $ ` \\ \" ' <space> <tab> <newline> and the following might need to be quoted under certain circumstances."
 
 begin test "single-quoting preserves literal special characters"
-  begin script
+  script
     echo '| & ; < > ( ) $ ` \ "'
-  end script
-  expect_stdout "\| & ; < > \( \) \$ ` \\ """
+  expect
+    stdout "\| & ; < > \( \) \$ ` \\ """
+    stderr ""
+    exit_code 0
 end test "single-quoting preserves literal special characters"
 
 requirement "SHALL-V3CHAP02-1000" doc="The application shall quote the following characters if they are to represent themselves: | & ; < > ( ) $ ` \\ \" ' <space> <tab> <newline> and the following might need to be quoted under certain circumstances."
 
 begin test "double-quoting preserves literal pipe semicolon angle parens"
-  begin script
+  script
     echo "| & ; < > ( )"
-  end script
-  expect_stdout "\| & ; < > \( \)"
+  expect
+    stdout "\| & ; < > \( \)"
+    stderr ""
+    exit_code 0
 end test "double-quoting preserves literal pipe semicolon angle parens"
 
 requirement "SHALL-V3CHAP02-1000" doc="The application shall quote the following characters if they are to represent themselves: | & ; < > ( ) $ ` \\ \" ' <space> <tab> <newline> and the following might need to be quoted under certain circumstances."
 
 begin test "quoting preserves literal space and tab in single argument"
-  begin script
+  script
     $SHELL -c 'for a in "$@"; do echo "[$a]"; done' sh "hello world" "a	b"
-  end script
-  expect_stdout "\[hello world\]\n\[a	b\]"
+  expect
+    stdout "\[hello world\]\n\[a	b\]"
+    stderr ""
+    exit_code 0
 end test "quoting preserves literal space and tab in single argument"
 
 requirement "SHALL-V3CHAP02-1000" doc="The application shall quote the following characters if they are to represent themselves: | & ; < > ( ) $ ` \\ \" ' <space> <tab> <newline> and the following might need to be quoted under certain circumstances."
 
 begin test "backslash-newline is line continuation not literal newline"
-  begin script
+  script
     echo hello\
     world
-  end script
-  expect_stdout "helloworld"
+  expect
+    stdout "helloworld"
+    stderr ""
+    exit_code 0
 end test "backslash-newline is line continuation not literal newline"
 
 requirement "SHALL-V3CHAP02-1000" doc="The application shall quote the following characters if they are to represent themselves: | & ; < > ( ) $ ` \\ \" ' <space> <tab> <newline> and the following might need to be quoted under certain circumstances."
 
 begin test "quoting prevents glob expansion of * ? [ ]"
-  begin script
+  script
     echo '*' '?' '[abc]'
-  end script
-  expect_stdout "\* \? \[abc\]"
+  expect
+    stdout "\* \? \[abc\]"
+    stderr ""
+    exit_code 0
 end test "quoting prevents glob expansion of * ? [ ]"
 
 requirement "SHALL-V3CHAP02-1000" doc="The application shall quote the following characters if they are to represent themselves: | & ; < > ( ) $ ` \\ \" ' <space> <tab> <newline> and the following might need to be quoted under certain circumstances."
 
 begin test "quoting preserves literal ~ = % { } characters"
-  begin script
+  script
     echo '~' '=' '%' '{' '}' ',' '^' '-'
-  end script
-  expect_stdout "~ = % { } , ^ -"
+  expect
+    stdout "~ = % { } , ^ -"
+    stderr ""
+    exit_code 0
 end test "quoting preserves literal ~ = % { } characters"
 
 requirement "SHALL-V3CHAP02-1001" doc="A sequence of characters starting with a <dollar-sign> immediately followed by a single-quote ( $' ) shall preserve the literal value of all characters up to an unescaped terminating single-quote ( ' ), with the exception of certain <backslash>-escape sequences, as follows: \\\" yields a <quotation-mark> (double-quote) character, but note that <quotation-mark> can be included unescaped."
 begin test "dollar-single-quote hex escape"
-  begin script
+  script
     echo $'\x41\x42'
-  end script
-  expect_stdout "AB"
+  expect
+    stdout "AB"
+    stderr ""
+    exit_code 0
 end test "dollar-single-quote hex escape"
 
 requirement "SHALL-2-2-4-022" doc="If a <backslash>-escape sequence represents a single-quote character (for example \\' ), that sequence shall not terminate the dollar-single-quote sequence."
 requirement "SHALL-2-3-036" doc="If the current character is an unquoted <backslash>, single-quote, or double-quote or is the first character of an unquoted <dollar-sign> single-quote sequence, it shall affect quoting for subsequent characters up to the end of the quoted text."
 begin test "dollar-single-quote escaped single quote"
-  begin script
+  script
     echo $'can\'t'
-  end script
-  expect_stdout "can't"
+  expect
+    stdout "can't"
+    stderr ""
+    exit_code 0
 end test "dollar-single-quote escaped single quote"
 
 requirement "SHALL-2-3-025" doc="When an io_here token has been recognized by the grammar (see 2.10 Shell Grammar ), one or more of the subsequent lines immediately following the next NEWLINE token form the body of a here-document and shall be parsed according to the rules of 2.7.4 Here-Document ."
 begin test "newline delimits token"
-  begin script
+  script
     echo a
     echo b
-  end script
-  expect_stdout "a\nb"
+  expect
+    stdout "a\nb"
+    stderr ""
+    exit_code 0
 end test "newline delimits token"
 
 requirement "SHALL-V3CHAP02-1003" doc="The following words shall be recognized as reserved words: ! { } case do done elif else esac fi for if in then until while."
 begin test "reserved words not recognized when quoted"
-  begin script
+  script
     echo "if"
-  end script
-  expect_stdout "if"
+  expect
+    stdout "if"
+    stderr ""
+    exit_code 0
 end test "reserved words not recognized when quoted"
 
 requirement "SHALL-2-2-4-019" doc="In cases where a variable number of characters can be used to specify an escape sequence ( \\x XX and \\ ddd ), the escape sequence shall be terminated by the first character that is not of the expected type or, for \\ ddd sequences, when the maximum number of characters specified has been found, whichever occurs first."
 begin test "dollar-single-quote variable-length escapes terminate correctly"
-  begin script
+  script
     printf "%s|%s|%s|%s\n" $'\x41' $'\x41Z' $'\101' $'\1012'
-  end script
-  expect_stdout "A\|AZ\|A\|A2"
+  expect
+    stdout "A\|AZ\|A\|A2"
+    stderr ""
+    exit_code 0
 end test "dollar-single-quote variable-length escapes terminate correctly"
 
 requirement "SHALL-V3CHAP02-1003" doc="The following words shall be recognized as reserved words: ! { } case do done elif else esac fi for if in then until while."
 begin test "reserved words work in correct positions"
-  begin script
+  script
     if true; then
       echo yes
     fi
-  end script
-  expect_stdout "yes"
+  expect
+    stdout "yes"
+    stderr ""
+    exit_code 0
 end test "reserved words work in correct positions"
 
 requirement "SHALL-V3CHAP02-1003" doc="The following words shall be recognized as reserved words: ! { } case do done elif else esac fi for if in then until while."
 requirement "SHALL-V3CHAP02-1004" doc="This recognition shall only occur when none of the characters is quoted and when the word is used as: The first word of a command The first word following one of the reserved words other than case , for , or in The third word in a case command (only in is valid in this case) The third word in a for command (only in and do are valid in this case) See the grammar in 2.10 Shell Grammar ."
 requirement "SHALL-2-3-054" doc="Once a token is delimited, it is categorized as required by the grammar in 2.10 Shell Grammar."
 begin test "case/esac reserved words"
-  begin script
+  script
     case x in x) echo match ;; esac
-  end script
-  expect_stdout "match"
+  expect
+    stdout "match"
+    stderr ""
+    exit_code 0
 end test "case/esac reserved words"
 
 requirement "SHALL-2-3-1-053" doc="An implementation may defer the effect of a change to an alias but the change shall take effect no later than the completion of the currently executing complete_command (see 2.10 Shell Grammar )."
 requirement "SHALL-V3CHAP02-1001-DUP51" doc="If the value of the alias replacing the TOKEN ends in a <blank> that would be unquoted after substitution, and optionally if it ends in a <blank> that would be quoted after substitution, the shell shall check the next token in the input, if it is a TOKEN , for alias substitution; this process shall continue until a TOKEN is found that is not a valid alias or an alias value does not end in such a <blank>."
 requirement "SHALL-2-3-1-059" doc="Either the TOKEN is being considered for alias substitution because it follows an alias substitution whose replacement value ended with a <blank> (see below) or the TOKEN could be parsed as the command name word of a simple command (see 2.10 Shell Grammar), based on this TOKEN and the tokens (if any) that preceded it, but ignoring whether any subsequent characters would allow that."
 begin test "alias trailing blank triggers expansion of next word"
-  begin script
+  script
     alias myalias="echo "
     myalias hello
-  end script
-  expect_stdout "hello"
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
 end test "alias trailing blank triggers expansion of next word"
 
 requirement "SHALL-2-3-036" doc="If the current character is an unquoted <backslash>, single-quote, or double-quote or is the first character of an unquoted <dollar-sign> single-quote sequence, it shall affect quoting for subsequent characters up to the end of the quoted text."
 requirement "SHALL-V3CHAP02-1001" doc="A sequence of characters starting with a <dollar-sign> immediately followed by a single-quote ( $' ) shall preserve the literal value of all characters up to an unescaped terminating single-quote ( ' ), with the exception of certain <backslash>-escape sequences, as follows: \\\" yields a <quotation-mark> (double-quote) character, but note that <quotation-mark> can be included unescaped."
 requirement "SHALL-2-2-4-020" doc="These <backslash>-escape sequences shall be processed (replaced with the bytes or characters they yield) immediately prior to word expansion (see 2.6 Word Expansions ) of the word in which the dollar-single-quotes sequence occurs."
 begin test "dollar-single-quote basic support"
-  begin script
+  script
     printf '%s\n' $'hello\nworld'
-  end script
-  expect_stdout "hello\nworld"
+  expect
+    stdout "hello\nworld"
+    stderr ""
+    exit_code 0
 end test "dollar-single-quote basic support"
 
 requirement "SHALL-2-2-3-007" doc="Enclosing characters in double-quotes ( \"\" ) shall preserve the literal value of all characters within the double-quotes, with the exception of the characters backquote, <dollar-sign>, and <backslash>, as follows: $ The <dollar-sign> shall retain its special meaning introducing parameter expansion (see 2.6.2 Parameter Expansion ), a form of command substitution (see 2.6.3 Command Substitution ), and arithmetic expansion (see 2.6.4 Arithmetic Expansion ), but shall not retain its special meaning introducing the dollar-single-quotes form of quoting (see 2.2.4 Dollar-Single-Quotes )."
 begin test "dollar-paren command substitution"
-  begin script
+  script
     echo $(echo hello)
-  end script
-  expect_stdout "hello"
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
 end test "dollar-paren command substitution"
 
 requirement "SHALL-2-3-037" doc="During token recognition no substitutions shall be actually performed, and the result token shall contain exactly the characters that appear in the input unmodified, including any embedded or enclosing quotes or substitution operators, between the start and the end of the quoted text."
 begin test "backtick command substitution"
-  begin script
+  script
     echo `echo hello`
-  end script
-  expect_stdout "hello"
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
 end test "backtick command substitution"
 
 requirement "SHALL-2-3-041" doc="While processing the characters, if instances of expansions or quoting are found nested within the substitution, the shell shall recursively process them in the manner specified for the construct that is found."
 begin test "nested dollar-paren command substitution"
-  begin script
+  script
     echo $(echo $(echo nested))
-  end script
-  expect_stdout "nested"
+  expect
+    stdout "nested"
+    stderr ""
+    exit_code 0
 end test "nested dollar-paren command substitution"
 
 requirement "SHALL-V3CHAP02-1009" doc="The arithmetic expression shall be processed according to the rules given in 1.1.2.1 Arithmetic Precision and Operations , with the following exceptions: Only signed long integer arithmetic is required."
 begin test "arithmetic addition"
-  begin script
+  script
     echo $((40 + 2))
-  end script
-  expect_stdout "42"
+  expect
+    stdout "42"
+    stderr ""
+    exit_code 0
 end test "arithmetic addition"
 
 requirement "SHALL-2-6-102" doc="The expansions that are performed for a given word shall be performed in the following order: Tilde expansion (see 2.6.1 Tilde Expansion ), parameter expansion (see 2.6.2 Parameter Expansion ), command substitution (see 2.6.3 Command Substitution ), and arithmetic expansion (see 2.6.4 Arithmetic Expansion ) shall be performed, beginning to end."
 begin test "arithmetic subtraction negative"
-  begin script
+  script
     echo $((3 - 4))
-  end script
-  expect_stdout "-1"
+  expect
+    stdout "-1"
+    stderr ""
+    exit_code 0
 end test "arithmetic subtraction negative"

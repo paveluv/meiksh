@@ -7,37 +7,43 @@ testsuite "Input and Parsing Utilities"
 requirement "SHALL-READ-1282" doc="The read utility shall conform to XBD 12.2 Utility Syntax Guidelines ."
 
 begin test "basic read from here-doc"
-  begin script
+  script
     read v1 v2 <<INEOF
     word1 word2
     INEOF
     echo "$v1/$v2"
-  end script
-  expect_stdout "word1/word2"
+  expect
+    stdout "word1/word2"
+    stderr ""
+    exit_code 0
 end test "basic read from here-doc"
 
 requirement "SHALL-READ-1259" doc="The read utility shall read a single logical line from standard input into one or more shell variables."
 begin test "read -r treats backslash as literal"
-  begin script
+  script
     read -r v1 <<\INEOF
     word1\\
     word2
     INEOF
     echo "$v1"
-  end script
-  expect_stdout "word1\\\\"
+  expect
+    stdout "word1\\\\"
+    stderr ""
+    exit_code 0
 end test "read -r treats backslash as literal"
 
 requirement "SHALL-READ-1265" doc="If standard input is a terminal device and the invoking shell is interactive, read shall prompt for a continuation line when it reads an input line ending with a <backslash> <newline>, unless the -r option is specified."
 begin test "read without -r joins backslash-newline"
-  begin script
+  script
     read v1 <<INEOF
     word1\
     word2
     INEOF
     echo "$v1"
-  end script
-  expect_stdout "word1word2"
+  expect
+    stdout "word1word2"
+    stderr ""
+    exit_code 0
 end test "read without -r joins backslash-newline"
 
 # ==============================================================================
@@ -48,12 +54,14 @@ requirement "SHALL-READ-1284" doc="The following options shall be supported: -d 
 requirement "SHALL-READ-1285" doc="If delim is the null string, the logical line delimiter shall be the null byte."
 requirement "SHALL-READ-1287" doc="If the -d delim option is not specified, or if it is specified and delim is not the null string, the standard input shall contain zero or more bytes (which need not form valid characters) and shall not contain any null bytes."
 
+# -d is a POSIX 2024 feature; older shells may not support it
 begin test "read -d with custom delimiter"
-  begin script
+  script
     printf "hello:world" | { read -d ":" val; echo "$val"; }
-  end script
-  # -d is a POSIX 2024 feature; older shells may not support it
-  expect_stdout ".*"
+  expect
+    stdout ".*"
+    stderr ""
+    exit_code 0
 end test "read -d with custom delimiter"
 
 # ==============================================================================
@@ -63,11 +71,13 @@ end test "read -d with custom delimiter"
 requirement "SHALL-READ-1290" doc="PS2 Provide the prompt string that an interactive shell shall write to standard error when a line ending with a <backslash> <newline> is read and the -r option was not specified."
 requirement "SHALL-READ-1291" doc="The standard error shall be used for diagnostic messages and prompts for continued input."
 begin test "read stderr used for diagnostics"
-  begin script
+  script
     read v1 < /dev/null 2>/dev/null
     echo "$?"
-  end script
-  expect_stdout "1"
+  expect
+    stdout "1"
+    stderr ""
+    exit_code 0
 end test "read stderr used for diagnostics"
 
 # ==============================================================================
@@ -78,7 +88,7 @@ requirement "SHALL-GETOPTS-1175" doc="It shall support the Utility Syntax Guidel
 requirement "SHALL-GETOPTS-1176" doc="When the shell is first invoked, the shell variable OPTIND shall be initialized to 1."
 requirement "SHALL-GETOPTS-1178" doc="Each time getopts is invoked, it shall place the value of the next option found in the parameter list in the shell variable specified by the name operand and the shell variable OPTIND shall be set as follows: When getopts successfully parses an option that takes an option-argument (that is, a character followed by <colon> in optstring , and exit status is 0), the value of OPTIND shall be the integer index of the next element of the parameter list (if any; see OPERANDS below) to be searched for an option character."
 begin test "getopts basic option parsing"
-  begin script
+  script
     set -- -a -b foo bar
     getopts "ab:" opt
     echo "$opt"
@@ -87,28 +97,34 @@ begin test "getopts basic option parsing"
     getopts "ab:" opt
     echo "$?"
     echo "$OPTIND"
-  end script
-  expect_stdout "a\nb foo\n1\n4"
+  expect
+    stdout "a\nb foo\n1\n4"
+    stderr ""
+    exit_code 0
 end test "getopts basic option parsing"
 
 requirement "SHALL-GETOPTS-1175" doc="It shall support the Utility Syntax Guidelines 3 to 10, inclusive, described in XBD 12.2 Utility Syntax Guidelines ."
 begin test "getopts silent mode error handling"
-  begin script
+  script
     set -- -x -b
     getopts ":ab:" opt
     echo "$opt $OPTARG"
     getopts ":ab:" opt
     echo "$opt $OPTARG"
-  end script
-  expect_stdout "\? x\n: b"
+  expect
+    stdout "\? x\n: b"
+    stderr ""
+    exit_code 0
 end test "getopts silent mode error handling"
 
 requirement "SHALL-GETOPTS-1178" doc="Each time getopts is invoked, it shall place the value of the next option found in the parameter list in the shell variable specified by the name operand and the shell variable OPTIND shall be set as follows: When getopts successfully parses an option that takes an option-argument (that is, a character followed by <colon> in optstring , and exit status is 0), the value of OPTIND shall be the integer index of the next element of the parameter list (if any; see OPERANDS below) to be searched for an option character."
 begin test "getopts verbose mode missing option-argument"
-  begin script
+  script
     set -- -b
     getopts "ab:" opt 2>/dev/null
     echo "$opt ${OPTARG:-unset}"
-  end script
-  expect_stdout "\? unset"
+  expect
+    stdout "\? unset"
+    stderr ""
+    exit_code 0
 end test "getopts verbose mode missing option-argument"

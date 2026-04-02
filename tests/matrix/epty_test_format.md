@@ -13,10 +13,12 @@ testsuite "Suite Name"
 
 requirement "REQ-ID" doc="Short description of the requirement."
 begin test "descriptive test name"
-  begin script
+  script
     echo hello
-  end script
-  expect_stdout "hello"
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
 end test "descriptive test name"
 ```
 
@@ -41,20 +43,23 @@ requirement "SHALL-2-2-1-002" doc="A <backslash> that is not quoted shall..."
 ## Non-interactive tests
 
 Non-interactive tests run a shell script and check its output/exit code.
+Each test contains a `script` block and an `expect` block.
 
 ```
 begin test "name"
-  begin script
+  script
     <shell code>
-  end script
-  <assertions>
+  expect
+    stdout "pattern"
+    stderr "pattern"
+    exit_code <expr>
 end test "name"
 ```
 
-### Script block rules
+### Script block
 
-- `begin script` and `end script` are indented 2 spaces.
-- Script body is indented 4 spaces (stripped to column 0 at runtime).
+- `script` is at column 2. Script body is at column 4 (stripped to
+  column 0 at runtime).
 - The body is taken **verbatim** — no quoting or escaping needed.
 - `$SHELL` is set to the target shell (e.g. `/usr/bin/bash --posix`).
 - The script runs in a clean environment with `HOME`, `TMPDIR`, `PATH`,
@@ -64,20 +69,34 @@ end test "name"
 - Avoid explicit cleanup-only commands (`rm -f ...`) unless cleanup behavior
   itself is the subject under test; the runner handles sandbox cleanup.
 
-### Available assertions
+### Expect block
 
-All patterns are **regex** (see "Regex syntax" below). Patterns are
-enclosed in double quotes.
+The `expect` block follows immediately after the script body. It
+contains exactly three assertions in this fixed order:
 
-| Assertion | Meaning |
-|---|---|
-| `expect_stdout "pattern"` | stdout matches regex (full match) |
-| `expect_stderr "pattern"` | stderr matches regex (full match) |
-| `expect_exit_code <expr>` | exit code satisfies expression (see below) |
+1. `stdout "pattern"` — assert stdout matches regex (full match)
+2. `stderr "pattern"` — assert stderr matches regex (full match)
+3. `exit_code <expr>` — assert exit code satisfies expression
+
+All three are **required** and must appear in exactly this order.
+The parser rejects any other ordering or omission.
+
+#### Assertion tips
+
+- `stdout` does a **full match** — the pattern must match the
+  entire stdout (trailing whitespace is trimmed). `stdout "hello"`
+  only passes if stdout is exactly `hello`.
+- `.` matches any character **except** newline. Use `\n` to match across
+  lines: `stdout "line1\nline2"`.
+- To match a substring within multi-line output, use `(.|\n)*` to cross
+  newlines: `stdout "(.|\n)*pattern(.|\n)*"`.
+- `stdout ""` asserts stdout is empty.
+- `stderr ""` asserts stderr is empty.
+- `stderr ".+"` asserts stderr is non-empty.
 
 #### Exit code expressions
 
-`expect_exit_code` accepts an expression that the actual exit code is
+`exit_code` accepts an expression that the actual exit code is
 tested against:
 
 | Expression | Meaning |
@@ -92,21 +111,6 @@ Supported operators: `==`, `!=`, `>`, `<`, `>=`, `<=`.
 Combinators: `&&` (and), `||` (or). Parentheses for grouping.
 `&&` binds tighter than `||`.
 
-### Assertion tips
-
-- `expect_stdout` does a **full match** — the pattern must match the
-  entire stdout (trailing whitespace is trimmed). `expect_stdout "hello"`
-  only passes if stdout is exactly `hello`.
-- `.` matches any character **except** newline. Use `\n` to match across
-  lines: `expect_stdout "line1\nline2"`.
-- To match a substring within multi-line output, use `(.|\n)*` to cross
-  newlines: `expect_stdout "(.|\n)*pattern(.|\n)*"`.
-- `expect_exit_code 0` is implicit if omitted — tests pass if exit code
-  is 0 and all assertions match. Use `expect_exit_code !=0` to assert
-  failure.
-- `expect_stderr ""` asserts stderr is empty.
-- `expect_stderr ".+"` asserts stderr is non-empty.
-
 ### setenv
 
 Set an environment variable for the test's execution:
@@ -114,14 +118,16 @@ Set an environment variable for the test's execution:
 ```
 begin test "locale-sensitive test"
   setenv "LC_ALL" "test_EPTY.UTF-8"
-  begin script
+  script
     ...
-  end script
-  expect_stdout "..."
+  expect
+    stdout "..."
+    stderr ""
+    exit_code 0
 end test "locale-sensitive test"
 ```
 
-`setenv` goes between `begin test` and `begin script`.
+`setenv` goes between `begin test` and `script`.
 
 ## Interactive (PTY) tests
 
@@ -190,10 +196,10 @@ The `.epty` runner uses a built-in regex engine. Supported syntax:
 | `(a\|b)` | Alternation group |
 | `\` | Escape next character |
 
-**Important**: In expect/not_expect patterns, backslash is passed
-through **raw** to the regex engine. There is no string-level escaping.
-To match a literal backslash, write `\\`. To match `[`, write `\[`.
-To embed a literal `"` in a pattern, double it: `""`.
+**Important**: In patterns, backslash is passed through **raw** to the
+regex engine. There is no string-level escaping. To match a literal
+backslash, write `\\`. To match `[`, write `\[`. To embed a literal
+`"` in a pattern, double it: `""`.
 
 In `send` strings, backslash escapes **are** interpreted: `\"`, `\\`,
 `\n`, `\r`, `\t`.
@@ -238,10 +244,12 @@ This checks:
 
 ```
 begin test "arithmetic expansion"
-  begin script
+  script
     echo $((2 + 3))
-  end script
-  expect_stdout "5"
+  expect
+    stdout "5"
+    stderr ""
+    exit_code 0
 end test "arithmetic expansion"
 ```
 
@@ -249,19 +257,23 @@ end test "arithmetic expansion"
 
 ```
 begin test "false returns non-zero"
-  begin script
+  script
     false
-  end script
-  expect_exit_code !=0
+  expect
+    stdout ""
+    stderr ""
+    exit_code !=0
 end test "false returns non-zero"
 ```
 
 ```
 begin test "signal exit code range"
-  begin script
+  script
     kill -TERM $$
-  end script
-  expect_exit_code >128
+  expect
+    stdout ""
+    stderr ""
+    exit_code >128
 end test "signal exit code range"
 ```
 
@@ -269,10 +281,12 @@ end test "signal exit code range"
 
 ```
 begin test "syntax error produces stderr"
-  begin script
+  script
     $SHELL -c 'if then' 2>&1
-  end script
-  expect_stderr ".+"
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
 end test "syntax error produces stderr"
 ```
 
@@ -280,10 +294,12 @@ end test "syntax error produces stderr"
 
 ```
 begin test "for loop output"
-  begin script
+  script
     for i in a b c; do echo $i; done
-  end script
-  expect_stdout "a\nb\nc"
+  expect
+    stdout "a\nb\nc"
+    stderr ""
+    exit_code 0
 end test "for loop output"
 ```
 

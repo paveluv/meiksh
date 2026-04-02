@@ -7,11 +7,13 @@ testsuite "Redirections"
 requirement "SHALL-2-7-5-221" doc="If word evaluates to one or more digits, the file descriptor denoted by n , or standard input if n is not specified, shall be made to be a copy of the file descriptor denoted by word ; if the digits in word do not represent an already open file descriptor, a redirection error shall result (see 2.8.1 Consequences of Shell Errors ); if the file descriptor denoted by word represents an open file descriptor that is not open for input, a redirection error may result."
 
 begin test "basic output redirection with >"
-  begin script
+  script
     echo hello > tmp.txt
     cat tmp.txt
-  end script
-  expect_stdout "hello"
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
 end test "basic output redirection with >"
 
 
@@ -23,30 +25,36 @@ requirement "SHALL-2-7-1-197" doc="Input redirection shall cause the file whose 
 requirement "SHALL-2-7-1-198" doc="If the number is omitted, the redirection shall refer to standard input (file descriptor 0)."
 
 begin test "input redirection with <"
-  begin script
+  script
     echo world > tmp.txt
     cat < tmp.txt
-  end script
-  expect_stdout "world"
+  expect
+    stdout "world"
+    stderr ""
+    exit_code 0
 end test "input redirection with <"
 
 requirement "SHALL-2-7-1-197" doc="Input redirection shall cause the file whose name results from the expansion of word to be opened for reading on the designated file descriptor, or standard input if the file descriptor is not specified."
 begin test "explicit stdin redirection with 0<"
-  begin script
+  script
     echo world > tmp.txt
     cat 0< tmp.txt
-  end script
-  expect_stdout "world"
+  expect
+    stdout "world"
+    stderr ""
+    exit_code 0
 end test "explicit stdin redirection with 0<"
 
 requirement "SHALL-2-7-190" doc="If n is quoted, the number shall not be recognized as part of the redirection expression."
 
 begin test "quoted fd number is not a redirection"
-  begin script
+  script
     echo content > tmp.txt
     "0"<tmp.txt
-  end script
-  expect_exit_code !=0
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
 end test "quoted fd number is not a redirection"
 
 
@@ -58,22 +66,26 @@ requirement "SHALL-2-7-2-200" doc="Output redirection using the '>' format shall
 requirement "SHALL-2-7-2-199" doc="If the number is omitted, the redirection shall refer to standard output (file descriptor 1)."
 
 begin test "explicit stdout redirection with 1>"
-  begin script
+  script
     echo foo 1> tmp.txt
     cat tmp.txt
-  end script
-  expect_stdout "foo"
+  expect
+    stdout "foo"
+    stderr ""
+    exit_code 0
 end test "explicit stdout redirection with 1>"
 
 requirement "SHALL-2-7-2-202" doc="In all other cases ( noclobber not set, redirection using '>' does not fail for the reasons stated above, or redirection using the \">|\" format), output redirection shall cause the file whose name results from the expansion of word to be opened for output on the designated file descriptor, or standard output if none is specified."
 
 begin test "noclobber prevents overwriting existing file"
-  begin script
+  script
     set -C
     echo a > tmp.txt
     echo b > tmp.txt
-  end script
-  expect_exit_code !=0
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
 end test "noclobber prevents overwriting existing file"
 
 
@@ -85,12 +97,14 @@ requirement "SHALL-2-7-3-204" doc="Appended output redirection shall cause the f
 requirement "SHALL-2-7-3-206" doc="If the file does not exist, it shall be created."
 
 begin test "append redirection with >>"
-  begin script
+  script
     echo a >> tmp_append.txt
     echo b >> tmp_append.txt
     cat tmp_append.txt
-  end script
-  expect_stdout "a\nb"
+  expect
+    stdout "a\nb"
+    stderr ""
+    exit_code 0
 end test "append redirection with >>"
 
 
@@ -102,35 +116,41 @@ requirement "SHALL-2-7-4-213" doc="If the redirection operator is never evaluate
 requirement "SHALL-2-7-4-210" doc="Otherwise: The delimiter shall be the word itself."
 
 begin test "here-document basic usage"
-  begin script
+  script
     cat <<EOF
     line1
     line2
     EOF
-  end script
-  expect_stdout "line1\nline2"
+  expect
+    stdout "line1\nline2"
+    stderr ""
+    exit_code 0
 end test "here-document basic usage"
 
 requirement "SHALL-2-7-4-209" doc="If any part of word is quoted, not counting double-quotes outside a command substitution if the here-document is inside one, the delimiter shall be formed by performing quote removal on word , and the here-document lines shall not be expanded."
 requirement "SHALL-2-7-4-214" doc="Any <backslash> characters in the input shall behave as the <backslash> inside double-quotes (see 2.2.3 Double-Quotes )."
 
 begin test "here-document with variable expansion"
-  begin script
+  script
     var=hello
     cat <<EOF
     $var
     EOF
-  end script
-  expect_stdout "hello"
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
 end test "here-document with variable expansion"
 
 requirement "SHALL-2-7-4-209" doc="If any part of word is quoted, not counting double-quotes outside a command substitution if the here-document is inside one, the delimiter shall be formed by performing quote removal on word , and the here-document lines shall not be expanded."
 begin test "here-document with quoted delimiter suppresses expansion"
-  begin script
+  script
     var=hello
     cat <<'EOF'
     $var
     EOF
-  end script
-  expect_stdout "\$var"
+  expect
+    stdout "\$var"
+    stderr ""
+    exit_code 0
 end test "here-document with quoted delimiter suppresses expansion"

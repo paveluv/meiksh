@@ -9,61 +9,73 @@ requirement "SHALL-DESCRIPTION-540" doc="If the exec command fails, a non-intera
 requirement "SHALL-DESCRIPTION-541" doc="If the exec command fails and the shell does not exit, any redirections associated with the exec command that were successfully made shall take effect in the current shell execution environment."
 requirement "SHALL-EXIT-STATUS-545" doc="If utility is specified and is executed, exec shall not return to the shell; rather, the exit status of the current shell execution environment shall be the exit status of utility ."
 begin test "exec of nonexistent command causes non-interactive shell to exit"
-  begin script
+  script
     exec /invalid/does/not/exist
     echo "survived"
-  end script
-  expect_exit_code !=0
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
 end test "exec of nonexistent command causes non-interactive shell to exit"
 
 requirement "SHALL-ENVIRONMENT-VARIABLES-024" doc="This variable shall represent an absolute pathname of the current working directory."
 requirement "SHALL-DESCRIPTION-542" doc="The exec special built-in shall support XBD 12.2 Utility Syntax Guidelines ."
 begin test "exec with no operands manipulates file descriptors"
-  begin script
+  script
     exec 3>tmp_fd3.txt
     echo "fd3 test" >&3
     exec 3>&-
     cat tmp_fd3.txt
-  end script
-  expect_stdout "fd3 test"
+  expect
+    stdout "fd3 test"
+    stderr ""
+    exit_code 0
 end test "exec with no operands manipulates file descriptors"
 
 requirement "SHALL-DESCRIPTION-538" doc="If exec is specified with no operands, any redirections associated with the exec command shall be made in the current shell execution environment."
 requirement "SHALL-DESCRIPTION-539" doc="If exec is specified with a utility operand, the shell shall execute a non-built-in utility as described in 2.9.1.6 Non-built-in Utility Execution with utility as the command name and the argument operands (if any) as the command arguments."
 requirement "SHALL-DESCRIPTION-554" doc="No other actions associated with the signal, such as execution of trap actions or creation of a core image, shall be performed by the shell."
 begin test "exec with operands replaces the shell"
-  begin script
+  script
     exec printf "%s" "exec test"
     echo "never runs"
-  end script
-  expect_stdout "exec test"
+  expect
+    stdout "exec test"
+    stderr ""
+    exit_code 0
 end test "exec with operands replaces the shell"
 
 requirement "SHALL-DESCRIPTION-549" doc="The exit utility shall cause the shell to exit from its current execution environment."
 requirement "SHALL-DESCRIPTION-551" doc="The wait status of the shell or subshell shall be determined by the unsigned decimal integer n , if specified."
 begin test "exit n sets explicit exit status"
-  begin script
+  script
     exit 42
-  end script
-  expect_exit_code 42
+  expect
+    stdout ""
+    stderr ""
+    exit_code 42
 end test "exit n sets explicit exit status"
 
 requirement "SHALL-DESCRIPTION-550" doc="If the current execution environment is a subshell environment, the shell shall exit from the subshell environment and continue in the environment from which that subshell environment was invoked; otherwise, the shell utility shall terminate."
 begin test "exit inside subshell only terminates the subshell"
-  begin script
+  script
     (exit 99)
     echo "$?"
-  end script
-  expect_stdout "99"
+  expect
+    stdout "99"
+    stderr ""
+    exit_code 0
 end test "exit inside subshell only terminates the subshell"
 
 requirement "SHALL-EXIT-STATUS-546" doc="If utility is specified and an attempt to execute it as a non-built-in utility fails, the exit status shall be as described in 2.9.1.6 Non-built-in Utility Execution ."
 requirement "SHALL-EXIT-STATUS-547" doc="If a redirection error occurs (see 2.8.1 Consequences of Shell Errors ), the exit status shall be a value in the range 1-125."
 requirement "SHALL-DESCRIPTION-555" doc="If n is not specified, the result shall be as if n were specified with the current value of the special parameter '?' (see 2.5.2 Special Parameters ), except that if the exit command would cause the end of execution of a trap action, the value for the special parameter '?' that is considered \"current\" shall be the value it had immediately preceding the trap action."
 begin test "exit with no n uses last command exit status"
-  begin script
+  script
     false
     exit
-  end script
-  expect_exit_code 1
+  expect
+    stdout ""
+    stderr ""
+    exit_code 1
 end test "exit with no n uses last command exit status"

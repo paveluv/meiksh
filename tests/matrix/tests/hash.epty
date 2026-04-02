@@ -7,21 +7,25 @@ testsuite "hash Utility"
 requirement "SHALL-HASH-1053" doc="The following option shall be supported: -r Forget all previously remembered utility locations."
 
 begin test "hash -r forgets all remembered locations"
-  begin script
+  script
     hash ls 2>/dev/null
     hash -r
     out=$(hash 2>&1)
     [ -z "$out" ] && echo empty || echo notempty
-  end script
-  expect_stdout "empty"
+  expect
+    stdout "empty"
+    stderr ""
+    exit_code 0
 end test "hash -r forgets all remembered locations"
 
 requirement "SHALL-HASH-1209" doc="The hash utility shall affect the way the current shell environment remembers the locations of utilities found as described in 2.9.1.4 Command Search and Execution ."
 begin test "hash -r exits with code 0"
-  begin script
+  script
     hash -r
-  end script
-  expect_exit_code 0
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
 end test "hash -r exits with code 0"
 
 # ==============================================================================
@@ -31,28 +35,34 @@ end test "hash -r exits with code 0"
 requirement "SHALL-HASH-1054" doc="The following operand shall be supported: utility The name of a utility to be searched for and added to the list of remembered locations."
 
 begin test "hash a known utility succeeds"
-  begin script
+  script
     hash ls
-  end script
-  expect_exit_code 0
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
 end test "hash a known utility succeeds"
 
 requirement "SHALL-HASH-1209" doc="The hash utility shall affect the way the current shell environment remembers the locations of utilities found as described in 2.9.1.4 Command Search and Execution ."
 begin test "hash output mentions hashed utility"
-  begin script
+  script
     hash -r
     hash ls 2>/dev/null
     hash 2>&1
-  end script
-  expect_stdout "(.|\n)*ls(.|\n)*"
+  expect
+    stdout "(.|\n)*ls(.|\n)*"
+    stderr ""
+    exit_code 0
 end test "hash output mentions hashed utility"
 
 requirement "SHALL-HASH-1209" doc="The hash utility shall affect the way the current shell environment remembers the locations of utilities found as described in 2.9.1.4 Command Search and Execution ."
 begin test "hash nonexistent utility fails"
-  begin script
+  script
     hash nonexistent_utility_xyzzy 2>/dev/null
-  end script
-  expect_exit_code !=0
+  expect
+    stdout ""
+    stderr ""
+    exit_code !=0
 end test "hash nonexistent utility fails"
 
 # ==============================================================================
@@ -62,12 +72,14 @@ end test "hash nonexistent utility fails"
 requirement "SHALL-HASH-1209" doc="The hash utility shall affect the way the current shell environment remembers the locations of utilities found as described in 2.9.1.4 Command Search and Execution ."
 
 begin test "hash remembers utility location"
-  begin script
+  script
     hash -r
     hash ls 2>/dev/null
     hash 2>&1
-  end script
-  expect_stdout "(.|\n)*ls(.|\n)*"
+  expect
+    stdout "(.|\n)*ls(.|\n)*"
+    stderr ""
+    exit_code 0
 end test "hash remembers utility location"
 
 # ==============================================================================
@@ -77,23 +89,27 @@ end test "hash remembers utility location"
 requirement "SHALL-HASH-1210" doc="Depending on the arguments specified, it shall add utility locations to its list of remembered locations or it shall purge the contents of the list."
 
 begin test "hash with utility argument adds it"
-  begin script
+  script
     hash -r
     hash cat 2>/dev/null
     hash 2>&1
-  end script
-  expect_stdout "(.|\n)*cat(.|\n)*"
+  expect
+    stdout "(.|\n)*cat(.|\n)*"
+    stderr ""
+    exit_code 0
 end test "hash with utility argument adds it"
 
 requirement "SHALL-HASH-1218" doc="This list shall consist of those utilities named in previous hash invocations that have been invoked, and may contain those invoked and found through the normal command search process."
 begin test "hash -r purges the list"
-  begin script
+  script
     hash cat 2>/dev/null
     hash -r
     out=$(hash 2>&1)
     [ -z "$out" ] && echo purged || echo stillhas
-  end script
-  expect_stdout "purged"
+  expect
+    stdout "purged"
+    stderr ""
+    exit_code 0
 end test "hash -r purges the list"
 
 # ==============================================================================
@@ -103,34 +119,40 @@ end test "hash -r purges the list"
 requirement "SHALL-HASH-1211" doc="When no arguments are specified, it shall report on the contents of the list."
 
 begin test "hash reports when table has items"
-  begin script
+  script
     hash -r
     hash ls 2>/dev/null
     hash cat 2>/dev/null
     out=$(hash 2>&1)
     [ -n "$out" ] && echo reported || echo empty
-  end script
-  expect_stdout "reported"
+  expect
+    stdout "reported"
+    stderr ""
+    exit_code 0
 end test "hash reports when table has items"
 
 requirement "SHALL-HASH-1037" doc="The following environment variables shall affect the execution of hash : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 begin test "hash produces no output when table is empty"
-  begin script
+  script
     hash -r
     out=$(hash 2>&1)
     [ -z "$out" ] && echo empty || echo notempty
-  end script
-  expect_stdout "empty"
+  expect
+    stdout "empty"
+    stderr ""
+    exit_code 0
 end test "hash produces no output when table is empty"
 
 requirement "SHALL-HASH-1209" doc="The hash utility shall affect the way the current shell environment remembers the locations of utilities found as described in 2.9.1.4 Command Search and Execution ."
 begin test "hash output contains paths for hashed utilities"
-  begin script
+  script
     hash -r
     hash ls 2>/dev/null
     hash 2>&1
-  end script
-  expect_stdout "(.|\n)*/(.|\n)*"
+  expect
+    stdout "(.|\n)*/(.|\n)*"
+    stderr ""
+    exit_code 0
 end test "hash output contains paths for hashed utilities"
 
 # ==============================================================================
@@ -140,35 +162,41 @@ end test "hash output contains paths for hashed utilities"
 requirement "SHALL-HASH-1212" doc="Utilities provided as built-ins to the shell and functions shall not be reported by hash ."
 
 begin test "function not in hash output"
-  begin script
+  script
     myfunc() { echo hi; }
     hash -r
     hash 2>&1 | grep -c myfunc || true
-  end script
-  expect_stdout "0"
+  expect
+    stdout "0"
+    stderr ""
+    exit_code 0
 end test "function not in hash output"
 
 requirement "SHALL-HASH-1212" doc="Utilities provided as built-ins to the shell and functions shall not be reported by hash ."
 begin test "built-in cd not in hash output"
-  begin script
+  script
     hash -r
     hash ls 2>/dev/null
     out=$(hash 2>&1)
     case "$out" in *cd*) echo found_cd;; *) echo no_cd;; esac
-  end script
-  expect_stdout "no_cd"
+  expect
+    stdout "no_cd"
+    stderr ""
+    exit_code 0
 end test "built-in cd not in hash output"
 
 requirement "SHALL-SH-1021-DUP621" doc="If the shell cannot obtain both read and write access to, or create, the history file, it shall use an unspecified mechanism that allows the history to operate properly. (References to history \"file\" in this section shall be understood to mean this unspecified mechanism in such cases.) An implementation may choose to access this variable only when initializing the history file; this initialization shall occur when fc or sh first attempt to retrieve entries from, or add entries to, the file, as the result of commands issued by the user, the file named by the ENV variable, or implementation-defined system start-up files."
 begin test "hashing a shell function does not add it"
-  begin script
+  script
     hash -r
     testfn() { :; }
     hash testfn 2>/dev/null
     out=$(hash 2>&1)
     case "$out" in *testfn*) echo found;; *) echo notfound;; esac
-  end script
-  expect_stdout "notfound"
+  expect
+    stdout "notfound"
+    stderr ""
+    exit_code 0
 end test "hashing a shell function does not add it"
 
 # ==============================================================================
@@ -180,34 +208,40 @@ requirement "SHALL-HASH-1217" doc="The standard output of hash shall be used whe
 requirement "SHALL-HASH-1218" doc="This list shall consist of those utilities named in previous hash invocations that have been invoked, and may contain those invoked and found through the normal command search process."
 
 begin test "hash remembers and lists utilities"
-  begin script
+  script
     hash -r
     hash sh
     hash >/dev/null && echo pass || echo fail
-  end script
-  expect_stdout "pass"
+  expect
+    stdout "pass"
+    stderr ""
+    exit_code 0
 end test "hash remembers and lists utilities"
 
 requirement "SHALL-HASH-1217" doc="The standard output of hash shall be used when no arguments are specified."
 begin test "hash output goes to stdout"
-  begin script
+  script
     hash -r
     hash echo 2>/dev/null
     echo 2>/dev/null
     hash 2>/dev/null
     echo pass
-  end script
-  expect_stdout "(.|\n)*pass"
+  expect
+    stdout "(.|\n)*pass"
+    stderr ""
+    exit_code 0
 end test "hash output goes to stdout"
 
 requirement "SHALL-HASH-1037" doc="The following environment variables shall affect the execution of hash : LANG Provide a default value for the internationalization variables that are unset or null. (See XBD 8.2 Internationalization Variables for the precedence of internationalization variables used to determine the values of locale categories.) LC_ALL If set to a non-empty string value, override the values of all the other internationalization variables."
 begin test "PATH change clears hash table"
-  begin script
+  script
     hash -r
     hash echo 2>/dev/null
     echo >/dev/null
     PATH="$PATH"
     hash 2>/dev/null | wc -l
-  end script
-  expect_stdout " *0"
+  expect
+    stdout " *0"
+    stderr ""
+    exit_code 0
 end test "PATH change clears hash table"

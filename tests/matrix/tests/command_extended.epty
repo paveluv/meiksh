@@ -7,26 +7,32 @@ testsuite "command — Extended Tests"
 requirement "SHALL-COMMAND-1030" doc="When the -V option is specified, standard output shall be formatted as: \"%s\\n\", <unspecified>."
 
 begin test "command -V echo produces output mentioning echo"
-  begin script
+  script
     command -V echo 2>&1
-  end script
-  expect_stdout ".*echo.*"
+  expect
+    stdout ".*echo.*"
+    stderr ""
+    exit_code 0
 end test "command -V echo produces output mentioning echo"
 
 requirement "SHALL-COMMAND-1030" doc="When the -V option is specified, standard output shall be formatted as: \"%s\\n\", <unspecified>."
 begin test "command -V for nonexistent command fails"
-  begin script
+  script
     command -V nonexistent_cmd_xyzzy 2>/dev/null
-  end script
-  expect_exit_code !=0
+  expect
+    stdout ""
+    stderr ""
+    exit_code !=0
 end test "command -V for nonexistent command fails"
 
 requirement "SHALL-COMMAND-1115" doc="Otherwise, no output shall be written and the exit status shall reflect that the name was not found."
 begin test "command -V cd produces output mentioning cd"
-  begin script
+  script
     command -V cd 2>&1
-  end script
-  expect_stdout ".*cd.*"
+  expect
+    stdout ".*cd.*"
+    stderr ""
+    exit_code 0
 end test "command -V cd produces output mentioning cd"
 
 # ==============================================================================
@@ -36,19 +42,23 @@ end test "command -V cd produces output mentioning cd"
 requirement "SHALL-COMMAND-1038" doc="The following operands shall be supported: argument One of the strings treated as an argument to command_name ."
 
 begin test "arguments after command_name are passed through"
-  begin script
+  script
     command echo hello world
-  end script
-  expect_stdout "hello world"
+  expect
+    stdout "hello world"
+    stderr ""
+    exit_code 0
 end test "arguments after command_name are passed through"
 
 requirement "SHALL-XBD-12-4017" doc="When multiple option-arguments are specified to follow a single option, they should be presented as a single argument, using <comma> characters within that argument or <blank> characters within that argument to separate them."
 begin test "multiple arguments forwarded correctly"
-  begin script
+  script
     command printf "%s %s %s
     " a b c
-  end script
-  expect_stdout "a b c"
+  expect
+    stdout "a b c"
+    stderr ""
+    exit_code 0
 end test "multiple arguments forwarded correctly"
 
 # ==============================================================================
@@ -58,30 +68,36 @@ end test "multiple arguments forwarded correctly"
 requirement "SHALL-COMMAND-1104" doc="The command utility shall cause the shell to treat the arguments as a simple command, suppressing the shell function lookup that is described in 2.9.1.4 Command Search and Execution , item 1c."
 
 begin test "command bypasses function shadowing echo"
-  begin script
+  script
     echo() { printf "FUNCTION
     "; }; command echo REAL
-  end script
-  expect_stdout "REAL"
+  expect
+    stdout "REAL"
+    stderr ""
+    exit_code 0
 end test "command bypasses function shadowing echo"
 
 requirement "SHALL-2-9-5-381" doc="Similarly, the optional io-redirect redirections and any variable assignments within compound-command shall be performed during the execution of the function itself, not the function definition."
 begin test "function itself works without command prefix"
-  begin script
+  script
     echo() { printf "FUNCTION
     "; }; echo ignored
-  end script
-  expect_stdout "FUNCTION"
+  expect
+    stdout "FUNCTION"
+    stderr ""
+    exit_code 0
 end test "function itself works without command prefix"
 
 requirement "SHALL-COMMAND-1104" doc="The command utility shall cause the shell to treat the arguments as a simple command, suppressing the shell function lookup that is described in 2.9.1.4 Command Search and Execution , item 1c."
 begin test "command bypasses function shadowing cat"
-  begin script
+  script
     cat() { printf "FAKE_CAT
     "; }; printf "real
     " | command cat
-  end script
-  expect_stdout "real"
+  expect
+    stdout "real"
+    stderr ""
+    exit_code 0
 end test "command bypasses function shadowing cat"
 
 # ==============================================================================
@@ -91,20 +107,24 @@ end test "command bypasses function shadowing cat"
 requirement "SHALL-COMMAND-1105" doc="If the command_name is the same as the name of one of the special built-in utilities, the special properties in the enumerated list at the beginning of 2.15 Special Built-In Utilities shall not occur."
 
 begin test "command export does not abort shell"
-  begin script
+  script
     command export 2>/dev/null
     echo survived
-  end script
-  expect_stdout "(.|\n)*\nsurvived"
+  expect
+    stdout "(.|\n)*\nsurvived"
+    stderr ""
+    exit_code 0
 end test "command export does not abort shell"
 
 requirement "SHALL-DESCRIPTION-512" doc="If n is specified, the break utility shall exit from the n th enclosing for , while , or until loop."
 begin test "command break outside loop does not abort shell"
-  begin script
+  script
     command break 2>/dev/null
     echo still_here
-  end script
-  expect_stdout "still_here"
+  expect
+    stdout "still_here"
+    stderr ""
+    exit_code 0
 end test "command break outside loop does not abort shell"
 
 # ==============================================================================
@@ -114,20 +134,24 @@ end test "command break outside loop does not abort shell"
 requirement "SHALL-COMMAND-1106" doc="In every other respect, if command_name is not the name of a function, the effect of command (with no options) shall be the same as omitting command , except that command_name does not appear in the command word position in the command command, and consequently is not subject to alias substitution (see 2.3.1 Alias Substitution ) nor recognized as a reserved word (see 2.4 Reserved Words )."
 
 begin test "command executes utility normally"
-  begin script
+  script
     command echo hello
-  end script
-  expect_stdout "hello"
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
 end test "command executes utility normally"
 
 requirement "SHALL-2-5-3-088" doc="One of the passes shall perform only the exclamation-mark expansion described below."
 begin test "command does not perform alias expansion"
-  begin script
+  script
     alias ls="echo ALIASED" 2>/dev/null
     command ls / >/dev/null 2>&1
     echo $?
-  end script
-  expect_stdout "0"
+  expect
+    stdout "0"
+    stderr ""
+    exit_code 0
 end test "command does not perform alias expansion"
 
 # ==============================================================================
@@ -137,52 +161,64 @@ end test "command does not perform alias expansion"
 requirement "SHALL-COMMAND-1107" doc="When the -v or -V option is used, the command utility shall provide information concerning how a command name is interpreted by the shell."
 
 begin test "command -v ls prints path or name"
-  begin script
+  script
     command -v ls 2>&1
-  end script
-  expect_stdout ".*((/.*ls)|ls).*"
+  expect
+    stdout ".*((/.*ls)|ls).*"
+    stderr ""
+    exit_code 0
 end test "command -v ls prints path or name"
 
 requirement "SHALL-COMMAND-1105" doc="If the command_name is the same as the name of one of the special built-in utilities, the special properties in the enumerated list at the beginning of 2.15 Special Built-In Utilities shall not occur."
 begin test "command -v cd prints builtin name"
-  begin script
+  script
     command -v cd 2>&1
-  end script
-  expect_stdout ".*cd.*"
+  expect
+    stdout ".*cd.*"
+    stderr ""
+    exit_code 0
 end test "command -v cd prints builtin name"
 
 requirement "SHALL-COMMAND-1106" doc="In every other respect, if command_name is not the name of a function, the effect of command (with no options) shall be the same as omitting command , except that command_name does not appear in the command word position in the command command, and consequently is not subject to alias substitution (see 2.3.1 Alias Substitution ) nor recognized as a reserved word (see 2.4 Reserved Words )."
 begin test "command -v for defined function prints function name"
-  begin script
+  script
     myfn() { :; }
     command -v myfn
-  end script
-  expect_stdout "myfn"
+  expect
+    stdout "myfn"
+    stderr ""
+    exit_code 0
 end test "command -v for defined function prints function name"
 
 requirement "SHALL-COMMAND-1106" doc="In every other respect, if command_name is not the name of a function, the effect of command (with no options) shall be the same as omitting command , except that command_name does not appear in the command word position in the command command, and consequently is not subject to alias substitution (see 2.3.1 Alias Substitution ) nor recognized as a reserved word (see 2.4 Reserved Words )."
 begin test "command -v for alias or no alias"
-  begin script
+  script
     alias greet="echo hi" 2>/dev/null
     command -v greet 2>/dev/null || echo NO_ALIAS
-  end script
-  expect_stdout "(alias greet=.*|NO_ALIAS)"
+  expect
+    stdout "(alias greet=.*|NO_ALIAS)"
+    stderr ""
+    exit_code 0
 end test "command -v for alias or no alias"
 
 requirement "SHALL-2-6-4-167" doc="If the expression is invalid, or the contents of a shell variable used in the expression are not recognized by the shell, the expansion fails and the shell shall write a diagnostic message to standard error indicating the failure."
 begin test "command -v for nonexistent command fails"
-  begin script
+  script
     command -v nonexistent_cmd_xyzzy 2>/dev/null
-  end script
-  expect_exit_code !=0
+  expect
+    stdout ""
+    stderr ""
+    exit_code !=0
 end test "command -v for nonexistent command fails"
 
 requirement "SHALL-EXTENDED-DESCRIPTION-5040" doc="For each conversion specification that consumes an argument, an argument operand shall be evaluated and converted to the appropriate type for the conversion as specified below."
 begin test "command -V echo describes command type"
-  begin script
+  script
     command -V echo 2>&1
-  end script
-  expect_stdout ".*echo.*"
+  expect
+    stdout ".*echo.*"
+    stderr ""
+    exit_code 0
 end test "command -V echo describes command type"
 
 # ==============================================================================
@@ -192,30 +228,36 @@ end test "command -V echo describes command type"
 requirement "SHALL-COMMAND-1108" doc="The command utility shall be treated as a declaration utility if the first argument passed to the utility is recognized as a declaration utility."
 
 begin test "command export behaves as declaration utility"
-  begin script
+  script
     command export FOO=bar
     echo $FOO
-  end script
-  expect_stdout "bar"
+  expect
+    stdout "bar"
+    stderr ""
+    exit_code 0
 end test "command export behaves as declaration utility"
 
 requirement "SHALL-DESCRIPTION-570" doc="The readonly special built-in shall be a declaration utility."
 begin test "command readonly behaves as declaration utility"
-  begin script
+  script
     command readonly RO_VAR=42
     echo $RO_VAR
-  end script
-  expect_stdout "42"
+  expect
+    stdout "42"
+    stderr ""
+    exit_code 0
 end test "command readonly behaves as declaration utility"
 
 # Note: 'local' is not specified by POSIX; this tests an extension
 requirement "SHALL-COMMAND-1104" doc="The command utility shall cause the shell to treat the arguments as a simple command, suppressing the shell function lookup that is described in 2.9.1.4 Command Search and Execution , item 1c."
 begin test "command local inside function"
-  begin script
+  script
     f() { command local LV=hello 2>/dev/null && echo $LV || echo $LV; }
     f
-  end script
-  expect_stdout "hello"
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
 end test "command local inside function"
 
 # ==============================================================================
@@ -225,37 +267,45 @@ end test "command local inside function"
 requirement "SHALL-COMMAND-1109" doc="In this case, subsequent words of the form name = word shall be expanded in an assignment context."
 
 begin test "command export assigns variable"
-  begin script
+  script
     command export TVAR=hello
     echo $TVAR
-  end script
-  expect_stdout "hello"
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
 end test "command export assigns variable"
 
 requirement "SHALL-2-6-5-168" doc="After parameter expansion ( 2.6.2 Parameter Expansion ), command substitution ( 2.6.3 Command Substitution ), and arithmetic expansion ( 2.6.4 Arithmetic Expansion ), if the shell variable IFS (see 2.5.3 Shell Variables ) is set and its value is not empty, or if IFS is unset, the shell shall scan each field containing results of expansions and substitutions that did not occur in double-quotes for field splitting; zero, one or multiple fields can result."
 begin test "multiple assignments in one command export"
-  begin script
+  script
     command export A=1 B=2 C=3
     echo $A $B $C
-  end script
-  expect_stdout "1 2 3"
+  expect
+    stdout "1 2 3"
+    stderr ""
+    exit_code 0
 end test "multiple assignments in one command export"
 
 requirement "SHALL-2-9-1-1-270" doc="If there is a command name and it is recognized as a declaration utility, then any remaining words after the word that expanded to produce the command name, that would be recognized as a variable assignment in isolation, shall be expanded as a variable assignment (tilde expansion after the first <equals-sign> and after any unquoted <colon>, parameter expansion, command substitution, arithmetic expansion, and quote removal, but no field splitting or pathname expansion); while remaining words that would not be a variable assignment in isolation shall be subject to regular expansion (tilde expansion for only a leading <tilde>, parameter expansion, command substitution, arithmetic expansion, field splitting, pathname expansion, and quote removal)."
 begin test "tilde expansion in assignment context"
-  begin script
+  script
     command export HOMEDIR=~
     case "$HOMEDIR" in /*) echo absolute;; *) echo relative;; esac
-  end script
-  expect_stdout "absolute"
+  expect
+    stdout "absolute"
+    stderr ""
+    exit_code 0
 end test "tilde expansion in assignment context"
 
 requirement "SHALL-2-5-3-074" doc="Variables shall be initialized from the environment (as defined by XBD 8. Environment Variables and the exec function in the System Interfaces volume of POSIX.1-2024) and can be given new values with variable assignment commands. Shell variables shall be initialized only from environment variables that have valid names. If a variable is initialized from the environment, it shall be marked for export immediately; see the export special built-in."
 begin test "variable references expand in assignment values"
-  begin script
+  script
     X=hello
     command export Y=${X}_world
     echo $Y
-  end script
-  expect_stdout "hello_world"
+  expect
+    stdout "hello_world"
+    stderr ""
+    exit_code 0
 end test "variable references expand in assignment values"
