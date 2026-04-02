@@ -66,6 +66,8 @@
 mod json;
 #[path = "epty_parser.rs"]
 mod epty_parser;
+#[path = "md_parser.rs"]
+mod md_parser;
 
 use std::collections::HashMap;
 use std::env;
@@ -1491,7 +1493,11 @@ struct TestReport {
 // ── Suite parser ─────────────────────────────────────────────────────────────
 
 fn parse_suite(text: &str, filename: &str) -> Result<TestSuite, String> {
-    epty_parser::parse_suite(text, filename)
+    if filename.ends_with(".md") {
+        md_parser::parse_md_suite(text, filename)
+    } else {
+        epty_parser::parse_suite(text, filename)
+    }
 }
 
 // Matrix integrity checks moved to tests/check_matrix_integrity.rs.
@@ -2094,7 +2100,7 @@ fn main() {
         i += 1;
     }
 
-    let has_epty = files.iter().any(|f| f.ends_with(".epty"));
+    let has_epty = files.iter().any(|f| f.ends_with(".epty") || f.ends_with(".md"));
 
     if has_epty {
         // Suite mode
