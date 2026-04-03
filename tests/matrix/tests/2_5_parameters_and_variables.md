@@ -1287,8 +1287,6 @@ end interactive test "PS1 uses parameter expansion"
 Within PS1, `!!` is an escaped exclamation mark and expands to a single literal
 `!`.
 
-**NOTE: `bash --posix` FAILS THIS TEST ON GNU BASH, VERSION 5.2.37(1)-RELEASE (x86_64-pc-linux-gnu).**
-
 ```
 begin interactive test "PS1 uses exclamation-mark expansion"
   spawn -i
@@ -1306,8 +1304,6 @@ end interactive test "PS1 uses exclamation-mark expansion"
 
 Within PS1, a single `!` expands to the history file number of the next command
 to be typed.
-
-**NOTE: `bash --posix` FAILS THIS TEST ON GNU BASH, VERSION 5.2.37(1)-RELEASE (x86_64-pc-linux-gnu).**
 
 ```
 begin interactive test "PS1 single exclamation-mark expands to next history number"
