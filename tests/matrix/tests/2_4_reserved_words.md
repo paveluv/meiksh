@@ -51,286 +51,183 @@ When the word **time** is recognized as a reserved word in circumstances where i
 
 ### Tests
 
-#### Test: reserved words work in correct positions
+#### Test: reserved words recognized as first word of command
 
-The `if`/`then`/`fi` keywords are recognized as reserved words when used as
-the first word of a command or following another reserved word, causing the
-shell to build compound-command syntax rather than executing them as commands.
+Reserved words such as `if`, `then`, and `fi` are recognized when they appear as the first word of a command, enabling compound command syntax.
 
 ```
-begin test "reserved words work in correct positions"
+begin test "reserved words recognized as first word of command"
   script
-    if true; then
-      echo yes
-    fi
+    if true; then echo yes; fi
   expect
     stdout "yes"
     stderr ""
     exit_code 0
-end test "reserved words work in correct positions"
+end test "reserved words recognized as first word of command"
 ```
 
-#### Test: else branch
+#### Test: reserved words recognized after another reserved word
 
-The `else` and `elif` reserved words are recognized after `then` (which is
-itself a reserved word other than `case`, `for`, or `in`), enabling the
-full if/elif/else/fi compound command.
+A reserved word is recognized when it is the first word following another reserved word (provided the preceding word is not `case`, `for`, or `in`). Here, `if` follows `!`.
 
 ```
-begin test "else branch"
+begin test "reserved words recognized after another reserved word"
   script
-    if false; then
-      echo "if"
-    elif false; then
-      echo "elif"
-    else
-      echo "else"
-    fi
+    ! if false; then echo no; else echo yes; fi
   expect
-    stdout "else"
+    stdout "yes"
+    stderr ""
+    exit_code !=0
+end test "reserved words recognized after another reserved word"
+```
+
+#### Test: reserved word not recognized after case
+
+The word immediately following the `case` reserved word is not recognized as a reserved word. It is treated as an ordinary word (the word to be matched).
+
+```
+begin test "reserved word not recognized after case"
+  script
+    case if in if) echo ok;; esac
+  expect
+    stdout "ok"
     stderr ""
     exit_code 0
-end test "else branch"
+end test "reserved word not recognized after case"
 ```
 
-#### Test: case/esac reserved words
+#### Test: reserved word not recognized after for
 
-The `case` keyword is recognized as the first word of a command, and `in`
-is recognized as the third word in a case command, building the case/esac
-compound command.
+The word immediately following the `for` reserved word is not recognized as a reserved word. It is treated as an ordinary word (the variable name).
 
 ```
-begin test "case/esac reserved words"
+begin test "reserved word not recognized after for"
   script
-    case x in x) echo match ;; esac
+    for do in 1; do echo "loop-$do"; done
   expect
-    stdout "match"
+    stdout "loop-1"
     stderr ""
     exit_code 0
-end test "case/esac reserved words"
+end test "reserved word not recognized after for"
 ```
 
-#### Test: for/do/done reserved words
+#### Test: reserved word not recognized after in
 
-The `for` keyword is recognized as the first word, `in` as the third word
-in a for command, and `do`/`done` following other reserved words, building
-the for-loop compound command.
+The word immediately following the `in` reserved word (in a `for` loop) is not recognized as a reserved word. It is treated as an ordinary word (an item to iterate over).
 
 ```
-begin test "for/do/done reserved words"
+begin test "reserved word not recognized after in"
   script
-    for i in a b c; do
-      printf '%s ' "$i"
-    done
+    for i in if then else; do echo "$i"; done
   expect
-    stdout "a b c"
+    stdout "if\nthen\nelse"
     stderr ""
     exit_code 0
-end test "for/do/done reserved words"
+end test "reserved word not recognized after in"
 ```
 
-#### Test: while/until reserved words
+#### Test: in recognized as third word in case
 
-The `while` and `until` reserved words are recognized as the first word of
-a command, building loop compound commands with `do`/`done`.
+The word `in` is recognized as a reserved word when it is the third word in a `case` command.
 
 ```
-begin test "while/until reserved words"
+begin test "in recognized as third word in case"
   script
-    x=0
-    while [ "$x" -lt 3 ]; do
-      x=$((x + 1))
-    done
-    echo "$x"
+    case x in x) echo ok;; esac
   expect
-    stdout "3"
+    stdout "ok"
     stderr ""
     exit_code 0
-end test "while/until reserved words"
+end test "in recognized as third word in case"
 ```
 
-#### Test: brace group reserved words
+#### Test: do recognized as third word in for
 
-The `{` and `}` reserved words are recognized at command positions, allowing
-a brace group to execute commands in the current shell environment.
+The word `do` is recognized as a reserved word when it is the third word in a `for` command (which implicitly loops over positional parameters).
 
 ```
-begin test "brace group reserved words"
+begin test "do recognized as third word in for"
   script
-    { echo hello; }
+    set -- a b c
+    for i do echo "$i"; done
   expect
-    stdout "hello"
+    stdout "a\nb\nc"
     stderr ""
     exit_code 0
-end test "brace group reserved words"
-```
-
-#### Test: bang reserved word negates exit status
-
-The `!` reserved word is recognized as the first word of a pipeline and
-negates the exit status: a successful command yields non-zero, and vice versa.
-
-```
-begin test "bang reserved word negates exit status"
-  script
-    ! false
-  expect
-    stdout ""
-    stderr ""
-    exit_code 0
-end test "bang reserved word negates exit status"
-```
-
-#### Test: reserved words not recognized when quoted
-
-Reserved words must not be recognized when any of their characters are quoted.
-Here `"if"` is treated as a regular command name (which doesn't exist),
-producing an error rather than starting a compound command.
-
-```
-begin test "reserved words not recognized when quoted"
-  script
-    echo "if"
-  expect
-    stdout "if"
-    stderr ""
-    exit_code 0
-end test "reserved words not recognized when quoted"
+end test "do recognized as third word in for"
 ```
 
 #### Test: quoted reserved word is not recognized
 
-When `"if"` is used as the first word of a command, it is not recognized as
-a reserved word because it is quoted. The shell attempts to execute it as a
-regular command, which fails.
+A reserved word is not recognized if any of its characters are quoted. It is treated as a regular command name, which typically results in a "command not found" error.
 
 ```
 begin test "quoted reserved word is not recognized"
   script
-    "if" true
-    then echo yes
-    fi
+    $SHELL -c '"if" true; then echo yes; fi' 2>/dev/null
   expect
     stdout ""
-    stderr "(.|\n)+"
+    stderr ""
     exit_code !=0
 end test "quoted reserved word is not recognized"
 ```
 
-#### Test: reserved words not special as arguments
-
-Reserved words are only recognized in specific syntactic positions. When used
-as arguments to a command (not as the first word), they are treated as
-ordinary strings.
-
-```
-begin test "reserved words not special as arguments"
-  script
-    echo if while for done
-  expect
-    stdout "if while for done"
-    stderr ""
-    exit_code 0
-end test "reserved words not special as arguments"
-```
-
-#### Test: unquoted reserved word builds syntax
-
-An unquoted `if` at the start of a command is recognized as a reserved word
-and triggers compound-command parsing, producing normal if/then/fi behavior.
-
-```
-begin test "unquoted reserved word builds syntax"
-  script
-    if true; then
-      echo "yes"
-    fi
-  expect
-    stdout "yes"
-    stderr ""
-    exit_code 0
-end test "unquoted reserved word builds syntax"
-```
-
-#### Test: time reserved word measures and passes through output
-
-When `time` is recognized as a reserved word before a simple command, it
-measures execution time (written to stderr) while passing through the
-command's stdout unchanged.
-
-```
-begin test "time reserved word measures and passes through output"
-  script
-    time echo "measured"
-  expect
-    stdout "measured"
-    stderr "(.|\n)*.+"
-    exit_code 0
-end test "time reserved word measures and passes through output"
-```
-
-#### Test: in only valid as third word in case
-
-The word `in` is only recognized as a reserved word when it appears as the
-third word in a `case` command. In other positions it is just an ordinary
-argument.
-
-```
-begin test "in only valid as third word in case"
-  script
-    echo in
-  expect
-    stdout "in"
-    stderr ""
-    exit_code 0
-end test "in only valid as third word in case"
-```
-
-#### Test: do only valid as third word in for
-
-The word `do` is recognized as a reserved word only in specific positions
-(e.g., after `for ... in ...`). When used as a plain argument, it is not
-special.
-
-```
-begin test "do only valid as third word in for"
-  script
-    echo do
-  expect
-    stdout "do"
-    stderr ""
-    exit_code 0
-end test "do only valid as third word in for"
-```
-
-#### Test: reserved word after case not recognized
-
-After `case`, only `in` is valid as the third word. Other reserved words like
-`do` in that position cause a syntax error.
-
-```
-begin test "reserved word after case not recognized"
-  script
-    eval 'case x do x) echo match ;; esac' 2>/dev/null
-  expect
-    stdout ""
-    stderr ""
-    exit_code !=0
-end test "reserved word after case not recognized"
-```
-
 #### Test: partially quoted reserved word is not recognized
 
-Quoting even a single character of a reserved word prevents recognition.
-`\if` escapes the `i`, so the shell does not recognize it as a reserved word.
+A reserved word is not recognized even if only a single character is quoted via a backslash.
 
 ```
 begin test "partially quoted reserved word is not recognized"
   script
-    echo \if
+    $SHELL -c '\if true; then echo yes; fi' 2>/dev/null
   expect
-    stdout "if"
+    stdout ""
+    stderr ""
+    exit_code !=0
+end test "partially quoted reserved word is not recognized"
+```
+
+#### Test: quoted in is not recognized as third word in case
+
+If the third word in a `case` command is a quoted `"in"`, it is not recognized as a reserved word, resulting in a syntax error because the unquoted `in` reserved word is strictly required.
+
+```
+begin test "quoted in is not recognized as third word in case"
+  script
+    $SHELL -c 'case x "in" x) echo ok;; esac' 2>/dev/null
+  expect
+    stdout ""
+    stderr ""
+    exit_code !=0
+end test "quoted in is not recognized as third word in case"
+```
+
+#### Test: quoted do is not recognized as third word in for
+
+If the third word in a `for` command is a quoted `"do"`, it is not recognized as a reserved word, resulting in a syntax error because the unquoted `in` or `do` reserved word is strictly required.
+
+```
+begin test "quoted do is not recognized as third word in for"
+  script
+    $SHELL -c 'for i "do" echo "$i"; done' 2>/dev/null
+  expect
+    stdout ""
+    stderr ""
+    exit_code !=0
+end test "quoted do is not recognized as third word in for"
+```
+
+#### Test: reserved word is not recognized as an argument
+
+Reserved words are not recognized when they appear in argument positions (i.e., not the first word of a command and not following a qualifying reserved word). They are simply treated as ordinary text.
+
+```
+begin test "reserved word is not recognized as an argument"
+  script
+    echo if while for
+  expect
+    stdout "if while for"
     stderr ""
     exit_code 0
-end test "partially quoted reserved word is not recognized"
+end test "reserved word is not recognized as an argument"
 ```
