@@ -5,6 +5,17 @@ specification, including all seven subsections: Tilde Expansion, Parameter
 Expansion, Command Substitution, Arithmetic Expansion, Field Splitting,
 Pathname Expansion, and Quote Removal.
 
+Each `## 2.6…` block below is **verbatim** normative text from POSIX.1-2024
+chapter 2 (Shell Command Language), checked by `check_integrity` against
+`docs/posix/md/utilities/V3_chap02.md`. Cross-references inside those blocks
+still use the standard’s link targets.
+
+**Appendices** at the end of this file reproduce other provisions that 2.6
+depends on: token recognition (2.3), special parameters `@` and `*` (2.5.2),
+*IFS* (2.5.3), double-quote rules for `${…}` (2.2.3), pattern matching through
+filename expansion (2.14), and utility arithmetic rules (1.1.2.1) referenced
+by 2.6.4. Readers can follow 2.6 and its cross-links from this file alone.
+
 ## Table of contents
 
 - [2.6 Word Expansions](#26-word-expansions)
@@ -15,6 +26,12 @@ Pathname Expansion, and Quote Removal.
 - [2.6.5 Field Splitting](#265-field-splitting)
 - [2.6.6 Pathname Expansion](#266-pathname-expansion)
 - [2.6.7 Quote Removal](#267-quote-removal)
+- [Appendix A POSIX 2.14 pattern matching](#appendix-a-posix-214-pattern-matching)
+- [Appendix B POSIX 2.3 token recognition item 5](#appendix-b-posix-23-token-recognition-item-5)
+- [Appendix C POSIX 2.5.2 special parameters at and star](#appendix-c-posix-252-special-parameters-at-and-star)
+- [Appendix D POSIX 2.5.3 IFS variable](#appendix-d-posix-253-ifs-variable)
+- [Appendix E POSIX 2.2.3 double-quotes excerpt](#appendix-e-posix-223-double-quotes-excerpt)
+- [Appendix F POSIX 1.1.2.1 arithmetic precision excerpt](#appendix-f-posix-1121-arithmetic-precision-excerpt)
 
 ## 2.6 Word Expansions
 
@@ -125,6 +142,25 @@ begin test "lone dollar sign treated as literal"
     stderr ""
     exit_code 0
 end test "lone dollar sign treated as literal"
+```
+
+#### Test: at expansion yields multiple fields from one word
+
+Parameter expansion of `'@'` (when not double-quoted) can produce several
+fields from a single word in contexts such as a `for` *in* list.
+
+```
+begin test "at expansion yields multiple fields from one word"
+  script
+    set -- a b c
+    for i in $@; do
+      echo "[$i]"
+    done
+  expect
+    stdout "\[a\]\n\[b\]\n\[c\]"
+    stderr ""
+    exit_code 0
+end test "at expansion yields multiple fields from one word"
 ```
 
 #### Test: tilde result not subject to field splitting or pathname expansion
@@ -295,6 +331,46 @@ begin test "quoted tilde does not expand"
     stderr ""
     exit_code 0
 end test "quoted tilde does not expand"
+```
+
+#### Test: assignment expands tilde after unquoted colon
+
+In an assignment word, a tilde-prefix may follow an unquoted `<colon>`; it is
+terminated by the next unquoted colon or slash.
+
+```
+begin test "assignment expands tilde after unquoted colon"
+  script
+    H=$HOME
+    HOME=/assign_colon_demo
+    x=:~/sub
+    echo "$x"
+    HOME=$H
+  expect
+    stdout ":/assign_colon_demo/sub"
+    stderr ""
+    exit_code 0
+end test "assignment expands tilde after unquoted colon"
+```
+
+#### Test: assignment value may contain several tilde-prefixes
+
+Each leading tilde-prefix and each tilde-prefix after an unquoted colon in the
+same assignment word shall be expanded separately.
+
+```
+begin test "assignment value may contain several tilde-prefixes"
+  script
+    H=$HOME
+    HOME=/multi_tilde_demo
+    p=~/one:~/two
+    echo "$p"
+    HOME=$H
+  expect
+    stdout "/multi_tilde_demo/one:/multi_tilde_demo/two"
+    stderr ""
+    exit_code 0
+end test "assignment value may contain several tilde-prefixes"
 ```
 
 ## 2.6.2 Parameter Expansion
@@ -487,6 +563,25 @@ begin test "parameter expansion without braces"
 end test "parameter expansion without braces"
 ```
 
+#### Test: default word is expanded when parameter unset
+
+When `${parameter:-word}` needs *word*, that *word* shall undergo parameter
+expansion, command substitution, arithmetic expansion, tilde expansion, and
+quote removal. This uses a nested expansion inside *word*.
+
+```
+begin test "default word is expanded when parameter unset"
+  script
+    unset outer_word
+    inner_word=resolved
+    echo "${outer_word:-${inner_word}}"
+  expect
+    stdout "resolved"
+    stderr ""
+    exit_code 0
+end test "default word is expanded when parameter unset"
+```
+
 #### Test: colon-dash fallback on unset
 
 `${parameter:-word}` substitutes `word` when the parameter is unset. Since
@@ -557,6 +652,24 @@ begin test "colon-equals assignment on unset"
 end test "colon-equals assignment on unset"
 ```
 
+#### Test: colon-equals assigns when parameter is null
+
+With `${parameter:=word}`, a parameter that is set but null is treated like
+unset: the word is assigned and substituted.
+
+```
+begin test "colon-equals assigns when parameter is null"
+  script
+    foo=""
+    echo "${foo:=was_null}"
+    echo "$foo"
+  expect
+    stdout "was_null\nwas_null"
+    stderr ""
+    exit_code 0
+end test "colon-equals assigns when parameter is null"
+```
+
 #### Test: colon-question generates error on unset
 
 `${parameter:?word}` writes `word` to standard error and exits with non-zero
@@ -572,6 +685,40 @@ begin test "colon-question generates error on unset"
     stderr ".*error message.*"
     exit_code !=0
 end test "colon-question generates error on unset"
+```
+
+#### Test: colon-question generates error when null
+
+The colon form tests for unset or null, so a null value shall trigger the
+diagnostic and non-zero exit like an unset parameter.
+
+```
+begin test "colon-question generates error when null"
+  script
+    foo=""
+    echo "${foo:?null not allowed}"
+  expect
+    stdout ""
+    stderr ".+null not allowed.*"
+    exit_code !=0
+end test "colon-question generates error when null"
+```
+
+#### Test: colon-question with omitted word writes diagnostic
+
+If *word* is omitted in `${parameter:?}`, the shell writes a message indicating
+the parameter is unset or null.
+
+```
+begin test "colon-question with omitted word writes diagnostic"
+  script
+    unset zq_missing
+    echo "${zq_missing:?}"
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
+end test "colon-question with omitted word writes diagnostic"
 ```
 
 #### Test: colon-plus empty when unset
@@ -605,6 +752,23 @@ begin test "colon-plus substitutes alt when set"
     stderr ""
     exit_code 0
 end test "colon-plus substitutes alt when set"
+```
+
+#### Test: colon-plus with omitted word substitutes empty when set
+
+When *word* is omitted in `${parameter:+word}`, an empty string is substituted
+when the parameter is set and non-null.
+
+```
+begin test "colon-plus with omitted word substitutes empty when set"
+  script
+    foo=value
+    echo "X${foo:+}Y"
+  expect
+    stdout "XY"
+    stderr ""
+    exit_code 0
+end test "colon-plus with omitted word substitutes empty when set"
 ```
 
 #### Test: fallback word not expanded when parameter set
@@ -701,6 +865,45 @@ begin test "colon-plus substitutes alternative value"
     stderr ""
     exit_code 0
 end test "colon-plus substitutes alternative value"
+```
+
+#### Test: equals assigns only when unset without colon
+
+`${parameter=word}` assigns only when the parameter is unset; a null value is
+left unchanged and substituted as null.
+
+```
+begin test "equals assigns only when unset without colon"
+  script
+    unset bar
+    echo "${bar=assigned}"
+    echo "$bar"
+    bar=""
+    echo "${bar=again}"
+    echo "after_null:$bar"
+  expect
+    stdout "assigned\nassigned\n\nafter_null:"
+    stderr ""
+    exit_code 0
+end test "equals assigns only when unset without colon"
+```
+
+#### Test: question errors only when unset without colon
+
+`${parameter?word}` treats a null value as set: no error. When unset, it fails.
+
+```
+begin test "question errors only when unset without colon"
+  script
+    foo=""
+    echo "null_ok:${foo?missing}"
+    unset baz
+    ( echo "${baz?gone}" ) 2>/dev/null && echo bad || echo failed_as_expected
+  expect
+    stdout "null_ok:\nfailed_as_expected"
+    stderr ""
+    exit_code 0
+end test "question errors only when unset without colon"
 ```
 
 #### Test: empty pattern in suffix/prefix removal
@@ -802,6 +1005,59 @@ begin test "string length"
     stderr ""
     exit_code 0
 end test "string length"
+```
+
+#### Test: unbraced expansion uses longest valid name
+
+For `$name`, the shell shall take the longest sequence that forms a valid
+variable name.
+
+```
+begin test "unbraced expansion uses longest valid name"
+  script
+    ab=short
+    abc=longer
+    echo "$abc"
+  expect
+    stdout "longer"
+    stderr ""
+    exit_code 0
+end test "unbraced expansion uses longest valid name"
+```
+
+#### Test: quotes inside braces make literal pattern character
+
+Double-quotes inside `${parameter#word}` quote pattern characters; the same
+`*` outside quotes in `"${parameter#*}"` is a pattern metacharacter (contrast
+the informative examples).
+
+```
+begin test "quotes inside braces make literal pattern character"
+  script
+    x='*tail'
+    echo "${x#"*"}"
+  expect
+    stdout "tail"
+    stderr ""
+    exit_code 0
+end test "quotes inside braces make literal pattern character"
+```
+
+#### Test: double-quoted expansion keeps pattern metacharacters active
+
+Enclosing `${parameter#pattern}` in double-quotes does not quote pattern
+characters inside the braces.
+
+```
+begin test "double-quoted expansion keeps pattern metacharacters active"
+  script
+    x='axbx'
+    echo "${x#*x}"
+  expect
+    stdout "bx"
+    stderr ""
+    exit_code 0
+end test "double-quoted expansion keeps pattern metacharacters active"
 ```
 
 ## 2.6.3 Command Substitution
@@ -940,6 +1196,75 @@ begin test "nested dollar-paren command substitution"
     stderr ""
     exit_code 0
 end test "nested dollar-paren command substitution"
+```
+
+#### Test: command substitution strips all trailing newlines
+
+If the substituted command's standard output ends with one or more newline
+bytes, those trailing newlines shall not appear in the replacement text.
+
+```
+begin test "command substitution strips all trailing newlines"
+  script
+    out=$(printf 'only\n\n\n')
+    case $out in
+      (only) echo stripped_ok ;;
+      (*) echo bad ;;
+    esac
+  expect
+    stdout "stripped_ok"
+    stderr ""
+    exit_code 0
+end test "command substitution strips all trailing newlines"
+```
+
+#### Test: command substitution output is not re-expanded
+
+The replacement text from command substitution shall not undergo tilde,
+parameter, command, or arithmetic expansion again in the parent shell.
+
+```
+begin test "command substitution output is not re-expanded"
+  script
+    HOME=/should_not_apply
+    echo "$(printf '%s' '$HOME')"
+  expect
+    stdout "\$HOME"
+    stderr ""
+    exit_code 0
+end test "command substitution output is not re-expanded"
+```
+
+#### Test: parenthesized subshell command substitution needs spacing
+
+A conforming application separates `"$("` and `'('` when starting a command
+substitution with a subshell so the shell does not treat `"$(("` as arithmetic.
+
+```
+begin test "parenthesized subshell command substitution needs spacing"
+  script
+    echo "$( ( echo inside_subshell ) )"
+  expect
+    stdout "inside_subshell"
+    stderr ""
+    exit_code 0
+end test "parenthesized subshell command substitution needs spacing"
+```
+
+#### Test: backslash in backticks escapes dollar backtick and backslash
+
+Outside double-quotes, backslash in the backquoted form keeps its literal
+meaning except when introducing `$`, backquote, or another backslash.
+
+```
+begin test "backslash in backticks escapes dollar backtick and backslash"
+  script
+    echo `echo \\n`
+  expect
+    stdout "n"
+    stderr ""
+    exit_code 0
+end test "backslash in backticks escapes dollar backtick and backslash"
 ```
 
 ## 2.6.4 Arithmetic Expansion
@@ -1085,6 +1410,56 @@ begin test "arithmetic subtraction negative"
     stderr ""
     exit_code 0
 end test "arithmetic subtraction negative"
+```
+
+#### Test: arithmetic dollar-variable equals bare name
+
+If variable *x* holds a valid integer constant, `"$((x))"` and `"$(($x))"` shall
+yield the same value.
+
+```
+begin test "arithmetic dollar-variable equals bare name"
+  script
+    x=15
+    a=$((x))
+    b=$(($x))
+    [ "$a" = "$b" ] && [ "$a" = 15 ] && echo match
+  expect
+    stdout "match"
+    stderr ""
+    exit_code 0
+end test "arithmetic dollar-variable equals bare name"
+```
+
+#### Test: arithmetic octal constant
+
+Octal constants as in ISO C (leading zero) shall be recognized in arithmetic
+expansion.
+
+```
+begin test "arithmetic octal constant"
+  script
+    echo $((010))
+  expect
+    stdout "8"
+    stderr ""
+    exit_code 0
+end test "arithmetic octal constant"
+```
+
+#### Test: arithmetic hexadecimal constant
+
+Hexadecimal `0x` constants shall be recognized in arithmetic expansion.
+
+```
+begin test "arithmetic hexadecimal constant"
+  script
+    echo $((0x10))
+  expect
+    stdout "16"
+    stderr ""
+    exit_code 0
+end test "arithmetic hexadecimal constant"
 ```
 
 ## 2.6.5 Field Splitting
@@ -1302,6 +1677,62 @@ begin test "non-IFS character does not split"
 end test "non-IFS character does not split"
 ```
 
+#### Test: expansion-only field of IFS white space yields zero fields
+
+If a field contains only expansion results and those consist entirely of *IFS*
+white space, the algorithm yields no output fields for that input field.
+
+```
+begin test "expansion-only field of IFS white space yields zero fields"
+  script
+    x=$(printf ' \t \n ')
+    set -- $x
+    echo "n=$#"
+  expect
+    stdout "n=0"
+    stderr ""
+    exit_code 0
+end test "expansion-only field of IFS white space yields zero fields"
+```
+
+#### Test: internal newline from command substitution can split fields
+
+Newlines from command substitution are included in the replacement except for
+trailing ones; they may act as field delimiters when field splitting applies.
+
+```
+begin test "internal newline from command substitution can split fields"
+  script
+    out=$(printf 'first\nsecond')
+    set -- $out
+    echo "$1-$2"
+  expect
+    stdout "first-second"
+    stderr ""
+    exit_code 0
+end test "internal newline from command substitution can split fields"
+```
+
+#### Test: literal portion of word is not split while expansion portion is
+
+Only bytes that came from unquoted expansions participate in field splitting;
+literal text in the same word stays attached to adjacent non-IFS bytes.
+
+```
+begin test "literal portion of word is not split while expansion portion is"
+  script
+    IFS=":"
+    v="b:c"
+    for i in a:$v; do
+      echo "[$i]"
+    done
+  expect
+    stdout "\[a:b\]\n\[c\]"
+    stderr ""
+    exit_code 0
+end test "literal portion of word is not split while expansion portion is"
+```
+
 ## 2.6.6 Pathname Expansion
 
 After field splitting, if [*set*](#set) **-f** is not in effect, each field in the resulting command line shall be expanded using the algorithm described in [2.14 Pattern Matching Notation](#214-pattern-matching-notation), qualified by the rules in [2.14.3 Patterns Used for Filename Expansion](#2143-patterns-used-for-filename-expansion).
@@ -1343,6 +1774,59 @@ begin test "set -f disables pathname expansion"
 end test "set -f disables pathname expansion"
 ```
 
+#### Test: non-matching glob pattern is left unchanged
+
+If a pattern contains special glob characters but matches no pathnames, the
+pattern string shall remain unchanged (Appendix A, 2.14.3).
+
+```
+begin test "non-matching glob pattern is left unchanged"
+  script
+    d=$(mktemp -d)
+    cd "$d" || exit 1
+    echo nomatch_xyz_*.no_such_file
+    cd ..
+    rmdir "$d"
+  expect
+    stdout "nomatch_xyz_\*\.no_such_file"
+    stderr ""
+    exit_code 0
+end test "non-matching glob pattern is left unchanged"
+```
+
+#### Test: quoted glob metacharacters are not pathname expanded
+
+Metacharacters inside double-quotes are not subject to pathname expansion.
+
+```
+begin test "quoted glob metacharacters are not pathname expanded"
+  script
+    touch glob_quote_marker.txt
+    echo "*.txt"
+  expect
+    stdout "\*\.txt"
+    stderr ""
+    exit_code 0
+end test "quoted glob metacharacters are not pathname expanded"
+```
+
+#### Test: pattern without special characters is unchanged
+
+If the word has no unquoted `*`, `?`, or `[` that are special for patterns, it
+shall be left unchanged by pathname expansion even when names exist.
+
+```
+begin test "pattern without special characters is unchanged"
+  script
+    touch plain_name_file.txt
+    echo plain_name_file.txt
+  expect
+    stdout "plain_name_file.txt"
+    stderr ""
+    exit_code 0
+end test "pattern without special characters is unchanged"
+```
+
 ## 2.6.7 Quote Removal
 
 The quote character sequence `<dollar-sign>` single-quote and the single-character quote characters (`<backslash>`, single-quote, and double-quote) that were present in the original word shall be removed unless they have themselves been quoted. Note that the single-quote character that terminates a `<dollar-sign>` single-quote sequence is itself a single-character quote character.
@@ -1367,3 +1851,135 @@ begin test "quote removal"
     exit_code 0
 end test "quote removal"
 ```
+
+
+---
+
+## Appendix A POSIX 2.14 pattern matching
+
+Normative text from POSIX.1-2024 **2.14 Pattern Matching Notation** through **2.14.3 Patterns Used for Filename Expansion** (normatively referenced by **2.6.6 Pathname Expansion**). Copied verbatim from `docs/posix/md/utilities/V3_chap02.md`.
+
+### 2.14 Pattern Matching Notation
+
+The pattern matching notation described in this section is used to specify patterns for matching character strings in the shell. This notation is also used by some other utilities ([*find*](../utilities/find.md), [*pax*](../utilities/pax.md), and optionally [*make*](../utilities/make.md)) and by some system interfaces ([*fnmatch*()](../functions/fnmatch.md), [*glob*()](../functions/glob.md), and [*wordexp*()](../functions/wordexp.md)). Historically, pattern matching notation is related to, but slightly different from, the regular expression notation described in XBD [*9. Regular Expressions*](../basedefs/V1_chap09.md#9-regular-expressions). For this reason, the description of the rules for this pattern matching notation are based on the description of regular expression notation, modified to account for the differences.
+
+If an attempt is made to use pattern matching notation to match a string that contains one or more bytes that do not form part of a valid character, the behavior is unspecified. Since pathnames can contain such bytes, portable applications need to ensure that the current locale is the C or POSIX locale when performing pattern matching (or expansion) on arbitrary pathnames.
+
+#### 2.14.1 Patterns Matching a Single Character
+
+The following patterns shall match a single character: ordinary characters, special pattern characters, and pattern bracket expressions. The pattern bracket expression also shall match a single collating element.
+
+In a pattern, or part of one, where a shell-quoting `<backslash>` can be used, a `<backslash>` character shall escape the following character as described in [2.2.1 Escape Character (Backslash)](#221-escape-character-backslash), regardless of whether or not the `<backslash>` is inside a bracket expression. (The sequence `"\\"` represents one literal `<backslash>`.)
+
+In a pattern, or part of one, where a shell-quoting `<backslash>` cannot be used to preserve the literal value of a character that would otherwise be treated as special:
+
+- A `<backslash>` character that is not inside a bracket expression shall preserve the literal value of the following character, unless the following character is in a part of the pattern where shell quoting can be used and is a shell quoting character, in which case the behavior is unspecified.
+- For the shell only, it is unspecified whether or not a `<backslash>` character inside a bracket expression preserves the literal value of the following character.
+
+All of the requirements and effects of quoting on ordinary, shell special, and special pattern characters shall apply to escaping in this context, except where specified otherwise. (Situations where this applies include word expansions when a pattern used in pathname expansion is not present in the original word but results from an earlier expansion, or the argument to the [*find*](../utilities/find.md) -*name* or -*path* primary as passed to [*find*](../utilities/find.md), or the *pattern* argument to the [*fnmatch*()](../functions/fnmatch.md) and [*glob*()](../functions/glob.md) functions when FNM_NOESCAPE or GLOB_NOESCAPE is not set in *flags*, respectively.)
+
+If a pattern ends with an unescaped `<backslash>`, the behavior is unspecified.
+
+An ordinary character is a pattern that shall match itself. In a pattern, or part of one, where a shell-quoting `<backslash>` can be used, an ordinary character can be any character in the supported character set except for NUL, those special shell characters in [2.2 Quoting](#22-quoting) that require quoting, and the three special pattern characters described below. In a pattern, or part of one, where a shell-quoting `<backslash>` cannot be used to preserve the literal value of a character that would otherwise be treated as special, an ordinary character can be any character in the supported character set except for NUL and the three special pattern characters described below. Matching shall be based on the bit pattern used for encoding the character, not on the graphic representation of the character. If any character (ordinary, shell special, or pattern special) is quoted, or escaped with a `<backslash>`, that pattern shall match the character itself. The application shall ensure that it quotes or escapes any character that would otherwise be treated as special, in order for it to be matched as an ordinary character.
+
+When unquoted, unescaped, and not inside a bracket expression, the following three characters shall have special meaning in the specification of patterns:
+
+- `?`: A `<question-mark>` is a pattern that shall match any character.
+- `*`: An `<asterisk>` is a pattern that shall match multiple characters, as described in [2.14.2 Patterns Matching Multiple Characters](#2142-patterns-matching-multiple-characters).
+- `[`: A `<left-square-bracket>` shall introduce a bracket expression if the characters following it meet the requirements for bracket expressions stated in XBD [*9.3.5 RE Bracket Expression*](../basedefs/V1_chap09.md#935-re-bracket-expression), except that the `<exclamation-mark>` character (`'!'`) shall replace the `<circumflex>` character (`'^'`) in its role in a non-matching list in the regular expression notation. A bracket expression starting with an unquoted `<circumflex>` character produces unspecified results. A `<left-square-bracket>` that does not introduce a valid bracket expression shall match the character itself.
+
+#### 2.14.2 Patterns Matching Multiple Characters
+
+The following rules are used to construct patterns matching multiple characters from patterns matching a single character:
+
+1. The `<asterisk>` (`'*'`) is a pattern that shall match any string, including the null string.
+2. The concatenation of patterns matching a single character is a valid pattern that shall match the concatenation of the single characters or collating elements matched by each of the concatenated patterns.
+3. The concatenation of one or more patterns matching a single character with one or more `<asterisk>` characters is a valid pattern. In such patterns, each `<asterisk>` shall match a string of zero or more characters, matching the greatest possible number of characters that still allows the remainder of the pattern to match the string.
+
+#### 2.14.3 Patterns Used for Filename Expansion
+
+The rules described so far in [2.14.1 Patterns Matching a Single Character](#2141-patterns-matching-a-single-character) and [2.14.2 Patterns Matching Multiple Characters](#2142-patterns-matching-multiple-characters) are qualified by the following rules that apply when pattern matching notation is used for filename expansion:
+
+1. The `<slash>` character in a pathname shall be explicitly matched by using one or more `<slash>` characters in the pattern; it shall neither be matched by the `<asterisk>` or `<question-mark>` special characters nor by a bracket expression. `<slash>` characters in the pattern shall be identified before bracket expressions; thus, a `<slash>` cannot be included in a pattern bracket expression used for filename expansion. If a `<slash>` character is found following an unescaped `<left-square-bracket>` character before a corresponding `<right-square-bracket>` is found, the open bracket shall be treated as an ordinary character. For example, the pattern `"a[b/c]d"` does not match such pathnames as **abd** or **a/d**. It only matches a pathname of literally **a[b/c]d**.
+2. If a filename begins with a `<period>` (`'.'`), the `<period>` shall be explicitly matched by using a `<period>` as the first character of the pattern or immediately following a `<slash>` character. The leading `<period>` shall not be matched by: It is unspecified whether an explicit `<period>` in a bracket expression matching list, such as `"[.abc]"`, can match a leading `<period>` in a filename.
+    - The `<asterisk>` or `<question-mark>` special characters
+    - A bracket expression containing a non-matching list, such as `"[!a]"`, a range expression, such as `"[%-0]"`, or a character class expression, such as `"[[:punct:]]"`
+3. If a specified pattern contains any `'*'`, `'?'` or `'['` characters that will be treated as special (see [2.14.1 Patterns Matching a Single Character](#2141-patterns-matching-a-single-character)), it shall be matched against existing filenames and pathnames, as appropriate; if directory entries for dot and dot-dot exist, they may be ignored. Each component that contains any such characters shall require read permission in the directory containing that component. Each component that contains a `<backslash>` that will be treated as special may require read permission in the directory containing that component. Any component, except the last, that does not contain any `'*'`, `'?'` or `'['` characters that will be treated as special shall require search permission. If these permissions are denied, or if an attempt to open or search a pathname as a directory, or an attempt to read an opened directory, fails because of an error condition that is related to file system contents, this shall not be considered an error and pathname expansion shall continue as if the pathname had named an existing directory which had been successfully opened and read, or searched, and no matching directory entries had been found in it. For other error conditions it is unspecified whether pathname expansion fails or they are treated the same as when permission is denied. For example, given the pattern: search permission is needed for directories **/** and **foo**, search and read permissions are needed for directory **bar**, and search permission is needed for each **x*** directory. If the pattern matches any existing filenames or pathnames, the pattern shall be replaced with those filenames and pathnames, sorted according to the collating sequence in effect in the current locale. If this collating sequence does not have a total ordering of all characters (see XBD [*7.3.2 LC_COLLATE*](../basedefs/V1_chap07.md#732-lccollate)), any filenames or pathnames that collate equally shall be further compared byte-by-byte using the collating sequence for the POSIX locale. If the pattern contains an open bracket (`'['`) that does not introduce a bracket expression as in XBD [*9.3.5 RE Bracket Expression*](../basedefs/V1_chap09.md#935-re-bracket-expression), it is unspecified whether other unquoted `'*'`, `'?'`, `'['` or `<backslash>` characters within the same slash-delimited component of the pattern retain their special meanings or are treated as ordinary characters. For example, the pattern `"a*[/b*"` may match all filenames beginning with `'b'` in the directory `"a*["` or it may match all filenames beginning with `'b'` in all directories with names beginning with `'a'` and ending with `'['`. If the pattern does not match any existing filenames or pathnames, the pattern string shall be left unchanged.
+  ```
+  /foo/bar/x*/bam
+  ```
+  **Note:** A future version of this standard may require that directory entries for dot and dot-dot are ignored (if they exist) when matching patterns against existing filenames. For example, when expanding the pattern `".*"` the result would not include dot and dot-dot.
+4. If a specified pattern does not contain any `'*'`, `'?'` or `'['` characters that will be treated as special, the pattern string shall be left unchanged.
+
+## Appendix B POSIX 2.3 token recognition item 5
+
+Normative text: numbered rule **5** from **2.3 Token Recognition** (referenced where **2.6 Word Expansions** ties token recognition to the first expansion stage). Copied verbatim from `docs/posix/md/utilities/V3_chap02.md`.
+
+5. If the current character is an unquoted `'$'` or ``'`'``, the shell shall identify the start of any candidates for parameter expansion ( [2.6.2 Parameter Expansion](#262-parameter-expansion)), command substitution ( [2.6.3 Command Substitution](#263-command-substitution)), or arithmetic expansion ( [2.6.4 Arithmetic Expansion](#264-arithmetic-expansion)) from their introductory unquoted character sequences: `'$'` or `"${"`, `"$("` or ``'`'``, and `"$(("`, respectively. The shell shall read sufficient input to determine the end of the unit to be expanded (as explained in the cited sections). While processing the characters, if instances of expansions or quoting are found nested within the substitution, the shell shall recursively process them in the manner specified for the construct that is found. For `"$("` and ``'`'`` only, if instances of **io_here** tokens are found nested within the substitution, they shall be parsed according to the rules of [2.7.4 Here-Document](#274-here-document); if the terminating `')'` or ``'`'`` of the substitution occurs before the **NEWLINE** token marking the start of the here-document, the behavior is unspecified. The characters found from the beginning of the substitution to its end, allowing for any recursion necessary to recognize embedded constructs, shall be included unmodified in the result token, including any embedded or enclosing substitution operators or quotes. The token shall not be delimited by the end of the substitution.
+
+## Appendix C POSIX 2.5.2 special parameters at and star
+
+Normative text: opening paragraph and the `'@'` and `'*'` special parameters from **2.5.2 Special Parameters** (referenced by **2.6 Word Expansions** for multi-field expansion). Copied verbatim from `docs/posix/md/utilities/V3_chap02.md`, except the closing cross-reference to *IFS* is retargeted to Appendix D in this file.
+
+Listed below are the special parameters and the values to which they shall expand. Only the values of the special parameters are listed; see [2.6 Word Expansions](#26-word-expansions) for a detailed summary of all the stages involved in expanding words.
+
+- `@`: Expands to the positional parameters, starting from one, initially producing one field for each positional parameter that is set. When the expansion occurs in a context where field splitting will be performed, any empty fields may be discarded and each of the non-empty fields shall be further split as described in [2.6.5 Field Splitting](#265-field-splitting). When the expansion occurs within double-quotes, the behavior is unspecified unless one of the following is true:
+
+    - Field splitting as described in [2.6.5 Field Splitting](#265-field-splitting) would be performed if the expansion were not within double-quotes (regardless of whether field splitting would have any effect; for example, if *IFS* is null).
+    - The double-quotes are within the *word* of a ${*parameter*:-*word*} or a ${*parameter*:+*word*} expansion (with or without the `<colon>`; see [2.6.2 Parameter Expansion](#262-parameter-expansion)) which would have been subject to field splitting if *parameter* had been expanded instead of *word*.
+
+  If one of these conditions is true, the initial fields shall be retained as separate fields, except that if the parameter being expanded was embedded within a word, the first field shall be joined with the beginning part of the original word and the last field shall be joined with the end part of the original word. In all other contexts the results of the expansion are unspecified. If there are no positional parameters, the expansion of `'@'` shall generate zero fields, even when `'@'` is within double-quotes; however, if the expansion is embedded within a word which contains one or more other parts that expand to a quoted null string, these null string(s) shall still produce an empty field, except that if the other parts are all within the same double-quotes as the `'@'`, it is unspecified whether the result is zero fields or one empty field.
+- `*`: Expands to the positional parameters, starting from one, initially producing one field for each positional parameter that is set. When the expansion occurs in a context where field splitting will be performed, any empty fields may be discarded and each of the non-empty fields shall be further split as described in [2.6.5 Field Splitting](#265-field-splitting). When the expansion occurs in a context where field splitting will not be performed, the initial fields shall be joined to form a single field with the value of each parameter separated by the first character of the *IFS* variable if *IFS* contains at least one character, or separated by a `<space>` if *IFS* is unset, or with no separation if *IFS* is set to a null string.
+
+See the description of the *IFS* variable in [Appendix D POSIX 2.5.3 IFS variable](#appendix-d-posix-253-ifs-variable).
+
+## Appendix D POSIX 2.5.3 IFS variable
+
+From **2.5.3 Shell Variables**, the entry for *IFS* (referenced by **2.6.5 Field Splitting** and by the `*` special parameter):
+
+- *IFS*: A string treated as a list of characters that is used for field splitting, expansion of the `'*'` special parameter, and to split lines into fields with the [*read*](../utilities/read.md) utility. If the value of *IFS* includes any bytes that do not form part of a valid character, the results of field splitting, expansion of `'*'`, and use of the [*read*](../utilities/read.md) utility are unspecified. If *IFS* is not set, it shall behave as normal for an unset variable, except that field splitting by the shell and line splitting by the [*read*](../utilities/read.md) utility shall be performed as if the value of *IFS* is `<space>``<tab>``<newline>`; see [2.6.5 Field Splitting](#265-field-splitting). The shell shall set *IFS* to `<space>``<tab>``<newline>` when it is invoked.
+
+## Appendix E POSIX 2.2.3 double-quotes excerpt
+
+Normative text: opening sentence and the `$` bullet from **2.2.3 Double-Quotes** (referenced by **2.6.2 Parameter Expansion** for how double-quotes interact with `"${...}"` and the closing `}`). Copied verbatim from `docs/posix/md/utilities/V3_chap02.md`.
+
+Enclosing characters in double-quotes (`""`) shall preserve the literal value of all characters within the double-quotes, with the exception of the characters backquote, `<dollar-sign>`, and `<backslash>`, as follows:
+
+- `$`: The `<dollar-sign>` shall retain its special meaning introducing parameter expansion (see [2.6.2 Parameter Expansion](#262-parameter-expansion)), a form of command substitution (see [2.6.3 Command Substitution](#263-command-substitution)), and arithmetic expansion (see [2.6.4 Arithmetic Expansion](#264-arithmetic-expansion)), but shall not retain its special meaning introducing the dollar-single-quotes form of quoting (see [2.2.4 Dollar-Single-Quotes](#224-dollar-single-quotes)). The input characters within the quoted string that are also enclosed between `"$("` and the matching `')'` shall not be affected by the double-quotes, but rather shall define the command(s) whose output replaces the `"$(...)"` when the word is expanded. The tokenizing rules in [2.3 Token Recognition](#23-token-recognition) shall be applied recursively to find the matching `')'`. For the four varieties of parameter expansion that provide for substring processing (see [2.6.2 Parameter Expansion](#262-parameter-expansion)), within the string of characters from an enclosed `"${"` to the matching `'}'`, the double-quotes within which the expansion occurs shall have no effect on the handling of any special characters. For parameter expansions other than the four varieties that provide for substring processing, within the string of characters from an enclosed `"${"` to the matching `'}'`, the double-quotes within which the expansion occurs shall preserve the literal value of all characters, with the exception of the characters double-quote, backquote, `<dollar-sign>`, and `<backslash>`. If any unescaped double-quote characters occur within the string, other than in embedded command substitutions, the behavior is unspecified. The backquote and `<dollar-sign>` characters shall follow the same rules as for characters in double-quotes described in this section. The `<backslash>` character shall follow the same rules as for characters in double-quotes described in this section except that it shall additionally retain its special meaning as an escape character when followed by `'}'` and this shall prevent the escaped `'}'` from being considered when determining the matching `'}'` (using the rule in [2.6.2 Parameter Expansion](#262-parameter-expansion)).
+
+## Appendix F POSIX 1.1.2.1 arithmetic precision excerpt
+
+Normative text from XCU **1.1.2.1 Arithmetic Precision and Operations** in `docs/posix/md/utilities/V3_chap01.md`, normatively referenced by **2.6.4 Arithmetic Expansion** (shell arithmetic follows these rules subject to the exceptions in the 2.6.4 normative text). Copied verbatim.
+
+##### 1.1.2.1 Arithmetic Precision and Operations
+
+Integer variables and constants, including the values of operands and option-arguments, used by the standard utilities listed in this volume of POSIX.1-2024 shall be implemented as equivalent to the ISO C standard **signed long** data type; floating point shall be implemented as equivalent to the ISO C standard **double** type. Conversions between types shall be as described in the ISO C standard. All variables shall be initialized to zero if they are not otherwise assigned by the input to the application.
+
+Arithmetic operators and control flow keywords shall be implemented as equivalent to those in the cited ISO C standard section, as listed in [Selected ISO C Standard Operators and Control Flow Keywords](#tagtcjh_10).
+
+**Note:** The comma operator (section 6.5.17 of the ISO C standard) is intentionally not included in the table. It need not be supported by implementations.
+
+Table: Selected ISO C Standard Operators and Control Flow Keywords
+
+| **Operation** | **ISO C Standard Equivalent Reference** |
+| --- | --- |
+| () | Section 6.5.1, Primary Expressions |
+| postfix ++ postfix -- | Section 6.5.2, Postfix Operators |
+| unary + unary - prefix ++ prefix -- ~ ! *sizeof*() | Section 6.5.3, Unary Operators |
+| * / % | Section 6.5.5, Multiplicative Operators |
+| + - | Section 6.5.6, Additive Operators |
+| &lt;&lt; &gt;&gt; | Section 6.5.7, Bitwise Shift Operators |
+| &lt;, &lt;= &gt;, &gt;= | Section 6.5.8, Relational Operators |
+| == != | Section 6.5.9, Equality Operators |
+| & | Section 6.5.10, Bitwise AND Operator |
+| ^ | Section 6.5.11, Bitwise Exclusive OR Operator |
+| \| | Section 6.5.12, Bitwise Inclusive OR Operator |
+| && | Section 6.5.13, Logical AND Operator |
+| \|\| | Section 6.5.14, Logical OR Operator |
+| *expr*?*expr*:*expr* | Section 6.5.15, Conditional Operator |
+| =, *=, /=, %=, +=, -= &lt;&lt;=, &gt;&gt;=, &=, ^=, \|= | Section 6.5.16, Assignment Operators |
+| **if** () **if** () ... **else** **switch** () | Section 6.8.4, Selection Statements |
+| **while** () **do** ... **while** () **for** () | Section 6.8.5, Iteration Statements |
+| **goto** **continue** **break** **return** | Section 6.8.6, Jump Statements |
+
+The evaluation of arithmetic expressions shall be equivalent to that described in Section 6.5, Expressions, of the ISO C standard.
