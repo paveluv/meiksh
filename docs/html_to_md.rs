@@ -997,10 +997,16 @@ fn collect_heading_anchor_slugs_into(
                     let text = normalize_inline(&render_inline_children(&child_el.children));
                     if !text.is_empty() {
                         let slug = slugify_heading(&text);
-                        if !slug.is_empty() {
+                        // POSIX utility pages place <a name="set"> (and tag_19_*) immediately before an
+                        // h4 "NAME" heading. Slugifying that heading yields "name", which would remap
+                        // every #set / #tag_19_* link to #name and break cross-references. Skip pending
+                        // remapping only for that boilerplate heading.
+                        if !slug.is_empty() && slug != "name" {
                             for anchor in pending_anchors.drain(..) {
                                 mappings.entry(anchor).or_insert_with(|| slug.clone());
                             }
+                        } else {
+                            pending_anchors.clear();
                         }
                     }
                 }

@@ -1968,8 +1968,8 @@ Table: Selected ISO C Standard Operators and Control Flow Keywords
 | unary + unary - prefix ++ prefix -- ~ ! *sizeof*() | Section 6.5.3, Unary Operators |
 | * / % | Section 6.5.5, Multiplicative Operators |
 | + - | Section 6.5.6, Additive Operators |
-| &lt;&lt; &gt;&gt; | Section 6.5.7, Bitwise Shift Operators |
-| &lt;, &lt;= &gt;, &gt;= | Section 6.5.8, Relational Operators |
+| \<\< \>\> | Section 6.5.7, Bitwise Shift Operators |
+| \<, \<= \>, \>= | Section 6.5.8, Relational Operators |
 | == != | Section 6.5.9, Equality Operators |
 | & | Section 6.5.10, Bitwise AND Operator |
 | ^ | Section 6.5.11, Bitwise Exclusive OR Operator |
@@ -1977,7 +1977,7 @@ Table: Selected ISO C Standard Operators and Control Flow Keywords
 | && | Section 6.5.13, Logical AND Operator |
 | \|\| | Section 6.5.14, Logical OR Operator |
 | *expr*?*expr*:*expr* | Section 6.5.15, Conditional Operator |
-| =, *=, /=, %=, +=, -= &lt;&lt;=, &gt;&gt;=, &=, ^=, \|= | Section 6.5.16, Assignment Operators |
+| =, *=, /=, %=, +=, -= \<\<=, \>\>=, &=, ^=, \|= | Section 6.5.16, Assignment Operators |
 | **if** () **if** () ... **else** **switch** () | Section 6.8.4, Selection Statements |
 | **while** () **do** ... **while** () **for** () | Section 6.8.5, Iteration Statements |
 | **goto** **continue** **break** **return** | Section 6.8.6, Jump Statements |
