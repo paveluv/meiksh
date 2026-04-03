@@ -95,7 +95,7 @@ pub fn parse_md_suite(text: &str, filename: &str) -> Result<TestSuite, String> {
 }
 
 fn parse_test_heading(line: &str) -> Option<String> {
-    let rest = line.strip_prefix("##### Test: ")?;
+    let rest = line.strip_prefix("#### Test: ")?;
     let name = rest.trim();
     if name.is_empty() {
         return None;
