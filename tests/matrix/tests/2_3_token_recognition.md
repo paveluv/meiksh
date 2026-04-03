@@ -39,7 +39,7 @@ Tokens are not delimited by the end of a command substitution. The string `suffi
 ```
 begin test "end of substitution does not delimit token"
   script
-    echo $(echo hello)suffix
+    printf '%s\n' "$(printf '%s' hello)suffix"
   expect
     stdout "hellosuffix"
     stderr ""
@@ -49,17 +49,17 @@ end test "end of substitution does not delimit token"
 
 #### Test: complete_command executed before next is tokenized
 
-When parsing an interactive shell or a script, the shell executes a complete command before tokenizing and parsing the next one. This means variables set in a command take effect immediately.
+When parsing a program, the shell executes one complete command before
+tokenizing and parsing the next. This makes an alias defined by the first
+complete command visible to the second one.
 
 ```
 begin test "complete_command executed before next is tokenized"
   script
-    x=first
-    echo $x
-    x=second
-    echo $x
+    alias after_first="printf '%s\n' tokenized-later"
+    after_first
   expect
-    stdout "first\nsecond"
+    stdout "tokenized-later"
     stderr ""
     exit_code 0
 end test "complete_command executed before next is tokenized"
@@ -83,12 +83,14 @@ end test "line continuation: backslash-newline removed before tokenizing"
 
 #### Test: bad expansion parameter error
 
-During token recognition, substitutions aren't actually performed. Even if a token contains a substitution that will eventually cause a syntax or expansion error, the shell parses it as a word first and errors out during the expansion phase.
+During token recognition, substitutions are not performed immediately. A token
+containing an invalid expansion is still recognized as one word, and the shell
+reports the error only when expansion is attempted.
 
 ```
 begin test "bad expansion parameter error"
   script
-    echo ${/} 2>/dev/null
+    printf '%s\n' ${/}
   expect
     stdout ""
     stderr ".+"
@@ -111,19 +113,20 @@ begin test "end of input delimits current token"
 end test "end of input delimits current token"
 ```
 
-#### Test: empty token discarded
+#### Test: blank input is discarded
 
-If a token is delimited but hasn't accumulated any characters (such as between two semicolons `;;`), that empty token is discarded and not treated as a word.
+If token recognition reaches end-of-input without accumulating any token
+characters, nothing is executed.
 
 ```
-begin test "empty token discarded"
+begin test "blank input is discarded"
   script
     printf '%s' ' ' | $SHELL
   expect
     stdout ""
     stderr ""
     exit_code 0
-end test "empty token discarded"
+end test "blank input is discarded"
 ```
 
 #### Test: quoted field does not delimit token
@@ -210,16 +213,36 @@ begin test "here-doc nested in command substitution"
 end test "here-doc nested in command substitution"
 ```
 
+#### Test: tokens after io_here are saved until body is parsed
+
+Tokens recognized after an `io_here` on the same line are saved and processed
+only after the here-document body has been parsed.
+
+```
+begin test "tokens after io_here are saved until body is parsed"
+  script
+    cat <<EOF >saved_after_heredoc.txt
+    saved body
+    EOF
+    cat saved_after_heredoc.txt
+  expect
+    stdout "saved body"
+    stderr ""
+    exit_code 0
+end test "tokens after io_here are saved until body is parsed"
+```
+
 #### Test: backslash quoting of special characters
 
-A backslash preserves the literal value of the following character, preventing special characters like `|`, `&`, and `;` from acting as operators.
+A backslash begins quoted text during token recognition, preventing operator
+characters like `|`, `&`, and `;` from delimiting tokens.
 
 ```
 begin test "backslash quoting of special characters"
   script
-    echo \| \& \;
+    printf '%s\n' \| \& \;
   expect
-    stdout "\| & ;"
+    stdout "\|\n&\n;"
     stderr ""
     exit_code 0
 end test "backslash quoting of special characters"
@@ -227,13 +250,14 @@ end test "backslash quoting of special characters"
 
 #### Test: backslash preserves literal value of following character
 
-A backslash escapes the literal value of a wildcard character like `*`, preventing pathname expansion.
+A backslash keeps `*` in the current word instead of letting it participate in
+pathname expansion or token delimiting.
 
 ```
 begin test "backslash preserves literal value of following character"
   script
     touch a_test_b
-    echo a\*b
+    printf '%s\n' a\*b
   expect
     stdout "a\*b"
     stderr ""
@@ -248,7 +272,7 @@ A backslash before a semicolon prevents the shell from interpreting it as a comm
 ```
 begin test "backslash escapes semicolon so it is literal"
   script
-    echo foo\;bar
+    printf '%s\n' foo\;bar
   expect
     stdout "foo;bar"
     stderr ""
@@ -279,7 +303,7 @@ A backslash escapes a dollar sign, preventing it from initiating parameter expan
 ```
 begin test "backslash preserves dollar sign literally"
   script
-    echo \$foo
+    printf '%s\n' \$foo
   expect
     stdout "\$foo"
     stderr ""
@@ -336,77 +360,86 @@ begin test "multiple consecutive backslash-newline continuations"
 end test "multiple consecutive backslash-newline continuations"
 ```
 
-#### Test: single quotes preserve all characters literally
+#### Test: single-quoted text does not delimit surrounding token
 
-Enclosing characters in single quotes preserves the literal value of all characters within, including wildcards and dollar signs.
+Single-quoted text is included unmodified in the current token during token
+recognition, and the closing quote does not delimit the token.
 
 ```
-begin test "single quotes preserve all characters literally"
+begin test "single-quoted text does not delimit surrounding token"
   script
-    echo '$foo *'
+    set -- pre'$foo *'post
+    printf '%s\n%s\n' "$#" "$1"
   expect
-    stdout "\$foo \*"
+    stdout "1\npre\$foo \*post"
     stderr ""
     exit_code 0
-end test "single quotes preserve all characters literally"
+end test "single-quoted text does not delimit surrounding token"
 ```
 
-#### Test: double quotes prevent wildcard expansion
+#### Test: double-quoted text does not delimit surrounding token
 
-Enclosing characters in double quotes preserves their literal value and prevents wildcard expansion (like `*`).
+Double-quoted text remains part of the current token, so unquoted characters
+immediately before and after it are concatenated into one word.
 
 ```
-begin test "double quotes prevent wildcard expansion"
+begin test "double-quoted text does not delimit surrounding token"
   script
-    echo "a*b"
+    set -- pre"a*b"post
+    printf '%s\n%s\n' "$#" "$1"
   expect
-    stdout "a\*b"
+    stdout "1\nprea\*bpost"
     stderr ""
     exit_code 0
-end test "double quotes prevent wildcard expansion"
+end test "double-quoted text does not delimit surrounding token"
 ```
 
-#### Test: double quotes backslash produces single backslash
+#### Test: escaped backslash in double quotes stays in one token
 
-Inside double quotes, a backslash retains its special meaning only before certain characters (like `$`, `\``, `"`). A backslash preceding another backslash escapes it, producing a single literal backslash.
+Inside double quotes, `\\` contributes a literal backslash to the current token
+without delimiting it.
 
 ```
-begin test "double quotes backslash produces single backslash"
+begin test "escaped backslash in double quotes stays in one token"
   script
-    echo "\\"
+    set -- pre"\\"post
+    printf '%s\n%s\n' "$#" "$1"
   expect
-    stdout "\\"
+    stdout "1\npre\\post"
     stderr ""
     exit_code 0
-end test "double quotes backslash produces single backslash"
+end test "escaped backslash in double quotes stays in one token"
 ```
 
-#### Test: double quotes allow parameter and command and arithmetic expansion
+#### Test: quoted substitutions do not delimit token
 
-Inside double quotes, the dollar sign (`$`) and backquote retain their special meaning, allowing parameter, command, and arithmetic expansions to occur.
+Inside double quotes, parameter, command, and arithmetic substitutions are still
+recognized, but the quoted field remains part of one token.
 
 ```
-begin test "double quotes allow parameter and command and arithmetic expansion"
+begin test "quoted substitutions do not delimit token"
   script
     foo=bar
-    echo "$foo $(echo sub) $((2+2)) $'literal'"
+    printf '%s\n' "pre-$foo-$(printf '%s' sub)-$((2+2))-post"
   expect
-    stdout "bar sub 4 \$'literal'"
+    stdout "pre-bar-sub-4-post"
     stderr ""
     exit_code 0
-end test "double quotes allow parameter and command and arithmetic expansion"
+end test "quoted substitutions do not delimit token"
 ```
 
 #### Test: inner double quotes inside command substitution
 
-Double quotes can be nested inside a command substitution that is itself double-quoted. The inner quotes define the command to be executed.
+Double quotes can appear inside a command substitution that is itself within a
+double-quoted field, and the entire substitution result remains part of the
+surrounding token.
 
 ```
 begin test "inner double quotes inside command substitution"
   script
-    echo "$(echo "inner quotes")"
+    printf '%s\n' pre"$(printf '%s\n' "inner quotes")"post
   expect
-    stdout "inner quotes"
+    stdout "preinner quotespost"
     stderr ""
     exit_code 0
 end test "inner double quotes inside command substitution"
@@ -414,14 +447,15 @@ end test "inner double quotes inside command substitution"
 
 #### Test: recursive tokenizing finds matching paren
 
-The shell recursively tokenizes characters to correctly locate the matching closing parenthesis of a command substitution.
+The shell recursively tokenizes characters to locate the matching closing
+parenthesis of a command substitution without delimiting the surrounding token.
 
 ```
 begin test "recursive tokenizing finds matching paren"
   script
-    echo "$(echo "(recursive)")"
+    printf '%s\n' pre"$(printf '%s\n' "(recursive)")"post
   expect
-    stdout "\(recursive\)"
+    stdout "pre\(recursive\)post"
     stderr ""
     exit_code 0
 end test "recursive tokenizing finds matching paren"
@@ -429,171 +463,189 @@ end test "recursive tokenizing finds matching paren"
 
 #### Test: backquote inside double quotes executes
 
-Inside double quotes, the backquote retains its special meaning and introduces a command substitution.
+Inside double quotes, a backquote substitution is recognized without delimiting
+the surrounding token.
 
 ```
 begin test "backquote inside double quotes executes"
   script
-    echo "`echo sub`"
+    printf '%s\n' "pre`printf '%s\n' sub`post"
   expect
-    stdout "sub"
+    stdout "presubpost"
     stderr ""
     exit_code 0
 end test "backquote inside double quotes executes"
 ```
 
-#### Test: backslash in double quotes special only before certain chars
+#### Test: backslash in double quotes does not delimit token for other chars
 
-Inside double quotes, a backslash only acts as an escape character when followed by `$`, `\``, `"`, `\`, or a newline. Otherwise, it is treated as a literal backslash.
+Inside double quotes, a backslash before characters other than `$`, `` ` ``,
+`"`, `\`, or newline remains part of the current token as a literal backslash.
 
 ```
-begin test "backslash in double quotes special only before certain chars"
+begin test "backslash in double quotes does not delimit token for other chars"
   script
-    printf "%s\n" "\n \$ \` \\"
+    printf '%s\n' "\n" "\a" "\*"
   expect
-    stdout "\\n \$ ` \\"
+    stdout "\\n\n\\a\n\\\*"
     stderr ""
     exit_code 0
-end test "backslash in double quotes special only before certain chars"
+end test "backslash in double quotes does not delimit token for other chars"
 ```
 
-#### Test: double quotes preserve expansion result literally
+#### Test: quoted expansion result stays in one field
 
-When an expansion occurs within double quotes, the expanded value is not subjected to field splitting or pathname expansion, preserving characters like spaces and wildcards literally.
+When an expansion occurs within double quotes, the token remains one field
+rather than being delimited by blanks or glob characters in the expansion
+result.
 
 ```
-begin test "double quotes preserve expansion result literally"
+begin test "quoted expansion result stays in one field"
   script
-    foo='* * *'
-    echo "$foo"
+    foo='a b *'
+    set -- "pre-$foo-post"
+    printf '%s\n%s\n' "$#" "$1"
   expect
-    stdout "\* \* \*"
+    stdout "1\npre-a b \*-post"
     stderr ""
     exit_code 0
-end test "double quotes preserve expansion result literally"
+end test "quoted expansion result stays in one field"
 ```
 
-#### Test: substring processing not affected by outer double quotes
+#### Test: parameter expansion candidate does not delimit token
 
-Inside double-quotes, substring processing operations (like `${var#pattern}`) are unaffected by the outer double-quotes, allowing patterns to be processed normally.
+An unquoted `${...}` expansion candidate is recognized as part of the current
+word and does not delimit the surrounding token.
 
 ```
-begin test "substring processing not affected by outer double quotes"
+begin test "parameter expansion candidate does not delimit token"
   script
     foo="a*b"
-    unset unset_var
-    echo "${foo#a*}" "${unset_var:-*}"
+    printf '%s\n' pre"${foo#a*}"post
   expect
-    stdout ".*\*b \*.*"
+    stdout "pre\*bpost"
     stderr ""
     exit_code 0
-end test "substring processing not affected by outer double quotes"
+end test "parameter expansion candidate does not delimit token"
 ```
 
-#### Test: backslash dollar and backquote inside braces
+#### Test: nested command substitution inside ${...} stays in one token
 
-Within a parameter expansion (like `${...}`), the double-quotes preserve the literal value of all characters except `"`, `\``, `$`, and `\`.
+The shell reads far enough to find the end of a `${...}` expansion even when the
+expansion text contains a nested command substitution.
 
 ```
-begin test "backslash dollar and backquote inside braces"
+begin test "nested command substitution inside ${...} stays in one token"
   script
     unset foo
-    printf "%s\n" "${foo:-`echo default` \$ \n \\ }"
+    printf '%s\n' pre"${foo:-$(printf '%s' default)}"post
   expect
-    stdout "default \$ \\n \\.*"
+    stdout "predefaultpost"
     stderr ""
     exit_code 0
-end test "backslash dollar and backquote inside braces"
+end test "nested command substitution inside ${...} stays in one token"
 ```
 
-#### Test: escaped double quote inside double quotes
+#### Test: escaped double quote stays in double-quoted token
 
-A double quote can be included literally inside a double-quoted string if it is preceded by a backslash.
+A backslash-escaped double quote is included in the current double-quoted token
+without terminating it.
 
 ```
-begin test "escaped double quote inside double quotes"
+begin test "escaped double quote stays in double-quoted token"
   script
-    echo "\""
+    set -- pre"\""post
+    printf '%s\n%s\n' "$#" "$1"
   expect
-    stdout """"
+    stdout "1\npre""post"
     stderr ""
     exit_code 0
-end test "escaped double quote inside double quotes"
+end test "escaped double quote stays in double-quoted token"
 ```
 
-#### Test: dollar-single-quote newline escape
+#### Test: dollar-single-quoted text does not delimit surrounding token
 
-The `$'...'` quoting mechanism processes backslash escapes such as `\n` to produce a literal newline.
+The `$'...'` quoted region is recognized as part of the current token, so
+unquoted text immediately before and after it remains in the same word.
 
 ```
-begin test "dollar-single-quote newline escape"
+begin test "dollar-single-quoted text does not delimit surrounding token"
   script
-    echo $'a\nb'
+    printf '%s\n' pre$'\x41'post
   expect
-    stdout "a\nb"
+    stdout "preApost"
     stderr ""
     exit_code 0
-end test "dollar-single-quote newline escape"
+end test "dollar-single-quoted text does not delimit surrounding token"
 ```
 
-#### Test: backslash-quoting preserves literal special characters
+#### Test: backslash-quoted operator characters stay in one token
 
-Backslash quoting preserves the literal value of special characters like `<` and `>`.
+Backslash quoting keeps operator and quoting characters inside the current word
+instead of allowing them to delimit tokens.
 
 ```
-begin test "backslash-quoting preserves literal special characters"
+begin test "backslash-quoted operator characters stay in one token"
   script
-    echo \| \& \; \< \> \( \) \$ \` \\ \"
+    set -- pre\|post pre\&post pre\;post
+    printf '%s\n%s\n%s\n%s\n' "$#" "$1" "$2" "$3"
   expect
-    stdout "\| & ; < > \( \) \$ ` \\ """
+    stdout "3\npre\|post\npre&post\npre;post"
     stderr ""
     exit_code 0
-end test "backslash-quoting preserves literal special characters"
+end test "backslash-quoted operator characters stay in one token"
 ```
 
-#### Test: single-quoting preserves literal special characters
+#### Test: single-quoted special characters stay in one token
 
-Single quotes preserve the literal value of all enclosed special characters.
+Single-quoted operator characters and blanks remain inside one token, and the
+surrounding unquoted text is concatenated onto the same word.
 
 ```
-begin test "single-quoting preserves literal special characters"
+begin test "single-quoted special characters stay in one token"
   script
-    echo '| & ; < > ( ) $ ` \ "'
+    set -- pre'| & ; < > ( ) $ ` \ "'post
+    printf '%s\n%s\n' "$#" "$1"
   expect
-    stdout "\| & ; < > \( \) \$ ` \\ """
+    stdout "1\npre\| & ; < > \( \) \$ ` \\ ""post"
     stderr ""
     exit_code 0
-end test "single-quoting preserves literal special characters"
+end test "single-quoted special characters stay in one token"
 ```
 
-#### Test: double-quoting preserves literal pipe semicolon angle parens
+#### Test: double-quoted special characters stay in one token
 
-Double quotes preserve the literal value of special characters like `|`, `;`, and `<`.
+Double-quoted operator characters remain in the current token rather than
+delimiting it, and the surrounding unquoted text is concatenated onto the same
+word.
 
 ```
-begin test "double-quoting preserves literal pipe semicolon angle parens"
+begin test "double-quoted special characters stay in one token"
   script
-    echo "| & ; < > ( )"
+    set -- pre"| & ; < > ( )"post
+    printf '%s\n%s\n' "$#" "$1"
   expect
-    stdout "\| & ; < > \( \)"
+    stdout "1\npre\| & ; < > \( \)post"
     stderr ""
     exit_code 0
-end test "double-quoting preserves literal pipe semicolon angle parens"
+end test "double-quoted special characters stay in one token"
 ```
 
-#### Test: quoting preserves literal space and tab in single argument
+#### Test: quoted blanks do not delimit token
 
-Quoting spaces and tabs prevents them from acting as token separators, keeping the text as a single argument.
+Quoted spaces and tabs are retained within a single token rather than acting as
+token delimiters.
 
 ```
-begin test "quoting preserves literal space and tab in single argument"
+begin test "quoted blanks do not delimit token"
   script
-    $SHELL -c 'for a in "$@"; do echo "[$a]"; done' sh "hello world" "a	b"
+    set -- "hello world" "a	b"
+    printf '%s\n%s\n%s\n' "$#" "$1" "$2"
   expect
-    stdout "\[hello world\]\n\[a	b\]"
+    stdout "2\nhello world\na	b"
     stderr ""
     exit_code 0
-end test "quoting preserves literal space and tab in single argument"
+end test "quoted blanks do not delimit token"
 ```
 
 #### Test: backslash-newline is line continuation not literal newline
@@ -612,64 +664,70 @@ begin test "backslash-newline is line continuation not literal newline"
 end test "backslash-newline is line continuation not literal newline"
 ```
 
-#### Test: quoting prevents glob expansion of * ? [ ]
+#### Test: quoted glob characters stay in one token
 
-Quoting prevents wildcard characters from triggering pathname expansion.
+Quoted glob characters remain part of the current token, and surrounding
+unquoted text is concatenated to the same word.
 
 ```
-begin test "quoting prevents glob expansion of * ? [ ]"
+begin test "quoted glob characters stay in one token"
   script
-    echo '*' '?' '[abc]'
+    set -- pre'*'post pre'?'post pre'[abc]'post
+    printf '%s\n%s\n%s\n%s\n' "$#" "$1" "$2" "$3"
   expect
-    stdout "\* \? \[abc\]"
+    stdout "3\npre\*post\npre\?post\npre\[abc\]post"
     stderr ""
     exit_code 0
-end test "quoting prevents glob expansion of * ? [ ]"
+end test "quoted glob characters stay in one token"
 ```
 
-#### Test: quoting preserves literal ~ = % { } characters
+#### Test: quoted conditionally special characters stay in one token
 
-Quoting preserves characters that might be conditionally special under certain circumstances.
+Quoted conditionally special characters remain part of the current token instead
+of being interpreted specially.
 
 ```
-begin test "quoting preserves literal ~ = % { } characters"
+begin test "quoted conditionally special characters stay in one token"
   script
-    echo '~' '=' '%' '{' '}' ',' '^' '-'
+    set -- pre'~'post pre'='post pre'%'post pre'{'post pre'}'post pre','post pre'^'post pre'-'post
+    printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$#" "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8"
   expect
-    stdout "~ = % { } , ^ -"
+    stdout "8\npre~post\npre=post\npre%post\npre\{post\npre\}post\npre,post\npre\^post\npre-post"
     stderr ""
     exit_code 0
-end test "quoting preserves literal ~ = % { } characters"
+end test "quoted conditionally special characters stay in one token"
 ```
 
-#### Test: dollar-single-quote hex escape
+#### Test: dollar-single-quoted escape stays in one token
 
-The `$'...'` mechanism processes hex escapes (like `\x41`) into literal characters.
+An escaped character produced by a dollar-single-quoted region remains part of
+the surrounding token.
 
 ```
-begin test "dollar-single-quote hex escape"
+begin test "dollar-single-quoted escape stays in one token"
   script
-    echo $'\x41\x42'
+    printf '%s\n' pre$'\x41\x42'post
   expect
-    stdout "AB"
+    stdout "preABpost"
     stderr ""
     exit_code 0
-end test "dollar-single-quote hex escape"
+end test "dollar-single-quoted escape stays in one token"
 ```
 
-#### Test: dollar-single-quote escaped single quote
+#### Test: escaped single quote in dollar-single-quotes stays in one token
 
-Inside `$'...'`, a single quote can be escaped with a backslash to include it literally.
+An escaped single quote inside `$'...'` is included in the current token and
+does not terminate the quoted region early.
 
 ```
-begin test "dollar-single-quote escaped single quote"
+begin test "escaped single quote in dollar-single-quotes stays in one token"
   script
-    echo $'can\'t'
+    printf '%s\n' pre$'can\'t'post
   expect
-    stdout "can't"
+    stdout "precan'tpost"
     stderr ""
     exit_code 0
-end test "dollar-single-quote escaped single quote"
+end test "escaped single quote in dollar-single-quotes stays in one token"
 ```
 
 #### Test: newline delimits token
@@ -690,14 +748,21 @@ end test "newline delimits token"
 
 #### Test: reserved words not recognized when quoted
 
-Reserved words like `if` are not recognized as such if they contain any quoting characters.
+Reserved words like `if` are not recognized as such if they contain quoting
+characters. In command position, the quoted word is treated as an ordinary
+command name.
 
 ```
 begin test "reserved words not recognized when quoted"
   script
-    echo "if"
+    cat > if <<'EOF'
+    #!/bin/sh
+    printf '%s\n' quoted-word
+    EOF
+    chmod +x if
+    PATH=".:$PATH" 'if'
   expect
-    stdout "if"
+    stdout "quoted-word"
     stderr ""
     exit_code 0
 end test "reserved words not recognized when quoted"
@@ -705,14 +770,16 @@ end test "reserved words not recognized when quoted"
 
 #### Test: dollar-single-quote variable-length escapes terminate correctly
 
-Octal and hex escapes in `$'...'` terminate correctly when the escape sequence ends.
+Variable-length escapes inside `$'...'` terminate correctly, and the resulting
+text remains part of the surrounding token.
 
 ```
 begin test "dollar-single-quote variable-length escapes terminate correctly"
   script
-    printf "%s|%s|%s|%s\n" $'\x41' $'\x41Z' $'\101' $'\1012'
+    set -- pre$'\x41'post pre$'\x41Z'post pre$'\101'post pre$'\1012'post
+    printf '%s\n%s\n%s\n%s\n%s\n' "$#" "$1" "$2" "$3" "$4"
   expect
-    stdout "A\|AZ\|A\|A2"
+    stdout "4\npreApost\npreAZpost\npreApost\npreA2post"
     stderr ""
     exit_code 0
 end test "dollar-single-quote variable-length escapes terminate correctly"
@@ -752,14 +819,15 @@ end test "case/esac reserved words"
 
 #### Test: dollar-single-quote basic support
 
-The `$'...'` quoting mechanism correctly interprets the enclosed string and its escapes.
+The `$'...'` quoted region remains part of the surrounding token even when an
+escape produces an embedded newline.
 
 ```
 begin test "dollar-single-quote basic support"
   script
-    printf '%s\n' $'hello\nworld'
+    printf '%s\n' pre$'hello\nworld'post
   expect
-    stdout "hello\nworld"
+    stdout "prehello\nworldpost"
     stderr ""
     exit_code 0
 end test "dollar-single-quote basic support"
@@ -767,14 +835,15 @@ end test "dollar-single-quote basic support"
 
 #### Test: dollar-paren command substitution
 
-The `$(...)` syntax correctly performs command substitution.
+The `$(...)` syntax is recognized as one substitution unit and does not delimit
+the surrounding token.
 
 ```
 begin test "dollar-paren command substitution"
   script
-    echo $(echo hello)
+    printf '%s\n' pre$(printf '%s' hello)post
   expect
-    stdout "hello"
+    stdout "prehellopost"
     stderr ""
     exit_code 0
 end test "dollar-paren command substitution"
@@ -782,14 +851,15 @@ end test "dollar-paren command substitution"
 
 #### Test: backtick command substitution
 
-The `` `...` `` syntax correctly performs command substitution.
+The `` `...` `` syntax is recognized as one substitution unit and does not
+delimit the surrounding token.
 
 ```
 begin test "backtick command substitution"
   script
-    echo `echo hello`
+    printf '%s\n' pre`printf '%s' hello`post
   expect
-    stdout "hello"
+    stdout "prehellopost"
     stderr ""
     exit_code 0
 end test "backtick command substitution"
@@ -797,14 +867,15 @@ end test "backtick command substitution"
 
 #### Test: nested dollar-paren command substitution
 
-Command substitutions using `$(...)` can be safely nested.
+Command substitutions using `$(...)` can nest recursively without delimiting the
+surrounding token.
 
 ```
 begin test "nested dollar-paren command substitution"
   script
-    echo $(echo $(echo nested))
+    printf '%s\n' pre$(printf '%s' "$(printf '%s' nested)")post
   expect
-    stdout "nested"
+    stdout "prenestedpost"
     stderr ""
     exit_code 0
 end test "nested dollar-paren command substitution"
@@ -812,14 +883,15 @@ end test "nested dollar-paren command substitution"
 
 #### Test: arithmetic addition
 
-The `$((...))` syntax evaluates arithmetic expressions like addition.
+The `$((...))` arithmetic expansion candidate does not delimit the surrounding
+token.
 
 ```
 begin test "arithmetic addition"
   script
-    echo $((40 + 2))
+    printf '%s\n' pre$((40 + 2))post
   expect
-    stdout "42"
+    stdout "pre42post"
     stderr ""
     exit_code 0
 end test "arithmetic addition"
@@ -827,17 +899,50 @@ end test "arithmetic addition"
 
 #### Test: arithmetic subtraction negative
 
-The `$((...))` syntax evaluates arithmetic expressions like subtraction, properly yielding negative numbers.
+Arithmetic expansion remains part of the current token even when the result is
+negative.
 
 ```
 begin test "arithmetic subtraction negative"
   script
-    echo $((3 - 4))
+    printf '%s\n' pre$((3 - 4))post
   expect
-    stdout "-1"
+    stdout "pre-1post"
     stderr ""
     exit_code 0
 end test "arithmetic subtraction negative"
+```
+
+#### Test: && forms a single operator token
+
+Two consecutive `&` characters are combined into the `&&` operator token rather
+than being treated as separate words.
+
+```
+begin test "&& forms a single operator token"
+  script
+    true && printf '%s\n' and-list
+  expect
+    stdout "and-list"
+    stderr ""
+    exit_code 0
+end test "&& forms a single operator token"
+```
+
+#### Test: || forms a single operator token
+
+Two consecutive `|` characters are combined into the `||` operator token rather
+than being treated as separate words.
+
+```
+begin test "|| forms a single operator token"
+  script
+    false || printf '%s\n' or-list
+  expect
+    stdout "or-list"
+    stderr ""
+    exit_code 0
+end test "|| forms a single operator token"
 ```
 
 #### Test: unquoted > is a control operator
@@ -975,6 +1080,64 @@ begin interactive test "alias substitution"
 end interactive test "alias substitution"
 ```
 
+#### Test: quoted token is not alias-substituted
+
+A token containing quoting characters is not subject to alias substitution, even
+if its unquoted text matches an alias name.
+
+```
+begin interactive test "quoted token is not alias-substituted"
+  spawn -i
+  expect "$ "
+  send "cat > foo <<'EOF'\n#!/bin/sh\nprintf '%s\\n' quoted-command\nEOF\nchmod +x foo\nPATH=.:$PATH"
+  expect "$ "
+  send "alias foo=\"printf '%s\\n' aliased\""
+  expect "$ "
+  send "'foo'"
+  expect "quoted-command"
+  sendeof
+  wait
+end interactive test "quoted token is not alias-substituted"
+```
+
+#### Test: alias does not expand in non-command position
+
+Alias substitution is not applied to an ordinary argument token that is not in
+command-name position.
+
+```
+begin interactive test "alias does not expand in non-command position"
+  spawn -i
+  expect "$ "
+  send "alias foo=\"printf '%s\\n' aliased\""
+  expect "$ "
+  send "printf '%s\\n' foo"
+  expect "foo"
+  sendeof
+  wait
+end interactive test "alias does not expand in non-command position"
+```
+
+#### Test: alias name must match the whole token
+
+Alias substitution applies only when the token itself is the alias name. A
+longer token that merely starts with the alias name is not substituted.
+
+```
+begin interactive test "alias name must match the whole token"
+  spawn -i
+  expect "$ "
+  send "cat > foobar <<'EOF'\n#!/bin/sh\nprintf '%s\\n' whole-token\nEOF\nchmod +x foobar\nPATH=.:$PATH"
+  expect "$ "
+  send "alias foo=\"printf '%s\\n' aliased\""
+  expect "$ "
+  send "foobar"
+  expect "whole-token"
+  sendeof
+  wait
+end interactive test "alias name must match the whole token"
+```
+
 #### Test: alias with trailing space chains to next word
 
 If an alias value ends with a space, the next word is also evaluated for alias substitution.
@@ -992,5 +1155,80 @@ begin interactive test "alias with trailing space chains to next word"
   sendeof
   wait
 end interactive test "alias with trailing space chains to next word"
+```
+
+#### Test: alias replacement is re-tokenized from the start
+
+After alias substitution, token recognition resumes at the start of the alias
+value as if that text had been read from the input.
+
+```
+begin interactive test "alias replacement is re-tokenized from the start"
+  spawn -i
+  expect "$ "
+  send "alias make_if=\"if true; then printf '%s\\\\n' retokenized; fi\""
+  expect "$ "
+  send "make_if"
+  expect "retokenized"
+  sendeof
+  wait
+end interactive test "alias replacement is re-tokenized from the start"
+```
+
+#### Test: same alias name is not recursively re-expanded
+
+If a token already resulted from substitution of alias `a`, the shell does not
+apply alias `a` to that token again at a deeper recursion level.
+
+```
+begin interactive test "same alias name is not recursively re-expanded"
+  spawn -i
+  expect "$ "
+  send "alias a=\"a\""
+  expect "$ "
+  send "a >/dev/null 2>&1 || printf '%s\n' recursion-stopped"
+  expect "recursion-stopped"
+  sendeof
+  wait
+end interactive test "same alias name is not recursively re-expanded"
+```
+
+#### Test: alias redefinition applies by next complete command
+
+An alias redefinition takes effect no later than the next complete command.
+
+```
+begin interactive test "alias redefinition applies by next complete command"
+  spawn -i
+  expect "$ "
+  send "alias foo=\"printf '%s\\n' old\""
+  expect "$ "
+  send "foo"
+  expect "old"
+  expect "$ "
+  send "alias foo=\"printf '%s\\n' new\""
+  expect "$ "
+  send "foo"
+  expect "new"
+  sendeof
+  wait
+end interactive test "alias redefinition applies by next complete command"
+```
+
+#### Test: alias is not inherited by child shell
+
+Alias definitions are not inherited by a separate shell invocation.
+
+```
+begin interactive test "alias is not inherited by child shell"
+  spawn -i
+  expect "$ "
+  send "alias outer=\"printf '%s\\n' aliased\""
+  expect "$ "
+  send "$SHELL -c 'outer' >/dev/null 2>&1 || printf '%s\\n' child-clean"
+  expect "child-clean"
+  sendeof
+  wait
+end interactive test "alias is not inherited by child shell"
 ```
 
