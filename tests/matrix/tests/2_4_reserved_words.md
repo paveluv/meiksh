@@ -49,6 +49,8 @@ When used in circumstances where reserved words are recognized (described above)
 
 When the word **time** is recognized as a reserved word in circumstances where it would, if it were not a reserved word, be the command name (see [2.9.1.1 Order of Processing](#2911-order-of-processing)) of a simple command that would execute the [*time*](../utilities/time.md) utility in a manner other than one for which [*time*](../utilities/time.md#tag_20_122) states that the results are unspecified, the behavior shall be as specified for the [*time*](../utilities/time.md) utility.
 
+When used in circumstances where reserved words are recognized (described above), all words whose final character is a `<colon>` (`':'`) are reserved; their use in those circumstances produces unspecified results.
+
 ### Tests
 
 #### Test: reserved words recognized as first word of command
@@ -66,6 +68,74 @@ begin test "reserved words recognized as first word of command"
 end test "reserved words recognized as first word of command"
 ```
 
+#### Test: case is recognized as first word of command
+
+The `case` word is recognized as a reserved word when it appears as the first
+word of a command.
+
+```
+begin test "case is recognized as first word of command"
+  script
+    case z in
+      z) printf '%s\n' case-first-word ;;
+    esac
+  expect
+    stdout "case-first-word"
+    stderr ""
+    exit_code 0
+end test "case is recognized as first word of command"
+```
+
+#### Test: for is recognized as first word of command
+
+The `for` word is recognized as a reserved word when it appears as the first
+word of a command.
+
+```
+begin test "for is recognized as first word of command"
+  script
+    for x in 1 2; do
+      printf '%s\n' "for-$x"
+    done
+  expect
+    stdout "for-1\nfor-2"
+    stderr ""
+    exit_code 0
+end test "for is recognized as first word of command"
+```
+
+#### Test: brace group words are recognized
+
+The `{` and `}` words are recognized as reserved words in a brace group.
+
+```
+begin test "brace group words are recognized"
+  script
+    { printf '%s\n' brace-group; }
+  expect
+    stdout "brace-group"
+    stderr ""
+    exit_code 0
+end test "brace group words are recognized"
+```
+
+#### Test: exclamation mark is recognized as reserved word
+
+The `!` word is recognized as a reserved word in first-word position and
+negates the exit status of the following pipeline.
+
+```
+begin test "exclamation mark is recognized as reserved word"
+  script
+    ! false
+    printf '%s\n' "$?"
+  expect
+    stdout "0"
+    stderr ""
+    exit_code 0
+end test "exclamation mark is recognized as reserved word"
+```
+
 #### Test: reserved words recognized after another reserved word
 
 A reserved word is recognized when it is the first word following another reserved word (provided the preceding word is not `case`, `for`, or `in`). Here, `if` follows `!`.
@@ -79,6 +149,45 @@ begin test "reserved words recognized after another reserved word"
     stderr ""
     exit_code !=0
 end test "reserved words recognized after another reserved word"
+```
+
+#### Test: elif then else and fi are recognized in if command
+
+The `elif`, `then`, `else`, and `fi` words are recognized in the positions
+required by the `if` compound command grammar.
+
+```
+begin test "elif then else and fi are recognized in if command"
+  script
+    if false; then
+      printf '%s\n' no
+    elif true; then
+      printf '%s\n' elif-branch
+    else
+      printf '%s\n' else-branch
+    fi
+  expect
+    stdout "elif-branch"
+    stderr ""
+    exit_code 0
+end test "elif then else and fi are recognized in if command"
+```
+
+#### Test: fi is recognized as closing reserved word
+
+The `fi` word is recognized as the closing reserved word of an `if` command.
+
+```
+begin test "fi is recognized as closing reserved word"
+  script
+    if true; then
+      printf '%s\n' closing-fi
+    fi
+  expect
+    stdout "closing-fi"
+    stderr ""
+    exit_code 0
+end test "fi is recognized as closing reserved word"
 ```
 
 #### Test: reserved word not recognized after case
@@ -141,6 +250,40 @@ begin test "in recognized as third word in case"
 end test "in recognized as third word in case"
 ```
 
+#### Test: esac is recognized as closing reserved word
+
+The `esac` word is recognized as the closing reserved word of a `case` command.
+
+```
+begin test "esac is recognized as closing reserved word"
+  script
+    case y in
+      x) printf '%s\n' no ;;
+      y) printf '%s\n' yes ;;
+    esac
+  expect
+    stdout "yes"
+    stderr ""
+    exit_code 0
+end test "esac is recognized as closing reserved word"
+```
+
+#### Test: in recognized as third word in for
+
+The word `in` is recognized as a reserved word when it is the third word in a
+`for` command.
+
+```
+begin test "in recognized as third word in for"
+  script
+    for i in a b; do printf '%s\n' "$i"; done
+  expect
+    stdout "a\nb"
+    stderr ""
+    exit_code 0
+end test "in recognized as third word in for"
+```
+
 #### Test: do recognized as third word in for
 
 The word `do` is recognized as a reserved word when it is the third word in a `for` command (which implicitly loops over positional parameters).
@@ -157,33 +300,102 @@ begin test "do recognized as third word in for"
 end test "do recognized as third word in for"
 ```
 
+#### Test: done is recognized as closing reserved word
+
+The `done` word is recognized as the closing reserved word of a loop command.
+
+```
+begin test "done is recognized as closing reserved word"
+  script
+    for x in one two; do
+      printf '%s\n' "$x"
+    done
+  expect
+    stdout "one\ntwo"
+    stderr ""
+    exit_code 0
+end test "done is recognized as closing reserved word"
+```
+
+#### Test: while do and done are recognized
+
+The `while`, `do`, and `done` words are recognized in the positions required by
+the `while` compound command grammar.
+
+```
+begin test "while do and done are recognized"
+  script
+    i=0
+    while [ "$i" -lt 2 ]; do
+      printf '%s\n' "while-$i"
+      i=$((i + 1))
+    done
+  expect
+    stdout "while-0\nwhile-1"
+    stderr ""
+    exit_code 0
+end test "while do and done are recognized"
+```
+
+#### Test: until do and done are recognized
+
+The `until`, `do`, and `done` words are recognized in the positions required by
+the `until` compound command grammar.
+
+```
+begin test "until do and done are recognized"
+  script
+    i=0
+    until [ "$i" -ge 2 ]; do
+      printf '%s\n' "until-$i"
+      i=$((i + 1))
+    done
+  expect
+    stdout "until-0\nuntil-1"
+    stderr ""
+    exit_code 0
+end test "until do and done are recognized"
+```
+
 #### Test: quoted reserved word is not recognized
 
-A reserved word is not recognized if any of its characters are quoted. It is treated as a regular command name, which typically results in a "command not found" error.
+A reserved word is not recognized if any of its characters are quoted. In
+command position it is treated as an ordinary command name.
 
 ```
 begin test "quoted reserved word is not recognized"
   script
-    $SHELL -c '"if" true; then echo yes; fi'
+    cat > if <<'EOF'
+    #!/bin/sh
+    printf '%s\n' quoted-if
+    EOF
+    chmod +x if
+    PATH=".:$PATH" $SHELL -c '"if"'
   expect
-    stdout ""
-    stderr "(.|\n)+"
-    exit_code !=0
+    stdout "quoted-if"
+    stderr ""
+    exit_code 0
 end test "quoted reserved word is not recognized"
 ```
 
 #### Test: partially quoted reserved word is not recognized
 
-A reserved word is not recognized even if only a single character is quoted via a backslash.
+A reserved word is not recognized even if only a single character is quoted via
+a backslash. In command position it is treated as an ordinary command name.
 
 ```
 begin test "partially quoted reserved word is not recognized"
   script
-    $SHELL -c '\if true; then echo yes; fi'
+    cat > if <<'EOF'
+    #!/bin/sh
+    printf '%s\n' escaped-if
+    EOF
+    chmod +x if
+    PATH=".:$PATH" $SHELL -c '\if'
   expect
-    stdout ""
-    stderr "(.|\n)+"
-    exit_code !=0
+    stdout "escaped-if"
+    stderr ""
+    exit_code 0
 end test "partially quoted reserved word is not recognized"
 ```
 
