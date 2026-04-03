@@ -164,10 +164,10 @@ A reserved word is not recognized if any of its characters are quoted. It is tre
 ```
 begin test "quoted reserved word is not recognized"
   script
-    $SHELL -c '"if" true; then echo yes; fi' 2>/dev/null
+    $SHELL -c '"if" true; then echo yes; fi'
   expect
     stdout ""
-    stderr ""
+    stderr "(.|\n)+"
     exit_code !=0
 end test "quoted reserved word is not recognized"
 ```
@@ -179,10 +179,10 @@ A reserved word is not recognized even if only a single character is quoted via 
 ```
 begin test "partially quoted reserved word is not recognized"
   script
-    $SHELL -c '\if true; then echo yes; fi' 2>/dev/null
+    $SHELL -c '\if true; then echo yes; fi'
   expect
     stdout ""
-    stderr ""
+    stderr "(.|\n)+"
     exit_code !=0
 end test "partially quoted reserved word is not recognized"
 ```
@@ -194,10 +194,10 @@ If the third word in a `case` command is a quoted `"in"`, it is not recognized a
 ```
 begin test "quoted in is not recognized as third word in case"
   script
-    $SHELL -c 'case x "in" x) echo ok;; esac' 2>/dev/null
+    $SHELL -c 'case x "in" x) echo ok;; esac'
   expect
     stdout ""
-    stderr ""
+    stderr "(.|\n)+"
     exit_code !=0
 end test "quoted in is not recognized as third word in case"
 ```
@@ -209,10 +209,10 @@ If the third word in a `for` command is a quoted `"do"`, it is not recognized as
 ```
 begin test "quoted do is not recognized as third word in for"
   script
-    $SHELL -c 'for i "do" echo "$i"; done' 2>/dev/null
+    $SHELL -c 'for i "do" echo "$i"; done'
   expect
     stdout ""
-    stderr ""
+    stderr "(.|\n)+"
     exit_code !=0
 end test "quoted do is not recognized as third word in for"
 ```
