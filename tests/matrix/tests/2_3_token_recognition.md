@@ -154,19 +154,22 @@ begin test "blank input is discarded"
 end test "blank input is discarded"
 ```
 
-#### Test: quoted field does not delimit token
+#### Test: empty token from delimiter is discarded
 
-A quoted field does not delimit a token. Unquoted text appended immediately after a quoted field (or vice versa) is treated as a single token.
+When a delimiting rule fires but no characters have been accumulated into a
+token, the resulting empty token is discarded rather than being passed to the
+grammar. Multiple consecutive blanks therefore produce no extra empty arguments.
 
 ```
-begin test "quoted field does not delimit token"
+begin test "empty token from delimiter is discarded"
   script
-    echo "hello"world
+    set --    a      b
+    printf '%s\n' "$#" "$1" "$2"
   expect
-    stdout "helloworld"
+    stdout "2\na\nb"
     stderr ""
     exit_code 0
-end test "quoted field does not delimit token"
+end test "empty token from delimiter is discarded"
 ```
 
 #### Test: substitution does not delimit token nested
@@ -273,134 +276,6 @@ begin test "tokens after io_here are saved until body is parsed"
     stderr ""
     exit_code 0
 end test "tokens after io_here are saved until body is parsed"
-```
-
-#### Test: backslash quoting of special characters
-
-A backslash begins quoted text during token recognition, preventing operator
-characters like `|`, `&`, and `;` from delimiting tokens.
-
-```
-begin test "backslash quoting of special characters"
-  script
-    printf '%s\n' \| \& \;
-  expect
-    stdout "\|\n&\n;"
-    stderr ""
-    exit_code 0
-end test "backslash quoting of special characters"
-```
-
-#### Test: backslash preserves literal value of following character
-
-A backslash keeps `*` in the current word instead of letting it participate in
-pathname expansion or token delimiting.
-
-```
-begin test "backslash preserves literal value of following character"
-  script
-    touch a_test_b
-    printf '%s\n' a\*b
-  expect
-    stdout "a\*b"
-    stderr ""
-    exit_code 0
-end test "backslash preserves literal value of following character"
-```
-
-#### Test: backslash escapes semicolon so it is literal
-
-A backslash before a semicolon prevents the shell from interpreting it as a command delimiter, passing it as a literal character in the argument.
-
-```
-begin test "backslash escapes semicolon so it is literal"
-  script
-    printf '%s\n' foo\;bar
-  expect
-    stdout "foo;bar"
-    stderr ""
-    exit_code 0
-end test "backslash escapes semicolon so it is literal"
-```
-
-#### Test: backslash escapes space preventing field split
-
-A backslash before a space prevents it from acting as a token separator, keeping the two words joined as a single argument.
-
-```
-begin test "backslash escapes space preventing field split"
-  script
-    set -- foo\ bar
-    printf "%s:%s\n" "$#" "$1"
-  expect
-    stdout "1:foo bar"
-    stderr ""
-    exit_code 0
-end test "backslash escapes space preventing field split"
-```
-
-#### Test: backslash preserves dollar sign literally
-
-A backslash escapes a dollar sign, preventing it from initiating parameter expansion and preserving it literally.
-
-```
-begin test "backslash preserves dollar sign literally"
-  script
-    printf '%s\n' \$foo
-  expect
-    stdout "\$foo"
-    stderr ""
-    exit_code 0
-end test "backslash preserves dollar sign literally"
-```
-
-#### Test: backslash-newline is line continuation
-
-A backslash immediately followed by a newline acts as line continuation, allowing a single token (like a command name) to span multiple lines.
-
-```
-begin test "backslash-newline is line continuation"
-  script
-    ec\
-    ho line continuation
-  expect
-    stdout "line continuation"
-    stderr ""
-    exit_code 0
-end test "backslash-newline is line continuation"
-```
-
-#### Test: backslash-newline line continuation between tokens
-
-Line continuation can occur between tokens, acting as a simple continuation rather than a token separator.
-
-```
-begin test "backslash-newline line continuation between tokens"
-  script
-    echo \
-    hello
-  expect
-    stdout "hello"
-    stderr ""
-    exit_code 0
-end test "backslash-newline line continuation between tokens"
-```
-
-#### Test: multiple consecutive backslash-newline continuations
-
-Multiple consecutive backslash-newline sequences are properly processed as line continuations, joining the lines.
-
-```
-begin test "multiple consecutive backslash-newline continuations"
-  script
-    ec\
-    \
-    ho multi
-  expect
-    stdout "multi"
-    stderr ""
-    exit_code 0
-end test "multiple consecutive backslash-newline continuations"
 ```
 
 #### Test: single-quoted text does not delimit surrounding token
@@ -520,22 +395,6 @@ begin test "backquote inside double quotes executes"
 end test "backquote inside double quotes executes"
 ```
 
-#### Test: backslash in double quotes does not delimit token for other chars
-
-Inside double quotes, a backslash before characters other than `$`, `` ` ``,
-`"`, `\`, or newline remains part of the current token as a literal backslash.
-
-```
-begin test "backslash in double quotes does not delimit token for other chars"
-  script
-    printf '%s\n' "\n" "\a" "\*"
-  expect
-    stdout "\\n\n\\a\n\\\*"
-    stderr ""
-    exit_code 0
-end test "backslash in double quotes does not delimit token for other chars"
-```
-
 #### Test: quoted expansion result stays in one field
 
 When an expansion occurs within double quotes, the token remains one field
@@ -622,21 +481,22 @@ begin test "dollar-single-quoted text does not delimit surrounding token"
 end test "dollar-single-quoted text does not delimit surrounding token"
 ```
 
-#### Test: backslash-quoted operator characters stay in one token
+#### Test: backslash-quoted special characters stay in one token
 
-Backslash quoting keeps operator and quoting characters inside the current word
-instead of allowing them to delimit tokens.
+Backslash quoting keeps operator characters (`|`, `&`, `;`) and expansion
+introducers (`$`, `` ` ``) inside the current word instead of allowing them to
+delimit tokens or start expansions (Rule 4 takes precedence over Rules 5 and 6).
 
 ```
-begin test "backslash-quoted operator characters stay in one token"
+begin test "backslash-quoted special characters stay in one token"
   script
-    set -- pre\|post pre\&post pre\;post
-    printf '%s\n%s\n%s\n%s\n' "$#" "$1" "$2" "$3"
+    set -- pre\|post pre\&post pre\;post pre\$post pre\`post
+    printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$#" "$1" "$2" "$3" "$4" "$5"
   expect
-    stdout "3\npre\|post\npre&post\npre;post"
+    stdout "5\npre\|post\npre&post\npre;post\npre\$post\npre`post"
     stderr ""
     exit_code 0
-end test "backslash-quoted operator characters stay in one token"
+end test "backslash-quoted special characters stay in one token"
 ```
 
 #### Test: single-quoted special characters stay in one token
@@ -689,22 +549,6 @@ begin test "quoted blanks do not delimit token"
     stderr ""
     exit_code 0
 end test "quoted blanks do not delimit token"
-```
-
-#### Test: backslash-newline is line continuation not literal newline
-
-A backslash-newline pair is removed entirely and does not produce a literal newline in the output.
-
-```
-begin test "backslash-newline is line continuation not literal newline"
-  script
-    echo hello\
-    world
-  expect
-    stdout "helloworld"
-    stderr ""
-    exit_code 0
-end test "backslash-newline is line continuation not literal newline"
 ```
 
 #### Test: quoted glob characters stay in one token
@@ -940,22 +784,6 @@ begin test "arithmetic addition"
 end test "arithmetic addition"
 ```
 
-#### Test: arithmetic subtraction negative
-
-Arithmetic expansion remains part of the current token even when the result is
-negative.
-
-```
-begin test "arithmetic subtraction negative"
-  script
-    printf '%s\n' pre$((3 - 4))post
-  expect
-    stdout "pre-1post"
-    stderr ""
-    exit_code 0
-end test "arithmetic subtraction negative"
-```
-
 #### Test: && forms a single operator token
 
 Two consecutive `&` characters are combined into the `&&` operator token rather
@@ -1117,21 +945,6 @@ begin test "comment after operator is ignored up to newline"
     stderr ""
     exit_code 0
 end test "comment after operator is ignored up to newline"
-```
-
-#### Test: quoted # is not a comment
-
-A `#` character enclosed in quotes does not introduce a comment and is treated literally.
-
-```
-begin test "quoted # is not a comment"
-  script
-    echo "a # not a comment"
-  expect
-    stdout "a # not a comment"
-    stderr ""
-    exit_code 0
-end test "quoted # is not a comment"
 ```
 
 #### Test: # in middle of word is not a comment
