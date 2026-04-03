@@ -200,6 +200,25 @@ begin test "quoted # is not a comment"
 end test "quoted # is not a comment"
 ```
 
+#### Test: adjacent quoting forms concatenate into single word
+
+Different quoting mechanisms placed next to each other without intervening
+whitespace are joined into a single token. This is essential for embedding
+characters that cannot appear inside a particular quoting form (for example, a
+single-quote inside a single-quoted region).
+
+```
+begin test "adjacent quoting forms concatenate into single word"
+  script
+    set -- 'foo'"bar" "hello "world 'a'\''b'
+    printf '%s\n%s\n%s\n%s\n' "$#" "$1" "$2" "$3"
+  expect
+    stdout "3\nfoobar\nhello world\na'b"
+    stderr ""
+    exit_code 0
+end test "adjacent quoting forms concatenate into single word"
+```
+
 #### Test: quoting prevents reserved word recognition
 
 Quoting can prevent a reserved word from being recognized as such. Here the
@@ -295,6 +314,23 @@ begin test "backslash escapes space preventing field split"
     stderr ""
     exit_code 0
 end test "backslash escapes space preventing field split"
+```
+
+#### Test: backslash before dollar prevents parameter expansion
+
+A backslash before `$` preserves the dollar sign literally, preventing it from
+introducing parameter expansion.
+
+```
+begin test "backslash before dollar prevents parameter expansion"
+  script
+    HOME=/should/not/appear
+    printf '%s\n' \$HOME
+  expect
+    stdout "\$HOME"
+    stderr ""
+    exit_code 0
+end test "backslash before dollar prevents parameter expansion"
 ```
 
 #### Test: backslash-newline is line continuation
@@ -424,6 +460,23 @@ begin test "single quotes preserve literal newline"
 end test "single quotes preserve literal newline"
 ```
 
+#### Test: single-quote cannot occur within single-quotes
+
+A single-quote cannot appear inside single-quotes because there is no escape
+mechanism. To include a literal single-quote, end the single-quoted string,
+insert an escaped or differently-quoted single-quote, and resume.
+
+```
+begin test "single-quote cannot occur within single-quotes"
+  script
+    printf '%s\n' 'don'\''t stop'
+  expect
+    stdout "don't stop"
+    stderr ""
+    exit_code 0
+end test "single-quote cannot occur within single-quotes"
+```
+
 #### Test: unterminated single quote causes shell syntax error
 
 An unmatched single-quote is not a valid shell token. The shell should reject
@@ -510,6 +563,23 @@ begin test "recursive tokenizing finds matching paren"
     stderr ""
     exit_code 0
 end test "recursive tokenizing finds matching paren"
+```
+
+#### Test: nested subshell parens do not close command substitution
+
+When a subshell `(...)` appears inside `$(...)`, the shell applies token
+recognition recursively. The `)` that closes the subshell must not be mistaken
+for the `)` that closes the command substitution.
+
+```
+begin test "nested subshell parens do not close command substitution"
+  script
+    printf '%s\n' "$(echo a; (echo b))"
+  expect
+    stdout "a\nb"
+    stderr ""
+    exit_code 0
+end test "nested subshell parens do not close command substitution"
 ```
 
 #### Test: backquote inside double quotes executes
@@ -664,22 +734,22 @@ begin test "quoted $@ preserves positional parameter boundaries"
 end test "quoted $@ preserves positional parameter boundaries"
 ```
 
-#### Test: substring pattern remains active inside quoted ${...}
+#### Test: all four substring processing forms active in double quotes
 
-For substring-processing parameter expansions such as `${var#word}`, the outer
-double-quotes do not disable pattern syntax inside the braces. The `*` in the
-pattern still matches.
+For the four substring-processing parameter expansion forms (`#`, `##`, `%`,
+`%%`), the outer double-quotes do not disable pattern syntax inside the braces.
+The `*` glob character in each pattern still matches as expected.
 
 ```
-begin test "substring pattern remains active inside quoted ${...}"
+begin test "all four substring processing forms active in double quotes"
   script
-    foo='abcabc'
-    printf '%s\n' "${foo#*c}"
+    v='aXbXcXd'
+    printf '%s\n' "${v#*X}" "${v##*X}" "${v%X*}" "${v%%X*}"
   expect
-    stdout "abc"
+    stdout "bXcXd\nd\naXbXc\na"
     stderr ""
     exit_code 0
-end test "substring pattern remains active inside quoted ${...}"
+end test "all four substring processing forms active in double quotes"
 ```
 
 #### Test: default word remains literal inside quoted ${...:-word}
@@ -750,22 +820,6 @@ begin test "double quotes prevent wildcard expansion"
 end test "double quotes prevent wildcard expansion"
 ```
 
-#### Test: double quotes backslash produces single backslash
-
-Inside double-quotes, `\\` (backslash before backslash) produces a single
-literal backslash.
-
-```
-begin test "double quotes backslash produces single backslash"
-  script
-    printf '%s\n' "\\"
-  expect
-    stdout "\\"
-    stderr ""
-    exit_code 0
-end test "double quotes backslash produces single backslash"
-```
-
 #### Test: escaped double quote inside double quotes
 
 A backslash before `"` inside double-quotes produces a literal double-quote
@@ -782,21 +836,20 @@ begin test "escaped double quote inside double quotes"
 end test "escaped double quote inside double quotes"
 ```
 
-#### Test: dollar-paren command substitution inside double quotes
+#### Test: unterminated double quote causes shell syntax error
 
-The `$(...)` command substitution form works inside double-quotes, replacing the
-construct with the command's standard output while preserving the result as part
-of one quoted field.
+An unmatched double-quote is not valid shell syntax. The shell should reject the
+script with a syntax error.
 
 ```
-begin test "dollar-paren command substitution inside double quotes"
+begin test "unterminated double quote causes shell syntax error"
   script
-    printf '%s\n' "$(printf '%s\n' hello)"
+    printf '%s\n' "unterminated
   expect
-    stdout "hello"
-    stderr ""
-    exit_code 0
-end test "dollar-paren command substitution inside double quotes"
+    stdout ""
+    stderr "(.|\n)+"
+    exit_code !=0
+end test "unterminated double quote causes shell syntax error"
 ```
 
 ## 2.2.4 Dollar-Single-Quotes
