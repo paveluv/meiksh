@@ -1,4 +1,4 @@
-# Introduction
+# Test Suite for 2.2 Quoting
 
 This test suite covers **Section 2.2 Quoting** of the POSIX Shell Command Language
 (POSIX.1-2024), which defines how the shell interprets special characters and the
