@@ -35,7 +35,7 @@ The various quoting mechanisms are the escape character, single-quotes, double-q
 
 ### Tests
 
-##### Test: backslash-quoting preserves literal special characters
+#### Test: backslash-quoting preserves literal special characters
 
 Backslash-quoting each of the mandatory-quote characters (`| & ; < > ( ) $ \` \ "`)
 produces their literal values.
@@ -51,7 +51,7 @@ begin test "backslash-quoting preserves literal special characters"
 end test "backslash-quoting preserves literal special characters"
 ```
 
-##### Test: single-quoting preserves literal special characters
+#### Test: single-quoting preserves literal special characters
 
 Single-quoting a string containing all mandatory-quote characters preserves each
 one literally.
@@ -67,7 +67,7 @@ begin test "single-quoting preserves literal special characters"
 end test "single-quoting preserves literal special characters"
 ```
 
-##### Test: double-quoting preserves literal pipe semicolon angle parens
+#### Test: double-quoting preserves literal pipe semicolon angle parens
 
 Double-quoting preserves the literal value of `| & ; < > ( )`, which are not
 special inside double-quotes.
@@ -83,7 +83,7 @@ begin test "double-quoting preserves literal pipe semicolon angle parens"
 end test "double-quoting preserves literal pipe semicolon angle parens"
 ```
 
-##### Test: quoting preserves literal space and tab in single argument
+#### Test: quoting preserves literal space and tab in single argument
 
 Quoting spaces and tabs prevents field splitting, so `"hello world"` and `"a<TAB>b"`
 each remain a single argument.
@@ -99,7 +99,7 @@ begin test "quoting preserves literal space and tab in single argument"
 end test "quoting preserves literal space and tab in single argument"
 ```
 
-##### Test: backslash-newline is line continuation not literal newline
+#### Test: backslash-newline is line continuation not literal newline
 
 A backslash immediately before a newline acts as line continuation, not as a
 literal newline character.
@@ -116,7 +116,7 @@ begin test "backslash-newline is line continuation not literal newline"
 end test "backslash-newline is line continuation not literal newline"
 ```
 
-##### Test: quoting prevents glob expansion of * ? [ ]
+#### Test: quoting prevents glob expansion of * ? [ ]
 
 Quoting the conditionally-special glob characters `*`, `?`, `[` prevents
 pathname expansion.
@@ -132,7 +132,7 @@ begin test "quoting prevents glob expansion of * ? [ ]"
 end test "quoting prevents glob expansion of * ? [ ]"
 ```
 
-##### Test: quoting preserves literal ~ = % { } characters
+#### Test: quoting preserves literal ~ = % { } characters
 
 The conditionally-special characters `~ = % { } , ^ -` are preserved literally
 when quoted.
@@ -148,7 +148,7 @@ begin test "quoting preserves literal ~ = % { } characters"
 end test "quoting preserves literal ~ = % { } characters"
 ```
 
-##### Test: dollar-single-quote newline escape
+#### Test: dollar-single-quote newline escape
 
 The `$'...'` quoting mechanism processes backslash escapes; `$'a\nb'` produces a
 literal newline between `a` and `b`.
@@ -164,7 +164,7 @@ begin test "dollar-single-quote newline escape"
 end test "dollar-single-quote newline escape"
 ```
 
-##### Test: quoted # is not a comment
+#### Test: quoted # is not a comment
 
 The `#` character is conditionally special (it starts comments). When quoted
 inside double-quotes, it is preserved literally and does not introduce a comment.
@@ -186,7 +186,7 @@ A `<backslash>` that is not quoted shall preserve the literal value of the follo
 
 ### Tests
 
-##### Test: backslash preserves literal value of following character
+#### Test: backslash preserves literal value of following character
 
 A backslash before `*` preserves it literally inside a word, so `a\*b` produces
 `a*b` without pathname expansion.
@@ -202,7 +202,7 @@ begin test "backslash preserves literal value of following character"
 end test "backslash preserves literal value of following character"
 ```
 
-##### Test: backslash escapes semicolon so it is literal
+#### Test: backslash escapes semicolon so it is literal
 
 A backslash before `;` prevents the shell from treating it as a command
 separator. The output is the literal string `foo;bar`.
@@ -218,7 +218,7 @@ begin test "backslash escapes semicolon so it is literal"
 end test "backslash escapes semicolon so it is literal"
 ```
 
-##### Test: backslash escapes space preventing field split
+#### Test: backslash escapes space preventing field split
 
 A backslash before a space prevents field splitting, so `foo\ bar` is a single
 argument rather than two.
@@ -235,7 +235,7 @@ begin test "backslash escapes space preventing field split"
 end test "backslash escapes space preventing field split"
 ```
 
-##### Test: backslash-newline is line continuation
+#### Test: backslash-newline is line continuation
 
 When a newline immediately follows a backslash, the shell treats the pair as line
 continuation. The token `ec` + `ho` is joined into the command `echo`.
@@ -252,7 +252,7 @@ begin test "backslash-newline is line continuation"
 end test "backslash-newline is line continuation"
 ```
 
-##### Test: backslash-newline line continuation between tokens
+#### Test: backslash-newline line continuation between tokens
 
 Line continuation between separate tokens: the backslash-newline after `echo`
 joins it with `hello` on the next line.
@@ -269,7 +269,7 @@ begin test "backslash-newline line continuation between tokens"
 end test "backslash-newline line continuation between tokens"
 ```
 
-##### Test: multiple consecutive backslash-newline continuations
+#### Test: multiple consecutive backslash-newline continuations
 
 Multiple consecutive backslash-newline pairs are all removed, joining `ec`, an
 empty continuation, and `ho multi` into `echo multi`.
@@ -287,7 +287,7 @@ begin test "multiple consecutive backslash-newline continuations"
 end test "multiple consecutive backslash-newline continuations"
 ```
 
-##### Test: line continuation: backslash-newline removed before tokenizing
+#### Test: line continuation: backslash-newline removed before tokenizing
 
 The backslash-newline pair is removed before token splitting, so `a\<newline>b`
 becomes the single token `ab`.
@@ -310,7 +310,7 @@ Enclosing characters in single-quotes (`''`) shall preserve the literal value of
 
 ### Tests
 
-##### Test: single quotes preserve all characters literally
+#### Test: single quotes preserve all characters literally
 
 Characters `$` and `*` inside single-quotes are not expanded; they appear in the
 output as literal `$foo *`.
@@ -349,7 +349,7 @@ The application shall ensure that a double-quote that is not within `"$(...)"` n
 
 ### Tests
 
-##### Test: double quotes allow parameter and command and arithmetic expansion
+#### Test: double quotes allow parameter and command and arithmetic expansion
 
 Inside double-quotes, `$foo`, `$(echo sub)`, and `$((2+2))` are expanded, but
 `$'literal'` (dollar-single-quote) is not special.
@@ -366,7 +366,7 @@ begin test "double quotes allow parameter and command and arithmetic expansion"
 end test "double quotes allow parameter and command and arithmetic expansion"
 ```
 
-##### Test: inner double quotes inside command substitution
+#### Test: inner double quotes inside command substitution
 
 Double-quotes inside `$(...)` are independent from the outer double-quotes; the
 inner `"inner quotes"` is processed as a separate quoting context.
@@ -382,7 +382,7 @@ begin test "inner double quotes inside command substitution"
 end test "inner double quotes inside command substitution"
 ```
 
-##### Test: recursive tokenizing finds matching paren
+#### Test: recursive tokenizing finds matching paren
 
 The shell applies tokenizing rules recursively to find the matching `)` for
 `$(...)`, even when the inner command contains parentheses.
@@ -398,7 +398,7 @@ begin test "recursive tokenizing finds matching paren"
 end test "recursive tokenizing finds matching paren"
 ```
 
-##### Test: backquote inside double quotes executes
+#### Test: backquote inside double quotes executes
 
 A backquote inside double-quotes retains its special meaning and introduces
 command substitution.
@@ -414,7 +414,7 @@ begin test "backquote inside double quotes executes"
 end test "backquote inside double quotes executes"
 ```
 
-##### Test: backslash in double quotes special only before certain chars
+#### Test: backslash in double quotes special only before certain chars
 
 Inside double-quotes (outside `$(...)` and `${...}`), backslash is only special
 before `$`, `` ` ``, `"`, `\`, and newline. Before other characters like `n`, the
@@ -431,7 +431,7 @@ begin test "backslash in double quotes special only before certain chars"
 end test "backslash in double quotes special only before certain chars"
 ```
 
-##### Test: double quotes preserve expansion result literally
+#### Test: double quotes preserve expansion result literally
 
 When a parameter expansion occurs inside double-quotes, the result is preserved
 literally without further expansion — glob characters in the value are not
@@ -449,7 +449,7 @@ begin test "double quotes preserve expansion result literally"
 end test "double quotes preserve expansion result literally"
 ```
 
-##### Test: substring processing not affected by outer double quotes
+#### Test: substring processing not affected by outer double quotes
 
 For substring-processing parameter expansions (`${var#pattern}`, etc.), the
 double-quotes have no effect on pattern matching inside the braces.
@@ -467,7 +467,7 @@ begin test "substring processing not affected by outer double quotes"
 end test "substring processing not affected by outer double quotes"
 ```
 
-##### Test: backslash dollar and backquote inside braces
+#### Test: backslash dollar and backquote inside braces
 
 Inside `${...}`, backquote and `$` retain their special meanings (command
 substitution and expansion), while `\` escapes `$` and follows double-quote
@@ -485,7 +485,7 @@ begin test "backslash dollar and backquote inside braces"
 end test "backslash dollar and backquote inside braces"
 ```
 
-##### Test: double quotes prevent wildcard expansion
+#### Test: double quotes prevent wildcard expansion
 
 Glob characters inside double-quotes are not expanded; `"a*b"` outputs the
 literal string `a*b`.
@@ -501,7 +501,7 @@ begin test "double quotes prevent wildcard expansion"
 end test "double quotes prevent wildcard expansion"
 ```
 
-##### Test: double quotes backslash produces single backslash
+#### Test: double quotes backslash produces single backslash
 
 Inside double-quotes, `\\` (backslash before backslash) produces a single
 literal backslash.
@@ -517,7 +517,7 @@ begin test "double quotes backslash produces single backslash"
 end test "double quotes backslash produces single backslash"
 ```
 
-##### Test: escaped double quote inside double quotes
+#### Test: escaped double quote inside double quotes
 
 A backslash before `"` inside double-quotes produces a literal double-quote
 character, as required for including `"` within double-quoted strings.
@@ -533,7 +533,7 @@ begin test "escaped double quote inside double quotes"
 end test "escaped double quote inside double quotes"
 ```
 
-##### Test: dollar-paren command substitution
+#### Test: dollar-paren command substitution
 
 The `$(...)` command substitution form works inside double-quotes, replacing the
 construct with the command's standard output.
@@ -583,7 +583,7 @@ If a `<backslash>`-escape sequence represents a single-quote character (for exam
 
 ### Tests
 
-##### Test: dollar-single-quote basic support
+#### Test: dollar-single-quote basic support
 
 The `$'...'` syntax processes `\n` as a newline character, producing two lines
 of output.
@@ -599,7 +599,7 @@ begin test "dollar-single-quote basic support"
 end test "dollar-single-quote basic support"
 ```
 
-##### Test: dollar-single-quote hex escape
+#### Test: dollar-single-quote hex escape
 
 The `\xHH` escape in `$'...'` produces the byte with the given hexadecimal value;
 `\x41\x42` yields `AB`.
@@ -615,7 +615,7 @@ begin test "dollar-single-quote hex escape"
 end test "dollar-single-quote hex escape"
 ```
 
-##### Test: dollar-single-quote escaped single quote
+#### Test: dollar-single-quote escaped single quote
 
 The `\'` escape inside `$'...'` produces a literal single-quote without
 terminating the dollar-single-quote sequence.
@@ -631,7 +631,7 @@ begin test "dollar-single-quote escaped single quote"
 end test "dollar-single-quote escaped single quote"
 ```
 
-##### Test: dollar-single-quote variable-length escapes terminate correctly
+#### Test: dollar-single-quote variable-length escapes terminate correctly
 
 Variable-length escape sequences (`\xHH` and `\ddd`) terminate at the first
 character that is not of the expected type, or when the maximum number of digits

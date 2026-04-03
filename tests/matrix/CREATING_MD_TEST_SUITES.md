@@ -33,7 +33,7 @@ Every `.md` test suite follows this exact layout:
 
     ### Tests
 
-    ##### Test: test name here
+    #### Test: test name here
 
     Brief description of what this test verifies and why.
 
@@ -48,7 +48,7 @@ Every `.md` test suite follows this exact layout:
     end test "test name here"
     ```
 
-    ##### Test: another test
+    #### Test: another test
 
     ...more tests...
 
@@ -58,7 +58,7 @@ Every `.md` test suite follows this exact layout:
 
     ### Tests
 
-    ##### Test: subsection test
+    #### Test: subsection test
 
     ...tests for this subsection...
 
@@ -70,17 +70,17 @@ Every `.md` test suite follows this exact layout:
 
 1. **Section headings** use `##` (level 2). Subsection headings also use `##`.
 2. **"Tests" headings** use `###` (level 3), always literally `### Tests`.
-3. **Test headings** use `#####` (level 5), always in the form `##### Test: <name>`.
-4. The test name after `##### Test: ` must **exactly match** the name in the
+3. **Test headings** use `####` (level 4), always in the form `#### Test: <name>`.
+4. The test name after `#### Test: ` must **exactly match** the name in the
    `begin test "..."` and `end test "..."` lines inside the code block.
-5. Each `##### Test:` section must contain **exactly one** fenced code block
+5. Each `#### Test:` section must contain **exactly one** fenced code block
    (`` ``` ``). The code block must not contain triple backticks internally.
 6. **Standard text** is copied verbatim from `docs/posix/md/utilities/V3_chap02.md`.
-   Code blocks in the standard text (outside `##### Test:` sections) are ignored
+   Code blocks in the standard text (outside `#### Test:` sections) are ignored
    by the parser and are safe to include.
-7. Markdown text between the `##### Test:` heading and the code block (the
+7. Markdown text between the `#### Test:` heading and the code block (the
    description) must not contain any headings (lines starting with `#`).
-8. Everything outside `##### Test:` sections is treated as documentation and
+8. Everything outside `#### Test:` sections is treated as documentation and
    ignored by the test runner.
 
 ## Test Block Format (`.epty` DSL)
@@ -242,7 +242,7 @@ described above:
 3. For **each section/subsection**:
    - Copy the **verbatim standard text** from `docs/posix/md/utilities/V3_chap02.md`.
    - Add a `### Tests` heading.
-   - Add test blocks migrated from existing `.epty` files, one `##### Test:` per test.
+   - Add test blocks migrated from existing `.epty` files, one `#### Test:` per test.
    - Write a brief **description** above each test's code block explaining what
      the test verifies.
 
