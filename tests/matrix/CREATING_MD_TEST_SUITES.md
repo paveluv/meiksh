@@ -35,7 +35,10 @@ Every `.md` test suite follows this exact layout:
 
     #### Test: test name here
 
-    Brief description of what this test verifies and why.
+    A brief, plain-English explanation of what this test verifies and why.
+    Do not use blockquotes to repeat the standard verbatim here; instead,
+    conveniently paraphrase or explain the rule being tested so a random reader
+    can easily follow along.
 
     ```
     begin test "test name here"
@@ -244,7 +247,7 @@ described above:
    - Add a `### Tests` heading.
    - Add test blocks migrated from existing `.epty` files, one `#### Test:` per test.
    - Write a brief **description** above each test's code block explaining what
-     the test verifies.
+     the test verifies. This description should be written in plain English, explaining the intent of the test to a random reader. It should conveniently paraphrase or summarize the relevant requirement(s) rather than just pasting a blockquote of the standard text. Since the verbatim standard text is already provided above the `### Tests` heading, blockquotes of the standard in the test description are redundant and discouraged.
 
 ### Step 4: Verify parsing
 

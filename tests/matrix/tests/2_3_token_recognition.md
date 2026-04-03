@@ -34,11 +34,7 @@ In situations where the shell parses its input as a *program*, once a *complete_
 
 #### Test: end of substitution does not delimit token
 
-> Once a token has started, zero or more characters from the input shall be appended to the token until the end of the token is delimited according to one of the rules below.
-
-> When both the start and end of a token have been delimited, the characters forming the token shall be exactly those in the input between the two delimiters, including any quoting characters.
-
-> If the end of input is recognized, the current token (if any) shall be delimited.
+Tokens are not delimited by the end of a command substitution. The string `suffix` is appended to the substitution to form a single token.
 
 ```
 begin test "end of substitution does not delimit token"
@@ -53,7 +49,7 @@ end test "end of substitution does not delimit token"
 
 #### Test: complete_command executed before next is tokenized
 
-> In situations where the shell parses its input as a program , once a complete_command has been recognized by the grammar (see 2.10 Shell Grammar ), the complete_command shall be executed before the next complete_command is tokenized and parsed.
+When parsing an interactive shell or a script, the shell executes a complete command before tokenizing and parsing the next one. This means variables set in a command take effect immediately.
 
 ```
 begin test "complete_command executed before next is tokenized"
@@ -71,9 +67,7 @@ end test "complete_command executed before next is tokenized"
 
 #### Test: line continuation: backslash-newline removed before tokenizing
 
-> The <backslash> and <newline> shall be removed before splitting the input into tokens.
-
-> To specify nesting within the backquoted version, the application shall precede the inner backquotes with <backslash> characters.
+A backslash followed by a newline is interpreted as line continuation and removed entirely before the shell splits the input into tokens, meaning it does not act as a token separator.
 
 ```
 begin test "line continuation: backslash-newline removed before tokenizing"
@@ -89,7 +83,7 @@ end test "line continuation: backslash-newline removed before tokenizing"
 
 #### Test: bad expansion parameter error
 
-> During token recognition no substitutions shall be actually performed, and the result token shall contain exactly the characters that appear in the input unmodified, including any embedded or enclosing quotes or substitution operators, between the start and the end of the quoted text.
+During token recognition, substitutions aren't actually performed. Even if a token contains a substitution that will eventually cause a syntax or expansion error, the shell parses it as a word first and errors out during the expansion phase.
 
 ```
 begin test "bad expansion parameter error"
@@ -104,11 +98,7 @@ end test "bad expansion parameter error"
 
 #### Test: end of input delimits current token
 
-> The shell shall read its input in terms of lines. (For details about how the shell reads its input, see the description of sh .) The input lines can be of unlimited length.
-
-> When it is not processing an io_here , the shell shall break its input into tokens by applying the first applicable rule below to each character in turn in its input.
-
-> At the start of input or after a previous token has just been delimited, the first or next token, respectively, shall start with the first character that has not already been included in a token and is not discarded according to the rules below.
+The end of input (EOF) automatically delimits the current token being parsed without needing a trailing newline or blank.
 
 ```
 begin test "end of input delimits current token"
@@ -123,11 +113,7 @@ end test "end of input delimits current token"
 
 #### Test: empty token discarded
 
-> If a rule below indicates that a token is delimited, and no characters have been included in the token, that empty token shall be discarded.
-
-> The shell shall read sufficient input to determine the end of the unit to be expanded (as explained in the cited sections).
-
-> When a TOKEN is seen where one of those annotated productions could be used to reduce the symbol, the applicable rule shall be applied to convert the token identifier type of the TOKEN to a token identifier acceptable at that point in the grammar.
+If a token is delimited but hasn't accumulated any characters (such as between two semicolons `;;`), that empty token is discarded and not treated as a word.
 
 ```
 begin test "empty token discarded"
@@ -142,9 +128,7 @@ end test "empty token discarded"
 
 #### Test: quoted field does not delimit token
 
-> The token shall not be delimited by the end of the quoted field.
-
-> If the previous character was used as part of an operator and the current character is not quoted and can be used with the previous characters to form an operator, it shall be used as part of that (operator) token.
+A quoted field does not delimit a token. Unquoted text appended immediately after a quoted field (or vice versa) is treated as a single token.
 
 ```
 begin test "quoted field does not delimit token"
@@ -159,11 +143,7 @@ end test "quoted field does not delimit token"
 
 #### Test: substitution does not delimit token nested
 
-> For \
-
-> The token shall not be delimited by the end of the substitution.
-
-> When a TOKEN is subject to alias substitution, the value of the alias shall be processed as if it had been read from the input instead of the TOKEN , with token recognition (see 2.3 Token Recognition ) resuming at the start of the alias value.
+A command substitution does not delimit a token. Any preceding or trailing text is concatenated with the substitution to form a single token.
 
 ```
 begin test "substitution does not delimit token nested"
@@ -178,11 +158,7 @@ end test "substitution does not delimit token nested"
 
 #### Test: here-document body after io_here
 
-> When an io_here token has been recognized by the grammar (see 2.10 Shell Grammar ), one or more of the subsequent lines immediately following the next NEWLINE token form the body of a here-document and shall be parsed according to the rules of 2.7.4 Here-Document .
-
-> Any non- NEWLINE tokens (including more io_here tokens) that are recognized while searching for the next NEWLINE token shall be saved for processing after the here-document has been parsed.
-
-> If a saved token is an io_here token, the corresponding here-document shall start on the line immediately following the line containing the trailing delimiter of the previous here-document.
+When a here-document redirection (`<<EOF`) is recognized, the shell reads the body of the here-document starting from the line immediately following the next newline character.
 
 ```
 begin test "here-document body after io_here"
@@ -199,7 +175,7 @@ end test "here-document body after io_here"
 
 #### Test: multiple here-documents on same line
 
-> These lines shall be parsed using two major modes: ordinary token recognition and processing of here-documents.
+If multiple here-document redirections appear on the same line, their bodies are read sequentially in the order they were defined, starting from the following lines.
 
 ```
 begin test "multiple here-documents on same line"
@@ -218,9 +194,7 @@ end test "multiple here-documents on same line"
 
 #### Test: here-doc nested in command substitution
 
-> The backquote shall retain its special meaning introducing the other form of command substitution (see 2.6.3 Command Substitution).
-
-> Command substitution shall occur when command(s) are enclosed as follows: $( commands ) or (backquoted version): ` commands ` The shell shall expand the command substitution by executing commands in a subshell environment (see 2.13 Shell Execution Environment ) and replacing the command substitution (the text of the commands string plus the enclosing \
+A here-document can be nested safely inside a command substitution, provided the termination of the substitution occurs after the termination of the here-document.
 
 ```
 begin test "here-doc nested in command substitution"
@@ -238,7 +212,7 @@ end test "here-doc nested in command substitution"
 
 #### Test: backslash quoting of special characters
 
-> After a token has been categorized as type TOKEN (see 2.10.1 Shell Grammar Lexical Conventions ), including (recursively) any token resulting from an alias substitution, the TOKEN shall be subject to alias substitution if all of the following conditions are true: The TOKEN does not contain any quoting characters.
+A backslash preserves the literal value of the following character, preventing special characters like `|`, `&`, and `;` from acting as operators.
 
 ```
 begin test "backslash quoting of special characters"
@@ -253,9 +227,7 @@ end test "backslash quoting of special characters"
 
 #### Test: backslash preserves literal value of following character
 
-> A <backslash> that is not quoted shall preserve the literal value of the following character, with the exception of a <newline>.
-
-> A sequence of characters starting with a <dollar-sign> immediately followed by a single-quote ( $' ) shall preserve the literal value of all characters up to an unescaped terminating single-quote ( ' ), with the exception of certain <backslash>-escape sequences, as follows: \\\
+A backslash escapes the literal value of a wildcard character like `*`, preventing pathname expansion.
 
 ```
 begin test "backslash preserves literal value of following character"
@@ -270,7 +242,7 @@ end test "backslash preserves literal value of following character"
 
 #### Test: backslash escapes semicolon so it is literal
 
-> A <backslash> that is not quoted shall preserve the literal value of the following character, with the exception of a <newline>.
+A backslash before a semicolon prevents the shell from interpreting it as a command delimiter, passing it as a literal character in the argument.
 
 ```
 begin test "backslash escapes semicolon so it is literal"
@@ -285,7 +257,7 @@ end test "backslash escapes semicolon so it is literal"
 
 #### Test: backslash escapes space preventing field split
 
-> A <backslash> that is not quoted shall preserve the literal value of the following character, with the exception of a <newline>.
+A backslash before a space prevents it from acting as a token separator, keeping the two words joined as a single argument.
 
 ```
 begin test "backslash escapes space preventing field split"
@@ -301,7 +273,7 @@ end test "backslash escapes space preventing field split"
 
 #### Test: backslash preserves dollar sign literally
 
-> If the current character is an unquoted <backslash>, single-quote, or double-quote or is the first character of an unquoted <dollar-sign> single-quote sequence, it shall affect quoting for subsequent characters up to the end of the quoted text.
+A backslash escapes a dollar sign, preventing it from initiating parameter expansion and preserving it literally.
 
 ```
 begin test "backslash preserves dollar sign literally"
@@ -316,9 +288,7 @@ end test "backslash preserves dollar sign literally"
 
 #### Test: backslash-newline is line continuation
 
-> The sh utility is a command language interpreter that shall execute commands read from a command line string, the standard input, or a specified file.
-
-> If a <newline> immediately follows the <backslash>, the shell shall interpret this as line continuation.
+A backslash immediately followed by a newline acts as line continuation, allowing a single token (like a command name) to span multiple lines.
 
 ```
 begin test "backslash-newline is line continuation"
@@ -334,7 +304,7 @@ end test "backslash-newline is line continuation"
 
 #### Test: backslash-newline line continuation between tokens
 
-> If a <newline> immediately follows the <backslash>, the shell shall interpret this as line continuation.
+Line continuation can occur between tokens, acting as a simple continuation rather than a token separator.
 
 ```
 begin test "backslash-newline line continuation between tokens"
@@ -350,7 +320,7 @@ end test "backslash-newline line continuation between tokens"
 
 #### Test: multiple consecutive backslash-newline continuations
 
-> If a <newline> immediately follows the <backslash>, the shell shall interpret this as line continuation.
+Multiple consecutive backslash-newline sequences are properly processed as line continuations, joining the lines.
 
 ```
 begin test "multiple consecutive backslash-newline continuations"
@@ -367,9 +337,7 @@ end test "multiple consecutive backslash-newline continuations"
 
 #### Test: single quotes preserve all characters literally
 
-> Enclosing characters in single-quotes ( '' ) shall preserve the literal value of each character within the single-quotes.
-
-> These <backslash>-escape sequences shall be processed (replaced with the bytes or characters they yield) immediately prior to word expansion (see 2.6 Word Expansions ) of the word in which the dollar-single-quotes sequence occurs.
+Enclosing characters in single quotes preserves the literal value of all characters within, including wildcards and dollar signs.
 
 ```
 begin test "single quotes preserve all characters literally"
@@ -384,7 +352,7 @@ end test "single quotes preserve all characters literally"
 
 #### Test: double quotes prevent wildcard expansion
 
-> The <backslash> character shall follow the same rules as for characters in double-quotes described in this section except that it shall additionally retain its special meaning as an escape character when followed by '}' and this shall prevent the escaped '}' from being considered when determining the matching '}' (using the rule in 2.6.2 Parameter Expansion ).
+Enclosing characters in double quotes preserves their literal value and prevents wildcard expansion (like `*`).
 
 ```
 begin test "double quotes prevent wildcard expansion"
@@ -399,7 +367,7 @@ end test "double quotes prevent wildcard expansion"
 
 #### Test: double quotes backslash produces single backslash
 
-> The application shall ensure that a double-quote that is not within \
+Inside double quotes, a backslash retains its special meaning only before certain characters (like `$`, `\``, `"`). A backslash preceding another backslash escapes it, producing a single literal backslash.
 
 ```
 begin test "double quotes backslash produces single backslash"
@@ -414,11 +382,7 @@ end test "double quotes backslash produces single backslash"
 
 #### Test: double quotes allow parameter and command and arithmetic expansion
 
-> If the current character is an unquoted '$' or '`' , the shell shall identify the start of any candidates for parameter expansion ( 2.6.2 Parameter Expansion ), command substitution ( 2.6.3 Command Substitution ), or arithmetic expansion ( 2.6.4 Arithmetic Expansion ) from their introductory unquoted character sequences: '$' or \
-
-> The application shall ensure that the commands to be executed are expressed in the language described in 2. Shell Command Language.
-
-> Enclosing characters in double-quotes ( \
+Inside double quotes, the dollar sign (`$`) and backquote retain their special meaning, allowing parameter, command, and arithmetic expansions to occur.
 
 ```
 begin test "double quotes allow parameter and command and arithmetic expansion"
@@ -434,11 +398,7 @@ end test "double quotes allow parameter and command and arithmetic expansion"
 
 #### Test: inner double quotes inside command substitution
 
-> During token recognition no substitutions shall be actually performed, and the result token shall contain exactly the characters that appear in the input unmodified, including any embedded or enclosing quotes or substitution operators, between the start and the end of the quoted text.
-
-> The characters found from the beginning of the substitution to its end, allowing for any recursion necessary to recognize embedded constructs, shall be included unmodified in the result token, including any embedded or enclosing substitution operators or quotes.
-
-> The input characters within the quoted string that are also enclosed between \
+Double quotes can be nested inside a command substitution that is itself double-quoted. The inner quotes define the command to be executed.
 
 ```
 begin test "inner double quotes inside command substitution"
@@ -453,7 +413,7 @@ end test "inner double quotes inside command substitution"
 
 #### Test: recursive tokenizing finds matching paren
 
-> The tokenizing rules in 2.3 Token Recognition shall be applied recursively to find the matching ')' .
+The shell recursively tokenizes characters to correctly locate the matching closing parenthesis of a command substitution.
 
 ```
 begin test "recursive tokenizing finds matching paren"
@@ -468,7 +428,7 @@ end test "recursive tokenizing finds matching paren"
 
 #### Test: backquote inside double quotes executes
 
-> The backquote and <dollar-sign> characters shall follow the same rules as for characters in double-quotes described in this section.
+Inside double quotes, the backquote retains its special meaning and introduces a command substitution.
 
 ```
 begin test "backquote inside double quotes executes"
@@ -483,9 +443,7 @@ end test "backquote inside double quotes executes"
 
 #### Test: backslash in double quotes special only before certain chars
 
-> Enclosing characters in double-quotes ( \
-
-> Outside of \
+Inside double quotes, a backslash only acts as an escape character when followed by `$`, `\``, `"`, `\`, or a newline. Otherwise, it is treated as a literal backslash.
 
 ```
 begin test "backslash in double quotes special only before certain chars"
@@ -500,9 +458,7 @@ end test "backslash in double quotes special only before certain chars"
 
 #### Test: double quotes preserve expansion result literally
 
-> For parameter expansions other than the four varieties that provide for substring processing, within the string of characters from an enclosed \
-
-> When double-quotes are used to quote a parameter expansion, command substitution, or arithmetic expansion, the literal value of all characters within the result of the expansion shall be preserved.
+When an expansion occurs within double quotes, the expanded value is not subjected to field splitting or pathname expansion, preserving characters like spaces and wildcards literally.
 
 ```
 begin test "double quotes preserve expansion result literally"
@@ -518,7 +474,7 @@ end test "double quotes preserve expansion result literally"
 
 #### Test: substring processing not affected by outer double quotes
 
-> For the four varieties of parameter expansion that provide for substring processing (see 2.6.2 Parameter Expansion ), within the string of characters from an enclosed \
+Inside double-quotes, substring processing operations (like `${var#pattern}`) are unaffected by the outer double-quotes, allowing patterns to be processed normally.
 
 ```
 begin test "substring processing not affected by outer double quotes"
@@ -535,7 +491,7 @@ end test "substring processing not affected by outer double quotes"
 
 #### Test: backslash dollar and backquote inside braces
 
-> Enclosing characters in double-quotes ( \
+Within a parameter expansion (like `${...}`), the double-quotes preserve the literal value of all characters except `"`, `\``, `$`, and `\`.
 
 ```
 begin test "backslash dollar and backquote inside braces"
@@ -551,11 +507,7 @@ end test "backslash dollar and backquote inside braces"
 
 #### Test: escaped double quote inside double quotes
 
-> The format for arithmetic expansion shall be as follows: $(( expression )) The expression shall be treated as if it were in double-quotes, except that a double-quote inside the expression is not treated specially.
-
-> Outside of \
-
-> The application shall ensure that a double-quote that is not within \
+A double quote can be included literally inside a double-quoted string if it is preceded by a backslash.
 
 ```
 begin test "escaped double quote inside double quotes"
@@ -570,7 +522,7 @@ end test "escaped double quote inside double quotes"
 
 #### Test: dollar-single-quote newline escape
 
-> The application shall quote the following characters if they are to represent themselves: | & ; < > ( ) $ ` \\ \
+The `$'...'` quoting mechanism processes backslash escapes such as `\n` to produce a literal newline.
 
 ```
 begin test "dollar-single-quote newline escape"
@@ -585,7 +537,7 @@ end test "dollar-single-quote newline escape"
 
 #### Test: backslash-quoting preserves literal special characters
 
-> The application shall quote the following characters if they are to represent themselves: | & ; < > ( ) $ ` \\ \
+Backslash quoting preserves the literal value of special characters like `<` and `>`.
 
 ```
 begin test "backslash-quoting preserves literal special characters"
@@ -600,7 +552,7 @@ end test "backslash-quoting preserves literal special characters"
 
 #### Test: single-quoting preserves literal special characters
 
-> The application shall quote the following characters if they are to represent themselves: | & ; < > ( ) $ ` \\ \
+Single quotes preserve the literal value of all enclosed special characters.
 
 ```
 begin test "single-quoting preserves literal special characters"
@@ -615,7 +567,7 @@ end test "single-quoting preserves literal special characters"
 
 #### Test: double-quoting preserves literal pipe semicolon angle parens
 
-> The application shall quote the following characters if they are to represent themselves: | & ; < > ( ) $ ` \\ \
+Double quotes preserve the literal value of special characters like `|`, `;`, and `<`.
 
 ```
 begin test "double-quoting preserves literal pipe semicolon angle parens"
@@ -630,7 +582,7 @@ end test "double-quoting preserves literal pipe semicolon angle parens"
 
 #### Test: quoting preserves literal space and tab in single argument
 
-> The application shall quote the following characters if they are to represent themselves: | & ; < > ( ) $ ` \\ \
+Quoting spaces and tabs prevents them from acting as token separators, keeping the text as a single argument.
 
 ```
 begin test "quoting preserves literal space and tab in single argument"
@@ -645,7 +597,7 @@ end test "quoting preserves literal space and tab in single argument"
 
 #### Test: backslash-newline is line continuation not literal newline
 
-> The application shall quote the following characters if they are to represent themselves: | & ; < > ( ) $ ` \\ \
+A backslash-newline pair is removed entirely and does not produce a literal newline in the output.
 
 ```
 begin test "backslash-newline is line continuation not literal newline"
@@ -661,7 +613,7 @@ end test "backslash-newline is line continuation not literal newline"
 
 #### Test: quoting prevents glob expansion of * ? [ ]
 
-> The application shall quote the following characters if they are to represent themselves: | & ; < > ( ) $ ` \\ \
+Quoting prevents wildcard characters from triggering pathname expansion.
 
 ```
 begin test "quoting prevents glob expansion of * ? [ ]"
@@ -676,7 +628,7 @@ end test "quoting prevents glob expansion of * ? [ ]"
 
 #### Test: quoting preserves literal ~ = % { } characters
 
-> The application shall quote the following characters if they are to represent themselves: | & ; < > ( ) $ ` \\ \
+Quoting preserves characters that might be conditionally special under certain circumstances.
 
 ```
 begin test "quoting preserves literal ~ = % { } characters"
@@ -691,7 +643,7 @@ end test "quoting preserves literal ~ = % { } characters"
 
 #### Test: dollar-single-quote hex escape
 
-> A sequence of characters starting with a <dollar-sign> immediately followed by a single-quote ( $' ) shall preserve the literal value of all characters up to an unescaped terminating single-quote ( ' ), with the exception of certain <backslash>-escape sequences, as follows: \\\
+The `$'...'` mechanism processes hex escapes (like `\x41`) into literal characters.
 
 ```
 begin test "dollar-single-quote hex escape"
@@ -706,9 +658,7 @@ end test "dollar-single-quote hex escape"
 
 #### Test: dollar-single-quote escaped single quote
 
-> If a <backslash>-escape sequence represents a single-quote character (for example \\' ), that sequence shall not terminate the dollar-single-quote sequence.
-
-> If the current character is an unquoted <backslash>, single-quote, or double-quote or is the first character of an unquoted <dollar-sign> single-quote sequence, it shall affect quoting for subsequent characters up to the end of the quoted text.
+Inside `$'...'`, a single quote can be escaped with a backslash to include it literally.
 
 ```
 begin test "dollar-single-quote escaped single quote"
@@ -723,7 +673,7 @@ end test "dollar-single-quote escaped single quote"
 
 #### Test: newline delimits token
 
-> When an io_here token has been recognized by the grammar (see 2.10 Shell Grammar ), one or more of the subsequent lines immediately following the next NEWLINE token form the body of a here-document and shall be parsed according to the rules of 2.7.4 Here-Document .
+A newline character delimits the current token and acts as a command separator.
 
 ```
 begin test "newline delimits token"
@@ -739,7 +689,7 @@ end test "newline delimits token"
 
 #### Test: reserved words not recognized when quoted
 
-> The following words shall be recognized as reserved words: ! { } case do done elif else esac fi for if in then until while.
+Reserved words like `if` are not recognized as such if they contain any quoting characters.
 
 ```
 begin test "reserved words not recognized when quoted"
@@ -754,7 +704,7 @@ end test "reserved words not recognized when quoted"
 
 #### Test: dollar-single-quote variable-length escapes terminate correctly
 
-> In cases where a variable number of characters can be used to specify an escape sequence ( \\x XX and \\ ddd ), the escape sequence shall be terminated by the first character that is not of the expected type or, for \\ ddd sequences, when the maximum number of characters specified has been found, whichever occurs first.
+Octal and hex escapes in `$'...'` terminate correctly when the escape sequence ends.
 
 ```
 begin test "dollar-single-quote variable-length escapes terminate correctly"
@@ -769,7 +719,7 @@ end test "dollar-single-quote variable-length escapes terminate correctly"
 
 #### Test: reserved words work in correct positions
 
-> The following words shall be recognized as reserved words: ! { } case do done elif else esac fi for if in then until while.
+Reserved words are correctly recognized when unquoted and occurring in positions where they are expected (like the beginning of a command).
 
 ```
 begin test "reserved words work in correct positions"
@@ -786,11 +736,7 @@ end test "reserved words work in correct positions"
 
 #### Test: case/esac reserved words
 
-> The following words shall be recognized as reserved words: ! { } case do done elif else esac fi for if in then until while.
-
-> This recognition shall only occur when none of the characters is quoted and when the word is used as: The first word of a command The first word following one of the reserved words other than case , for , or in The third word in a case command (only in is valid in this case) The third word in a for command (only in and do are valid in this case) See the grammar in 2.10 Shell Grammar .
-
-> Once a token is delimited, it is categorized as required by the grammar in 2.10 Shell Grammar.
+The `case` and `esac` reserved words delimit the switch statement correctly.
 
 ```
 begin test "case/esac reserved words"
@@ -805,11 +751,7 @@ end test "case/esac reserved words"
 
 #### Test: alias trailing blank triggers expansion of next word
 
-> An implementation may defer the effect of a change to an alias but the change shall take effect no later than the completion of the currently executing complete_command (see 2.10 Shell Grammar ).
-
-> If the value of the alias replacing the TOKEN ends in a <blank> that would be unquoted after substitution, and optionally if it ends in a <blank> that would be quoted after substitution, the shell shall check the next token in the input, if it is a TOKEN , for alias substitution; this process shall continue until a TOKEN is found that is not a valid alias or an alias value does not end in such a <blank>.
-
-> Either the TOKEN is being considered for alias substitution because it follows an alias substitution whose replacement value ended with a <blank> (see below) or the TOKEN could be parsed as the command name word of a simple command (see 2.10 Shell Grammar), based on this TOKEN and the tokens (if any) that preceded it, but ignoring whether any subsequent characters would allow that.
+If an alias definition ends with a blank, the shell attempts alias expansion on the next token as well.
 
 ```
 begin test "alias trailing blank triggers expansion of next word"
@@ -825,11 +767,7 @@ end test "alias trailing blank triggers expansion of next word"
 
 #### Test: dollar-single-quote basic support
 
-> If the current character is an unquoted <backslash>, single-quote, or double-quote or is the first character of an unquoted <dollar-sign> single-quote sequence, it shall affect quoting for subsequent characters up to the end of the quoted text.
-
-> A sequence of characters starting with a <dollar-sign> immediately followed by a single-quote ( $' ) shall preserve the literal value of all characters up to an unescaped terminating single-quote ( ' ), with the exception of certain <backslash>-escape sequences, as follows: \\\
-
-> These <backslash>-escape sequences shall be processed (replaced with the bytes or characters they yield) immediately prior to word expansion (see 2.6 Word Expansions ) of the word in which the dollar-single-quotes sequence occurs.
+The `$'...'` quoting mechanism correctly interprets the enclosed string and its escapes.
 
 ```
 begin test "dollar-single-quote basic support"
@@ -844,7 +782,7 @@ end test "dollar-single-quote basic support"
 
 #### Test: dollar-paren command substitution
 
-> Enclosing characters in double-quotes ( \
+The `$(...)` syntax correctly performs command substitution.
 
 ```
 begin test "dollar-paren command substitution"
@@ -859,7 +797,7 @@ end test "dollar-paren command substitution"
 
 #### Test: backtick command substitution
 
-> During token recognition no substitutions shall be actually performed, and the result token shall contain exactly the characters that appear in the input unmodified, including any embedded or enclosing quotes or substitution operators, between the start and the end of the quoted text.
+The `` `...` `` syntax correctly performs command substitution.
 
 ```
 begin test "backtick command substitution"
@@ -874,7 +812,7 @@ end test "backtick command substitution"
 
 #### Test: nested dollar-paren command substitution
 
-> While processing the characters, if instances of expansions or quoting are found nested within the substitution, the shell shall recursively process them in the manner specified for the construct that is found.
+Command substitutions using `$(...)` can be safely nested.
 
 ```
 begin test "nested dollar-paren command substitution"
@@ -889,7 +827,7 @@ end test "nested dollar-paren command substitution"
 
 #### Test: arithmetic addition
 
-> The arithmetic expression shall be processed according to the rules given in 1.1.2.1 Arithmetic Precision and Operations , with the following exceptions: Only signed long integer arithmetic is required.
+The `$((...))` syntax evaluates arithmetic expressions like addition.
 
 ```
 begin test "arithmetic addition"
@@ -904,7 +842,7 @@ end test "arithmetic addition"
 
 #### Test: arithmetic subtraction negative
 
-> The expansions that are performed for a given word shall be performed in the following order: Tilde expansion (see 2.6.1 Tilde Expansion ), parameter expansion (see 2.6.2 Parameter Expansion ), command substitution (see 2.6.3 Command Substitution ), and arithmetic expansion (see 2.6.4 Arithmetic Expansion ) shall be performed, beginning to end.
+The `$((...))` syntax evaluates arithmetic expressions like subtraction, properly yielding negative numbers.
 
 ```
 begin test "arithmetic subtraction negative"
@@ -919,9 +857,7 @@ end test "arithmetic subtraction negative"
 
 #### Test: unquoted > is a control operator
 
-> If the current character is not quoted and can be used as the first character of a new operator, the current token (if any) shall be delimited.
-
-> The current character shall be used as the beginning of the next (operator) token.
+An unquoted `>` character acts as a redirection control operator and delimits the preceding token.
 
 ```
 begin test "unquoted > is a control operator"
@@ -937,9 +873,7 @@ end test "unquoted > is a control operator"
 
 #### Test: >> forms a single append operator
 
-> If the previous character was used as part of an operator and the current character is not quoted and can be used with the previous characters to form an operator, it shall be used as part of that (operator) token.
-
-> If the previous character was used as part of an operator and the current character cannot be used with the previous characters to form an operator, the operator containing the previous character shall be delimited.
+Consecutive unquoted `>` characters form a single `>>` append operator.
 
 ```
 begin test ">> forms a single append operator"
@@ -956,11 +890,7 @@ end test ">> forms a single append operator"
 
 #### Test: multiple blanks between words
 
-> If the current character is an unquoted <blank>, any token containing the previous character is delimited and the current character shall be discarded.
-
-> If the previous character was part of a word, the current character shall be appended to that word.
-
-> The current character is used as the start of a new word.
+Unquoted blanks act as token delimiters; multiple consecutive blanks simply delimit the tokens and are discarded.
 
 ```
 begin test "multiple blanks between words"
@@ -975,9 +905,7 @@ end test "multiple blanks between words"
 
 #### Test: comments ignored up to newline
 
-> If the current character is a '#' , it and all subsequent characters up to, but excluding, the next <newline> shall be discarded as a comment.
-
-> The <newline> that ends the line is not considered part of the comment.
+An unquoted `#` introduces a comment, causing the shell to ignore all subsequent characters up to (but not including) the next newline.
 
 ```
 begin test "comments ignored up to newline"
@@ -993,7 +921,7 @@ end test "comments ignored up to newline"
 
 #### Test: quoted # is not a comment
 
-> The application shall quote the following characters if they are to represent themselves: | & ; < > ( ) $ ` \\ \
+A `#` character enclosed in quotes does not introduce a comment and is treated literally.
 
 ```
 begin test "quoted # is not a comment"
@@ -1008,7 +936,7 @@ end test "quoted # is not a comment"
 
 #### Test: # in middle of word is not a comment
 
-> If one of these conditions is true, the initial fields shall be retained as separate fields, except that if the parameter being expanded was embedded within a word, the first field shall be joined with the beginning part of the original word and the last field shall be joined with the end part of the original word.
+A `#` character in the middle of a word does not introduce a comment; it is treated as part of the word.
 
 ```
 begin test "# in middle of word is not a comment"
@@ -1047,11 +975,7 @@ When used as specified by this volume of POSIX.1-2024, alias definitions shall n
 
 #### Test: alias substitution
 
-> When a TOKEN is subject to alias substitution, the value of the alias shall be processed as if it had been read from the input instead of the TOKEN , with token recognition (see 2.3 Token Recognition ) resuming at the start of the alias value.
-
-> An implementation may defer the effect of a change to an alias but the change shall take effect no later than the completion of the currently executing complete_command (see 2.10 Shell Grammar ).
-
-> Changes to aliases shall not take effect out of order.
+A token that forms a valid alias name is replaced by its alias definition, and the shell executes the substituted text.
 
 ```
 begin interactive test "alias substitution"
@@ -1068,7 +992,7 @@ end interactive test "alias substitution"
 
 #### Test: alias with trailing space chains to next word
 
-> If the value of the alias replacing the TOKEN ends in a <blank> that would be unquoted after substitution, and optionally if it ends in a <blank> that would be quoted after substitution, the shell shall check the next token in the input, if it is a TOKEN , for alias substitution; this process shall continue until a TOKEN is found that is not a valid alias or an alias value does not end in such a <blank>.
+If an alias value ends with a space, the next word is also evaluated for alias substitution.
 
 ```
 begin interactive test "alias with trailing space chains to next word"
