@@ -112,6 +112,24 @@ begin test "parameters preserve representative non-null bytes"
 end test "parameters preserve representative non-null bytes"
 ```
 
+#### Test: parameters preserve representative high-bit bytes
+
+Parameters can also hold non-null bytes outside the ASCII range. This test
+stores bytes `0xFF` and `0x80` and confirms the exact byte sequence is
+preserved.
+
+```
+begin test "parameters preserve representative high-bit bytes"
+  script
+    value=$(printf 'A\377B\200C')
+    printf '%s' "$value" | od -An -t x1 | tr -d ' \n'
+  expect
+    stdout "41ff428043"
+    stderr ""
+    exit_code 0
+end test "parameters preserve representative high-bit bytes"
+```
+
 ## 2.5.1 Positional Parameters
 
 A positional parameter is a parameter denoted by a decimal representation of a positive integer. The digits denoting the positional parameters shall always be interpreted as a decimal value, even if there is a leading zero. When a positional parameter with more than one digit is specified, the application shall enclose the digits in braces (see [2.6.2 Parameter Expansion](#262-parameter-expansion)).
@@ -175,6 +193,22 @@ begin test "${08} and ${008} use decimal positional index 8"
     stderr ""
     exit_code 0
 end test "${08} and ${008} use decimal positional index 8"
+```
+
+#### Test: $10 is $1 followed by literal 0 without braces
+
+Without braces, `$10` is interpreted as `$1` followed by the literal character
+`0`, not as the tenth positional parameter.
+
+```
+begin test "$10 is $1 followed by literal 0 without braces"
+  script
+    $SHELL -c 'set -- one two three four five six seven eight nine ten; printf "<%s>\n" "$10"'
+  expect
+    stdout "<one0>"
+    stderr ""
+    exit_code 0
+end test "$10 is $1 followed by literal 0 without braces"
 ```
 
 #### Test: positional parameters follow invocation function and set lifecycle
@@ -250,6 +284,22 @@ begin test "@ expands positional parameters in order"
 end test "@ expands positional parameters in order"
 ```
 
+#### Test: quoted $@ preserves empty positional parameters
+
+Within double-quotes, `"$@"` produces one field for each positional parameter
+that is set, including empty positional parameters.
+
+```
+begin test "quoted $@ preserves empty positional parameters"
+  script
+    $SHELL -c 'set -- a "" c; for i in "$@"; do printf "<%s>" "$i"; done'
+  expect
+    stdout "<a><><c>"
+    stderr ""
+    exit_code 0
+end test "quoted $@ preserves empty positional parameters"
+```
+
 #### Test: * expands positional parameters in order
 
 Unquoted `$*` expands to the positional parameters, each as a separate field
@@ -315,6 +365,22 @@ begin test "quoted $* uses first IFS character as separator"
 end test "quoted $* uses first IFS character as separator"
 ```
 
+#### Test: quoted $* uses only the first character of multi-character IFS
+
+When `IFS` contains more than one character, `"$*"` joins positional
+parameters using only the first character.
+
+```
+begin test "quoted $* uses only the first character of multi-character IFS"
+  script
+    $SHELL -c 'IFS=":;"; set -- a b c; printf "%s\n" "$*"'
+  expect
+    stdout "a:b:c"
+    stderr ""
+    exit_code 0
+end test "quoted $* uses only the first character of multi-character IFS"
+```
+
 #### Test: quoted $* uses space when IFS is unset
 
 When `"$*"` is expanded and `IFS` is unset, the positional parameters are
@@ -361,6 +427,43 @@ begin test "quoted $@ joins prefix and suffix to first and last fields"
     stderr ""
     exit_code 0
 end test "quoted $@ joins prefix and suffix to first and last fields"
+```
+
+#### Test: quoted $@ in ${parameter:-word} retains separate fields
+
+When `"$@"` appears within the *word* of a `${parameter:-word}` expansion in a
+context where field splitting would have been performed for `parameter`, its
+fields are retained as separate fields.
+
+```
+begin test "quoted $@ in ${parameter:-word} retains separate fields"
+  script
+    $SHELL -c 'unset v; set -- "a b" c; for i in ${v:-"$@"}; do printf "<%s>" "$i"; done'
+  expect
+    stdout "<a b><c>"
+    stderr ""
+    exit_code 0
+end test "quoted $@ in ${parameter:-word} retains separate fields"
+```
+
+#### Test: zero quoted $@ still preserves adjacent quoted null field
+
+If there are no positional parameters and `"$@"` is embedded within a word that
+also contains another quoted null part outside the same double-quotes, that
+quoted null part still produces an empty field.
+
+```
+begin test "zero quoted $@ still preserves adjacent quoted null field"
+  script
+    set --
+    for i in ''"$@"; do
+        printf "<%s>" "$i"
+    done
+  expect
+    stdout "<>"
+    stderr ""
+    exit_code 0
+end test "zero quoted $@ still preserves adjacent quoted null field"
 ```
 
 #### Test: # expands to decimal positional count
@@ -441,6 +544,22 @@ begin test "$? preserved in subshell"
 end test "$? preserved in subshell"
 ```
 
+#### Test: $? after assignment with command substitution uses substitution status
+
+When a command substitution appears in an assignment command, the exit status of
+the assignment command becomes the exit status of the command substitution.
+
+```
+begin test "$? after assignment with command substitution uses substitution status"
+  script
+    $SHELL -c 'v=$(false); printf "%s\n" "$?"'
+  expect
+    stdout "1"
+    stderr ""
+    exit_code 0
+end test "$? after assignment with command substitution uses substitution status"
+```
+
 #### Test: $- includes options enabled by set
 
 `$-` expands to the current single-letter option flags. After `set -u`, the
@@ -455,6 +574,22 @@ begin test "$- includes options enabled by set"
     stderr ""
     exit_code 0
 end test "$- includes options enabled by set"
+```
+
+#### Test: interactive $- includes i option flag
+
+In an interactive shell, `$-` includes the `i` option flag regardless of how
+the shell was invoked.
+
+```
+begin interactive test "interactive $- includes i option flag"
+  spawn -i
+  expect "$ "
+  send "case \"\$-\" in (*i*) echo has_i;; (*) echo missing;; esac"
+  expect "has_i"
+  sendeof
+  wait
+end interactive test "interactive $- includes i option flag"
 ```
 
 #### Test: $$ is decimal process id
@@ -507,6 +642,22 @@ begin test "$! gives pid of most recent async list"
 end test "$! gives pid of most recent async list"
 ```
 
+#### Test: $! updates to the most recent async list
+
+When multiple asynchronous commands are launched, `$!` expands to the process
+ID of the most recently started asynchronous command.
+
+```
+begin test "$! updates to the most recent async list"
+  script
+    $SHELL -c 'sleep 0.1 & p1=$!; sleep 0.1 & p2=$!; [ "$p1" != "$p2" ] && [ "$!" = "$p2" ] && echo ok; wait "$p1" "$p2"'
+  expect
+    stdout "ok"
+    stderr ""
+    exit_code 0
+end test "$! updates to the most recent async list"
+```
+
 #### Test: $0 expands to shell or script name
 
 `$0` expands to the name of the shell or script. When invoked with `-c` and
@@ -521,6 +672,25 @@ begin test "$0 expands to shell or script name"
     stderr ""
     exit_code 0
 end test "$0 expands to shell or script name"
+```
+
+#### Test: $0 expands to invoked script pathname
+
+When the shell is invoked to run a script, `$0` expands to the script name used
+for that invocation.
+
+```
+begin test "$0 expands to invoked script pathname"
+  script
+    cat > ./show0.sh <<'EOF'
+    printf "<%s>\n" "$0"
+    EOF
+    $SHELL ./show0.sh
+  expect
+    stdout "<./show0.sh>"
+    stderr ""
+    exit_code 0
+end test "$0 expands to invoked script pathname"
 ```
 
 ## 2.5.3 Shell Variables
@@ -583,6 +753,79 @@ begin test "invalid environment names are not initialized as shell variables"
 end test "invalid environment names are not initialized as shell variables"
 ```
 
+#### Test: environment names starting with a digit are not initialized
+
+Environment variables whose names start with a digit are not valid shell names
+and are not initialized as shell variables.
+
+```
+begin test "environment names starting with a digit are not initialized"
+  script
+    env '1BAD=bad' GOOD_NAME=good $SHELL -c 'echo "$GOOD_NAME"; set | grep -q "^1BAD=" && echo bad || echo ok'
+  expect
+    stdout "good\nok"
+    stderr ""
+    exit_code 0
+end test "environment names starting with a digit are not initialized"
+```
+
+#### Test: for loop name can define a shell variable
+
+The loop control name in a `for` loop can define and initialize a shell
+variable even if it was previously unset.
+
+```
+begin test "for loop name can define a shell variable"
+  script
+    unset loop_name
+    for loop_name in first second; do :; done
+    printf "%s\n" "$loop_name"
+  expect
+    stdout "second"
+    stderr ""
+    exit_code 0
+end test "for loop name can define a shell variable"
+```
+
+#### Test: read utility can define and initialize a shell variable
+
+The `read` utility can define a previously unset shell variable and initialize
+it from input.
+
+```
+begin test "read utility can define and initialize a shell variable"
+  script
+    unset read_created
+    read read_created <<'EOF'
+    hello
+    EOF
+    printf "<%s>\n" "$read_created"
+  expect
+    stdout "<hello>"
+    stderr ""
+    exit_code 0
+end test "read utility can define and initialize a shell variable"
+```
+
+#### Test: getopts utility can define and initialize a shell variable
+
+The `getopts` utility can define and initialize its option-name variable.
+
+```
+begin test "getopts utility can define and initialize a shell variable"
+  script
+    unset opt_name
+    OPTIND=1
+    set -- -a
+    getopts a opt_name >/dev/null
+    printf "<%s>\n" "$opt_name"
+  expect
+    stdout "<a>"
+    stderr ""
+    exit_code 0
+end test "getopts utility can define and initialize a shell variable"
+```
+
 #### Test: environment-initialized variable is exported to child process
 
 A variable initialized from the environment is automatically marked for
@@ -597,6 +840,24 @@ begin test "environment-initialized variable is exported to child process"
     stderr ""
     exit_code 0
 end test "environment-initialized variable is exported to child process"
+```
+
+#### Test: ${name=word} can create and initialize a shell variable
+
+The `${name=word}` expansion can define a previously unset shell variable and
+initialize it to the given value.
+
+```
+begin test "${name=word} can create and initialize a shell variable"
+  script
+    unset created_by_expansion
+    : "${created_by_expansion=made_here}"
+    printf "%s\n" "$created_by_expansion"
+  expect
+    stdout "made_here"
+    stderr ""
+    exit_code 0
+end test "${name=word} can create and initialize a shell variable"
 ```
 
 #### Test: ENV file processed for interactive shell
@@ -619,6 +880,69 @@ begin test "ENV file processed for interactive shell"
 end test "ENV file processed for interactive shell"
 ```
 
+#### Test: ENV pathname is obtained by parameter expansion
+
+When an interactive shell is invoked, the value of `ENV` is subjected to
+parameter expansion and the resulting absolute pathname is used.
+
+```
+begin test "ENV pathname is obtained by parameter expansion"
+  script
+    env_root="$PWD"
+    _env_file="$PWD/_test_env_param.sh"
+    echo 'echo env_param_loaded' > "$_env_file"
+    ENV='$env_root/_test_env_param.sh'
+    export ENV env_root
+    $SHELL -i -c ':' 2>/dev/null
+  expect
+    stdout "env_param_loaded"
+    stderr ""
+    exit_code 0
+end test "ENV pathname is obtained by parameter expansion"
+```
+
+#### Test: ENV startup file need not be executable
+
+The file named by `ENV` is executed for an interactive shell even if the file
+itself does not have execute permission.
+
+```
+begin test "ENV startup file need not be executable"
+  script
+    _env_file="$PWD/_env_nonexec.sh"
+    echo 'echo nonexec_env_loaded' > "$_env_file"
+    chmod 644 "$_env_file"
+    ENV="$_env_file"
+    export ENV
+    $SHELL -i -c ':' 2>/dev/null
+  expect
+    stdout "nonexec_env_loaded"
+    stderr ""
+    exit_code 0
+end test "ENV startup file need not be executable"
+```
+
+#### Test: ENV file is parsed as program so aliases take effect on later lines
+
+The `ENV` file is tokenized and parsed as a program, not as a single compound
+list, so an alias defined on one line takes effect on a later line in the same
+file.
+
+```
+begin test "ENV file is parsed as program so aliases take effect on later lines"
+  script
+    _env_file="$PWD/_test_env_alias.sh"
+    printf '%s\n' 'alias envsay="printf '\''%s\n'\'' alias_ok"' 'envsay' > "$_env_file"
+    ENV=$_env_file
+    export ENV
+    $SHELL -i -c ':' 2>/dev/null
+  expect
+    stdout "alias_ok"
+    stderr ""
+    exit_code 0
+end test "ENV file is parsed as program so aliases take effect on later lines"
+```
+
 #### Test: ENV is ignored for non-interactive shell
 
 The `ENV` file is only processed for interactive shells. A non-interactive
@@ -637,6 +961,54 @@ begin test "ENV is ignored for non-interactive shell"
 end test "ENV is ignored for non-interactive shell"
 ```
 
+#### Test: LANG provides default locale for shell character classes
+
+When no category-specific locale variable overrides it, `LANG` provides the
+default locale used by shell pattern character classes.
+
+```
+begin test "LANG provides default locale for shell character classes"
+  script
+    LANG=test_EPTY.ISO-8859-1 LC_ALL= LC_CTYPE= $SHELL -c 'v=$(printf "\\351"); case "$v" in ([[:alpha:]]) echo alpha;; (*) echo no;; esac'
+  expect
+    stdout "alpha"
+    stderr ""
+    exit_code 0
+end test "LANG provides default locale for shell character classes"
+```
+
+#### Test: LC_CTYPE controls shell pattern character classes
+
+The `LC_CTYPE` variable determines which characters are treated as letters by
+shell pattern character classes such as `[[:alpha:]]`.
+
+```
+begin test "LC_CTYPE controls shell pattern character classes"
+  script
+    LANG=C LC_ALL= LC_CTYPE=test_EPTY.ISO-8859-1 $SHELL -c 'v=$(printf "\\351"); case "$v" in ([[:alpha:]]) echo alpha;; (*) echo no;; esac'
+  expect
+    stdout "alpha"
+    stderr ""
+    exit_code 0
+end test "LC_CTYPE controls shell pattern character classes"
+```
+
+#### Test: LC_ALL overrides LANG and LC_CTYPE for shell character classes
+
+If `LC_ALL` is set to a non-empty value, it overrides `LANG` and `LC_CTYPE`
+when the shell evaluates pattern character classes.
+
+```
+begin test "LC_ALL overrides LANG and LC_CTYPE for shell character classes"
+  script
+    LANG=test_EPTY.ISO-8859-1 LC_CTYPE=test_EPTY.ISO-8859-1 LC_ALL=C $SHELL -c 'v=$(printf "\\351"); case "$v" in ([[:alpha:]]) echo alpha;; (*) echo no;; esac'
+  expect
+    stdout "no"
+    stderr ""
+    exit_code 0
+end test "LC_ALL overrides LANG and LC_CTYPE for shell character classes"
+```
+
 #### Test: IFS default splits on space, tab, and newline
 
 The shell initializes IFS to space, tab, and newline. A string containing all
@@ -652,6 +1024,98 @@ begin test "IFS default splits on space, tab, and newline"
     stderr ""
     exit_code 0
 end test "IFS default splits on space, tab, and newline"
+```
+
+#### Test: IFS is initialized to space tab newline
+
+On shell invocation, `IFS` is initialized to the three default separator
+characters: space, tab, and newline.
+
+```
+begin test "IFS is initialized to space tab newline"
+  script
+    printf '%s' "$IFS" | od -An -t x1 | tr -d ' \n'
+  expect
+    stdout "20090a"
+    stderr ""
+    exit_code 0
+end test "IFS is initialized to space tab newline"
+```
+
+#### Test: unset IFS still uses default field-splitting characters
+
+If `IFS` is unset, field splitting is performed as if it were space, tab, and
+newline.
+
+```
+begin test "unset IFS still uses default field-splitting characters"
+  script
+    unset IFS
+    foo="a b	c
+    d"
+    for i in $foo; do echo split; done | wc -l | tr -d " "
+  expect
+    stdout "4"
+    stderr ""
+    exit_code 0
+end test "unset IFS still uses default field-splitting characters"
+```
+
+#### Test: IFS affects field splitting performed by read
+
+The value of `IFS` is also used by the `read` utility to split an input line
+into fields.
+
+```
+begin test "IFS affects field splitting performed by read"
+  script
+    IFS=:
+    read first second <<'EOF'
+    a:b
+    EOF
+    printf "<%s><%s>\n" "$first" "$second"
+  expect
+    stdout "<a><b>"
+    stderr ""
+    exit_code 0
+end test "IFS affects field splitting performed by read"
+```
+
+#### Test: unset IFS makes read use default separators
+
+If `IFS` is unset, the `read` utility splits input as if `IFS` were space, tab,
+and newline.
+
+```
+begin test "unset IFS makes read use default separators"
+  script
+    unset IFS
+    read first second <<'EOF'
+    a b
+    EOF
+    printf "<%s><%s>\n" "$first" "$second"
+  expect
+    stdout "<a><b>"
+    stderr ""
+    exit_code 0
+end test "unset IFS makes read use default separators"
+```
+
+#### Test: HOME is used for tilde expansion
+
+The contents of `HOME` are used for tilde expansion.
+
+```
+begin test "HOME is used for tilde expansion"
+  script
+    home_dir="$PWD/home_base"
+    mkdir "$home_dir"
+    HOME="$home_dir" $SHELL -c 'printf "%s\n" ~'
+  expect
+    stdout ".*/home_base"
+    stderr ""
+    exit_code 0
+end test "HOME is used for tilde expansion"
 ```
 
 #### Test: PPID same in subshell
@@ -672,6 +1136,44 @@ begin test "PPID same in subshell"
 end test "PPID same in subshell"
 ```
 
+#### Test: PPID is decimal process id
+
+`PPID` is set by the shell to the decimal value of its parent process ID.
+
+```
+begin test "PPID is decimal process id"
+  script
+    case "$PPID" in (""|*[!0-9]*) echo bad;; (*) echo ok;; esac
+  expect
+    stdout "ok"
+    stderr ""
+    exit_code 0
+end test "PPID is decimal process id"
+```
+
+#### Test: PATH affects command interpretation
+
+The value of `PATH` affects command interpretation by determining where command
+names are searched.
+
+```
+begin test "PATH affects command interpretation"
+  script
+    bindir="$PWD/path_bin"
+    mkdir "$bindir"
+    cat > "$bindir/path_cmd" <<'EOF'
+    #!/bin/sh
+    printf '%s\n' path-hit
+    EOF
+    chmod +x "$bindir/path_cmd"
+    PATH="$bindir" $SHELL -c 'path_cmd'
+  expect
+    stdout "path-hit"
+    stderr ""
+    exit_code 0
+end test "PATH affects command interpretation"
+```
+
 #### Test: set -x traces commands with default PS4 prefix
 
 When `set -x` enables execution tracing, each traced command is prefixed
@@ -690,23 +1192,23 @@ begin test "set -x traces commands with default PS4 prefix"
 end test "set -x traces commands with default PS4 prefix"
 ```
 
-#### Test: changing PS4 alters trace prefix
+#### Test: PS4 uses parameter expansion
 
-Assigning a new value to `PS4` changes the prefix used for `set -x` trace
-output. Here `PS4` includes `$LINENO` which is expanded before display.
+Before each execution-trace line, `PS4` is subjected to parameter expansion.
 
 ```
-begin test "changing PS4 alters trace prefix"
+begin test "PS4 uses parameter expansion"
   script
-    PS4="TRACE:\$LINENO> "
+    prefix=TRACE
+    PS4='$prefix> '
     set -x
     echo "traced"
     set +x
   expect
     stdout "(.|\n)*"
-    stderr "(.|\n)*TRACE:(.|\n)*"
+    stderr "(.|\n)*TRACE> echo traced(.|\n)*"
     exit_code 0
-end test "changing PS4 alters trace prefix"
+end test "PS4 uses parameter expansion"
 ```
 
 #### Test: PWD is set to current working directory
@@ -741,23 +1243,144 @@ begin test "PWD is initialized from valid environment value"
 end test "PWD is initialized from valid environment value"
 ```
 
-#### Test: PS1 parameter and exclamation-mark expansion
+#### Test: default PS1 prompt is written to stderr
 
-PS1 is subjected to parameter expansion and exclamation-mark expansion before
-each interactive prompt. This test checks the specified parameter and `!!`
-behavior without relying on unspecified command substitution.
+When an interactive shell is ready to read a command, the default PS1 prompt is
+written to standard error.
 
 ```
-begin interactive test "PS1 parameter and exclamation-mark expansion"
+begin test "default PS1 prompt is written to stderr"
+  script
+    stderr_file="$PWD/ps1.stderr"
+    $SHELL -i > /dev/null 2>"$stderr_file" <<'EOF'
+    exit
+    EOF
+    grep -q '\$ ' "$stderr_file" && echo ok
+  expect
+    stdout "ok"
+    stderr ""
+    exit_code 0
+end test "default PS1 prompt is written to stderr"
+```
+
+#### Test: PS1 uses parameter expansion
+
+PS1 is subjected to parameter expansion before each interactive prompt.
+
+```
+begin interactive test "PS1 uses parameter expansion"
   spawn -i
   expect "$ "
   send "marker=VALUE"
   expect "$ "
-  send "PS1='cmd !! $marker> '"
-  expect "cmd ! VALUE> "
+  send "PS1='cmd $marker> '"
+  expect "cmd VALUE> "
   send "echo interactive_test"
   expect "interactive_test"
   sendeof
   wait
-end interactive test "PS1 parameter and exclamation-mark expansion"
+end interactive test "PS1 uses parameter expansion"
+```
+
+#### Test: PS1 uses exclamation-mark expansion
+
+Within PS1, `!!` is an escaped exclamation mark and expands to a single literal
+`!`.
+
+**NOTE: `bash --posix` FAILS THIS TEST ON GNU BASH, VERSION 5.2.37(1)-RELEASE (x86_64-pc-linux-gnu).**
+
+```
+begin interactive test "PS1 uses exclamation-mark expansion"
+  spawn -i
+  expect "$ "
+  send "PS1='cmd !!> '"
+  expect "cmd !> "
+  send "echo interactive_test"
+  expect "interactive_test"
+  sendeof
+  wait
+end interactive test "PS1 uses exclamation-mark expansion"
+```
+
+#### Test: PS1 single exclamation-mark expands to next history number
+
+Within PS1, a single `!` expands to the history file number of the next command
+to be typed.
+
+**NOTE: `bash --posix` FAILS THIS TEST ON GNU BASH, VERSION 5.2.37(1)-RELEASE (x86_64-pc-linux-gnu).**
+
+```
+begin interactive test "PS1 single exclamation-mark expands to next history number"
+  spawn -i
+  expect "$ "
+  send "PS1='cmd !> '"
+  expect "cmd [0-9][0-9]*> "
+  send "echo interactive_test"
+  expect "interactive_test"
+  sendeof
+  wait
+end interactive test "PS1 single exclamation-mark expands to next history number"
+```
+
+#### Test: PS2 prompt is written to stderr
+
+When an interactive shell receives a newline before a command is complete, the
+expanded PS2 prompt is written to standard error.
+
+```
+begin test "PS2 prompt is written to stderr"
+  script
+    stderr_file="$PWD/ps2.stderr"
+    PS2='CONT> ' $SHELL -i > /dev/null 2>"$stderr_file" <<'EOF'
+    echo 'unterminated
+    '
+    exit
+    EOF
+    grep -q 'CONT> ' "$stderr_file" && echo ok
+  expect
+    stdout "ok"
+    stderr ""
+    exit_code 0
+end test "PS2 prompt is written to stderr"
+```
+
+#### Test: PS2 default prompt is greater-than space
+
+When an interactive shell reads a newline before a command is complete, the
+default `PS2` prompt is `"> "`.
+
+```
+begin interactive test "PS2 default prompt is greater-than space"
+  spawn -i
+  expect "$ "
+  send "echo 'unterminated"
+  expect "> "
+  send "'"
+  expect "unterminated"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "PS2 default prompt is greater-than space"
+```
+
+#### Test: PS2 uses parameter expansion
+
+Before each continuation prompt, `PS2` is subjected to parameter expansion.
+
+```
+begin interactive test "PS2 uses parameter expansion"
+  spawn -i
+  expect "$ "
+  send "marker=CONT"
+  expect "$ "
+  send "PS2='\$marker> '"
+  expect "$ "
+  send "echo 'unterminated"
+  expect "CONT> "
+  send "'"
+  expect "unterminated"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "PS2 uses parameter expansion"
 ```
