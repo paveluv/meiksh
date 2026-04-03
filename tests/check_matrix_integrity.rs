@@ -561,6 +561,9 @@ mod tests {
                     env_overrides: vec![],
                     script_lines: vec![],
                     script: Some("true".to_string()),
+                    expect_stdout: None,
+                    expect_stderr: None,
+                    expect_exit_code: None,
                 })
                 .collect(),
         }

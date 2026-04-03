@@ -9,14 +9,14 @@ of the POSIX Shell Command Language standard.
 - The POSIX standard text lives in `docs/posix/md/utilities/V3_chap02.md`.
 - Existing requirements are catalogued in `tests/matrix/requirements.json`.
 - Existing `.epty` tests in `tests/matrix/tests/` already cover many requirements
-  and can be migrated into the new `.md` format.
+  and can be migrated into the new `.md` format. **Important: Do NOT remove the original `.epty` files after migrating them yet. They will be removed in a separate pass.**
 - Test suites go in `tests/matrix/tests/` and must have a `.md` extension.
 
 ## File Structure
 
 Every `.md` test suite follows this exact layout:
 
-    # Introduction
+    # Test Suite for X.Y Section Name
 
     Brief paragraph describing which section is being tested and what it covers.
 
