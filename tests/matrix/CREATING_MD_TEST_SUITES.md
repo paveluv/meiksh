@@ -272,6 +272,18 @@ All tests must pass, except for known `bash --posix` non-compliances
 - Check that exit codes are correct for the shell being tested.
 - Use `--test "test name"` to run a single test in isolation for debugging.
 
+### Step 6: Verify citation integrity
+
+```bash
+cargo run --quiet --bin check_integrity -- tests/matrix
+```
+
+This verifies that every `## X.Y Section Name` block in the `.md` test suite
+contains text that is **exactly verbatim** from the corresponding section in
+`docs/posix/md/utilities/V3_chap02.md`. Any deviation — even a single character
+— is flagged as an error. This guarantees that standard text citations remain
+faithful to the source.
+
 ## Reference Example
 
 See `tests/matrix/tests/2_2_quoting.md` for a complete example covering

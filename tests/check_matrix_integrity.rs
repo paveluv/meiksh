@@ -425,15 +425,16 @@ fn check_requirements_integrity(
     errors
 }
 
-fn collect_epty_files(matrix_dir: &Path) -> Result<Vec<PathBuf>, String> {
+fn collect_test_files(matrix_dir: &Path, ext: &str) -> Result<Vec<PathBuf>, String> {
     let tests_dir = matrix_dir.join("tests");
     let rd = fs::read_dir(&tests_dir)
         .map_err(|e| format!("cannot read {}: {e}", tests_dir.to_string_lossy()))?;
     let mut files = Vec::new();
     for ent in rd {
-        let ent = ent.map_err(|e| format!("cannot read entry in {}: {e}", tests_dir.to_string_lossy()))?;
+        let ent =
+            ent.map_err(|e| format!("cannot read entry in {}: {e}", tests_dir.to_string_lossy()))?;
         let p = ent.path();
-        if p.extension().and_then(|s| s.to_str()) == Some("epty") {
+        if p.extension().and_then(|s| s.to_str()) == Some(ext) {
             files.push(p);
         }
     }
@@ -441,12 +442,233 @@ fn collect_epty_files(matrix_dir: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(files)
 }
 
+struct MdCitation {
+    section_name: String,
+    body_lines: Vec<String>,
+    line_num: usize,
+}
+
+fn extract_md_citations(content: &str) -> Vec<MdCitation> {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut citations = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        if !line.starts_with("## ") || line.starts_with("## Table of contents") {
+            i += 1;
+            continue;
+        }
+        let section_name = line[3..].trim().to_string();
+        if !section_name.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+            i += 1;
+            continue;
+        }
+        let heading_line = i + 1;
+        i += 1;
+        let mut body = Vec::new();
+        while i < lines.len() {
+            let l = lines[i];
+            if l.starts_with("## ") || l.starts_with("### Tests") {
+                break;
+            }
+            body.push(l.to_string());
+            i += 1;
+        }
+        while body.last().map_or(false, |l| l.is_empty()) {
+            body.pop();
+        }
+        while body.first().map_or(false, |l| l.is_empty()) {
+            body.remove(0);
+        }
+        if !body.is_empty() {
+            citations.push(MdCitation {
+                section_name,
+                body_lines: body,
+                line_num: heading_line,
+            });
+        }
+    }
+    citations
+}
+
+struct SourceSection {
+    name: String,
+    body_lines: Vec<String>,
+}
+
+fn extract_source_sections(content: &str) -> Vec<SourceSection> {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut headings: Vec<(usize, String)> = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        if !(line.starts_with("## ")
+            || line.starts_with("### ")
+            || line.starts_with("#### ")
+            || line.starts_with("##### "))
+        {
+            continue;
+        }
+        let hashes = line.bytes().take_while(|&b| b == b'#').count();
+        let name = line[hashes..].trim().to_string();
+        if name.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+            headings.push((i, name));
+        }
+    }
+
+    let mut sections = Vec::new();
+    for (idx, (start, name)) in headings.iter().enumerate() {
+        let end = if idx + 1 < headings.len() {
+            headings[idx + 1].0
+        } else {
+            lines.len()
+        };
+        let mut body: Vec<String> = lines[start + 1..end]
+            .iter()
+            .map(|l| l.to_string())
+            .collect();
+        while body.last().map_or(false, |l| l.is_empty()) {
+            body.pop();
+        }
+        while body.first().map_or(false, |l| l.is_empty()) {
+            body.remove(0);
+        }
+        sections.push(SourceSection {
+            name: name.clone(),
+            body_lines: body,
+        });
+    }
+    sections
+}
+
+fn source_file_for_section(section_name: &str, md_root: &Path) -> Option<PathBuf> {
+    let chapter: &str = section_name.split('.').next()?;
+    let chap_num: u32 = chapter.parse().ok()?;
+    let filename = format!("V3_chap{:02}.md", chap_num);
+    Some(md_root.join("utilities").join(filename))
+}
+
+fn check_md_citations(md_files: &[PathBuf], md_root: &Path) -> (Vec<String>, usize) {
+    let mut errors = Vec::new();
+    let mut source_cache: HashMap<PathBuf, Vec<SourceSection>> = HashMap::new();
+    let mut total_citations = 0usize;
+
+    for md_file in md_files {
+        let filename = md_file
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown.md");
+        let content = match fs::read_to_string(md_file) {
+            Ok(c) => c,
+            Err(e) => {
+                errors.push(format!("{filename}: cannot read: {e}"));
+                continue;
+            }
+        };
+        let citations = extract_md_citations(&content);
+        if citations.is_empty() {
+            errors.push(format!("{filename}: no section citations found"));
+            continue;
+        }
+
+        for citation in &citations {
+            let source_path = match source_file_for_section(&citation.section_name, md_root) {
+                Some(p) => p,
+                None => {
+                    errors.push(format!(
+                        "{filename}: line {}: cannot determine source file for section {:?}",
+                        citation.line_num, citation.section_name
+                    ));
+                    continue;
+                }
+            };
+            let source_sections = source_cache.entry(source_path.clone()).or_insert_with(|| {
+                match fs::read_to_string(&source_path) {
+                    Ok(c) => extract_source_sections(&c),
+                    Err(e) => {
+                        errors.push(format!(
+                            "{filename}: cannot read source {}: {e}",
+                            source_path.to_string_lossy()
+                        ));
+                        Vec::new()
+                    }
+                }
+            });
+            let source = match source_sections
+                .iter()
+                .find(|s| s.name == citation.section_name)
+            {
+                Some(s) => s,
+                None => {
+                    errors.push(format!(
+                        "{filename}: line {}: section {:?} not found in source {}",
+                        citation.line_num,
+                        citation.section_name,
+                        source_path.to_string_lossy()
+                    ));
+                    continue;
+                }
+            };
+
+            let cite = &citation.body_lines;
+            let src = &source.body_lines;
+            total_citations += 1;
+            if cite == src {
+                continue;
+            }
+
+            let cite_len = cite.len();
+            let src_len = src.len();
+            let mut first_diff = None;
+            for j in 0..cite_len.min(src_len) {
+                if cite[j] != src[j] {
+                    first_diff = Some(j);
+                    break;
+                }
+            }
+            let diff_line = first_diff.unwrap_or(cite_len.min(src_len));
+            let file_line = citation.line_num + 1 + diff_line;
+            if let Some(j) = first_diff {
+                let cite_trunc: String = cite[j].chars().take(120).collect();
+                let src_trunc: String = src[j].chars().take(120).collect();
+                errors.push(format!(
+                    "{filename}: line {file_line}: section {:?} citation differs from source\n\
+                     \x20 test suite: {:?}{}\n\
+                     \x20 source:     {:?}{}",
+                    citation.section_name,
+                    cite_trunc,
+                    if cite[j].len() > 120 { "..." } else { "" },
+                    src_trunc,
+                    if src[j].len() > 120 { "..." } else { "" },
+                ));
+            } else {
+                let direction = if cite_len < src_len {
+                    "shorter"
+                } else {
+                    "longer"
+                };
+                errors.push(format!(
+                    "{filename}: line {}: section {:?} citation is {direction} than source ({cite_len} vs {src_len} lines)",
+                    citation.line_num,
+                    citation.section_name,
+                ));
+            }
+        }
+    }
+    (errors, total_citations)
+}
+
 fn derive_html_root_from_matrix_dir(matrix_dir: &Path) -> PathBuf {
-    // matrix_dir is expected to be <repo>/tests/matrix
     if let Some(repo_root) = matrix_dir.parent().and_then(|p| p.parent()) {
         repo_root.join("docs/posix/susv5-html")
     } else {
         PathBuf::from("docs/posix/susv5-html")
+    }
+}
+
+fn derive_md_root_from_matrix_dir(matrix_dir: &Path) -> PathBuf {
+    if let Some(repo_root) = matrix_dir.parent().and_then(|p| p.parent()) {
+        repo_root.join("docs/posix/md")
+    } else {
+        PathBuf::from("docs/posix/md")
     }
 }
 
@@ -460,7 +682,15 @@ fn main() {
     let matrix_dir = PathBuf::from(&args[1]);
     let req_path = matrix_dir.join("requirements.json");
     let html_root = derive_html_root_from_matrix_dir(&matrix_dir);
-    let epty_files = match collect_epty_files(&matrix_dir) {
+    let md_root = derive_md_root_from_matrix_dir(&matrix_dir);
+    let epty_files = match collect_test_files(&matrix_dir, "epty") {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("check_integrity: {e}");
+            std::process::exit(2);
+        }
+    };
+    let md_files = match collect_test_files(&matrix_dir, "md") {
         Ok(v) => v,
         Err(e) => {
             eprintln!("check_integrity: {e}");
@@ -485,11 +715,17 @@ fn main() {
                 std::process::exit(2);
             }
         };
-        let filename = file.file_name().and_then(|s| s.to_str()).unwrap_or("unknown.epty");
+        let filename = file
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown.epty");
         match epty_parser::parse_suite(&text, filename) {
             Ok(s) => suites.push((file.to_string_lossy().to_string(), s)),
             Err(e) => {
-                eprintln!("check_integrity: parse error in {}: {e}", file.to_string_lossy());
+                eprintln!(
+                    "check_integrity: parse error in {}: {e}",
+                    file.to_string_lossy()
+                );
                 parse_errors += 1;
             }
         }
@@ -499,6 +735,8 @@ fn main() {
         std::process::exit(1);
     }
 
+    let mut all_errors = Vec::new();
+
     let req_entries = match load_requirements(&req_path) {
         Ok(e) => e,
         Err(e) => {
@@ -506,19 +744,31 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let errs = check_requirements_integrity(&req_entries, &suites, &html_root);
-    if !errs.is_empty() {
-        for e in &errs {
+    all_errors.extend(check_requirements_integrity(
+        &req_entries, &suites, &html_root,
+    ));
+
+    let mut citation_count = 0usize;
+    if !md_files.is_empty() {
+        let (errs, count) = check_md_citations(&md_files, &md_root);
+        all_errors.extend(errs);
+        citation_count = count;
+    }
+
+    if !all_errors.is_empty() {
+        for e in &all_errors {
             eprintln!("integrity: {e}");
         }
-        eprintln!("{} integrity error(s)", errs.len());
+        eprintln!("{} integrity error(s)", all_errors.len());
         std::process::exit(1);
     }
 
     eprintln!(
-        "integrity OK for {} file(s) ({} tests)",
+        "integrity OK for {} file(s) ({} tests), {} md section citation(s) verified across {} file(s)",
         epty_files.len(),
-        suites.iter().map(|(_, s)| s.tests.len()).sum::<usize>()
+        suites.iter().map(|(_, s)| s.tests.len()).sum::<usize>(),
+        citation_count,
+        md_files.len(),
     );
 }
 
@@ -649,5 +899,135 @@ mod tests {
             !errs.iter().any(|e| e.contains("is missing test")),
             "unexpected missing-link error: {errs:?}"
         );
+    }
+
+    #[test]
+    fn extract_md_citations_basic() {
+        let md = "\
+# Test Suite for 2.1 Intro
+
+## Table of contents
+
+- [2.1 Intro](#21-intro)
+
+## 2.1 Intro
+
+First paragraph.
+
+Second paragraph.
+
+### Tests
+
+#### Test: some test
+";
+        let citations = extract_md_citations(md);
+        assert_eq!(citations.len(), 1);
+        assert_eq!(citations[0].section_name, "2.1 Intro");
+        assert_eq!(
+            citations[0].body_lines,
+            vec!["First paragraph.", "", "Second paragraph."]
+        );
+    }
+
+    #[test]
+    fn extract_md_citations_multiple_sections() {
+        let md = "\
+## 2.1 Top
+
+Top body.
+
+### Tests
+
+## 2.1.1 Sub
+
+Sub body line 1.
+Sub body line 2.
+
+### Tests
+";
+        let citations = extract_md_citations(md);
+        assert_eq!(citations.len(), 2);
+        assert_eq!(citations[0].section_name, "2.1 Top");
+        assert_eq!(citations[0].body_lines, vec!["Top body."]);
+        assert_eq!(citations[1].section_name, "2.1.1 Sub");
+        assert_eq!(
+            citations[1].body_lines,
+            vec!["Sub body line 1.", "Sub body line 2."]
+        );
+    }
+
+    #[test]
+    fn extract_md_citations_skips_non_section() {
+        let md = "\
+## Table of contents
+
+- link
+
+## Not a number
+
+Some text.
+";
+        let citations = extract_md_citations(md);
+        assert!(citations.is_empty());
+    }
+
+    #[test]
+    fn extract_source_sections_basic() {
+        let src = "\
+### 2.1 Top
+
+Top body.
+
+#### 2.1.1 Sub
+
+Sub body.
+
+### 2.2 Next
+
+Next body.
+";
+        let sections = extract_source_sections(src);
+        assert_eq!(sections.len(), 3);
+        assert_eq!(sections[0].name, "2.1 Top");
+        assert_eq!(sections[0].body_lines, vec!["Top body."]);
+        assert_eq!(sections[1].name, "2.1.1 Sub");
+        assert_eq!(sections[1].body_lines, vec!["Sub body."]);
+        assert_eq!(sections[2].name, "2.2 Next");
+        assert_eq!(sections[2].body_lines, vec!["Next body."]);
+    }
+
+    #[test]
+    fn extract_source_sections_stops_at_next_heading() {
+        let src = "\
+### 2.1 Sec
+
+Line one.
+
+Line two.
+
+#### 2.1.1 Sub
+
+Sub text.
+";
+        let sections = extract_source_sections(src);
+        assert_eq!(sections[0].name, "2.1 Sec");
+        assert_eq!(
+            sections[0].body_lines,
+            vec!["Line one.", "", "Line two."]
+        );
+    }
+
+    #[test]
+    fn source_file_for_section_chapter2() {
+        let root = Path::new("/docs/posix/md");
+        let p = source_file_for_section("2.6.2 Parameter Expansion", root).unwrap();
+        assert_eq!(p, PathBuf::from("/docs/posix/md/utilities/V3_chap02.md"));
+    }
+
+    #[test]
+    fn source_file_for_section_chapter1() {
+        let root = Path::new("/docs/posix/md");
+        let p = source_file_for_section("1.3 Something", root).unwrap();
+        assert_eq!(p, PathBuf::from("/docs/posix/md/utilities/V3_chap01.md"));
     }
 }
