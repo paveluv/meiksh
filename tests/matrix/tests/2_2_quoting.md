@@ -407,6 +407,23 @@ begin test "single quotes preserve spaces tabs and semicolons literally"
 end test "single quotes preserve spaces tabs and semicolons literally"
 ```
 
+#### Test: single quotes preserve literal newline
+
+Single-quotes preserve the literal value of every character inside them,
+including a newline.
+
+```
+begin test "single quotes preserve literal newline"
+  script
+    printf '%s\n' 'hello
+    world'
+  expect
+    stdout "hello\nworld"
+    stderr ""
+    exit_code 0
+end test "single quotes preserve literal newline"
+```
+
 #### Test: unterminated single quote causes shell syntax error
 
 An unmatched single-quote is not a valid shell token. The shell should reject
@@ -559,6 +576,23 @@ begin test "backslash-newline inside double quotes is continuation"
     stderr ""
     exit_code 0
 end test "backslash-newline inside double quotes is continuation"
+```
+
+#### Test: double quotes preserve literal newline
+
+Newline is not one of the characters exempted from literal preservation inside
+double-quotes, so an embedded newline is preserved as part of the quoted field.
+
+```
+begin test "double quotes preserve literal newline"
+  script
+    printf '%s\n' "hello
+    world"
+  expect
+    stdout "hello\nworld"
+    stderr ""
+    exit_code 0
+end test "double quotes preserve literal newline"
 ```
 
 #### Test: double quotes preserve parameter expansion as one field
@@ -971,4 +1005,23 @@ begin test "dollar-single-quote variable-length escapes terminate correctly"
     stderr ""
     exit_code 0
 end test "dollar-single-quote variable-length escapes terminate correctly"
+```
+
+#### Test: dollar-single-quote escapes are processed before word expansion
+
+Backslash escapes inside `$'...'` are processed immediately before word
+expansion, but the resulting characters remain literal as part of the quoted
+word. An escaped dollar sign therefore does not start a new parameter
+expansion.
+
+```
+begin test "dollar-single-quote escapes are processed before word expansion"
+  script
+    foo=BAR
+    printf '%s\n' $'\x24'foo
+  expect
+    stdout "\$foo"
+    stderr ""
+    exit_code 0
+end test "dollar-single-quote escapes are processed before word expansion"
 ```
