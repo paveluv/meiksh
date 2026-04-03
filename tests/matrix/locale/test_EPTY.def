@@ -2,8 +2,10 @@ comment_char %
 escape_char /
 
 % Minimal locale for expect_pty POSIX compliance testing.
-% Compiled at suite startup via: localedef -f UTF-8 -i test_EPTY.def <outdir>/test_EPTY.UTF-8
-% Used with LOCPATH=<outdir> LC_ALL=test_EPTY.UTF-8
+% Compiled at suite startup into both UTF-8 and ISO-8859-1 variants:
+%   localedef -f UTF-8 -i test_EPTY.def <outdir>/test_EPTY.UTF-8
+%   localedef -f ISO-8859-1 -i test_EPTY.def <outdir>/test_EPTY.ISO-8859-1
+% Used with LOCPATH=<outdir> and LC_ALL/LANG/LC_CTYPE selecting one variant.
 
 LC_IDENTIFICATION
 title      "expect_pty test locale"

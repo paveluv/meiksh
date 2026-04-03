@@ -1551,13 +1551,29 @@ fn baseline_env(tmpdir: &str, shell_str: &str, locale_dir: Option<&str>) -> Hash
     env
 }
 
+fn compile_locale_variant(locale_dir: &str, def_path: &str, charmap: &str, locale_name: &str) -> bool {
+    let out_path = format!("{locale_dir}/{locale_name}");
+    if std::path::Path::new(&out_path).is_dir() {
+        return true;
+    }
+
+    let status = Command::new("localedef")
+        .args(["-f", charmap, "-i", def_path, &out_path])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    match status {
+        Ok(s) if s.success() => {
+            eprintln!("expect_pty: compiled test locale to {out_path}");
+            true
+        }
+        _ => false,
+    }
+}
+
 fn compile_test_locale() -> Option<String> {
     let locale_dir = "/tmp/epty_locale";
-    let out_path = format!("{locale_dir}/test_EPTY.UTF-8");
-
-    if std::path::Path::new(&out_path).is_dir() {
-        return Some(locale_dir.to_string());
-    }
 
     let _ = fs::create_dir_all(locale_dir);
 
@@ -1569,21 +1585,15 @@ fn compile_test_locale() -> Option<String> {
         return None;
     }
 
-    let status = Command::new("localedef")
-        .args(["-f", "UTF-8", "-i", &def_path, &out_path])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+    let utf8_ok = compile_locale_variant(locale_dir, &def_path, "UTF-8", "test_EPTY.UTF-8");
+    let latin1_ok =
+        compile_locale_variant(locale_dir, &def_path, "ISO-8859-1", "test_EPTY.ISO-8859-1");
 
-    match status {
-        Ok(s) if s.success() => {
-            eprintln!("expect_pty: compiled test locale to {out_path}");
-            Some(locale_dir.to_string())
-        }
-        _ => {
-            eprintln!("expect_pty: localedef not available or failed, skipping locale tests");
-            None
-        }
+    if utf8_ok || latin1_ok {
+        Some(locale_dir.to_string())
+    } else {
+        eprintln!("expect_pty: localedef not available or failed, skipping locale tests");
+        None
     }
 }
 
