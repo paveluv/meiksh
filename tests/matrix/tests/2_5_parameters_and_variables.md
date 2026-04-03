@@ -262,7 +262,7 @@ Listed below are the special parameters and the values to which they shall expan
 - `-`: (Hyphen.) Expands to the current option flags (the single-letter option names concatenated into a string) as specified on invocation, by the [*set*](#set) special built-in command, or implicitly by the shell. It is unspecified whether the **-c** and **-s** options are included in the expansion of `"$-"`. The **-i** option shall be included in `"$-"` if the shell is interactive, regardless of whether it was specified on invocation.
 - `$`: Expands to the shortest representation of the decimal process ID of the invoked shell. In a subshell (see [2.13 Shell Execution Environment](#213-shell-execution-environment)), `'$'` shall expand to the same value as that of the current shell.
 - `!`: Expands to the shortest representation of the decimal process ID associated with the most recent asynchronous AND-OR list (see [2.9.3.1 Asynchronous AND-OR Lists](#2931-asynchronous-and-or-lists)) executed from the current shell execution environment, or to the shortest representation of the decimal process ID of the last command specified in the currently executing pipeline in the job-control background job that most recently resumed execution through the use of [*bg*](../utilities/bg.md), whichever is the most recent.
-- 0: (Zero.) Expands to the name of the shell or shell script. See [*sh*](../utilities/sh.md#) for a detailed description of how this name is derived.
+- 0: (Zero.) Expands to the name of the shell or shell script. See [*sh*](../utilities/sh.md) for a detailed description of how this name is derived.
 
 See the description of the *IFS* variable in [2.5.3 Shell Variables](#253-shell-variables).
 

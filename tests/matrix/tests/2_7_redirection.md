@@ -39,7 +39,7 @@ writes the character 2 into file **a**. If any part of *redir-op* is quoted, no 
 echo 2\>a
 ```
 
-writes the characters 2&gt;*a* to standard output. The optional number, redirection operator, and *word* shall not appear in the arguments provided to the command to be executed (if any).
+writes the characters 2\>*a* to standard output. The optional number, redirection operator, and *word* shall not appear in the arguments provided to the command to be executed (if any).
 
 The shell may support an additional format used for redirection:
 
@@ -324,7 +324,7 @@ end test "append redirection with >>"
 
 The redirection operators `"<<"` and `"<<-"` both allow redirection of subsequent lines read by the shell to the input of a command. The redirected lines are known as a "here-document".
 
-The here-document shall be treated as a single word that begins after the next **NEWLINE** token and continues until there is a line containing only the delimiter and a `<newline>`, with no `<blank>` characters in between. Then the next here-document starts, if there is one. For the purposes of locating this terminating line, the end of a *command_string* operand (see [*sh*](../utilities/sh.md#)) shall be treated as a `<newline>` character, and the end of the *commands* string in `$(commands)` and `` `commands` `` may be treated as a `<newline>`. If the end of input is reached without finding the terminating line, the shell should, but need not, treat this as a redirection error. The format is as follows:
+The here-document shall be treated as a single word that begins after the next **NEWLINE** token and continues until there is a line containing only the delimiter and a `<newline>`, with no `<blank>` characters in between. Then the next here-document starts, if there is one. For the purposes of locating this terminating line, the end of a *command_string* operand (see [*sh*](../utilities/sh.md)) shall be treated as a `<newline>` character, and the end of the *commands* string in `$(commands)` and `` `commands` `` may be treated as a `<newline>`. If the end of input is reached without finding the terminating line, the shell should, but need not, treat this as a redirection error. The format is as follows:
 
 ```
 [n]<<word
@@ -332,7 +332,7 @@ The here-document shall be treated as a single word that begins after the next *
 delimiter
 ```
 
-where the optional *n* represents the file descriptor number. If the number is omitted, the here-document refers to standard input (file descriptor 0). It is unspecified whether the file descriptor is opened as a regular file or some other type of file. Portable applications cannot rely on the file descriptor being seekable (see XSH [*lseek*()](../functions/lseek.md#)).
+where the optional *n* represents the file descriptor number. If the number is omitted, the here-document refers to standard input (file descriptor 0). It is unspecified whether the file descriptor is opened as a regular file or some other type of file. Portable applications cannot rely on the file descriptor being seekable (see XSH [*lseek*()](../functions/lseek.md)).
 
 If any part of *word* is quoted, not counting double-quotes outside a command substitution if the here-document is inside one, the delimiter shall be formed by performing quote removal on *word*, and the here-document lines shall not be expanded. Otherwise:
 
