@@ -37,34 +37,38 @@ The various quoting mechanisms are the escape character, single-quotes, double-q
 
 #### Test: backslash-quoting preserves literal special characters
 
-Backslash-quoting each of the mandatory-quote characters (`| & ; < > ( ) $ \` \ "`)
-produces their literal values.
+Backslash-quoting preserves the literal value of each following character. This
+test covers representative shell metacharacters and quote characters using
+`printf` so the result is not affected by `echo`'s implementation-defined
+backslash handling.
 
 ```
 begin test "backslash-quoting preserves literal special characters"
   script
-    echo \| \& \; \< \> \( \) \$ \` \\ \"
+    printf '%s\n' \| \& \; \< \> \( \) \$ \` \\ \" \'
   expect
-    stdout "\| & ; < > \( \) \$ ` \\ """
+    stdout "\|\n&\n;\n<\n>\n\(\n\)\n\$\n`\n\\\n""\n'"
     stderr ""
     exit_code 0
 end test "backslash-quoting preserves literal special characters"
 ```
 
-#### Test: single-quoting preserves literal special characters
+#### Test: single-quoting preserves literal shell metacharacters
 
-Single-quoting a string containing all mandatory-quote characters preserves each
-one literally.
+Single-quotes preserve the literal value of every character inside them. This
+test covers representative metacharacters, parameter-expansion syntax,
+command-substitution syntax, pathname-expansion syntax, a comment introducer,
+and a backslash.
 
 ```
-begin test "single-quoting preserves literal special characters"
+begin test "single-quoting preserves literal shell metacharacters"
   script
-    echo '| & ; < > ( ) $ ` \ "'
+    printf '%s\n' '| & ; < > ( ) $ ` \ " * ? [abc] #'
   expect
-    stdout "\| & ; < > \( \) \$ ` \\ """
+    stdout "\| & ; < > \( \) \$ ` \\ "" \* \? \[abc\] #"
     stderr ""
     exit_code 0
-end test "single-quoting preserves literal special characters"
+end test "single-quoting preserves literal shell metacharacters"
 ```
 
 #### Test: double-quoting preserves literal pipe semicolon angle parens
@@ -75,7 +79,7 @@ special inside double-quotes.
 ```
 begin test "double-quoting preserves literal pipe semicolon angle parens"
   script
-    echo "| & ; < > ( )"
+    printf '%s\n' "| & ; < > ( )"
   expect
     stdout "\| & ; < > \( \)"
     stderr ""
@@ -132,20 +136,20 @@ begin test "quoting prevents glob expansion of * ? [ ]"
 end test "quoting prevents glob expansion of * ? [ ]"
 ```
 
-#### Test: quoting preserves literal ~ = % { } characters
+#### Test: quoting preserves literal ~ = % { } , ^ - characters
 
 The conditionally-special characters `~ = % { } , ^ -` are preserved literally
 when quoted.
 
 ```
-begin test "quoting preserves literal ~ = % { } characters"
+begin test "quoting preserves literal ~ = % { } , ^ - characters"
   script
-    echo '~' '=' '%' '{' '}' ',' '^' '-'
+    printf '%s\n' '~' '=' '%' '{' '}' ',' '^' '-'
   expect
-    stdout "~ = % { } , ^ -"
+    stdout "~\n=\n%\n\{\n\}\n,\n\^\n-"
     stderr ""
     exit_code 0
-end test "quoting preserves literal ~ = % { } characters"
+end test "quoting preserves literal ~ = % { } , ^ - characters"
 ```
 
 #### Test: dollar-single-quote newline escape
@@ -156,7 +160,7 @@ literal newline between `a` and `b`.
 ```
 begin test "dollar-single-quote newline escape"
   script
-    echo $'a\nb'
+    printf '%s\n' $'a\nb'
   expect
     stdout "a\nb"
     stderr ""
@@ -194,9 +198,9 @@ A backslash before `*` preserves it literally inside a word, so `a\*b` produces
 ```
 begin test "backslash preserves literal value of following character"
   script
-    echo a\\*b
+    printf '%s\n' a\*b
   expect
-    stdout "a\\\*b"
+    stdout "a\*b"
     stderr ""
     exit_code 0
 end test "backslash preserves literal value of following character"
@@ -210,7 +214,7 @@ separator. The output is the literal string `foo;bar`.
 ```
 begin test "backslash escapes semicolon so it is literal"
   script
-    echo foo\;bar
+    printf '%s\n' foo\;bar
   expect
     stdout "foo;bar"
     stderr ""
@@ -254,8 +258,9 @@ end test "backslash-newline is line continuation"
 
 #### Test: backslash-newline line continuation between tokens
 
-Line continuation between separate tokens: the backslash-newline after `echo`
-joins it with `hello` on the next line.
+When a backslash-newline appears between tokens, both characters are removed.
+The next word remains separated by the remaining space, so this command still
+has `echo` and `hello` as separate tokens.
 
 ```
 begin test "backslash-newline line continuation between tokens"
@@ -310,20 +315,54 @@ Enclosing characters in single-quotes (`''`) shall preserve the literal value of
 
 ### Tests
 
-#### Test: single quotes preserve all characters literally
+#### Test: single quotes suppress parameter command and pathname expansion
 
-Characters `$` and `*` inside single-quotes are not expanded; they appear in the
-output as literal `$foo *`.
+A single-quoted word suppresses parameter expansion, command substitution, and
+pathname expansion. The characters `$foo`, `$(printf cmd)`, and `*` therefore
+remain literal.
 
 ```
-begin test "single quotes preserve all characters literally"
+begin test "single quotes suppress parameter command and pathname expansion"
   script
-    echo '$foo *'
+    printf '%s\n' '$foo' '$(printf cmd)' '*'
   expect
-    stdout "\$foo \*"
+    stdout "\$foo\n\$\(printf cmd\)\n\*"
     stderr ""
     exit_code 0
-end test "single quotes preserve all characters literally"
+end test "single quotes suppress parameter command and pathname expansion"
+```
+
+#### Test: single quotes preserve spaces tabs and semicolons literally
+
+Single-quotes preserve embedded spaces, tabs, and semicolons as ordinary
+characters, so each quoted word remains one shell argument.
+
+```
+begin test "single quotes preserve spaces tabs and semicolons literally"
+  script
+    set -- 'a b' 'c	d' 'x;y'
+    printf '%s\n%s\n%s\n%s\n' "$#" "$1" "$2" "$3"
+  expect
+    stdout "3\na b\nc	d\nx;y"
+    stderr ""
+    exit_code 0
+end test "single quotes preserve spaces tabs and semicolons literally"
+```
+
+#### Test: unterminated single quote causes shell syntax error
+
+An unmatched single-quote is not a valid shell token. The shell should reject
+the script with a syntax error instead of executing it.
+
+```
+begin test "unterminated single quote causes shell syntax error"
+  script
+    printf '%s\n' 'unterminated
+  expect
+    stdout ""
+    stderr "(.|\n)+"
+    exit_code !=0
+end test "unterminated single quote causes shell syntax error"
 ```
 
 ## 2.2.3 Double-Quotes
@@ -358,7 +397,7 @@ Inside double-quotes, `$foo`, `$(echo sub)`, and `$((2+2))` are expanded, but
 begin test "double quotes allow parameter and command and arithmetic expansion"
   script
     foo=bar
-    echo "$foo $(echo sub) $((2+2)) $'literal'"
+    printf '%s\n' "$foo $(echo sub) $((2+2)) $'literal'"
   expect
     stdout "bar sub 4 \$'literal'"
     stderr ""
@@ -374,7 +413,7 @@ inner `"inner quotes"` is processed as a separate quoting context.
 ```
 begin test "inner double quotes inside command substitution"
   script
-    echo "$(echo "inner quotes")"
+    printf '%s\n' "$(printf '%s\n' "inner quotes")"
   expect
     stdout "inner quotes"
     stderr ""
@@ -390,7 +429,7 @@ The shell applies tokenizing rules recursively to find the matching `)` for
 ```
 begin test "recursive tokenizing finds matching paren"
   script
-    echo "$(echo "(recursive)")"
+    printf '%s\n' "$(printf '%s\n' "(recursive)")"
   expect
     stdout "\(recursive\)"
     stderr ""
@@ -406,7 +445,7 @@ command substitution.
 ```
 begin test "backquote inside double quotes executes"
   script
-    echo "`echo sub`"
+    printf '%s\n' "`printf '%s\n' sub`"
   expect
     stdout "sub"
     stderr ""
@@ -414,75 +453,142 @@ begin test "backquote inside double quotes executes"
 end test "backquote inside double quotes executes"
 ```
 
-#### Test: backslash in double quotes special only before certain chars
+#### Test: backslash before non-special character stays literal in double quotes
 
-Inside double-quotes (outside `$(...)` and `${...}`), backslash is only special
-before `$`, `` ` ``, `"`, `\`, and newline. Before other characters like `n`, the
-backslash is preserved literally.
+Inside double-quotes, backslash is only special before `$`, `` ` ``, `"`, `\`,
+and newline. Before other characters like `n`, `a`, and `*`, the backslash is
+preserved literally.
 
 ```
-begin test "backslash in double quotes special only before certain chars"
+begin test "backslash before non-special character stays literal in double quotes"
   script
-    printf "%s\n" "\n \$ \` \\"
+    printf '%s\n' "\n" "\a" "\*"
   expect
-    stdout "\\n \$ ` \\"
+    stdout "\\n\n\\a\n\\\*"
     stderr ""
     exit_code 0
-end test "backslash in double quotes special only before certain chars"
+end test "backslash before non-special character stays literal in double quotes"
 ```
 
-#### Test: double quotes preserve expansion result literally
+#### Test: backslash escapes special characters in double quotes
 
-When a parameter expansion occurs inside double-quotes, the result is preserved
-literally without further expansion — glob characters in the value are not
-expanded.
+Inside double-quotes, backslash escapes `$`, `` ` ``, `"`, and `\`, yielding the
+literal characters without leaving the backslash in the result.
 
 ```
-begin test "double quotes preserve expansion result literally"
+begin test "backslash escapes special characters in double quotes"
   script
-    foo='* * *'
-    echo "$foo"
+    printf '%s\n' "\$" "\`" "\"" "\\"
   expect
-    stdout "\* \* \*"
+    stdout "\$\n`\n""\n\\"
     stderr ""
     exit_code 0
-end test "double quotes preserve expansion result literally"
+end test "backslash escapes special characters in double quotes"
 ```
 
-#### Test: substring processing not affected by outer double quotes
+#### Test: backslash-newline inside double quotes is continuation
 
-For substring-processing parameter expansions (`${var#pattern}`, etc.), the
-double-quotes have no effect on pattern matching inside the braces.
+Inside double-quotes, a backslash immediately followed by newline is still a
+line continuation. Both characters are removed from the resulting word.
 
 ```
-begin test "substring processing not affected by outer double quotes"
+begin test "backslash-newline inside double quotes is continuation"
   script
-    foo="a*b"
-    unset unset_var
-    echo "${foo#a*}" "${unset_var:-*}"
+    script=$'printf \'%s\\n\' "ab\\\ncd"\n'
+    $SHELL -c "$script"
   expect
-    stdout ".*\*b \*.*"
+    stdout "abcd"
     stderr ""
     exit_code 0
-end test "substring processing not affected by outer double quotes"
+end test "backslash-newline inside double quotes is continuation"
 ```
 
-#### Test: backslash dollar and backquote inside braces
+#### Test: double quotes preserve parameter expansion as one field
 
-Inside `${...}`, backquote and `$` retain their special meanings (command
-substitution and expansion), while `\` escapes `$` and follows double-quote
-rules.
+When parameter expansion occurs inside double-quotes, the resulting text remains
+a single field and pathname expansion is not applied to the expansion result.
 
 ```
-begin test "backslash dollar and backquote inside braces"
+begin test "double quotes preserve parameter expansion as one field"
+  script
+    foo='a b *'
+    set -- "$foo"
+    printf '%s\n%s\n' "$#" "$1"
+  expect
+    stdout "1\na b \*"
+    stderr ""
+    exit_code 0
+end test "double quotes preserve parameter expansion as one field"
+```
+
+#### Test: substring pattern remains active inside quoted ${...}
+
+For substring-processing parameter expansions such as `${var#word}`, the outer
+double-quotes do not disable pattern syntax inside the braces. The `*` in the
+pattern still matches.
+
+```
+begin test "substring pattern remains active inside quoted ${...}"
+  script
+    foo='abcabc'
+    printf '%s\n' "${foo#*c}"
+  expect
+    stdout "abc"
+    stderr ""
+    exit_code 0
+end test "substring pattern remains active inside quoted ${...}"
+```
+
+#### Test: default word remains literal inside quoted ${...:-word}
+
+For parameter expansions other than the substring-processing forms, the outer
+double-quotes preserve the literal value of ordinary characters in the default
+word. The `*` here remains literal.
+
+```
+begin test "default word remains literal inside quoted ${...:-word}"
   script
     unset foo
-    printf "%s\n" "${foo:-`echo default` \$ \n \\ }"
+    printf '%s\n' "${foo:-*}"
   expect
-    stdout "default \$ \\n \\.*"
+    stdout "\*"
     stderr ""
     exit_code 0
-end test "backslash dollar and backquote inside braces"
+end test "default word remains literal inside quoted ${...:-word}"
+```
+
+#### Test: command substitution remains active inside quoted ${...:-word}
+
+Inside `${...}` within double-quotes, `$(` still introduces command
+substitution for non-substring expansions.
+
+```
+begin test "command substitution remains active inside quoted ${...:-word}"
+  script
+    unset foo
+    printf '%s\n' "${foo:-$(printf '%s\n' default)}"
+  expect
+    stdout "default"
+    stderr ""
+    exit_code 0
+end test "command substitution remains active inside quoted ${...:-word}"
+```
+
+#### Test: escaped right brace does not terminate quoted ${...}
+
+Inside `${...}` within double-quotes, a backslash before `}` prevents that
+character from being treated as the closing brace for the expansion.
+
+```
+begin test "escaped right brace does not terminate quoted ${...}"
+  script
+    unset foo
+    printf '%s\n' "${foo:-\}x}"
+  expect
+    stdout "\}x"
+    stderr ""
+    exit_code 0
+end test "escaped right brace does not terminate quoted ${...}"
 ```
 
 #### Test: double quotes prevent wildcard expansion
@@ -493,7 +599,7 @@ literal string `a*b`.
 ```
 begin test "double quotes prevent wildcard expansion"
   script
-    echo "a*b"
+    printf '%s\n' "a*b"
   expect
     stdout "a\*b"
     stderr ""
@@ -509,7 +615,7 @@ literal backslash.
 ```
 begin test "double quotes backslash produces single backslash"
   script
-    echo "\\"
+    printf '%s\n' "\\"
   expect
     stdout "\\"
     stderr ""
@@ -525,7 +631,7 @@ character, as required for including `"` within double-quoted strings.
 ```
 begin test "escaped double quote inside double quotes"
   script
-    echo "\""
+    printf '%s\n' "\""
   expect
     stdout """"
     stderr ""
@@ -533,20 +639,21 @@ begin test "escaped double quote inside double quotes"
 end test "escaped double quote inside double quotes"
 ```
 
-#### Test: dollar-paren command substitution
+#### Test: dollar-paren command substitution inside double quotes
 
 The `$(...)` command substitution form works inside double-quotes, replacing the
-construct with the command's standard output.
+construct with the command's standard output while preserving the result as part
+of one quoted field.
 
 ```
-begin test "dollar-paren command substitution"
+begin test "dollar-paren command substitution inside double quotes"
   script
-    echo $(echo hello)
+    printf '%s\n' "$(printf '%s\n' hello)"
   expect
     stdout "hello"
     stderr ""
     exit_code 0
-end test "dollar-paren command substitution"
+end test "dollar-paren command substitution inside double quotes"
 ```
 
 ## 2.2.4 Dollar-Single-Quotes
@@ -623,12 +730,90 @@ terminating the dollar-single-quote sequence.
 ```
 begin test "dollar-single-quote escaped single quote"
   script
-    echo $'can\'t'
+    printf '%s\n' $'can\'t'
   expect
     stdout "can't"
     stderr ""
     exit_code 0
 end test "dollar-single-quote escaped single quote"
+```
+
+#### Test: dollar-single-quote double-quote escape
+
+The `\"` escape yields a literal double-quote character inside `$'...'`.
+
+```
+begin test "dollar-single-quote double-quote escape"
+  script
+    printf '%s\n' $'a\"b'
+  expect
+    stdout "a""b"
+    stderr ""
+    exit_code 0
+end test "dollar-single-quote double-quote escape"
+```
+
+#### Test: dollar-single-quote backslash escape
+
+The `\\` escape yields a literal backslash character inside `$'...'`.
+
+```
+begin test "dollar-single-quote backslash escape"
+  script
+    printf '%s\n' $'a\\b'
+  expect
+    stdout "a\\b"
+    stderr ""
+    exit_code 0
+end test "dollar-single-quote backslash escape"
+```
+
+#### Test: dollar-single-quote octal escape
+
+The `\ddd` form accepts one to three octal digits and yields the corresponding
+byte value. `\101\102` therefore produces `AB`.
+
+```
+begin test "dollar-single-quote octal escape"
+  script
+    printf '%s\n' $'\101\102'
+  expect
+    stdout "AB"
+    stderr ""
+    exit_code 0
+end test "dollar-single-quote octal escape"
+```
+
+#### Test: dollar-single-quote control escapes produce expected bytes
+
+The named control escapes `\a`, `\b`, `\e`, `\f`, `\r`, `\t`, and `\v` yield
+their specified byte values.
+
+```
+begin test "dollar-single-quote control escapes produce expected bytes"
+  script
+    printf '%s' $'\a\b\e\f\r\t\v' | od -An -tx1
+  expect
+    stdout " *07 08 1b 0c 0d 09 0b"
+    stderr ""
+    exit_code 0
+end test "dollar-single-quote control escapes produce expected bytes"
+```
+
+#### Test: dollar-single-quote c-control escape
+
+The `\cX` form yields the corresponding control character. For `X=A`, the byte
+value is `0x01`.
+
+```
+begin test "dollar-single-quote c-control escape"
+  script
+    printf '%s' $'\cA' | od -An -tx1
+  expect
+    stdout " *01"
+    stderr ""
+    exit_code 0
+end test "dollar-single-quote c-control escape"
 ```
 
 #### Test: dollar-single-quote variable-length escapes terminate correctly
