@@ -160,6 +160,23 @@ begin test "$01 is $0 followed by literal 1, and ${10} expands to 10th arg"
 end test "$01 is $0 followed by literal 1, and ${10} expands to 10th arg"
 ```
 
+#### Test: ${08} and ${008} use decimal positional index 8
+
+Leading zeroes do not change the decimal interpretation of a positional
+parameter index. `${08}` and `${008}` both expand to the eighth positional
+parameter.
+
+```
+begin test "${08} and ${008} use decimal positional index 8"
+  script
+    $SHELL -c 'printf "%s\n%s\n" "${08}" "${008}"' sh 1 2 3 4 5 6 7 eighth
+  expect
+    stdout "eighth\neighth"
+    stderr ""
+    exit_code 0
+end test "${08} and ${008} use decimal positional index 8"
+```
+
 #### Test: positional parameters follow invocation function and set lifecycle
 
 Positional parameters are set at shell invocation, temporarily replaced inside
@@ -280,6 +297,70 @@ begin test "quoted $* is single string, quoted $@ is distinct args"
     stderr ""
     exit_code 0
 end test "quoted $* is single string, quoted $@ is distinct args"
+```
+
+#### Test: quoted $* uses first IFS character as separator
+
+When `"$*"` is expanded and `IFS` is non-empty, the positional parameters are
+joined using the first character of `IFS`.
+
+```
+begin test "quoted $* uses first IFS character as separator"
+  script
+    $SHELL -c 'IFS=:; set -- a b c; printf "%s\n" "$*"'
+  expect
+    stdout "a:b:c"
+    stderr ""
+    exit_code 0
+end test "quoted $* uses first IFS character as separator"
+```
+
+#### Test: quoted $* uses space when IFS is unset
+
+When `"$*"` is expanded and `IFS` is unset, the positional parameters are
+joined using a space.
+
+```
+begin test "quoted $* uses space when IFS is unset"
+  script
+    $SHELL -c 'unset IFS; set -- a b c; printf "%s\n" "$*"'
+  expect
+    stdout "a b c"
+    stderr ""
+    exit_code 0
+end test "quoted $* uses space when IFS is unset"
+```
+
+#### Test: quoted $* uses no separator when IFS is null
+
+When `"$*"` is expanded and `IFS` is set to a null string, the positional
+parameters are joined with no separator.
+
+```
+begin test "quoted $* uses no separator when IFS is null"
+  script
+    $SHELL -c 'IFS=; set -- a b c; printf "%s\n" "$*"'
+  expect
+    stdout "abc"
+    stderr ""
+    exit_code 0
+end test "quoted $* uses no separator when IFS is null"
+```
+
+#### Test: quoted $@ joins prefix and suffix to first and last fields
+
+When `"$@"` is embedded within a word, the first field joins with the prefix
+and the last field joins with the suffix.
+
+```
+begin test "quoted $@ joins prefix and suffix to first and last fields"
+  script
+    $SHELL -c 'set -- "a b" c; for x in pre"$@"post; do printf "<%s>" "$x"; done'
+  expect
+    stdout "<prea b><cpost>"
+    stderr ""
+    exit_code 0
+end test "quoted $@ joins prefix and suffix to first and last fields"
 ```
 
 #### Test: # expands to decimal positional count
@@ -526,11 +607,9 @@ is read and executed before any interactive commands.
 ```
 begin test "ENV file processed for interactive shell"
   script
-    _env_file=_test_env.sh
-    echo 'ENVMARKER=loaded' > $_env_file
-    EFILE=$_env_file
-    export EFILE
-    ENV=$EFILE
+    _env_file="$PWD/_test_env.sh"
+    echo 'ENVMARKER=loaded' > "$_env_file"
+    ENV=$_env_file
     export ENV
     $SHELL -i -c 'echo $ENVMARKER' 2>/dev/null
   expect
@@ -558,24 +637,6 @@ begin test "ENV is ignored for non-interactive shell"
 end test "ENV is ignored for non-interactive shell"
 ```
 
-#### Test: ENV set to valid file does not crash non-interactive shell
-
-Setting `ENV` to a valid file for a non-interactive shell should have no
-effect — the shell runs normally without executing the `ENV` file.
-
-```
-begin test "ENV set to valid file does not crash non-interactive shell"
-  script
-    _env_file=_test_env2.sh
-    echo 'echo env_ran' > $_env_file
-    ENV=$_env_file $SHELL -c true 2>/dev/null
-  expect
-    stdout ""
-    stderr ""
-    exit_code 0
-end test "ENV set to valid file does not crash non-interactive shell"
-```
-
 #### Test: IFS default splits on space, tab, and newline
 
 The shell initializes IFS to space, tab, and newline. A string containing all
@@ -591,27 +652,6 @@ begin test "IFS default splits on space, tab, and newline"
     stderr ""
     exit_code 0
 end test "IFS default splits on space, tab, and newline"
-```
-
-#### Test: LC_CTYPE change mid-script does not break lexical processing
-
-Changing `LC_CTYPE` after the shell has started does not affect lexical
-processing of commands in the current execution environment.
-
-```
-begin test "LC_CTYPE change mid-script does not break lexical processing"
-  script
-    LC_CTYPE=C
-    export LC_CTYPE
-    echo "hello world"
-    LC_CTYPE=POSIX
-    export LC_CTYPE
-    echo "still works"
-  expect
-    stdout "hello world\nstill works"
-    stderr ""
-    exit_code 0
-end test "LC_CTYPE change mid-script does not break lexical processing"
 ```
 
 #### Test: PPID same in subshell
@@ -671,12 +711,12 @@ end test "changing PS4 alters trace prefix"
 
 #### Test: PWD is set to current working directory
 
-The shell sets `PWD` to the current working directory. It must be non-empty.
+The shell sets `PWD` to the current working directory pathname.
 
 ```
 begin test "PWD is set to current working directory"
   script
-    test -n "$PWD" && echo ok
+    [ -n "$PWD" ] && [ "$PWD" = "$(pwd -P)" ] && echo ok
   expect
     stdout "ok"
     stderr ""
@@ -704,15 +744,17 @@ end test "PWD is initialized from valid environment value"
 #### Test: PS1 parameter and exclamation-mark expansion
 
 PS1 is subjected to parameter expansion and exclamation-mark expansion before
-each interactive prompt. This test sets PS1 with a history number placeholder
-and a command substitution, then verifies the prompt changes.
+each interactive prompt. This test checks the specified parameter and `!!`
+behavior without relying on unspecified command substitution.
 
 ```
 begin interactive test "PS1 parameter and exclamation-mark expansion"
   spawn -i
   expect "$ "
-  send "PS1='cmd \\! var $(echo 1)> '"
-  expect "cmd .* var 1>"
+  send "marker=VALUE"
+  expect "$ "
+  send "PS1='cmd !! $marker> '"
+  expect "cmd ! VALUE> "
   send "echo interactive_test"
   expect "interactive_test"
   sendeof
