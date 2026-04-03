@@ -234,7 +234,6 @@ begin test "backslash preserves literal value of following character"
   script
     touch a_test_b
     echo a\*b
-    rm -f a_test_b
   expect
     stdout "a\*b"
     stderr ""
