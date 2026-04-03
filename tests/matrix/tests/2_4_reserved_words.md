@@ -173,23 +173,6 @@ begin test "elif then else and fi are recognized in if command"
 end test "elif then else and fi are recognized in if command"
 ```
 
-#### Test: fi is recognized as closing reserved word
-
-The `fi` word is recognized as the closing reserved word of an `if` command.
-
-```
-begin test "fi is recognized as closing reserved word"
-  script
-    if true; then
-      printf '%s\n' closing-fi
-    fi
-  expect
-    stdout "closing-fi"
-    stderr ""
-    exit_code 0
-end test "fi is recognized as closing reserved word"
-```
-
 #### Test: reserved word not recognized after case
 
 The word immediately following the `case` reserved word is not recognized as a reserved word. It is treated as an ordinary word (the word to be matched).
@@ -300,23 +283,6 @@ begin test "do recognized as third word in for"
 end test "do recognized as third word in for"
 ```
 
-#### Test: done is recognized as closing reserved word
-
-The `done` word is recognized as the closing reserved word of a loop command.
-
-```
-begin test "done is recognized as closing reserved word"
-  script
-    for x in one two; do
-      printf '%s\n' "$x"
-    done
-  expect
-    stdout "one\ntwo"
-    stderr ""
-    exit_code 0
-end test "done is recognized as closing reserved word"
-```
-
 #### Test: while do and done are recognized
 
 The `while`, `do`, and `done` words are recognized in the positions required by
@@ -355,6 +321,24 @@ begin test "until do and done are recognized"
     stderr ""
     exit_code 0
 end test "until do and done are recognized"
+```
+
+#### Test: time reserved word measures and passes through output
+
+When `time` is recognized as a reserved word and the resulting simple command
+would execute the `time` utility in a specified manner, the shell shall behave
+as the `time` utility specifies: the command's own output passes through and
+timing information is written to standard error.
+
+```
+begin test "time reserved word measures and passes through output"
+  script
+    time echo "measured"
+  expect
+    stdout "measured"
+    stderr "(.|\n)*.+"
+    exit_code 0
+end test "time reserved word measures and passes through output"
 ```
 
 #### Test: quoted reserved word is not recognized
