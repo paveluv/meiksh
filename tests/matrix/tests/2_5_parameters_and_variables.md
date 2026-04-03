@@ -1009,6 +1009,27 @@ begin test "LC_ALL overrides LANG and LC_CTYPE for shell character classes"
 end test "LC_ALL overrides LANG and LC_CTYPE for shell character classes"
 ```
 
+#### Test: LINENO tracks sequential line numbers in a script
+
+The shell sets `LINENO` to the current sequential line number (starting with 1)
+within a script before executing each command.
+
+```
+begin test "LINENO tracks sequential line numbers in a script"
+  script
+    cat > _lineno.sh <<'SCRIPT'
+    echo "$LINENO"
+    echo "$LINENO"
+    echo "$LINENO"
+    SCRIPT
+    $SHELL _lineno.sh
+  expect
+    stdout "1\n2\n3"
+    stderr ""
+    exit_code 0
+end test "LINENO tracks sequential line numbers in a script"
+```
+
 #### Test: IFS default splits on space, tab, and newline
 
 The shell initializes IFS to space, tab, and newline. A string containing all
