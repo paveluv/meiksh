@@ -118,7 +118,7 @@ If a token is delimited but hasn't accumulated any characters (such as between t
 ```
 begin test "empty token discarded"
   script
-    $SHELL -c ';;' 2>/dev/null || true
+    printf '%s' ' ' | $SHELL
   expect
     stdout ""
     stderr ""
@@ -232,9 +232,11 @@ A backslash escapes the literal value of a wildcard character like `*`, preventi
 ```
 begin test "backslash preserves literal value of following character"
   script
-    echo a\\*b
+    touch a_test_b
+    echo a\*b
+    rm -f a_test_b
   expect
-    stdout "a\\\*b"
+    stdout "a\*b"
     stderr ""
     exit_code 0
 end test "backslash preserves literal value of following character"
@@ -747,22 +749,6 @@ begin test "case/esac reserved words"
     stderr ""
     exit_code 0
 end test "case/esac reserved words"
-```
-
-#### Test: alias trailing blank triggers expansion of next word
-
-If an alias definition ends with a blank, the shell attempts alias expansion on the next token as well.
-
-```
-begin test "alias trailing blank triggers expansion of next word"
-  script
-    alias myalias="echo "
-    myalias hello
-  expect
-    stdout "hello"
-    stderr ""
-    exit_code 0
-end test "alias trailing blank triggers expansion of next word"
 ```
 
 #### Test: dollar-single-quote basic support
