@@ -32,6 +32,31 @@ In situations where the shell parses its input as a *program*, once a *complete_
 
 ### Tests
 
+#### Test: long input line is accepted
+
+The shell reads its input in terms of lines, and input lines can be of
+unlimited length. This test feeds a moderately long single command line and
+checks that the full token is preserved.
+
+```
+begin test "long input line is accepted"
+  script
+    i=0
+    payload=
+    while [ "$i" -lt 5000 ]; do
+      payload="${payload}x"
+      i=$((i + 1))
+    done
+    printf "printf '%%s\\n' %s\n" "$payload" > long_line.sh
+    out=$($SHELL long_line.sh)
+    printf '%s\n' "${#out}"
+  expect
+    stdout "5000"
+    stderr ""
+    exit_code 0
+end test "long input line is accepted"
+```
+
 #### Test: end of substitution does not delimit token
 
 Tokens are not delimited by the end of a command substitution. The string `suffix` is appended to the substitution to form a single token.
@@ -174,6 +199,24 @@ begin test "here-document body after io_here"
     stderr ""
     exit_code 0
 end test "here-document body after io_here"
+```
+
+#### Test: << forms io_here operator without blanks
+
+The `<<` operator is recognized as a single `io_here` token even when it is
+adjacent to the command name and delimiter with no surrounding blanks.
+
+```
+begin test "<< forms io_here operator without blanks"
+  script
+    cat<<EOF
+    compact heredoc
+    EOF
+  expect
+    stdout "compact heredoc"
+    stderr ""
+    exit_code 0
+end test "<< forms io_here operator without blanks"
 ```
 
 #### Test: multiple here-documents on same line
@@ -916,12 +959,12 @@ end test "arithmetic subtraction negative"
 #### Test: && forms a single operator token
 
 Two consecutive `&` characters are combined into the `&&` operator token rather
-than being treated as separate words.
+than being treated as separate words, even without surrounding blanks.
 
 ```
 begin test "&& forms a single operator token"
   script
-    true && printf '%s\n' and-list
+    true&&printf '%s\n' and-list
   expect
     stdout "and-list"
     stderr ""
@@ -932,12 +975,12 @@ end test "&& forms a single operator token"
 #### Test: || forms a single operator token
 
 Two consecutive `|` characters are combined into the `||` operator token rather
-than being treated as separate words.
+than being treated as separate words, even without surrounding blanks.
 
 ```
 begin test "|| forms a single operator token"
   script
-    false || printf '%s\n' or-list
+    false||printf '%s\n' or-list
   expect
     stdout "or-list"
     stderr ""
@@ -945,20 +988,53 @@ begin test "|| forms a single operator token"
 end test "|| forms a single operator token"
 ```
 
-#### Test: unquoted > is a control operator
+#### Test: single pipe operator delimits words without blanks
 
-An unquoted `>` character acts as a redirection control operator and delimits the preceding token.
+An unquoted `|` starts an operator token and delimits the surrounding words even
+when there are no blanks around it.
 
 ```
-begin test "unquoted > is a control operator"
+begin test "single pipe operator delimits words without blanks"
   script
-    echo a>tmp_token.txt
+    printf '%s\n' piped|cat
+  expect
+    stdout "piped"
+    stderr ""
+    exit_code 0
+end test "single pipe operator delimits words without blanks"
+```
+
+#### Test: unquoted > starts redirection operator
+
+An unquoted `>` character starts a redirection operator token and delimits the
+preceding word even when there are no surrounding blanks.
+
+```
+begin test "unquoted > starts redirection operator"
+  script
+    printf '%s\n' a>tmp_token.txt
     cat tmp_token.txt
   expect
     stdout "a"
     stderr ""
     exit_code 0
-end test "unquoted > is a control operator"
+end test "unquoted > starts redirection operator"
+```
+
+#### Test: semicolon operator delimits commands without blanks
+
+An unquoted `;` starts an operator token and separates complete commands even
+when it appears with no surrounding blanks.
+
+```
+begin test "semicolon operator delimits commands without blanks"
+  script
+    printf '%s\n' first;printf '%s\n' second
+  expect
+    stdout "first\nsecond"
+    stderr ""
+    exit_code 0
+end test "semicolon operator delimits commands without blanks"
 ```
 
 #### Test: >> forms a single append operator
@@ -993,6 +1069,23 @@ begin test "multiple blanks between words"
 end test "multiple blanks between words"
 ```
 
+#### Test: unquoted tab delimits words
+
+An unquoted tab is a `<blank>` and therefore delimits tokens just like an
+unquoted space.
+
+```
+begin test "unquoted tab delimits words"
+  script
+    script=$(printf 'set -- a\tb\nprintf "%%s:%%s:%%s\\n" "$#" "$1" "$2"\n')
+    printf '%s' "$script" | $SHELL
+  expect
+    stdout "2:a:b"
+    stderr ""
+    exit_code 0
+end test "unquoted tab delimits words"
+```
+
 #### Test: comments ignored up to newline
 
 An unquoted `#` introduces a comment, causing the shell to ignore all subsequent characters up to (but not including) the next newline.
@@ -1007,6 +1100,23 @@ begin test "comments ignored up to newline"
     stderr ""
     exit_code 0
 end test "comments ignored up to newline"
+```
+
+#### Test: comment after operator is ignored up to newline
+
+After an operator has delimited the previous token, an unquoted `#` begins a
+comment even with no intervening blank.
+
+```
+begin test "comment after operator is ignored up to newline"
+  script
+    printf '%s\n' a;#this is ignored
+    printf '%s\n' b
+  expect
+    stdout "a\nb"
+    stderr ""
+    exit_code 0
+end test "comment after operator is ignored up to newline"
 ```
 
 #### Test: quoted # is not a comment
@@ -1138,6 +1248,26 @@ begin interactive test "alias name must match the whole token"
 end interactive test "alias name must match the whole token"
 ```
 
+#### Test: token that is not a valid alias name is not substituted
+
+Alias substitution applies only to tokens that are valid alias names. A token
+containing a slash is therefore not subject to alias substitution.
+
+```
+begin interactive test "token that is not a valid alias name is not substituted"
+  spawn -i
+  expect "$ "
+  send "cat > foo <<'EOF'\n#!/bin/sh\nprintf '%s\\n' slash-token\nEOF\nchmod +x foo"
+  expect "$ "
+  send "alias foo=\"printf '%s\\n' aliased\""
+  expect "$ "
+  send "./foo"
+  expect "slash-token"
+  sendeof
+  wait
+end interactive test "token that is not a valid alias name is not substituted"
+```
+
 #### Test: alias with trailing space chains to next word
 
 If an alias value ends with a space, the next word is also evaluated for alias substitution.
@@ -1155,6 +1285,26 @@ begin interactive test "alias with trailing space chains to next word"
   sendeof
   wait
 end interactive test "alias with trailing space chains to next word"
+```
+
+#### Test: alias without trailing blank does not chain to next word
+
+If an alias value does not end in a blank, the following token is not checked
+for alias substitution merely because it follows that alias expansion.
+
+```
+begin interactive test "alias without trailing blank does not chain to next word"
+  spawn -i
+  expect "$ "
+  send "alias a1=\"printf '%s\\\\n'\""
+  expect "$ "
+  send "alias a2=\"printf '%s\\\\n' chained\""
+  expect "$ "
+  send "a1 a2"
+  expect "a2"
+  sendeof
+  wait
+end interactive test "alias without trailing blank does not chain to next word"
 ```
 
 #### Test: alias replacement is re-tokenized from the start
@@ -1175,6 +1325,27 @@ begin interactive test "alias replacement is re-tokenized from the start"
 end interactive test "alias replacement is re-tokenized from the start"
 ```
 
+#### Test: different alias names can recurse
+
+After substituting one alias, token recognition resumes at the start of the
+replacement text, allowing a different alias name found there to be substituted
+recursively.
+
+```
+begin interactive test "different alias names can recurse"
+  spawn -i
+  expect "$ "
+  send "alias a='b'"
+  expect "$ "
+  send "alias b=\"printf '%s\\n' recursive\""
+  expect "$ "
+  send "a"
+  expect "recursive"
+  sendeof
+  wait
+end interactive test "different alias names can recurse"
+```
+
 #### Test: same alias name is not recursively re-expanded
 
 If a token already resulted from substitution of alias `a`, the shell does not
@@ -1191,6 +1362,28 @@ begin interactive test "same alias name is not recursively re-expanded"
   sendeof
   wait
 end interactive test "same alias name is not recursively re-expanded"
+```
+
+#### Test: alias changes do not take effect out of order
+
+When multiple changes are made to the same alias, later changes do not take
+effect before earlier ones. This test derives the second definition from the
+first, so an out-of-order implementation would not be able to produce the final
+value correctly.
+
+```
+begin interactive test "alias changes do not take effect out of order"
+  spawn -i
+  expect "$ "
+  send "alias foo=\"printf '%s\\n' first\""
+  expect "$ "
+  send "alias \"$(alias foo | sed 's/first/second/')\""
+  expect "$ "
+  send "foo"
+  expect "second"
+  sendeof
+  wait
+end interactive test "alias changes do not take effect out of order"
 ```
 
 #### Test: alias redefinition applies by next complete command
