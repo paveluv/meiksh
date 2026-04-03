@@ -128,12 +128,28 @@ pathname expansion.
 ```
 begin test "quoting prevents glob expansion of * ? [ ]"
   script
-    echo '*' '?' '[abc]'
+    printf '%s\n' '*' '?' '[abc]'
   expect
-    stdout "\* \? \[abc\]"
+    stdout "\*\n\?\n\[abc\]"
     stderr ""
     exit_code 0
 end test "quoting prevents glob expansion of * ? [ ]"
+```
+
+#### Test: quoting preserves literal ! and ] characters
+
+The conditionally-special characters `!` and `]` are preserved literally when
+quoted.
+
+```
+begin test "quoting preserves literal ! and ] characters"
+  script
+    printf '%s\n' '!' ']'
+  expect
+    stdout "!\n\]"
+    stderr ""
+    exit_code 0
+end test "quoting preserves literal ! and ] characters"
 ```
 
 #### Test: quoting preserves literal ~ = % { } , ^ - characters
@@ -176,12 +192,54 @@ inside double-quotes, it is preserved literally and does not introduce a comment
 ```
 begin test "quoted # is not a comment"
   script
-    echo "a # not a comment"
+    printf '%s\n' "a # not a comment"
   expect
     stdout "a # not a comment"
     stderr ""
     exit_code 0
 end test "quoted # is not a comment"
+```
+
+#### Test: quoting prevents reserved word recognition
+
+Quoting can prevent a reserved word from being recognized as such. Here the
+quoted word `'if'` is treated as a command name, allowing an executable named
+`if` to run.
+
+```
+begin test "quoting prevents reserved word recognition"
+  script
+    cat > if <<'EOF'
+    #!/bin/sh
+    printf '%s\n' reserved-word-suppressed
+    EOF
+    chmod +x if
+    PATH=".:$PATH" 'if'
+  expect
+    stdout "reserved-word-suppressed"
+    stderr ""
+    exit_code 0
+end test "quoting prevents reserved word recognition"
+```
+
+#### Test: quoted here-doc delimiter suppresses expansion
+
+Quoting a here-document delimiter prevents parameter expansion and command
+substitution in the here-document body.
+
+```
+begin test "quoted here-doc delimiter suppresses expansion"
+  script
+    value=world
+    cat <<'EOF'
+    hello $value
+    $(printf '%s' cmd)
+    EOF
+  expect
+    stdout "hello \$value\n\$\(printf '%s' cmd\)"
+    stderr ""
+    exit_code 0
+end test "quoted here-doc delimiter suppresses expansion"
 ```
 
 ## 2.2.1 Escape Character (Backslash)
@@ -521,6 +579,57 @@ begin test "double quotes preserve parameter expansion as one field"
 end test "double quotes preserve parameter expansion as one field"
 ```
 
+#### Test: double quotes preserve command substitution as one field
+
+When command substitution occurs inside double-quotes, the resulting text remains
+a single field and pathname expansion is not applied to the substitution result.
+
+```
+begin test "double quotes preserve command substitution as one field"
+  script
+    set -- "$(printf '%s' 'a b *')"
+    printf '%s\n%s\n' "$#" "$1"
+  expect
+    stdout "1\na b \*"
+    stderr ""
+    exit_code 0
+end test "double quotes preserve command substitution as one field"
+```
+
+#### Test: double quotes preserve arithmetic expansion as one field
+
+When arithmetic expansion occurs inside double-quotes, the resulting text is
+preserved as one field.
+
+```
+begin test "double quotes preserve arithmetic expansion as one field"
+  script
+    set -- "$((1 + 2))"
+    printf '%s\n%s\n' "$#" "$1"
+  expect
+    stdout "1\n3"
+    stderr ""
+    exit_code 0
+end test "double quotes preserve arithmetic expansion as one field"
+```
+
+#### Test: quoted $@ preserves positional parameter boundaries
+
+Inside double-quotes, `"$@"` expands to separate fields preserving the original
+boundaries of the positional parameters.
+
+```
+begin test "quoted $@ preserves positional parameter boundaries"
+  script
+    set -- 'a b' c
+    for x in "$@"; do printf '[%s]\n' "$x"; done
+  expect
+    stdout "\[a b\]\n\[c\]"
+    stderr ""
+    exit_code 0
+end test "quoted $@ preserves positional parameter boundaries"
+```
+
 #### Test: substring pattern remains active inside quoted ${...}
 
 For substring-processing parameter expansions such as `${var#word}`, the outer
@@ -714,7 +823,7 @@ The `\xHH` escape in `$'...'` produces the byte with the given hexadecimal value
 ```
 begin test "dollar-single-quote hex escape"
   script
-    echo $'\x41\x42'
+    printf '%s\n' $'\x41\x42'
   expect
     stdout "AB"
     stderr ""
@@ -751,6 +860,22 @@ begin test "dollar-single-quote double-quote escape"
     stderr ""
     exit_code 0
 end test "dollar-single-quote double-quote escape"
+```
+
+#### Test: dollar-single-quote allows unescaped double quote
+
+A double-quote can also appear unescaped inside `$'...'`; it does not terminate
+the dollar-single-quoted sequence.
+
+```
+begin test "dollar-single-quote allows unescaped double quote"
+  script
+    printf '%s\n' $'a"b'
+  expect
+    stdout "a""b"
+    stderr ""
+    exit_code 0
+end test "dollar-single-quote allows unescaped double quote"
 ```
 
 #### Test: dollar-single-quote backslash escape
@@ -814,6 +939,21 @@ begin test "dollar-single-quote c-control escape"
     stderr ""
     exit_code 0
 end test "dollar-single-quote c-control escape"
+```
+
+#### Test: dollar-single-quote c-backslash yields fs
+
+The special case `\c\\` yields the file-separator control character (`0x1c`).
+
+```
+begin test "dollar-single-quote c-backslash yields fs"
+  script
+    printf '%s' $'\c\\' | od -An -tx1
+  expect
+    stdout " *1c"
+    stderr ""
+    exit_code 0
+end test "dollar-single-quote c-backslash yields fs"
 ```
 
 #### Test: dollar-single-quote variable-length escapes terminate correctly
