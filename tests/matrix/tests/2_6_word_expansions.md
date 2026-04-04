@@ -355,6 +355,42 @@ begin test "assignment value may contain several tilde-prefixes"
 end test "assignment value may contain several tilde-prefixes"
 ```
 
+#### Test: tilde expansion with quoted characters after slash
+
+A tilde-prefix consists of an unquoted `<tilde>` character followed by all the
+characters preceding the first unquoted `<slash>`. If there are quoted characters
+after the unquoted `<slash>`, tilde expansion still occurs for the prefix.
+
+```
+begin test "tilde expansion with quoted characters after slash"
+  script
+    HOME="/my/home/dir"
+    echo ~/"foo"
+  expect
+    stdout "/my/home/dir/foo"
+    stderr ""
+    exit_code 0
+end test "tilde expansion with quoted characters after slash"
+```
+
+#### Test: tilde not expanded if unquoted characters follow before slash
+
+If unquoted characters that are not part of a portable login name occur before
+the first unquoted `<slash>`, it does not form a valid tilde-prefix.
+For instance, a command substitution `~$(...)` remains unexpanded.
+
+```
+begin test "tilde not expanded if unquoted characters follow before slash"
+  script
+    HOME="/my/home"
+    echo ~$(echo /foo)
+  expect
+    stdout "~/foo"
+    stderr ""
+    exit_code 0
+end test "tilde not expanded if unquoted characters follow before slash"
+```
+
 #### Test: tilde with null HOME produces empty field not zero fields
 
 If `HOME` is set to a null string and the word consists of only `~`, the
@@ -741,6 +777,26 @@ begin test "colon-equals assigns when parameter is null"
     stderr ""
     exit_code 0
 end test "colon-equals assigns when parameter is null"
+```
+
+#### Test: colon-equals assignment evaluates nested parameter assignments
+
+If *word* is needed in `${parameter:=word}`, it undergoes word expansions.
+A nested parameter assignment inside *word* shall be evaluated and its side
+effects persist.
+
+```
+begin test "colon-equals assignment evaluates nested parameter assignments"
+  script
+    unset foo
+    unset nested_var
+    echo "${foo:=${nested_var=nested_value}}"
+    echo "outer=$foo inner=$nested_var"
+  expect
+    stdout "nested_value\nouter=nested_value inner=nested_value"
+    stderr ""
+    exit_code 0
+end test "colon-equals assignment evaluates nested parameter assignments"
 ```
 
 #### Test: colon-equals assignment to positional parameter fails
@@ -1382,6 +1438,43 @@ begin test "command substitution output is not re-expanded"
 end test "command substitution output is not re-expanded"
 ```
 
+#### Test: field splitting affects command substitution results
+
+Unless enclosed in double-quotes, the output of command substitution is
+subject to field splitting. Newlines and spaces are converted to distinct
+fields.
+
+```
+begin test "field splitting affects command substitution results"
+  script
+    out=$(echo "a b c")
+    set -- $out
+    echo "$# <$1> <$2> <$3>"
+  expect
+    stdout "3 <a> <b> <c>"
+    stderr ""
+    exit_code 0
+end test "field splitting affects command substitution results"
+```
+
+#### Test: double quotes prevent field splitting of command substitution
+
+Double quotes surrounding a command substitution prevent its output from
+being broken into multiple fields.
+
+```
+begin test "double quotes prevent field splitting of command substitution"
+  script
+    out=$(echo "a b c")
+    set -- "$out"
+    echo "$# <$1>"
+  expect
+    stdout "1 <a b c>"
+    stderr ""
+    exit_code 0
+end test "double quotes prevent field splitting of command substitution"
+```
+
 #### Test: parenthesized subshell command substitution needs spacing
 
 A conforming application separates `"$("` and `'('` when starting a command
@@ -1673,6 +1766,45 @@ begin test "empty IFS prevents field splitting"
     stderr ""
     exit_code 0
 end test "empty IFS prevents field splitting"
+```
+
+#### Test: wholly empty unquoted parameter expansion is removed
+
+If `IFS` is set to whitespace and an expansion result is entirely empty, it is
+removed from the field list (before quote removal). Note that if the expansion
+is within double-quotes, it produces an empty field instead.
+
+```
+begin test "wholly empty unquoted parameter expansion is removed"
+  script
+    IFS=" "
+    empty=""
+    set -- pre $empty post
+    echo "$#"
+  expect
+    stdout "2"
+    stderr ""
+    exit_code 0
+end test "wholly empty unquoted parameter expansion is removed"
+```
+
+#### Test: wholly empty quoted parameter expansion is retained
+
+An empty string from a double-quoted parameter expansion produces an empty
+field; it is not removed like an unquoted expansion.
+
+```
+begin test "wholly empty quoted parameter expansion is retained"
+  script
+    IFS=" "
+    empty=""
+    set -- pre "$empty" post
+    echo "$#"
+  expect
+    stdout "3"
+    stderr ""
+    exit_code 0
+end test "wholly empty quoted parameter expansion is retained"
 ```
 
 #### Test: empty IFS still removes wholly empty expansion
