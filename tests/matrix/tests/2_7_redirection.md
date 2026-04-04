@@ -133,6 +133,23 @@ begin test "fd 3 works and does not appear in arguments"
 end test "fd 3 works and does not appear in arguments"
 ```
 
+#### Test: file descriptor 9 is supported for redirection
+
+All implementations shall support file descriptors 0 to 9 inclusive for use
+by the application. This test verifies the upper bound of that range.
+
+```
+begin test "file descriptor 9 is supported for redirection"
+  script
+    echo "fd9_data" > tmp_fd9_src.txt
+    cat 9<tmp_fd9_src.txt <&9
+  expect
+    stdout "fd9_data"
+    stderr ""
+    exit_code 0
+end test "file descriptor 9 is supported for redirection"
+```
+
 #### Test: failed redirection to read-only directory fails the command
 
 A failure to open or create a file shall cause a redirection to fail. Writing
@@ -455,6 +472,42 @@ begin test "explicit stdout redirection with 1>"
 end test "explicit stdout redirection with 1>"
 ```
 
+#### Test: output redirection on designated file descriptor
+
+Output redirection with an explicit file descriptor number opens the file on
+that descriptor. Here `2>` redirects standard error to a file.
+
+```
+begin test "output redirection on designated file descriptor"
+  script
+    (echo "stderr_data" >&2) 2>tmp_fd2_redir.txt
+    cat tmp_fd2_redir.txt
+  expect
+    stdout "stderr_data"
+    stderr ""
+    exit_code 0
+end test "output redirection on designated file descriptor"
+```
+
+#### Test: output redirection creates nonexistent file
+
+If the target file does not exist, output redirection shall create it as an
+empty file. The `:` command writes nothing, so the created file is empty.
+
+```
+begin test "output redirection creates nonexistent file"
+  script
+    rm -f tmp_create_redir.txt
+    : > tmp_create_redir.txt
+    test -f tmp_create_redir.txt && echo "created"
+    test -s tmp_create_redir.txt || echo "empty"
+  expect
+    stdout "created\nempty"
+    stderr ""
+    exit_code 0
+end test "output redirection creates nonexistent file"
+```
+
 #### Test: output redirection with > truncates existing file
 
 When `>` succeeds and the target already exists, the file shall be opened as
@@ -508,6 +561,25 @@ begin test "noclobber prevents overwriting symlink to regular file"
     stderr ".+"
     exit_code !=0
 end test "noclobber prevents overwriting symlink to regular file"
+```
+
+#### Test: noclobber allows creating new files
+
+When `noclobber` is set, output redirection with `>` shall only fail if the
+target already exists as a regular file. Creating a new file is permitted.
+
+```
+begin test "noclobber allows creating new files"
+  script
+    set -C
+    rm -f tmp_new_clobber.txt
+    echo "new" > tmp_new_clobber.txt
+    cat tmp_new_clobber.txt
+  expect
+    stdout "new"
+    stderr ""
+    exit_code 0
+end test "noclobber allows creating new files"
 ```
 
 #### Test: greater-pipe output redirection overwrites despite noclobber
@@ -725,6 +797,45 @@ begin test "quoted here-document delimiter suppresses command and arithmetic exp
     stderr ""
     exit_code 0
 end test "quoted here-document delimiter suppresses command and arithmetic expansion"
+```
+
+#### Test: partially quoted here-document delimiter suppresses expansion
+
+When any part of the delimiter word is quoted, quote removal forms the
+delimiter and here-document lines shall not be expanded. A partially quoted
+word like `E"O"F` becomes the delimiter `EOF` after quote removal.
+
+```
+begin test "partially quoted here-document delimiter suppresses expansion"
+  script
+    var=hello
+    cat <<E"O"F
+    $var
+    EOF
+  expect
+    stdout "\$var"
+    stderr ""
+    exit_code 0
+end test "partially quoted here-document delimiter suppresses expansion"
+```
+
+#### Test: here-document double-quote is special inside dollar-paren
+
+The double-quote character shall not be treated specially within a
+here-document, except when it appears within `$()`. Inside a command
+substitution, double-quotes retain their quoting effect.
+
+```
+begin test "here-document double-quote is special inside dollar-paren"
+  script
+    cat <<EOF
+    $(echo "hello world")
+    EOF
+  expect
+    stdout "hello world"
+    stderr ""
+    exit_code 0
+end test "here-document double-quote is special inside dollar-paren"
 ```
 
 #### Test: here-document expands variables and handles backslash continuation
@@ -949,6 +1060,105 @@ begin test "here-document terminator line allows no blanks before delimiter"
 end test "here-document terminator line allows no blanks before delimiter"
 ```
 
+#### Test: outer double-quotes around command substitution do not suppress here-document expansion
+
+If any part of the delimiter word is quoted, here-document lines shall not
+be expanded — but double-quotes outside a command substitution are not counted
+when the here-document is inside one. Outer `"` around `$()` must not suppress
+expansion of the here-document body.
+
+```
+begin test "outer double-quotes around command substitution do not suppress here-document expansion"
+  script
+    _HD_OUTER=expanded
+    x="$(cat <<EOF
+    $_HD_OUTER
+    EOF
+    )"
+    echo "$x"
+  expect
+    stdout "expanded"
+    stderr ""
+    exit_code 0
+end test "outer double-quotes around command substitution do not suppress here-document expansion"
+```
+
+#### Test: here-document double-quote is special inside backticks
+
+The double-quote character shall not be treated specially within a
+here-document, except when it appears within backtick command substitution
+(among others). Inside backticks, double-quotes retain their quoting effect.
+
+```
+begin test "here-document double-quote is special inside backticks"
+  script
+    cat <<EOF
+    `echo "hello world"`
+    EOF
+  expect
+    stdout "hello world"
+    stderr ""
+    exit_code 0
+end test "here-document double-quote is special inside backticks"
+```
+
+#### Test: here-document terminated by end of command string
+
+For the purposes of locating the terminating line, the end of a
+`command_string` operand (see sh) shall be treated as a `<newline>` character.
+A here-document whose delimiter is the very last token in `sh -c` (with no
+trailing newline) is properly terminated.
+
+```
+begin test "here-document terminated by end of command string"
+  script
+    $SHELL -c "$(printf 'cat <<EOF\nhello\nEOF')"
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
+end test "here-document terminated by end of command string"
+```
+
+#### Test: here-document double-quote is special inside braces
+
+The double-quote character shall not be treated specially within a
+here-document, except when it appears within `${}` (among others). Here the
+`"` inside `${:+}` acts as a quoting character, so the output contains no
+literal quote characters.
+
+```
+begin test "here-document double-quote is special inside braces"
+  script
+    _HD_BR=yes
+    cat <<EOF
+    ${_HD_BR:+"has value"}
+    EOF
+  expect
+    stdout "has value"
+    stderr ""
+    exit_code 0
+end test "here-document double-quote is special inside braces"
+```
+
+#### Test: here-document <<- strips tabs after backslash-newline continuation
+
+With `<<-`, leading tab stripping occurs after backslash-newline line
+continuation has been performed. When two tab-indented lines are joined by
+continuation, the second line's tab becomes embedded and survives stripping.
+
+```
+begin test "here-document <<- strips tabs after backslash-newline continuation"
+  script
+    printf 'cat <<-DELIM\n\tcont\\\n\tinued\nDELIM\n' > tmp_tab_cont.sh
+    $SHELL tmp_tab_cont.sh
+  expect
+    stdout "cont\tinued"
+    stderr ""
+    exit_code 0
+end test "here-document <<- strips tabs after backslash-newline continuation"
+```
+
 ## 2.7.5 Duplicating an Input File Descriptor
 
 The redirection operator:
@@ -1028,6 +1238,48 @@ begin test "omitted n with input fd close closes standard input"
 end test "omitted n with input fd close closes standard input"
 ```
 
+#### Test: duplicate input fd to explicit fd number
+
+When *n* is specified in `[n]<&word`, file descriptor *n* (not standard input)
+shall be made to be a copy of the file descriptor denoted by *word*.
+
+```
+begin test "duplicate input fd to explicit fd number"
+  script
+    echo "dup_n_data" > tmp_dup_in_n.txt
+    exec 5<tmp_dup_in_n.txt
+    exec 3<&5
+    exec 5<&-
+    cat <&3
+    exec 3<&-
+  expect
+    stdout "dup_n_data"
+    stderr ""
+    exit_code 0
+end test "duplicate input fd to explicit fd number"
+```
+
+#### Test: closing specific input fd with n<&-
+
+When *word* evaluates to `'-'` in `[n]<&word`, file descriptor *n* shall be
+closed. After closing fd 5, attempting to read from it causes a redirection
+error.
+
+```
+begin test "closing specific input fd with n<&-"
+  script
+    echo data > tmp_close_in5.txt
+    exec 5<tmp_close_in5.txt
+    cat <&5
+    exec 5<&-
+    (cat <&5) 2>/dev/null || echo "fd5_closed"
+  expect
+    stdout "data\nfd5_closed"
+    stderr ""
+    exit_code 0
+end test "closing specific input fd with n<&-"
+```
+
 ## 2.7.6 Duplicating an Output File Descriptor
 
 The redirection operator:
@@ -1105,6 +1357,48 @@ begin test "omitted n with output fd close closes standard output"
     stderr ".+"
     exit_code !=0
 end test "omitted n with output fd close closes standard output"
+```
+
+#### Test: duplicate output fd to explicit fd number
+
+When *n* is specified in `[n]>&word`, file descriptor *n* (not standard
+output) shall be made to be a copy of the file descriptor denoted by *word*.
+
+```
+begin test "duplicate output fd to explicit fd number"
+  script
+    exec 5>tmp_dup_out_n.txt
+    exec 3>&5
+    exec 5>&-
+    echo "dup_out_n_data" >&3
+    exec 3>&-
+    cat tmp_dup_out_n.txt
+  expect
+    stdout "dup_out_n_data"
+    stderr ""
+    exit_code 0
+end test "duplicate output fd to explicit fd number"
+```
+
+#### Test: closing specific output fd with n>&-
+
+When *word* evaluates to `'-'` in `[n]>&word`, file descriptor *n* shall be
+closed. After closing fd 4, attempting to write to it causes a redirection
+error, but data written before the close is preserved.
+
+```
+begin test "closing specific output fd with n>&-"
+  script
+    exec 4>tmp_close_out4.txt
+    echo "written" >&4
+    exec 4>&-
+    (echo "fail" >&4) 2>/dev/null || echo "fd4_closed"
+    cat tmp_close_out4.txt
+  expect
+    stdout "fd4_closed\nwritten"
+    stderr ""
+    exit_code 0
+end test "closing specific output fd with n>&-"
 ```
 
 ## 2.7.7 Open File Descriptors for Reading and Writing
