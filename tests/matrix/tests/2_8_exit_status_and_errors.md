@@ -107,7 +107,10 @@ any further processing of the command in which the error occurred.
 begin interactive test "interactive shell does not exit on syntax error"
   spawn -i
   expect "$ "
-  send "fi"
+  send "fi; echo bad > syntax_tail.txt"
+  expect "$ "
+  send "if test -f syntax_tail.txt; then echo tail_ran; else echo tail_stopped; fi"
+  expect "tail_stopped"
   expect "$ "
   send "echo survived_syntax"
   expect "survived_syntax"
@@ -170,6 +173,23 @@ begin test "command utility prevents exit on special built-in error"
 end test "command utility prevents exit on special built-in error"
 ```
 
+#### Test: command utility prevents exit on dot read error
+
+Because a dot-file read error is treated as a special built-in utility error,
+executing `.` via the `command` utility shall not cause the shell to exit.
+
+```
+begin test "command utility prevents exit on dot read error"
+  script
+    echo 'command . /definitely_missing_dot_command_2_8; echo "survived"' > tmp_dot_command_err.sh
+    $SHELL tmp_dot_command_err.sh 2>/dev/null
+  expect
+    stdout "survived"
+    stderr ""
+    exit_code 0
+end test "command utility prevents exit on dot read error"
+```
+
 #### Test: special built-in error in subshell only terminates subshell
 
 If a "shall exit" error occurs in a subshell environment, the shell shall exit
@@ -197,7 +217,10 @@ an error.
 begin interactive test "interactive shell does not exit on special built-in error"
   spawn -i
   expect "$ "
-  send "set -Z"
+  send "set -Z; echo bad > sbi_tail.txt"
+  expect "$ "
+  send "if test -f sbi_tail.txt; then echo tail_ran; else echo tail_stopped; fi"
+  expect "tail_stopped"
   expect "$ "
   send "echo survived_sbi"
   expect "survived_sbi"
@@ -222,6 +245,42 @@ begin test "other utility error does not cause non-interactive shell to exit"
     stderr ""
     exit_code 0
 end test "other utility error does not cause non-interactive shell to exit"
+```
+
+#### Test: other utility diagnostic does not prevent shell continuation
+
+The shell is not required to write a diagnostic for another utility's error,
+but the utility itself shall still write one if required to do so, and the
+shell shall continue running afterward.
+
+```
+begin test "other utility diagnostic does not prevent shell continuation"
+  script
+    ls /definitely_missing_util_diag_2_8
+    echo "survived"
+  expect
+    stdout "survived"
+    stderr ".+"
+    exit_code 0
+end test "other utility diagnostic does not prevent shell continuation"
+```
+
+#### Test: interactive shell does not exit on other utility error
+
+An interactive shell shall not exit when a non-special-built-in utility
+reports an error.
+
+```
+begin interactive test "interactive shell does not exit on other utility error"
+  spawn -i
+  expect "$ "
+  send "ls /definitely_missing_interactive_2_8"
+  expect "$ "
+  send "echo survived_other_util"
+  expect "survived_other_util"
+  sendeof
+  wait
+end interactive test "interactive shell does not exit on other utility error"
 ```
 
 #### Test: redirection error with special built-in causes exit
@@ -285,7 +344,10 @@ built-in, even though a non-interactive shell would exit.
 begin interactive test "interactive shell does not exit on redirection error with special built-in"
   spawn -i
   expect "$ "
-  send ": < /nonexistent_interactive_redir"
+  send ": < /nonexistent_interactive_redir; echo bad > redir_sbi_tail.txt"
+  expect "$ "
+  send "if test -f redir_sbi_tail.txt; then echo tail_ran; else echo tail_stopped; fi"
+  expect "tail_stopped"
   expect "$ "
   send "echo survived_redir_sbi"
   expect "survived_redir_sbi"
@@ -302,13 +364,31 @@ The shell shall write a diagnostic message (table: diagnostic required yes).
 ```
 begin test "redirection error with compound command does not cause exit"
   script
-    { echo hello; } < /nonexistent_cmpd_redir_7m 2>/dev/null
+    { echo hello; } < /nonexistent_cmpd_redir_7m
     echo "survived"
   expect
     stdout "survived"
-    stderr "(.|\n)*"
+    stderr ".+"
     exit_code 0
 end test "redirection error with compound command does not cause exit"
+```
+
+#### Test: interactive shell does not exit on redirection error with compound command
+
+An interactive shell shall not exit on a redirection error with a compound
+command.
+
+```
+begin interactive test "interactive shell does not exit on redirection error with compound command"
+  spawn -i
+  expect "$ "
+  send "{ echo hi; } < /definitely_missing_cmpd_interactive_2_8"
+  expect "$ "
+  send "echo survived_cmpd_redir"
+  expect "survived_cmpd_redir"
+  sendeof
+  wait
+end interactive test "interactive shell does not exit on redirection error with compound command"
 ```
 
 #### Test: redirection error with function execution does not cause exit
@@ -320,13 +400,128 @@ exit.
 begin test "redirection error with function execution does not cause exit"
   script
     redir_func() { echo hello; }
-    redir_func < /nonexistent_func_redir_4k 2>/dev/null
+    redir_func < /nonexistent_func_redir_4k
     echo "survived"
   expect
     stdout "survived"
-    stderr "(.|\n)*"
+    stderr ".+"
     exit_code 0
 end test "redirection error with function execution does not cause exit"
+```
+
+#### Test: interactive shell does not exit on redirection error with function execution
+
+An interactive shell shall not exit on a redirection error during function
+execution.
+
+```
+begin interactive test "interactive shell does not exit on redirection error with function execution"
+  spawn -i
+  expect "$ "
+  send "redir_func_i() { echo hi; }"
+  expect "$ "
+  send "redir_func_i < /definitely_missing_func_interactive_2_8"
+  expect "$ "
+  send "echo survived_func_redir"
+  expect "survived_func_redir"
+  sendeof
+  wait
+end interactive test "interactive shell does not exit on redirection error with function execution"
+```
+
+#### Test: dot read error causes non-interactive shell to exit
+
+An unrecoverable read error while reading from the `file` operand of the dot
+special built-in shall be treated as a special built-in utility error, so a
+non-interactive shell exits with non-zero status.
+
+```
+begin test "dot read error causes non-interactive shell to exit"
+  script
+    echo '. /definitely_missing_dot_file_2_8; echo survived' > tmp_dot_read_err.sh
+    $SHELL tmp_dot_read_err.sh 2>/dev/null
+  expect
+    stdout ""
+    stderr ""
+    exit_code !=0
+end test "dot read error causes non-interactive shell to exit"
+```
+
+#### Test: dot read error diagnostic can be redirected
+
+Because a dot-file read error is treated as a special built-in utility error,
+its diagnostic can be redirected like the diagnostic of another special
+built-in utility.
+
+```
+begin test "dot read error diagnostic can be redirected"
+  script
+    echo '. /definitely_missing_dot_diag_2_8 2>dot_diag.txt' > tmp_dot_diag_redir.sh
+    $SHELL tmp_dot_diag_redir.sh >/dev/null 2>/dev/null
+    cat dot_diag.txt
+  expect
+    stdout "(.|\n)+"
+    stderr ""
+    exit_code 0
+end test "dot read error diagnostic can be redirected"
+```
+
+#### Test: dot read error in subshell exits subshell only
+
+When a dot-file read error occurs in a subshell environment, the subshell
+shall exit with non-zero status and the parent shell shall continue.
+
+```
+begin test "dot read error in subshell exits subshell only"
+  script
+    ( . /definitely_missing_dot_subshell_2_8 ) 2>/dev/null
+    echo "parent survived"
+  expect
+    stdout "parent survived"
+    stderr ""
+    exit_code 0
+end test "dot read error in subshell exits subshell only"
+```
+
+#### Test: dot read error still runs previously defined EXIT trap
+
+When a dot-file read error causes the non-interactive shell to stop, any
+previously defined `EXIT` trap action shall still be executed.
+
+```
+begin test "dot read error still runs previously defined EXIT trap"
+  script
+    echo 'trap "echo EXIT_TRAP" EXIT' > tmp_dot_exit_trap.sh
+    echo '. /definitely_missing_dot_file_2_8' >> tmp_dot_exit_trap.sh
+    echo 'echo survived' >> tmp_dot_exit_trap.sh
+    $SHELL tmp_dot_exit_trap.sh
+  expect
+    stdout "EXIT_TRAP"
+    stderr ".+"
+    exit_code !=0
+end test "dot read error still runs previously defined EXIT trap"
+```
+
+#### Test: interactive shell does not exit on dot read error
+
+Because a dot-file read error is treated as a special built-in utility error,
+an interactive shell shall not exit and shall not continue processing the rest
+of that command.
+
+```
+begin interactive test "interactive shell does not exit on dot read error"
+  spawn -i
+  expect "$ "
+  send ". /definitely_missing_dot_file_2_8; echo bad > dot_tail.txt"
+  expect "$ "
+  send "if test -f dot_tail.txt; then echo tail_ran; else echo tail_stopped; fi"
+  expect "tail_stopped"
+  expect "$ "
+  send "echo survived_dot"
+  expect "survived_dot"
+  sendeof
+  wait
+end interactive test "interactive shell does not exit on dot read error"
 ```
 
 #### Test: redirection error with other utility does not cause exit
@@ -344,6 +539,24 @@ begin test "redirection error with other utility does not cause exit"
     stderr "(.|\n)*"
     exit_code 0
 end test "redirection error with other utility does not cause exit"
+```
+
+#### Test: interactive shell does not exit on redirection error with other utility
+
+An interactive shell shall not exit on a redirection error with a
+non-special-built-in utility.
+
+```
+begin interactive test "interactive shell does not exit on redirection error with other utility"
+  spawn -i
+  expect "$ "
+  send "cat < /definitely_missing_util_interactive_2_8"
+  expect "$ "
+  send "echo survived_util_redir"
+  expect "survived_util_redir"
+  sendeof
+  wait
+end interactive test "interactive shell does not exit on redirection error with other utility"
 ```
 
 #### Test: redirection error writes diagnostic to stderr
@@ -425,7 +638,10 @@ begin interactive test "interactive shell does not exit on variable assignment e
   expect "$ "
   send "readonly IVAR_A=1"
   expect "$ "
-  send "IVAR_A=2 :"
+  send "IVAR_A=2 :; echo bad > var_tail.txt"
+  expect "$ "
+  send "if test -f var_tail.txt; then echo tail_ran; else echo tail_stopped; fi"
+  expect "tail_stopped"
   expect "$ "
   send "echo survived_var"
   expect "survived_var"
@@ -488,13 +704,19 @@ end test "expansion error in subshell exits subshell only"
 
 #### Test: interactive shell does not exit on expansion error
 
-An interactive shell shall not exit on an expansion error.
+An interactive shell shall not exit on an expansion error and shall not
+perform any further processing of the command in which the error occurred.
 
 ```
 begin interactive test "interactive shell does not exit on expansion error"
   spawn -i
   expect "$ "
-  send "echo ${}"
+  send "unset IEXP"
+  expect "$ "
+  send "echo \"${IEXP:?}\"; echo bad > exp_tail.txt"
+  expect "$ "
+  send "if test -f exp_tail.txt; then echo tail_ran; else echo tail_stopped; fi"
+  expect "tail_stopped"
   expect "$ "
   send "echo survived_exp"
   expect "survived_exp"
@@ -536,6 +758,24 @@ begin test "missing command does not cause shell to exit"
     stderr ""
     exit_code 0
 end test "missing command does not cause shell to exit"
+```
+
+#### Test: command not found in subshell can terminate subshell only
+
+For the "may exit" command-not-found case, bash in POSIX mode terminates the
+subshell with non-zero status while the parent shell continues.
+
+```
+begin test "command not found in subshell can terminate subshell only"
+  script
+    ( nonexistent_cmd_subshell_2_8 ) 2>/dev/null
+    echo "$?"
+    echo "parent survived"
+  expect
+    stdout "127\nparent survived"
+    stderr ""
+    exit_code 0
+end test "command not found in subshell can terminate subshell only"
 ```
 
 #### Test: interactive shell does not exit on command not found
