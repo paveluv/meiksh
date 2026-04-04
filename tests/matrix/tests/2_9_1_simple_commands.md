@@ -87,6 +87,25 @@ begin test "variable expands into command name and argument"
 end test "variable expands into command name and argument"
 ```
 
+#### Test: first expanded field is command name and remaining fields are arguments
+
+If the first non-assignment, non-redirection word expands to multiple fields,
+the first resulting field is the command name and the remaining fields are
+arguments to that command.
+
+```
+begin test "first expanded field is command name and remaining fields are arguments"
+  script
+    cmd='set -- one two'
+    $cmd
+    printf "%s\n%s\n%s\n" "$#" "$1" "$2"
+  expect
+    stdout "2\none\ntwo"
+    stderr ""
+    exit_code 0
+end test "first expanded field is command name and remaining fields are arguments"
+```
+
 #### Test: redirection with no command creates file
 
 Redirections are performed even when there is no command name (step 3).
@@ -117,6 +136,58 @@ begin test "arithmetic expansion in variable assignment preceding command"
     stderr ""
     exit_code 0
 end test "arithmetic expansion in variable assignment preceding command"
+```
+
+#### Test: parameter expansion in variable assignment preceding command
+
+Variable assignments in step 4 undergo parameter expansion before the value is
+assigned.
+
+```
+begin test "parameter expansion in variable assignment preceding command"
+  script
+    P=world
+    A="hello ${P}"
+    printf "%s\n" "$A"
+  expect
+    stdout "hello world"
+    stderr ""
+    exit_code 0
+end test "parameter expansion in variable assignment preceding command"
+```
+
+#### Test: command substitution in variable assignment preceding command
+
+Variable assignments in step 4 undergo command substitution before the value
+is assigned.
+
+```
+begin test "command substitution in variable assignment preceding command"
+  script
+    A="$(printf cmdsub)"
+    printf "%s\n" "$A"
+  expect
+    stdout "cmdsub"
+    stderr ""
+    exit_code 0
+end test "command substitution in variable assignment preceding command"
+```
+
+#### Test: quote removal in variable assignment preceding command
+
+Variable assignments in step 4 undergo quote removal before the value is
+assigned, so quotes used to preserve blanks do not remain in the value.
+
+```
+begin test "quote removal in variable assignment preceding command"
+  script
+    A='a b'
+    printf "%s\n" "$A"
+  expect
+    stdout "a b"
+    stderr ""
+    exit_code 0
+end test "quote removal in variable assignment preceding command"
 ```
 
 #### Test: export with variable assignment is visible in environment
@@ -151,6 +222,62 @@ begin test "tilde expansion in assignment context"
     stderr ""
     exit_code 0
 end test "tilde expansion in assignment context"
+```
+
+#### Test: declaration utility assignment does not field split
+
+When the command name is a declaration utility, words recognized as variable
+assignments are expanded as assignments, so field splitting is not performed
+on the assigned value.
+
+```
+begin test "declaration utility assignment does not field split"
+  script
+    value='aa bb'
+    command export ASSIGN=$value
+    printf "%s\n" "$ASSIGN"
+  expect
+    stdout "aa bb"
+    stderr ""
+    exit_code 0
+end test "declaration utility assignment does not field split"
+```
+
+#### Test: declaration utility assignment does not pathname expand
+
+When the command name is a declaration utility, assignment words are expanded
+as assignments, so pathname expansion is not performed on the assigned value.
+
+```
+begin test "declaration utility assignment does not pathname expand"
+  script
+    touch aa bb
+    command export GLOB=*
+    printf "%s\n" "$GLOB"
+  expect
+    stdout "\*"
+    stderr ""
+    exit_code 0
+end test "declaration utility assignment does not pathname expand"
+```
+
+#### Test: assignment-looking word after regular command is an argument
+
+For command names that are not declaration utilities, words after the command
+name are subject to regular expansion, not assignment context. An assignment-
+looking word is passed as an ordinary argument and does not set a variable.
+
+```
+begin test "assignment-looking word after regular command is an argument"
+  script
+    unset FOO
+    printf "%s\n" FOO=bar
+    printf "%s\n" "${FOO-unset}"
+  expect
+    stdout "FOO=bar\nunset"
+    stderr ""
+    exit_code 0
+end test "assignment-looking word after regular command is an argument"
 ```
 
 ## 2.9.1.2 Variable Assignments
@@ -208,6 +335,139 @@ begin test "assignment before regular command is temporary"
 end test "assignment before regular command is temporary"
 ```
 
+#### Test: prefix assignment before printf does not persist
+
+Even if `printf` is implemented internally by the shell, it is a standard
+utility and prefix assignments shall behave as if it were not a function: the
+assignment does not persist in the current shell after the command completes.
+
+```
+begin test "prefix assignment before printf does not persist"
+  script
+    unset X
+    X=val printf '%s\n' text
+    printf '%s\n' "${X-unset}"
+  expect
+    stdout "text\nunset"
+    stderr ""
+    exit_code 0
+end test "prefix assignment before printf does not persist"
+```
+
+#### Test: prefix assignment before echo does not persist
+
+Even if `echo` is implemented internally by the shell, it is a standard
+utility and prefix assignments shall behave as if it were not a function: the
+assignment does not persist in the current shell after the command completes.
+
+```
+begin test "prefix assignment before echo does not persist"
+  script
+    unset X
+    X=val echo text
+    printf '%s\n' "${X-unset}"
+  expect
+    stdout "text\nunset"
+    stderr ""
+    exit_code 0
+end test "prefix assignment before echo does not persist"
+```
+
+#### Test: prefix assignment before test does not persist
+
+Even if `test` is implemented internally by the shell, it is a standard
+utility and prefix assignments shall behave as if it were not a function: the
+assignment does not persist in the current shell after the command completes.
+
+```
+begin test "prefix assignment before test does not persist"
+  script
+    unset X
+    X=val test 1 -eq 1
+    printf "%s\n" "${X-unset}"
+  expect
+    stdout "unset"
+    stderr ""
+    exit_code 0
+end test "prefix assignment before test does not persist"
+```
+
+#### Test: prefix assignment before bracket does not persist
+
+Even if `[` is implemented internally by the shell, it is a standard utility
+and prefix assignments shall behave as if it were not a function: the
+assignment does not persist in the current shell after the command completes.
+
+```
+begin test "prefix assignment before bracket does not persist"
+  script
+    unset X
+    X=val [ 1 -eq 1 ]
+    printf "%s\n" "${X-unset}"
+  expect
+    stdout "unset"
+    stderr ""
+    exit_code 0
+end test "prefix assignment before bracket does not persist"
+```
+
+#### Test: prefix assignment before pwd does not persist
+
+Even if `pwd` is implemented internally by the shell, it is a standard
+utility and prefix assignments shall behave as if it were not a function: the
+assignment does not persist in the current shell after the command completes.
+
+```
+begin test "prefix assignment before pwd does not persist"
+  script
+    unset X
+    X=val pwd >/dev/null
+    printf "%s\n" "${X-unset}"
+  expect
+    stdout "unset"
+    stderr ""
+    exit_code 0
+end test "prefix assignment before pwd does not persist"
+```
+
+#### Test: prefix assignment before true does not persist
+
+Even if `true` is implemented internally by the shell, it is a standard
+utility and prefix assignments shall behave as if it were not a function: the
+assignment does not persist in the current shell after the command completes.
+
+```
+begin test "prefix assignment before true does not persist"
+  script
+    unset X
+    X=val true
+    printf "%s\n" "${X-unset}"
+  expect
+    stdout "unset"
+    stderr ""
+    exit_code 0
+end test "prefix assignment before true does not persist"
+```
+
+#### Test: prefix assignment before false does not persist
+
+Even if `false` is implemented internally by the shell, it is a standard
+utility and prefix assignments shall behave as if it were not a function: the
+assignment does not persist in the current shell after the command completes.
+
+```
+begin test "prefix assignment before false does not persist"
+  script
+    unset X
+    X=val false
+    printf "%s\n" "${X-unset}"
+  expect
+    stdout "unset"
+    stderr ""
+    exit_code 0
+end test "prefix assignment before false does not persist"
+```
+
 #### Test: assignment before special built-in persists
 
 Variable assignments before a special built-in utility affect the current
@@ -223,6 +483,24 @@ begin test "assignment before special built-in persists"
     stderr ""
     exit_code 0
 end test "assignment before special built-in persists"
+```
+
+#### Test: assignment before special built-in remains after utility execution
+
+If the command name is a special built-in utility, variable assignments affect
+the current execution environment before execution and remain in effect after
+the utility completes.
+
+```
+begin test "assignment before special built-in remains after utility execution"
+  script
+    export FOO=bar >/dev/null
+    printf "%s\n" "$FOO"
+  expect
+    stdout "bar"
+    stderr ""
+    exit_code 0
+end test "assignment before special built-in remains after utility execution"
 ```
 
 #### Test: assignment to readonly variable fails
@@ -242,6 +520,26 @@ begin test "assignment to readonly variable fails"
 end test "assignment to readonly variable fails"
 ```
 
+#### Test: readonly assignment before regular command is an error
+
+If a variable assignment attempts to modify a readonly variable, a variable
+assignment error shall occur even when the assignment precedes a regular
+command.
+
+```
+begin test "readonly assignment before regular command is an error"
+  script
+    readonly X=1
+    X=2 env >/dev/null
+    printf "%s\n" "$?"
+    echo survived
+  expect
+    stdout "1\nsurvived"
+    stderr ".+"
+    exit_code 0
+end test "readonly assignment before regular command is an error"
+```
+
 #### Test: function call with var assignment affects function environment
 
 Variable assignments before a function call affect the execution environment
@@ -258,6 +556,23 @@ begin test "function call with var assignment affects function environment"
     stderr ""
     exit_code 0
 end test "function call with var assignment affects function environment"
+```
+
+#### Test: special built-in modifications to assigned variables persist
+
+If an assigned variable is further modified by a special built-in utility, the
+modification made by the utility shall persist after the command completes.
+
+```
+begin test "special built-in modifications to assigned variables persist"
+  script
+    OPTIND=1 getopts a opt -a >/dev/null 2>&1
+    printf "%s\n" "$OPTIND"
+  expect
+    stdout "2"
+    stderr ""
+    exit_code 0
+end test "special built-in modifications to assigned variables persist"
 ```
 
 ## 2.9.1.3 Commands with no Command Name
@@ -284,6 +599,24 @@ begin test "command substitution exit status propagates"
 end test "command substitution exit status propagates"
 ```
 
+#### Test: last command substitution determines exit status
+
+If there is no command name and there are multiple command substitutions, the
+simple command shall complete with the exit status of the command substitution
+whose exit status was obtained last.
+
+```
+begin test "last command substitution determines exit status"
+  script
+    foo=$(true) bar=$(false)
+    printf "%s\n" "$?"
+  expect
+    stdout "1"
+    stderr ""
+    exit_code 0
+end test "last command substitution determines exit status"
+```
+
 #### Test: simple assignment completes with zero exit status
 
 When there is no command name and no command substitution, the command
@@ -298,6 +631,44 @@ begin test "simple assignment completes with zero exit status"
     stderr ""
     exit_code 0
 end test "simple assignment completes with zero exit status"
+```
+
+#### Test: redirection failure with no command yields non-zero status
+
+If a simple command has no command name and a redirection performed in the
+current shell execution environment fails, the command shall fail immediately
+with an exit status greater than zero and write an error message.
+
+```
+begin test "redirection failure with no command yields non-zero status"
+  script
+    < /definitely_missing_no_command_2_9_1
+    printf "%s\n" "$?"
+    echo survived
+  expect
+    stdout "1\nsurvived"
+    stderr ".+"
+    exit_code 0
+end test "redirection failure with no command yields non-zero status"
+```
+
+#### Test: no-command redirections do not persist in current shell
+
+When a simple command has no command name, redirections are performed in a
+subshell environment and therefore do not leave file descriptors open in the
+current shell.
+
+```
+begin test "no-command redirections do not persist in current shell"
+  script
+    exec 3>&-
+    3>tmp_no_persist.txt
+    printf 'test' >&3 || echo closed
+  expect
+    stdout "closed"
+    stderr ".+"
+    exit_code 0
+end test "no-command redirections do not persist in current shell"
 ```
 
 ## 2.9.1.4 Command Search and Execution
@@ -458,6 +829,173 @@ begin test "prefix variable assignment passed to command"
 end test "prefix variable assignment passed to command"
 ```
 
+#### Test: special built-in is invoked before PATH search
+
+If a command name matches a special built-in utility, that special built-in
+shall be invoked instead of any external utility found in `PATH`.
+
+```
+begin test "special built-in is invoked before PATH search"
+  script
+    mkdir bin
+    printf '#!/bin/sh\necho path_export\n' > bin/export
+    chmod +x bin/export
+    PATH="$PWD/bin:$PATH"
+    export TESTVAR=1 >/dev/null
+    printf "%s\n" "$TESTVAR"
+  expect
+    stdout "1"
+    stderr ""
+    exit_code 0
+end test "special built-in is invoked before PATH search"
+```
+
+#### Test: intrinsic utility command is invoked before PATH search
+
+If a command name matches an intrinsic utility, that utility shall be invoked
+instead of an external utility of the same name found in `PATH`.
+
+```
+begin test "intrinsic utility command is invoked before PATH search"
+  script
+    mkdir bin
+    printf '#!/bin/sh\necho external_command\n' > bin/command
+    chmod +x bin/command
+    PATH="$PWD/bin:$PATH"
+    command -v command
+  expect
+    stdout "command"
+    stderr ""
+    exit_code 0
+end test "intrinsic utility command is invoked before PATH search"
+```
+
+#### Test: intrinsic utility type is invoked before PATH search
+
+If a command name matches an intrinsic utility, that utility shall be invoked
+before any external utility of the same name in `PATH`.
+
+```
+begin test "intrinsic utility type is invoked before PATH search"
+  script
+    mkdir bin
+    printf '#!/bin/sh\necho external_type\n' > bin/type
+    chmod +x bin/type
+    PATH="$PWD/bin:$PATH"
+    type command
+  expect
+    stdout ".+"
+    stderr ""
+    exit_code 0
+end test "intrinsic utility type is invoked before PATH search"
+```
+
+#### Test: function name is invoked before PATH search
+
+If a command name matches a known shell function, the function shall be
+invoked during command search.
+
+```
+begin test "function name is invoked before PATH search"
+  script
+    myfun() { printf "%s\n" "function_called"; }
+    myfun arg1
+  expect
+    stdout "function_called"
+    stderr ""
+    exit_code 0
+end test "function name is invoked before PATH search"
+```
+
+#### Test: function is invoked before matching PATH utility
+
+If a command name matches a known shell function, that function shall be
+invoked before a utility with the same name found via `PATH`.
+
+```
+begin test "function is invoked before matching PATH utility"
+  script
+    mkdir bin
+    printf '#!/bin/sh\necho path_cmd\n' > bin/foo
+    chmod +x bin/foo
+    foo() { echo function_cmd; }
+    PATH="$PWD/bin:$PATH"
+    foo
+  expect
+    stdout "function_cmd"
+    stderr ""
+    exit_code 0
+end test "function is invoked before matching PATH utility"
+```
+
+#### Test: intrinsic utility cd is invoked before matching PATH utility
+
+The intrinsic utility `cd` is not subject to `PATH` search, so an external
+utility named `cd` in `PATH` is not invoked.
+
+```
+begin test "intrinsic utility cd is invoked before matching PATH utility"
+  script
+    mkdir bin target
+    printf '#!/bin/sh\necho external_cd\n' > bin/cd
+    chmod +x bin/cd
+    PATH="$PWD/bin:$PATH"
+    cd target
+    pwd
+  expect
+    stdout ".+/target"
+    stderr ""
+    exit_code 0
+end test "intrinsic utility cd is invoked before matching PATH utility"
+```
+
+#### Test: PATH assignment causes command to be re-searched
+
+After a utility has been found, the shell may remember its location, but if
+`PATH` has been assigned it shall search again for subsequent invocations.
+
+```
+begin test "PATH assignment causes command to be re-searched"
+  script
+    mkdir bin1 bin2
+    printf '#!/bin/sh\necho one\n' > bin1/cmdx
+    chmod +x bin1/cmdx
+    PATH="$PWD/bin1:$PATH" cmdx
+    rm bin1/cmdx
+    printf '#!/bin/sh\necho two\n' > bin2/cmdx
+    chmod +x bin2/cmdx
+    PATH="$PWD/bin2:$PATH" cmdx
+  expect
+    stdout "one\ntwo"
+    stderr ""
+    exit_code 0
+end test "PATH assignment causes command to be re-searched"
+```
+
+#### Test: failed remembered location triggers a new PATH search
+
+If a remembered utility location fails for a later invocation, the shell shall
+repeat the search to find the new location, if any.
+
+```
+begin test "failed remembered location triggers a new PATH search"
+  script
+    mkdir dir1 dir2
+    printf '#!/bin/sh\necho first\n' > dir1/retrycmd
+    chmod +x dir1/retrycmd
+    PATH="$PWD/dir1:$PWD/dir2:$PATH"
+    retrycmd
+    rm dir1/retrycmd
+    printf '#!/bin/sh\necho second\n' > dir2/retrycmd
+    chmod +x dir2/retrycmd
+    retrycmd
+  expect
+    stdout "first\nsecond"
+    stderr ""
+    exit_code 0
+end test "failed remembered location triggers a new PATH search"
+```
+
 ## 2.9.1.5 Standard File Descriptors
 
 If the utility would be executed with file descriptor 0, 1, or 2 closed, implementations may execute the utility with the file descriptor open to an unspecified file. If a standard utility or a conforming application is executed with file descriptor 0 not open for reading or with file descriptor 1 or 2 not open for writing, the environment in which the utility or application is executed shall be deemed non-conforming, and consequently the utility or application might not behave as described in this standard.
@@ -499,6 +1037,62 @@ begin test "subshell does not affect parent variable"
     stderr ""
     exit_code 0
 end test "subshell does not affect parent variable"
+```
+
+#### Test: exec replaces current shell execution environment
+
+When execution is made via the `exec` special built-in, the shell shall not
+create a separate utility environment; the new process image replaces the
+current shell execution environment.
+
+```
+begin test "exec replaces current shell execution environment"
+  script
+    exec /usr/bin/printf 'exec_replaced\n'
+    echo survived
+  expect
+    stdout "exec_replaced"
+    stderr ""
+    exit_code 0
+end test "exec replaces current shell execution environment"
+```
+
+#### Test: exec in subshell replaces only the subshell environment
+
+If the current shell environment is a subshell environment, `exec` shall
+replace that subshell environment and the shell shall continue in the parent
+environment from which the subshell was invoked.
+
+```
+begin test "exec in subshell replaces only the subshell environment"
+  script
+    ( exec /usr/bin/printf 'subshell_exec\n' )
+    echo parent_survived
+  expect
+    stdout "subshell_exec\nparent_survived"
+    stderr ""
+    exit_code 0
+end test "exec in subshell replaces only the subshell environment"
+```
+
+#### Test: PATH searched file without shebang falls back to shell execution
+
+If a PATH search finds an executable file and executing it yields `ENOEXEC`,
+the shell shall execute a command equivalent to invoking a shell on that file.
+
+```
+begin test "PATH searched file without shebang falls back to shell execution"
+  script
+    mkdir bin
+    printf 'echo path_fallback\n' > bin/noshebang
+    chmod +x bin/noshebang
+    PATH="$PWD/bin:$PATH"
+    noshebang
+  expect
+    stdout "path_fallback"
+    stderr ""
+    exit_code 0
+end test "PATH searched file without shebang falls back to shell execution"
 ```
 
 #### Test: file without magic header but with exec bit runs as shell script
