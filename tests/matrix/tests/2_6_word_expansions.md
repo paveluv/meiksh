@@ -1923,6 +1923,28 @@ begin test "arithmetic dollar-variable equals bare name"
 end test "arithmetic dollar-variable equals bare name"
 ```
 
+#### Test: arithmetic dollar-variable with explicit signs
+
+The integer constant in the variable may optionally include a leading `<plus-sign>`
+or `<hyphen-minus>`. Both `"$(($x))"` and `"$((x))"` shall return the same value.
+
+```
+begin test "arithmetic dollar-variable with explicit signs"
+  script
+    x="-15"
+    a=$((x))
+    b=$(($x))
+    y="+20"
+    c=$((y))
+    d=$(($y))
+    echo "$a $b $c $d"
+  expect
+    stdout "-15 -15 20 20"
+    stderr ""
+    exit_code 0
+end test "arithmetic dollar-variable with explicit signs"
+```
+
 #### Test: arithmetic octal constant
 
 Octal constants as in ISO C (leading zero) shall be recognized in arithmetic
@@ -2423,6 +2445,27 @@ begin test "pathname expansion with glob"
     stderr ""
     exit_code 0
 end test "pathname expansion with glob"
+```
+
+#### Test: glob expansion is sorted
+
+If the pattern matches any existing filenames, the pattern is replaced with
+those filenames sorted according to the collating sequence.
+
+```
+begin test "glob expansion is sorted"
+  script
+    d=$(mktemp -d)
+    cd "$d" || exit 1
+    touch c a b
+    echo *
+    cd ..
+    rm -rf "$d"
+  expect
+    stdout "a b c"
+    stderr ""
+    exit_code 0
+end test "glob expansion is sorted"
 ```
 
 #### Test: set -f disables pathname expansion
