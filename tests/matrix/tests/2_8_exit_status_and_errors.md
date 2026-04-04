@@ -63,39 +63,57 @@ begin test "syntax error causes non-interactive shell to exit"
 end test "syntax error causes non-interactive shell to exit"
 ```
 
-#### Test: syntax error prevents further execution
+#### Test: syntax error writes diagnostic to stderr
 
-When a syntax error is detected, the shell shall not perform any further
-processing of the command in which the error occurred. The `echo "survived"`
-after the syntax error must not execute.
+The shell shall write a diagnostic message to standard error when a shell
+language syntax error is detected (table: diagnostic required yes).
 
 ```
-begin test "syntax error prevents further execution"
+begin test "syntax error writes diagnostic to stderr"
   script
-    echo 'if true; echo "no_then"; fi; echo "survived"' > tmp_err1.sh
-    $SHELL tmp_err1.sh 2>/dev/null
+    echo 'if true; echo wrong; fi' > tmp_syn_diag.sh
+    $SHELL tmp_syn_diag.sh
   expect
     stdout ""
-    stderr ""
+    stderr "(.|\n)+"
     exit_code !=0
-end test "syntax error prevents further execution"
+end test "syntax error writes diagnostic to stderr"
 ```
 
-#### Test: readonly assignment before special built-in causes exit
+#### Test: syntax error in subshell exits subshell only
 
-A variable assignment error (assigning to a readonly variable) preceding a
-special built-in utility shall cause a non-interactive shell to exit.
+If a shall-exit error occurs in a subshell environment, the shell shall exit
+from the subshell with a non-zero status and continue in the parent
+environment. Here `eval` triggers a syntax error inside a subshell.
 
 ```
-begin test "readonly assignment before special built-in causes exit"
+begin test "syntax error in subshell exits subshell only"
   script
-    echo 'readonly RO_VAR=1; RO_VAR=2 export OTHER=3; echo "survived"' > tmp_err2.sh
-    $SHELL tmp_err2.sh 2>/dev/null
+    (eval 'if then') 2>/dev/null
+    echo "parent survived"
   expect
-    stdout ""
+    stdout "parent survived"
     stderr ""
-    exit_code !=0
-end test "readonly assignment before special built-in causes exit"
+    exit_code 0
+end test "syntax error in subshell exits subshell only"
+```
+
+#### Test: interactive shell does not exit on syntax error
+
+An interactive shell shall not exit on a syntax error but shall not perform
+any further processing of the command in which the error occurred.
+
+```
+begin interactive test "interactive shell does not exit on syntax error"
+  spawn -i
+  expect "$ "
+  send "fi"
+  expect "$ "
+  send "echo survived_syntax"
+  expect "survived_syntax"
+  sendeof
+  wait
+end interactive test "interactive shell does not exit on syntax error"
 ```
 
 #### Test: invalid option on special built-in causes exit
@@ -113,6 +131,25 @@ begin test "invalid option on special built-in causes exit"
     stderr ""
     exit_code !=0
 end test "invalid option on special built-in causes exit"
+```
+
+#### Test: special built-in diagnostic can be redirected
+
+Although special built-ins are part of the shell, a diagnostic message written
+by a special built-in is not considered a shell diagnostic message and can be
+redirected like any other utility (Note 2).
+
+```
+begin test "special built-in diagnostic can be redirected"
+  script
+    echo 'set -Z 2>tmp_sbi_diag.txt' > tmp_sbi_redir.sh
+    $SHELL tmp_sbi_redir.sh 2>/dev/null
+    cat tmp_sbi_diag.txt
+  expect
+    stdout "(.|\n)+"
+    stderr ""
+    exit_code 0
+end test "special built-in diagnostic can be redirected"
 ```
 
 #### Test: command utility prevents exit on special built-in error
@@ -151,10 +188,343 @@ begin test "special built-in error in subshell only terminates subshell"
 end test "special built-in error in subshell only terminates subshell"
 ```
 
+#### Test: interactive shell does not exit on special built-in error
+
+An interactive shell shall not exit when a special built-in utility encounters
+an error.
+
+```
+begin interactive test "interactive shell does not exit on special built-in error"
+  spawn -i
+  expect "$ "
+  send "set -Z"
+  expect "$ "
+  send "echo survived_sbi"
+  expect "survived_sbi"
+  sendeof
+  wait
+end interactive test "interactive shell does not exit on special built-in error"
+```
+
+#### Test: other utility error does not cause non-interactive shell to exit
+
+An error from a non-special-built-in utility shall not cause the shell to
+exit. The shell is not required to write a diagnostic, but the utility itself
+writes its own (Note 3).
+
+```
+begin test "other utility error does not cause non-interactive shell to exit"
+  script
+    ls /nonexistent_other_util_path_8z 2>/dev/null
+    echo "survived"
+  expect
+    stdout "survived"
+    stderr ""
+    exit_code 0
+end test "other utility error does not cause non-interactive shell to exit"
+```
+
+#### Test: redirection error with special built-in causes exit
+
+A redirection error on a special built-in utility shall cause a non-interactive
+shell to exit with a diagnostic message.
+
+```
+begin test "redirection error with special built-in causes exit"
+  script
+    echo ': < /nonexistent_sbi_redir_9q; echo survived' > tmp_redir_sbi.sh
+    $SHELL tmp_redir_sbi.sh 2>/dev/null
+  expect
+    stdout ""
+    stderr ""
+    exit_code !=0
+end test "redirection error with special built-in causes exit"
+```
+
+#### Test: redirection error with special built-in writes diagnostic to stderr
+
+The shell shall write a diagnostic message to standard error for a redirection
+error with a special built-in (table: diagnostic required yes). The shell also
+exits with a non-zero status.
+
+```
+begin test "redirection error with special built-in writes diagnostic to stderr"
+  script
+    echo ': < /nonexistent_redir_sbi_diag; echo survived' > tmp_redir_sbi_diag.sh
+    $SHELL tmp_redir_sbi_diag.sh
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
+end test "redirection error with special built-in writes diagnostic to stderr"
+```
+
+#### Test: redirection error with special built-in in subshell exits subshell only
+
+If a redirection error on a special built-in occurs in a subshell, the
+subshell shall exit with non-zero status and the parent shall continue.
+
+```
+begin test "redirection error with special built-in in subshell exits subshell only"
+  script
+    (: < /nonexistent_sub_redir_sbi) 2>/dev/null
+    echo "parent survived"
+  expect
+    stdout "parent survived"
+    stderr ""
+    exit_code 0
+end test "redirection error with special built-in in subshell exits subshell only"
+```
+
+#### Test: interactive shell does not exit on redirection error with special built-in
+
+An interactive shell shall not exit on a redirection error with a special
+built-in, even though a non-interactive shell would exit.
+
+```
+begin interactive test "interactive shell does not exit on redirection error with special built-in"
+  spawn -i
+  expect "$ "
+  send ": < /nonexistent_interactive_redir"
+  expect "$ "
+  send "echo survived_redir_sbi"
+  expect "survived_redir_sbi"
+  sendeof
+  wait
+end interactive test "interactive shell does not exit on redirection error with special built-in"
+```
+
+#### Test: redirection error with compound command does not cause exit
+
+A redirection error on a compound command shall not cause the shell to exit.
+The shell shall write a diagnostic message (table: diagnostic required yes).
+
+```
+begin test "redirection error with compound command does not cause exit"
+  script
+    { echo hello; } < /nonexistent_cmpd_redir_7m 2>/dev/null
+    echo "survived"
+  expect
+    stdout "survived"
+    stderr "(.|\n)*"
+    exit_code 0
+end test "redirection error with compound command does not cause exit"
+```
+
+#### Test: redirection error with function execution does not cause exit
+
+A redirection error during function execution shall not cause the shell to
+exit.
+
+```
+begin test "redirection error with function execution does not cause exit"
+  script
+    redir_func() { echo hello; }
+    redir_func < /nonexistent_func_redir_4k 2>/dev/null
+    echo "survived"
+  expect
+    stdout "survived"
+    stderr "(.|\n)*"
+    exit_code 0
+end test "redirection error with function execution does not cause exit"
+```
+
+#### Test: redirection error with other utility does not cause exit
+
+A redirection error on a non-special-built-in utility shall not cause the
+shell to exit.
+
+```
+begin test "redirection error with other utility does not cause exit"
+  script
+    cat < /nonexistent_util_redir_2j 2>/dev/null
+    echo "survived"
+  expect
+    stdout "survived"
+    stderr "(.|\n)*"
+    exit_code 0
+end test "redirection error with other utility does not cause exit"
+```
+
+#### Test: redirection error writes diagnostic to stderr
+
+The shell shall write a diagnostic message to standard error for redirection
+errors (table: diagnostic required yes for all redirection error types).
+
+```
+begin test "redirection error writes diagnostic to stderr"
+  script
+    cat < /nonexistent_redir_diag_5n
+    echo "survived_diag"
+  expect
+    stdout "survived_diag"
+    stderr ".+"
+    exit_code 0
+end test "redirection error writes diagnostic to stderr"
+```
+
+#### Test: readonly assignment before special built-in causes exit
+
+A variable assignment error (assigning to a readonly variable) preceding a
+special built-in utility shall cause a non-interactive shell to exit.
+
+```
+begin test "readonly assignment before special built-in causes exit"
+  script
+    echo 'readonly RO_VAR=1; RO_VAR=2 export OTHER=3; echo "survived"' > tmp_err2.sh
+    $SHELL tmp_err2.sh 2>/dev/null
+  expect
+    stdout ""
+    stderr ""
+    exit_code !=0
+end test "readonly assignment before special built-in causes exit"
+```
+
+#### Test: variable assignment error writes diagnostic to stderr
+
+The shell shall write a diagnostic message to standard error when a variable
+assignment error occurs (table: diagnostic required yes).
+
+```
+begin test "variable assignment error writes diagnostic to stderr"
+  script
+    echo 'readonly V=1; V=2 :' > tmp_varerr_diag.sh
+    $SHELL tmp_varerr_diag.sh
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
+end test "variable assignment error writes diagnostic to stderr"
+```
+
+#### Test: variable assignment error in subshell exits subshell only
+
+If a variable assignment error occurs in a subshell, the subshell shall exit
+with non-zero status and the parent shall continue.
+
+```
+begin test "variable assignment error in subshell exits subshell only"
+  script
+    (readonly V=1; V=2 :) 2>/dev/null
+    echo "parent survived"
+  expect
+    stdout "parent survived"
+    stderr ""
+    exit_code 0
+end test "variable assignment error in subshell exits subshell only"
+```
+
+#### Test: interactive shell does not exit on variable assignment error
+
+An interactive shell shall not exit on a variable assignment error but shall
+not perform any further processing of the command in which the error occurred.
+
+```
+begin interactive test "interactive shell does not exit on variable assignment error"
+  spawn -i
+  expect "$ "
+  send "readonly IVAR_A=1"
+  expect "$ "
+  send "IVAR_A=2 :"
+  expect "$ "
+  send "echo survived_var"
+  expect "survived_var"
+  sendeof
+  wait
+end interactive test "interactive shell does not exit on variable assignment error"
+```
+
+#### Test: expansion error causes non-interactive shell to exit
+
+An expansion error shall cause a non-interactive shell to exit. Here the
+`:?` operator on an unset variable triggers an expansion-time error.
+
+```
+begin test "expansion error causes non-interactive shell to exit"
+  script
+    echo 'unset _EXP_V; echo "${_EXP_V:?}"; echo survived' > tmp_exp_exit.sh
+    $SHELL tmp_exp_exit.sh 2>/dev/null
+  expect
+    stdout ""
+    stderr ""
+    exit_code !=0
+end test "expansion error causes non-interactive shell to exit"
+```
+
+#### Test: expansion error writes diagnostic to stderr
+
+The shell shall write a diagnostic message to standard error on an expansion
+error (table: diagnostic required yes).
+
+```
+begin test "expansion error writes diagnostic to stderr"
+  script
+    echo 'unset _EXP_D; echo "${_EXP_D:?}"' > tmp_exp_diag.sh
+    $SHELL tmp_exp_diag.sh
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
+end test "expansion error writes diagnostic to stderr"
+```
+
+#### Test: expansion error in subshell exits subshell only
+
+If an expansion error occurs in a subshell environment, the subshell shall
+exit with a non-zero status and the parent shall continue.
+
+```
+begin test "expansion error in subshell exits subshell only"
+  script
+    unset _NOSUB 2>/dev/null
+    (: "${_NOSUB:?sub_err}") 2>/dev/null
+    echo "parent survived"
+  expect
+    stdout "parent survived"
+    stderr ""
+    exit_code 0
+end test "expansion error in subshell exits subshell only"
+```
+
+#### Test: interactive shell does not exit on expansion error
+
+An interactive shell shall not exit on an expansion error.
+
+```
+begin interactive test "interactive shell does not exit on expansion error"
+  spawn -i
+  expect "$ "
+  send "echo ${}"
+  expect "$ "
+  send "echo survived_exp"
+  expect "survived_exp"
+  sendeof
+  wait
+end interactive test "interactive shell does not exit on expansion error"
+```
+
+#### Test: command not found writes diagnostic to stderr
+
+The shell shall write a diagnostic message when a command is not found
+(table: diagnostic required yes).
+
+```
+begin test "command not found writes diagnostic to stderr"
+  script
+    nonexistent_cmd_diag_3x
+    echo "survived_diag"
+  expect
+    stdout "survived_diag"
+    stderr ".+"
+    exit_code 0
+end test "command not found writes diagnostic to stderr"
+```
+
 #### Test: missing command does not cause shell to exit
 
-An "other utility" error (command not found) shall not cause a non-interactive
-shell to exit. The shell continues executing subsequent commands.
+The table allows a non-interactive shell to optionally exit when a command is
+not found ("may exit"). This test verifies the shell can continue execution,
+which is the permitted behavior in `bash --posix`.
 
 ```
 begin test "missing command does not cause shell to exit"
@@ -166,6 +536,24 @@ begin test "missing command does not cause shell to exit"
     stderr ""
     exit_code 0
 end test "missing command does not cause shell to exit"
+```
+
+#### Test: interactive shell does not exit on command not found
+
+An interactive shell shall not exit when a command is not found (table:
+interactive "shall not exit").
+
+```
+begin interactive test "interactive shell does not exit on command not found"
+  spawn -i
+  expect "$ "
+  send "nonexistent_cmd_interactive_7q"
+  expect "$ "
+  send "echo survived_notfound"
+  expect "survived_notfound"
+  sendeof
+  wait
+end interactive test "interactive shell does not exit on command not found"
 ```
 
 ## 2.8.2 Exit Status for Commands
@@ -235,4 +623,43 @@ begin test "signal-terminated process has exit status > 128"
     stderr ""
     exit_code 0
 end test "signal-terminated process has exit status > 128"
+```
+
+#### Test: signal exit status encodes the signal number
+
+The exit status of a signal-terminated command shall identify which signal
+caused the termination. Bash encodes this as 128 plus the signal number;
+SIGTERM (signal 15) produces exit status 143.
+
+```
+begin test "signal exit status encodes the signal number"
+  script
+    $SHELL -c 'kill -TERM $$'
+    echo $?
+  expect
+    stdout "143"
+    stderr ""
+    exit_code 0
+end test "signal exit status encodes the signal number"
+```
+
+#### Test: normal exit status reflects WEXITSTATUS value
+
+The exit status of a normally terminated command is the low-order 8 bits of
+the value passed to `exit`, equivalent to applying WEXITSTATUS to the
+`wait()` status.
+
+```
+begin test "normal exit status reflects WEXITSTATUS value"
+  script
+    $SHELL -c 'exit 42'
+    r1=$?
+    $SHELL -c 'exit 300'
+    r2=$?
+    echo "$r1 $r2"
+  expect
+    stdout "42 44"
+    stderr ""
+    exit_code 0
+end test "normal exit status reflects WEXITSTATUS value"
 ```
