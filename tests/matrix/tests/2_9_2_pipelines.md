@@ -101,6 +101,22 @@ begin test "pipeline exit status is last command"
 end test "pipeline exit status is last command"
 ```
 
+#### Test: pipeline exit status follows failing last command
+
+Without pipefail, the exit status of a pipeline is the exit status of the
+last command even when an earlier command succeeds.
+
+```
+begin test "pipeline exit status follows failing last command"
+  script
+    true | false
+  expect
+    stdout ""
+    stderr ""
+    exit_code 1
+end test "pipeline exit status follows failing last command"
+```
+
 #### Test: pipeline assignments happen before redirections
 
 Pipeline assignments to stdin/stdout occur before explicit redirections
@@ -152,6 +168,48 @@ begin test "pipeline sender stdout redirect overrides pipe"
     stderr ""
     exit_code 0
 end test "pipeline sender stdout redirect overrides pipe"
+```
+
+#### Test: middle pipeline command redirections override both pipe ends
+
+If a middle pipeline command redirects both its standard input and standard
+output, those redirections override both pipeline assignments after the pipe
+connections are set up.
+
+```
+begin test "middle pipeline command redirections override both pipe ends"
+  script
+    printf 'from_file\n' > tmp_middle_pipe.txt
+    printf 'from_left\n' | cat < tmp_middle_pipe.txt > tmp_middle_out.txt | wc -c
+    printf 'out:'
+    cat tmp_middle_out.txt
+  expect
+    stdout "0\nout:from_file"
+    stderr ""
+    exit_code 0
+end test "middle pipeline command redirections override both pipe ends"
+```
+
+#### Test: foreground pipeline waits for last command to complete
+
+For a foreground pipeline, the shell shall wait for the last command in the
+pipeline to complete before executing the next command.
+
+```
+begin test "foreground pipeline waits for last command to complete"
+  script
+    rm -f tmp_pipeline_done.txt
+    printf x | { sleep 0.2; cat >/dev/null; echo done > tmp_pipeline_done.txt; }
+    if test -f tmp_pipeline_done.txt; then
+      echo waited
+    else
+      echo early
+    fi
+  expect
+    stdout "waited"
+    stderr ""
+    exit_code 0
+end test "foreground pipeline waits for last command to complete"
 ```
 
 #### Test: ! ( false ) succeeds with blank separation
@@ -321,4 +379,22 @@ begin test "pipefail uses setting at pipeline start"
     stderr ""
     exit_code 0
 end test "pipefail uses setting at pipeline start"
+```
+
+#### Test: pipefail start setting is not cleared by later command
+
+The shell shall use the pipefail setting from when pipeline execution begins.
+Disabling pipefail in a later command does not change which command determines
+the pipeline exit status.
+
+```
+begin test "pipefail start setting is not cleared by later command"
+  script
+    set -o pipefail
+    false | set +o pipefail
+  expect
+    stdout ""
+    stderr ""
+    exit_code 1
+end test "pipefail start setting is not cleared by later command"
 ```
