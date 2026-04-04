@@ -228,20 +228,68 @@ begin test "positional parameters follow invocation function and set lifecycle"
 end test "positional parameters follow invocation function and set lifecycle"
 ```
 
-#### Test: $@ with no positional params generates zero fields
+#### Test: empty unquoted $@ generated from missing positional parameters expands to zero fields
+
+When there are no positional parameters, `$@` without quotes expands to zero
+fields (discarded during field splitting).
+
+```
+begin test "empty unquoted $@ generated from missing positional parameters expands to zero fields"
+  script
+    $SHELL -c 'for i in $@; do echo "found: <$i>"; done' sh
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "empty unquoted $@ generated from missing positional parameters expands to zero fields"
+```
+
+#### Test: empty unquoted $* generated from missing positional parameters expands to zero fields
+
+When there are no positional parameters, `$*` without quotes expands to zero
+fields (discarded during field splitting).
+
+```
+begin test "empty unquoted $* generated from missing positional parameters expands to zero fields"
+  script
+    $SHELL -c 'for i in $*; do echo "found: <$i>"; done' sh
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "empty unquoted $* generated from missing positional parameters expands to zero fields"
+```
+
+#### Test: empty quoted $* generated from missing positional parameters expands to one empty field
+
+When there are no positional parameters, `"$*"` (unlike `"$@"`) expands to a
+single empty field.
+
+```
+begin test "empty quoted $* generated from missing positional parameters expands to one empty field"
+  script
+    $SHELL -c 'for i in "$*"; do echo "found: <$i>"; done' sh
+  expect
+    stdout "found: <>"
+    stderr ""
+    exit_code 0
+end test "empty quoted $* generated from missing positional parameters expands to one empty field"
+```
+
+#### Test: empty quoted $@ expands to zero fields
 
 When there are no positional parameters, `"$@"` generates zero fields — the
 loop body does not execute at all.
 
 ```
-begin test "$@ with no positional params generates zero fields"
+begin test "empty quoted $@ expands to zero fields"
   script
     $SHELL -c 'for i in "$@"; do echo "found: $i"; done' sh
   expect
     stdout ""
     stderr ""
     exit_code 0
-end test "$@ with no positional params generates zero fields"
+end test "empty quoted $@ expands to zero fields"
 ```
 
 ## 2.5.2 Special Parameters
