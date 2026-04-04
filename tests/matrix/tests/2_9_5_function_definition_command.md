@@ -89,6 +89,50 @@ begin test "variable inside function not expanded at declaration time"
 end test "variable inside function not expanded at declaration time"
 ```
 
+#### Test: command substitution in function body is deferred until call
+
+No expansions in the function body are performed when the function is
+declared. Command substitution in the body runs only when the function is
+called.
+
+```
+begin test "command substitution in function body is deferred until call"
+  script
+    rm -f tmp_func_touch.txt
+    myfunc() {
+        out=$(touch tmp_func_touch.txt; printf made)
+        echo "$out"
+    }
+    if test -f tmp_func_touch.txt; then echo early; else echo not_yet; fi
+    myfunc
+    if test -f tmp_func_touch.txt; then echo after; else echo missing; fi
+  expect
+    stdout "not_yet\nmade\nafter"
+    stderr ""
+    exit_code 0
+end test "command substitution in function body is deferred until call"
+```
+
+#### Test: assignments in function body are performed during execution
+
+Variable assignments within the compound-command are performed when the
+function executes, not when it is defined.
+
+```
+begin test "assignments in function body are performed during execution"
+  script
+    VALUE=outer
+    myfunc() { VALUE=inner; }
+    printf "before:%s\n" "$VALUE"
+    myfunc
+    printf "after:%s\n" "$VALUE"
+  expect
+    stdout "before:outer\nafter:inner"
+    stderr ""
+    exit_code 0
+end test "assignments in function body are performed during execution"
+```
+
 #### Test: positional parameters pass to function and restore after
 
 Function arguments become positional parameters during execution and are
@@ -112,6 +156,29 @@ begin test "positional parameters pass to function and restore after"
     stderr ""
     exit_code 0
 end test "positional parameters pass to function and restore after"
+```
+
+#### Test: function temporarily changes sharp to operand count
+
+During function execution, the special parameter `#` reflects the number of
+operands passed to the function, and when the function completes it is restored
+to its previous value.
+
+```
+begin test "function temporarily changes sharp to operand count"
+  script
+    set -- outer1 outer2 outer3
+    myfunc() {
+        printf "inside:%s\n" "$#"
+    }
+    printf "before:%s\n" "$#"
+    myfunc a b
+    printf "after:%s\n" "$#"
+  expect
+    stdout "before:3\ninside:2\nafter:3"
+    stderr ""
+    exit_code 0
+end test "function temporarily changes sharp to operand count"
 ```
 
 #### Test: function does not change dollar zero
@@ -153,6 +220,27 @@ begin test "return from function sets exit status and skips remaining"
     stderr ""
     exit_code 0
 end test "return from function sets exit status and skips remaining"
+```
+
+#### Test: return resumes with next command after function call
+
+If `return` is executed in the function body, the function completes and
+execution resumes with the command following the function invocation.
+
+```
+begin test "return resumes with next command after function call"
+  script
+    myfunc() {
+        return 7
+        echo "bad"
+    }
+    myfunc
+    echo "after_call"
+  expect
+    stdout "after_call"
+    stderr ""
+    exit_code 0
+end test "return resumes with next command after function call"
 ```
 
 #### Test: successful function definition exits zero
@@ -212,6 +300,30 @@ begin test "redirection error on function call yields non-zero exit"
 end test "redirection error on function call yields non-zero exit"
 ```
 
+#### Test: function definition redirection is deferred until function call
+
+Trailing redirections in a function definition are neither expanded nor
+performed when the function is declared. They are expanded and applied when
+the function is called.
+
+```
+begin test "function definition redirection is deferred until function call"
+  script
+    suffix=before
+    myfunc() { echo body; } > "tmp_$suffix.txt"
+    suffix=after
+    printf "before:"
+    if test -f tmp_before.txt; then cat tmp_before.txt; else echo missing; fi
+    myfunc
+    printf "after:"
+    if test -f tmp_after.txt; then cat tmp_after.txt; else echo missing; fi
+  expect
+    stdout "before:missing\nafter:body"
+    stderr ""
+    exit_code 0
+end test "function definition redirection is deferred until function call"
+```
+
 #### Test: function with syntax error in body causes non-interactive shell to exit
 
 Functions have the same syntax-error properties as special built-in
@@ -231,4 +343,21 @@ begin test "function with syntax error in body causes non-interactive shell to e
     stderr ""
     exit_code !=0
 end test "function with syntax error in body causes non-interactive shell to exit"
+```
+
+#### Test: failed function definition returns non-zero status
+
+If a function definition is not declared successfully, its exit status shall
+be greater than zero.
+
+```
+begin test "failed function definition returns non-zero status"
+  script
+    /usr/bin/bash --posix -c 'myfunc() { ' >/dev/null 2>&1
+    echo $?
+  expect
+    stdout "[1-9][0-9]*"
+    stderr ""
+    exit_code 0
+end test "failed function definition returns non-zero status"
 ```
