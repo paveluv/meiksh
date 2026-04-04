@@ -79,6 +79,42 @@ begin test "quoted fd number is not a redirection"
 end test "quoted fd number is not a redirection"
 ```
 
+#### Test: fd number must be delimited from preceding text
+
+The file descriptor number is recognized only when it is delimited from any
+preceding text. Here the `1` is part of the word `token1`, so `>` still uses
+its default file descriptor.
+
+```
+begin test "fd number must be delimited from preceding text"
+  script
+    echo token1>tmp_delimited_fd.txt
+    cat tmp_delimited_fd.txt
+  expect
+    stdout "token1"
+    stderr ""
+    exit_code 0
+end test "fd number must be delimited from preceding text"
+```
+
+#### Test: blank between fd number and operator prevents fd designation
+
+The file descriptor number must immediately precede the redirection operator,
+with no intervening blanks. A separated `2` is an ordinary argument, not a
+file descriptor designator.
+
+```
+begin test "blank between fd number and operator prevents fd designation"
+  script
+    echo literal 2 > tmp_blank_between_fd_and_operator.txt
+    cat tmp_blank_between_fd_and_operator.txt
+  expect
+    stdout "literal 2"
+    stderr ""
+    exit_code 0
+end test "blank between fd number and operator prevents fd designation"
+```
+
 #### Test: fd 3 works and does not appear in arguments
 
 The optional number, redirection operator, and word shall not appear in the
@@ -150,6 +186,24 @@ begin test "redirection words are subject to parameter expansion"
     stderr ""
     exit_code 0
 end test "redirection words are subject to parameter expansion"
+```
+
+#### Test: redirection words are subject to quote removal
+
+For redirection operators other than `<<` and `<<-`, the word shall be
+subjected to quote removal. Quotes used to preserve blanks in the target path
+do not become part of the filename.
+
+```
+begin test "redirection words are subject to quote removal"
+  script
+    echo quoted > "tmp quoted redir.txt"
+    cat "tmp quoted redir.txt"
+  expect
+    stdout "quoted"
+    stderr ""
+    exit_code 0
+end test "redirection words are subject to quote removal"
 ```
 
 #### Test: quoted redirection operator is not recognized
@@ -244,6 +298,25 @@ begin test "multiple output redirections are evaluated left to right"
     stderr ""
     exit_code 0
 end test "multiple output redirections are evaluated left to right"
+```
+
+#### Test: stderr duplication respects left-to-right redirection order
+
+Redirections are evaluated from beginning to end. Duplicating stderr from the
+current stdout before redirecting stdout to a file leaves stderr on the
+original destination, while stdout goes to the file. In the harness, that
+original destination is the captured stdout stream.
+
+```
+begin test "stderr duplication respects left-to-right redirection order"
+  script
+    (printf out; printf err >&2) 2>&1 > tmp_stderr_order.txt
+    cat tmp_stderr_order.txt
+  expect
+    stdout "errout"
+    stderr ""
+    exit_code 0
+end test "stderr duplication respects left-to-right redirection order"
 ```
 
 #### Test: redirection operators do not count as command arguments
@@ -382,6 +455,24 @@ begin test "explicit stdout redirection with 1>"
 end test "explicit stdout redirection with 1>"
 ```
 
+#### Test: output redirection with > truncates existing file
+
+When `>` succeeds and the target already exists, the file shall be opened as
+if with `O_TRUNC`, so previous contents are discarded before writing.
+
+```
+begin test "output redirection with > truncates existing file"
+  script
+    printf 'old data\n' > tmp_trunc.txt
+    echo new > tmp_trunc.txt
+    cat tmp_trunc.txt
+  expect
+    stdout "new"
+    stderr ""
+    exit_code 0
+end test "output redirection with > truncates existing file"
+```
+
 #### Test: noclobber prevents overwriting existing file
 
 When the `noclobber` option is set (`set -C`), output redirection with `>`
@@ -398,6 +489,25 @@ begin test "noclobber prevents overwriting existing file"
     stderr ".+"
     exit_code !=0
 end test "noclobber prevents overwriting existing file"
+```
+
+#### Test: noclobber prevents overwriting symlink to regular file
+
+When `noclobber` is set, output redirection with `>` shall also fail if the
+target is a symbolic link that resolves to an existing regular file.
+
+```
+begin test "noclobber prevents overwriting symlink to regular file"
+  script
+    printf old > tmp_target.txt
+    ln -s tmp_target.txt tmp_link.txt
+    set -C
+    echo new > tmp_link.txt
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
+end test "noclobber prevents overwriting symlink to regular file"
 ```
 
 #### Test: greater-pipe output redirection overwrites despite noclobber
@@ -560,6 +670,25 @@ begin test "here-document with variable expansion"
 end test "here-document with variable expansion"
 ```
 
+#### Test: here-document performs command and arithmetic expansion
+
+When the delimiter word is not quoted, here-document lines shall also be
+expanded for command substitution and arithmetic expansion.
+
+```
+begin test "here-document performs command and arithmetic expansion"
+  script
+    cat <<EOF
+    $(printf cmd)
+    $((2 + 3))
+    EOF
+  expect
+    stdout "cmd\n5"
+    stderr ""
+    exit_code 0
+end test "here-document performs command and arithmetic expansion"
+```
+
 #### Test: here-document with quoted delimiter suppresses expansion
 
 When any part of the delimiter word is quoted, here-document lines are not
@@ -577,6 +706,25 @@ begin test "here-document with quoted delimiter suppresses expansion"
     stderr ""
     exit_code 0
 end test "here-document with quoted delimiter suppresses expansion"
+```
+
+#### Test: quoted here-document delimiter suppresses command and arithmetic expansion
+
+When any part of the delimiter word is quoted, here-document lines shall not
+be expanded at all, including command substitution and arithmetic expansion.
+
+```
+begin test "quoted here-document delimiter suppresses command and arithmetic expansion"
+  script
+    cat <<'EOF'
+    $(printf no)
+    $((1 + 2))
+    EOF
+  expect
+    stdout "\$\(printf no\)\n\$\(\(1 \+ 2\)\)"
+    stderr ""
+    exit_code 0
+end test "quoted here-document delimiter suppresses command and arithmetic expansion"
 ```
 
 #### Test: here-document expands variables and handles backslash continuation
@@ -598,6 +746,26 @@ begin test "here-document expands variables and handles backslash continuation"
     stderr ""
     exit_code 0
 end test "here-document expands variables and handles backslash continuation"
+```
+
+#### Test: here-document backslashes behave as in double quotes
+
+In an unquoted here-document, backslashes shall behave as they do inside
+double-quotes: they can preserve a literal `$` and a literal backslash.
+
+```
+begin test "here-document backslashes behave as in double quotes"
+  script
+    value=expanded
+    cat <<EOF
+    \$value
+    \\
+    EOF
+  expect
+    stdout "\$value\n\\"
+    stderr ""
+    exit_code 0
+end test "here-document backslashes behave as in double quotes"
 ```
 
 #### Test: here-document not expanded when command is not executed
@@ -638,6 +806,46 @@ begin test "multiple here-documents on one line are read in order"
     stderr ""
     exit_code 0
 end test "multiple here-documents on one line are read in order"
+```
+
+#### Test: here-document can target an explicit file descriptor
+
+The optional *n* in `[n]<<word` designates the file descriptor that receives
+the here-document input. Duplicating that descriptor onto standard input lets
+`cat` read the here-document contents.
+
+```
+begin test "here-document can target an explicit file descriptor"
+  script
+    cat 5<<EOF <&5
+    heredoc-fd
+    EOF
+  expect
+    stdout "heredoc-fd"
+    stderr ""
+    exit_code 0
+end test "here-document can target an explicit file descriptor"
+```
+
+#### Test: here-document delimiter search applies backslash-newline continuation
+
+When searching for the trailing delimiter of an unquoted here-document,
+`<backslash><newline>` line continuation shall be performed. A delimiter split
+across those two physical lines is therefore recognized.
+
+```
+begin test "here-document delimiter search applies backslash-newline continuation"
+  script
+    cat <<EOF
+    before
+    EO\
+    F
+    echo after
+  expect
+    stdout "before\nafter"
+    stderr ""
+    exit_code 0
+end test "here-document delimiter search applies backslash-newline continuation"
 ```
 
 #### Test: interactive here-document prompt goes to stderr stream
@@ -682,6 +890,43 @@ begin test "here-document with <<- strips leading tabs"
     stderr ""
     exit_code 0
 end test "here-document with <<- strips leading tabs"
+```
+
+#### Test: here-document with <<- strips tabs from delimiter line
+
+With `<<-`, leading tab characters are stripped from the line containing the
+trailing delimiter as the here-document is read. A tab-indented delimiter line
+still terminates the here-document.
+
+```
+begin test "here-document with <<- strips tabs from delimiter line"
+  script
+    printf 'cat <<-EOF\n\tline\n\tEOF\necho after\n' > tmp_tab_delim.sh
+    $SHELL tmp_tab_delim.sh
+  expect
+    stdout "line\nafter"
+    stderr ""
+    exit_code 0
+end test "here-document with <<- strips tabs from delimiter line"
+```
+
+#### Test: here-document with <<- does not strip tabs produced by expansion
+
+Tab stripping for `<<-` occurs as the here-document is read from shell input,
+so a leading tab that comes from expansion is not removed.
+
+```
+begin test "here-document with <<- does not strip tabs produced by expansion"
+  script
+    tab=$(printf '\t')
+    cat <<-EOF | od -An -tx1 | tr -d ' \n'
+    ${tab}x
+    EOF
+  expect
+    stdout "09780a"
+    stderr ""
+    exit_code 0
+end test "here-document with <<- does not strip tabs produced by expansion"
 ```
 
 #### Test: here-document terminator line allows no blanks before delimiter
@@ -767,6 +1012,22 @@ begin test "duplicate input from non-open file descriptor is a redirection error
 end test "duplicate input from non-open file descriptor is a redirection error"
 ```
 
+#### Test: omitted n with input fd close closes standard input
+
+If *word* evaluates to `'-'` and *n* is omitted in `[n]<&word`, standard input
+shall be closed for the command.
+
+```
+begin test "omitted n with input fd close closes standard input"
+  script
+    cat <&-
+  expect
+    stdout ""
+    stderr "(.|\n)+"
+    exit_code !=0
+end test "omitted n with input fd close closes standard input"
+```
+
 ## 2.7.6 Duplicating an Output File Descriptor
 
 The redirection operator:
@@ -830,6 +1091,22 @@ begin test "duplicate output from non-open file descriptor is a redirection erro
 end test "duplicate output from non-open file descriptor is a redirection error"
 ```
 
+#### Test: omitted n with output fd close closes standard output
+
+If *word* evaluates to `'-'` and *n* is omitted in `[n]>&word`, standard
+output is closed for the command.
+
+```
+begin test "omitted n with output fd close closes standard output"
+  script
+    echo hi >&-
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
+end test "omitted n with output fd close closes standard output"
+```
+
 ## 2.7.7 Open File Descriptors for Reading and Writing
 
 The redirection operator:
@@ -858,4 +1135,39 @@ begin test "read-write redirection creates file and allows writing"
     stderr ""
     exit_code 0
 end test "read-write redirection creates file and allows writing"
+```
+
+#### Test: read-write redirection with omitted fd uses standard input
+
+When the file descriptor is omitted for `<>`, the redirection shall refer to
+standard input. `cat` can therefore read the file through stdin.
+
+```
+begin test "read-write redirection with omitted fd uses standard input"
+  script
+    printf 'rwline\n' > tmp_rw_stdin.txt
+    cat <> tmp_rw_stdin.txt
+  expect
+    stdout "rwline"
+    stderr ""
+    exit_code 0
+end test "read-write redirection with omitted fd uses standard input"
+```
+
+#### Test: read-write redirection opens the designated fd for reading
+
+When an explicit file descriptor is given with `<>`, the file is opened on
+that descriptor for reading as well as writing. Duplicating the descriptor to
+standard input lets `cat` read from it.
+
+```
+begin test "read-write redirection opens the designated fd for reading"
+  script
+    printf 'rwfd\n' > tmp_rwfd.txt
+    cat 4<>tmp_rwfd.txt <&4
+  expect
+    stdout "rwfd"
+    stderr ""
+    exit_code 0
+end test "read-write redirection opens the designated fd for reading"
 ```
