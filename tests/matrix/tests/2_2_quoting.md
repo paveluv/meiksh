@@ -598,6 +598,24 @@ begin test "backquote inside double quotes executes"
 end test "backquote inside double quotes executes"
 ```
 
+#### Test: backslash escapes removed inside double-quoted backquote
+
+Inside double-quotes, the command string of a backquote command substitution is
+formed by removing backslash escapes before passing the string to the subshell.
+Here `\$` is passed as `$` and `\"` is passed as `"`.
+
+```
+begin test "backslash escapes removed inside double-quoted backquote"
+  script
+    foo=outer
+    printf '%s\n' "`foo=inner; printf \"%s\" \"\$foo\"`"
+  expect
+    stdout "inner"
+    stderr ""
+    exit_code 0
+end test "backslash escapes removed inside double-quoted backquote"
+```
+
 #### Test: backslash before non-special character stays literal in double quotes
 
 Inside double-quotes, backslash is only special before `$`, `` ` ``, `"`, `\`,
@@ -905,14 +923,14 @@ end test "dollar-single-quote basic support"
 #### Test: dollar-single-quote hex escape
 
 The `\xHH` escape in `$'...'` produces the byte with the given hexadecimal value;
-`\x41\x42` yields `AB`.
+`\x41\x42` yields `AB` and `\xA` yields the newline byte `0x0a`.
 
 ```
 begin test "dollar-single-quote hex escape"
   script
-    printf '%s\n' $'\x41\x42'
+    printf '%s' $'\x41\x42\xA' | od -An -tx1
   expect
-    stdout "AB"
+    stdout " 41 42 0a"
     stderr ""
     exit_code 0
 end test "dollar-single-quote hex escape"
