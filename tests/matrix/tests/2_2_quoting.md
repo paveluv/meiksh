@@ -867,7 +867,7 @@ A sequence of characters starting with a `<dollar-sign>` immediately followed by
 - `\r` yields a `<carriage-return>` character.
 - `\t` yields a `<tab>` character.
 - `\v` yields a `<vertical-tab>` character.
-- `\c`*X* yields the control character listed in the **Value** column of [*Values for cpio c_mode Field*](../utilities/stty.md#tagtcjh_23) in the OPERANDS section of the [*stty*](../utilities/stty.md) utility when *X* is one of the characters listed in the **^c** column of the same table, except that `\c\\` yields the `<FS>` control character since the `<backslash>` character has to be escaped.
+- `\c`*X* yields the control character listed in the **Value** column of [*Values for cpio c_mode Field*](docs/posix/md/utilities/stty.md#tagtcjh_23) in the OPERANDS section of the [*stty*](docs/posix/md/utilities/stty.md) utility when *X* is one of the characters listed in the **^c** column of the same table, except that `\c\\` yields the `<FS>` control character since the `<backslash>` character has to be escaped.
 - `\x`*XX* yields the byte whose value is the hexadecimal value *XX* (one or more hexadecimal digits). If more than two hexadecimal digits follow `\x`, the results are unspecified.
 - `\`*ddd* yields the byte whose value is the octal value *ddd* (one to three octal digits).
 - The behavior of an unescaped `<backslash>` immediately followed by any other character, including `<newline>`, is unspecified.

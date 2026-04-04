@@ -9,7 +9,7 @@ This test suite verifies the POSIX shell token recognition rules, including char
 
 ## 2.3 Token Recognition
 
-The shell shall read its input in terms of lines. (For details about how the shell reads its input, see the description of [*sh*](../utilities/sh.md).) The input lines can be of unlimited length. These lines shall be parsed using two major modes: ordinary token recognition and processing of here-documents.
+The shell shall read its input in terms of lines. (For details about how the shell reads its input, see the description of [*sh*](docs/posix/md/utilities/sh.md).) The input lines can be of unlimited length. These lines shall be parsed using two major modes: ordinary token recognition and processing of here-documents.
 
 When an **io_here** token has been recognized by the grammar (see [2.10 Shell Grammar](#210-shell-grammar)), one or more of the subsequent lines immediately following the next **NEWLINE** token form the body of a here-document and shall be parsed according to the rules of [2.7.4 Here-Document](#274-here-document). Any non-**NEWLINE** tokens (including more **io_here** tokens) that are recognized while searching for the next **NEWLINE** token shall be saved for processing after the here-document has been parsed. If a saved token is an **io_here** token, the corresponding here-document shall start on the line immediately following the line containing the trailing delimiter of the previous here-document. If any saved token includes a `<newline>` character, the behavior is unspecified.
 
@@ -1158,7 +1158,7 @@ end test "# in middle of word is not a comment"
 After a token has been categorized as type **TOKEN** (see [2.10.1 Shell Grammar Lexical Conventions](#2101-shell-grammar-lexical-conventions)), including (recursively) any token resulting from an alias substitution, the **TOKEN** shall be subject to alias substitution if all of the following conditions are true:
 
 - The **TOKEN** does not contain any quoting characters.
-- The **TOKEN** is a valid alias name (see XBD [*3.10 Alias Name*](../basedefs/V1_chap03.md#310-alias-name)).
+- The **TOKEN** is a valid alias name (see XBD [*3.10 Alias Name*](docs/posix/md/basedefs/V1_chap03.md#310-alias-name)).
 - An alias with that name is in effect.
 - The **TOKEN** did not either fully or, optionally, partially result from an alias substitution of the same alias name at any earlier recursion level.
 - Either the **TOKEN** is being considered for alias substitution because it follows an alias substitution whose replacement value ended with a `<blank>` (see below) or the **TOKEN** could be parsed as the command name word of a simple command (see [2.10 Shell Grammar](#210-shell-grammar)), based on this **TOKEN** and the tokens (if any) that preceded it, but ignoring whether any subsequent characters would allow that.

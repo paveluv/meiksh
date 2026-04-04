@@ -19,7 +19,7 @@ and Open File Descriptors for Reading and Writing.
 
 ## 2.7 Redirection
 
-Redirection is used to open and close files for the current shell execution environment (see [2.13 Shell Execution Environment](#213-shell-execution-environment)) or for any command. Redirection operators can be used with numbers representing file descriptors (see XBD [*3.141 File Descriptor*](../basedefs/V1_chap03.md#3141-file-descriptor)) as described below.
+Redirection is used to open and close files for the current shell execution environment (see [2.13 Shell Execution Environment](#213-shell-execution-environment)) or for any command. Redirection operators can be used with numbers representing file descriptors (see XBD [*3.141 File Descriptor*](docs/posix/md/basedefs/V1_chap03.md#3141-file-descriptor)) as described below.
 
 The overall format used for redirection is:
 
@@ -230,9 +230,9 @@ The two general formats for redirecting output are:
 
 where the optional *n* represents the file descriptor number. If the number is omitted, the redirection shall refer to standard output (file descriptor 1).
 
-Output redirection using the `'>'` format shall fail if the *noclobber* option is set (see the description of [*set*](#set) **-C**) and the file named by the expansion of *word* exists and is either a regular file or a symbolic link that resolves to a regular file; it may also fail if the file is a symbolic link that does not resolve to an existing file. The check for existence, file creation, and open operations shall be performed atomically as is done by the [*open*()](../functions/open.md) function as defined in System Interfaces volume of POSIX.1-2024 when the O_CREAT and O_EXCL flags are set, except that if the file exists and is a symbolic link, the open operation need not fail with [EEXIST] unless the symbolic link resolves to an existing regular file. Performing these operations atomically ensures that the creation of lock files and unique (often temporary) files is reliable, with important caveats detailed in [*C.2.7.2 Redirecting Output*](../xrat/V4_xcu_chap01.md#c272-redirecting-output). The check for the type of the file need not be performed atomically with the check for existence, file creation, and open operations. If not, there is a potential race condition that may result in a misleading shell diagnostic message when redirection fails. See XRAT [*C.2.7.2 Redirecting Output*](../xrat/V4_xcu_chap01.md#c272-redirecting-output) for more details.
+Output redirection using the `'>'` format shall fail if the *noclobber* option is set (see the description of [*set*](#set) **-C**) and the file named by the expansion of *word* exists and is either a regular file or a symbolic link that resolves to a regular file; it may also fail if the file is a symbolic link that does not resolve to an existing file. The check for existence, file creation, and open operations shall be performed atomically as is done by the [*open*()](docs/posix/md/functions/open.md) function as defined in System Interfaces volume of POSIX.1-2024 when the O_CREAT and O_EXCL flags are set, except that if the file exists and is a symbolic link, the open operation need not fail with [EEXIST] unless the symbolic link resolves to an existing regular file. Performing these operations atomically ensures that the creation of lock files and unique (often temporary) files is reliable, with important caveats detailed in [*C.2.7.2 Redirecting Output*](docs/posix/md/xrat/V4_xcu_chap01.md#c272-redirecting-output). The check for the type of the file need not be performed atomically with the check for existence, file creation, and open operations. If not, there is a potential race condition that may result in a misleading shell diagnostic message when redirection fails. See XRAT [*C.2.7.2 Redirecting Output*](docs/posix/md/xrat/V4_xcu_chap01.md#c272-redirecting-output) for more details.
 
-In all other cases (*noclobber* not set, redirection using `'>'` does not fail for the reasons stated above, or redirection using the `">|"` format), output redirection shall cause the file whose name results from the expansion of *word* to be opened for output on the designated file descriptor, or standard output if none is specified. If the file does not exist, it shall be created as an empty file; otherwise, it shall be opened as if the [*open*()](../functions/open.md) function was called with the O_TRUNC flag set.
+In all other cases (*noclobber* not set, redirection using `'>'` does not fail for the reasons stated above, or redirection using the `">|"` format), output redirection shall cause the file whose name results from the expansion of *word* to be opened for output on the designated file descriptor, or standard output if none is specified. If the file does not exist, it shall be created as an empty file; otherwise, it shall be opened as if the [*open*()](docs/posix/md/functions/open.md) function was called with the O_TRUNC flag set.
 
 ### Tests
 
@@ -290,7 +290,7 @@ end test "noclobber prevents overwriting existing file"
 
 ## 2.7.3 Appending Redirected Output
 
-Appended output redirection shall cause the file whose name results from the expansion of word to be opened for output on the designated file descriptor. The file shall be opened as if the [*open*()](../functions/open.md) function as defined in the System Interfaces volume of POSIX.1-2024 was called with the O_APPEND flag set. If the file does not exist, it shall be created.
+Appended output redirection shall cause the file whose name results from the expansion of word to be opened for output on the designated file descriptor. The file shall be opened as if the [*open*()](docs/posix/md/functions/open.md) function as defined in the System Interfaces volume of POSIX.1-2024 was called with the O_APPEND flag set. If the file does not exist, it shall be created.
 
 The general format for appending redirected output is as follows:
 
@@ -324,7 +324,7 @@ end test "append redirection with >>"
 
 The redirection operators `"<<"` and `"<<-"` both allow redirection of subsequent lines read by the shell to the input of a command. The redirected lines are known as a "here-document".
 
-The here-document shall be treated as a single word that begins after the next **NEWLINE** token and continues until there is a line containing only the delimiter and a `<newline>`, with no `<blank>` characters in between. Then the next here-document starts, if there is one. For the purposes of locating this terminating line, the end of a *command_string* operand (see [*sh*](../utilities/sh.md)) shall be treated as a `<newline>` character, and the end of the *commands* string in `$(commands)` and `` `commands` `` may be treated as a `<newline>`. If the end of input is reached without finding the terminating line, the shell should, but need not, treat this as a redirection error. The format is as follows:
+The here-document shall be treated as a single word that begins after the next **NEWLINE** token and continues until there is a line containing only the delimiter and a `<newline>`, with no `<blank>` characters in between. Then the next here-document starts, if there is one. For the purposes of locating this terminating line, the end of a *command_string* operand (see [*sh*](docs/posix/md/utilities/sh.md)) shall be treated as a `<newline>` character, and the end of the *commands* string in `$(commands)` and `` `commands` `` may be treated as a `<newline>`. If the end of input is reached without finding the terminating line, the shell should, but need not, treat this as a redirection error. The format is as follows:
 
 ```
 [n]<<word
@@ -332,7 +332,7 @@ The here-document shall be treated as a single word that begins after the next *
 delimiter
 ```
 
-where the optional *n* represents the file descriptor number. If the number is omitted, the here-document refers to standard input (file descriptor 0). It is unspecified whether the file descriptor is opened as a regular file or some other type of file. Portable applications cannot rely on the file descriptor being seekable (see XSH [*lseek*()](../functions/lseek.md)).
+where the optional *n* represents the file descriptor number. If the number is omitted, the here-document refers to standard input (file descriptor 0). It is unspecified whether the file descriptor is opened as a regular file or some other type of file. Portable applications cannot rely on the file descriptor being seekable (see XSH [*lseek*()](docs/posix/md/functions/lseek.md)).
 
 If any part of *word* is quoted, not counting double-quotes outside a command substitution if the here-document is inside one, the delimiter shall be formed by performing quote removal on *word*, and the here-document lines shall not be expanded. Otherwise:
 

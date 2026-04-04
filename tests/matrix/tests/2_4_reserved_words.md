@@ -47,7 +47,7 @@ When used in circumstances where reserved words are recognized (described above)
 - **select**
 - **time**
 
-When the word **time** is recognized as a reserved word in circumstances where it would, if it were not a reserved word, be the command name (see [2.9.1.1 Order of Processing](#2911-order-of-processing)) of a simple command that would execute the [*time*](../utilities/time.md) utility in a manner other than one for which [*time*](../utilities/time.md#tag_20_122) states that the results are unspecified, the behavior shall be as specified for the [*time*](../utilities/time.md) utility.
+When the word **time** is recognized as a reserved word in circumstances where it would, if it were not a reserved word, be the command name (see [2.9.1.1 Order of Processing](#2911-order-of-processing)) of a simple command that would execute the [*time*](docs/posix/md/utilities/time.md) utility in a manner other than one for which [*time*](docs/posix/md/utilities/time.md#tag_20_122) states that the results are unspecified, the behavior shall be as specified for the [*time*](docs/posix/md/utilities/time.md) utility.
 
 When used in circumstances where reserved words are recognized (described above), all words whose final character is a `<colon>` (`':'`) are reserved; their use in those circumstances produces unspecified results.
 
