@@ -156,9 +156,9 @@ A job-control background job can be controlled as described in [2.11 Job Control
 
 The process ID associated with the asynchronous AND-OR list shall become known in the current shell execution environment; see [2.13 Shell Execution Environment](#213-shell-execution-environment). This process ID shall remain known until any one of the following occurs (and, unless otherwise specified, may continue to remain known after it occurs).
 
-- The process terminates and the application waits for the process ID or the corresponding job ID (see [*wait*](../utilities/wait.md#tag_20_147)).
+- The process terminates and the application waits for the process ID or the corresponding job ID (see [*wait*](docs/posix/md/utilities/wait.md#tag_20_147)).
 - If the asynchronous AND-OR list did not become a background job: another asynchronous AND-OR list is invoked before `"$!"` (corresponding to the previous asynchronous AND-OR list) is expanded in the current shell execution environment.
-- If the asynchronous AND-OR list became a background job: the [*jobs*](../utilities/jobs.md) utility reports the termination status of that job.
+- If the asynchronous AND-OR list became a background job: the [*jobs*](docs/posix/md/utilities/jobs.md) utility reports the termination status of that job.
 - If the shell is interactive and the asynchronous AND-OR list became a background job: a message indicating completion of the corresponding job is written to standard error. If [*set*](#set) **-b** is enabled, it is unspecified whether the process ID is removed from the list of known process IDs when the message is written or immediately prior to when the shell writes the next prompt for input.
 
 The implementation need not retain more than the {CHILD_MAX} most recent entries in its list of known process IDs in the current shell execution environment.
@@ -177,7 +177,7 @@ If the shell is interactive and the asynchronous AND-OR list did not become a ba
 
 The exit status of an asynchronous AND-OR list shall be zero.
 
-The exit status of the subshell in which the AND-OR list is asynchronously executed can be obtained using the [*wait*](../utilities/wait.md) utility.
+The exit status of the subshell in which the AND-OR list is asynchronously executed can be obtained using the [*wait*](docs/posix/md/utilities/wait.md) utility.
 
 ### Tests
 

@@ -1646,31 +1646,87 @@ fn is_list_like_block(block: &str) -> bool {
 }
 
 fn rewrite_posix_href(href: &str) -> String {
-    let Some((path, anchor)) = href.split_once('#') else {
-        if href.ends_with(".html") {
-            return format!("{}{}", &href[..href.len() - 5], ".md");
-        }
-        return href.to_string();
+    let (path, anchor) = match href.split_once('#') {
+        Some((p, a)) => (p, Some(a)),
+        None => (href, None),
     };
 
-    let rewritten_anchor = heading_slug_for_href(href).unwrap_or_else(|| anchor.to_string());
-    let rewritten_path = if path.ends_with(".html") {
-        format!("{}{}", &path[..path.len() - 5], ".md")
-    } else {
-        path.to_string()
-    };
-
-    if rewritten_anchor.is_empty() {
-        if rewritten_path.is_empty() {
-            String::new()
+    let rewritten_anchor = if let Some(a) = anchor {
+        if a.is_empty() {
+            None
         } else {
-            rewritten_path
+            Some(heading_slug_for_href(href).unwrap_or_else(|| a.to_string()))
         }
-    } else if rewritten_path.is_empty() {
-        format!("#{rewritten_anchor}")
     } else {
-        format!("{rewritten_path}#{rewritten_anchor}")
+        None
+    };
+
+    let rewritten_path = if path.is_empty() {
+        String::new()
+    } else {
+        let md_path = if path.ends_with(".html") {
+            format!("{}.md", &path[..path.len() - 5])
+        } else {
+            path.to_string()
+        };
+        root_relative_path(&md_path)
+    };
+
+    match (rewritten_path.is_empty(), rewritten_anchor) {
+        (true, None) => String::new(),
+        (true, Some(a)) => format!("#{a}"),
+        (false, None) => rewritten_path,
+        (false, Some(a)) => format!("{rewritten_path}#{a}"),
     }
+}
+
+fn root_relative_path(relative_md_path: &str) -> String {
+    if !relative_md_path.contains("../") {
+        return relative_md_path.to_string();
+    }
+
+    let Some(input_path) = CURRENT_INPUT_PATH.get() else {
+        return relative_md_path.to_string();
+    };
+    let Some(input_dir) = input_path.parent() else {
+        return relative_md_path.to_string();
+    };
+
+    let resolved = input_dir.join(relative_md_path);
+    let normalized = normalize_path(&resolved);
+    let normalized_str = normalized.to_string_lossy();
+
+    if let Some(pos) = find_doc_root(&normalized_str) {
+        let within_tree = &normalized_str[pos..];
+        return format!("docs/posix/md/{within_tree}");
+    }
+
+    relative_md_path.to_string()
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut components = Vec::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                if !components.is_empty() {
+                    components.pop();
+                }
+            }
+            std::path::Component::CurDir => {}
+            other => components.push(other),
+        }
+    }
+    components.iter().collect()
+}
+
+fn find_doc_root(path: &str) -> Option<usize> {
+    for marker in ["susv5-html/", "posix/md/"] {
+        if let Some(pos) = path.find(marker) {
+            return Some(pos + marker.len());
+        }
+    }
+    None
 }
 
 fn heading_level(name: &str) -> usize {

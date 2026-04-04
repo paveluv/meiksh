@@ -32,7 +32,7 @@ Certain errors shall cause the shell to write a diagnostic message to standard e
 
 Notes:
 
-1. The shell shall exit only if the special built-in utility is executed directly. If it is executed via the [*command*](../utilities/command.md) utility, the shell shall not exit.
+1. The shell shall exit only if the special built-in utility is executed directly. If it is executed via the [*command*](docs/posix/md/utilities/command.md) utility, the shell shall not exit.
 2. Although special built-ins are part of the shell, a diagnostic message written by a special built-in is not considered to be a shell diagnostic message, and can be redirected like any other utility.
 3. The shell is not required to write a diagnostic message, but the utility itself shall write a diagnostic message if required to do so.
 4. If an unrecoverable read error occurs when reading commands, other than from the *file* operand of the [*dot*](#dot) special built-in, the shell shall execute no further commands (including any already successfully read but not yet executed) other than any specified in a previously defined EXIT [*trap*](#trap) action. An unrecoverable read error while reading from the *file* operand of the [*dot*](#dot) special built-in shall be treated as a special built-in utility error.
@@ -177,7 +177,7 @@ The exit status of a command shall be determined as follows:
 - If the command is not found, the exit status shall be 127.
 - Otherwise, if the command name is found, but it is not an executable utility, the exit status shall be 126.
 - Otherwise, if the command terminated due to the receipt of a signal, the shell shall assign it an exit status greater than 128. The exit status shall identify, in an implementation-defined manner, which signal terminated the command. Note that shell implementations are permitted to assign an exit status greater than 255 if a command terminates due to a signal.
-- Otherwise, the exit status shall be the value obtained by the equivalent of the WEXITSTATUS macro applied to the status obtained by the [*wait*()](../functions/wait.md) function (as defined in the System Interfaces volume of POSIX.1-2024). Note that for C programs, this value is equal to the result of performing a modulo 256 operation on the value passed to [*_Exit*()](../functions/_Exit.md), [*_exit*()](../functions/_exit.md), or [*exit*()](../functions/exit.md) or returned from *main*().
+- Otherwise, the exit status shall be the value obtained by the equivalent of the WEXITSTATUS macro applied to the status obtained by the [*wait*()](docs/posix/md/functions/wait.md) function (as defined in the System Interfaces volume of POSIX.1-2024). Note that for C programs, this value is equal to the result of performing a modulo 256 operation on the value passed to [*_Exit*()](docs/posix/md/functions/_Exit.md), [*_exit*()](docs/posix/md/functions/_exit.md), or [*exit*()](docs/posix/md/functions/exit.md) or returned from *main*().
 
 ### Tests
 

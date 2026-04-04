@@ -17,7 +17,7 @@ The format of a function definition command is as follows:
 fname ( ) compound-command [io-redirect ...]
 ```
 
-The function is named *fname*; the application shall ensure that it is a name (see XBD [*3.216 Name*](../basedefs/V1_chap03.md#3216-name)) and that it is not the name of a special built-in utility. An implementation may allow other characters in a function name as an extension. The implementation shall maintain separate name spaces for functions and variables.
+The function is named *fname*; the application shall ensure that it is a name (see XBD [*3.216 Name*](docs/posix/md/basedefs/V1_chap03.md#3216-name)) and that it is not the name of a special built-in utility. An implementation may allow other characters in a function name as an extension. The implementation shall maintain separate name spaces for functions and variables.
 
 The argument *compound-command* represents a compound command, as described in [2.9.4 Compound Commands](#294-compound-commands).
 
