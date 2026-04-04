@@ -154,6 +154,41 @@ begin test "blank input is discarded"
 end test "blank input is discarded"
 ```
 
+#### Test: operator extended with next unquoted character
+
+If the previous character was part of an operator, and the current character is
+unquoted and can form an operator with the previous ones, they form a single token.
+
+```
+begin test "operator extended with next unquoted character"
+  script
+    echo foo >>tmp_extend.txt
+    cat tmp_extend.txt
+  expect
+    stdout "foo"
+    stderr ""
+    exit_code 0
+end test "operator extended with next unquoted character"
+```
+
+#### Test: operator delimited when next character cannot form operator
+
+If the previous character was part of an operator, and the current character
+cannot be used to extend that operator, the previous characters are delimited
+as a token.
+
+```
+begin test "operator delimited when next character cannot form operator"
+  script
+    echo foo >tmp_delim.txt
+    cat tmp_delim.txt
+  expect
+    stdout "foo"
+    stderr ""
+    exit_code 0
+end test "operator delimited when next character cannot form operator"
+```
+
 #### Test: empty token from delimiter is discarded
 
 When a delimiting rule fires but no characters have been accumulated into a
