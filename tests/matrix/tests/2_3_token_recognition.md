@@ -189,14 +189,14 @@ begin test "operator delimited when next character cannot form operator"
 end test "operator delimited when next character cannot form operator"
 ```
 
-#### Test: empty token from delimiter is discarded
+#### Test: empty token from delimiter without characters is discarded
 
-When a delimiting rule fires but no characters have been accumulated into a
-token, the resulting empty token is discarded rather than being passed to the
-grammar. Multiple consecutive blanks therefore produce no extra empty arguments.
+If a rule indicates that a token is delimited, but no characters have been
+included in the token (e.g., from multiple consecutive spaces), the empty token
+shall be discarded.
 
 ```
-begin test "empty token from delimiter is discarded"
+begin test "empty token from delimiter without characters is discarded"
   script
     set --    a      b
     printf '%s\n' "$#" "$1" "$2"
@@ -204,7 +204,7 @@ begin test "empty token from delimiter is discarded"
     stdout "2\na\nb"
     stderr ""
     exit_code 0
-end test "empty token from delimiter is discarded"
+end test "empty token from delimiter without characters is discarded"
 ```
 
 #### Test: substitution does not delimit token nested
