@@ -583,6 +583,25 @@ begin test "default word is expanded when parameter unset"
 end test "default word is expanded when parameter unset"
 ```
 
+#### Test: tilde expansion inside default word
+
+When *word* is evaluated in a parameter expansion like `${parameter:-word}`, it is
+subjected to tilde expansion.
+
+```
+begin test "tilde expansion inside default word"
+  script
+    H=$HOME
+    unset foo
+    out=$(echo ${foo:-~})
+    [ "$out" = "$H" ] && echo ok
+  expect
+    stdout "ok"
+    stderr ""
+    exit_code 0
+end test "tilde expansion inside default word"
+```
+
 #### Test: colon-dash fallback on unset
 
 `${parameter:-word}` substitutes `word` when the parameter is unset. Since
@@ -669,6 +688,24 @@ begin test "colon-equals assigns when parameter is null"
     stderr ""
     exit_code 0
 end test "colon-equals assigns when parameter is null"
+```
+
+#### Test: colon-equals assignment to positional parameter fails
+
+Only variables, not positional parameters or special parameters, can be assigned
+with `${parameter:=word}`. Attempting to assign to a positional parameter
+shall fail.
+
+```
+begin test "colon-equals assignment to positional parameter fails"
+  script
+    set -- "arg"
+    echo "${2:=foo}"
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
+end test "colon-equals assignment to positional parameter fails"
 ```
 
 #### Test: colon-question generates error on unset
@@ -1432,6 +1469,25 @@ begin test "arithmetic hexadecimal constant"
 end test "arithmetic hexadecimal constant"
 ```
 
+#### Test: arithmetic expression evaluated as if in double quotes
+
+The arithmetic expression is treated as if it were in double-quotes. Unquoted glob
+characters like `*` do not undergo pathname expansion to match existing files;
+instead, they are passed as literal characters to the arithmetic evaluator.
+
+```
+begin test "arithmetic expression evaluated as if in double quotes"
+  script
+    touch 2 3 4
+    # * does not glob, it evaluates as multiplication operator missing operands
+    echo $(( * ))
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
+end test "arithmetic expression evaluated as if in double quotes"
+```
+
 ## 2.6.5 Field Splitting
 
 After parameter expansion ( [2.6.2 Parameter Expansion](#262-parameter-expansion)), command substitution ( [2.6.3 Command Substitution](#263-command-substitution)), and arithmetic expansion ( [2.6.4 Arithmetic Expansion](#264-arithmetic-expansion)), if the shell variable *IFS* (see [2.5.3 Shell Variables](#253-shell-variables)) is set and its value is not empty, or if *IFS* is unset, the shell shall scan each field containing results of expansions and substitutions that did not occur in double-quotes for field splitting; zero, one or multiple fields can result.
@@ -1549,6 +1605,27 @@ begin test "IFS non-whitespace delimiter produces empty fields"
     stderr ""
     exit_code 0
 end test "IFS non-whitespace delimiter produces empty fields"
+```
+
+#### Test: IFS mixed whitespace and non-whitespace delimiters
+
+If an IFS non-whitespace character is present alongside IFS whitespace characters,
+the whitespace characters delimit fields, and the non-whitespace character can
+delimit an empty field. Here `a: :b` produces three fields: `a`, an empty field,
+and `b`.
+
+```
+begin test "IFS mixed whitespace and non-whitespace delimiters"
+  script
+    IFS=" :"
+    v="a: :b"
+    set -- $v
+    echo "$# <$1> <$2> <$3>"
+  expect
+    stdout "3 <a> <> <b>"
+    stderr ""
+    exit_code 0
+end test "IFS mixed whitespace and non-whitespace delimiters"
 ```
 
 #### Test: field splitting result replaces input field list
@@ -1765,6 +1842,51 @@ begin test "set -f disables pathname expansion"
 end test "set -f disables pathname expansion"
 ```
 
+#### Test: glob asterisk does not match slash
+
+The `<slash>` character in a pathname must be explicitly matched; it cannot
+be matched by `<asterisk>` or `<question-mark>`.
+
+```
+begin test "glob asterisk does not match slash"
+  script
+    d=$(mktemp -d)
+    cd "$d" || exit 1
+    mkdir -p dir_slash/sub
+    touch dir_slash/sub/file
+    echo dir_slash*file
+    echo dir_slash/*/file
+    cd ..
+    rm -rf "$d"
+  expect
+    stdout "dir_slash\*file\ndir_slash/sub/file"
+    stderr ""
+    exit_code 0
+end test "glob asterisk does not match slash"
+```
+
+#### Test: glob asterisk does not match leading period
+
+If a filename begins with a `<period>`, the leading period shall not be matched
+by `<asterisk>` or `<question-mark>`. It must be matched explicitly.
+
+```
+begin test "glob asterisk does not match leading period"
+  script
+    d=$(mktemp -d)
+    cd "$d" || exit 1
+    touch .hidden_file
+    echo *hidden_file
+    echo .*hidden_file
+    cd ..
+    rm -rf "$d"
+  expect
+    stdout "\*hidden_file\n.hidden_file"
+    stderr ""
+    exit_code 0
+end test "glob asterisk does not match leading period"
+```
+
 #### Test: non-matching glob pattern is left unchanged
 
 If a pattern contains special glob characters but matches no pathnames, the
@@ -1841,6 +1963,22 @@ begin test "quote removal"
     stderr ""
     exit_code 0
 end test "quote removal"
+```
+
+#### Test: dollar-single-quote removed during quote removal
+
+The quote character sequence `<dollar-sign>` single-quote (`$'...'`) shall
+be removed, leaving only its interpreted content in the final word.
+
+```
+begin test "dollar-single-quote removed during quote removal"
+  script
+    echo $'test'
+  expect
+    stdout "test"
+    stderr ""
+    exit_code 0
+end test "dollar-single-quote removed during quote removal"
 ```
 
 
