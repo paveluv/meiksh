@@ -536,7 +536,115 @@ fn extract_source_sections(content: &str) -> Vec<SourceSection> {
             body_lines: body,
         });
     }
+
+    let utility_parent_sections = extract_utility_pages(&lines, &mut sections);
+
+    for parent_name in &utility_parent_sections {
+        if let Some(sec) = sections.iter_mut().find(|s| s.name == *parent_name) {
+            if let Some(cut) = sec.body_lines.iter().position(|l| l == "#### NAME") {
+                let mut preamble = sec.body_lines[..cut].to_vec();
+                while preamble.last().map_or(false, |l| l.is_empty() || l == "---") {
+                    preamble.pop();
+                }
+                sec.body_lines = preamble;
+            }
+        }
+    }
+
     sections
+}
+
+/// Extract individual utility pages from within composite sections (e.g. 2.15).
+///
+/// Each utility page in the source starts with `#### NAME` followed by
+/// `> <name> — <description>` and ends with `*End of informative text.*`.
+/// We emit a SourceSection named `<parent_section> <utility_name>`, e.g.
+/// `2.15 Special Built-In Utilities break`.
+///
+/// Returns the set of parent section names that had utility pages extracted.
+fn extract_utility_pages(lines: &[&str], sections: &mut Vec<SourceSection>) -> Vec<String> {
+    let mut parent_sections = Vec::new();
+    let name_indices: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(i, l)| if *l == "#### NAME" { Some(i) } else { None })
+        .collect();
+
+    for &name_idx in &name_indices {
+        let desc_idx = name_idx + 2;
+        if desc_idx >= lines.len() {
+            continue;
+        }
+        let desc_line = lines[desc_idx];
+        let util_name = match parse_utility_desc(desc_line) {
+            Some(n) => n,
+            None => continue,
+        };
+
+        let parent = match find_parent_numbered_section(lines, name_idx) {
+            Some(s) => s,
+            None => continue,
+        };
+
+        let end_marker = "*End of informative text.*";
+        let end_idx = (name_idx..lines.len())
+            .find(|&i| lines[i] == end_marker)
+            .map(|i| i + 1)
+            .unwrap_or(lines.len());
+
+        let mut body: Vec<String> = lines[name_idx..end_idx]
+            .iter()
+            .map(|l| l.to_string())
+            .collect();
+        while body.last().map_or(false, |l| l.is_empty()) {
+            body.pop();
+        }
+
+        let section_name = format!("{parent} {util_name}");
+        if !parent_sections.contains(&parent) {
+            parent_sections.push(parent);
+        }
+        sections.push(SourceSection {
+            name: section_name,
+            body_lines: body,
+        });
+    }
+    parent_sections
+}
+
+/// Parse `> name — description` into the utility name.
+fn parse_utility_desc(line: &str) -> Option<String> {
+    let stripped = line.strip_prefix("> ")?;
+    let dash_pos = stripped.find(" — ")?;
+    let raw_name = stripped[..dash_pos].trim();
+    let name = raw_name
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .and_then(|s| s.strip_prefix('*'))
+        .and_then(|s| s.strip_suffix('*'))
+        .unwrap_or(raw_name);
+    Some(name.to_string())
+}
+
+/// Walk backwards from `pos` to find the nearest numbered section heading.
+fn find_parent_numbered_section(lines: &[&str], pos: usize) -> Option<String> {
+    for i in (0..pos).rev() {
+        let line = lines[i];
+        let prefix = if line.starts_with("### ") {
+            Some(4)
+        } else if line.starts_with("## ") {
+            Some(3)
+        } else {
+            None
+        };
+        if let Some(skip) = prefix {
+            let name = line[skip..].trim();
+            if name.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+                return Some(name.to_string());
+            }
+        }
+    }
+    None
 }
 
 fn source_file_for_section(section_name: &str, md_root: &Path) -> Option<PathBuf> {
@@ -1029,5 +1137,74 @@ Sub text.
         let root = Path::new("/docs/posix/md");
         let p = source_file_for_section("1.3 Something", root).unwrap();
         assert_eq!(p, PathBuf::from("/docs/posix/md/utilities/V3_chap01.md"));
+    }
+
+    #[test]
+    fn extract_utility_pages_from_section() {
+        let src = "\
+### 2.15 Special Built-In Utilities
+
+Preamble text.
+
+---
+
+---
+
+#### NAME
+
+> break — exit from for, while, or until loop
+
+#### DESCRIPTION
+
+> The break utility shall exit from the nth enclosing loop.
+
+---
+
+*The following sections are informative.*
+
+#### RATIONALE
+
+> None.
+
+*End of informative text.*
+
+---
+
+#### NAME
+
+> colon — null utility
+
+#### DESCRIPTION
+
+> This utility shall do nothing except return a 0 exit status.
+
+---
+
+*The following sections are informative.*
+
+#### RATIONALE
+
+> None.
+
+*End of informative text.*
+";
+        let sections = extract_source_sections(src);
+        assert_eq!(sections[0].name, "2.15 Special Built-In Utilities");
+        assert_eq!(sections[0].body_lines, vec!["Preamble text."]);
+
+        let brk = sections.iter().find(|s| s.name == "2.15 Special Built-In Utilities break").unwrap();
+        assert_eq!(brk.body_lines[0], "#### NAME");
+        assert!(brk.body_lines.last().unwrap() == "*End of informative text.*");
+
+        let colon = sections.iter().find(|s| s.name == "2.15 Special Built-In Utilities colon").unwrap();
+        assert_eq!(colon.body_lines[0], "#### NAME");
+        assert!(colon.body_lines.last().unwrap() == "*End of informative text.*");
+    }
+
+    #[test]
+    fn parse_utility_desc_basic() {
+        assert_eq!(parse_utility_desc("> break — exit from loop"), Some("break".to_string()));
+        assert_eq!(parse_utility_desc("> colon — null utility"), Some("colon".to_string()));
+        assert_eq!(parse_utility_desc("not a desc line"), None);
     }
 }
