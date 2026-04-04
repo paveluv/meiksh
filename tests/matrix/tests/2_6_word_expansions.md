@@ -817,6 +817,23 @@ begin test "colon-equals assignment to positional parameter fails"
 end test "colon-equals assignment to positional parameter fails"
 ```
 
+#### Test: colon-equals assignment to special parameter fails
+
+Attempting to assign to a special parameter (like `*`) with
+`${parameter:=word}` shall fail.
+
+```
+begin test "colon-equals assignment to special parameter fails"
+  script
+    set --
+    echo "${*:=foo}"
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
+end test "colon-equals assignment to special parameter fails"
+```
+
 #### Test: colon-question generates error on unset
 
 `${parameter:?word}` writes `word` to standard error and exits with non-zero
@@ -1361,6 +1378,26 @@ begin test "star expansion joins without separation when IFS null"
 end test "star expansion joins without separation when IFS null"
 ```
 
+#### Test: quoted star joins parameters into single field
+
+When `"$*"` is used, the expansion occurs in a context where field splitting is
+not performed, so the positional parameters are joined into a single field,
+separated by the first character of `IFS`.
+
+```
+begin test "quoted star joins parameters into single field"
+  script
+    set -- a b c
+    IFS=":"
+    set -- "$*"
+    echo "$# <$1>"
+  expect
+    stdout "1 <a:b:c>"
+    stderr ""
+    exit_code 0
+end test "quoted star joins parameters into single field"
+```
+
 ## 2.6.3 Command Substitution
 
 Command substitution allows the output of one or more commands to be substituted in place of the commands themselves. Command substitution shall occur when command(s) are enclosed as follows:
@@ -1718,6 +1755,40 @@ begin test "division by zero fails"
     stderr ".+"
     exit_code !=0
 end test "division by zero fails"
+```
+
+#### Test: invalid arithmetic expression fails
+
+If the arithmetic expression is syntactically invalid, the expansion fails
+and the shell writes a diagnostic message to standard error.
+
+```
+begin test "invalid arithmetic expression fails"
+  script
+    echo $(( 1 + ))
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
+end test "invalid arithmetic expression fails"
+```
+
+#### Test: unrecognized variable content in arithmetic fails
+
+If the contents of a shell variable used in the arithmetic expression are not
+recognized by the shell (e.g., non-numeric format when only integers are
+supported), the expansion fails and an error is written.
+
+```
+begin test "unrecognized variable content in arithmetic fails"
+  script
+    x="1foo"
+    echo $(( x + 1 ))
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
+end test "unrecognized variable content in arithmetic fails"
 ```
 
 #### Test: arithmetic subtraction negative
@@ -2078,6 +2149,83 @@ begin test "empty expansion removed from field list"
     stderr ""
     exit_code 0
 end test "empty expansion removed from field list"
+```
+
+#### Test: trailing non-whitespace IFS delimiter does not add empty field
+
+A single non-whitespace `IFS` delimiter at the end of an expansion does not
+produce a trailing empty field.
+
+```
+begin test "trailing non-whitespace IFS delimiter does not add empty field"
+  script
+    IFS=":"
+    x="a:"
+    set -- $x
+    echo "$# <$1>"
+  expect
+    stdout "1 <a>"
+    stderr ""
+    exit_code 0
+end test "trailing non-whitespace IFS delimiter does not add empty field"
+```
+
+#### Test: multiple trailing non-whitespace IFS delimiters
+
+Multiple non-whitespace `IFS` delimiters at the end of an expansion produce
+empty fields for the intermediate delimiters, but not for the final one.
+For example, `a::` produces two fields: `a` and an empty field.
+
+```
+begin test "multiple trailing non-whitespace IFS delimiters"
+  script
+    IFS=":"
+    x="a::"
+    set -- $x
+    echo "$# <$1> <$2>"
+  expect
+    stdout "2 <a> <>"
+    stderr ""
+    exit_code 0
+end test "multiple trailing non-whitespace IFS delimiters"
+```
+
+#### Test: leading non-whitespace IFS delimiter produces empty field
+
+A non-whitespace `IFS` delimiter at the beginning of an expansion produces a
+leading empty field.
+
+```
+begin test "leading non-whitespace IFS delimiter produces empty field"
+  script
+    IFS=":"
+    x=":a"
+    set -- $x
+    echo "$# <$1> <$2>"
+  expect
+    stdout "2 <> <a>"
+    stderr ""
+    exit_code 0
+end test "leading non-whitespace IFS delimiter produces empty field"
+```
+
+#### Test: leading and trailing IFS white space is ignored
+
+Unlike non-whitespace delimiters, `IFS` white space characters at the beginning
+or end of an expansion do not produce empty fields.
+
+```
+begin test "leading and trailing IFS white space is ignored"
+  script
+    IFS=" "
+    x=" a "
+    set -- $x
+    echo "$# <$1>"
+  expect
+    stdout "1 <a>"
+    stderr ""
+    exit_code 0
+end test "leading and trailing IFS white space is ignored"
 ```
 
 #### Test: non-IFS character does not split
