@@ -564,6 +564,59 @@ begin test "parameter expansion without braces"
 end test "parameter expansion without braces"
 ```
 
+#### Test: braces separate parameter name from subsequent characters
+
+When a parameter is followed by a character that could be interpreted as part
+of the name, braces are required to separate it.
+
+```
+begin test "braces separate parameter name from subsequent characters"
+  script
+    foo=val
+    foox=wrong
+    echo "${foo}x"
+  expect
+    stdout "valx"
+    stderr ""
+    exit_code 0
+end test "braces separate parameter name from subsequent characters"
+```
+
+#### Test: multi-digit positional parameter requires braces
+
+Braces are required for positional parameters with more than one digit.
+`$10` is `$1` followed by `0`, whereas `${10}` is the tenth positional parameter.
+
+```
+begin test "multi-digit positional parameter requires braces"
+  script
+    set -- a b c d e f g h i j k
+    echo "$10 vs ${10}"
+  expect
+    stdout "a0 vs j"
+    stderr ""
+    exit_code 0
+end test "multi-digit positional parameter requires braces"
+```
+
+#### Test: special parameters can be enclosed in braces
+
+The parameter name or symbol can be enclosed in braces. This includes single-character
+special parameters like `#` and `?`.
+
+```
+begin test "special parameters can be enclosed in braces"
+  script
+    set -- "a"
+    echo "${#}"
+    echo "${?}"
+  expect
+    stdout "1\n0"
+    stderr ""
+    exit_code 0
+end test "special parameters can be enclosed in braces"
+```
+
 #### Test: default word is expanded when parameter unset
 
 When `${parameter:-word}` needs *word*, that *word* shall undergo parameter
@@ -864,6 +917,24 @@ begin test "set -u fails on length of unset variable"
 end test "set -u fails on length of unset variable"
 ```
 
+#### Test: set -u fails on suffix removal of unset variable
+
+Substring processing varieties like `${parameter%word}` fail under `set -u` when
+the parameter is unset.
+
+```
+begin test "set -u fails on suffix removal of unset variable"
+  script
+    set -u
+    unset unset_var
+    echo "${unset_var%foo}"
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
+end test "set -u fails on suffix removal of unset variable"
+```
+
 #### Test: colon vs no-colon: unset vs null distinction
 
 Without the colon, `${parameter-word}` only substitutes `word` when the
@@ -959,6 +1030,24 @@ begin test "empty pattern in suffix/prefix removal"
     stderr ""
     exit_code 0
 end test "empty pattern in suffix/prefix removal"
+```
+
+#### Test: pattern word is expanded before suffix removal
+
+The `word` in `${parameter%word}` is expanded to produce a pattern before the
+matching is evaluated.
+
+```
+begin test "pattern word is expanded before suffix removal"
+  script
+    foo="a.b.c"
+    pat=".c"
+    echo "${foo%$pat}"
+  expect
+    stdout "a.b"
+    stderr ""
+    exit_code 0
+end test "pattern word is expanded before suffix removal"
 ```
 
 #### Test: smallest suffix removal
@@ -1098,6 +1187,26 @@ begin test "double-quoted expansion keeps pattern metacharacters active"
 end test "double-quoted expansion keeps pattern metacharacters active"
 ```
 
+#### Test: matching brace ignores escaped and quoted braces
+
+The closing `}` of a parameter expansion is determined without examining `}`
+characters that are escaped by backslash, within quoted strings, or inside
+nested expansions.
+
+```
+begin test "matching brace ignores escaped and quoted braces"
+  script
+    unset foo
+    echo "${foo:-\}}"
+    echo "${foo:-"}"}"
+    echo "${foo:-$(echo "}")}"
+  expect
+    stdout "}\n}\n}"
+    stderr ""
+    exit_code 0
+end test "matching brace ignores escaped and quoted braces"
+```
+
 ## 2.6.3 Command Substitution
 
 Command substitution allows the output of one or more commands to be substituted in place of the commands themselves. Command substitution shall occur when command(s) are enclosed as follows:
@@ -1218,6 +1327,22 @@ begin test "nested dollar-paren command substitution"
     stderr ""
     exit_code 0
 end test "nested dollar-paren command substitution"
+```
+
+#### Test: double quotes do not affect command substitution parsing
+
+Double quotes enclosing a command substitution do not affect how the characters
+within `$(...)` are interpreted; they are parsed recursively as commands.
+
+```
+begin test "double quotes do not affect command substitution parsing"
+  script
+    echo "$(echo "nested double quotes")"
+  expect
+    stdout "nested double quotes"
+    stderr ""
+    exit_code 0
+end test "double quotes do not affect command substitution parsing"
 ```
 
 #### Test: command substitution strips all trailing newlines
@@ -1905,6 +2030,24 @@ begin test "non-matching glob pattern is left unchanged"
     stderr ""
     exit_code 0
 end test "non-matching glob pattern is left unchanged"
+```
+
+#### Test: backslash escapes glob character
+
+A `<backslash>` character that is not inside a bracket expression shall preserve
+the literal value of the following character during pathname expansion.
+
+```
+begin test "backslash escapes glob character"
+  script
+    touch "star*"
+    echo star\*
+    rm "star*"
+  expect
+    stdout "star\*"
+    stderr ""
+    exit_code 0
+end test "backslash escapes glob character"
 ```
 
 #### Test: quoted glob metacharacters are not pathname expanded
