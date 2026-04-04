@@ -40,6 +40,24 @@ begin test "redirection applies to all commands in group"
 end test "redirection applies to all commands in group"
 ```
 
+#### Test: inner redirection overrides compound command redirection
+
+A redirection on a compound command applies to enclosed commands unless a
+command explicitly overrides that redirection.
+
+```
+begin test "inner redirection overrides compound command redirection"
+  script
+    { echo outer; echo inner > tmp_inner.txt; } > tmp_outer.txt
+    printf '%s\n' "$(cat tmp_outer.txt)"
+    printf '%s\n' "$(cat tmp_inner.txt)"
+  expect
+    stdout "outer\ninner"
+    stderr ""
+    exit_code 0
+end test "inner redirection overrides compound command redirection"
+```
+
 ## 2.9.4.1 Grouping Commands
 
 The format for grouping commands is as follows:
@@ -71,6 +89,25 @@ begin test "subshell variable isolation"
 end test "subshell variable isolation"
 ```
 
+#### Test: subshell built-in effects do not persist
+
+Built-in commands that affect the environment inside `( ... )` shall not
+remain in effect after the subshell finishes.
+
+```
+begin test "subshell built-in effects do not persist"
+  script
+    start=$PWD
+    mkdir elsewhere
+    ( cd elsewhere )
+    if [ "$PWD" = "$start" ]; then echo unchanged; else echo changed; fi
+  expect
+    stdout "unchanged"
+    stderr ""
+    exit_code 0
+end test "subshell built-in effects do not persist"
+```
+
 #### Test: subshell false propagates exit status
 
 The exit status of a grouping command is the exit status of the
@@ -86,6 +123,59 @@ begin test "subshell false propagates exit status"
     stderr ""
     exit_code 1
 end test "subshell false propagates exit status"
+```
+
+#### Test: brace group exit status follows compound-list
+
+The exit status of a grouping command shall be the exit status of its
+compound-list for `{ ... ; }` as well as `( ... )`.
+
+```
+begin test "brace group exit status follows compound-list"
+  script
+    { false; }
+    exit $?
+  expect
+    stdout ""
+    stderr ""
+    exit_code 1
+end test "brace group exit status follows compound-list"
+```
+
+#### Test: brace group runs in current shell environment
+
+Grouping with `{ ... ; }` executes the compound-list in the current process
+environment, so variable assignments remain in effect afterward.
+
+```
+begin test "brace group runs in current shell environment"
+  script
+    X=old
+    { X=new; }
+    printf '%s\n' "$X"
+  expect
+    stdout "new"
+    stderr ""
+    exit_code 0
+end test "brace group runs in current shell environment"
+```
+
+#### Test: brace group allows newline before closing brace
+
+For `{ ... ; }`, the semicolon before `}` is only an example of a control
+operator delimiter; a `<newline>` may delimit the closing `}` instead.
+
+```
+begin test "brace group allows newline before closing brace"
+  script
+    {
+      echo hi
+    }
+  expect
+    stdout "hi"
+    stderr ""
+    exit_code 0
+end test "brace group allows newline before closing brace"
 ```
 
 #### Test: nested subshells with spaced parens
@@ -171,6 +261,24 @@ begin test "for-in expands word list correctly"
 end test "for-in expands word list correctly"
 ```
 
+#### Test: for-in word list performs command and arithmetic expansion
+
+The words following `in` are expanded to generate the list of items, including
+command substitution and arithmetic expansion.
+
+```
+begin test "for-in word list performs command and arithmetic expansion"
+  script
+    for i in $(printf 'a b') $((1+1)); do
+      printf '<%s>\n' "$i"
+    done
+  expect
+    stdout "<a>\n<b>\n<2>"
+    stderr ""
+    exit_code 0
+end test "for-in word list performs command and arithmetic expansion"
+```
+
 #### Test: for loop with empty list does not execute body
 
 If no items result from the expansion, the compound-list is not executed.
@@ -209,6 +317,25 @@ begin test "for loop exit status is last command"
 end test "for loop exit status is last command"
 ```
 
+#### Test: for loop exit status zero when no items
+
+If no items result from expansion, the `for` loop body is not executed and the
+exit status of the command shall be zero.
+
+```
+begin test "for loop exit status zero when no items"
+  script
+    for i in; do
+      false
+    done
+    exit $?
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "for loop exit status zero when no items"
+```
+
 #### Test: for loop without in iterates positional params
 
 Omitting `in word ...` is equivalent to `in "$@"`, iterating over the
@@ -224,6 +351,26 @@ begin test "for loop without in iterates positional params"
     stderr ""
     exit_code 0
 end test "for loop without in iterates positional params"
+```
+
+#### Test: for loop without in preserves quoted positional parameters
+
+Omitting `in word ...` is equivalent to iterating over `"$@"`, so each
+positional parameter is preserved as a separate item even if it contains
+blanks.
+
+```
+begin test "for loop without in preserves quoted positional parameters"
+  script
+    set -- 'a b' c
+    for i do
+      printf '<%s>\n' "$i"
+    done
+  expect
+    stdout "<a b>\n<c>"
+    stderr ""
+    exit_code 0
+end test "for loop without in preserves quoted positional parameters"
 ```
 
 ## 2.9.4.3 Case Conditional Construct
@@ -266,6 +413,23 @@ begin test "case ;; termination"
     stderr ""
     exit_code 0
 end test "case ;; termination"
+```
+
+#### Test: case clause may start with leading paren
+
+An optional leading `(` may appear before a `case` pattern list.
+
+```
+begin test "case clause may start with leading paren"
+  script
+    case a in
+      (a) echo leadparen ;;
+    esac
+  expect
+    stdout "leadparen"
+    stderr ""
+    exit_code 0
+end test "case clause may start with leading paren"
 ```
 
 #### Test: case with pipe patterns and early exit
@@ -357,6 +521,64 @@ begin test "case ;& multi-fallthrough until ;;"
 end test "case ;& multi-fallthrough until ;;"
 ```
 
+#### Test: case ;& exit status is from last executed clause
+
+When `;&` fallthrough executes later clauses, the exit status of `case` shall
+be the exit status of the last clause that was executed.
+
+```
+begin test "case ;& exit status is from last executed clause"
+  script
+    case a in
+      a) : ;&
+      b) false ;;
+    esac
+    exit $?
+  expect
+    stdout ""
+    stderr ""
+    exit_code 1
+end test "case ;& exit status is from last executed clause"
+```
+
+#### Test: case ;& can end with zero exit status
+
+When `;&` fallthrough reaches a later clause whose compound-list succeeds, the
+exit status of `case` shall be zero because that last executed clause
+succeeded.
+
+```
+begin test "case ;& can end with zero exit status"
+  script
+    case a in
+      a) : ;&
+      b) : ;;
+    esac
+    exit $?
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "case ;& can end with zero exit status"
+```
+
+#### Test: last case clause may omit terminator
+
+The final `case` clause does not require a `;;` or `;&` terminator.
+
+```
+begin test "last case clause may omit terminator"
+  script
+    case a in
+      a) echo noterm
+    esac
+  expect
+    stdout "noterm"
+    stderr ""
+    exit_code 0
+end test "last case clause may omit terminator"
+```
+
 #### Test: pattern expansion in case labels
 
 Case patterns undergo parameter expansion before matching.
@@ -374,6 +596,125 @@ begin test "pattern expansion in case labels"
     stderr ""
     exit_code 0
 end test "pattern expansion in case labels"
+```
+
+#### Test: case word undergoes parameter expansion before matching
+
+The `case` word is expanded before matching, so parameter expansion in the
+word determines which clause matches.
+
+```
+begin test "case word undergoes parameter expansion before matching"
+  script
+    word=hello
+    case "$word" in
+        $(printf hello)) echo matched ;;
+        *) echo nomatch ;;
+    esac
+  expect
+    stdout "matched"
+    stderr ""
+    exit_code 0
+end test "case word undergoes parameter expansion before matching"
+```
+
+#### Test: case word undergoes command substitution before matching
+
+The `case` word is expanded before matching, so command substitution in the
+word determines which clause matches.
+
+```
+begin test "case word undergoes command substitution before matching"
+  script
+    case $(printf x) in
+      x) echo cmdsub ;;
+      *) echo no ;;
+    esac
+  expect
+    stdout "cmdsub"
+    stderr ""
+    exit_code 0
+end test "case word undergoes command substitution before matching"
+```
+
+#### Test: case word undergoes arithmetic expansion before matching
+
+The `case` word is expanded before matching, so arithmetic expansion in the
+word determines which clause matches.
+
+```
+begin test "case word undergoes arithmetic expansion before matching"
+  script
+    case $((2+3)) in
+      5) echo arithmetic ;;
+      *) echo no ;;
+    esac
+  expect
+    stdout "arithmetic"
+    stderr ""
+    exit_code 0
+end test "case word undergoes arithmetic expansion before matching"
+```
+
+#### Test: case word undergoes tilde expansion before matching
+
+The `case` word is expanded before matching, so tilde expansion in the word
+determines which clause matches.
+
+```
+begin test "case word undergoes tilde expansion before matching"
+  script
+    HOME="$PWD/home"
+    mkdir -p "$HOME"
+    case ~ in
+      "$HOME") echo tilde ;;
+      *) echo no ;;
+    esac
+  expect
+    stdout "tilde"
+    stderr ""
+    exit_code 0
+end test "case word undergoes tilde expansion before matching"
+```
+
+#### Test: case stops expanding patterns after first match
+
+After the first matching `case` clause is found, no later patterns in the
+statement shall be expanded.
+
+```
+begin test "case stops expanding patterns after first match"
+  script
+    rm -f later.txt
+    case x in
+      x) echo first ;;
+      $(touch later.txt)) echo later ;;
+    esac
+    if test -f later.txt; then echo expanded; else echo not_expanded; fi
+  expect
+    stdout "first\nnot_expanded"
+    stderr ""
+    exit_code 0
+end test "case stops expanding patterns after first match"
+```
+
+#### Test: quoted case pattern matches literally
+
+Quoted parts of a `case` pattern are matched literally rather than as pattern
+metacharacters.
+
+```
+begin test "quoted case pattern matches literally"
+  script
+    case 'a*b' in
+      'a*b') echo literal ;;
+      *) echo other ;;
+    esac
+  expect
+    stdout "literal"
+    stderr ""
+    exit_code 0
+end test "quoted case pattern matches literally"
 ```
 
 #### Test: pattern with arithmetic expansion in case label
@@ -498,6 +839,28 @@ begin test "elif true branch"
 end test "elif true branch"
 ```
 
+#### Test: if stops after first successful elif
+
+Each `elif` compound-list shall be executed in turn until one has zero exit
+status; after that `then` compound-list runs and the command completes.
+
+```
+begin test "if stops after first successful elif"
+  script
+    if false; then
+      echo if
+    elif true; then
+      echo elif1
+    elif true; then
+      echo elif2
+    fi
+  expect
+    stdout "elif1"
+    stderr ""
+    exit_code 0
+end test "if stops after first successful elif"
+```
+
 #### Test: if exit status from then clause
 
 The exit status of the if command is the exit status of the then or else
@@ -515,6 +878,90 @@ begin test "if exit status from then clause"
     stderr ""
     exit_code 1
 end test "if exit status from then clause"
+```
+
+#### Test: if executes else branch on failure
+
+If the initial `if` and all `elif` compound-lists have non-zero status, the
+`else` compound-list shall be executed.
+
+```
+begin test "if executes else branch on failure"
+  script
+    if false; then
+      echo if
+    else
+      echo else
+    fi
+  expect
+    stdout "else"
+    stderr ""
+    exit_code 0
+end test "if executes else branch on failure"
+```
+
+#### Test: if executes else after failed elif chain
+
+If the initial `if` and each `elif` compound-list have non-zero status, the
+`else` compound-list shall be executed.
+
+```
+begin test "if executes else after failed elif chain"
+  script
+    if false; then
+      echo if
+    elif false; then
+      echo elif1
+    else
+      echo else
+    fi
+  expect
+    stdout "else"
+    stderr ""
+    exit_code 0
+end test "if executes else after failed elif chain"
+```
+
+#### Test: if exit status from else clause
+
+When the `else` compound-list is executed, the exit status of the `if`
+command shall be the exit status of that `else` compound-list.
+
+```
+begin test "if exit status from else clause"
+  script
+    if false; then
+      echo if
+    else
+      false
+    fi
+    exit $?
+  expect
+    stdout ""
+    stderr ""
+    exit_code 1
+end test "if exit status from else clause"
+```
+
+#### Test: if exit status zero when no branch body executes
+
+If neither a `then` nor an `else` compound-list is executed, the exit status
+of the `if` command shall be zero.
+
+```
+begin test "if exit status zero when no branch body executes"
+  script
+    if false; then
+      echo if
+    elif false; then
+      echo elif
+    fi
+    exit $?
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "if exit status zero when no branch body executes"
 ```
 
 ## 2.9.4.5 The while Loop
@@ -564,6 +1011,25 @@ begin test "while loop iterates correctly"
     stderr ""
     exit_code 0
 end test "while loop iterates correctly"
+```
+
+#### Test: while loop re-executes condition list each iteration
+
+The `while` command shall execute its first compound-list repeatedly, once
+before each possible execution of the body.
+
+```
+begin test "while loop re-executes condition list each iteration"
+  script
+    count=0
+    while count=$((count + 1)); [ "$count" -le 2 ]; do
+      printf "%s\n" "$count"
+    done
+  expect
+    stdout "1\n2"
+    stderr ""
+    exit_code 0
+end test "while loop re-executes condition list each iteration"
 ```
 
 #### Test: while loop with false condition does not execute
@@ -667,6 +1133,25 @@ begin test "until loop iterates correctly"
 end test "until loop iterates correctly"
 ```
 
+#### Test: until loop re-executes condition list each iteration
+
+The `until` command shall execute its first compound-list repeatedly, once
+before each possible execution of the body.
+
+```
+begin test "until loop re-executes condition list each iteration"
+  script
+    count=0
+    until count=$((count + 1)); [ "$count" -gt 2 ]; do
+      printf "%s\n" "$count"
+    done
+  expect
+    stdout "1\n2"
+    stderr ""
+    exit_code 0
+end test "until loop re-executes condition list each iteration"
+```
+
 #### Test: until loop with true condition does not execute
 
 When the condition is immediately zero, the body is never executed.
@@ -684,4 +1169,44 @@ begin test "until loop with true condition does not execute"
     stderr ""
     exit_code 0
 end test "until loop with true condition does not execute"
+```
+
+#### Test: until loop exit status from last iteration
+
+The exit status of the `until` loop is the exit status of the last
+compound-list-2 executed.
+
+```
+begin test "until loop exit status from last iteration"
+  script
+    counter=0
+    until [ "$counter" -ge 1 ]; do
+      counter=$((counter + 1))
+      false
+    done
+    exit $?
+  expect
+    stdout ""
+    stderr ""
+    exit_code 1
+end test "until loop exit status from last iteration"
+```
+
+#### Test: until loop exit status zero when body never executes
+
+If the body is never executed, the exit status of the `until` loop shall be
+zero.
+
+```
+begin test "until loop exit status zero when body never executes"
+  script
+    until true; do
+      false
+    done
+    exit $?
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "until loop exit status zero when body never executes"
 ```
