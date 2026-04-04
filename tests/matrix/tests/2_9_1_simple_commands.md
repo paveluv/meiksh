@@ -39,6 +39,26 @@ begin test "simple command execution order"
 end test "simple command execution order"
 ```
 
+#### Test: assignment and redirection intermixed with no command name
+
+A simple command is a sequence of optional variable assignments and
+redirections in any sequence. When there is no command name, both the
+assignment and the redirection are processed regardless of textual order.
+
+```
+begin test "assignment and redirection intermixed with no command name"
+  script
+    rm -f tmp_intermixed.txt
+    > tmp_intermixed.txt VAR=intermixed
+    echo "$VAR"
+    test -f tmp_intermixed.txt && echo "file_exists"
+  expect
+    stdout "intermixed\nfile_exists"
+    stderr ""
+    exit_code 0
+end test "assignment and redirection intermixed with no command name"
+```
+
 ## 2.9.1.1 Order of Processing
 
 When a given simple command is required to be executed (that is, when any conditional construct such as an AND-OR list or a **case** statement has not bypassed the simple command), the following expansions, assignments, and redirections shall all be performed from the beginning of the command text to the end:
@@ -261,6 +281,82 @@ begin test "declaration utility assignment does not pathname expand"
 end test "declaration utility assignment does not pathname expand"
 ```
 
+#### Test: tilde expansion in plain variable assignment
+
+Variable assignments (step 4) undergo tilde expansion before the value is
+assigned. A leading `~` in the value expands to the home directory.
+
+```
+begin test "tilde expansion in plain variable assignment"
+  script
+    HOMEDIR=~
+    case "$HOMEDIR" in /*) echo absolute;; *) echo relative;; esac
+  expect
+    stdout "absolute"
+    stderr ""
+    exit_code 0
+end test "tilde expansion in plain variable assignment"
+```
+
+#### Test: declaration utility tilde expansion after colon
+
+When a declaration utility is the command name, assignment words undergo tilde
+expansion after the first `=` and after any unquoted `:`. Both tildes in a
+colon-separated path are expanded.
+
+```
+begin test "declaration utility tilde expansion after colon"
+  script
+    command export TPATH=~:/tmp:~
+    first="${TPATH%%:*}"
+    last="${TPATH##*:}"
+    case "$first" in /*) echo "first_expanded";; *) echo "first_literal";; esac
+    case "$last" in /*) echo "last_expanded";; *) echo "last_literal";; esac
+  expect
+    stdout "first_expanded\nlast_expanded"
+    stderr ""
+    exit_code 0
+end test "declaration utility tilde expansion after colon"
+```
+
+#### Test: assignment values do not undergo pathname expansion
+
+Variable assignments (step 4) are expanded for tilde expansion, parameter
+expansion, command substitution, arithmetic expansion, and quote removal only.
+Pathname expansion is not listed and shall not be performed.
+
+```
+begin test "assignment values do not undergo pathname expansion"
+  script
+    touch tmp_glob_a tmp_glob_b
+    VAR=tmp_glob_*
+    printf "%s\n" "$VAR"
+  expect
+    stdout "tmp_glob_\*"
+    stderr ""
+    exit_code 0
+end test "assignment values do not undergo pathname expansion"
+```
+
+#### Test: assignment values do not undergo field splitting
+
+Variable assignments (step 4) undergo tilde expansion, parameter expansion,
+command substitution, arithmetic expansion, and quote removal. Field splitting
+is not listed and shall not be performed on assignment values.
+
+```
+begin test "assignment values do not undergo field splitting"
+  script
+    IFS=:
+    VAR=$(printf "a:b:c")
+    printf "%s\n" "$VAR"
+  expect
+    stdout "a:b:c"
+    stderr ""
+    exit_code 0
+end test "assignment values do not undergo field splitting"
+```
+
 #### Test: assignment-looking word after regular command is an argument
 
 For command names that are not declaration utilities, words after the command
@@ -468,6 +564,26 @@ begin test "prefix assignment before false does not persist"
 end test "prefix assignment before false does not persist"
 ```
 
+#### Test: side-effect of step 4 expansion persists in current shell
+
+Variable assignments before a non-special-built-in command shall not affect
+the current shell, except as a side-effect of the expansions in step 4. A
+`${VAR:=val}` expansion inside the assignment value assigns to VAR as a side
+effect, and that assignment persists.
+
+```
+begin test "side-effect of step 4 expansion persists in current shell"
+  script
+    unset Y
+    X=${Y:=side} /usr/bin/true
+    printf "%s\n" "${Y}"
+  expect
+    stdout "side"
+    stderr ""
+    exit_code 0
+end test "side-effect of step 4 expansion persists in current shell"
+```
+
 #### Test: assignment before special built-in persists
 
 Variable assignments before a special built-in utility affect the current
@@ -538,6 +654,27 @@ begin test "readonly assignment before regular command is an error"
     stderr ".+"
     exit_code 0
 end test "readonly assignment before regular command is an error"
+```
+
+#### Test: readonly prefix assignment before special built-in exits shell
+
+A variable assignment error before a special built-in utility causes the
+(non-interactive) shell to exit, unlike before a regular command where the
+shell continues execution (see [2.8.1 Consequences of Shell Errors](#281-consequences-of-shell-errors)).
+
+```
+begin test "readonly prefix assignment before special built-in exits shell"
+  script
+    (
+      readonly FOO=1
+      FOO=2 :
+      echo "survived"
+    )
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
+end test "readonly prefix assignment before special built-in exits shell"
 ```
 
 #### Test: function call with var assignment affects function environment
@@ -615,6 +752,24 @@ begin test "last command substitution determines exit status"
     stderr ""
     exit_code 0
 end test "last command substitution determines exit status"
+```
+
+#### Test: last command substitution exit status with success last
+
+When there are multiple command substitutions in a no-command-name simple
+command, the exit status is that of the last substitution obtained. If the
+last one succeeds, the exit status shall be zero.
+
+```
+begin test "last command substitution exit status with success last"
+  script
+    foo=$(false) bar=$(true)
+    printf "%s\n" "$?"
+  expect
+    stdout "0"
+    stderr ""
+    exit_code 0
+end test "last command substitution exit status with success last"
 ```
 
 #### Test: simple assignment completes with zero exit status
@@ -928,6 +1083,25 @@ begin test "function is invoked before matching PATH utility"
 end test "function is invoked before matching PATH utility"
 ```
 
+#### Test: function is invoked before intrinsic utility
+
+If a command name matches the name of a known function (step 1c), that
+function shall be invoked before an intrinsic utility of the same name
+(step 1d).
+
+```
+begin test "function is invoked before intrinsic utility"
+  script
+    cd () { echo "function_cd"; }
+    cd /tmp
+    unset -f cd
+  expect
+    stdout "function_cd"
+    stderr ""
+    exit_code 0
+end test "function is invoked before intrinsic utility"
+```
+
 #### Test: intrinsic utility cd is invoked before matching PATH utility
 
 The intrinsic utility `cd` is not subject to `PATH` search, so an external
@@ -1093,6 +1267,46 @@ begin test "PATH searched file without shebang falls back to shell execution"
     stderr ""
     exit_code 0
 end test "PATH searched file without shebang falls back to shell execution"
+```
+
+#### Test: ENOEXEC fallback via PATH passes arguments to script
+
+When `execl()` fails with `ENOEXEC` and the shell falls back to invoking a
+shell on the file found via `PATH`, any remaining arguments shall be passed
+to the new shell.
+
+```
+begin test "ENOEXEC fallback via PATH passes arguments to script"
+  script
+    mkdir bin
+    printf 'echo "$@"\n' > bin/argscript
+    chmod +x bin/argscript
+    PATH="$PWD/bin:$PATH"
+    argscript one two three
+  expect
+    stdout "one two three"
+    stderr ""
+    exit_code 0
+end test "ENOEXEC fallback via PATH passes arguments to script"
+```
+
+#### Test: ENOEXEC fallback with slash passes arguments to script
+
+When `execl()` fails with `ENOEXEC` and the command name contains a slash,
+any remaining arguments shall be passed to the new shell that executes the
+file.
+
+```
+begin test "ENOEXEC fallback with slash passes arguments to script"
+  script
+    printf 'echo "$@"\n' > tmp_argscript
+    chmod +x tmp_argscript
+    ./tmp_argscript one two three
+  expect
+    stdout "one two three"
+    stderr ""
+    exit_code 0
+end test "ENOEXEC fallback with slash passes arguments to script"
 ```
 
 #### Test: file without magic header but with exec bit runs as shell script
