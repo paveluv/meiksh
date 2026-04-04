@@ -109,6 +109,22 @@ begin test "sequential AND-OR lists write solely bar"
 end test "sequential AND-OR lists write solely bar"
 ```
 
+#### Test: semicolon separator executes lists sequentially
+
+A `';'` separator shall cause the preceding AND-OR list to be executed
+sequentially. Commands separated by `;` on a single line execute in order.
+
+```
+begin test "semicolon separator executes lists sequentially"
+  script
+    x=1; x=2; echo "$x"
+  expect
+    stdout "2"
+    stderr ""
+    exit_code 0
+end test "semicolon separator executes lists sequentially"
+```
+
 #### Test: asynchronous list isolation
 
 An `&` terminator causes asynchronous execution in a subshell; variable
@@ -130,17 +146,19 @@ end test "asynchronous list isolation"
 
 #### Test: async AND-OR list exit status is zero
 
-The exit status of an asynchronous AND-OR list (terminated by `&`) is always
-zero, regardless of the exit status of the commands within it.
+The exit status of an asynchronous AND-OR list (terminated by `&`) shall be
+zero, regardless of the exit status of the commands within it. The `$?`
+immediately after `false &` confirms the async list itself returned zero.
 
 ```
 begin test "async AND-OR list exit status is zero"
   script
     false &
-    wait $!
-    exit 0
+    echo "$?"
+    wait
+    true
   expect
-    stdout ""
+    stdout "0"
     stderr ""
     exit_code 0
 end test "async AND-OR list exit status is zero"
@@ -253,6 +271,25 @@ begin test "explicit redirect overrides /dev/null"
     stderr ""
     exit_code 0
 end test "explicit redirect overrides /dev/null"
+```
+
+#### Test: wait returns background command exit status
+
+The exit status of the subshell in which the AND-OR list is asynchronously
+executed can be obtained using the wait utility. Here `wait $!` returns the
+exit status of the `(exit 42)` background command.
+
+```
+begin test "wait returns background command exit status"
+  script
+    (exit 42) &
+    wait $!
+    echo "$?"
+  expect
+    stdout "42"
+    stderr ""
+    exit_code 0
+end test "wait returns background command exit status"
 ```
 
 ## 2.9.3.2 Sequential AND-OR Lists
@@ -371,6 +408,25 @@ begin test "AND list exit status is last executed command"
 end test "AND list exit status is last executed command"
 ```
 
+#### Test: AND list skipped commands are not expanded
+
+The commands in an AND list are expanded only if they are executed. When a
+command fails, subsequent commands are not expanded — side effects of expansion
+(such as command substitution) do not occur.
+
+```
+begin test "AND list skipped commands are not expanded"
+  script
+    rm -f tmp_and_expand.txt
+    false && echo $(touch tmp_and_expand.txt)
+    test -f tmp_and_expand.txt && echo "expanded" || echo "not_expanded"
+  expect
+    stdout "not_expanded"
+    stderr ""
+    exit_code 0
+end test "AND list skipped commands are not expanded"
+```
+
 ## 2.9.3.4 OR Lists
 
 The control operator `"||"` denotes an OR List. The format shall be:
@@ -387,6 +443,22 @@ The exit status of an OR list shall be the exit status of the last command that 
 
 ### Tests
 
+#### Test: OR list executes second command on failure
+
+When the first command has a non-zero exit status, the next command in the
+OR list shall be executed.
+
+```
+begin test "OR list executes second command on failure"
+  script
+    false || echo "or_executed"
+  expect
+    stdout "or_executed"
+    stderr ""
+    exit_code 0
+end test "OR list executes second command on failure"
+```
+
 #### Test: OR list skips second command on success
 
 When the first command succeeds, subsequent commands in the OR list are
@@ -401,6 +473,41 @@ begin test "OR list skips second command on success"
     stderr ""
     exit_code 0
 end test "OR list skips second command on success"
+```
+
+#### Test: OR list skipped commands are not expanded
+
+When a command in an OR list succeeds, subsequent commands are not executed and
+their expansions do not occur — side effects like command substitution are
+suppressed.
+
+```
+begin test "OR list skipped commands are not expanded"
+  script
+    rm -f tmp_or_expand.txt
+    true || echo $(touch tmp_or_expand.txt)
+    test -f tmp_or_expand.txt && echo "expanded" || echo "not_expanded"
+  expect
+    stdout "not_expanded"
+    stderr ""
+    exit_code 0
+end test "OR list skipped commands are not expanded"
+```
+
+#### Test: OR list exit status when all commands fail
+
+When no command in the OR list has a zero exit status and there are no more
+commands left to execute, the exit status is that of the last command executed.
+
+```
+begin test "OR list exit status when all commands fail"
+  script
+    false || false
+  expect
+    stdout ""
+    stderr ""
+    exit_code 1
+end test "OR list exit status when all commands fail"
 ```
 
 #### Test: OR list exit status is last executed command
