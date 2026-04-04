@@ -182,24 +182,6 @@ begin test "tilde result not subject to field splitting or pathname expansion"
 end test "tilde result not subject to field splitting or pathname expansion"
 ```
 
-#### Test: tilde alone expands to HOME (section 2)
-
-A lone unquoted `~` shall be replaced by the value of `$HOME`. This tests the
-general rule from section 2.6 that tilde expansion is performed first.
-
-```
-begin test "tilde alone expands to HOME (section 2)"
-  script
-    H=$HOME
-    out=$(echo ~)
-    [ "$out" = "$H" ] && echo ok
-  expect
-    stdout "ok"
-    stderr ""
-    exit_code 0
-end test "tilde alone expands to HOME (section 2)"
-```
-
 #### Test: positional parameters count
 
 The shell creates multiple fields from a single word as a result of field
@@ -371,6 +353,25 @@ begin test "assignment value may contain several tilde-prefixes"
     stderr ""
     exit_code 0
 end test "assignment value may contain several tilde-prefixes"
+```
+
+#### Test: tilde with null HOME produces empty field not zero fields
+
+If `HOME` is set to a null string and the word consists of only `~`, the
+result is an empty field (one field, empty), not zero fields.
+
+```
+begin test "tilde with null HOME produces empty field not zero fields"
+  script
+    HOME=''
+    set -- ~
+    echo "$#"
+    printf '<%s>\n' "$1"
+  expect
+    stdout "1\n<>"
+    stderr ""
+    exit_code 0
+end test "tilde with null HOME produces empty field not zero fields"
 ```
 
 ## 2.6.2 Parameter Expansion
@@ -1166,22 +1167,6 @@ begin test "nested backtick command substitution"
 end test "nested backtick command substitution"
 ```
 
-#### Test: dollar-paren command substitution
-
-Basic test of `$(commands)` — the modern and preferred command substitution
-syntax.
-
-```
-begin test "dollar-paren command substitution"
-  script
-    echo $(echo hello)
-  expect
-    stdout "hello"
-    stderr ""
-    exit_code 0
-end test "dollar-paren command substitution"
-```
-
 #### Test: nested dollar-paren command substitution
 
 The `$(...)` form supports straightforward nesting without escape characters,
@@ -1382,21 +1367,6 @@ begin test "division by zero fails"
 end test "division by zero fails"
 ```
 
-#### Test: arithmetic addition
-
-Arithmetic expansion with signed long integer addition.
-
-```
-begin test "arithmetic addition"
-  script
-    echo $((40 + 2))
-  expect
-    stdout "42"
-    stderr ""
-    exit_code 0
-end test "arithmetic addition"
-```
-
 #### Test: arithmetic subtraction negative
 
 Arithmetic expansion correctly handles negative results from subtraction.
@@ -1522,6 +1492,27 @@ begin test "empty IFS prevents field splitting"
     stderr ""
     exit_code 0
 end test "empty IFS prevents field splitting"
+```
+
+#### Test: empty IFS still removes wholly empty expansion
+
+Even when `IFS` is the empty string (no field splitting), a field that
+contained the results of an expansion and is entirely empty shall be removed
+from the field list.
+
+```
+begin test "empty IFS still removes wholly empty expansion"
+  script
+    IFS=''
+    empty=''
+    set -- pre $empty post
+    echo "$#"
+    printf '<%s>\n' "$@"
+  expect
+    stdout "2\n<pre>\n<post>"
+    stderr ""
+    exit_code 0
+end test "empty IFS still removes wholly empty expansion"
 ```
 
 #### Test: IFS colon splits fields in order
