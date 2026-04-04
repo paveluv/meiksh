@@ -1011,14 +1011,14 @@ begin test "colon vs no-colon: unset vs null distinction"
 end test "colon vs no-colon: unset vs null distinction"
 ```
 
-#### Test: colon-plus substitutes alternative value
+#### Test: plus substitutes alternative value
 
 `${parameter+word}` (without colon) substitutes `word` when the parameter is
 set — even if null. When unset, it substitutes null. This tests the no-colon
 variant of the alternative value expansion.
 
 ```
-begin test "colon-plus substitutes alternative value"
+begin test "plus substitutes alternative value"
   script
     foo=set
     v1="${foo+alt}"
@@ -1029,7 +1029,7 @@ begin test "colon-plus substitutes alternative value"
     stdout "ok"
     stderr ""
     exit_code 0
-end test "colon-plus substitutes alternative value"
+end test "plus substitutes alternative value"
 ```
 
 #### Test: equals assigns only when unset without colon
@@ -1261,6 +1261,104 @@ begin test "matching brace ignores escaped and quoted braces"
     stderr ""
     exit_code 0
 end test "matching brace ignores escaped and quoted braces"
+```
+
+#### Test: quoted at yields zero fields when no positional parameters
+
+When there are no positional parameters, the expansion of `"$@"` generates zero
+fields.
+
+```
+begin test "quoted at yields zero fields when no positional parameters"
+  script
+    set --
+    for i in "$@"; do echo "arg: $i"; done
+    echo done
+  expect
+    stdout "done"
+    stderr ""
+    exit_code 0
+end test "quoted at yields zero fields when no positional parameters"
+```
+
+#### Test: quoted at yields empty field when embedded with null string
+
+If `"$@"` occurs in a word containing other parts that expand to a quoted null
+string, these null string(s) shall still produce an empty field even if there
+are no positional parameters.
+
+```
+begin test "quoted at yields empty field when embedded with null string"
+  script
+    set --
+    empty=""
+    set -- "$@""$empty"
+    echo "$#"
+    echo "<$1>"
+  expect
+    stdout "1\n<>"
+    stderr ""
+    exit_code 0
+end test "quoted at yields empty field when embedded with null string"
+```
+
+#### Test: star expansion joins with first IFS character
+
+When the expansion of `*` occurs in a context where field splitting will not be
+performed (like variable assignment), the fields are joined with the first
+character of the `IFS` variable.
+
+```
+begin test "star expansion joins with first IFS character"
+  script
+    set -- a b c
+    IFS=",-"
+    # Assignment does not perform field splitting
+    joined=$*
+    echo "$joined"
+  expect
+    stdout "a,b,c"
+    stderr ""
+    exit_code 0
+end test "star expansion joins with first IFS character"
+```
+
+#### Test: star expansion joins with space when IFS unset
+
+If `IFS` is unset, `*` expansion in a non-splitting context joins fields with
+a single space.
+
+```
+begin test "star expansion joins with space when IFS unset"
+  script
+    set -- a b c
+    unset IFS
+    joined=$*
+    echo "$joined"
+  expect
+    stdout "a b c"
+    stderr ""
+    exit_code 0
+end test "star expansion joins with space when IFS unset"
+```
+
+#### Test: star expansion joins without separation when IFS null
+
+If `IFS` is set to a null string, `*` expansion in a non-splitting context joins
+fields with no separation.
+
+```
+begin test "star expansion joins without separation when IFS null"
+  script
+    set -- a b c
+    IFS=""
+    joined=$*
+    echo "$joined"
+  expect
+    stdout "abc"
+    stderr ""
+    exit_code 0
+end test "star expansion joins without separation when IFS null"
 ```
 
 ## 2.6.3 Command Substitution
@@ -2213,6 +2311,113 @@ begin test "pattern without special characters is unchanged"
     stderr ""
     exit_code 0
 end test "pattern without special characters is unchanged"
+```
+
+#### Test: glob question mark does not match slash
+
+The `<slash>` character in a pathname cannot be matched by `<question-mark>`.
+
+```
+begin test "glob question mark does not match slash"
+  script
+    d=$(mktemp -d)
+    cd "$d" || exit 1
+    mkdir -p dir_slash/sub
+    touch dir_slash/sub/file
+    echo dir_slash?sub/file
+    cd ..
+    rm -rf "$d"
+  expect
+    stdout "dir_slash\?sub/file"
+    stderr ""
+    exit_code 0
+end test "glob question mark does not match slash"
+```
+
+#### Test: glob bracket expression does not match slash
+
+The `<slash>` character in a pathname cannot be matched by a bracket expression.
+
+```
+begin test "glob bracket expression does not match slash"
+  script
+    d=$(mktemp -d)
+    cd "$d" || exit 1
+    mkdir -p dir_slash/sub
+    touch dir_slash/sub/file
+    echo dir_slash[/]sub/file
+    cd ..
+    rm -rf "$d"
+  expect
+    stdout "dir_slash\[/\]sub/file"
+    stderr ""
+    exit_code 0
+end test "glob bracket expression does not match slash"
+```
+
+#### Test: bracket expression containing slash is treated literally
+
+If a `<slash>` character is found following an unescaped `<left-square-bracket>`
+character before a corresponding `<right-square-bracket>`, the open bracket
+is treated as an ordinary character.
+
+```
+begin test "bracket expression containing slash is treated literally"
+  script
+    d=$(mktemp -d)
+    cd "$d" || exit 1
+    mkdir "a[b"
+    touch "a[b/c]d"
+    echo a[b/c]d
+    cd ..
+    rm -rf "$d"
+  expect
+    stdout "a\[b/c\]d"
+    stderr ""
+    exit_code 0
+end test "bracket expression containing slash is treated literally"
+```
+
+#### Test: glob question mark does not match leading period
+
+If a filename begins with a `<period>`, it cannot be matched by `<question-mark>`.
+
+```
+begin test "glob question mark does not match leading period"
+  script
+    d=$(mktemp -d)
+    cd "$d" || exit 1
+    touch .hidden_file
+    echo ?hidden_file
+    cd ..
+    rm -rf "$d"
+  expect
+    stdout "\?hidden_file"
+    stderr ""
+    exit_code 0
+end test "glob question mark does not match leading period"
+```
+
+#### Test: glob bracket expression does not match leading period
+
+If a filename begins with a `<period>`, it cannot be matched by a bracket expression
+containing a period. (It is unspecified for explicit `.`, but a general `[.]`
+often doesn't match a leading `.`. We test explicit `[.]` here to confirm shell behavior).
+
+```
+begin test "glob bracket expression does not match leading period"
+  script
+    d=$(mktemp -d)
+    cd "$d" || exit 1
+    touch .hidden_file
+    echo [.]hidden_file
+    cd ..
+    rm -rf "$d"
+  expect
+    stdout "\[\.\]hidden_file"
+    stderr ""
+    exit_code 0
+end test "glob bracket expression does not match leading period"
 ```
 
 ## 2.6.7 Quote Removal
