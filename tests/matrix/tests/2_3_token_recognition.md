@@ -1232,6 +1232,80 @@ begin interactive test "alias does not expand in non-command position"
 end interactive test "alias does not expand in non-command position"
 ```
 
+#### Test: alias expands after assignment
+
+A token could be parsed as a command name word even if it follows an assignment,
+so it is subject to alias substitution.
+
+```
+begin interactive test "alias expands after assignment"
+  spawn -i
+  expect "$ "
+  send "alias foo=\"echo aliased\""
+  expect "$ "
+  send "VAR=value foo"
+  expect "aliased"
+  sendeof
+  wait
+end interactive test "alias expands after assignment"
+```
+
+#### Test: alias expands after redirection
+
+A token could be parsed as a command name word even if it follows a redirection,
+so it is subject to alias substitution.
+
+```
+begin interactive test "alias expands after redirection"
+  spawn -i
+  expect "$ "
+  send "alias foo=\"echo aliased\""
+  expect "$ "
+  send "</dev/null foo"
+  expect "aliased"
+  sendeof
+  wait
+end interactive test "alias expands after redirection"
+```
+
+#### Test: alias substitution requires alias to be in effect
+
+Alias substitution only occurs if an alias with that name is currently in effect.
+
+```
+begin interactive test "alias substitution requires alias to be in effect"
+  spawn -i
+  expect "$ "
+  send "alias foo=\"echo aliased\""
+  expect "$ "
+  send "unalias foo"
+  expect "$ "
+  send "foo 2>/dev/null || echo not_aliased"
+  expect "not_aliased"
+  sendeof
+  wait
+end interactive test "alias substitution requires alias to be in effect"
+```
+
+#### Test: alias substitution ignores subsequent characters like parens
+
+The shell determines if a token could be parsed as a command name ignoring whether
+subsequent characters (like `()`) would allow that. The substitution still occurs,
+which typically causes a syntax error when defining a function.
+
+```
+begin interactive test "alias substitution ignores subsequent characters like parens"
+  spawn -i
+  expect "$ "
+  send "alias foo=\"echo aliased\""
+  expect "$ "
+  send "foo () { echo func; }"
+  expect "syntax error"
+  sendeof
+  wait
+end interactive test "alias substitution ignores subsequent characters like parens"
+```
+
 #### Test: alias name must match the whole token
 
 Alias substitution applies only when the token itself is the alias name. A
@@ -1289,6 +1363,29 @@ begin interactive test "alias with trailing space chains to next word"
   sendeof
   wait
 end interactive test "alias with trailing space chains to next word"
+```
+
+#### Test: alias chaining continues through multiple aliases
+
+If the value of the replacing alias ends in a blank, the shell continues checking
+subsequent tokens until it finds one that is not a valid alias or its replacement
+does not end in a blank.
+
+```
+begin interactive test "alias chaining continues through multiple aliases"
+  spawn -i
+  expect "$ "
+  send "alias a1=\"echo \""
+  expect "$ "
+  send "alias a2=\"nested \""
+  expect "$ "
+  send "alias a3=\"chained\""
+  expect "$ "
+  send "a1 a2 a3"
+  expect "nested chained"
+  sendeof
+  wait
+end interactive test "alias chaining continues through multiple aliases"
 ```
 
 #### Test: alias without trailing blank does not chain to next word
