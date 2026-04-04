@@ -152,23 +152,117 @@ begin test "redirection words are subject to parameter expansion"
 end test "redirection words are subject to parameter expansion"
 ```
 
-#### Test: append redirection appends to file
+#### Test: quoted redirection operator is not recognized
 
-Redirection with `>>` appends to an existing file rather than truncating it.
-This also exercises that fd numbers 0-9 are supported and that the redirection
-components do not appear in command arguments.
+If any part of the redirection operator is quoted, no redirection expression
+is recognized; the operator characters are ordinary arguments to the command.
 
 ```
-begin test "append redirection appends to file"
+begin test "quoted redirection operator is not recognized"
   script
-    echo "initial" > tmp_append.txt
-    echo "append" >> tmp_append.txt
-    cat tmp_append.txt
+    rm -f tmp_quoted_redirop.txt
+    echo 2\>tmp_quoted_redirop.txt
+    if test -f tmp_quoted_redirop.txt; then echo file_exists; else echo no_file; fi
   expect
-    stdout "initial\nappend"
+    stdout "2>tmp_quoted_redirop.txt\nno_file"
     stderr ""
     exit_code 0
-end test "append redirection appends to file"
+end test "quoted redirection operator is not recognized"
+```
+
+#### Test: redirection words are subject to tilde expansion
+
+For redirection operators other than `<<` and `<<-`, the word shall be
+subjected to tilde expansion (among others). A leading tilde in the target
+path expands using `HOME`.
+
+```
+begin test "redirection words are subject to tilde expansion"
+  script
+    mkdir -p tmp_home_redir/sub
+    HOME="$PWD/tmp_home_redir"
+    export HOME
+    echo tilde_home > ~/sub/out.txt
+    cat tmp_home_redir/sub/out.txt
+  expect
+    stdout "tilde_home"
+    stderr ""
+    exit_code 0
+end test "redirection words are subject to tilde expansion"
+```
+
+#### Test: redirection words are subject to command substitution
+
+For redirection operators other than `<<` and `<<-`, the word shall be
+subjected to command substitution. The filename can be produced by a command
+substitution in the redirection target.
+
+```
+begin test "redirection words are subject to command substitution"
+  script
+    echo via_subst > $(echo tmp_cmdsubst_redir.txt)
+    cat tmp_cmdsubst_redir.txt
+  expect
+    stdout "via_subst"
+    stderr ""
+    exit_code 0
+end test "redirection words are subject to command substitution"
+```
+
+#### Test: redirection words are subject to arithmetic expansion
+
+For redirection operators other than `<<` and `<<-`, the word shall be
+subjected to arithmetic expansion. A digit sequence in the filename can come
+from `$((...))`.
+
+```
+begin test "redirection words are subject to arithmetic expansion"
+  script
+    echo arith_word > tmp_$((12*2)).txt
+    cat tmp_24.txt
+  expect
+    stdout "arith_word"
+    stderr ""
+    exit_code 0
+end test "redirection words are subject to arithmetic expansion"
+```
+
+#### Test: multiple output redirections are evaluated left to right
+
+If more than one redirection operator is specified with a command, the order
+of evaluation is from beginning to end; later output redirections replace where
+standard output is directed.
+
+```
+begin test "multiple output redirections are evaluated left to right"
+  script
+    echo ordered > tmp_multi_first.txt > tmp_multi_second.txt
+    if test -s tmp_multi_first.txt; then echo first_nonempty; else echo first_empty; fi
+    if test -s tmp_multi_second.txt; then echo second_nonempty; else echo second_empty; fi
+  expect
+    stdout "first_empty\nsecond_nonempty"
+    stderr ""
+    exit_code 0
+end test "multiple output redirections are evaluated left to right"
+```
+
+#### Test: redirection operators do not count as command arguments
+
+The optional number, redirection operator, and word shall not appear in the
+arguments provided to the command. A function sees only its real operands in
+`$#`.
+
+```
+begin test "redirection operators do not count as command arguments"
+  script
+    f() { printf '%s' "$#"; }
+    f onlyarg > tmp_argcount.txt
+    cat tmp_argcount.txt
+  expect
+    stdout "1"
+    stderr ""
+    exit_code 0
+end test "redirection operators do not count as command arguments"
 ```
 
 ## 2.7.1 Redirecting Input
@@ -217,6 +311,24 @@ begin test "explicit stdin redirection with 0<"
     stderr ""
     exit_code 0
 end test "explicit stdin redirection with 0<"
+```
+
+#### Test: input redirection opens file on designated file descriptor
+
+Input redirection `[n]<word` opens the file on file descriptor *n* when *n* is
+specified. Duplicating that descriptor onto standard input allows `cat` to read
+the file.
+
+```
+begin test "input redirection opens file on designated file descriptor"
+  script
+    echo designated > tmp_n_input.txt
+    cat 5<tmp_n_input.txt <&5
+  expect
+    stdout "designated"
+    stderr ""
+    exit_code 0
+end test "input redirection opens file on designated file descriptor"
 ```
 
 ## 2.7.2 Redirecting Output
@@ -288,6 +400,25 @@ begin test "noclobber prevents overwriting existing file"
 end test "noclobber prevents overwriting existing file"
 ```
 
+#### Test: greater-pipe output redirection overwrites despite noclobber
+
+When `noclobber` is set, redirection using the `">|"` format shall still open
+the existing file for output (truncating it), unlike plain `>`.
+
+```
+begin test "greater-pipe output redirection overwrites despite noclobber"
+  script
+    set -C
+    echo first > tmp_force_clobber.txt
+    echo second >| tmp_force_clobber.txt
+    cat tmp_force_clobber.txt
+  expect
+    stdout "second"
+    stderr ""
+    exit_code 0
+end test "greater-pipe output redirection overwrites despite noclobber"
+```
+
 ## 2.7.3 Appending Redirected Output
 
 Appended output redirection shall cause the file whose name results from the expansion of word to be opened for output on the designated file descriptor. The file shall be opened as if the [*open*()](docs/posix/md/functions/open.md) function as defined in the System Interfaces volume of POSIX.1-2024 was called with the O_APPEND flag set. If the file does not exist, it shall be created.
@@ -318,6 +449,27 @@ begin test "append redirection with >>"
     stderr ""
     exit_code 0
 end test "append redirection with >>"
+```
+
+#### Test: append redirection with explicit file descriptor
+
+The optional *n* in `[n]>>word` opens the file for append on file descriptor *n*.
+Writing with `>&n` appends through that descriptor the same way `>>` does for
+standard output.
+
+```
+begin test "append redirection with explicit file descriptor"
+  script
+    echo first >> tmp_append3.txt
+    exec 3>>tmp_append3.txt
+    echo second >&3
+    exec 3>&-
+    cat tmp_append3.txt
+  expect
+    stdout "first\nsecond"
+    stderr ""
+    exit_code 0
+end test "append redirection with explicit file descriptor"
 ```
 
 ## 2.7.4 Here-Document
@@ -532,6 +684,26 @@ begin test "here-document with <<- strips leading tabs"
 end test "here-document with <<- strips leading tabs"
 ```
 
+#### Test: here-document terminator line allows no blanks before delimiter
+
+The here-document ends at a line containing only the delimiter and a newline,
+with no `<blank>` characters before the delimiter. A line that includes
+leading blanks before the delimiter text is part of the document body.
+
+```
+begin test "here-document terminator line allows no blanks before delimiter"
+  script
+    cat <<EOF
+    body
+     EOF
+    EOF
+  expect
+    stdout "body\n EOF"
+    stderr ""
+    exit_code 0
+end test "here-document terminator line allows no blanks before delimiter"
+```
+
 ## 2.7.5 Duplicating an Input File Descriptor
 
 The redirection operator:
@@ -579,6 +751,22 @@ begin test "closing an unopened input fd is not an error"
 end test "closing an unopened input fd is not an error"
 ```
 
+#### Test: duplicate input from non-open file descriptor is a redirection error
+
+If *word* in `[n]<&word` evaluates to digits that do not represent an already
+open file descriptor, a redirection error shall result.
+
+```
+begin test "duplicate input from non-open file descriptor is a redirection error"
+  script
+    true 3<&99
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
+end test "duplicate input from non-open file descriptor is a redirection error"
+```
+
 ## 2.7.6 Duplicating an Output File Descriptor
 
 The redirection operator:
@@ -624,6 +812,22 @@ begin test "closing an unopened output fd is not an error"
     stderr ""
     exit_code 0
 end test "closing an unopened output fd is not an error"
+```
+
+#### Test: duplicate output from non-open file descriptor is a redirection error
+
+If *word* in `[n]>&word` evaluates to digits that do not represent an already
+open file descriptor, a redirection error shall result.
+
+```
+begin test "duplicate output from non-open file descriptor is a redirection error"
+  script
+    true 3>&99
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
+end test "duplicate output from non-open file descriptor is a redirection error"
 ```
 
 ## 2.7.7 Open File Descriptors for Reading and Writing
