@@ -58,6 +58,42 @@ begin test "inner redirection overrides compound command redirection"
 end test "inner redirection overrides compound command redirection"
 ```
 
+#### Test: for loop with redirection on terminator
+
+Redirections on compound command terminators apply to all commands within.
+This verifies the "each" in the general 2.9.4 statement applies to `for`.
+
+```
+begin test "for loop with redirection on terminator"
+  script
+    for i in 1 2 3; do
+      echo "$i"
+    done > tmp_for_redir.txt
+    cat tmp_for_redir.txt
+  expect
+    stdout "1\n2\n3"
+    stderr ""
+    exit_code 0
+end test "for loop with redirection on terminator"
+```
+
+#### Test: subshell with redirection on terminator
+
+Redirections on the `( ... )` terminator apply to all commands within the
+subshell.
+
+```
+begin test "subshell with redirection on terminator"
+  script
+    ( echo hello ) > tmp_sub_redir.txt
+    cat tmp_sub_redir.txt
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
+end test "subshell with redirection on terminator"
+```
+
 ## 2.9.4.1 Grouping Commands
 
 The format for grouping commands is as follows:
@@ -371,6 +407,25 @@ begin test "for loop without in preserves quoted positional parameters"
     stderr ""
     exit_code 0
 end test "for loop without in preserves quoted positional parameters"
+```
+
+#### Test: for loop variable retains last value after loop
+
+The variable name is set to each item in the current execution environment,
+so after the loop completes it retains the value from the last iteration.
+
+```
+begin test "for loop variable retains last value after loop"
+  script
+    for i in a b c; do
+      :
+    done
+    echo "$i"
+  expect
+    stdout "c"
+    stderr ""
+    exit_code 0
+end test "for loop variable retains last value after loop"
 ```
 
 ## 2.9.4.3 Case Conditional Construct
@@ -753,6 +808,66 @@ begin test "pattern with command substitution in case label"
 end test "pattern with command substitution in case label"
 ```
 
+#### Test: case ;& fallthrough through empty clause
+
+When `;&` fallthrough passes through a clause whose compound-list is empty
+(the "(if any)" case), the fallthrough shall continue to subsequent clauses.
+
+```
+begin test "case ;& fallthrough through empty clause"
+  script
+    case a in
+      a) echo matched ;&
+      b) ;&
+      c) echo reached ;;
+    esac
+  expect
+    stdout "matched\nreached"
+    stderr ""
+    exit_code 0
+end test "case ;& fallthrough through empty clause"
+```
+
+#### Test: pattern with tilde expansion in case label
+
+Case patterns undergo tilde expansion before matching, as explicitly listed
+in the specification alongside parameter, command substitution, and arithmetic
+expansion.
+
+```
+begin test "pattern with tilde expansion in case label"
+  script
+    HOME=/test/home
+    case "/test/home" in
+      ~) echo tilde ;;
+      *) echo no ;;
+    esac
+  expect
+    stdout "tilde"
+    stderr ""
+    exit_code 0
+end test "pattern with tilde expansion in case label"
+```
+
+#### Test: case ;& fallthrough to end of case statement
+
+When `;&` fallthrough reaches the final clause and there are no further
+clauses in the case statement, the case command completes.
+
+```
+begin test "case ;& fallthrough to end of case statement"
+  script
+    case a in
+      a) echo one ;&
+      b) echo two
+    esac
+  expect
+    stdout "one\ntwo"
+    stderr ""
+    exit_code 0
+end test "case ;& fallthrough to end of case statement"
+```
+
 #### Test: pattern matching with star
 
 Case patterns support `*` as a glob-style match-anything pattern.
@@ -941,6 +1056,27 @@ begin test "if exit status from else clause"
     stderr ""
     exit_code 1
 end test "if exit status from else clause"
+```
+
+#### Test: if exit status from elif then clause
+
+The exit status of the `if` command shall be the exit status of whichever
+`then` compound-list was executed, including one reached via an `elif`.
+
+```
+begin test "if exit status from elif then clause"
+  script
+    if false; then
+      true
+    elif true; then
+      false
+    fi
+    exit $?
+  expect
+    stdout ""
+    stderr ""
+    exit_code 1
+end test "if exit status from elif then clause"
 ```
 
 #### Test: if exit status zero when no branch body executes
