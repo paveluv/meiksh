@@ -52,6 +52,39 @@ begin test "basic pipe stdout flows into stdin"
 end test "basic pipe stdout flows into stdin"
 ```
 
+#### Test: multi-stage pipeline connects all commands
+
+The shell shall connect stdout of each command to stdin of the next, supporting
+pipelines with three or more stages.
+
+```
+begin test "multi-stage pipeline connects all commands"
+  script
+    echo abc | tr a x | tr c z
+  expect
+    stdout "xbz"
+    stderr ""
+    exit_code 0
+end test "multi-stage pipeline connects all commands"
+```
+
+#### Test: pipeline only connects stdout not stderr
+
+The shell shall connect the standard output of the command to the standard
+input of the next command. Standard error is not part of this connection and
+passes through to the overall stderr stream.
+
+```
+begin test "pipeline only connects stdout not stderr"
+  script
+    (echo "stdout_data"; echo "stderr_data" >&2) | cat
+  expect
+    stdout "stdout_data"
+    stderr "stderr_data"
+    exit_code 0
+end test "pipeline only connects stdout not stderr"
+```
+
 #### Test: pipeline exit status is last command
 
 Without pipefail, the exit status of a pipeline is the exit status of the
@@ -85,6 +118,42 @@ begin test "pipeline assignments happen before redirections"
 end test "pipeline assignments happen before redirections"
 ```
 
+#### Test: pipeline stdin redirection overrides pipe assignment
+
+The standard input of a command shall be considered to be assigned by the
+pipeline before any redirection specified by redirection operators. A later
+input redirection on the receiving command overrides the pipe.
+
+```
+begin test "pipeline stdin redirection overrides pipe assignment"
+  script
+    echo "from_redirect" > tmp_redir_override.txt
+    echo "from_pipe" | cat < tmp_redir_override.txt
+  expect
+    stdout "from_redirect"
+    stderr ""
+    exit_code 0
+end test "pipeline stdin redirection overrides pipe assignment"
+```
+
+#### Test: pipeline sender stdout redirect overrides pipe
+
+The standard output of a command shall be assigned by the pipeline before any
+redirection operators. A `>` redirect on the sending command overrides the
+pipe, so the receiver gets no data through the pipe.
+
+```
+begin test "pipeline sender stdout redirect overrides pipe"
+  script
+    echo "to_file" > tmp_stdout_override.txt | cat
+    cat tmp_stdout_override.txt
+  expect
+    stdout "to_file"
+    stderr ""
+    exit_code 0
+end test "pipeline sender stdout redirect overrides pipe"
+```
+
 #### Test: ! ( false ) succeeds with blank separation
 
 The `!` reserved word negates the exit status; when command1 is a subshell,
@@ -99,6 +168,39 @@ begin test "! ( false ) succeeds with blank separation"
     stderr ""
     exit_code 0
 end test "! ( false ) succeeds with blank separation"
+```
+
+#### Test: bang negation returns 1 when pipeline succeeds
+
+When the pipeline begins with `!`, the exit status is the logical NOT of the
+last command's exit status. A succeeding pipeline yields exit status 1.
+
+```
+begin test "bang negation returns 1 when pipeline succeeds"
+  script
+    ! true
+  expect
+    stdout ""
+    stderr ""
+    exit_code 1
+end test "bang negation returns 1 when pipeline succeeds"
+```
+
+#### Test: bang negation applies to entire multi-command pipeline
+
+The `!` reserved word negates the exit status of the whole pipeline, not just
+the first command. Without pipefail, the pipeline exit status is the last
+command's; `!` then inverts that.
+
+```
+begin test "bang negation applies to entire multi-command pipeline"
+  script
+    ! true | false
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "bang negation applies to entire multi-command pipeline"
 ```
 
 #### Test: errexit does not exit on ! pipeline
@@ -117,4 +219,106 @@ begin test "errexit does not exit on ! pipeline"
     stderr ""
     exit_code 0
 end test "errexit does not exit on ! pipeline"
+```
+
+#### Test: pipefail reports rightmost non-zero exit status
+
+With pipefail enabled and no `!` prefix, the exit status is the exit status of
+the last (rightmost) command that returned a non-zero exit status.
+
+```
+begin test "pipefail reports rightmost non-zero exit status"
+  script
+    set -o pipefail
+    (exit 2) | true | (exit 3)
+  expect
+    stdout ""
+    stderr ""
+    exit_code 3
+end test "pipefail reports rightmost non-zero exit status"
+```
+
+#### Test: pipefail returns zero when all commands succeed
+
+With pipefail enabled, the exit status is zero if all commands in the pipeline
+returned an exit status of 0.
+
+```
+begin test "pipefail returns zero when all commands succeed"
+  script
+    set -o pipefail
+    true | true | true
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "pipefail returns zero when all commands succeed"
+```
+
+#### Test: pipefail picks rightmost non-zero from earlier command
+
+With pipefail enabled, the exit status is from the rightmost non-zero command,
+even when that command is not the last in the pipeline.
+
+```
+begin test "pipefail picks rightmost non-zero from earlier command"
+  script
+    set -o pipefail
+    (exit 5) | true
+  expect
+    stdout ""
+    stderr ""
+    exit_code 5
+end test "pipefail picks rightmost non-zero from earlier command"
+```
+
+#### Test: pipefail with bang negation gives zero on failure
+
+With pipefail enabled and `!` prefix, the exit status is zero if any command in
+the pipeline returned a non-zero exit status.
+
+```
+begin test "pipefail with bang negation gives zero on failure"
+  script
+    set -o pipefail
+    ! false | true
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "pipefail with bang negation gives zero on failure"
+```
+
+#### Test: pipefail with bang negation gives one on all-zero pipeline
+
+With pipefail enabled and `!` prefix, the exit status is 1 if all commands in
+the pipeline returned exit status 0.
+
+```
+begin test "pipefail with bang negation gives one on all-zero pipeline"
+  script
+    set -o pipefail
+    ! true | true
+  expect
+    stdout ""
+    stderr ""
+    exit_code 1
+end test "pipefail with bang negation gives one on all-zero pipeline"
+```
+
+#### Test: pipefail uses setting at pipeline start
+
+The shell shall use the pipefail setting at the time it begins execution of the
+pipeline, not the setting at the time it sets the exit status. Enabling pipefail
+within the pipeline does not retroactively affect the exit status.
+
+```
+begin test "pipefail uses setting at pipeline start"
+  script
+    (exit 42) | set -o pipefail
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "pipefail uses setting at pipeline start"
 ```
