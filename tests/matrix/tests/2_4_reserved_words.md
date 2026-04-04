@@ -427,3 +427,49 @@ begin test "reserved word is not recognized as an argument"
     exit_code 0
 end test "reserved word is not recognized as an argument"
 ```
+
+#### Test: function may be recognized as reserved word
+
+The word `function` may be recognized as a reserved word. If so, its use produces unspecified results; the implementation here accepts it as declaring a function.
+
+```
+begin test "function may be recognized as reserved word"
+  script
+    function foo { echo "function-body"; }
+    foo
+  expect
+    stdout "function-body"
+    stderr ""
+    exit_code 0
+end test "function may be recognized as reserved word"
+```
+
+#### Test: double brackets may be recognized as reserved words
+
+The words `[[` and `]]` may be recognized as reserved words. If so, their use produces unspecified results; the implementation here accepts them for conditional expressions.
+
+```
+begin test "double brackets may be recognized as reserved words"
+  script
+    [[ "a" == "a" ]] && echo "double-brackets"
+  expect
+    stdout "double-brackets"
+    stderr ""
+    exit_code 0
+end test "double brackets may be recognized as reserved words"
+```
+
+#### Test: words ending in colon are reserved
+
+All words whose final character is a colon (`:`) are reserved when used where reserved words are recognized, producing unspecified results. Here the implementation rejects using `foo:` as a function name.
+
+```
+begin test "words ending in colon are reserved"
+  script
+    $SHELL -c 'foo: () { echo bad; }'
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
+end test "words ending in colon are reserved"
+```
