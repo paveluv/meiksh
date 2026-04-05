@@ -3177,6 +3177,13 @@ mod tests {
 
     #[test]
     fn field_and_pattern_helpers_cover_corner_cases() {
+        run_trace(
+            vec![t(
+                "opendir",
+                vec![ArgMatcher::Any],
+                TraceResult::Err(crate::sys::ENOENT),
+            )],
+            || {
         let segs = vec![Segment::Text("*.txt".to_string(), false)];
         assert_eq!(
             split_fields_from_segments(&segs, ""),
@@ -3263,6 +3270,8 @@ mod tests {
         assert_eq!(
             render_pattern_from_segments(&[Segment::Text("*".to_string(), true)]),
             "\\*".to_string()
+        );
+            },
         );
     }
 
@@ -3428,16 +3437,25 @@ mod tests {
 
     #[test]
     fn unmatched_glob_returns_pattern_literally() {
-        let mut ctx = DefaultPathContext::new();
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "*.definitely-no-match".to_string()
-                }
-            )
-            .expect("unmatched glob"),
-            vec!["*.definitely-no-match".to_string()]
+        run_trace(
+            vec![t(
+                "opendir",
+                vec![ArgMatcher::Any],
+                TraceResult::Err(crate::sys::ENOENT),
+            )],
+            || {
+                let mut ctx = DefaultPathContext::new();
+                assert_eq!(
+                    expand_word(
+                        &mut ctx,
+                        &Word {
+                            raw: "*.definitely-no-match".to_string()
+                        }
+                    )
+                    .expect("unmatched glob"),
+                    vec!["*.definitely-no-match".to_string()]
+                );
+            },
         );
     }
 
@@ -3462,6 +3480,10 @@ mod tests {
 
         let literal = expand_here_document(&mut ctx, "\\x").expect("expand heredoc");
         assert_eq!(literal, "\\x");
+
+        let double_backslash =
+            expand_here_document(&mut ctx, "a\\\\b\n").expect("expand heredoc double backslash");
+        assert_eq!(double_backslash, "a\\b\n");
     }
 
     #[test]

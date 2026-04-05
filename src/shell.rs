@@ -201,6 +201,12 @@ pub enum JobState {
     Done(i32),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReapedJobState {
+    Stopped(i32),
+    Done(i32),
+}
+
 #[derive(Clone, Debug)]
 pub struct Job {
     pub id: usize,
@@ -449,19 +455,27 @@ impl Shell {
                 let chunk = decode_stdin_chunk(std::mem::take(&mut line_bytes))?;
                 self.echo_verbose_input(&chunk);
                 source.push_str(&chunk);
-                if let Some(executed_status) = self.maybe_run_stdin_source(&mut source, false)? {
-                    status = executed_status;
-                    if !self.running || self.has_pending_control() {
-                        return Ok(status);
-                    }
+                self.apply_stdin_fragment(&mut source, false, &mut status)?;
+                if !self.running || self.has_pending_control() {
+                    return Ok(status);
                 }
             }
         }
 
-        if let Some(executed_status) = self.maybe_run_stdin_source(&mut source, true)? {
-            status = executed_status;
-        }
+        self.apply_stdin_fragment(&mut source, true, &mut status)?;
         Ok(status)
+    }
+
+    fn apply_stdin_fragment(
+        &mut self,
+        source: &mut String,
+        eof: bool,
+        status: &mut i32,
+    ) -> Result<(), ShellError> {
+        if let Some(s) = self.maybe_run_stdin_source(source, eof)? {
+            *status = s;
+        }
+        Ok(())
     }
 
     fn execute_source_incrementally(&mut self, source: &str) -> Result<i32, ShellError> {
@@ -610,7 +624,7 @@ impl Shell {
         id
     }
 
-    pub fn reap_jobs(&mut self) -> Vec<(usize, JobState)> {
+    pub fn reap_jobs(&mut self) -> Vec<(usize, ReapedJobState)> {
         let mut finished = Vec::new();
         let mut remaining = Vec::new();
 
@@ -649,10 +663,10 @@ impl Shell {
                 let final_status = job.last_status.unwrap_or(0);
                 self.known_job_statuses.insert(job.id, final_status);
                 job.state = JobState::Done(final_status);
-                finished.push((job.id, job.state));
+                finished.push((job.id, ReapedJobState::Done(final_status)));
             } else if any_stopped {
                 job.state = JobState::Stopped(stop_signal);
-                finished.push((job.id, job.state));
+                finished.push((job.id, ReapedJobState::Stopped(stop_signal)));
                 remaining.push(job);
             } else {
                 remaining.push(job);
@@ -780,24 +794,20 @@ impl Shell {
     pub fn print_jobs(&mut self) {
         let finished = self.reap_jobs();
         for (id, state) in finished {
-            if let JobState::Done(status) = state {
+            if let ReapedJobState::Done(status) = state {
                 sys_println!("[{id}] Done {status}");
             }
         }
         for job in &self.jobs {
-            match job.state {
-                JobState::Running => sys_println!("[{}] Running {}", job.id, job.command),
-                JobState::Stopped(sig) => {
-                    sys_println!(
-                        "[{}] Stopped ({}) {}",
-                        job.id,
-                        sys::signal_name(sig),
-                        job.command
-                    );
-                }
-                JobState::Done(status) => {
-                    sys_println!("[{}] Done {} {}", job.id, status, job.command)
-                }
+            if let JobState::Stopped(sig) = job.state {
+                sys_println!(
+                    "[{}] Stopped ({}) {}",
+                    job.id,
+                    sys::signal_name(sig),
+                    job.command
+                );
+            } else {
+                sys_println!("[{}] Running {}", job.id, job.command);
             }
         }
     }
@@ -1107,10 +1117,7 @@ impl Shell {
             .filter(|j| matches!(j.state, JobState::Stopped(_)))
             .collect();
         if stopped.len() >= 2 {
-            let second_last = stopped[stopped.len() - 2];
-            if Some(second_last.id) != current {
-                return Some(second_last.id);
-            }
+            return Some(stopped[stopped.len() - 2].id);
         }
         self.jobs
             .iter()
@@ -1770,7 +1777,7 @@ mod tests {
                 let mut shell = test_shell();
                 shell.register_background_job("exit 0".into(), None, vec![fake_handle(1001)]);
                 let finished = shell.reap_jobs();
-                assert_eq!(finished, vec![(1, JobState::Done(0))]);
+                assert_eq!(finished, vec![(1, ReapedJobState::Done(0))]);
                 assert!(shell.jobs.is_empty());
             },
         );
@@ -1828,7 +1835,7 @@ mod tests {
                 let id =
                     shell.register_background_job("exit 0".into(), None, vec![fake_handle(1001)]);
                 let finished = shell.reap_jobs();
-                assert_eq!(finished, vec![(id, JobState::Done(1))]);
+                assert_eq!(finished, vec![(id, ReapedJobState::Done(1))]);
                 assert!(shell.jobs.is_empty());
             },
         );
@@ -3000,6 +3007,445 @@ mod tests {
                 let mut shell = test_shell();
                 let status = shell.run_standard_input().expect("stdin eintr retry");
                 assert_eq!(status, 0);
+            },
+        );
+    }
+
+    fn stdin_blocking_trace() -> Vec<test_support::TraceEntry> {
+        vec![
+            t(
+                "isatty",
+                vec![ArgMatcher::Fd(sys::STDIN_FILENO)],
+                TraceResult::Int(0),
+            ),
+            t(
+                "fstat",
+                vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::StatFile(0o644),
+            ),
+        ]
+    }
+
+    #[test]
+    fn run_standard_input_fatal_read_error() {
+        let mut trace = stdin_blocking_trace();
+        trace.push(t(
+            "read",
+            vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+            TraceResult::Err(libc::EIO),
+        ));
+        run_trace(trace, || {
+            let mut shell = test_shell();
+            assert!(shell.run_standard_input().is_err());
+        });
+    }
+
+    #[test]
+    fn run_standard_input_eof_with_remaining_bytes() {
+        let mut trace = stdin_blocking_trace();
+        trace.push(t(
+            "read",
+            vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+            TraceResult::Bytes(b":".to_vec()),
+        ));
+        trace.push(t(
+            "read",
+            vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+            TraceResult::Int(0),
+        ));
+        run_trace(trace, || {
+            let mut shell = test_shell();
+            let status = shell.run_standard_input().expect("stdin eof partial");
+            assert_eq!(status, 0);
+        });
+    }
+
+    #[test]
+    fn maybe_run_stdin_source_parse_error() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut source = "if true\n".to_string();
+            let result = shell.maybe_run_stdin_source(&mut source, false);
+            assert!(result.expect("non-eof parse yields None").is_none());
+
+            let mut bad = ")\n".to_string();
+            let result = shell.maybe_run_stdin_source(&mut bad, true);
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn capture_output_reads_data_from_pipe() {
+        let child = vec![
+            t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
+            t(
+                "dup2",
+                vec![ArgMatcher::Fd(201), ArgMatcher::Fd(1)],
+                TraceResult::Int(0),
+            ),
+            t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
+        ];
+        run_trace(
+            vec![
+                t("pipe", vec![], TraceResult::Fds(200, 201)),
+                t_fork(TraceResult::Pid(1000), child),
+                t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
+                t(
+                    "read",
+                    vec![ArgMatcher::Fd(200), ArgMatcher::Any],
+                    TraceResult::Bytes(b"data".to_vec()),
+                ),
+                t(
+                    "read",
+                    vec![ArgMatcher::Fd(200), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+                t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
+                t(
+                    "waitpid",
+                    vec![
+                        ArgMatcher::Int(1000),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(0),
+                    ],
+                    TraceResult::Status(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let output = shell.capture_output(":").expect("capture");
+                assert_eq!(output, "data");
+            },
+        );
+    }
+
+    #[test]
+    fn command_substitute_maps_error() {
+        run_trace(
+            vec![t(
+                "pipe",
+                vec![],
+                TraceResult::Err(sys::EIO),
+            )],
+            || {
+                let mut shell = test_shell();
+                let result = crate::expand::Context::command_substitute(&mut shell, "true");
+                assert!(result.is_err());
+            },
+        );
+    }
+
+    #[test]
+    fn known_job_statuses_shortcut_in_wait_for_job() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.known_job_statuses.insert(42, 7);
+            let status = shell.wait_for_job(42).expect("wait");
+            assert_eq!(status, 7);
+            assert_eq!(shell.last_status, 7);
+        });
+    }
+
+    #[test]
+    fn wait_for_job_stopped_handling() {
+        run_trace(
+            vec![
+                t(
+                    "waitpid",
+                    vec![
+                        ArgMatcher::Int(2001),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
+                    TraceResult::StoppedSig(20),
+                ),
+                t(
+                    "tcgetattr",
+                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.interactive = true;
+                let id =
+                    shell.register_background_job("sleep 99".into(), None, vec![fake_handle(2001)]);
+                let status = shell.wait_for_job(id).expect("wait stopped");
+                assert_eq!(status, 128 + 20);
+                let job = shell.jobs.iter().find(|j| j.id == id).expect("job exists");
+                assert!(matches!(job.state, JobState::Stopped(20)));
+                assert!(job.saved_termios.is_some());
+            },
+        );
+    }
+
+    #[test]
+    fn wait_for_job_restores_saved_termios() {
+        let termios = unsafe { std::mem::zeroed::<libc::termios>() };
+        run_trace(
+            vec![
+                t(
+                    "tcsetattr",
+                    vec![
+                        ArgMatcher::Fd(sys::STDIN_FILENO),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "waitpid",
+                    vec![
+                        ArgMatcher::Int(2002),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
+                    TraceResult::Status(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let id =
+                    shell.register_background_job("exit 0".into(), None, vec![fake_handle(2002)]);
+                let idx = shell.jobs.iter().position(|j| j.id == id).unwrap();
+                shell.jobs[idx].saved_termios = Some(termios);
+                let status = shell.wait_for_job(id).expect("wait with termios");
+                assert_eq!(status, 0);
+            },
+        );
+    }
+
+    #[test]
+    fn wait_for_pid_operand_stopped() {
+        run_trace(
+            vec![t(
+                "waitpid",
+                vec![
+                    ArgMatcher::Int(3001),
+                    ArgMatcher::Any,
+                    ArgMatcher::Int(sys::WUNTRACED as i64),
+                ],
+                TraceResult::StoppedSig(20),
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.register_background_job("sleep".into(), None, vec![fake_handle(3001)]);
+                let status = shell.wait_for_pid_operand(3001).expect("wait stopped pid");
+                assert_eq!(status, 128 + 20);
+            },
+        );
+    }
+
+    #[test]
+    fn wait_on_job_index_stopped() {
+        run_trace(
+            vec![t(
+                "waitpid",
+                vec![
+                    ArgMatcher::Int(4001),
+                    ArgMatcher::Any,
+                    ArgMatcher::Int(sys::WUNTRACED as i64),
+                ],
+                TraceResult::StoppedSig(20),
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.register_background_job("sleep".into(), None, vec![fake_handle(4001)]);
+                let status = shell.wait_on_job_index(0, false).expect("wait stopped index");
+                assert_eq!(status, 128 + 20);
+            },
+        );
+    }
+
+    #[test]
+    fn load_script_source_not_found() {
+        run_trace(
+            vec![
+                t(
+                    "access",
+                    vec![ArgMatcher::Str("nonexistent-script".into()), ArgMatcher::Int(0)],
+                    TraceResult::Err(sys::ENOENT),
+                ),
+                t(
+                    "stat",
+                    vec![ArgMatcher::Str("/usr/bin/nonexistent-script".into()), ArgMatcher::Any],
+                    TraceResult::Err(sys::ENOENT),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert("PATH".into(), "/usr/bin".into());
+                let err = shell.load_script_source(Path::new("nonexistent-script"));
+                assert!(err.is_err());
+                let e = err.unwrap_err();
+                assert!(e.message.contains("not found"));
+            },
+        );
+    }
+
+    #[test]
+    fn load_script_source_binary_file_rejected() {
+        run_trace(
+            vec![
+                t(
+                    "access",
+                    vec![ArgMatcher::Str("binary-script".into()), ArgMatcher::Int(0)],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "open",
+                    vec![ArgMatcher::Str("binary-script".into()), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Fd(10),
+                ),
+                t(
+                    "read",
+                    vec![ArgMatcher::Fd(10), ArgMatcher::Any],
+                    TraceResult::Bytes(b"#!/bin/sh\0binary-data".to_vec()),
+                ),
+                t(
+                    "read",
+                    vec![ArgMatcher::Fd(10), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "close",
+                    vec![ArgMatcher::Fd(10)],
+                    TraceResult::Int(0),
+                ),
+            ],
+            || {
+                let shell = test_shell();
+                let err = shell.load_script_source(Path::new("binary-script"));
+                assert!(err.is_err());
+                let e = err.unwrap_err();
+                assert!(e.message.contains("cannot execute"));
+            },
+        );
+    }
+
+    #[test]
+    fn print_jobs_shows_stopped_running_and_done() {
+        run_trace(
+            vec![
+                t(
+                    "waitpid",
+                    vec![
+                        ArgMatcher::Int(3001),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(
+                            (sys::WUNTRACED | sys::WNOHANG) as i64,
+                        ),
+                    ],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(1),
+                        ArgMatcher::Bytes(b"[2] Done 0\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(1),
+                        ArgMatcher::Bytes(
+                            b"[1] Stopped (SIGTSTP) sleep 99\n".to_vec(),
+                        ),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(1),
+                        ArgMatcher::Bytes(b"[3] Running sleep 300\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(Job {
+                    id: 1,
+                    command: "sleep 99".into(),
+                    children: vec![],
+                    last_pid: None,
+                    last_status: None,
+                    pgid: None,
+                    state: JobState::Stopped(sys::SIGTSTP),
+                    saved_termios: None,
+                });
+                shell.jobs.push(Job {
+                    id: 2,
+                    command: "exit 0".into(),
+                    children: vec![],
+                    last_pid: None,
+                    last_status: None,
+                    pgid: None,
+                    state: JobState::Done(0),
+                    saved_termios: None,
+                });
+                shell.jobs.push(Job {
+                    id: 3,
+                    command: "sleep 300".into(),
+                    children: vec![fake_handle(3001)],
+                    last_pid: Some(3001),
+                    last_status: None,
+                    pgid: None,
+                    state: JobState::Running,
+                    saved_termios: None,
+                });
+                shell.print_jobs();
+            },
+        );
+    }
+
+    #[test]
+    fn active_option_flags_monitor_and_syntax_check() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.options.monitor = true;
+            assert!(shell.active_option_flags().contains('m'));
+            shell.options.monitor = false;
+
+            shell.options.syntax_check_only = true;
+            assert!(shell.active_option_flags().contains('n'));
+        });
+    }
+
+    #[test]
+    fn search_script_path_empty_dir_and_not_found() {
+        run_trace(
+            vec![
+                t(
+                    "access",
+                    vec![ArgMatcher::Str("missing".into()), ArgMatcher::Int(0)],
+                    TraceResult::Err(sys::ENOENT),
+                ),
+                t(
+                    "getenv",
+                    vec![ArgMatcher::Str("PATH".into())],
+                    TraceResult::Str(":/nonexistent".into()),
+                ),
+                t(
+                    "stat",
+                    vec![ArgMatcher::Str("./missing".into()), ArgMatcher::Any],
+                    TraceResult::Err(sys::ENOENT),
+                ),
+                t(
+                    "stat",
+                    vec![ArgMatcher::Str("/nonexistent/missing".into()), ArgMatcher::Any],
+                    TraceResult::Err(sys::ENOENT),
+                ),
+            ],
+            || {
+                let shell = test_shell();
+                assert_eq!(
+                    resolve_script_path(&shell, Path::new("missing")),
+                    None
+                );
             },
         );
     }
