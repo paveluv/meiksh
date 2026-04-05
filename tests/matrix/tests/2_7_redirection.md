@@ -759,6 +759,25 @@ begin test "here-document basic usage"
 end test "here-document basic usage"
 ```
 
+#### Test: here-document begins after the next NEWLINE token
+
+The here-document body begins after the next NEWLINE token. Any commands or
+tokens appearing on the same line after the `<<` operator are parsed normally
+and executed before the here-document body begins.
+
+```
+begin test "here-document begins after the next NEWLINE token"
+  script
+    cat <<EOF; echo "same line"
+    body
+    EOF
+  expect
+    stdout "body\nsame line"
+    stderr ""
+    exit_code 0
+end test "here-document begins after the next NEWLINE token"
+```
+
 #### Test: here-document with variable expansion
 
 When the delimiter word is not quoted, all lines of the here-document are
