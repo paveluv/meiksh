@@ -489,6 +489,23 @@ begin test "for loop name may be spelled in"
 end test "for loop name may be spelled in"
 ```
 
+#### Test: token with equals after command name is WORD
+
+Rule 7b applies only in positions where assignment recognition is relevant.
+After the command name has been identified, a token containing `=` is treated
+as a normal WORD argument.
+
+```
+begin test "token with equals after command name is WORD"
+  script
+    printf '%s\n' x=1
+  expect
+    stdout "x=1"
+    stderr ""
+    exit_code 0
+end test "token with equals after command name is WORD"
+```
+
 #### Test: quoted reserved word is parsed as WORD
 
 Rule 1 recognizes reserved words only when the token is exactly the reserved
@@ -538,6 +555,23 @@ begin test "function name token identification"
     stderr ""
     exit_code 0
 end test "function name token identification"
+```
+
+#### Test: reserved word cannot be function name
+
+Rule 8 first checks whether the token is exactly a reserved word. An exact
+reserved word such as `if` is not recognized as NAME in function-name
+position, so the definition is a syntax error.
+
+```
+begin test "reserved word cannot be function name"
+  script
+    if() { echo bad; }
+  expect
+    stdout ""
+    stderr "(.|\n)+"
+    exit_code !=0
+end test "reserved word cannot be function name"
 ```
 
 #### Test: function body expansion deferred to invocation
