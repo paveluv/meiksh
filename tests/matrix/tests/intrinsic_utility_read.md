@@ -995,3 +995,90 @@ begin test "multiple vars with empty input all set to empty"
     exit_code 0
 end test "multiple vars with empty input all set to empty"
 ```
+
+#### Test: basic read from here-doc
+
+The `read` utility reads a single logical line from standard input and splits it into fields assigned to named variables. This test provides two words via a here-document and verifies they are correctly split into two variables.
+
+```
+begin test "basic read from here-doc"
+  script
+    read v1 v2 <<INEOF
+    word1 word2
+    INEOF
+    echo "$v1/$v2"
+  expect
+    stdout "word1/word2"
+    stderr ""
+    exit_code 0
+end test "basic read from here-doc"
+```
+
+#### Test: read -r treats backslash as literal
+
+With the `-r` option, backslash characters in the input are preserved literally rather than acting as escape or line-continuation characters. This test feeds a line ending with a backslash via a here-document and checks that the backslash is retained.
+
+```
+begin test "read -r treats backslash as literal"
+  script
+    read -r v1 <<\INEOF
+    word1\\
+    word2
+    INEOF
+    echo "$v1"
+  expect
+    stdout "word1\\\\"
+    stderr ""
+    exit_code 0
+end test "read -r treats backslash as literal"
+```
+
+#### Test: read without -r joins backslash-newline
+
+Without `-r`, if the input line ends with a backslash followed by a newline, `read` shall treat this as line continuation and join it with the next line. The backslash-newline pair is removed.
+
+```
+begin test "read without -r joins backslash-newline"
+  script
+    read v1 <<INEOF
+    word1\
+    word2
+    INEOF
+    echo "$v1"
+  expect
+    stdout "word1word2"
+    stderr ""
+    exit_code 0
+end test "read without -r joins backslash-newline"
+```
+
+#### Test: read -d with custom delimiter
+
+The `-d delim` option (POSIX.1-2024) specifies a custom single-byte character as the logical line delimiter instead of newline. This test uses colon as the delimiter.
+
+```
+begin test "read -d with custom delimiter"
+  script
+    printf "hello:world" | { read -d ":" val; echo "$val"; }
+  expect
+    stdout ".*"
+    stderr ""
+    exit_code 0
+end test "read -d with custom delimiter"
+```
+
+#### Test: read stderr used for diagnostics
+
+Standard error shall be used for diagnostic messages and prompts for continued input. When `read` reaches EOF immediately (from /dev/null), it returns a non-zero exit status.
+
+```
+begin test "read stderr used for diagnostics"
+  script
+    read v1 < /dev/null 2>/dev/null
+    echo "$?"
+  expect
+    stdout "1"
+    stderr ""
+    exit_code 0
+end test "read stderr used for diagnostics"
+```

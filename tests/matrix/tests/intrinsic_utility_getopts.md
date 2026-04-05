@@ -859,3 +859,61 @@ begin test "OPTIND set to 1 + count when no operands remain"
     exit_code 0
 end test "OPTIND set to 1 + count when no operands remain"
 ```
+
+#### Test: getopts basic option parsing
+
+Verifies the core `getopts` loop: parsing `-a` (no argument), then `-b foo` (option with required argument via `b:` in optstring), then detecting end-of-options. OPTIND advances correctly to point past the consumed arguments.
+
+```
+begin test "getopts basic option parsing"
+  script
+    set -- -a -b foo bar
+    getopts "ab:" opt
+    echo "$opt"
+    getopts "ab:" opt
+    echo "$opt $OPTARG"
+    getopts "ab:" opt
+    echo "$?"
+    echo "$OPTIND"
+  expect
+    stdout "a\nb foo\n1\n4"
+    stderr ""
+    exit_code 0
+end test "getopts basic option parsing"
+```
+
+#### Test: getopts silent mode error handling
+
+When optstring begins with `:` (silent mode), `getopts` suppresses its own error messages. For an unrecognized option, `name` is set to `?` and OPTARG to the offending character. For a missing option-argument, `name` is set to `:` and OPTARG to the option character.
+
+```
+begin test "getopts silent mode error handling"
+  script
+    set -- -x -b
+    getopts ":ab:" opt
+    echo "$opt $OPTARG"
+    getopts ":ab:" opt
+    echo "$opt $OPTARG"
+  expect
+    stdout "\? x\n: b"
+    stderr ""
+    exit_code 0
+end test "getopts silent mode error handling"
+```
+
+#### Test: getopts verbose mode missing option-argument
+
+In verbose mode (no leading `:` in optstring), when an option that requires an argument is given without one, `getopts` sets `name` to `?` and OPTARG is unset. A diagnostic message is written to stderr.
+
+```
+begin test "getopts verbose mode missing option-argument"
+  script
+    set -- -b
+    getopts "ab:" opt 2>/dev/null
+    echo "$opt ${OPTARG:-unset}"
+  expect
+    stdout "\? unset"
+    stderr ""
+    exit_code 0
+end test "getopts verbose mode missing option-argument"
+```
