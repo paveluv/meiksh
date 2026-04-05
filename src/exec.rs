@@ -438,9 +438,10 @@ fn execute_command(shell: &mut Shell, command: &Command) -> Result<i32, ShellErr
         }
         Command::Group(program) => execute_nested_program(shell, program),
         Command::FunctionDef(function) => {
-            shell
-                .functions
-                .insert(function.name.clone(), (*function.body).clone());
+            shell.functions.insert(
+                function.name.to_string(),
+                (*function.body).clone().into_static(),
+            );
             Ok(0)
         }
         Command::If(if_command) => execute_if(shell, if_command),
@@ -872,9 +873,9 @@ fn expand_simple(
             let body = if here_doc.expand {
                 expand::expand_here_document(shell, &here_doc.body)?
             } else {
-                here_doc.body.clone()
+                here_doc.body.to_string()
             };
-            (here_doc.delimiter.clone(), Some(body))
+            (here_doc.delimiter.to_string(), Some(body))
         } else {
             let target = expand::expand_redirect_word(shell, &redirection.target)?;
             (target, None)
@@ -888,7 +889,7 @@ fn expand_simple(
     }
 
     Ok(ExpandedSimpleCommand {
-        assignments,
+        assignments: assignments.into_iter().map(|(n, v)| (n.into_owned(), v)).collect(),
         argv,
         redirections,
     })
@@ -910,9 +911,9 @@ fn expand_redirections(
             let body = if here_doc.expand {
                 expand::expand_here_document(shell, &here_doc.body)?
             } else {
-                here_doc.body.clone()
+                here_doc.body.to_string()
             };
-            (here_doc.delimiter.clone(), Some(body))
+            (here_doc.delimiter.to_string(), Some(body))
         } else {
             let target = expand::expand_redirect_word(shell, &redirection.target)?;
             (target, None)
@@ -1569,7 +1570,7 @@ fn render_case(case_command: &CaseCommand) -> String {
         let patterns = arm
             .patterns
             .iter()
-            .map(|pattern| pattern.raw.as_str())
+            .map(|pattern| pattern.raw.as_ref())
             .collect::<Vec<_>>()
             .join(" | ");
         text.push_str(&patterns);
@@ -1589,7 +1590,7 @@ fn render_simple(simple: &SimpleCommand) -> String {
                 parts.push(format!("{}={}", assignment.name, assignment.value.raw));
             }
             for word in &simple.words {
-                parts.push(word.raw.clone());
+                parts.push(word.raw.to_string());
             }
             parts.join(" ")
         },
@@ -2315,7 +2316,7 @@ mod tests {
                             timed: TimedMode::Off,
                             commands: vec![Command::Simple(SimpleCommand {
                                 words: vec![Word {
-                                    raw: "true".to_string(),
+                                    raw: "true".into(),
                                 }],
                                 ..SimpleCommand::default()
                             })],
@@ -2327,7 +2328,7 @@ mod tests {
             };
 
             let function = FunctionDef {
-                name: "greet".to_string(),
+                name: "greet".into(),
                 body: Box::new(Command::Group(program.clone())),
             };
             let if_command = IfCommand {
@@ -2348,19 +2349,19 @@ mod tests {
 
             let simple = SimpleCommand {
                 assignments: vec![Assignment {
-                    name: "X".to_string(),
+                    name: "X".into(),
                     value: Word {
-                        raw: "1".to_string(),
+                        raw: "1".into(),
                     },
                 }],
                 words: vec![Word {
-                    raw: "echo".to_string(),
+                    raw: "echo".into(),
                 }],
                 redirections: vec![Redirection {
                     fd: None,
                     kind: RedirectionKind::Write,
                     target: Word {
-                        raw: "out".to_string(),
+                        raw: "out".into(),
                     },
                     here_doc: None,
                 }],
@@ -2392,7 +2393,7 @@ mod tests {
                         timed: TimedMode::Off,
                         commands: vec![Command::Simple(SimpleCommand {
                             words: vec![Word {
-                                raw: "true".to_string(),
+                                raw: "true".into(),
                             }],
                             ..SimpleCommand::default()
                         })],
@@ -4518,7 +4519,7 @@ mod tests {
                         timed: TimedMode::Off,
                         commands: vec![Command::Simple(SimpleCommand {
                             words: vec![Word {
-                                raw: "true".to_string(),
+                                raw: "true".into(),
                             }],
                             ..SimpleCommand::default()
                         })],
@@ -4530,7 +4531,7 @@ mod tests {
                             timed: TimedMode::Off,
                             commands: vec![Command::Simple(SimpleCommand {
                                 words: vec![Word {
-                                    raw: ":".to_string(),
+                                    raw: ":".into(),
                                 }],
                                 ..SimpleCommand::default()
                             })],
@@ -5123,7 +5124,7 @@ mod tests {
                         timed: TimedMode::Off,
                         commands: vec![Command::Simple(SimpleCommand {
                             words: vec![Word {
-                                raw: "true".to_string(),
+                                raw: "true".into(),
                             }],
                             ..SimpleCommand::default()
                         })],

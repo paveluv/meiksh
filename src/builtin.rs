@@ -2165,6 +2165,7 @@ mod tests {
     use super::*;
     use crate::shell::ShellOptions;
     use crate::syntax::Word;
+    use std::borrow::Cow;
     use std::collections::{BTreeMap, BTreeSet, HashMap};
 
     use crate::sys::test_support::{
@@ -2198,9 +2199,9 @@ mod tests {
         }
     }
 
-    fn literal(raw: &str) -> Word {
+    fn literal(raw: &str) -> Word<'static> {
         Word {
-            raw: raw.to_string(),
+            raw: Cow::Owned(raw.to_string()),
         }
     }
 
