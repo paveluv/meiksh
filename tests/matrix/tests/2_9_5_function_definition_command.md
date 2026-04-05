@@ -408,6 +408,40 @@ begin test "function body can be a subshell compound command"
 end test "function body can be a subshell compound command"
 ```
 
+#### Test: function body can be a for loop compound command
+
+The compound-command in a function definition can be any compound command from
+2.9.4, not just a brace group. A `for` loop is a valid function body.
+
+```
+begin test "function body can be a for loop compound command"
+  script
+    myfunc() for i in 1 2; do echo $i; done
+    myfunc
+  expect
+    stdout "1\n2"
+    stderr ""
+    exit_code 0
+end test "function body can be a for loop compound command"
+```
+
+#### Test: function body can be an if compound command
+
+The compound-command in a function definition can be any compound command from
+2.9.4, not just a brace group. An `if` construct is a valid function body.
+
+```
+begin test "function body can be an if compound command"
+  script
+    myfunc() if true; then echo "is_if"; fi
+    myfunc
+  expect
+    stdout "is_if"
+    stderr ""
+    exit_code 0
+end test "function body can be an if compound command"
+```
+
 #### Test: function exit status is last command exit status
 
 The exit status of a function invocation is the exit status of the last
