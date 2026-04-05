@@ -107,6 +107,14 @@ requirements.
 For each test, ask:
 - Does the expected exit code match what the standard says?
 - Does the test description accurately paraphrase the standard's requirement?
+- Does the test have a proper description? Every test must have a brief,
+  plain-English explanation between the `#### Test:` heading and the code
+  block. The description should explain the intent of the test to a random
+  reader — conveniently paraphrase or summarize the relevant requirement(s)
+  rather than pasting a blockquote of the standard text. Since the verbatim
+  standard text is already provided above the `### Tests` heading,
+  blockquotes of the standard in the test description are redundant and
+  discouraged. Tests with missing or empty descriptions must be fixed.
 - If the test was written to pass on `bash --posix`, does `bash` actually
   comply with the standard here? (Check `tests/matrix/bash_compliance.md`.)
 
