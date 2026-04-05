@@ -212,6 +212,24 @@ begin test "foreground pipeline waits for last command to complete"
 end test "foreground pipeline waits for last command to complete"
 ```
 
+#### Test: background pipeline does not wait
+
+If the pipeline is in the background, the shell does not wait for it to
+complete before continuing to the next command.
+
+```
+begin test "background pipeline does not wait"
+  script
+    rm -f tmp_bg_pipeline_done.txt
+    { sleep 0.2; echo done > tmp_bg_pipeline_done.txt; } &
+    if test -f tmp_bg_pipeline_done.txt; then echo waited; else echo early; fi
+  expect
+    stdout "early"
+    stderr ""
+    exit_code 0
+end test "background pipeline does not wait"
+```
+
 #### Test: ! ( false ) succeeds with blank separation
 
 The `!` reserved word negates the exit status; when command1 is a subshell,
