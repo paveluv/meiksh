@@ -211,153 +211,14 @@ as specified by POSIX.1-2024 (Section 1.7).
 
 ### Tests
 
-#### Test: getopts retrieves options from parameter list
-
-`getopts` retrieves options and option-arguments from a list of
-parameters.
-
-```
-begin test "getopts retrieves options from parameter list"
-  script
-    $SHELL -c 'OPTIND=1; set -- -a; getopts a name; echo "$name"'
-  expect
-    stdout "a"
-    stderr ""
-    exit_code 0
-end test "getopts retrieves options from parameter list"
-```
-
-#### Test: getopts loop extracts each option in turn
-
-Repeated calls to `getopts` extract successive options.
-
-```
-begin test "getopts loop extracts each option in turn"
-  script
-    $SHELL -c 'OPTIND=1; set -- -a -b -c; result=""; while getopts abc name; do result="${result}${name}"; done; echo "$result"'
-  expect
-    stdout "abc"
-    stderr ""
-    exit_code 0
-end test "getopts loop extracts each option in turn"
-```
-
-#### Test: OPTARG set to option-argument value
-
-When an option requires an argument, OPTARG is set to the
-option-argument.
-
-```
-begin test "OPTARG set to option-argument value"
-  script
-    $SHELL -c 'OPTIND=1; set -- -f myfile; getopts f: name; echo "$OPTARG"'
-  expect
-    stdout "myfile"
-    stderr ""
-    exit_code 0
-end test "OPTARG set to option-argument value"
-```
-
-#### Test: invalid option sets name to question mark
-
-When an option character not in optstring is found, `name` is set
-to `?`.
-
-```
-begin test "invalid option sets name to question mark"
-  script
-    $SHELL -c 'OPTIND=1; set -- -z; getopts ab name 2>/dev/null; echo "$name"'
-  expect
-    stdout "[?]"
-    stderr ""
-    exit_code 0
-end test "invalid option sets name to question mark"
-```
-
-#### Test: getopts returns non-zero when options exhausted
-
-`getopts` returns a non-zero value when all options have been
-processed.
-
-```
-begin test "getopts returns non-zero when options exhausted"
-  script
-    $SHELL -c 'OPTIND=1; set -- -a; getopts a name; getopts a name; echo "$?"'
-  expect
-    stdout "[1-9].*"
-    stderr ""
-    exit_code 0
-end test "getopts returns non-zero when options exhausted"
-```
-
-#### Test: getopts sets name to option character
-
-Verifies that `getopts` stores the matched option letter in the specified shell variable. When `-a` is passed and `a` is in the optstring, `name` must be set to `a`.
-
-```
-begin test "getopts sets name to option character"
-  script
-    $SHELL -c 'OPTIND=1; getopts ab: name -a; echo "$name"'
-  expect
-    stdout "a"
-    stderr ""
-    exit_code 0
-end test "getopts sets name to option character"
-```
-
-#### Test: option with colon expects argument
-
-Verifies that when an option character is followed by a colon in the optstring, `getopts` treats it as requiring an argument and still sets `name` to the option character itself.
-
-```
-begin test "option with colon expects argument"
-  script
-    $SHELL -c 'OPTIND=1; set -- -f myfile; getopts f: name; echo "$name"'
-  expect
-    stdout "f"
-    stderr ""
-    exit_code 0
-end test "option with colon expects argument"
-```
-
-#### Test: OPTARG set to option-argument value (separate word)
-
-Verifies that when an option-argument is given as a separate word (e.g. `-f myfile.txt`), `OPTARG` is set to that argument value.
-
-```
-begin test "OPTARG set to option-argument value (separate word)"
-  script
-    $SHELL -c 'OPTIND=1; set -- -f myfile.txt; getopts f: name; echo "$OPTARG"'
-  expect
-    stdout "myfile.txt"
-    stderr ""
-    exit_code 0
-end test "OPTARG set to option-argument value (separate word)"
-```
-
-#### Test: OPTARG set to option-argument value (concatenated)
-
-Verifies that `getopts` interprets the characters immediately following an option letter as its argument when concatenated in a single word (e.g. `-fmyfile.txt`), setting `OPTARG` accordingly.
-
-```
-begin test "OPTARG set to option-argument value (concatenated)"
-  script
-    $SHELL -c 'OPTIND=1; set -- -fmyfile.txt; getopts f: name; echo "$OPTARG"'
-  expect
-    stdout "myfile.txt"
-    stderr ""
-    exit_code 0
-end test "OPTARG set to option-argument value (concatenated)"
-```
-
 #### Test: OPTIND initialized to 1
 
-Verifies that when the shell is first invoked, `OPTIND` is initialized to 1, as required by POSIX.
+When the shell starts, `OPTIND` shall be initialized to `1`.
 
 ```
 begin test "OPTIND initialized to 1"
   script
-    $SHELL -c 'echo "$OPTIND"'
+    printf '%s\n' "$OPTIND"
   expect
     stdout "1"
     stderr ""
@@ -365,419 +226,471 @@ begin test "OPTIND initialized to 1"
 end test "OPTIND initialized to 1"
 ```
 
-#### Test: OPTIND updated after first option
+#### Test: getopts parses positional parameters by default
 
-Verifies that after `getopts` successfully parses one option from a two-option list, `OPTIND` advances to 2, pointing to the next element to be processed.
+Without explicit `param` operands, `getopts` shall parse the current
+positional parameters in the current shell execution environment.
 
 ```
-begin test "OPTIND updated after first option"
+begin test "getopts parses positional parameters by default"
   script
-    $SHELL -c 'OPTIND=1; set -- -a -b; getopts ab name; echo "$OPTIND"'
+    OPTIND=1
+    set -- -a -b
+    result=
+    while getopts ab name; do
+      result="${result}${name}"
+    done
+    printf '%s\n' "$result"
   expect
-    stdout "2"
+    stdout "ab"
     stderr ""
     exit_code 0
-end test "OPTIND updated after first option"
+end test "getopts parses positional parameters by default"
 ```
 
-#### Test: OPTIND updated after two options
+#### Test: param operands override positional parameters
 
-Verifies that after `getopts` processes both options in a two-option list, `OPTIND` advances to 3, pointing past all parsed arguments.
+If `param` operands are supplied, `getopts` shall parse those operands
+instead of the shell's current positional parameters.
 
 ```
-begin test "OPTIND updated after two options"
+begin test "param operands override positional parameters"
   script
-    $SHELL -c 'OPTIND=1; set -- -a -b; getopts ab name; getopts ab name; echo "$OPTIND"'
+    set -- -a
+    OPTIND=1
+    result=
+    while getopts xy name -x -y; do
+      result="${result}${name}"
+    done
+    printf '%s:%s\n' "$result" "$OPTIND"
   expect
-    stdout "3"
+    stdout "xy:3"
     stderr ""
     exit_code 0
-end test "OPTIND updated after two options"
+end test "param operands override positional parameters"
 ```
 
-#### Test: OPTIND after option with separate argument
+#### Test: option with separate argument sets OPTARG and OPTIND
 
-Verifies that when an option takes an argument as a separate word (e.g. `-f val`), `OPTIND` advances past both the option and its argument, resulting in a value of 3.
+When an option that requires an argument is followed by a separate
+parameter, `getopts` shall set `name`, set `OPTARG` to just the argument
+text, and advance `OPTIND` past both words.
 
 ```
-begin test "OPTIND after option with separate argument"
+begin test "option with separate argument sets OPTARG and OPTIND"
   script
-    $SHELL -c 'OPTIND=1; set -- -f val; getopts f: name; echo "$OPTIND"'
+    OPTIND=1
+    set -- -f value operand
+    getopts f: name
+    status=$?
+    printf 'name=%s optarg=%s optind=%s status=%s\n' "$name" "$OPTARG" "$OPTIND" "$status"
   expect
-    stdout "3"
+    stdout "name=f optarg=value optind=3 status=0"
     stderr ""
     exit_code 0
-end test "OPTIND after option with separate argument"
+end test "option with separate argument sets OPTARG and OPTIND"
+```
+
+#### Test: option with attached argument sets OPTARG and OPTIND
+
+If an option requiring an argument is written in the same word as its
+argument, the following characters shall be treated as the argument and
+`OPTIND` shall advance to the next parameter.
+
+```
+begin test "option with attached argument sets OPTARG and OPTIND"
+  script
+    OPTIND=1
+    set -- -fvalue operand
+    getopts f: name
+    status=$?
+    printf 'name=%s optarg=%s optind=%s status=%s\n' "$name" "$OPTARG" "$OPTIND" "$status"
+  expect
+    stdout "name=f optarg=value optind=2 status=0"
+    stderr ""
+    exit_code 0
+end test "option with attached argument sets OPTARG and OPTIND"
+```
+
+#### Test: separate option-argument preserves embedded spaces
+
+When an option-argument is supplied as a separate parameter, `OPTARG`
+shall contain only the characters of that argument, including embedded
+spaces.
+
+```
+begin test "separate option-argument preserves embedded spaces"
+  script
+    OPTIND=1
+    set -- -f "a b" operand
+    getopts f: name
+    printf 'name=%s optarg=<%s> optind=%s\n' "$name" "$OPTARG" "$OPTIND"
+  expect
+    stdout "name=f optarg=<a b> optind=3"
+    stderr ""
+    exit_code 0
+end test "separate option-argument preserves embedded spaces"
+```
+
+#### Test: option without argument unsets OPTARG
+
+If the option found does not have an option-argument, `OPTARG` shall be
+unset.
+
+```
+begin test "option without argument unsets OPTARG"
+  script
+    OPTIND=1
+    OPTARG=stale
+    set -- -a
+    getopts a name
+    printf '%s\n' "${OPTARG-unset}"
+  expect
+    stdout "unset"
+    stderr ""
+    exit_code 0
+end test "option without argument unsets OPTARG"
+```
+
+#### Test: invalid option in normal mode reports diagnostic
+
+For an unknown option in normal mode, `name` shall be `?`, `OPTARG`
+shall be unset, the exit status shall remain `0`, and stderr shall
+identify both the invoking program and the offending option character.
+
+```
+begin test "invalid option in normal mode reports diagnostic"
+  script
+    tmp=$(mktemp)
+    prog=${0##*/}
+    OPTIND=1
+    set -- -z
+    getopts ab name 2>"$tmp"
+    status=$?
+    if [ "$name" = "?" ] &&
+       [ "${OPTARG+set}" != set ] &&
+       [ "$status" -eq 0 ] &&
+       grep -Fq "$prog" "$tmp" &&
+       grep -Fq "z" "$tmp"; then
+      echo ok
+    else
+      echo fail
+    fi
+    rm -f "$tmp"
+  expect
+    stdout "ok"
+    stderr ""
+    exit_code 0
+end test "invalid option in normal mode reports diagnostic"
+```
+
+#### Test: invalid option in silent mode suppresses diagnostic
+
+If `optstring` starts with `:`, an unknown option shall still return
+status `0`, but `name` shall be `?`, `OPTARG` shall contain the
+offending character, and no diagnostic shall be written to stderr.
+
+```
+begin test "invalid option in silent mode suppresses diagnostic"
+  script
+    tmp=$(mktemp)
+    OPTIND=1
+    set -- -z
+    getopts :ab name 2>"$tmp"
+    status=$?
+    printf 'name=%s optarg=%s status=%s stderr_bytes=%s\n' "$name" "$OPTARG" "$status" "$(wc -c <"$tmp")"
+    rm -f "$tmp"
+  expect
+    stdout "name=\? optarg=z status=0 stderr_bytes=0"
+    stderr ""
+    exit_code 0
+end test "invalid option in silent mode suppresses diagnostic"
+```
+
+#### Test: missing argument in normal mode reports diagnostic
+
+If a required option-argument is missing in normal mode, `name` shall be
+`?`, `OPTARG` shall be unset, the exit status shall remain `0`, and
+stderr shall identify both the invoking program and the option whose
+argument is missing.
+
+```
+begin test "missing argument in normal mode reports diagnostic"
+  script
+    tmp=$(mktemp)
+    prog=${0##*/}
+    OPTIND=1
+    set -- -f
+    getopts f: name 2>"$tmp"
+    status=$?
+    if [ "$name" = "?" ] &&
+       [ "${OPTARG+set}" != set ] &&
+       [ "$status" -eq 0 ] &&
+       grep -Fq "$prog" "$tmp" &&
+       grep -Fq "f" "$tmp"; then
+      echo ok
+    else
+      echo fail
+    fi
+    rm -f "$tmp"
+  expect
+    stdout "ok"
+    stderr ""
+    exit_code 0
+end test "missing argument in normal mode reports diagnostic"
+```
+
+#### Test: missing argument in silent mode sets colon and OPTARG
+
+If `optstring` starts with `:` and a required option-argument is
+missing, `name` shall be `:`, `OPTARG` shall be the option character,
+and no diagnostic shall be written to stderr.
+
+```
+begin test "missing argument in silent mode sets colon and OPTARG"
+  script
+    tmp=$(mktemp)
+    OPTIND=1
+    set -- -f
+    getopts :f: name 2>"$tmp"
+    status=$?
+    printf 'name=%s optarg=%s status=%s stderr_bytes=%s\n' "$name" "$OPTARG" "$status" "$(wc -c <"$tmp")"
+    rm -f "$tmp"
+  expect
+    stdout "name=: optarg=f status=0 stderr_bytes=0"
+    stderr ""
+    exit_code 0
+end test "missing argument in silent mode sets colon and OPTARG"
+```
+
+#### Test: getopts resumes parsing after invalid option
+
+After an unknown option, `OPTIND` is unspecified but shall still encode
+enough state for the next `getopts` call to resume after the option just
+parsed.
+
+```
+begin test "getopts resumes parsing after invalid option"
+  script
+    OPTIND=1
+    set -- -z -a
+    getopts ab name 2>/dev/null
+    getopts ab name 2>/dev/null
+    status=$?
+    printf 'name=%s status=%s\n' "$name" "$status"
+  expect
+    stdout "name=a status=0"
+    stderr ""
+    exit_code 0
+end test "getopts resumes parsing after invalid option"
+```
+
+#### Test: first operand ends option processing
+
+Encountering a non-option operand shall end option processing, return
+status `1`, set `name` to `?`, leave `OPTARG` unset, and leave `OPTIND`
+pointing at that operand.
+
+```
+begin test "first operand ends option processing"
+  script
+    OPTIND=1
+    OPTARG=stale
+    set -- -a operand -b
+    getopts a name
+    getopts a name
+    status=$?
+    printf 'name=%s optind=%s optarg=%s status=%s\n' "$name" "$OPTIND" "${OPTARG-unset}" "$status"
+  expect
+    stdout "name=\? optind=2 optarg=unset status=1"
+    stderr ""
+    exit_code 0
+end test "first operand ends option processing"
+```
+
+#### Test: double dash ends option processing
+
+The first `--` that is not itself an option-argument shall end option
+processing, and `OPTIND` shall point to the next operand after it.
+
+```
+begin test "double dash ends option processing"
+  script
+    OPTIND=1
+    OPTARG=stale
+    set -- -a -- operand -b
+    getopts a name
+    getopts a name
+    status=$?
+    saved_optind=$OPTIND
+    shift $((saved_optind - 1))
+    printf 'name=%s optind=%s optarg=%s status=%s first=%s\n' "$name" "$saved_optind" "${OPTARG-unset}" "$status" "$1"
+  expect
+    stdout "name=\? optind=3 optarg=unset status=1 first=operand"
+    stderr ""
+    exit_code 0
+end test "double dash ends option processing"
+```
+
+#### Test: end of options with no operands sets OPTIND past list
+
+If there are no operands after option processing ends, `getopts` shall
+return `1`, set `name` to `?`, unset `OPTARG`, and set `OPTIND` to one
+past the parameter list.
+
+```
+begin test "end of options with no operands sets OPTIND past list"
+  script
+    OPTIND=1
+    OPTARG=stale
+    set -- -a -b
+    getopts ab name
+    getopts ab name
+    getopts ab name
+    status=$?
+    printf 'name=%s optind=%s optarg=%s status=%s\n' "$name" "$OPTIND" "${OPTARG-unset}" "$status"
+  expect
+    stdout "name=\? optind=3 optarg=unset status=1"
+    stderr ""
+    exit_code 0
+end test "end of options with no operands sets OPTIND past list"
+```
+
+#### Test: empty parameter list reports end of options
+
+If the parameter list is empty, `getopts` shall immediately report end of
+options with status `1`, set `name` to `?`, leave `OPTARG` unset, and
+set `OPTIND` to `1`.
+
+```
+begin test "empty parameter list reports end of options"
+  script
+    OPTIND=1
+    OPTARG=stale
+    set --
+    getopts a name
+    status=$?
+    printf 'name=%s optind=%s optarg=%s status=%s\n' "$name" "$OPTIND" "${OPTARG-unset}" "$status"
+  expect
+    stdout "name=\? optind=1 optarg=unset status=1"
+    stderr ""
+    exit_code 0
+end test "empty parameter list reports end of options"
 ```
 
 #### Test: OPTIND and OPTARG are not exported by default
 
-Verifies that `OPTIND` and `OPTARG` are not present in the exported environment by default, as POSIX requires these variables to not be exported unless explicitly done so.
+`OPTIND` and `OPTARG` shall not be exported to child processes unless
+the application explicitly exports them.
 
 ```
 begin test "OPTIND and OPTARG are not exported by default"
   script
-    $SHELL -c 'env | grep -c "^OPTIND\|^OPTARG"; echo $?'
+    OPTIND=1
+    OPTARG=example
+    env | grep -Eq '^(OPTIND|OPTARG)='
+    printf '%s\n' "$?"
   expect
-    stdout "0\n1"
+    stdout "1"
     stderr ""
     exit_code 0
 end test "OPTIND and OPTARG are not exported by default"
 ```
 
-#### Test: invalid option sets name to ?
+#### Test: setting OPTIND to 1 allows reparsing new parameters
 
-Verifies that when an unrecognized option character is encountered (without silent mode), `name` is set to `?` and a diagnostic message is written to stderr.
+If the application resets `OPTIND` to `1`, `getopts` shall allow a new
+parameter list to be parsed in the same shell execution environment.
 
 ```
-begin test "invalid option sets name to ?"
+begin test "setting OPTIND to 1 allows reparsing new parameters"
   script
-    $SHELL -c 'OPTIND=1; set -- -z; getopts ab name; echo "$name"'
-  expect
-    stdout "\?"
-    stderr ".+"
-    exit_code 0
-end test "invalid option sets name to ?"
-```
-
-#### Test: invalid option in silent mode sets OPTARG to offending char
-
-Verifies that in silent mode (optstring begins with `:`), when an unrecognized option is encountered, `OPTARG` is set to the offending option character and no diagnostic is written to stderr.
-
-```
-begin test "invalid option in silent mode sets OPTARG to offending char"
-  script
-    $SHELL -c 'OPTIND=1; set -- -z; getopts :ab name; echo "$OPTARG"'
-  expect
-    stdout "z"
-    stderr ""
-    exit_code 0
-end test "invalid option in silent mode sets OPTARG to offending char"
-```
-
-#### Test: missing argument sets name to ?
-
-Verifies that when an option requiring an argument is given without one (non-silent mode), `name` is set to `?` and a diagnostic message is written to stderr.
-
-```
-begin test "missing argument sets name to ?"
-  script
-    $SHELL -c 'OPTIND=1; set -- -f; getopts f: name; echo "$name"'
-  expect
-    stdout "\?"
-    stderr ".+"
-    exit_code 0
-end test "missing argument sets name to ?"
-```
-
-#### Test: missing argument in silent mode sets name to colon
-
-Verifies that in silent mode (optstring begins with `:`), when a required option-argument is missing, `name` is set to `:` and `OPTARG` is set to the option character that was missing its argument.
-
-```
-begin test "missing argument in silent mode sets name to colon"
-  script
-    $SHELL -c 'OPTIND=1; set -- -f; getopts :f: name; echo "$name:$OPTARG"'
-  expect
-    stdout "::f"
-    stderr ""
-    exit_code 0
-end test "missing argument in silent mode sets name to colon"
-```
-
-#### Test: invalid option still returns exit status 0
-
-Verifies that encountering an unrecognized option is not treated as an error in `getopts` processing itself — the exit status remains 0, since the error is in how arguments were presented to the application, not in `getopts`.
-
-```
-begin test "invalid option still returns exit status 0"
-  script
-    $SHELL -c 'OPTIND=1; set -- -z; getopts ab name 2>/dev/null; echo $?'
-  expect
-    stdout "0"
-    stderr ""
-    exit_code 0
-end test "invalid option still returns exit status 0"
-```
-
-#### Test: missing argument still returns exit status 0
-
-Verifies that a missing option-argument is not a `getopts` processing error — the exit status is still 0. POSIX considers this an error in the way arguments were presented, not in `getopts` itself.
-
-```
-begin test "missing argument still returns exit status 0"
-  script
-    $SHELL -c 'OPTIND=1; set -- -f; getopts f: name 2>/dev/null; echo $?'
-  expect
-    stdout "0"
-    stderr ""
-    exit_code 0
-end test "missing argument still returns exit status 0"
-```
-
-#### Test: OPTIND reset allows reparsing
-
-Verifies that setting `OPTIND` back to 1 allows a new set of parameters to be parsed from scratch, as POSIX permits restarting option processing this way.
-
-```
-begin test "OPTIND reset allows reparsing"
-  script
-    $SHELL -c 'OPTIND=1; set -- -a -b; result=""; while getopts ab name; do result="${result}${name}"; done; OPTIND=1; set -- -x -y; while getopts xy name; do result="${result}${name}"; done; echo "$result"'
+    OPTIND=1
+    set -- -a -b
+    result=
+    while getopts ab name; do
+      result="${result}${name}"
+    done
+    OPTIND=1
+    set -- -x -y
+    while getopts xy name; do
+      result="${result}${name}"
+    done
+    printf '%s\n' "$result"
   expect
     stdout "abxy"
     stderr ""
     exit_code 0
-end test "OPTIND reset allows reparsing"
+end test "setting OPTIND to 1 allows reparsing new parameters"
 ```
 
-#### Test: -- terminates option processing
+#### Test: combined short options are parsed separately
 
-Verifies that encountering `--` in the parameter list ends option processing, so subsequent arguments (even those beginning with `-`) are treated as operands.
+Grouped single-letter options after one hyphen shall be returned one at
+a time across successive `getopts` calls.
 
 ```
-begin test "-- terminates option processing"
+begin test "combined short options are parsed separately"
   script
-    $SHELL -c 'OPTIND=1; result=""; set -- -a -- -b; while getopts ab name; do result="${result}${name}"; done; echo "$result"'
-  expect
-    stdout "a"
-    stderr ""
-    exit_code 0
-end test "-- terminates option processing"
-```
-
-#### Test: OPTIND points past -- to operand
-
-Verifies that after option processing is terminated by `--`, `OPTIND` points to the first operand following `--`, so that `shift $((OPTIND - 1))` correctly removes all options and the `--` delimiter.
-
-```
-begin test "OPTIND points past -- to operand"
-  script
-    $SHELL -c 'OPTIND=1; set -- -a -- operand; while getopts a name; do :; done; shift $((OPTIND - 1)); echo "$1"'
-  expect
-    stdout "operand"
-    stderr ""
-    exit_code 0
-end test "OPTIND points past -- to operand"
-```
-
-#### Test: getopts returns 0 on successful parse
-
-Verifies that `getopts` returns exit status 0 when it successfully finds an option in the parameter list.
-
-```
-begin test "getopts returns 0 on successful parse"
-  script
-    $SHELL -c 'OPTIND=1; set -- -a; getopts a name'
-  expect
-    stdout ""
-    stderr ""
-    exit_code 0
-end test "getopts returns 0 on successful parse"
-```
-
-#### Test: getopts returns non-zero with no options
-
-Verifies that `getopts` returns a non-zero exit status (1) when the parameter list is empty and there are no options to process, signaling end-of-options.
-
-```
-begin test "getopts returns non-zero with no options"
-  script
-    $SHELL -c 'OPTIND=1; set -- ; getopts a name'
-  expect
-    stdout ""
-    stderr ""
-    exit_code !=0
-end test "getopts returns non-zero with no options"
-```
-
-#### Test: name set to ? when options exhausted
-
-Verifies that when all options have been consumed, `getopts` sets `name` to `?` to indicate end-of-options, as required by POSIX.
-
-```
-begin test "name set to ? when options exhausted"
-  script
-    $SHELL -c 'OPTIND=1; set -- -a; getopts a name; getopts a name; echo "$name"'
-  expect
-    stdout "\?"
-    stderr ""
-    exit_code 0
-end test "name set to ? when options exhausted"
-```
-
-#### Test: unknown option in silent mode: name=? OPTARG=char
-
-Verifies the combined behavior in silent mode for an unknown option: `name` is set to `?` and `OPTARG` is set to the unrecognized option character, allowing the application to handle the error programmatically.
-
-```
-begin test "unknown option in silent mode: name=? OPTARG=char"
-  script
-    $SHELL -c 'OPTIND=1; set -- -z; getopts :ab name; echo "$name:$OPTARG"'
-  expect
-    stdout "\?:z"
-    stderr ""
-    exit_code 0
-end test "unknown option in silent mode: name=? OPTARG=char"
-```
-
-#### Test: no stderr for unknown option in silent mode
-
-Verifies that when the optstring begins with `:` (silent mode), no diagnostic message is written to stderr for an unrecognized option — the application is expected to handle the error itself.
-
-```
-begin test "no stderr for unknown option in silent mode"
-  script
-    $SHELL -c 'OPTIND=1; set -- -z; getopts :ab name' 2>&1
-  expect
-    stdout ""
-    stderr ""
-    exit_code 0
-end test "no stderr for unknown option in silent mode"
-```
-
-#### Test: missing argument in silent mode: name=: OPTARG=char
-
-Verifies the combined silent-mode behavior when a required argument is missing: `name` is set to `:` and `OPTARG` is set to the option character whose argument was absent.
-
-```
-begin test "missing argument in silent mode: name=: OPTARG=char"
-  script
-    $SHELL -c 'OPTIND=1; set -- -f; getopts :f: name; echo "$name:$OPTARG"'
-  expect
-    stdout "::f"
-    stderr ""
-    exit_code 0
-end test "missing argument in silent mode: name=: OPTARG=char"
-```
-
-#### Test: no stderr for missing argument in silent mode
-
-Verifies that in silent mode, no diagnostic message is written to stderr when a required option-argument is missing. Silent mode suppresses all stderr diagnostics from `getopts`.
-
-```
-begin test "no stderr for missing argument in silent mode"
-  script
-    $SHELL -c 'OPTIND=1; set -- -f; getopts :f: name' 2>&1
-  expect
-    stdout ""
-    stderr ""
-    exit_code 0
-end test "no stderr for missing argument in silent mode"
-```
-
-#### Test: diagnostic message written to stderr for unknown option
-
-Verifies that in normal (non-silent) mode, `getopts` writes a diagnostic message to stderr when an option character not in the optstring is encountered.
-
-```
-begin test "diagnostic message written to stderr for unknown option"
-  script
-    $SHELL -c 'OPTIND=1; set -- -z; getopts ab name'
-  expect
-    stdout ""
-    stderr ".+"
-    exit_code 0
-end test "diagnostic message written to stderr for unknown option"
-```
-
-#### Test: diagnostic message written to stderr for missing argument
-
-Verifies that in normal (non-silent) mode, `getopts` writes a diagnostic message to stderr when an option that requires an argument is given without one.
-
-```
-begin test "diagnostic message written to stderr for missing argument"
-  script
-    $SHELL -c 'OPTIND=1; set -- -f; getopts f: name'
-  expect
-    stdout ""
-    stderr ".+"
-    exit_code 0
-end test "diagnostic message written to stderr for missing argument"
-```
-
-#### Test: OPTIND=1 reset parses new parameters
-
-Verifies that assigning `OPTIND=1` between two separate `getopts` invocations with different positional parameters allows each set to be parsed independently.
-
-```
-begin test "OPTIND=1 reset parses new parameters"
-  script
-    $SHELL -c 'OPTIND=1; set -- -x; getopts x name; r1="$name"; OPTIND=1; set -- -y; getopts y name; r2="$name"; echo "${r1}:${r2}"'
-  expect
-    stdout "x:y"
-    stderr ""
-    exit_code 0
-end test "OPTIND=1 reset parses new parameters"
-```
-
-#### Test: combined options after single hyphen
-
-Verifies that multiple option characters grouped after a single hyphen (e.g. `-abc`) are each parsed individually by successive `getopts` calls, per Utility Syntax Guideline 5.
-
-```
-begin test "combined options after single hyphen"
-  script
-    $SHELL -c 'OPTIND=1; result=""; set -- -abc; while getopts abc name; do result="${result}${name}"; done; echo "$result"'
+    OPTIND=1
+    set -- -abc
+    result=
+    while getopts abc name; do
+      result="${result}${name}"
+    done
+    printf '%s\n' "$result"
   expect
     stdout "abc"
     stderr ""
     exit_code 0
-end test "combined options after single hyphen"
+end test "combined short options are parsed separately"
 ```
 
-#### Test: combined options where last takes argument
+#### Test: grouped options may end with option requiring argument
 
-Verifies that when options are grouped and the last one requires an argument (e.g. `-abf file.txt`), all preceding options are parsed normally and the final option receives its argument from the next word.
+When grouped options end with one that requires an argument, earlier
+options shall still be parsed normally and the final option shall consume
+its argument.
 
 ```
-begin test "combined options where last takes argument"
+begin test "grouped options may end with option requiring argument"
   script
-    $SHELL -c 'OPTIND=1; result=""; arg=""; set -- -abf file.txt; while getopts abf: name; do result="${result}${name}"; if [ "$name" = "f" ]; then arg="$OPTARG"; fi; done; echo "${result}:${arg}"'
+    OPTIND=1
+    set -- -abf file.txt
+    result=
+    arg=
+    while getopts abf: name; do
+      result="${result}${name}"
+      if [ "$name" = "f" ]; then
+        arg=$OPTARG
+      fi
+    done
+    printf '%s:%s\n' "$result" "$arg"
   expect
     stdout "abf:file.txt"
     stderr ""
     exit_code 0
-end test "combined options where last takes argument"
-```
-
-#### Test: OPTARG unset for options without arguments
-
-Verifies that `OPTARG` is unset after parsing an option that does not take an argument, even if `OPTARG` previously held a value.
-
-```
-begin test "OPTARG unset for options without arguments"
-  script
-    $SHELL -c 'OPTIND=1; OPTARG="stale"; set -- -a; getopts a name; echo "${OPTARG:-UNSET}"'
-  expect
-    stdout "UNSET"
-    stderr ""
-    exit_code 0
-end test "OPTARG unset for options without arguments"
-```
-
-#### Test: getopts uses positional parameters by default
-
-Verifies that when no `param` operands are given, `getopts` parses the current positional parameters (`"$@"`) by default.
-
-```
-begin test "getopts uses positional parameters by default"
-  script
-    $SHELL -c 'set -- -a -b; OPTIND=1; result=""; while getopts ab name; do result="${result}${name}"; done; echo "$result"'
-  expect
-    stdout "ab"
-    stderr ""
-    exit_code 0
-end test "getopts uses positional parameters by default"
+end test "grouped options may end with option requiring argument"
 ```
 
 #### Test: getopts uses function positional parameters
 
-Verifies that inside a shell function, `getopts` operates on the function's own positional parameters rather than the script-level ones.
+Inside a shell function, `getopts` shall parse that function's current
+positional parameters by default.
 
 ```
 begin test "getopts uses function positional parameters"
   script
-    $SHELL -c 'f() { OPTIND=1; result=""; while getopts xy name; do result="${result}${name}"; done; echo "$result"; }; f -x -y'
+    f() {
+      OPTIND=1
+      result=
+      while getopts xy name; do
+        result="${result}${name}"
+      done
+      printf '%s\n' "$result"
+    }
+    set -- -a
+    f -x -y
   expect
     stdout "xy"
     stderr ""
@@ -785,135 +698,82 @@ begin test "getopts uses function positional parameters"
 end test "getopts uses function positional parameters"
 ```
 
-#### Test: param operands override positional parameters
+#### Test: explicit null option-argument as separate parameter is preserved
 
-Verifies that when explicit `param` operands are supplied after `name` on the `getopts` command line, they are parsed instead of the current positional parameters.
+An explicit null string supplied as a separate option-argument shall be
+accepted as the option-argument value.
 
 ```
-begin test "param operands override positional parameters"
+begin test "explicit null option-argument as separate parameter is preserved"
   script
-    $SHELL -c 'set -- -a; OPTIND=1; getopts x name -x; echo "$name"'
+    OPTIND=1
+    set -- -f ""
+    getopts f: name
+    printf 'name=%s optarg=<%s>\n' "$name" "$OPTARG"
   expect
-    stdout "x"
+    stdout "name=f optarg=<>"
     stderr ""
     exit_code 0
-end test "param operands override positional parameters"
+end test "explicit null option-argument as separate parameter is preserved"
 ```
 
-#### Test: non-option argument stops parsing
+#### Test: readonly name variable causes processing error
 
-Verifies that encountering a parameter that does not begin with `-` (and is not an option-argument) terminates option processing, even if further option-like arguments follow.
+If `getopts` cannot assign to the variable named by `name`, that is a
+`getopts` processing error and shall produce a return value greater than
+`1`.
 
 ```
-begin test "non-option argument stops parsing"
+begin test "readonly name variable causes processing error"
   script
-    $SHELL -c 'OPTIND=1; result=""; set -- -a operand -b; while getopts ab name; do result="${result}${name}"; done; echo "$result"'
+    OPTIND=1
+    readonly name
+    set -- -a
+    getopts a name 2>/dev/null
   expect
-    stdout "a"
+    stdout ""
     stderr ""
-    exit_code 0
-end test "non-option argument stops parsing"
+    exit_code >1
+end test "readonly name variable causes processing error"
 ```
 
-#### Test: explicit null option-argument as separate word
+#### Test: readonly OPTIND causes processing error
 
-Verifies that an explicit null string (`""`) supplied as a separate argument is accepted as a valid option-argument, with `OPTARG` set to the empty string.
+If `getopts` cannot update `OPTIND`, that is also a processing error and
+shall produce a return value greater than `1`. This test asserts the
+POSIX requirement directly; `bash --posix` currently returns `0` here.
 
 ```
-begin test "explicit null option-argument as separate word"
+begin test "readonly OPTIND causes processing error"
   script
-    $SHELL -c 'OPTIND=1; set -- -f ""; getopts f: name; echo "name=$name OPTARG=<$OPTARG>"'
+    OPTIND=1
+    readonly OPTIND
+    set -- -a
+    getopts a name 2>/dev/null
   expect
-    stdout "name=f OPTARG=<>"
+    stdout ""
     stderr ""
-    exit_code 0
-end test "explicit null option-argument as separate word"
+    exit_code >1
+end test "readonly OPTIND causes processing error"
 ```
 
-#### Test: readonly name variable causes return value greater than one
+#### Test: readonly OPTARG causes processing error
 
-Verifies that if the `name` variable is marked readonly, `getopts` cannot assign to it and treats this as a processing error, returning an exit status greater than one.
+If `getopts` cannot assign `OPTARG` for an option that requires an
+argument, that too shall be a processing error with a return value
+greater than `1`. This test asserts the POSIX requirement directly;
+`bash --posix` currently returns `0` here.
 
 ```
-begin test "readonly name variable causes return value greater than one"
+begin test "readonly OPTARG causes processing error"
   script
-    $SHELL -c 'OPTIND=1; readonly name; set -- -a; getopts a name 2>/dev/null; echo $?'
+    OPTIND=1
+    readonly OPTARG
+    set -- -f value
+    getopts f: name 2>/dev/null
   expect
-    stdout "[2-9][0-9]*"
+    stdout ""
     stderr ""
-    exit_code 0
-end test "readonly name variable causes return value greater than one"
-```
-
-#### Test: OPTIND set to 1 + count when no operands remain
-
-Verifies that when all parameters are options and none are operands, `OPTIND` is set to `$# + 1` (one past the last parameter) after options are exhausted.
-
-```
-begin test "OPTIND set to 1 + count when no operands remain"
-  script
-    $SHELL -c 'OPTIND=1; set -- -a -b; while getopts ab name; do :; done; echo "$OPTIND"'
-  expect
-    stdout "3"
-    stderr ""
-    exit_code 0
-end test "OPTIND set to 1 + count when no operands remain"
-```
-
-#### Test: getopts basic option parsing
-
-Verifies the core `getopts` loop: parsing `-a` (no argument), then `-b foo` (option with required argument via `b:` in optstring), then detecting end-of-options. OPTIND advances correctly to point past the consumed arguments.
-
-```
-begin test "getopts basic option parsing"
-  script
-    set -- -a -b foo bar
-    getopts "ab:" opt
-    echo "$opt"
-    getopts "ab:" opt
-    echo "$opt $OPTARG"
-    getopts "ab:" opt
-    echo "$?"
-    echo "$OPTIND"
-  expect
-    stdout "a\nb foo\n1\n4"
-    stderr ""
-    exit_code 0
-end test "getopts basic option parsing"
-```
-
-#### Test: getopts silent mode error handling
-
-When optstring begins with `:` (silent mode), `getopts` suppresses its own error messages. For an unrecognized option, `name` is set to `?` and OPTARG to the offending character. For a missing option-argument, `name` is set to `:` and OPTARG to the option character.
-
-```
-begin test "getopts silent mode error handling"
-  script
-    set -- -x -b
-    getopts ":ab:" opt
-    echo "$opt $OPTARG"
-    getopts ":ab:" opt
-    echo "$opt $OPTARG"
-  expect
-    stdout "\? x\n: b"
-    stderr ""
-    exit_code 0
-end test "getopts silent mode error handling"
-```
-
-#### Test: getopts verbose mode missing option-argument
-
-In verbose mode (no leading `:` in optstring), when an option that requires an argument is given without one, `getopts` sets `name` to `?` and OPTARG is unset. A diagnostic message is written to stderr.
-
-```
-begin test "getopts verbose mode missing option-argument"
-  script
-    set -- -b
-    getopts "ab:" opt 2>/dev/null
-    echo "$opt ${OPTARG:-unset}"
-  expect
-    stdout "\? unset"
-    stderr ""
-    exit_code 0
-end test "getopts verbose mode missing option-argument"
+    exit_code >1
+end test "readonly OPTARG causes processing error"
 ```

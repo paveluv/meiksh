@@ -142,4 +142,105 @@ Observed:
 
 ---
 
+## 5) non-ignored traps are not reset to default in subshell environments
+
+**POSIX passage (exact quote)**  
+From `docs/posix/md/utilities/V3_chap02.md`:
+
+> "A subshell environment shall be created as a duplicate of the shell environment, except that:
+>
+> - Unless specified otherwise (see [trap](#tag_19_29)), traps that are not being ignored shall be set to the default action."
+
+**Why this is non-compliant**  
+Bash `--posix` preserves a caught trap in a parenthesized subshell instead of
+resetting it to the default action.
+
+**Reproduction (portable shell commands)**
+
+```sh
+/usr/bin/bash --posix -c 'trap "echo parent" USR1; (trap -p USR1; echo end)'
+```
+
+Expected:
+- no `trap -p USR1` output from the subshell
+- output is just `end`
+
+Observed:
+- the subshell still reports the inherited trap, e.g. `trap -- 'echo parent' USR1`
+- output includes that trap line before `end`
+
+---
+
+## 6) `getopts` does not treat readonly `OPTIND` as a processing error
+
+**POSIX passage (exact quote)**  
+From `docs/posix/md/utilities/getopts.md`:
+
+> "The shell variables *OPTIND* and *OPTARG* shall not be exported by default. An error in setting any of these variables (such as if *name* has previously been marked *readonly*) shall be considered an error of *getopts* processing, and shall result in a return value greater than one."
+
+**Why this is non-compliant**  
+When `OPTIND` is marked readonly, bash `--posix` still returns success (`0`)
+and reports a parsed option, even though `getopts` could not update `OPTIND`
+as required.
+
+**Reproduction (portable shell commands)**
+
+On a generic POSIX system with bash installed in `PATH`:
+
+```sh
+bash --posix -c '
+  OPTIND=1
+  readonly OPTIND
+  set -- -a
+  getopts a name 2>/dev/null
+  printf "exit=%s name=%s OPTIND=%s\n" "$?" "$name" "$OPTIND"
+'
+```
+
+Expected:
+- `getopts` detects a processing error because it cannot set `OPTIND`
+- exit status is greater than `1`
+
+Observed:
+- `exit=0 name=a OPTIND=1`
+- `getopts` reports success even though `OPTIND` remained unchanged
+
+---
+
+## 7) `getopts` does not treat readonly `OPTARG` as a processing error
+
+**POSIX passage (exact quote)**  
+From `docs/posix/md/utilities/getopts.md`:
+
+> "The shell variables *OPTIND* and *OPTARG* shall not be exported by default. An error in setting any of these variables (such as if *name* has previously been marked *readonly*) shall be considered an error of *getopts* processing, and shall result in a return value greater than one."
+
+**Why this is non-compliant**  
+When `OPTARG` is marked readonly and an option requiring an argument is
+parsed, bash `--posix` still returns success (`0`) instead of reporting a
+`getopts` processing error.
+
+**Reproduction (portable shell commands)**
+
+On a generic POSIX system with bash installed in `PATH`:
+
+```sh
+bash --posix -c '
+  OPTIND=1
+  readonly OPTARG
+  set -- -f value
+  getopts f: name 2>/dev/null
+  printf "exit=%s name=%s OPTARG=%s\n" "$?" "$name" "${OPTARG-unset}"
+'
+```
+
+Expected:
+- `getopts` detects a processing error because it cannot assign `OPTARG`
+- exit status is greater than `1`
+
+Observed:
+- `exit=0 name=f OPTARG=unset`
+- `getopts` reports success even though it failed to set `OPTARG`
+
+---
+
 This file is intentionally strict: only independently reproducible, standards-backed bash deviations are included.
