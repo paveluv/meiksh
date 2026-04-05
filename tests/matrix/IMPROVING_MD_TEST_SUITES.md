@@ -96,6 +96,25 @@ Ignore:
 - Statements that are untestable (e.g. "the order is unspecified").
 - Informational notes (text after "**Note:**").
 
+### Step 1b: Verify existing tests match the standard
+
+Review every existing test in the suite and confirm that its assertions reflect
+the behavior required by the POSIX standard — not merely the behavior of
+`bash --posix` or any other specific implementation. Migrated tests are
+especially prone to encoding implementation quirks rather than normative
+requirements.
+
+For each test, ask:
+- Does the expected exit code match what the standard says?
+- Does the test description accurately paraphrase the standard's requirement?
+- If the test was written to pass on `bash --posix`, does `bash` actually
+  comply with the standard here? (Check `tests/matrix/bash_compliance.md`.)
+
+When a test encodes non-standard behavior, fix it to assert what the standard
+requires. If `bash --posix` deviates, the test will fail against bash — that
+is correct and expected; document the deviation in the test description and
+in `bash_compliance.md`.
+
 ### Step 2: Write new tests to fill gaps
 
 For each gap, write a test that:

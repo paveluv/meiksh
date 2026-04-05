@@ -214,3 +214,20 @@ begin test "exec of nonexistent command causes non-interactive shell to exit"
     exit_code !=0
 end test "exec of nonexistent command causes non-interactive shell to exit"
 ```
+
+#### Test: exec with no utility returns 0
+
+When `exec` is invoked with no command or arguments (only
+redirections or nothing), the shell continues execution and the
+exit status is 0.
+
+```
+begin test "exec with no utility returns 0"
+  script
+    exec
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "exec with no utility returns 0"
+```

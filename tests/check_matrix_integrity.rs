@@ -448,6 +448,10 @@ struct MdCitation {
     line_num: usize,
 }
 
+fn is_citation_heading(name: &str) -> bool {
+    name.chars().next().map_or(false, |c| c.is_ascii_digit()) || name.starts_with("utility: ")
+}
+
 fn extract_md_citations(content: &str) -> Vec<MdCitation> {
     let lines: Vec<&str> = content.lines().collect();
     let mut citations = Vec::new();
@@ -459,7 +463,7 @@ fn extract_md_citations(content: &str) -> Vec<MdCitation> {
             continue;
         }
         let section_name = line[3..].trim().to_string();
-        if !section_name.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+        if !is_citation_heading(&section_name) {
             i += 1;
             continue;
         }
@@ -612,6 +616,62 @@ fn extract_utility_pages(lines: &[&str], sections: &mut Vec<SourceSection>) -> V
     parent_sections
 }
 
+/// Extract a utility page from a standalone utility file (e.g. `alias.md`).
+///
+/// The file starts with `# <name>`, then `#### NAME`, `> <name> — <desc>`, etc.
+/// We extract from `#### NAME` to `*End of informative text.*` and emit a
+/// SourceSection named `utility: <name>`.
+///
+/// If `filename_stem` differs from the parsed utility name (e.g. `[.md` whose
+/// NAME line says `test`), an additional section with the filename-based name
+/// is emitted so that citations using either name resolve correctly.
+fn extract_standalone_utility_page(
+    content: &str,
+    sections: &mut Vec<SourceSection>,
+    filename_stem: Option<&str>,
+) {
+    let lines: Vec<&str> = content.lines().collect();
+    let name_idx = match lines.iter().position(|l| *l == "#### NAME") {
+        Some(i) => i,
+        None => return,
+    };
+    let desc_idx = name_idx + 2;
+    if desc_idx >= lines.len() {
+        return;
+    }
+    let util_name = match parse_utility_desc(lines[desc_idx]) {
+        Some(n) => n,
+        None => return,
+    };
+    let end_marker = "*End of informative text.*";
+    let end_idx = (name_idx..lines.len())
+        .find(|&i| lines[i] == end_marker)
+        .map(|i| i + 1)
+        .unwrap_or(lines.len());
+
+    let mut body: Vec<String> = lines[name_idx..end_idx]
+        .iter()
+        .map(|l| l.to_string())
+        .collect();
+    while body.last().map_or(false, |l| l.is_empty()) {
+        body.pop();
+    }
+
+    sections.push(SourceSection {
+        name: format!("utility: {util_name}"),
+        body_lines: body.clone(),
+    });
+
+    if let Some(stem) = filename_stem {
+        if stem != util_name {
+            sections.push(SourceSection {
+                name: format!("utility: {stem}"),
+                body_lines: body,
+            });
+        }
+    }
+}
+
 /// Parse `> name — description` into the utility name.
 fn parse_utility_desc(line: &str) -> Option<String> {
     let stripped = line.strip_prefix("> ")?;
@@ -678,19 +738,38 @@ fn check_md_citations(md_files: &[PathBuf], md_root: &Path) -> (Vec<String>, usi
         }
 
         for citation in &citations {
-            let source_path = match source_file_for_section(&citation.section_name, md_root) {
-                Some(p) => p,
-                None => {
-                    errors.push(format!(
-                        "{filename}: line {}: cannot determine source file for section {:?}",
-                        citation.line_num, citation.section_name
-                    ));
-                    continue;
-                }
-            };
+            let (source_path, source_section_name) =
+                if let Some(util_name) = citation.section_name.strip_prefix("utility: ") {
+                    let p = md_root.join("utilities").join(format!("{util_name}.md"));
+                    (p, citation.section_name.clone())
+                } else {
+                    match source_file_for_section(&citation.section_name, md_root) {
+                        Some(p) => (p, citation.section_name.clone()),
+                        None => {
+                            errors.push(format!(
+                                "{filename}: line {}: cannot determine source file for section {:?}",
+                                citation.line_num, citation.section_name
+                            ));
+                            continue;
+                        }
+                    }
+                };
+            let source_path_for_stem = source_path.clone();
             let source_sections = source_cache.entry(source_path.clone()).or_insert_with(|| {
-                match fs::read_to_string(&source_path) {
-                    Ok(c) => extract_source_sections(&c),
+                match fs::read_to_string(&source_path_for_stem) {
+                    Ok(c) => {
+                        let mut secs = extract_source_sections(&c);
+                        let stem = source_path_for_stem
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .map(|s| s.to_string());
+                        extract_standalone_utility_page(
+                            &c,
+                            &mut secs,
+                            stem.as_deref(),
+                        );
+                        secs
+                    }
                     Err(e) => {
                         errors.push(format!(
                             "{filename}: cannot read source {}: {e}",
@@ -702,7 +781,7 @@ fn check_md_citations(md_files: &[PathBuf], md_root: &Path) -> (Vec<String>, usi
             });
             let source = match source_sections
                 .iter()
-                .find(|s| s.name == citation.section_name)
+                .find(|s| s.name == source_section_name)
             {
                 Some(s) => s,
                 None => {

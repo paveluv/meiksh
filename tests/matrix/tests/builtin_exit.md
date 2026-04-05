@@ -219,3 +219,20 @@ begin test "EXIT trap fires on normal exit"
     exit_code 0
 end test "EXIT trap fires on normal exit"
 ```
+
+#### Test: exit with value 200
+
+The `exit` utility accepts values outside the 0-125 range. A value
+of 200 is passed through as the subshell's exit status.
+
+```
+begin test "exit with value 200"
+  script
+    (exit 200)
+    echo $?
+  expect
+    stdout "200"
+    stderr ""
+    exit_code 0
+end test "exit with value 200"
+```

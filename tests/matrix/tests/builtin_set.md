@@ -413,3 +413,341 @@ begin test "options default to off (-e is off)"
     exit_code 0
 end test "options default to off (-e is off)"
 ```
+
+#### Test: set output is suitable for reinput with quoting
+
+The output of `set` (listing variables) is formatted so it can be
+used as shell input to recreate the same variable assignments, even
+when values contain spaces and quotes.
+
+```
+begin test "set output is suitable for reinput with quoting"
+  script
+    my_weird_var="space and literal and \"quotes\""
+    output=$(set | grep "^my_weird_var=")
+    unset my_weird_var
+    eval "$output"
+    echo "$my_weird_var"
+  expect
+    stdout "space and literal and ""quotes"""
+    stderr ""
+    exit_code 0
+end test "set output is suitable for reinput with quoting"
+```
+
+#### Test: set -a causes variables to be auto-exported
+
+The `-a` (allexport) option causes all subsequent variable
+assignments to be automatically exported to the environment.
+
+```
+begin test "set -a causes variables to be auto-exported"
+  script
+    set -a
+    auto_exported="yes"
+    env | grep -q "^auto_exported=yes$" && echo "exported"
+  expect
+    stdout "exported"
+    stderr ""
+    exit_code 0
+end test "set -a causes variables to be auto-exported"
+```
+
+#### Test: set -b is accepted without error
+
+The `-b` (notify) option causes the shell to report background
+job completions immediately. Setting and unsetting it must succeed.
+
+```
+begin test "set -b is accepted without error"
+  script
+    set -b
+    set +b
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "set -b is accepted without error"
+```
+
+#### Test: noclobber prevents overwrite with >
+
+When the `-C` (noclobber) option is set, redirection with `>`
+shall fail if the target file already exists.
+
+```
+begin test "noclobber prevents overwrite with >"
+  script
+    _f=_noclobber_test
+    echo original > $_f
+    set -C
+    echo overwritten > $_f 2>/dev/null
+    cat $_f
+  expect
+    stdout "original"
+    stderr ".+"
+    exit_code 0
+end test "noclobber prevents overwrite with >"
+```
+
+#### Test: >| overrides noclobber
+
+The `>|` operator forces output redirection even when the
+noclobber option is set.
+
+```
+begin test ">| overrides noclobber"
+  script
+    _f=_noclobber_test2
+    echo original > $_f
+    set -C
+    echo forced >| $_f
+    cat $_f
+  expect
+    stdout "forced"
+    stderr ""
+    exit_code 0
+end test ">| overrides noclobber"
+```
+
+#### Test: errexit exits on command failure
+
+The `-e` (errexit) option causes the shell to exit immediately
+when a simple command fails (returns non-zero).
+
+```
+begin test "errexit exits on command failure"
+  script
+    set -e
+    echo "start"
+    false
+    echo "should not run"
+  expect
+    stdout "start"
+    stderr ""
+    exit_code !=0
+end test "errexit exits on command failure"
+```
+
+#### Test: errexit ignores failures in if/while/until and AND-OR lists
+
+With `-e` set, commands that are part of the condition in `if`,
+`while`, `until`, or AND-OR lists do not cause the shell to exit
+on failure.
+
+```
+begin test "errexit ignores failures in if/while/until and AND-OR lists"
+  script
+    set -e
+    if false; then
+      echo "no"
+    fi
+    false || true
+    true && false || true
+    while false; do
+      echo "no"
+    done
+    echo "survived"
+  expect
+    stdout "survived"
+    stderr ""
+    exit_code 0
+end test "errexit ignores failures in if/while/until and AND-OR lists"
+```
+
+#### Test: errexit does not exit on ! pipeline
+
+The `!` reserved word negates the exit status of a pipeline. With
+`-e` set, `! false` succeeds and the shell does not exit.
+
+```
+begin test "errexit does not exit on ! pipeline"
+  script
+    set -e
+    ! false
+    echo "survived_not"
+  expect
+    stdout "survived_not"
+    stderr ""
+    exit_code 0
+end test "errexit does not exit on ! pipeline"
+```
+
+#### Test: errexit triggers on pipeline failure (last command)
+
+With `-e` set, the exit status of a pipeline is the exit status
+of the last command; if it fails, the shell exits.
+
+```
+begin test "errexit triggers on pipeline failure (last command)"
+  script
+    set -e
+    echo ok | false
+    echo should_not_appear
+  expect
+    stdout "(.|\n)*"
+    stderr ""
+    exit_code !=0
+end test "errexit triggers on pipeline failure (last command)"
+```
+
+#### Test: set -f disables pathname expansion
+
+The `-f` (noglob) option disables pathname expansion, so pattern
+characters are treated literally.
+
+```
+begin test "set -f disables pathname expansion"
+  script
+    set -f
+    touch tmp_set_f.txt
+    echo tmp_set_*.txt
+  expect
+    stdout "tmp_set_\*.txt"
+    stderr ""
+    exit_code 0
+end test "set -f disables pathname expansion"
+```
+
+#### Test: set -m is accepted without error
+
+The `-m` (monitor) option enables job control. Setting it must
+not produce an error.
+
+```
+begin test "set -m is accepted without error"
+  script
+    set -m 2>/dev/null
+    true
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "set -m is accepted without error"
+```
+
+#### Test: set -n suppresses command execution
+
+The `-n` (noexec) option causes the shell to read commands but
+not execute them. No output is produced from commands in the
+script.
+
+```
+begin test "set -n suppresses command execution"
+  script
+    set -n
+    echo "should not run"
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "set -n suppresses command execution"
+```
+
+#### Test: nounset exits on unset variable expansion
+
+The `-u` (nounset) option causes the shell to write a diagnostic
+message and exit when an unset variable is expanded.
+
+```
+begin test "nounset exits on unset variable expansion"
+  script
+    set -u
+    echo "start"
+    echo "${this_var_is_definitely_unset}"
+    echo "should not run"
+  expect
+    stdout "start"
+    stderr ".+"
+    exit_code !=0
+end test "nounset exits on unset variable expansion"
+```
+
+#### Test: nounset does not trigger on $@ and $*
+
+With `-u` set, expanding `$@` or `$*` when there are no
+positional parameters is not an error.
+
+```
+begin test "nounset does not trigger on $@ and $*"
+  script
+    set -u
+    for i in "$@"; do
+      echo $i
+    done
+    echo "survived"
+  expect
+    stdout "survived"
+    stderr ""
+    exit_code 0
+end test "nounset does not trigger on $@ and $*"
+```
+
+#### Test: set -v echoes input to stderr
+
+The `-v` (verbose) option causes the shell to write each input
+line to standard error as it is read.
+
+```
+begin test "set -v echoes input to stderr"
+  script
+    set -v
+    echo "testing_verbose"
+  expect
+    stdout "(.|\n)*"
+    stderr "(.|\n)*echo.*testing_verbose(.|\n)*"
+    exit_code 0
+end test "set -v echoes input to stderr"
+```
+
+#### Test: set -x traces expanded commands to stderr
+
+The `-x` (xtrace) option causes the shell to write each command
+and its arguments to standard error after expansion.
+
+```
+begin test "set -x traces expanded commands to stderr"
+  script
+    set -x
+    echo "testing_xtrace"
+  expect
+    stdout "(.|\n)*"
+    stderr "(.|\n)*echo testing_xtrace(.|\n)*"
+    exit_code 0
+end test "set -x traces expanded commands to stderr"
+```
+
+#### Test: set -o succeeds
+
+`set -o` without an option-argument writes the current setting of
+all options to standard output.
+
+```
+begin test "set -o succeeds"
+  script
+    set -o 2>/dev/null
+    true
+  expect
+    stdout "(.|\n)*"
+    stderr ""
+    exit_code 0
+end test "set -o succeeds"
+```
+
+#### Test: set -o allexport exports all assignments
+
+The `allexport` option (equivalent to `-a`) causes all subsequent
+variable assignments to be marked for export.
+
+```
+begin test "set -o allexport exports all assignments"
+  script
+    set -o allexport
+    ALLEXP_VAR=allexp_val
+    env | grep ALLEXP_VAR
+  expect
+    stdout ".*ALLEXP_VAR=allexp_val.*"
+    stderr ""
+    exit_code 0
+end test "set -o allexport exports all assignments"
+```

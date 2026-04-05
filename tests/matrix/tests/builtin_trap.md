@@ -352,3 +352,191 @@ begin test "subshell inherits trap list before entry"
     exit_code 0
 end test "subshell inherits trap list before entry"
 ```
+
+#### Test: EXIT trap sees latest environment
+
+When an EXIT trap fires, it sees the current values of variables,
+including any changes made after the trap was set.
+
+```
+begin test "EXIT trap sees latest environment"
+  script
+    MYVAL=hello
+    trap 'echo $MYVAL' EXIT
+    MYVAL=world
+  expect
+    stdout "world"
+    stderr ""
+    exit_code 0
+end test "EXIT trap sees latest environment"
+```
+
+#### Test: trap persists across commands
+
+A trap, once set, remains in effect across subsequent commands
+until explicitly reset.
+
+```
+begin test "trap persists across commands"
+  script
+    trap "echo still_set" EXIT
+    echo "first_command"
+    echo "second_command"
+  expect
+    stdout "first_command\nsecond_command\nstill_set"
+    stderr ""
+    exit_code 0
+end test "trap persists across commands"
+```
+
+#### Test: trap -p shows trap -- format
+
+`trap -p` displays the trap action in a format suitable for
+reinput, using the `trap --` prefix.
+
+```
+begin test "trap -p shows trap -- format"
+  script
+    trap "echo caught" INT
+    trap -p INT
+  expect
+    stdout "trap -- .*INT.*"
+    stderr ""
+    exit_code 0
+end test "trap -p shows trap -- format"
+```
+
+#### Test: trap -p lists all traps
+
+When given no condition arguments, `trap -p` lists all active
+traps.
+
+```
+begin test "trap -p lists all traps"
+  script
+    trap "echo a" INT
+    trap "echo b" TERM
+    trap -p
+  expect
+    stdout "(.|\n)*trap -- .*INT(.|\n)*trap -- .*TERM(.|\n)*"
+    stderr ""
+    exit_code 0
+end test "trap -p lists all traps"
+```
+
+#### Test: EXIT trap fires on exit
+
+An EXIT trap fires when the shell terminates via the `exit`
+command.
+
+```
+begin test "EXIT trap fires on exit"
+  script
+    trap "echo trapped_exit" EXIT
+    exit 0
+  expect
+    stdout "trapped_exit"
+    stderr ""
+    exit_code 0
+end test "EXIT trap fires on exit"
+```
+
+#### Test: trap - resets EXIT trap
+
+Setting the action to `-` for EXIT resets it to the default
+(no action), so no trap fires on exit.
+
+```
+begin test "trap - resets EXIT trap"
+  script
+    trap "echo bad" EXIT
+    trap - EXIT
+    exit 0
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "trap - resets EXIT trap"
+```
+
+#### Test: trap with valid signal returns zero
+
+Setting a trap on a valid signal name succeeds with exit status 0.
+
+```
+begin test "trap with valid signal returns zero"
+  script
+    trap "" INT
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "trap with valid signal returns zero"
+```
+
+#### Test: trap with invalid signal returns non-zero
+
+Setting a trap on an invalid signal name produces an error and
+the exit status of the trap command is non-zero.
+
+```
+begin test "trap with invalid signal returns non-zero"
+  script
+    trap "" INVALID_SIGNAL_NAME_XYZ 2>/dev/null
+    echo "rc=$?"
+  expect
+    stdout "rc=[1-9][0-9]*"
+    stderr ""
+    exit_code 0
+end test "trap with invalid signal returns non-zero"
+```
+
+#### Test: shell survives invalid signal name
+
+An invalid signal name in a `trap` command produces a diagnostic
+but does not cause the shell to abort.
+
+```
+begin test "shell survives invalid signal name"
+  script
+    trap "" INVALID_SIGNAL_NAME_XYZ 2>/dev/null
+    echo survived
+  expect
+    stdout "survived"
+    stderr ""
+    exit_code 0
+end test "shell survives invalid signal name"
+```
+
+#### Test: trap with invalid signal produces diagnostic
+
+When an invalid signal name is given, a diagnostic message is
+written to standard error.
+
+```
+begin test "trap with invalid signal produces diagnostic"
+  script
+    trap "" NOSUCHSIGNAL 2>&1 || true
+  expect
+    stdout "(.|\n)*"
+    stderr ""
+    exit_code 0
+end test "trap with invalid signal produces diagnostic"
+```
+
+#### Test: EXIT trap fires before shell terminates
+
+The EXIT trap action is executed immediately before the shell
+terminates.
+
+```
+begin test "EXIT trap fires before shell terminates"
+  script
+    trap "echo exit_action" EXIT
+    exit 0
+  expect
+    stdout "exit_action"
+    stderr ""
+    exit_code 0
+end test "EXIT trap fires before shell terminates"
+```
