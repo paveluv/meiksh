@@ -201,6 +201,73 @@ begin test "function does not change dollar zero"
 end test "function does not change dollar zero"
 ```
 
+#### Test: positional parameters restored even after set in function
+
+When a function uses `set --` to modify its own positional parameters, the
+caller's positional parameters and `#` shall still be restored when the
+function completes.
+
+```
+begin test "positional parameters restored even after set in function"
+  script
+    set -- a b c
+    myfunc() {
+      set -- x y
+      echo "$@"
+    }
+    myfunc arg1
+    echo "$@"
+  expect
+    stdout "x y\na b c"
+    stderr ""
+    exit_code 0
+end test "positional parameters restored even after set in function"
+```
+
+#### Test: function with no arguments has empty positional parameters
+
+When a function is called with zero operands, `$#` shall be 0 and the
+positional parameters shall be empty during execution. The caller's
+parameters shall be restored afterward.
+
+```
+begin test "function with no arguments has empty positional parameters"
+  script
+    set -- a b c
+    myfunc() {
+      printf "%s:%s\n" "$#" "$*"
+    }
+    myfunc
+    echo "$# $1"
+  expect
+    stdout "0:\n3 a"
+    stderr ""
+    exit_code 0
+end test "function with no arguments has empty positional parameters"
+```
+
+#### Test: nested function calls restore parameters independently
+
+When a function calls another function, each level's positional parameters
+shall be independently saved and restored. After the inner function returns,
+the outer function's parameters are restored; after the outer returns, the
+caller's original parameters are restored.
+
+```
+begin test "nested function calls restore parameters independently"
+  script
+    inner() { printf "inner:%s:%s\n" "$#" "$*"; }
+    outer() { printf "outer_before:%s:%s\n" "$#" "$*"; inner x y z; printf "outer_after:%s:%s\n" "$#" "$*"; }
+    set -- a b
+    outer p q r
+    printf "main:%s:%s\n" "$#" "$*"
+  expect
+    stdout "outer_before:3:p q r\ninner:3:x y z\nouter_after:3:p q r\nmain:2:a b"
+    stderr ""
+    exit_code 0
+end test "nested function calls restore parameters independently"
+```
+
 #### Test: return from function sets exit status and skips remaining
 
 The `return` special built-in completes the function and sets its exit
@@ -257,6 +324,43 @@ begin test "successful function definition exits zero"
     stderr ""
     exit_code 0
 end test "successful function definition exits zero"
+```
+
+#### Test: function definition resets exit status to zero
+
+A successful function definition shall have exit status zero, even if the
+previous command had a non-zero exit status.
+
+```
+begin test "function definition resets exit status to zero"
+  script
+    false
+    myfunc() { echo hello; }
+    echo "$?"
+  expect
+    stdout "0"
+    stderr ""
+    exit_code 0
+end test "function definition resets exit status to zero"
+```
+
+#### Test: function body can be a subshell compound command
+
+The compound-command in a function definition can be any compound command from
+2.9.4, not just a brace group. A subshell `( ... )` is a valid function body.
+
+```
+begin test "function body can be a subshell compound command"
+  script
+    myfunc() (
+      echo "$1"
+    )
+    myfunc hello
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
+end test "function body can be a subshell compound command"
 ```
 
 #### Test: function exit status is last command exit status
