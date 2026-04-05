@@ -8,12 +8,12 @@ host_triple=$(rustc -vV | awk '/host:/ {print $2}')
 tool_dir="$(rustc --print sysroot)/lib/rustlib/$host_triple/bin"
 llvm_cov="$tool_dir/llvm-cov"
 llvm_profdata="$tool_dir/llvm-profdata"
+ignore_regex='(/rustc/|/\.cargo/registry/|/tests/)'
 
 rm -rf "$profile_dir"
 mkdir -p "$profile_dir"
 
 export CARGO_INCREMENTAL=0
-export LLVM_PROFILE_FILE="$profile_dir/meiksh-%p-%m.profraw"
 export RUSTFLAGS="${RUSTFLAGS-} -Cinstrument-coverage --cfg coverage"
 
 cd "$repo_root"
@@ -29,9 +29,13 @@ for pattern in ("target/debug/deps/meiksh-*", "target/debug/deps/spec_basic-*", 
         except FileNotFoundError:
             pass
 PY
+
+# ── Step 1: build everything (real binary + tests) and run tests ──
+export LLVM_PROFILE_FILE="$profile_dir/meiksh-%p-%m.profraw"
+cargo build --lib --bin meiksh
 cargo test --lib --test integration_basic
 
-"$llvm_profdata" merge -sparse "$profile_dir"/*.profraw -o "$profdata"
+"$llvm_profdata" merge -sparse "$profile_dir"/meiksh-*.profraw -o "$profdata"
 
 objects=""
 for path in \
@@ -48,7 +52,7 @@ do
 done
 
 coverage_summary=$("$llvm_cov" report \
-    --ignore-filename-regex='(/rustc/|/\.cargo/registry/|/tests/)' \
+    --ignore-filename-regex="$ignore_regex" \
     --instr-profile "$profdata" \
     $objects)
 
@@ -57,92 +61,83 @@ printf '%s\n' "$coverage_summary"
 "$llvm_cov" export \
     --format=text \
     --summary-only \
-    --ignore-filename-regex='(/rustc/|/\.cargo/registry/|/tests/)' \
+    --ignore-filename-regex="$ignore_regex" \
     --instr-profile "$profdata" \
     $objects > "$profile_dir/summary.json"
 
 "$llvm_cov" export \
     --format=lcov \
-    --ignore-filename-regex='(/rustc/|/\.cargo/registry/|/tests/)' \
+    --ignore-filename-regex="$ignore_regex" \
     --instr-profile "$profdata" \
     $objects > "$profile_dir/lcov.info"
 
 "$llvm_cov" show \
     --format=text \
     --show-instantiations=false \
-    --ignore-filename-regex='(/rustc/|/\.cargo/registry/|/tests/)' \
+    --ignore-filename-regex="$ignore_regex" \
     --instr-profile "$profdata" \
     $objects > "$profile_dir/files.txt"
 
-python3 - "$repo_root" "$profile_dir/lcov.info" > "$profile_dir/production-line-summary.txt" <<'PY'
+# ── Step 2: compute production-only coverage ──
+# The production binary contains only non-#[cfg(test)] code.  Asking llvm-cov
+# to report on just that object (with the test profdata for format compat)
+# gives us the exact set of production lines — no source parsing needed.
+"$llvm_cov" export \
+    --format=lcov \
+    --ignore-filename-regex="$ignore_regex" \
+    --instr-profile "$profdata" \
+    --object "$repo_root/target/debug/meiksh" \
+    > "$profile_dir/prod-lcov.info"
+python3 - "$repo_root" "$profile_dir/prod-lcov.info" "$profile_dir/lcov.info" \
+    > "$profile_dir/production-line-summary.txt" <<'PY'
 import json
 import pathlib
 import sys
 
 repo_root = pathlib.Path(sys.argv[1])
-lcov_path = pathlib.Path(sys.argv[2])
+prod_lcov = pathlib.Path(sys.argv[2])
+test_lcov = pathlib.Path(sys.argv[3])
 
 
-def inline_test_ranges(path: pathlib.Path) -> list[tuple[int, int]]:
-    lines = path.read_text().splitlines()
-    ranges = []
-    i = 0
-    while i < len(lines):
-        if lines[i].strip() != "#[cfg(test)]":
-            i += 1
+def parse_lcov_lines(lcov_path: pathlib.Path) -> dict[pathlib.Path, dict[int, int]]:
+    result: dict[pathlib.Path, dict[int, int]] = {}
+    current = None
+    for raw_line in lcov_path.read_text().splitlines():
+        if raw_line.startswith("SF:"):
+            p = pathlib.Path(raw_line[3:])
+            if str(p).startswith(str(repo_root / "src")) and p.exists():
+                current = p
+                result.setdefault(current, {})
+            else:
+                current = None
             continue
-        j = i + 1
-        while j < len(lines) and "mod " not in lines[j]:
-            j += 1
-        if j >= len(lines):
-            i += 1
+        if not raw_line.startswith("DA:") or current is None:
             continue
-        ranges.append((i + 1, len(lines)))
-        break
-    return ranges
+        line_no, count = raw_line[3:].split(",")[:2]
+        line_no = int(line_no)
+        count = int(count)
+        result[current][line_no] = max(result[current].get(line_no, 0), count)
+    return result
 
 
-def excluded_lines(path: pathlib.Path) -> set[int]:
-    excl = set()
-    for i, line in enumerate(path.read_text().splitlines(), 1):
-        if "LCOV_EXCL_LINE" in line:
-            excl.add(i)
-    return excl
+prod_lines = parse_lcov_lines(prod_lcov)
+test_lines = parse_lcov_lines(test_lcov)
 
+found = 0
+hit = 0
+for path, lines in prod_lines.items():
+    test = test_lines.get(path, {})
+    for line_no in lines:
+        found += 1
+        if test.get(line_no, 0) > 0:
+            hit += 1
 
-current = None
-per_file = {}
-excl_cache: dict[pathlib.Path, set[int]] = {}
-line_counts: dict[tuple, int] = {}
-
-for raw_line in lcov_path.read_text().splitlines():
-    if raw_line.startswith("SF:"):
-        current = pathlib.Path(raw_line[3:])
-        if str(current).startswith(str(repo_root / "src")) and current.exists():
-            per_file.setdefault(current, inline_test_ranges(current))
-            excl_cache.setdefault(current, excluded_lines(current))
-        else:
-            current = None
-        continue
-    if not raw_line.startswith("DA:") or current is None:
-        continue
-    line_no, count = raw_line[3:].split(",")[:2]
-    line_no = int(line_no)
-    count = int(count)
-    if any(start <= line_no <= end for start, end in per_file[current]):
-        continue
-    if line_no in excl_cache.get(current, set()):
-        continue
-    key = (current, line_no)
-    line_counts[key] = max(line_counts.get(key, 0), count)
-
-totals = {"found": len(line_counts), "hit": sum(1 for c in line_counts.values() if c > 0)}
-coverage = 100.0 if totals["found"] == 0 else (totals["hit"] / totals["found"] * 100.0)
+coverage = 100.0 if found == 0 else (hit / found * 100.0)
 print(
-    f"Production-only line coverage (excluding inline #[cfg(test)] modules): "
-    f"{coverage:.2f}% ({totals['hit']}/{totals['found']})"
+    f"Production-only line coverage: "
+    f"{coverage:.2f}% ({hit}/{found})"
 )
-print(json.dumps({"hit": totals["hit"], "found": totals["found"], "coverage": coverage}))
+print(json.dumps({"hit": hit, "found": found, "coverage": coverage}))
 PY
 
 sed -n '1p' "$profile_dir/production-line-summary.txt"

@@ -1713,6 +1713,14 @@ mod tests {
     }
 
     #[test]
+    fn rejects_unterminated_dollar_single_quote() {
+        let error = parse("echo $'unterminated").expect_err("parse should fail");
+        assert_eq!(error.message, "unterminated dollar-single-quotes");
+        let error = parse(r"echo $'backslash at end\").expect_err("parse should fail");
+        assert_eq!(error.message, "unterminated dollar-single-quotes");
+    }
+
+    #[test]
     fn parses_if_with_elif_and_else() {
         let program =
             parse("if true; then echo yes; elif false; then echo no; else echo maybe; fi")
