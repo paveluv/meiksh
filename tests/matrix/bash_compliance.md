@@ -244,3 +244,33 @@ Observed:
 ---
 
 This file is intentionally strict: only independently reproducible, standards-backed bash deviations are included.
+
+## 6) `! !` multiple pipeline negations accepted
+
+**POSIX passage (exact quote)**  
+From `docs/posix/md/utilities/V3_chap02.md`:
+
+> "```
+> pipeline         :      pipe_sequence
+>                  | Bang pipe_sequence
+>                  ;
+> ```"
+
+**Why this is non-compliant**  
+The POSIX grammar allows exactly one `Bang` (`!`) per pipeline. Bash in `--posix` mode accepts multiple `!` tokens (e.g., `! ! true`) and applies double negation, extending the grammar.
+
+**Reproduction (portable shell commands)**
+
+```sh
+/usr/bin/bash --posix -c '! ! true' 2>/dev/null
+printf "exit=%s\n" "$?"
+```
+
+Expected:
+- syntax error and non-zero exit status
+
+Observed:
+- `exit=0`
+- no error
+
+---

@@ -1579,3 +1579,108 @@ begin test "for loop with name and semicolon separator"
     exit_code 0
 end test "for loop with name and semicolon separator"
 ```
+#### Test: empty subshell is a syntax error
+```
+begin test "empty subshell is a syntax error"
+  script
+    ( )
+  expect
+    stdout ""
+    stderr "(.|\n)+"
+    exit_code !=0
+end test "empty subshell is a syntax error"
+```
+
+#### Test: empty brace group is a syntax error
+```
+begin test "empty brace group is a syntax error"
+  script
+    { }
+  expect
+    stdout ""
+    stderr "(.|\n)+"
+    exit_code !=0
+end test "empty brace group is a syntax error"
+```
+
+#### Test: empty do group is a syntax error
+```
+begin test "empty do group is a syntax error"
+  script
+    for i in a; do done
+  expect
+    stdout ""
+    stderr "(.|\n)+"
+    exit_code !=0
+end test "empty do group is a syntax error"
+```
+
+#### Test: empty then clause is a syntax error
+```
+begin test "empty then clause is a syntax error"
+  script
+    if true; then fi
+  expect
+    stdout ""
+    stderr "(.|\n)+"
+    exit_code !=0
+end test "empty then clause is a syntax error"
+```
+
+#### Test: empty if condition is a syntax error
+```
+begin test "empty if condition is a syntax error"
+  script
+    if then echo a; fi
+  expect
+    stdout ""
+    stderr "(.|\n)+"
+    exit_code !=0
+end test "empty if condition is a syntax error"
+```
+
+#### Test: multiple bangs in pipeline cause syntax error
+
+The grammar permits exactly one `Bang` (`!`) per pipeline. Repeating it
+is a syntax error. (Note: `bash --posix` incorrectly accepts this as an
+extension.)
+
+```
+begin test "multiple bangs in pipeline cause syntax error"
+  script
+    ! ! true 2>/dev/null
+    exit 127
+  expect
+    stdout ""
+    stderr ""
+    exit_code 127
+end test "multiple bangs in pipeline cause syntax error"
+```
+
+#### Test: bang negates compound command
+```
+begin test "bang negates compound command"
+  script
+    ! { false; }
+    echo $?
+  expect
+    stdout "0"
+    stderr ""
+    exit_code 0
+end test "bang negates compound command"
+```
+
+#### Test: bang negates entire pipe sequence
+```
+begin test "bang negates entire pipe sequence"
+  script
+    ! false | true
+    echo $?
+    ! true | false
+    echo $?
+  expect
+    stdout "1\n0"
+    stderr ""
+    exit_code 0
+end test "bang negates entire pipe sequence"
+```
