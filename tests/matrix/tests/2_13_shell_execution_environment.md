@@ -134,13 +134,13 @@ description explicitly says so (e.g. `cd`, `umask`).
 ```
 begin test "external utility does not change parent environment"
   script
-    cd /tmp
+    mkdir childdir
     parent="$PWD"
-    env cd /
-    echo "$PWD" = "$parent"
+    $SHELL -c 'cd childdir; pwd'
+    printf 'parent:%s\n' "$PWD"
   expect
-    stdout "/tmp = /tmp"
-    stderr ".+"
+    stdout ".+/childdir\nparent:.+"
+    stderr ""
     exit_code 0
 end test "external utility does not change parent environment"
 ```
@@ -154,9 +154,9 @@ are reset to their default action.
 begin test "subshell traps reset to default"
   script
     trap "echo parent_trap" USR1
-    (trap "echo subshell_trap" USR1; trap -p USR1)
+    (trap -p USR1; echo end)
   expect
-    stdout "trap -- .*subshell_trap.* USR1"
+    stdout "end"
     stderr ""
     exit_code 0
 end test "subshell traps reset to default"
@@ -214,6 +214,25 @@ begin test "command substitution runs in subshell"
     stderr ""
     exit_code 0
 end test "command substitution runs in subshell"
+```
+
+#### Test: command substitution resets non-ignored traps to default
+
+Command substitution is executed in a subshell environment, so traps that are
+not being ignored shall be reset to the default action there. Bash currently
+does not comply and still shows the inherited caught trap.
+
+```
+begin test "command substitution resets non-ignored traps to default"
+  script
+    trap "echo parent_trap" USR1
+    out=$(trap -p USR1; echo end)
+    printf '%s\n' "$out"
+  expect
+    stdout "end"
+    stderr ""
+    exit_code 0
+end test "command substitution resets non-ignored traps to default"
 ```
 
 #### Test: parenthesized group runs in subshell
@@ -381,18 +400,78 @@ begin test "subshell inherits functions"
 end test "subshell inherits functions"
 ```
 
+#### Test: subshell inherits aliases
+
+A subshell is a duplicate of the shell environment, including shell aliases.
+
+```
+begin test "subshell inherits aliases"
+  script
+    alias hi='echo hello'
+    (hi)
+    printf 'parent:'; hi
+  expect
+    stdout "hello\nparent:hello"
+    stderr ""
+    exit_code 0
+end test "subshell inherits aliases"
+```
+
 #### Test: subshell inherits shell options
 
-A subshell duplicates the parent's shell options.
+A subshell duplicates the parent's shell options. With `set -u`, expanding an
+unset variable in the subshell should fail.
 
 ```
 begin test "subshell inherits shell options"
   script
     set -u
-    (echo "ok")
+    ( : "$UNSET_VAR" ) 2>/dev/null
+    printf 'rc=%s\n' "$?"
   expect
-    stdout "ok"
+    stdout "rc=1"
     stderr ""
     exit_code 0
 end test "subshell inherits shell options"
+```
+
+#### Test: child utility inherits exec-open file descriptor
+
+The separate environment for a utility starts with the shell's open files,
+including file descriptors opened by the `exec` special built-in.
+
+```
+begin test "child utility inherits exec-open file descriptor"
+  script
+    exec 3>tmp_fd3.txt
+    $SHELL -c 'echo child >&3'
+    exec 3>&-
+    cat tmp_fd3.txt
+  expect
+    stdout "child"
+    stderr ""
+    exit_code 0
+end test "child utility inherits exec-open file descriptor"
+```
+
+#### Test: utility redirection additions do not affect parent open files
+
+The utility's separate environment includes additions specified by redirections
+to the utility itself, but those redirections do not modify the parent shell's
+open files.
+
+```
+begin test "utility redirection additions do not affect parent open files"
+  script
+    exec 3>parent_fd3.txt
+    $SHELL -c 'echo child >&3' 3>child_fd3.txt
+    echo parent >&3
+    exec 3>&-
+    printf 'parent:'; cat parent_fd3.txt
+    printf 'child:'; cat child_fd3.txt
+  expect
+    stdout "parent:parent\nchild:child"
+    stderr ""
+    exit_code 0
+end test "utility redirection additions do not affect parent open files"
 ```
