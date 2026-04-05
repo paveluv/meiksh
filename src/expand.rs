@@ -39,6 +39,7 @@ enum Segment {
     AtEmpty,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 enum Expansion {
     One(String),
     AtFields(Vec<String>),
@@ -56,7 +57,7 @@ pub fn expand_word<C: Context>(ctx: &mut C, word: &Word) -> Result<Vec<String>, 
     let expanded = expand_raw(ctx, &word.raw)?;
 
     if expanded.has_at_expansion {
-        return expand_word_with_at_fields(&expanded);
+        return expand_word_with_at_fields(&expanded, expanded.had_quoted_null_outside_at);
     }
 
     if expanded.segments.is_empty() {
@@ -98,7 +99,10 @@ pub fn expand_word<C: Context>(ctx: &mut C, word: &Word) -> Result<Vec<String>, 
     Ok(result)
 }
 
-fn expand_word_with_at_fields(expanded: &ExpandedWord) -> Result<Vec<String>, ExpandError> {
+fn expand_word_with_at_fields(
+    expanded: &ExpandedWord,
+    had_quoted_null_outside_at: bool,
+) -> Result<Vec<String>, ExpandError> {
     let has_at_empty = expanded
         .segments
         .iter()
@@ -109,6 +113,15 @@ fn expand_word_with_at_fields(expanded: &ExpandedWord) -> Result<Vec<String>, Ex
         .any(|s| matches!(s, Segment::AtBreak));
 
     if has_at_empty && !has_at_break {
+        if had_quoted_null_outside_at {
+            let mut text = String::new();
+            for seg in &expanded.segments {
+                if let Segment::Text(t, _) = seg {
+                    text.push_str(t);
+                }
+            }
+            return Ok(vec![text]);
+        }
         return Ok(Vec::new());
     }
 
@@ -306,12 +319,14 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
     let mut index = 0usize;
     let mut segments = Vec::new();
     let mut had_quoted_content = false;
+    let mut had_quoted_null_outside_at = false;
     let mut has_at_expansion = false;
 
     while index < chars.len() {
         match chars[index] {
             '\'' => {
                 had_quoted_content = true;
+                had_quoted_null_outside_at = true;
                 index += 1;
                 let start = index;
                 while index < chars.len() && chars[index] != '\'' {
@@ -329,6 +344,7 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
                 had_quoted_content = true;
                 index += 1;
                 let mut buffer = String::new();
+                let at_before = has_at_expansion;
                 while index < chars.len() && chars[index] != '"' {
                     match chars[index] {
                         '\\' => {
@@ -381,9 +397,13 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
                 if !buffer.is_empty() {
                     push_segment(&mut segments, buffer, true);
                 }
+                if !has_at_expansion || at_before == has_at_expansion {
+                    had_quoted_null_outside_at = true;
+                }
                 index += 1;
             }
             '\\' => {
+                had_quoted_null_outside_at = true;
                 index += 1;
                 if index < chars.len() {
                     push_segment(&mut segments, chars[index].to_string(), true);
@@ -447,6 +467,7 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
     Ok(ExpandedWord {
         segments,
         had_quoted_content,
+        had_quoted_null_outside_at,
         has_at_expansion,
     })
 }
@@ -544,8 +565,8 @@ fn expand_dollar<C: Context>(
         '{' => {
             let end = scan_to_closing_brace(chars, 2)?;
             let expr: String = chars[2..end].iter().collect();
-            let value = expand_braced_parameter(ctx, &expr, quoted)?;
-            Ok((Expansion::One(value), end + 1))
+            let expansion = expand_braced_parameter(ctx, &expr, quoted)?;
+            Ok((expansion, end + 1))
         }
         '(' => {
             if chars.get(2) == Some(&'(') {
@@ -893,13 +914,13 @@ fn expand_braced_parameter<C: Context>(
     ctx: &mut C,
     expr: &str,
     quoted: bool,
-) -> Result<String, ExpandError> {
+) -> Result<Expansion, ExpandError> {
     if expr == "#" {
-        return Ok(lookup_param(ctx, "#").unwrap_or_default());
+        return Ok(Expansion::One(lookup_param(ctx, "#").unwrap_or_default()));
     }
     if let Some(name) = expr.strip_prefix('#') {
         let value = require_set_parameter(ctx, name, lookup_param(ctx, name))?;
-        return Ok(value.chars().count().to_string());
+        return Ok(Expansion::One(value.chars().count().to_string()));
     }
 
     let (name, op, word) = parse_parameter_expression(expr)?;
@@ -908,33 +929,33 @@ fn expand_braced_parameter<C: Context>(
     let is_null = value.as_deref().map(|s| s.is_empty()).unwrap_or(true);
 
     match op.as_deref() {
-        None => require_set_parameter(ctx, &name, value),
+        None => Ok(Expansion::One(require_set_parameter(ctx, &name, value)?)),
         Some(":-") => {
             if !is_set || is_null {
-                expand_parameter_word(ctx, &word.unwrap_or_default(), quoted)
+                expand_parameter_word_as_expansion(ctx, &word.unwrap_or_default(), quoted)
             } else {
-                Ok(value.unwrap_or_default())
+                Ok(Expansion::One(value.unwrap_or_default()))
             }
         }
         Some("-") => {
             if !is_set {
-                expand_parameter_word(ctx, &word.unwrap_or_default(), quoted)
+                expand_parameter_word_as_expansion(ctx, &word.unwrap_or_default(), quoted)
             } else {
-                Ok(value.unwrap_or_default())
+                Ok(Expansion::One(value.unwrap_or_default()))
             }
         }
         Some(":=") => {
             if !is_set || is_null {
-                assign_parameter(ctx, &name, &word.unwrap_or_default(), quoted)
+                Ok(Expansion::One(assign_parameter(ctx, &name, &word.unwrap_or_default(), quoted)?))
             } else {
-                Ok(value.unwrap_or_default())
+                Ok(Expansion::One(value.unwrap_or_default()))
             }
         }
         Some("=") => {
             if !is_set {
-                assign_parameter(ctx, &name, &word.unwrap_or_default(), quoted)
+                Ok(Expansion::One(assign_parameter(ctx, &name, &word.unwrap_or_default(), quoted)?))
             } else {
-                Ok(value.unwrap_or_default())
+                Ok(Expansion::One(value.unwrap_or_default()))
             }
         }
         Some(":?") => {
@@ -946,7 +967,7 @@ fn expand_braced_parameter<C: Context>(
                 )?;
                 Err(ExpandError { message })
             } else {
-                Ok(value.unwrap_or_default())
+                Ok(Expansion::One(value.unwrap_or_default()))
             }
         }
         Some("?") => {
@@ -958,43 +979,34 @@ fn expand_braced_parameter<C: Context>(
                 )?;
                 Err(ExpandError { message })
             } else {
-                Ok(value.unwrap_or_default())
+                Ok(Expansion::One(value.unwrap_or_default()))
             }
         }
         Some(":+") => {
             if is_set && !is_null {
-                expand_parameter_word(ctx, &word.unwrap_or_default(), quoted)
+                expand_parameter_word_as_expansion(ctx, &word.unwrap_or_default(), quoted)
             } else {
-                Ok(String::new())
+                Ok(Expansion::One(String::new()))
             }
         }
         Some("+") => {
             if is_set {
-                expand_parameter_word(ctx, &word.unwrap_or_default(), quoted)
+                expand_parameter_word_as_expansion(ctx, &word.unwrap_or_default(), quoted)
             } else {
-                Ok(String::new())
+                Ok(Expansion::One(String::new()))
             }
         }
-        Some("%") => remove_parameter_pattern(
-            require_set_parameter(ctx, &name, value)?,
-            &expand_parameter_pattern_word(ctx, &word.unwrap_or_default())?,
-            PatternRemoval::SmallestSuffix,
-        ),
-        Some("%%") => remove_parameter_pattern(
-            require_set_parameter(ctx, &name, value)?,
-            &expand_parameter_pattern_word(ctx, &word.unwrap_or_default())?,
-            PatternRemoval::LargestSuffix,
-        ),
-        Some("#") => remove_parameter_pattern(
-            require_set_parameter(ctx, &name, value)?,
-            &expand_parameter_pattern_word(ctx, &word.unwrap_or_default())?,
-            PatternRemoval::SmallestPrefix,
-        ),
-        Some("##") => remove_parameter_pattern(
-            require_set_parameter(ctx, &name, value)?,
-            &expand_parameter_pattern_word(ctx, &word.unwrap_or_default())?,
-            PatternRemoval::LargestPrefix,
-        ),
+        Some("%" | "%%" | "#" | "##") => {
+            let val = require_set_parameter(ctx, &name, value)?;
+            let pat = expand_parameter_pattern_word(ctx, &word.unwrap_or_default())?;
+            let mode = match op.as_deref().unwrap() {
+                "%" => PatternRemoval::SmallestSuffix,
+                "%%" => PatternRemoval::LargestSuffix,
+                "#" => PatternRemoval::SmallestPrefix,
+                _ => PatternRemoval::LargestPrefix,
+            };
+            Ok(Expansion::One(remove_parameter_pattern(val, &pat, mode)?))
+        }
         Some(_) => Err(ExpandError {
             message: "unsupported parameter expansion".to_string(),
         }),
@@ -1160,6 +1172,35 @@ fn expand_parameter_word<C: Context>(
     Ok(flatten_segments(&expanded.segments))
 }
 
+fn expand_parameter_word_as_expansion<C: Context>(
+    ctx: &mut C,
+    raw: &str,
+    _quoted: bool,
+) -> Result<Expansion, ExpandError> {
+    let expanded = expand_raw(ctx, raw)?;
+    let has_at = expanded
+        .segments
+        .iter()
+        .any(|s| matches!(s, Segment::AtBreak | Segment::AtEmpty));
+    if has_at {
+        let mut fields = Vec::new();
+        let mut current = String::new();
+        for seg in &expanded.segments {
+            match seg {
+                Segment::Text(s, _) => current.push_str(s),
+                Segment::AtBreak => {
+                    fields.push(std::mem::take(&mut current));
+                }
+                Segment::AtEmpty => {}
+            }
+        }
+        fields.push(current);
+        Ok(Expansion::AtFields(fields))
+    } else {
+        Ok(Expansion::One(flatten_segments(&expanded.segments)))
+    }
+}
+
 fn expand_parameter_pattern_word<C: Context>(
     ctx: &mut C,
     raw: &str,
@@ -1252,6 +1293,7 @@ fn require_set_parameter<C: Context>(
 struct ExpandedWord {
     segments: Vec<Segment>,
     had_quoted_content: bool,
+    had_quoted_null_outside_at: bool,
     has_at_expansion: bool,
 }
 
@@ -1526,21 +1568,7 @@ fn pattern_matches_inner(text: &[char], ti: usize, pattern: &[char], pi: usize) 
 }
 
 fn match_charclass(class: &str, ch: char) -> bool {
-    match class {
-        "alnum" => ch.is_ascii_alphanumeric(),
-        "alpha" => ch.is_ascii_alphabetic(),
-        "blank" => ch == ' ' || ch == '\t',
-        "cntrl" => ch.is_ascii_control(),
-        "digit" => ch.is_ascii_digit(),
-        "graph" => ch.is_ascii_graphic(),
-        "lower" => ch.is_ascii_lowercase(),
-        "print" => ch.is_ascii_graphic() || ch == ' ',
-        "punct" => ch.is_ascii_punctuation(),
-        "space" => ch.is_ascii_whitespace(),
-        "upper" => ch.is_ascii_uppercase(),
-        "xdigit" => ch.is_ascii_hexdigit(),
-        _ => false,
-    }
+    crate::sys::classify_char(class, ch)
 }
 
 fn match_bracket(current: Option<char>, pattern: &[char], start: usize) -> Option<(bool, usize)> {
@@ -3115,31 +3143,31 @@ mod tests {
 
         assert_eq!(
             expand_braced_parameter(&mut ctx, "USER:-word", false).expect("default set"),
-            "meiksh"
+            Expansion::One("meiksh".into())
         );
         assert_eq!(
             expand_braced_parameter(&mut ctx, "USER:=word", false).expect("assign set"),
-            "meiksh"
+            Expansion::One("meiksh".into())
         );
         assert_eq!(
             expand_braced_parameter(&mut ctx, "MISSING=value", false).expect("assign unset"),
-            "value"
+            Expansion::One("value".into())
         );
         assert_eq!(ctx.env.get("MISSING").map(String::as_str), Some("value"));
         assert_eq!(
             expand_braced_parameter(&mut ctx, "USER=value", false).expect("assign set"),
-            "meiksh"
+            Expansion::One("meiksh".into())
         );
         assert_eq!(
             expand_braced_parameter(&mut ctx, "USER?boom", false).expect("question set"),
-            "meiksh"
+            Expansion::One("meiksh".into())
         );
         let error =
             expand_braced_parameter(&mut ctx, "UNSET?boom", false).expect_err("question unset");
         assert_eq!(error.message, "boom");
         assert_eq!(
             expand_braced_parameter(&mut ctx, "USER:?boom", false).expect("colon question set"),
-            "meiksh"
+            Expansion::One("meiksh".into())
         );
 
         let error = assign_parameter(&mut ctx, "1", "value", false).expect_err("invalid assign");
@@ -3833,7 +3861,7 @@ mod tests {
                 }
             )
             .expect("empty at dq"),
-            Vec::<String>::new()
+            vec!["".to_string()]
         );
     }
 
@@ -4970,5 +4998,67 @@ mod tests {
     fn apply_compound_assign_unknown_op_returns_error() {
         let err = apply_compound_assign("??=", 1, 2).unwrap_err();
         assert!(err.message.contains("unknown"));
+    }
+
+    #[test]
+    fn expand_braced_parameter_pattern_removal_operators() {
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.env.insert("FILE".into(), "archive.tar.gz".into());
+
+            assert_eq!(
+                expand_braced_parameter(&mut ctx, "FILE%.*", false).unwrap(),
+                Expansion::One("archive.tar".into())
+            );
+            assert_eq!(
+                expand_braced_parameter(&mut ctx, "FILE%%.*", false).unwrap(),
+                Expansion::One("archive".into())
+            );
+            assert_eq!(
+                expand_braced_parameter(&mut ctx, "FILE#*.", false).unwrap(),
+                Expansion::One("tar.gz".into())
+            );
+            assert_eq!(
+                expand_braced_parameter(&mut ctx, "FILE##*.", false).unwrap(),
+                Expansion::One("gz".into())
+            );
+        });
+    }
+
+    #[test]
+    fn scan_to_closing_brace_skips_backslash() {
+        assert_no_syscalls(|| {
+            let input: Vec<char> = "a\\}b}".chars().collect();
+            let pos = scan_to_closing_brace(&input, 0).unwrap();
+            assert_eq!(pos, 4);
+        });
+    }
+
+    #[test]
+    fn expand_parameter_word_as_expansion_with_at_fields() {
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.positional = vec!["x".into(), "y".into()];
+            let result = expand_parameter_word_as_expansion(&mut ctx, "\"$@\"", false).unwrap();
+            assert_eq!(result, Expansion::AtFields(vec!["x".into(), "y".into()]));
+        });
+    }
+
+    #[test]
+    fn expand_word_quoted_null_adjacent_to_empty_at() {
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.positional = Vec::new();
+            assert_eq!(
+                expand_word(
+                    &mut ctx,
+                    &Word {
+                        raw: "''\"$@\"".into()
+                    }
+                )
+                .unwrap(),
+                vec!["".to_string()]
+            );
+        });
     }
 }

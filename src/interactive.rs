@@ -5,12 +5,12 @@ use crate::shell::{Shell, ShellError};
 use crate::sys;
 
 pub fn run(shell: &mut Shell) -> Result<i32, ShellError> {
-    load_env_file(shell)?;
     sys::ensure_blocking_read_fd(sys::STDIN_FILENO)?;
     run_loop(shell)
 }
 
 fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
+    let mut accumulated = String::new();
     loop {
         for (id, state) in shell.reap_jobs() {
             use crate::shell::ReapedJobState;
@@ -28,24 +28,42 @@ fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
             break;
         }
 
-        let prompt_str = prompt(shell);
-        loop {
-            match sys::write_all_fd(sys::STDOUT_FILENO, prompt_str.as_bytes()) {
-                Ok(()) => break,
-                Err(e) if e.is_eintr() => continue,
-                Err(e) => return Err(e.into()),
-            }
-        }
+        let prompt_str = if accumulated.is_empty() {
+            expand_prompt(shell, "PS1", "$ ")
+        } else {
+            expand_prompt(shell, "PS2", "> ")
+        };
+        write_prompt(&prompt_str)?;
 
         let line = match read_line()? {
             Some(line) => line,
-            None => break,
+            None => {
+                if !accumulated.is_empty() {
+                    let msg = format!(
+                        "meiksh: unexpected EOF while looking for matching token\n"
+                    );
+                    let _ = sys::write_all_fd(sys::STDERR_FILENO, msg.as_bytes());
+                    accumulated.clear();
+                }
+                break;
+            }
         };
-        if line.trim().is_empty() {
+        if accumulated.is_empty() && line.trim().is_empty() {
             continue;
         }
-        append_history(shell, &line)?;
-        match shell.execute_string(&line) {
+        accumulated.push_str(&line);
+
+        match crate::syntax::parse_with_aliases(&accumulated, &shell.aliases) {
+            Ok(_) => {}
+            Err(ref e) if shell.input_is_incomplete(e) => {
+                continue;
+            }
+            Err(_) => {}
+        }
+
+        let source = std::mem::take(&mut accumulated);
+        append_history(shell, source.trim_end())?;
+        match shell.execute_string(&source) {
             Ok(status) => shell.last_status = status,
             Err(error) => {
                 let msg = format!("meiksh: {}\n", error.display_message());
@@ -60,6 +78,16 @@ fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
     }
 
     Ok(shell.last_status)
+}
+
+fn write_prompt(prompt_str: &str) -> Result<(), ShellError> {
+    loop {
+        match sys::write_all_fd(sys::STDERR_FILENO, prompt_str.as_bytes()) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.is_eintr() => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
 }
 
 fn read_line() -> sys::SysResult<Option<String>> {
@@ -83,13 +111,34 @@ fn read_line() -> sys::SysResult<Option<String>> {
     }
 }
 
-fn prompt(shell: &Shell) -> String {
-    shell
-        .get_var("PS1")
-        .unwrap_or_else(|| "meiksh$ ".to_string())
+fn expand_prompt(shell: &mut Shell, var: &str, default: &str) -> String {
+    let raw = shell.get_var(var).unwrap_or_else(|| default.to_string());
+    let histnum = shell.history_number();
+    let expanded = expand::expand_parameter_text(shell, &raw).unwrap_or(raw);
+    expand_prompt_exclamation(&expanded, histnum)
 }
 
-fn load_env_file(shell: &mut Shell) -> Result<(), ShellError> {
+fn expand_prompt_exclamation(s: &str, histnum: usize) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '!' {
+            match chars.next() {
+                Some('!') => result.push('!'),
+                Some(other) => {
+                    result.push_str(&histnum.to_string());
+                    result.push(other);
+                }
+                None => result.push_str(&histnum.to_string()),
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
+pub fn load_env_file(shell: &mut Shell) -> Result<(), ShellError> {
     if !sys::has_same_real_and_effective_ids() {
         return Ok(());
     }
@@ -113,7 +162,11 @@ fn append_history(shell: &Shell, line: &str) -> Result<(), ShellError> {
         sys::O_WRONLY | sys::O_CREAT | sys::O_APPEND,
         0o644,
     )?;
-    sys::write_all_fd(fd, line.as_bytes())?;
+    let mut entry = line.to_string();
+    if !entry.ends_with('\n') {
+        entry.push('\n');
+    }
+    sys::write_all_fd(fd, entry.as_bytes())?;
     sys::close_fd(fd)?;
     Ok(())
 }
@@ -184,9 +237,9 @@ mod tests {
     fn prompt_prefers_ps1() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            assert_eq!(prompt(&shell), "meiksh$ ");
+            assert_eq!(expand_prompt(&mut shell, "PS1", "$ "), "$ ");
             shell.env.insert("PS1".into(), "custom> ".into());
-            assert_eq!(prompt(&shell), "custom> ");
+            assert_eq!(expand_prompt(&mut shell, "PS1", "$ "), "custom> ");
         });
     }
 
@@ -399,8 +452,8 @@ mod tests {
                 t(
                     "write",
                     vec![
-                        ArgMatcher::Fd(sys::STDOUT_FILENO),
-                        ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"$ ".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -447,7 +500,7 @@ mod tests {
                 t(
                     "write",
                     vec![
-                        ArgMatcher::Fd(sys::STDOUT_FILENO),
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
                         ArgMatcher::Bytes(b"test$ ".to_vec()),
                     ],
                     TraceResult::Auto,
@@ -463,7 +516,7 @@ mod tests {
                 t(
                     "write",
                     vec![
-                        ArgMatcher::Fd(sys::STDOUT_FILENO),
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
                         ArgMatcher::Bytes(b"test$ ".to_vec()),
                     ],
                     TraceResult::Auto,
@@ -557,8 +610,8 @@ mod tests {
                 t(
                     "write",
                     vec![
-                        ArgMatcher::Fd(sys::STDOUT_FILENO),
-                        ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"$ ".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -578,162 +631,57 @@ mod tests {
 
     #[test]
     fn run_loop_recovers_from_parse_error() {
-        run_trace(
-            vec![
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDOUT_FILENO),
-                        ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                // read "echo 'unterminated\n" byte by byte
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b"e".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b"c".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b"h".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b"o".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b" ".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b"'".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b"u".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b"n".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b"t".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b"e".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b"r".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b"m".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b"i".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b"n".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b"a".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b"t".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b"e".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b"d".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b"\n".to_vec()),
-                ),
-                // open history file
-                t(
-                    "open",
-                    vec![
-                        ArgMatcher::Str("/tmp/bad-history.txt".into()),
-                        ArgMatcher::Any,
-                        ArgMatcher::Any,
-                    ],
-                    TraceResult::Fd(10),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(10), ArgMatcher::Any],
-                    TraceResult::Auto,
-                ),
-                t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
-                // parse error written to stderr
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"meiksh: unterminated single quote\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                // prompt again
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDOUT_FILENO),
-                        ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                // EOF
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-            ],
-            || {
-                let mut shell = test_shell();
-                shell
-                    .env
-                    .insert("HISTFILE".into(), "/tmp/bad-history.txt".into());
-                let status = run_loop(&mut shell).expect("parse handled");
-                assert_eq!(status, 2);
-            },
-        );
+        let mut trace = vec![
+            t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Bytes(b"$ ".to_vec()),
+                ],
+                TraceResult::Auto,
+            ),
+        ];
+        for b in b"echo 'unterminated\n" {
+            trace.push(t(
+                "read",
+                vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(vec![*b]),
+            ));
+        }
+        trace.extend_from_slice(&[
+            t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Bytes(b"> ".to_vec()),
+                ],
+                TraceResult::Auto,
+            ),
+            t(
+                "read",
+                vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Int(0),
+            ),
+            t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Bytes(
+                        b"meiksh: unexpected EOF while looking for matching token\n"
+                            .to_vec(),
+                    ),
+                ],
+                TraceResult::Auto,
+            ),
+        ]);
+        run_trace(trace, || {
+            let mut shell = test_shell();
+            shell
+                .env
+                .insert("HISTFILE".into(), "/tmp/bad-history.txt".into());
+            let status = run_loop(&mut shell).expect("parse handled");
+            assert_eq!(status, 0);
+        });
     }
 
     #[test]
@@ -807,8 +755,8 @@ mod tests {
                 t(
                     "write",
                     vec![
-                        ArgMatcher::Fd(sys::STDOUT_FILENO),
-                        ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"$ ".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -828,8 +776,8 @@ mod tests {
                 t(
                     "write",
                     vec![
-                        ArgMatcher::Fd(sys::STDOUT_FILENO),
-                        ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"$ ".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -907,8 +855,8 @@ mod tests {
                 t(
                     "write",
                     vec![
-                        ArgMatcher::Fd(sys::STDOUT_FILENO),
-                        ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"$ ".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -951,8 +899,8 @@ mod tests {
                 t(
                     "write",
                     vec![
-                        ArgMatcher::Fd(sys::STDOUT_FILENO),
-                        ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"$ ".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -976,8 +924,8 @@ mod tests {
                 t(
                     "write",
                     vec![
-                        ArgMatcher::Fd(sys::STDOUT_FILENO),
-                        ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"$ ".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -1017,8 +965,8 @@ mod tests {
                 t(
                     "write",
                     vec![
-                        ArgMatcher::Fd(sys::STDOUT_FILENO),
-                        ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"$ ".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -1062,8 +1010,8 @@ mod tests {
                 t(
                     "write",
                     vec![
-                        ArgMatcher::Fd(sys::STDOUT_FILENO),
-                        ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"$ ".to_vec()),
                     ],
                     TraceResult::Err(sys::EINTR),
                 ),
@@ -1071,8 +1019,8 @@ mod tests {
                 t(
                     "write",
                     vec![
-                        ArgMatcher::Fd(sys::STDOUT_FILENO),
-                        ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"$ ".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -1097,8 +1045,8 @@ mod tests {
             vec![t(
                 "write",
                 vec![
-                    ArgMatcher::Fd(sys::STDOUT_FILENO),
-                    ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Bytes(b"$ ".to_vec()),
                 ],
                 TraceResult::Err(sys::EIO),
             )],
@@ -1117,8 +1065,8 @@ mod tests {
             t(
                 "write",
                 vec![
-                    ArgMatcher::Fd(sys::STDOUT_FILENO),
-                    ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Bytes(b"$ ".to_vec()),
                 ],
                 TraceResult::Auto,
             ),
@@ -1167,8 +1115,8 @@ mod tests {
             t(
                 "write",
                 vec![
-                    ArgMatcher::Fd(sys::STDOUT_FILENO),
-                    ArgMatcher::Bytes(b"meiksh$ ".to_vec()),
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Bytes(b"$ ".to_vec()),
                 ],
                 TraceResult::Auto,
             ),
@@ -1189,6 +1137,61 @@ mod tests {
                 status, 127,
                 "exit status should be 127 for command not found"
             );
+        });
+    }
+
+    #[test]
+    fn expand_prompt_exclamation_covers_all_branches() {
+        assert_no_syscalls(|| {
+            assert_eq!(expand_prompt_exclamation("!!", 42), "!");
+            assert_eq!(expand_prompt_exclamation("!x", 42), "42x");
+            assert_eq!(expand_prompt_exclamation("!", 42), "42");
+            assert_eq!(expand_prompt_exclamation("no bang", 42), "no bang");
+        });
+    }
+
+    #[test]
+    fn run_loop_syntax_error_prints_error_and_continues() {
+        let mut trace = Vec::new();
+
+        let prompt = t(
+            "write",
+            vec![ArgMatcher::Fd(sys::STDERR_FILENO), ArgMatcher::Bytes(b"$ ".to_vec())],
+            TraceResult::Int(2),
+        );
+        trace.push(prompt.clone());
+        trace.extend(read_line_trace(b"$(\n"));
+
+        trace.push(t(
+            "open",
+            vec![ArgMatcher::Str("/tmp/hist".into()), ArgMatcher::Any, ArgMatcher::Any],
+            TraceResult::Fd(10),
+        ));
+        trace.push(t(
+            "write",
+            vec![ArgMatcher::Fd(10), ArgMatcher::Bytes(b"$(\n".to_vec())],
+            TraceResult::Int(3),
+        ));
+        trace.push(t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)));
+
+        let err_msg = b"meiksh: unterminated command substitution\n";
+        trace.push(t(
+            "write",
+            vec![ArgMatcher::Fd(sys::STDERR_FILENO), ArgMatcher::Bytes(err_msg.to_vec())],
+            TraceResult::Int(err_msg.len() as i64),
+        ));
+
+        trace.push(prompt.clone());
+        trace.push(t(
+            "read",
+            vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+            TraceResult::Bytes(vec![]),
+        ));
+
+        run_trace(trace, || {
+            let mut shell = test_shell();
+            shell.env.insert("HISTFILE".into(), "/tmp/hist".into());
+            let _ = run_loop(&mut shell);
         });
     }
 }

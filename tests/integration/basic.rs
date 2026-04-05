@@ -713,15 +713,14 @@ fn interactive_shell_expands_env_and_continues_after_error() {
                 .stdin
                 .as_mut()
                 .unwrap()
-                .write_all(b"echo 'unterminated\nprintenv TEST_ENV_LOADED\nexit\n")?;
+                .write_all(b"false\nprintenv TEST_ENV_LOADED\nexit\n")?;
             child.wait_with_output()
         })
         .expect("run meiksh interactive");
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("1"));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("unterminated"));
+    assert!(stdout.contains("1"), "ENV file should set TEST_ENV_LOADED=1, got: {stdout}");
 }
 
 #[test]
@@ -2097,4 +2096,141 @@ fn kill_background_job_via_process_group() {
         .expect("run meiksh");
     assert!(output.status.success());
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "done");
+}
+
+#[test]
+fn capture_output_preserves_non_utf8_bytes() {
+    let output = Command::new(meiksh())
+        .args([
+            "-c",
+            r#"v=$(printf 'A\377B\200C'); printf '%s' "$v" | od -An -t x1 | tr -d ' \n'"#,
+        ])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "41ff428043"
+    );
+}
+
+#[test]
+fn pwd_initialized_from_getcwd_when_env_invalid() {
+    let output = Command::new(meiksh())
+        .args(["-c", "echo $PWD"])
+        .env_remove("PWD")
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let pwd = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    assert!(pwd.starts_with('/'), "PWD should be absolute, got: {pwd}");
+}
+
+#[test]
+fn pwd_corrected_when_env_contains_dotdot() {
+    let output = Command::new(meiksh())
+        .args(["-c", "echo $PWD"])
+        .env("PWD", "/tmp/../tmp")
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let pwd = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    assert!(!pwd.contains(".."), "PWD should not contain .., got: {pwd}");
+}
+
+#[test]
+fn character_class_pattern_matching_uses_locale() {
+    let output = Command::new(meiksh())
+        .args(["-c", "case a in ([[:alpha:]]) echo yes;; (*) echo no;; esac"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "yes");
+}
+
+#[test]
+fn parameter_default_with_at_fields() {
+    let output = Command::new(meiksh())
+        .args([
+            "-c",
+            r#"set a b c; for x in ${unset:-"$@"}; do echo "($x)"; done"#,
+        ])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "(a)\n(b)\n(c)"
+    );
+
+    let output2 = Command::new(meiksh())
+        .args([
+            "-c",
+            r#"set --; echo "${unset:-"$@"}""#,
+        ])
+        .output()
+        .expect("run meiksh");
+    assert!(output2.status.success());
+    assert_eq!(String::from_utf8_lossy(&output2.stdout).trim(), "");
+}
+
+#[test]
+fn quoted_null_adjacent_to_empty_at_produces_one_field() {
+    let output = Command::new(meiksh())
+        .args([
+            "-c",
+            r#"set --; for x in ''"$@"; do echo "[$x]"; done"#,
+        ])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "[]");
+
+    let output2 = Command::new(meiksh())
+        .args([
+            "-c",
+            r#"set --; for x in 'pfx'"$@"; do echo "[$x]"; done"#,
+        ])
+        .output()
+        .expect("run meiksh");
+    assert!(output2.status.success());
+    assert_eq!(String::from_utf8_lossy(&output2.stdout).trim(), "[pfx]");
+}
+
+#[test]
+fn invalid_parameter_expansion_reports_error() {
+    let output = Command::new(meiksh())
+        .args(["-c", "echo ${%bad}"])
+        .output()
+        .expect("run meiksh");
+    assert!(!output.status.success());
+}
+
+#[test]
+fn parameter_pattern_removal_operators() {
+    let output = Command::new(meiksh())
+        .args([
+            "-c",
+            r#"f=archive.tar.gz; echo "${f%.*}" "${f%%.*}" "${f#*.}" "${f##*.}""#,
+        ])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "archive.tar archive tar.gz gz"
+    );
+}
+
+#[test]
+fn string_to_bytes_round_trips_non_ascii() {
+    let output = Command::new(meiksh())
+        .args([
+            "-c",
+            r#"v=$(printf '\351'); printf '%s' "$v" | od -An -t x1 | tr -d ' \n'"#,
+        ])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "e9");
 }

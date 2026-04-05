@@ -384,3 +384,59 @@ begin test "question mark does not match leading dot"
     exit_code 0
 end test "question mark does not match leading dot"
 ```
+
+#### Test: leading dot after slash must be matched explicitly
+
+If a filename component begins with `.`, that leading period shall be matched
+explicitly either at the start of the pattern or immediately after a slash.
+
+```
+begin test "leading dot after slash must be matched explicitly"
+  script
+    mkdir -p tmp_pattern/sub
+    touch tmp_pattern/sub/.hidden tmp_pattern/sub/visible
+    echo tmp_pattern/sub/*
+    echo tmp_pattern/sub/.*
+  expect
+    stdout "tmp_pattern/sub/visible\ntmp_pattern/sub/\.hidden"
+    stderr ""
+    exit_code 0
+end test "leading dot after slash must be matched explicitly"
+```
+
+#### Test: bracket non-matching and class patterns do not match leading dot
+
+For filename expansion, a leading `.` shall not be matched by a bracket
+expression containing a non-matching list or a character class expression.
+
+```
+begin test "bracket non-matching and class patterns do not match leading dot"
+  script
+    mkdir -p tmp_pattern
+    touch tmp_pattern/.x tmp_pattern/ax
+    echo tmp_pattern/[!a]x
+    echo tmp_pattern/[[:punct:]]x
+  expect
+    stdout "tmp_pattern/\[!a\]x\ntmp_pattern/\[\[:punct:\]\]x"
+    stderr ""
+    exit_code 0
+end test "bracket non-matching and class patterns do not match leading dot"
+```
+
+#### Test: slash before closing bracket makes open bracket literal
+
+If a slash appears after an unescaped `[` before a matching `]`, the `[` shall
+be treated as an ordinary character for filename expansion.
+
+```
+begin test "slash before closing bracket makes open bracket literal"
+  script
+    mkdir -p "a[b"
+    touch "a[b/c]d" abd
+    echo a[b/c]d
+  expect
+    stdout "a\[b/c\]d"
+    stderr ""
+    exit_code 0
+end test "slash before closing bracket makes open bracket literal"
+```

@@ -151,6 +151,7 @@ impl SysError {
 #[derive(Clone, Copy)]
 pub(crate) struct SystemInterface {
     getpid: fn() -> Pid,
+    getppid: fn() -> Pid,
     waitpid: fn(Pid, *mut c_int, c_int) -> Pid,
     kill: fn(Pid, c_int) -> c_int,
     signal: fn(c_int, libc::sighandler_t) -> libc::sighandler_t,
@@ -197,11 +198,15 @@ pub(crate) struct SystemInterface {
     pending_signal_bits: fn() -> usize,
     take_pending_signal_bits: fn() -> usize,
     monotonic_clock_ns: fn() -> u64,
+    // Locale
+    setup_locale: fn(),
+    classify_char: fn(&str, char) -> bool,
 }
 
 pub(crate) fn default_interface() -> SystemInterface {
     SystemInterface {
         getpid: || unsafe { libc::getpid() },
+        getppid: || unsafe { libc::getppid() },
         waitpid: |pid, status, options| unsafe { libc::waitpid(pid, status, options) },
         kill: |pid, sig| unsafe { libc::kill(pid, sig) },
         signal: |sig, handler| unsafe { libc::signal(sig, handler) },
@@ -303,6 +308,43 @@ pub(crate) fn default_interface() -> SystemInterface {
             unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, ts.as_mut_ptr()) };
             let ts = unsafe { ts.assume_init() };
             ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
+        },
+        setup_locale: || unsafe {
+            libc::setlocale(libc::LC_ALL, b"\0".as_ptr().cast());
+        },
+        classify_char: |class, ch| {
+            unsafe extern "C" {
+                fn iswalnum(wc: u32) -> c_int;
+                fn iswalpha(wc: u32) -> c_int;
+                fn iswblank(wc: u32) -> c_int;
+                fn iswcntrl(wc: u32) -> c_int;
+                fn iswdigit(wc: u32) -> c_int;
+                fn iswgraph(wc: u32) -> c_int;
+                fn iswlower(wc: u32) -> c_int;
+                fn iswprint(wc: u32) -> c_int;
+                fn iswpunct(wc: u32) -> c_int;
+                fn iswspace(wc: u32) -> c_int;
+                fn iswupper(wc: u32) -> c_int;
+                fn iswxdigit(wc: u32) -> c_int;
+            }
+            let wc = ch as u32;
+            unsafe {
+                match class {
+                    "alnum" => iswalnum(wc) != 0,
+                    "alpha" => iswalpha(wc) != 0,
+                    "blank" => iswblank(wc) != 0,
+                    "cntrl" => iswcntrl(wc) != 0,
+                    "digit" => iswdigit(wc) != 0,
+                    "graph" => iswgraph(wc) != 0,
+                    "lower" => iswlower(wc) != 0,
+                    "print" => iswprint(wc) != 0,
+                    "punct" => iswpunct(wc) != 0,
+                    "space" => iswspace(wc) != 0,
+                    "upper" => iswupper(wc) != 0,
+                    "xdigit" => iswxdigit(wc) != 0,
+                    _ => false,
+                }
+            }
         },
     }
 }
@@ -626,6 +668,10 @@ pub(crate) mod test_support {
         let entry = trace_dispatch("getpid", &[]);
         apply_trace_result_pid(&entry)
     }
+    fn trace_getppid() -> Pid {
+        let entry = trace_dispatch("getppid", &[]);
+        apply_trace_result_pid(&entry)
+    }
     fn trace_waitpid(pid: Pid, status: *mut c_int, options: c_int) -> Pid {
         let entry = trace_dispatch(
             "waitpid",
@@ -782,6 +828,21 @@ pub(crate) mod test_support {
                 panic!("trace result type mismatch for 'monotonic_clock_ns': expected Int, got {other:?}")
             }
         }
+    }
+    fn trace_setup_locale() {}
+    fn trace_classify_char(class: &str, ch: char) -> bool {
+        ch.is_ascii_alphabetic() && class == "alpha"
+            || ch.is_ascii_alphanumeric() && class == "alnum"
+            || ch.is_ascii_digit() && class == "digit"
+            || ch.is_ascii_lowercase() && class == "lower"
+            || ch.is_ascii_uppercase() && class == "upper"
+            || (ch == ' ' || ch == '\t') && class == "blank"
+            || ch.is_ascii_whitespace() && class == "space"
+            || ch.is_ascii_hexdigit() && class == "xdigit"
+            || ch.is_ascii_punctuation() && class == "punct"
+            || ch.is_ascii_graphic() && class == "graph"
+            || (ch.is_ascii_graphic() || ch == ' ') && class == "print"
+            || ch.is_ascii_control() && class == "cntrl"
     }
     fn trace_sysconf(name: c_int) -> c_long {
         let entry = trace_dispatch("sysconf", &[ArgMatcher::Int(name as i64)]);
@@ -1101,6 +1162,7 @@ pub(crate) mod test_support {
     pub(crate) fn trace_interface() -> SystemInterface {
         SystemInterface {
             getpid: trace_getpid,
+            getppid: trace_getppid,
             waitpid: trace_waitpid,
             kill: trace_kill,
             signal: trace_signal,
@@ -1141,12 +1203,17 @@ pub(crate) mod test_support {
             pending_signal_bits: test_pending_signal_bits,
             take_pending_signal_bits: test_take_pending_signal_bits,
             monotonic_clock_ns: trace_monotonic_clock_ns,
+            setup_locale: trace_setup_locale,
+            classify_char: trace_classify_char,
         }
     }
 
     pub(crate) fn no_interface_table() -> SystemInterface {
         fn panic_getpid() -> Pid {
             panic!("unexpected syscall 'getpid' in pure-logic test")
+        }
+        fn panic_getppid() -> Pid {
+            panic!("unexpected syscall 'getppid' in pure-logic test")
         }
         fn panic_waitpid(_: Pid, _: *mut c_int, _: c_int) -> Pid {
             panic!("unexpected syscall 'waitpid' in pure-logic test")
@@ -1262,9 +1329,30 @@ pub(crate) mod test_support {
         fn panic_monotonic_clock_ns() -> u64 {
             panic!("unexpected call 'monotonic_clock_ns' in pure-logic test")
         }
+        fn panic_setup_locale() {
+            panic!("unexpected call 'setup_locale' in pure-logic test")
+        }
+        fn ascii_classify_char(class: &str, ch: char) -> bool {
+            match class {
+                "alnum" => ch.is_ascii_alphanumeric(),
+                "alpha" => ch.is_ascii_alphabetic(),
+                "blank" => ch == ' ' || ch == '\t',
+                "cntrl" => ch.is_ascii_control(),
+                "digit" => ch.is_ascii_digit(),
+                "graph" => ch.is_ascii_graphic(),
+                "lower" => ch.is_ascii_lowercase(),
+                "print" => ch.is_ascii_graphic() || ch == ' ',
+                "punct" => ch.is_ascii_punctuation(),
+                "space" => ch.is_ascii_whitespace(),
+                "upper" => ch.is_ascii_uppercase(),
+                "xdigit" => ch.is_ascii_hexdigit(),
+                _ => false,
+            }
+        }
 
         SystemInterface {
             getpid: panic_getpid,
+            getppid: panic_getppid,
             waitpid: panic_waitpid,
             kill: panic_kill,
             signal: panic_signal,
@@ -1305,6 +1393,8 @@ pub(crate) mod test_support {
             pending_signal_bits: test_pending_signal_bits,
             take_pending_signal_bits: test_take_pending_signal_bits,
             monotonic_clock_ns: panic_monotonic_clock_ns,
+            setup_locale: panic_setup_locale,
+            classify_char: ascii_classify_char,
         }
     }
 
@@ -1520,6 +1610,18 @@ pub struct WaitStatus {
 
 pub fn current_pid() -> Pid {
     (sys_interface().getpid)()
+}
+
+pub fn parent_pid() -> Pid {
+    (sys_interface().getppid)()
+}
+
+pub fn setup_locale() {
+    (sys_interface().setup_locale)()
+}
+
+pub fn classify_char(class: &str, ch: char) -> bool {
+    (sys_interface().classify_char)(class, ch)
 }
 
 pub fn is_interactive_fd(fd: c_int) -> bool {
@@ -2183,11 +2285,28 @@ pub fn clock_ticks_per_second() -> SysResult<u64> {
 /// `file` is the pathname to exec (passed to `execvp`).
 /// `argv` is the full argument vector: `argv[0]` is the command name
 /// as typed by the user, `argv[1..]` are the remaining arguments.
+pub fn string_to_bytes(s: &str) -> Vec<u8> {
+    if s.is_ascii() {
+        return s.as_bytes().to_vec();
+    }
+    s.chars()
+        .flat_map(|ch| {
+            if (ch as u32) < 256 {
+                vec![ch as u8]
+            } else {
+                let mut buf = [0u8; 4];
+                ch.encode_utf8(&mut buf);
+                buf[..ch.len_utf8()].to_vec()
+            }
+        })
+        .collect()
+}
+
 pub fn exec_replace(file: &str, argv: &[String]) -> SysResult<()> {
-    let c_file = CString::new(file).map_err(|_| SysError::NulInPath)?;
+    let c_file = CString::new(string_to_bytes(file)).map_err(|_| SysError::NulInPath)?;
     let mut owned = Vec::with_capacity(argv.len());
     for arg in argv {
-        owned.push(CString::new(arg.as_str()).map_err(|_| SysError::NulInPath)?);
+        owned.push(CString::new(string_to_bytes(arg)).map_err(|_| SysError::NulInPath)?);
     }
 
     let mut pointers: Vec<*const c_char> = owned.iter().map(|arg| arg.as_ptr()).collect();
@@ -3748,5 +3867,58 @@ mod tests {
             let ns = monotonic_clock_ns();
             assert!(ns > 0, "monotonic clock should return positive nanoseconds");
         });
+    }
+
+    #[test]
+    fn default_interface_classify_char_ascii() {
+        test_support::with_test_interface(default_interface(), || {
+            setup_locale();
+            assert!(classify_char("alpha", 'a'));
+            assert!(classify_char("alpha", 'Z'));
+            assert!(!classify_char("alpha", '5'));
+            assert!(classify_char("alnum", '9'));
+            assert!(!classify_char("alnum", '!'));
+            assert!(classify_char("blank", ' '));
+            assert!(classify_char("blank", '\t'));
+            assert!(!classify_char("blank", 'a'));
+            assert!(classify_char("cntrl", '\x01'));
+            assert!(!classify_char("cntrl", 'a'));
+            assert!(classify_char("digit", '0'));
+            assert!(!classify_char("digit", 'x'));
+            assert!(classify_char("graph", '!'));
+            assert!(!classify_char("graph", ' '));
+            assert!(classify_char("lower", 'a'));
+            assert!(!classify_char("lower", 'A'));
+            assert!(classify_char("print", ' '));
+            assert!(classify_char("print", 'a'));
+            assert!(!classify_char("print", '\x01'));
+            assert!(classify_char("punct", '.'));
+            assert!(!classify_char("punct", 'a'));
+            assert!(classify_char("space", '\n'));
+            assert!(!classify_char("space", 'a'));
+            assert!(classify_char("upper", 'A'));
+            assert!(!classify_char("upper", 'a'));
+            assert!(classify_char("xdigit", 'f'));
+            assert!(!classify_char("xdigit", 'g'));
+            assert!(!classify_char("bogus", 'a'));
+        });
+    }
+
+    #[test]
+    fn string_to_bytes_ascii_fast_path() {
+        assert_eq!(string_to_bytes("hello"), b"hello");
+    }
+
+    #[test]
+    fn string_to_bytes_latin1_codepoints() {
+        let s: String = [0xe9u8 as char, 0xff as char].iter().collect();
+        assert_eq!(string_to_bytes(&s), vec![0xe9, 0xff]);
+    }
+
+    #[test]
+    fn string_to_bytes_non_latin1_codepoints() {
+        let s = "\u{1F600}";
+        let expected = s.as_bytes().to_vec();
+        assert_eq!(string_to_bytes(s), expected);
     }
 }

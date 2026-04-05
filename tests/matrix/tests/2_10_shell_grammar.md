@@ -592,3 +592,836 @@ begin test "function body expansion deferred to invocation"
     exit_code 0
 end test "function body expansion deferred to invocation"
 ```
+
+#### Test: multi-digit file descriptor as IO_NUMBER
+
+Rule 2 says a string "consisting solely of digits" before `<` or `>`
+is classified as IO_NUMBER. This applies to multi-digit descriptors like
+10, not just single digits.
+
+```
+begin test "multi-digit file descriptor as IO_NUMBER"
+  script
+    exec 10>tmp_fd10.txt
+    echo hello >&10
+    exec 10>&-
+    cat tmp_fd10.txt
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
+end test "multi-digit file descriptor as IO_NUMBER"
+```
+
+#### Test: reserved word in non-reserved position is WORD
+
+Rule 1 (2.10.2) states that reserved words are only recognized as such in
+positions where a reserved word could be the next correct token. In
+argument position, `if`, `then`, `else`, and `fi` are ordinary WORDs.
+
+```
+begin test "reserved word in non-reserved position is WORD"
+  script
+    echo if then else fi
+  expect
+    stdout "if then else fi"
+    stderr ""
+    exit_code 0
+end test "reserved word in non-reserved position is WORD"
+```
+
+#### Test: bang negates pipeline exit status
+
+The grammar production `pipeline : Bang pipe_sequence` defines `!` as
+negating the exit status of a pipeline. A successful command negated
+yields non-zero and vice versa.
+
+```
+begin test "bang negates pipeline exit status"
+  script
+    ! false
+    echo $?
+    ! true
+    echo $?
+  expect
+    stdout "0\n1"
+    stderr ""
+    exit_code 0
+end test "bang negates pipeline exit status"
+```
+
+#### Test: newline allowed after AND_IF operator
+
+The grammar production `and_or : and_or AND_IF linebreak pipeline`
+includes a linebreak non-terminal after `&&`, allowing newlines between
+the operator and the next pipeline.
+
+```
+begin test "newline allowed after AND_IF operator"
+  script
+    true &&
+    echo ok
+  expect
+    stdout "ok"
+    stderr ""
+    exit_code 0
+end test "newline allowed after AND_IF operator"
+```
+
+#### Test: newline allowed after OR_IF operator
+
+The grammar production `and_or : and_or OR_IF linebreak pipeline`
+includes a linebreak after `||`, allowing newlines between the operator
+and the next pipeline.
+
+```
+begin test "newline allowed after OR_IF operator"
+  script
+    false ||
+    echo ok
+  expect
+    stdout "ok"
+    stderr ""
+    exit_code 0
+end test "newline allowed after OR_IF operator"
+```
+
+#### Test: newline allowed after pipe operator
+
+The grammar production `pipe_sequence : pipe_sequence '|' linebreak
+command` includes a linebreak after `|`, allowing newlines between the
+pipe operator and the next command.
+
+```
+begin test "newline allowed after pipe operator"
+  script
+    echo hello |
+    cat
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
+end test "newline allowed after pipe operator"
+```
+
+#### Test: subshell as standalone compound command
+
+The grammar production `compound_command : subshell` allows `( ... )`
+as a compound command. Commands inside the subshell execute in a child
+environment, so variable changes do not affect the parent.
+
+```
+begin test "subshell as standalone compound command"
+  script
+    x=outer
+    (x=inner; echo "$x")
+    echo "$x"
+  expect
+    stdout "inner\nouter"
+    stderr ""
+    exit_code 0
+end test "subshell as standalone compound command"
+```
+
+#### Test: compound command with redirect list
+
+The grammar production `command : compound_command redirect_list` allows
+redirections to be applied to an entire compound command such as a brace
+group.
+
+```
+begin test "compound command with redirect list"
+  script
+    { echo hello; echo world; } > tmp_brace_redir.txt
+    cat tmp_brace_redir.txt
+  expect
+    stdout "hello\nworld"
+    stderr ""
+    exit_code 0
+end test "compound command with redirect list"
+```
+
+#### Test: case pattern with leading parenthesis
+
+The grammar production `pattern_list : '(' WORD` allows case patterns
+to begin with an optional `(`, which is sometimes used for symmetry.
+
+```
+begin test "case pattern with leading parenthesis"
+  script
+    case hello in
+      (hello) echo matched ;;
+    esac
+  expect
+    stdout "matched"
+    stderr ""
+    exit_code 0
+end test "case pattern with leading parenthesis"
+```
+
+#### Test: case pattern with pipe alternatives
+
+The grammar production `pattern_list : pattern_list '|' WORD` allows
+multiple alternative patterns separated by `|` in a single case item.
+
+```
+begin test "case pattern with pipe alternatives"
+  script
+    case b in
+      a|b|c) echo matched ;;
+    esac
+  expect
+    stdout "matched"
+    stderr ""
+    exit_code 0
+end test "case pattern with pipe alternatives"
+```
+
+#### Test: last case item may omit terminator
+
+The grammar's case_item_ns production allows the final item in a case
+statement to omit the `;;` or `;&` terminator.
+
+```
+begin test "last case item may omit terminator"
+  script
+    case x in
+      x) echo matched
+    esac
+  expect
+    stdout "matched"
+    stderr ""
+    exit_code 0
+end test "last case item may omit terminator"
+```
+
+#### Test: empty case clause matches nothing
+
+The grammar production `case_clause : Case WORD linebreak in linebreak
+Esac` allows a case statement with no patterns at all. The case command
+completes with exit status zero.
+
+```
+begin test "empty case clause matches nothing"
+  script
+    case x in
+    esac
+    echo $?
+  expect
+    stdout "0"
+    stderr ""
+    exit_code 0
+end test "empty case clause matches nothing"
+```
+
+#### Test: for loop with in but empty word list iterates zero times
+
+The grammar production `For name linebreak in sequential_sep do_group`
+allows `for x in ;` with an empty wordlist, meaning the loop body
+executes zero times.
+
+```
+begin test "for loop with in but empty word list iterates zero times"
+  script
+    for x in; do
+      echo bad
+    done
+    echo ok
+  expect
+    stdout "ok"
+    stderr ""
+    exit_code 0
+end test "for loop with in but empty word list iterates zero times"
+```
+
+#### Test: for loop recognizes in after newline
+
+The grammar production `For name linebreak in wordlist sequential_sep
+do_group` includes a linebreak before `in`, allowing newlines between
+the loop variable name and the `in` keyword. Rule 6b recognizes `in`
+in this position.
+
+```
+begin test "for loop recognizes in after newline"
+  script
+    for x
+    in a b; do
+      echo "$x"
+    done
+  expect
+    stdout "a\nb"
+    stderr ""
+    exit_code 0
+end test "for loop recognizes in after newline"
+```
+
+#### Test: background command with ampersand separator
+
+The grammar production `separator_op : '&'` causes the preceding
+command to execute asynchronously. The shell continues to the next
+command without waiting.
+
+```
+begin test "background command with ampersand separator"
+  script
+    echo bg > tmp_bg_grammar.txt &
+    wait
+    cat tmp_bg_grammar.txt
+    echo fg
+  expect
+    stdout "bg\nfg"
+    stderr ""
+    exit_code 0
+end test "background command with ampersand separator"
+```
+
+#### Test: io_redirect in cmd_prefix before command name
+
+The grammar production `cmd_prefix : io_redirect` allows redirections
+to appear before the command name in a simple command.
+
+```
+begin test "io_redirect in cmd_prefix before command name"
+  script
+    >tmp_prefix_grammar.txt echo hello
+    cat tmp_prefix_grammar.txt
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
+end test "io_redirect in cmd_prefix before command name"
+```
+
+#### Test: multiple assignment words in cmd_prefix
+
+The recursive grammar production `cmd_prefix : cmd_prefix
+ASSIGNMENT_WORD` allows multiple consecutive variable assignments before
+the command name.
+
+```
+begin test "multiple assignment words in cmd_prefix"
+  script
+    A=1 B=2 C=3 sh -c 'echo $A $B $C'
+  expect
+    stdout "1 2 3"
+    stderr ""
+    exit_code 0
+end test "multiple assignment words in cmd_prefix"
+```
+
+#### Test: while clause as compound command
+
+The grammar production `while_clause : While compound_list do_group`
+defines a while loop. The condition compound_list is evaluated before
+each iteration; the loop repeats while it exits zero.
+
+```
+begin test "while clause as compound command"
+  script
+    n=0
+    while [ "$n" -lt 3 ]; do
+      n=$((n + 1))
+    done
+    echo "$n"
+  expect
+    stdout "3"
+    stderr ""
+    exit_code 0
+end test "while clause as compound command"
+```
+
+#### Test: until clause as compound command
+
+The grammar production `until_clause : Until compound_list do_group`
+defines an until loop. The loop body repeats until the condition
+compound_list exits zero.
+
+```
+begin test "until clause as compound command"
+  script
+    n=0
+    until [ "$n" -ge 3 ]; do
+      n=$((n + 1))
+    done
+    echo "$n"
+  expect
+    stdout "3"
+    stderr ""
+    exit_code 0
+end test "until clause as compound command"
+```
+
+#### Test: simple if-then-fi without else part
+
+The grammar production `if_clause : If compound_list Then compound_list
+Fi` defines an if statement with no else_part. When the condition is true
+the body executes; when false, the if command exits zero silently.
+
+```
+begin test "simple if-then-fi without else part"
+  script
+    if true; then
+      echo yes
+    fi
+    if false; then
+      echo no
+    fi
+    echo done
+  expect
+    stdout "yes\ndone"
+    stderr ""
+    exit_code 0
+end test "simple if-then-fi without else part"
+```
+
+#### Test: if clause with else part
+
+The grammar productions `if_clause : If compound_list Then compound_list
+else_part Fi` and `else_part : Else compound_list` define the if-then-else
+construct. The else branch executes when the condition is non-zero.
+
+```
+begin test "if clause with else part"
+  script
+    if false; then
+      echo bad
+    else
+      echo good
+    fi
+  expect
+    stdout "good"
+    stderr ""
+    exit_code 0
+end test "if clause with else part"
+```
+
+#### Test: elif chain in if clause
+
+The grammar production `else_part : Elif compound_list Then compound_list
+else_part` allows chained elif branches. Each condition is tried in order
+until one succeeds.
+
+```
+begin test "elif chain in if clause"
+  script
+    x=2
+    if [ "$x" = 1 ]; then
+      echo one
+    elif [ "$x" = 2 ]; then
+      echo two
+    elif [ "$x" = 3 ]; then
+      echo three
+    else
+      echo other
+    fi
+  expect
+    stdout "two"
+    stderr ""
+    exit_code 0
+end test "elif chain in if clause"
+```
+
+#### Test: elif without trailing else clause
+
+The grammar production `else_part : Elif compound_list Then
+compound_list` allows an elif branch with no final else. When
+neither the if nor the elif condition is true, no branch executes.
+
+```
+begin test "elif without trailing else clause"
+  script
+    x=3
+    if [ "$x" = 1 ]; then
+      echo one
+    elif [ "$x" = 2 ]; then
+      echo two
+    fi
+    echo done
+  expect
+    stdout "done"
+    stderr ""
+    exit_code 0
+end test "elif without trailing else clause"
+```
+
+#### Test: function body with redirect list in definition
+
+The grammar production `function_body : compound_command redirect_list`
+allows redirections to be part of the function definition. They are
+applied each time the function is called.
+
+```
+begin test "function body with redirect list in definition"
+  script
+    fn() { echo "from fn"; } > tmp_fn_redir.txt
+    fn
+    cat tmp_fn_redir.txt
+  expect
+    stdout "from fn"
+    stderr ""
+    exit_code 0
+end test "function body with redirect list in definition"
+```
+
+#### Test: DLESSDASH strips leading tabs from here-document
+
+The grammar production `io_here : DLESSDASH here_end` recognizes the
+`<<-` operator, which strips leading tab characters from each line of
+the here-document body and from the delimiter line.
+
+```
+begin test "DLESSDASH strips leading tabs from here-document"
+  script
+    eval "$(printf 'cat <<-ENDHERE\n\thello world\n\tENDHERE\n')"
+  expect
+    stdout "hello world"
+    stderr ""
+    exit_code 0
+end test "DLESSDASH strips leading tabs from here-document"
+```
+
+#### Test: IO_NUMBER with here-document
+
+The grammar production `io_redirect : IO_NUMBER io_here` allows a
+here-document to be directed to an explicit file descriptor rather
+than the default standard input.
+
+```
+begin test "IO_NUMBER with here-document"
+  script
+    exec 3<<EOF
+    hello from fd3
+    EOF
+    cat <&3
+  expect
+    stdout "hello from fd3"
+    stderr ""
+    exit_code 0
+end test "IO_NUMBER with here-document"
+```
+
+#### Test: LESSAND duplicates input file descriptor
+
+The grammar production `io_file : LESSAND filename` recognizes the `<&`
+multi-character operator, which duplicates an input file descriptor.
+
+```
+begin test "LESSAND duplicates input file descriptor"
+  script
+    echo hello > tmp_lessand.txt
+    exec 3<tmp_lessand.txt
+    cat <&3
+    exec 3<&-
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
+end test "LESSAND duplicates input file descriptor"
+```
+
+#### Test: append redirect with DGREAT operator
+
+The grammar production `io_file : DGREAT filename` recognizes the `>>`
+multi-character operator token, which appends output to an existing file
+instead of truncating it.
+
+```
+begin test "append redirect with DGREAT operator"
+  script
+    echo first > tmp_dgreat.txt
+    echo second >> tmp_dgreat.txt
+    cat tmp_dgreat.txt
+  expect
+    stdout "first\nsecond"
+    stderr ""
+    exit_code 0
+end test "append redirect with DGREAT operator"
+```
+
+#### Test: LESSGREAT opens file for reading and writing
+
+The grammar production `io_file : LESSGREAT filename` recognizes the
+`<>` multi-character operator, which opens a file for both reading and
+writing.
+
+```
+begin test "LESSGREAT opens file for reading and writing"
+  script
+    echo hello > tmp_lessgreat.txt
+    cat <> tmp_lessgreat.txt
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
+end test "LESSGREAT opens file for reading and writing"
+```
+
+#### Test: clobber operator overrides noclobber
+
+The grammar defines `CLOBBER` (`>|`) as an io_file operator. It forces
+output redirection to overwrite an existing file even when the shell's
+noclobber option (`set -C`) is active.
+
+```
+begin test "clobber operator overrides noclobber"
+  script
+    set -C
+    echo first > tmp_clobber.txt
+    echo second >| tmp_clobber.txt
+    cat tmp_clobber.txt
+    set +C
+  expect
+    stdout "second"
+    stderr ""
+    exit_code 0
+end test "clobber operator overrides noclobber"
+```
+
+#### Test: SEMI_AND case fallthrough
+
+The grammar production `case_item : pattern_list ')' compound_list
+SEMI_AND linebreak` uses `;&` to fall through to the next case item's
+body without re-evaluating the pattern.
+
+```
+begin test "SEMI_AND case fallthrough"
+  script
+    case x in
+      x) echo one ;&
+      y) echo two ;;
+    esac
+  expect
+    stdout "one\ntwo"
+    stderr ""
+    exit_code 0
+end test "SEMI_AND case fallthrough"
+```
+
+#### Test: empty case body with DSEMI terminator
+
+The grammar production `case_item : pattern_list ')' linebreak DSEMI
+linebreak` allows a non-last case item to have an empty body while
+still using `;;` to separate it from subsequent items.
+
+```
+begin test "empty case body with DSEMI terminator"
+  script
+    case x in
+      y) ;;
+      x) echo matched ;;
+    esac
+  expect
+    stdout "matched"
+    stderr ""
+    exit_code 0
+end test "empty case body with DSEMI terminator"
+```
+
+#### Test: last case item with empty body exits zero
+
+The grammar production `case_item_ns : pattern_list ')' linebreak`
+allows the final case item to have an empty body (no compound_list).
+When matched, the case command exits zero.
+
+```
+begin test "last case item with empty body exits zero"
+  script
+    case x in
+      x)
+    esac
+    echo $?
+  expect
+    stdout "0"
+    stderr ""
+    exit_code 0
+end test "last case item with empty body exits zero"
+```
+
+#### Test: simple command with only redirect in cmd_prefix
+
+The grammar production `simple_command : cmd_prefix` allows a command
+consisting of only redirections with no command name. A bare `>file`
+creates or truncates the file.
+
+```
+begin test "simple command with only redirect in cmd_prefix"
+  script
+    echo content > tmp_prefix_only.txt
+    >tmp_prefix_only.txt
+    [ -s tmp_prefix_only.txt ] && echo notempty || echo empty
+  expect
+    stdout "empty"
+    stderr ""
+    exit_code 0
+end test "simple command with only redirect in cmd_prefix"
+```
+
+#### Test: multiple redirects in redirect_list on compound command
+
+The recursive grammar production `redirect_list : redirect_list
+io_redirect` allows multiple redirections to be applied to a compound
+command. Both stdout and stderr can be redirected independently.
+
+```
+begin test "multiple redirects in redirect_list on compound command"
+  script
+    { echo out; echo err >&2; } > tmp_multi_out.txt 2> tmp_multi_err.txt
+    cat tmp_multi_out.txt
+    cat tmp_multi_err.txt
+  expect
+    stdout "out\nerr"
+    stderr ""
+    exit_code 0
+end test "multiple redirects in redirect_list on compound command"
+```
+
+#### Test: multiple redirects in cmd_suffix
+
+The recursive grammar production `cmd_suffix : cmd_suffix io_redirect`
+allows multiple redirections after the command name. Both stdout and
+stderr can be separately redirected in a single simple command.
+
+```
+begin test "multiple redirects in cmd_suffix"
+  script
+    echo hello >tmp_suf_out.txt 2>tmp_suf_err.txt
+    cat tmp_suf_out.txt
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
+end test "multiple redirects in cmd_suffix"
+```
+
+#### Test: reserved word text before equals is ASSIGNMENT_WORD
+
+Rule 7a checks whether the TOKEN is exactly a reserved word. The token
+`if=hello` is not exactly `if`, so rule 7b applies. Since the characters
+before the first `=` form a valid name, the token is classified as
+ASSIGNMENT_WORD — the variable `if` is assigned.
+
+```
+begin test "reserved word text before equals is ASSIGNMENT_WORD"
+  script
+    if=hello
+    echo "$if"
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
+end test "reserved word text before equals is ASSIGNMENT_WORD"
+```
+
+#### Test: unquoted here-document delimiter allows parameter expansion
+
+Rule 3 applies quote removal to determine the here-document delimiter.
+When the delimiter word contains no quoting, expansions inside the
+here-document body are performed normally.
+
+```
+begin test "unquoted here-document delimiter allows parameter expansion"
+  script
+    var=hello
+    cat <<EOF
+    $var
+    EOF
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
+end test "unquoted here-document delimiter allows parameter expansion"
+```
+
+#### Test: for loop with do on same line and no separator
+
+The first grammar production `for_clause : For name do_group` has no
+separator between the loop variable name and the `do` keyword. This
+allows `for i do ... done` on a single line without a semicolon
+or newline between the name and `do`.
+
+```
+begin test "for loop with do on same line and no separator"
+  script
+    set -- a b c
+    for i do echo "$i"; done
+  expect
+    stdout "a\nb\nc"
+    stderr ""
+    exit_code 0
+end test "for loop with do on same line and no separator"
+```
+
+#### Test: empty body with SEMI_AND fallthrough
+
+The grammar production `case_item : pattern_list ')' linebreak
+SEMI_AND linebreak` allows a case item with an empty body to fall
+through via `;&` to the next item's body.
+
+```
+begin test "empty body with SEMI_AND fallthrough"
+  script
+    case x in
+      x) ;&
+      y) echo matched ;;
+    esac
+  expect
+    stdout "matched"
+    stderr ""
+    exit_code 0
+end test "empty body with SEMI_AND fallthrough"
+```
+
+#### Test: GREATAND duplicates output file descriptor
+
+The grammar production `io_file : GREATAND filename` recognizes the
+`>&` multi-character operator, which duplicates an output file
+descriptor to the specified target.
+
+```
+begin test "GREATAND duplicates output file descriptor"
+  script
+    echo hello >&2
+  expect
+    stdout ""
+    stderr "hello"
+    exit_code 0
+end test "GREATAND duplicates output file descriptor"
+```
+
+#### Test: multiple redirects in cmd_prefix
+
+The recursive grammar production `cmd_prefix : cmd_prefix io_redirect`
+allows multiple redirections to appear before the command name. Both
+stdout and stderr can be redirected in prefix position.
+
+```
+begin test "multiple redirects in cmd_prefix"
+  script
+    >tmp_pre_out.txt 2>tmp_pre_err.txt echo hello
+    cat tmp_pre_out.txt
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
+end test "multiple redirects in cmd_prefix"
+```
+
+#### Test: terminated items before unterminated last item
+
+The grammar production `case_list_ns : case_list case_item_ns` allows
+a case statement with `;;`-terminated items followed by a final item
+that omits the terminator.
+
+```
+begin test "terminated items before unterminated last item"
+  script
+    case x in
+      a) echo a ;;
+      x) echo x
+    esac
+  expect
+    stdout "x"
+    stderr ""
+    exit_code 0
+end test "terminated items before unterminated last item"
+```
