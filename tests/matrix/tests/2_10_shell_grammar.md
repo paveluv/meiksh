@@ -1735,3 +1735,72 @@ begin test "IO_LOCATION token is parsed as redirection"
     exit_code 0
 end test "IO_LOCATION token is parsed as redirection"
 ```
+#### Test: empty wordlist in for loop executes zero times
+
+The grammar allows an empty wordlist via `For name linebreak in sequential_sep do_group`.
+If the wordlist is omitted, the loop body executes zero times.
+
+```
+begin test "empty wordlist in for loop executes zero times"
+  script
+    for i in; do echo "iter"; done
+    echo "done"
+  expect
+    stdout "done"
+    stderr ""
+    exit_code 0
+end test "empty wordlist in for loop executes zero times"
+```
+
+#### Test: compound list execution order
+
+A `compound_list` executes its terms in sequence.
+
+```
+begin test "compound list execution order"
+  script
+    {
+      echo 1
+      echo 2
+      echo 3
+    }
+  expect
+    stdout "1\n2\n3"
+    stderr ""
+    exit_code 0
+end test "compound list execution order"
+```
+
+#### Test: background brace group
+
+A brace group can be executed asynchronously by suffixing it with `&`.
+
+```
+begin test "background brace group"
+  script
+    { sleep 0.1; echo bg; } > tmp_bg_brace.txt &
+    wait
+    cat tmp_bg_brace.txt
+  expect
+    stdout "bg"
+    stderr ""
+    exit_code 0
+end test "background brace group"
+```
+
+#### Test: background subshell
+
+A subshell can be executed asynchronously by suffixing it with `&`.
+
+```
+begin test "background subshell"
+  script
+    ( sleep 0.1; echo bg ) > tmp_bg_subshell.txt &
+    wait
+    cat tmp_bg_subshell.txt
+  expect
+    stdout "bg"
+    stderr ""
+    exit_code 0
+end test "background subshell"
+```
