@@ -2562,10 +2562,12 @@ testsuite \"My Suite\"
 requirement \"REQ-001\" doc=\"Some requirement.\"
 
 begin test \"first test\"
-  begin script
+  script
     echo hello
-  end script
-  expect_stdout \"hello\"
+  expect
+    stdout \"hello\"
+    stderr \"\"
+    exit_code 0
 end test \"first test\"
 
 requirement \"REQ-002\" doc=\"Another requirement.\"
@@ -2601,10 +2603,12 @@ requirement \"REQ-001\" doc=\"Test requirement.\"
 begin test \"with env\"
   setenv \"FOO\" \"bar\"
   setenv \"BAZ\" \"qux\"
-  begin script
+  script
     echo $FOO
-  end script
-  expect_stdout \"bar\"
+  expect
+    stdout \"bar\"
+    stderr \"\"
+    exit_code 0
 end test \"with env\"
 ";
         let suite = parse_suite(input, "env.epty").unwrap();
@@ -2619,9 +2623,12 @@ end test \"with env\"
 testsuite \"Bad\"
 requirement \"REQ-001\" doc=\"Test requirement.\"
 begin test \"alpha\"
-  begin script
+  script
     true
-  end script
+  expect
+    stdout \"\"
+    stderr \"\"
+    exit_code 0
 end test \"beta\"
 ";
         assert!(parse_suite(input, "bad.epty").is_err());
@@ -2633,9 +2640,12 @@ end test \"beta\"
 testsuite \"Bad\"
 requirement \"REQ-001\" doc=\"Test requirement.\"
 begin test \"alpha\"
-  begin script
+  script
     true
-  end script
+  expect
+    stdout \"\"
+    stderr \"\"
+    exit_code 0
 ";
         assert!(parse_suite(input, "bad.epty").is_err());
     }
@@ -2669,9 +2679,12 @@ end test \"alpha\"
         let input = "\
 requirement \"REQ-001\" doc=\"Test requirement.\"
 begin test \"lone\"
-  begin script
+  script
     true
-  end script
+  expect
+    stdout \"\"
+    stderr \"\"
+    exit_code 0
 end test \"lone\"
 ";
         let suite = parse_suite(input, "my_file.epty").unwrap();
@@ -2687,9 +2700,12 @@ requirement \"REQ-001\" doc=\"First requirement.\"
 requirement \"REQ-002\" doc=\"Something.\"
 
 begin test \"covered\"
-  begin script
+  script
     true
-  end script
+  expect
+    stdout \"\"
+    stderr \"\"
+    exit_code 0
 end test \"covered\"
 ";
         let suite = parse_suite(input, "test.epty").unwrap();
@@ -2705,9 +2721,12 @@ end test \"covered\"
         let input = "\
 requirement \"REQ-001\"
 begin test \"bare\"
-  begin script
+  script
     true
-  end script
+  expect
+    stdout \"\"
+    stderr \"\"
+    exit_code 0
 end test \"bare\"
 ";
         let err = parse_suite(input, "bad.epty").unwrap_err();
@@ -2719,9 +2738,12 @@ end test \"bare\"
         let input = "\
 requirement \"REQ-001\" doc=\"lowercase start.\"
 begin test \"t\"
-  begin script
+  script
     true
-  end script
+  expect
+    stdout \"\"
+    stderr \"\"
+    exit_code 0
 end test \"t\"
 ";
         let suite = parse_suite(input, "bad.epty").unwrap();
@@ -2734,9 +2756,12 @@ end test \"t\"
         let input = "\
 requirement \"REQ-001\" doc=\"No period at end\"
 begin test \"t\"
-  begin script
+  script
     true
-  end script
+  expect
+    stdout \"\"
+    stderr \"\"
+    exit_code 0
 end test \"t\"
 ";
         let suite = parse_suite(input, "bad.epty").unwrap();
@@ -2749,9 +2774,12 @@ end test \"t\"
         let input = "\
 requirement \"REQ-001\" doc=\"Trailing colon:.\"
 begin test \"t\"
-  begin script
+  script
     true
-  end script
+  expect
+    stdout \"\"
+    stderr \"\"
+    exit_code 0
 end test \"t\"
 ";
         let err = parse_suite(input, "bad.epty").unwrap_err();
@@ -2762,9 +2790,12 @@ end test \"t\"
     fn parse_suite_no_requirement_is_allowed() {
         let input = "\
 begin test \"bare\"
-  begin script
+  script
     true
-  end script
+  expect
+    stdout \"\"
+    stderr \"\"
+    exit_code 0
 end test \"bare\"
 ";
         let suite = parse_suite(input, "bad.epty").unwrap();
@@ -2780,9 +2811,12 @@ requirement \"REQ-002\" doc=\"Test requirement.\"
 requirement \"REQ-003\" doc=\"Test requirement.\"
 requirement \"REQ-004\" doc=\"Test requirement.\"
 begin test \"overloaded\"
-  begin script
+  script
     true
-  end script
+  expect
+    stdout \"\"
+    stderr \"\"
+    exit_code 0
 end test \"overloaded\"
 ";
         let suite = parse_suite(input, "bad.epty").unwrap();
@@ -2797,9 +2831,12 @@ requirement \"REQ-001\" doc=\"Test requirement.\"
 requirement \"REQ-002\" doc=\"Test requirement.\"
 requirement \"REQ-003\" doc=\"Test requirement.\"
 begin test \"three\"
-  begin script
+  script
     true
-  end script
+  expect
+    stdout \"\"
+    stderr \"\"
+    exit_code 0
 end test \"three\"
 ";
         let suite = parse_suite(input, "test.epty").unwrap();
@@ -2811,12 +2848,14 @@ end test \"three\"
         let input = "\
 requirement \"REQ-001\" doc=\"Test requirement.\"
 begin test \"multi\"
-  begin script
+  script
     echo line1
     echo line2
     echo line3
-  end script
-  expect_stdout \"line1\nline2\nline3\"
+  expect
+    stdout \"line1\\nline2\\nline3\"
+    stderr \"\"
+    exit_code 0
 end test \"multi\"
 ";
         let suite = parse_suite(input, "test.epty").unwrap();
@@ -2828,11 +2867,14 @@ end test \"multi\"
         let input = "\
 requirement \"REQ-001\" doc=\"Test requirement.\"
 begin test \"blanks\"
-  begin script
+  script
     echo before
 
     echo after
-  end script
+  expect
+    stdout \"\"
+    stderr \"\"
+    exit_code 0
 end test \"blanks\"
 ";
         let suite = parse_suite(input, "test.epty").unwrap();
@@ -2844,9 +2886,12 @@ end test \"blanks\"
         let input = "\
 requirement \"REQ-001\" doc=\"Test requirement.\"
 begin test \"quotes\"
-  begin script
+  script
     echo \"hello world\" '$var' $(cmd)
-  end script
+  expect
+    stdout \"\"
+    stderr \"\"
+    exit_code 0
 end test \"quotes\"
 ";
         let suite = parse_suite(input, "test.epty").unwrap();
@@ -2858,7 +2903,6 @@ end test \"quotes\"
         let input = "\
 requirement \"REQ-001\" doc=\"Test requirement.\"
 begin test \"no script\"
-  expect_exit_code 0
 end test \"no script\"
 ";
         assert!(parse_suite(input, "bad.epty").is_err());
@@ -2869,9 +2913,12 @@ end test \"no script\"
         let input = "\
 requirement \"REQ-001\" doc=\"Test requirement.\"
 begin interactive test \"bad\"
-  begin script
+  script
     echo hello
-  end script
+  expect
+    stdout \"\"
+    stderr \"\"
+    exit_code 0
 end interactive test \"bad\"
 ";
         assert!(parse_suite(input, "bad.epty").is_err());
@@ -2888,7 +2935,7 @@ end interactive test \"bad\"
         let input = "\
 requirement \"REQ-001\" doc=\"Test requirement.\"
 begin test \"bad\"
-  begin script
+  script
     echo hello
 end test \"bad\"
 ";
@@ -2917,15 +2964,21 @@ end test \"bad\"
             "testsuite \"S1\"
 requirement \"REQ-1\" doc=\"Doc one.\"
 begin test \"alpha\"
-  begin script
+  script
     true
-  end script
+  expect
+    stdout \"\"
+    stderr \"\"
+    exit_code 0
 end test \"alpha\"
 requirement \"REQ-2\" doc=\"Doc two.\"
 begin test \"beta\"
-  begin script
+  script
     true
-  end script
+  expect
+    stdout \"\"
+    stderr \"\"
+    exit_code 0
 end test \"beta\"
 ",
             "s1.epty",
@@ -2936,9 +2989,12 @@ end test \"beta\"
             "testsuite \"S2\"
 requirement \"REQ-3\" doc=\"Doc three.\"
 begin test \"alpha\"
-  begin script
+  script
     true
-  end script
+  expect
+    stdout \"\"
+    stderr \"\"
+    exit_code 0
 end test \"alpha\"
 ",
             "s2.epty",
