@@ -55,6 +55,9 @@ end test "descriptive test name"
 - Each test section has exactly one fenced code block.
 - `script` at column 2, body at column 4, `expect` at column 2, assertions at column 4.
 - Assertions must appear in order: `stdout`, `stderr`, `exit_code` (all required).
+- `setenv "KEY" "VALUE"` directives can appear between `begin test` and
+  `script` (or `spawn`) to set environment variables for the shell process.
+  Quoted strings support backslash escapes (`\"`, `\\`, `\n`, `\r`, `\t`).
 
 ### Interactive tests
 
