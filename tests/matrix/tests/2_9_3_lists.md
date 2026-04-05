@@ -255,6 +255,22 @@ begin test "background stdin from /dev/null"
 end test "background stdin from /dev/null"
 ```
 
+#### Test: job-control background job prints job number and PID
+
+If the shell is interactive and the asynchronous AND-OR list became a
+background job, the job number and process ID shall be written to stderr.
+
+```
+begin interactive test "job-control background job prints job number and PID"
+  spawn -i
+  expect "[$] "
+  send "sleep 0.1 &"
+  expect "\[1\] [0-9]+"
+  sendeof
+  wait
+end interactive test "job-control background job prints job number and PID"
+```
+
 #### Test: explicit redirect overrides /dev/null
 
 An explicit redirection of standard input overrides the default /dev/null
