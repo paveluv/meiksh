@@ -541,3 +541,356 @@ begin interactive test "set -b notification for stopped background job"
   wait
 end interactive test "set -b notification for stopped background job"
 ```
+#### Test: non-job-control background jobs do not appear in jobs list
+
+Requirements relating to background jobs stated in this section only apply
+to job-control background jobs. If job control is disabled (`set +m`), a
+background job is not added to the jobs list and does not produce completion
+notifications.
+
+```
+begin interactive test "non-job-control background jobs do not appear in jobs list"
+  spawn -i
+  expect "$ "
+  send "set +m"
+  expect "$ "
+  send "sleep 30 &"
+  expect "$ "
+  send "jobs | grep . >/dev/null && echo listed || echo not_listed"
+  expect "not_listed"
+  expect "$ "
+  send "kill \$! 2>/dev/null; wait"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "non-job-control background jobs do not appear in jobs list"
+```
+
+#### Test: interactive shell in background stops with SIGTTIN
+
+If an interactive shell is started with its process group not equal to the
+terminal's foreground process group (e.g. started as a background job), it
+shall either stop itself with `SIGTTIN` or attempt to read from standard
+input, which generates `SIGTTIN`.
+
+```
+begin interactive test "interactive shell in background stops with SIGTTIN"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "/usr/bin/bash --posix -i </dev/tty >/dev/null 2>&1 &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  sleep 500ms
+  send "jobs"
+  expect "(Stopped|Suspended)"
+  expect "$ "
+  send "kill -9 %1 2>/dev/null; wait 2>/dev/null"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "interactive shell in background stops with SIGTTIN"
+```
+
+#### Test: foreground job sets terminal foreground process group
+
+When a foreground job is created, the shell sets the foreground process
+group ID associated with the terminal to the job's process group ID.
+
+```
+begin interactive test "foreground job sets terminal foreground process group"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "(ps -o tpgid= -p \$BASHPID | tr -d ' ' > tmp_fgpgid.txt; ps -o pgid= -p \$BASHPID | tr -d ' ' > tmp_pgid.txt)"
+  expect "$ "
+  send "[ \$(cat tmp_fgpgid.txt) -eq \$(cat tmp_pgid.txt) ] && echo tpgid_match"
+  expect "tpgid_match"
+  expect "$ "
+  send "rm -f tmp_fgpgid.txt tmp_pgid.txt"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "foreground job sets terminal foreground process group"
+```
+
+#### Test: built-in foreground pipeline does not change tpgid
+
+If all commands in the foreground pipeline are executed by the shell itself
+in the current environment (e.g. a simple built-in), the foreground process
+group ID is set to the shell's process group ID, so it effectively does not
+change.
+
+```
+begin interactive test "built-in foreground pipeline does not change tpgid"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "TPGID1=\$(ps -o tpgid= -p \$BASHPID | tr -d ' '); :; TPGID2=\$(ps -o tpgid= -p \$BASHPID | tr -d ' '); [ \$TPGID1 -eq \$TPGID2 ] && echo unchanged"
+  expect "unchanged"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "built-in foreground pipeline does not change tpgid"
+```
+
+#### Test: shell restores terminal foreground process group after foreground job
+
+When a foreground job terminates or becomes suspended, the shell sets the
+foreground process group ID associated with the terminal back to its own
+process group ID.
+
+```
+begin interactive test "shell restores terminal foreground process group after foreground job"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "true"
+  expect "$ "
+  send "PGID=\$(ps -o pgid= -p \$BASHPID | tr -d ' '); TPGID=\$(ps -o tpgid= -p \$BASHPID | tr -d ' '); [ \$PGID -eq \$TPGID ] && echo restored"
+  expect "restored"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "shell restores terminal foreground process group after foreground job"
+```
+
+#### Test: background job brought to foreground and stopped becomes suspended job
+
+If a background job is brought to the foreground with `fg` and is
+subsequently stopped by a signal, the entire job shall become a suspended
+job as if it had been stopped while running in the background.
+
+```
+begin interactive test "background job brought to foreground and stopped becomes suspended job"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 30 &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  send "sh -c \"sleep 0.2; kill -STOP \$!\" &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  send "fg %1 >/dev/null"
+  sleep 500ms
+  expect "(Stopped|Suspended)"
+  expect "$ "
+  send "kill -9 %1 %2 2>/dev/null; wait 2>/dev/null"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "background job brought to foreground and stopped becomes suspended job"
+```
+
+#### Test: fg removes process ID from known list
+
+When a background job is brought into the foreground by `fg`, its associated
+process ID shall be removed from the list of process IDs known in the
+current shell execution environment.
+
+```
+begin interactive test "fg removes process ID from known list"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 0.1 &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  send "PID=\$!"
+  expect "$ "
+  send "fg %1 >/dev/null"
+  expect "$ "
+  send "wait \$PID 2>/dev/null; echo \$?"
+  expect "127"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "fg removes process ID from known list"
+```
+
+#### Test: foreground job stopped by SIGTTIN becomes suspended
+
+When a foreground job is stopped by the catchable `SIGTTIN` signal, the shell
+creates a suspended job and writes a status message.
+
+```
+begin interactive test "foreground job stopped by SIGTTIN becomes suspended"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sh -c 'sleep 0.2; kill -TTIN $$'"
+  sleep 1000ms
+  expect "(Stopped|Suspended)"
+  expect "$ "
+  send "kill -9 %1 2>/dev/null; wait 2>/dev/null"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "foreground job stopped by SIGTTIN becomes suspended"
+```
+
+#### Test: foreground job stopped by SIGTTOU becomes suspended
+
+When a foreground job is stopped by the catchable `SIGTTOU` signal, the shell
+creates a suspended job and writes a status message.
+
+```
+begin interactive test "foreground job stopped by SIGTTOU becomes suspended"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sh -c 'sleep 0.2; kill -TTOU $$'"
+  sleep 1000ms
+  expect "(Stopped|Suspended)"
+  expect "$ "
+  send "kill -9 %1 2>/dev/null; wait 2>/dev/null"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "foreground job stopped by SIGTTOU becomes suspended"
+```
+
+#### Test: background job stopped by SIGTSTP becomes suspended job
+
+When a background job is stopped by `SIGTSTP`, the shell converts it into a
+suspended job.
+
+```
+begin interactive test "background job stopped by SIGTSTP becomes suspended job"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 30 &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  send "kill -TSTP %1"
+  sleep 500ms
+  send "jobs"
+  expect "(Stopped|Suspended).*sleep"
+  expect "$ "
+  send "kill -9 %1 2>/dev/null; wait 2>/dev/null"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "background job stopped by SIGTSTP becomes suspended job"
+```
+
+#### Test: background job stopped by SIGTTIN becomes suspended job
+
+When a background job is stopped by `SIGTTIN`, the shell converts it into a
+suspended job.
+
+```
+begin interactive test "background job stopped by SIGTTIN becomes suspended job"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 30 &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  send "kill -TTIN %1"
+  sleep 500ms
+  send "jobs"
+  expect "(Stopped|Suspended).*sleep"
+  expect "$ "
+  send "kill -9 %1 2>/dev/null; wait 2>/dev/null"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "background job stopped by SIGTTIN becomes suspended job"
+```
+
+#### Test: background job stopped by SIGTTOU becomes suspended job
+
+When a background job is stopped by `SIGTTOU`, the shell converts it into a
+suspended job.
+
+```
+begin interactive test "background job stopped by SIGTTOU becomes suspended job"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 30 &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  send "kill -TTOU %1"
+  sleep 500ms
+  send "jobs"
+  expect "(Stopped|Suspended).*sleep"
+  expect "$ "
+  send "kill -9 %1 2>/dev/null; wait 2>/dev/null"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "background job stopped by SIGTTOU becomes suspended job"
+```
+
+#### Test: stopped background job produces notification at next prompt
+
+When a process associated with a background job is stopped by a signal and
+`set -b` is disabled, an interactive shell writes the suspended-job message
+immediately prior to writing the next prompt for input.
+
+```
+begin interactive test "stopped background job produces notification at next prompt"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 30 &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  send "kill -STOP %1"
+  expect "$ "
+  sleep 500ms
+  send "echo trigger_prompt"
+  expect "(Stopped|Suspended)"
+  expect "$ "
+  send "kill -9 %1 2>/dev/null; wait 2>/dev/null"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "stopped background job produces notification at next prompt"
+```
+
+#### Test: SIGCONT to stopped background job continues it in background
+
+Execution of a suspended job can be continued as a non-suspended background
+job by sending the stopped processes a `SIGCONT` signal.
+
+```
+begin interactive test "SIGCONT to stopped background job continues it in background"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 30 &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  send "kill -STOP %1"
+  sleep 500ms
+  expect "$ "
+  send "kill -CONT %1"
+  expect "$ "
+  sleep 500ms
+  send "jobs"
+  expect "(Running|Running).*sleep 30"
+  expect "$ "
+  send "kill %1; wait 2>/dev/null"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "SIGCONT to stopped background job continues it in background"
+```
