@@ -1684,3 +1684,54 @@ begin test "bang negates entire pipe sequence"
     exit_code 0
 end test "bang negates entire pipe sequence"
 ```
+#### Test: empty sequential list does not execute
+
+The grammar does not allow an empty command before a semicolon separator.
+A stray semicolon causes a syntax error.
+
+```
+begin test "empty sequential list does not execute"
+  script
+    ;
+  expect
+    stdout ""
+    stderr "(.|\n)+"
+    exit_code !=0
+end test "empty sequential list does not execute"
+```
+
+#### Test: double semicolon not in case statement
+
+The `DSEMI` token (`;;`) is only grammatically valid within a `case`
+command to terminate a case item. Using it elsewhere is a syntax error.
+
+```
+begin test "double semicolon not in case statement"
+  script
+    echo a ;; echo b
+  expect
+    stdout ""
+    stderr "(.|\n)+"
+    exit_code !=0
+end test "double semicolon not in case statement"
+```
+
+#### Test: IO_LOCATION token is parsed as redirection
+
+Rule 3 allows a string like `{fd}` immediately preceding `<` or `>`
+to be classified as `IO_LOCATION`. This is an optional feature. If supported,
+it assigns the file descriptor to the named variable; if not supported,
+it should be a syntax error or a literal string, but the shell should
+handle it gracefully.
+
+```
+begin test "IO_LOCATION token is parsed as redirection"
+  script
+    {fd}>tmp_ioloc.txt echo ok 2>/dev/null || echo syntax_error
+    rm -f tmp_ioloc.txt
+  expect
+    stdout "(ok|syntax_error)"
+    stderr ""
+    exit_code 0
+end test "IO_LOCATION token is parsed as redirection"
+```
