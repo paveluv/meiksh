@@ -283,3 +283,261 @@ begin interactive test "multiple async commands in one list"
   wait
 end interactive test "multiple async commands in one list"
 ```
+
+#### Test: background job process is a process group leader
+
+When a single asynchronous AND-OR list creates a background job, its
+associated process ID shall be that of a child process that is made a
+process group leader (its PGID equals its PID).
+
+```
+begin interactive test "background job process is a process group leader"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 30 &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  send "[ $(ps -o pgid= -p $!) -eq $! ] && echo pgrp_leader"
+  expect "pgrp_leader"
+  expect "$ "
+  send "kill %1; wait 2>/dev/null"
+  expect "$ "
+  send "exit"
+  wait
+end interactive test "background job process is a process group leader"
+```
+
+#### Test: background pipeline processes share process group
+
+When a background job is a pipeline, all processes created to execute
+the AND-OR list shall initially share the same process group ID as the
+process group leader.
+
+```
+begin interactive test "background pipeline processes share process group"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "(echo $BASHPID > tmp_pgtest_a.txt; sleep 30) | (echo $BASHPID > tmp_pgtest_b.txt; sleep 30) &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  sleep 500ms
+  send "PG_A=$(ps -o pgid= -p $(cat tmp_pgtest_a.txt) | tr -d ' '); PG_B=$(ps -o pgid= -p $(cat tmp_pgtest_b.txt) | tr -d ' '); [ $PG_A -eq $PG_B ] && echo same_pgrp"
+  expect "same_pgrp"
+  expect "$ "
+  send "kill %1 2>/dev/null; wait 2>/dev/null"
+  expect "$ "
+  send "rm -f tmp_pgtest_a.txt tmp_pgtest_b.txt"
+  expect "$ "
+  send "exit"
+  wait
+end interactive test "background pipeline processes share process group"
+```
+
+#### Test: foreground pipeline processes share process group
+
+When a foreground pipeline is executed, all processes comprising the
+pipeline shall be in the same process group. Each pipeline component
+records its own PGID; after completion, both PGIDs are compared.
+
+```
+begin interactive test "foreground pipeline processes share process group"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "(ps -o pgid= -p $BASHPID | tr -d ' ' > tmp_fgpg_a.txt; echo a) | (ps -o pgid= -p $BASHPID | tr -d ' ' > tmp_fgpg_b.txt; cat)"
+  expect "a"
+  expect "$ "
+  send "PG_A=$(cat tmp_fgpg_a.txt); PG_B=$(cat tmp_fgpg_b.txt); [ $PG_A -eq $PG_B ] && echo same_pgrp"
+  expect "same_pgrp"
+  expect "$ "
+  send "rm -f tmp_fgpg_a.txt tmp_fgpg_b.txt"
+  expect "$ "
+  send "exit"
+  wait
+end interactive test "foreground pipeline processes share process group"
+```
+
+#### Test: sequential list with trailing async creates background job
+
+For a list of sequentially executed AND-OR lists followed by an
+asynchronous AND-OR list, the sequential parts run as a foreground job.
+When they complete, the asynchronous part forms a separate background job.
+
+```
+begin interactive test "sequential list with trailing async creates background job"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "echo seq_done; sleep 30 &"
+  expect "seq_done"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  send "jobs"
+  expect "sleep 30"
+  expect "$ "
+  send "kill %1; wait 2>/dev/null"
+  expect "$ "
+  send "exit"
+  wait
+end interactive test "sequential list with trailing async creates background job"
+```
+
+#### Test: foreground job stopped by SIGTSTP becomes suspended
+
+When a process in a foreground job is stopped by a catchable signal
+(SIGTSTP), the shell shall create a suspended job, assign it a job
+number, and write a suspension message to standard error.
+
+```
+begin interactive test "foreground job stopped by SIGTSTP becomes suspended"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sh -c 'sleep 0.2; kill -TSTP $$'"
+  sleep 1000ms
+  expect "(Stopped|Suspended)"
+  expect "$ "
+  send "kill -9 %1 2>/dev/null; wait 2>/dev/null"
+  expect "$ "
+  send "exit"
+  wait
+end interactive test "foreground job stopped by SIGTSTP becomes suspended"
+```
+
+#### Test: foreground job stopped by SIGSTOP becomes suspended
+
+When a foreground job is stopped by SIGSTOP, the behavior shall be the
+same as for a catchable signal: the shell creates a suspended job,
+assigns it a job number, and writes a suspension message.
+
+```
+begin interactive test "foreground job stopped by SIGSTOP becomes suspended"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sh -c 'sleep 0.2; kill -STOP $$'"
+  sleep 1000ms
+  expect "(Stopped|Suspended)"
+  expect "$ "
+  send "kill -9 %1 2>/dev/null; wait 2>/dev/null"
+  expect "$ "
+  send "exit"
+  wait
+end interactive test "foreground job stopped by SIGSTOP becomes suspended"
+```
+
+#### Test: fg resumes suspended job as foreground
+
+A suspended job can be continued as a foreground job by means of the fg
+utility, which sends SIGCONT to the job's process group. The job runs to
+completion and is then removed from the jobs list.
+
+```
+begin interactive test "fg resumes suspended job as foreground"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sh -c 'trap \"exit 0\" CONT; sleep 0.1; kill -STOP $$' &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  sleep 500ms
+  send "true"
+  expect "(Stopped|Suspended)"
+  expect "$ "
+  send "fg %1"
+  expect "$ "
+  send "jobs | grep . > /dev/null && echo still_listed || echo cleared"
+  expect "cleared"
+  expect "$ "
+  send "exit"
+  wait
+end interactive test "fg resumes suspended job as foreground"
+```
+
+#### Test: background job terminated by signal produces notification
+
+When a background job is terminated by a signal (not just normal
+completion), an interactive shell shall write a termination notification
+before the next prompt.
+
+```
+begin interactive test "background job terminated by signal produces notification"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 30 &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  send "kill %1"
+  expect "$ "
+  send "true"
+  expect "(Terminated|Kill).*sleep"
+  expect "$ "
+  send "exit"
+  wait
+end interactive test "background job terminated by signal produces notification"
+```
+
+#### Test: set -b immediate notification for signal-terminated background job
+
+With `set -b` enabled, the shell shall write a termination notification
+immediately after a background job is terminated by a signal, without
+waiting for the next prompt.
+
+```
+begin interactive test "set -b immediate notification for signal-terminated background job"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "set -b"
+  expect "$ "
+  send "sleep 30 &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  send "kill %1"
+  sleep 500ms
+  expect "(Terminated|Kill).*sleep"
+  send "echo ok"
+  expect "ok"
+  sendeof
+  wait
+end interactive test "set -b immediate notification for signal-terminated background job"
+```
+
+#### Test: set -b notification for stopped background job
+
+With `set -b` enabled, when a background job is stopped by a signal the
+shell shall write the suspension notification immediately (or at the next
+prompt), rather than deferring it until the next prompt without `set -b`.
+
+```
+begin interactive test "set -b notification for stopped background job"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "set -b"
+  expect "$ "
+  send "sleep 30 &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  send "kill -STOP %1"
+  sleep 500ms
+  expect "(Stopped|Suspended).*sleep"
+  send "kill -9 %1 2>/dev/null; wait 2>/dev/null"
+  expect "$ "
+  send "exit"
+  wait
+end interactive test "set -b notification for stopped background job"
+```
