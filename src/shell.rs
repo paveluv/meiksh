@@ -267,6 +267,7 @@ pub enum PendingControl {
 
 impl Shell {
     pub fn from_env() -> Result<Self, ShellError> {
+        sys::setup_locale();
         let raw_args = sys::env_args_os();
         let args: Vec<String> = raw_args
             .iter()
@@ -277,14 +278,22 @@ impl Shell {
             .shell_name_override
             .clone()
             .unwrap_or_else(|| sys::shell_name_from_args(&args).to_string());
-        let env: HashMap<String, String> = sys::env_vars();
-        let exported: BTreeSet<String> = env.keys().cloned().collect();
+        let raw_env: HashMap<String, String> = sys::env_vars();
+        let mut env = HashMap::new();
+        let mut exported = BTreeSet::new();
+        for (key, value) in &raw_env {
+            if crate::syntax::is_name(key) {
+                env.insert(key.clone(), value.clone());
+                exported.insert(key.clone());
+            }
+        }
         let interactive = options.force_interactive
             || (sys::is_interactive_fd(sys::STDIN_FILENO)
                 && sys::is_interactive_fd(sys::STDERR_FILENO));
         let ignored_on_entry = Self::probe_ignored_signals();
-        let mut env = env;
         env.insert("IFS".into(), " \t\n".into());
+        env.insert("PPID".into(), sys::parent_pid().to_string());
+        Self::init_pwd(&mut env);
         Ok(Self {
             positional: options.positional.clone(),
             options,
@@ -309,6 +318,18 @@ impl Shell {
             errexit_suppressed: false,
             pid: sys::current_pid(),
         })
+    }
+
+    fn init_pwd(env: &mut HashMap<String, String>) {
+        let Ok(cwd) = sys::get_cwd() else { return };
+        let valid = env.get("PWD").is_some_and(|p| {
+            p.starts_with('/')
+                && !p.split('/').any(|c| c == "." || c == "..")
+                && std::path::Path::new(p) == std::path::Path::new(&cwd)
+        });
+        if !valid {
+            env.insert("PWD".into(), cwd);
+        }
     }
 
     fn probe_ignored_signals() -> BTreeSet<TrapCondition> {
@@ -365,6 +386,9 @@ impl Shell {
             if self.options.monitor {
                 self.setup_job_control();
             }
+        }
+        if self.interactive {
+            interactive::load_env_file(self)?;
         }
         let status = if let Some(command) = self.options.command_string.clone() {
             self.run_source("<command>", &command)?
@@ -482,7 +506,13 @@ impl Shell {
         let mut session = syntax::ParseSession::new(source)?;
         let mut status = 0;
         self.run_pending_traps()?;
-        while let Some(item) = session.next_item(&self.aliases)? {
+        loop {
+            let lineno = session.current_line();
+            let item = match session.next_item(&self.aliases)? {
+                Some(item) => item,
+                None => break,
+            };
+            self.env.insert("LINENO".into(), lineno.to_string());
             status = self.execute_program(&Program { items: vec![item] })?;
             self.run_pending_traps()?;
             if !self.running || self.has_pending_control() {
@@ -542,7 +572,10 @@ impl Shell {
         let ws = sys::wait_pid(pid, false)?.expect("child status");
         let status = sys::decode_wait_status(ws.status);
         self.last_status = status;
-        let text = String::from_utf8_lossy(&output).into_owned();
+        let text = match String::from_utf8(output) {
+            Ok(s) => s,
+            Err(e) => e.into_bytes().iter().map(|&b| b as char).collect(),
+        };
         Ok(text)
     }
 
@@ -559,6 +592,14 @@ impl Shell {
 
     pub fn get_var(&self, name: &str) -> Option<String> {
         self.env.get(name).cloned()
+    }
+
+    pub fn input_is_incomplete(&self, error: &crate::syntax::ParseError) -> bool {
+        stdin_parse_error_requires_more_input(error)
+    }
+
+    pub fn history_number(&self) -> usize {
+        1
     }
 
     pub fn set_var(&mut self, name: &str, value: String) -> Result<(), ShellError> {

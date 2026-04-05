@@ -1360,21 +1360,7 @@ fn match_pattern(text: &[char], ti: usize, pattern: &[char], pi: usize) -> bool 
 }
 
 fn match_charclass(class: &str, ch: char) -> bool {
-    match class {
-        "alnum" => ch.is_ascii_alphanumeric(),
-        "alpha" => ch.is_ascii_alphabetic(),
-        "blank" => ch == ' ' || ch == '\t',
-        "cntrl" => ch.is_ascii_control(),
-        "digit" => ch.is_ascii_digit(),
-        "graph" => ch.is_ascii_graphic(),
-        "lower" => ch.is_ascii_lowercase(),
-        "print" => ch.is_ascii_graphic() || ch == ' ',
-        "punct" => ch.is_ascii_punctuation(),
-        "space" => ch.is_ascii_whitespace(),
-        "upper" => ch.is_ascii_uppercase(),
-        "xdigit" => ch.is_ascii_hexdigit(),
-        _ => false,
-    }
+    crate::sys::classify_char(class, ch)
 }
 
 fn match_bracket(current: Option<char>, pattern: &[char], start: usize) -> Option<(bool, usize)> {

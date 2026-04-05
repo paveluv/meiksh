@@ -242,6 +242,14 @@ impl ParseSession {
             asynchronous,
         }))
     }
+
+    pub fn current_line(&self) -> usize {
+        self.parser.tokens[..self.parser.index]
+            .iter()
+            .filter(|t| matches!(t.kind, TokenKind::Newline))
+            .count()
+            + 1
+    }
 }
 
 /// Scan a `$'...'` (dollar-single-quote) token, preserving it raw for
@@ -1595,7 +1603,7 @@ fn alias_has_trailing_blank(alias: &str) -> bool {
     matches!(alias.chars().last(), Some(' ' | '\t'))
 }
 
-fn is_name(name: &str) -> bool {
+pub fn is_name(name: &str) -> bool {
     let mut chars = name.chars();
     let Some(first) = chars.next() else {
         return false;
