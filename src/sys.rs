@@ -196,6 +196,7 @@ pub(crate) struct SystemInterface {
     // Signal state
     pending_signal_bits: fn() -> usize,
     take_pending_signal_bits: fn() -> usize,
+    monotonic_clock_ns: fn() -> u64,
 }
 
 pub(crate) fn default_interface() -> SystemInterface {
@@ -297,6 +298,12 @@ pub(crate) fn default_interface() -> SystemInterface {
         },
         pending_signal_bits: || PENDING_SIGNALS.load(Ordering::SeqCst),
         take_pending_signal_bits: || PENDING_SIGNALS.swap(0, Ordering::SeqCst),
+        monotonic_clock_ns: || {
+            let mut ts = std::mem::MaybeUninit::<libc::timespec>::zeroed();
+            unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, ts.as_mut_ptr()) };
+            let ts = unsafe { ts.assume_init() };
+            ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
+        },
     }
 }
 
@@ -767,6 +774,15 @@ pub(crate) mod test_support {
             }
         }
     }
+    fn trace_monotonic_clock_ns() -> u64 {
+        let entry = trace_dispatch("monotonic_clock_ns", &[]);
+        match &entry.result {
+            TraceResult::Int(ns) => *ns as u64,
+            other => {
+                panic!("trace result type mismatch for 'monotonic_clock_ns': expected Int, got {other:?}")
+            }
+        }
+    }
     fn trace_sysconf(name: c_int) -> c_long {
         let entry = trace_dispatch("sysconf", &[ArgMatcher::Int(name as i64)]);
         match &entry.result {
@@ -1124,6 +1140,7 @@ pub(crate) mod test_support {
             getpwnam: trace_getpwnam,
             pending_signal_bits: test_pending_signal_bits,
             take_pending_signal_bits: test_take_pending_signal_bits,
+            monotonic_clock_ns: trace_monotonic_clock_ns,
         }
     }
 
@@ -1242,6 +1259,9 @@ pub(crate) mod test_support {
         fn panic_getpwnam(_: &str) -> Option<String> {
             panic!("unexpected call 'getpwnam' in pure-logic test")
         }
+        fn panic_monotonic_clock_ns() -> u64 {
+            panic!("unexpected call 'monotonic_clock_ns' in pure-logic test")
+        }
 
         SystemInterface {
             getpid: panic_getpid,
@@ -1284,6 +1304,7 @@ pub(crate) mod test_support {
             getpwnam: panic_getpwnam,
             pending_signal_bits: test_pending_signal_bits,
             take_pending_signal_bits: test_take_pending_signal_bits,
+            monotonic_clock_ns: panic_monotonic_clock_ns,
         }
     }
 
@@ -2143,6 +2164,10 @@ pub fn process_times() -> SysResult<ProcessTimes> {
         child_user_ticks: raw.tms_cutime as u64,
         child_system_ticks: raw.tms_cstime as u64,
     })
+}
+
+pub fn monotonic_clock_ns() -> u64 {
+    (sys_interface().monotonic_clock_ns)()
 }
 
 pub fn clock_ticks_per_second() -> SysResult<u64> {
@@ -3715,5 +3740,13 @@ mod tests {
                 assert_eq!(env_var("K"), None);
             },
         );
+    }
+
+    #[test]
+    fn default_interface_monotonic_clock_ns() {
+        test_support::with_test_interface(default_interface(), || {
+            let ns = monotonic_clock_ns();
+            assert!(ns > 0, "monotonic clock should return positive nanoseconds");
+        });
     }
 }

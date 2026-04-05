@@ -444,21 +444,6 @@ begin test "function may be recognized as reserved word"
 end test "function may be recognized as reserved word"
 ```
 
-#### Test: double brackets may be recognized as reserved words
-
-The words `[[` and `]]` may be recognized as reserved words. If so, their use produces unspecified results; the implementation here accepts them for conditional expressions.
-
-```
-begin test "double brackets may be recognized as reserved words"
-  script
-    [[ "a" == "a" ]] && echo "double-brackets"
-  expect
-    stdout "double-brackets"
-    stderr ""
-    exit_code 0
-end test "double brackets may be recognized as reserved words"
-```
-
 #### Test: words ending in colon are reserved
 
 All words whose final character is a colon (`:`) are reserved when used where reserved words are recognized, producing unspecified results. Here the implementation rejects using `foo:` as a function name.

@@ -6,7 +6,7 @@ use crate::expand;
 use crate::shell::{ChildWaitResult, FlowSignal, JobState, PendingControl, Shell, ShellError};
 use crate::syntax::{
     AndOr, CaseCommand, Command, ForCommand, FunctionDef, HereDoc, IfCommand, ListItem, LogicalOp,
-    LoopCommand, LoopKind, Pipeline, Program, RedirectionKind, SimpleCommand,
+    LoopCommand, LoopKind, Pipeline, Program, RedirectionKind, SimpleCommand, TimedMode,
 };
 use crate::sys;
 
@@ -147,6 +147,26 @@ fn execute_pipeline(
     pipeline: &Pipeline,
     asynchronous: bool,
 ) -> Result<i32, ShellError> {
+    let timer = if pipeline.timed != TimedMode::Off {
+        Some(TimeSnapshot::now())
+    } else {
+        None
+    };
+
+    let status = execute_pipeline_inner(shell, pipeline, asynchronous)?;
+
+    if let Some(before) = timer {
+        write_time_report(&before, pipeline.timed);
+    }
+
+    Ok(status)
+}
+
+fn execute_pipeline_inner(
+    shell: &mut Shell,
+    pipeline: &Pipeline,
+    asynchronous: bool,
+) -> Result<i32, ShellError> {
     if pipeline.commands.len() == 1 {
         if !asynchronous {
             let saved_suppressed = shell.errexit_suppressed;
@@ -175,6 +195,65 @@ fn execute_pipeline(
         Ok(if status == 0 { 1 } else { 0 })
     } else {
         Ok(status)
+    }
+}
+
+struct TimeSnapshot {
+    wall_ns: u64,
+    user_ticks: u64,
+    sys_ticks: u64,
+    child_user_ticks: u64,
+    child_sys_ticks: u64,
+    ticks_per_sec: u64,
+}
+
+impl TimeSnapshot {
+    fn now() -> Self {
+        let wall_ns = sys::monotonic_clock_ns();
+        let times = sys::process_times().unwrap_or(sys::ProcessTimes {
+            user_ticks: 0,
+            system_ticks: 0,
+            child_user_ticks: 0,
+            child_system_ticks: 0,
+        });
+        let ticks_per_sec = sys::clock_ticks_per_second().unwrap_or(100);
+        Self {
+            wall_ns,
+            user_ticks: times.user_ticks,
+            sys_ticks: times.system_ticks,
+            child_user_ticks: times.child_user_ticks,
+            child_sys_ticks: times.child_system_ticks,
+            ticks_per_sec,
+        }
+    }
+}
+
+fn write_time_report(before: &TimeSnapshot, mode: TimedMode) {
+    let after = TimeSnapshot::now();
+    let real_secs = (after.wall_ns.saturating_sub(before.wall_ns)) as f64 / 1_000_000_000.0;
+    let tps = before.ticks_per_sec as f64;
+    let user_secs = ((after.user_ticks + after.child_user_ticks)
+        .saturating_sub(before.user_ticks + before.child_user_ticks)) as f64
+        / tps;
+    let sys_secs = ((after.sys_ticks + after.child_sys_ticks)
+        .saturating_sub(before.sys_ticks + before.child_sys_ticks)) as f64
+        / tps;
+    match mode {
+        TimedMode::Posix => {
+            sys_eprintln!("real {:.2}", real_secs);
+            sys_eprintln!("user {:.2}", user_secs);
+            sys_eprintln!("sys {:.2}", sys_secs);
+        }
+        _ => {
+            let fmt = |secs: f64| -> String {
+                let mins = (secs / 60.0) as u64;
+                let remainder = secs - (mins as f64 * 60.0);
+                format!("{}m{:.3}s", mins, remainder)
+            };
+            sys_eprintln!("\nreal\t{}", fmt(real_secs));
+            sys_eprintln!("user\t{}", fmt(user_secs));
+            sys_eprintln!("sys\t{}", fmt(sys_secs));
+        }
     }
 }
 
@@ -1440,6 +1519,7 @@ fn render_function(function: &FunctionDef) -> String {
         function.name,
         render_pipeline(&Pipeline {
             negated: false,
+            timed: TimedMode::Off,
             commands: vec![(*function.body).clone()],
         })
     )
@@ -1607,7 +1687,7 @@ mod tests {
     use crate::shell::ShellOptions;
     use crate::syntax::{Assignment, HereDoc, Redirection, Word};
     use crate::sys::test_support::{
-        ArgMatcher, TraceResult, assert_no_syscalls, run_trace, t, t_fork,
+        ArgMatcher, TraceEntry, TraceResult, assert_no_syscalls, run_trace, t, t_fork,
     };
     use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -1677,6 +1757,7 @@ mod tests {
                 shell.env.insert("PATH".into(), "/usr/bin".into());
                 let pipeline = Pipeline {
                     negated: false,
+                    timed: TimedMode::Off,
                     commands: vec![Command::Simple(SimpleCommand {
                         words: vec![Word { raw: "true".into() }],
                         ..SimpleCommand::default()
@@ -1842,6 +1923,7 @@ mod tests {
                 shell.env.insert("PATH".into(), "/usr/bin".into());
                 let pipeline = Pipeline {
                     negated: true,
+                    timed: TimedMode::Off,
                     commands: vec![
                         Command::Simple(SimpleCommand {
                             words: vec![
@@ -2241,6 +2323,7 @@ mod tests {
                     and_or: AndOr {
                         first: Pipeline {
                             negated: false,
+                            timed: TimedMode::Off,
                             commands: vec![Command::Simple(SimpleCommand {
                                 words: vec![Word {
                                     raw: "true".to_string(),
@@ -2297,6 +2380,7 @@ mod tests {
 
             let pipeline = Pipeline {
                 negated: true,
+                timed: TimedMode::Off,
                 commands: vec![
                     Command::Subshell(program.clone()),
                     Command::Group(program.clone()),
@@ -2316,6 +2400,7 @@ mod tests {
                 and_or: AndOr {
                     first: Pipeline {
                         negated: false,
+                        timed: TimedMode::Off,
                         commands: vec![Command::Simple(SimpleCommand {
                             words: vec![Word {
                                 raw: "true".to_string(),
@@ -2403,6 +2488,7 @@ mod tests {
                     &mut shell,
                     &Pipeline {
                         negated: false,
+                        timed: TimedMode::Off,
                         commands: vec![
                             Command::Subshell(program.clone()),
                             Command::Group(program.clone()),
@@ -2427,6 +2513,7 @@ mod tests {
                         and_or: AndOr {
                             first: Pipeline {
                                 negated: false,
+                                timed: TimedMode::Off,
                                 commands: vec![Command::Simple(SimpleCommand {
                                     words: vec![Word { raw: "true".into() }],
                                     ..SimpleCommand::default()
@@ -2440,6 +2527,7 @@ mod tests {
                         and_or: AndOr {
                             first: Pipeline {
                                 negated: false,
+                                timed: TimedMode::Off,
                                 commands: vec![Command::Simple(SimpleCommand {
                                     words: vec![Word {
                                         raw: "false".into(),
@@ -2603,6 +2691,7 @@ mod tests {
             let render = render_and_or(&AndOr {
                 first: Pipeline {
                     negated: false,
+                    timed: TimedMode::Off,
                     commands: vec![Command::Simple(SimpleCommand {
                         words: vec![Word { raw: "true".into() }],
                         ..SimpleCommand::default()
@@ -2612,6 +2701,7 @@ mod tests {
                     LogicalOp::And,
                     Pipeline {
                         negated: false,
+                        timed: TimedMode::Off,
                         commands: vec![Command::Simple(SimpleCommand {
                             words: vec![Word {
                                 raw: "false".into(),
@@ -2632,6 +2722,7 @@ mod tests {
                 and_or: AndOr {
                     first: Pipeline {
                         negated: false,
+                        timed: TimedMode::Off,
                         commands: vec![Command::Simple(SimpleCommand {
                             words: vec![Word { raw: "true".into() }],
                             ..SimpleCommand::default()
@@ -2644,6 +2735,7 @@ mod tests {
         };
         let pipeline = Pipeline {
             negated: false,
+            timed: TimedMode::Off,
             commands: vec![
                 Command::FunctionDef(FunctionDef {
                     name: "f".into(),
@@ -2945,6 +3037,7 @@ mod tests {
             assert!(
                 render_pipeline(&Pipeline {
                     negated: false,
+                    timed: TimedMode::Off,
                     commands: vec![Command::Case(case_command)],
                 })
                 .contains("case ")
@@ -3004,6 +3097,7 @@ mod tests {
             let render = render_and_or(&AndOr {
                 first: Pipeline {
                     negated: false,
+                    timed: TimedMode::Off,
                     commands: vec![Command::Simple(SimpleCommand {
                         words: vec![Word {
                             raw: "false".into(),
@@ -3015,6 +3109,7 @@ mod tests {
                     LogicalOp::Or,
                     Pipeline {
                         negated: false,
+                        timed: TimedMode::Off,
                         commands: vec![Command::For(ForCommand {
                             name: "item".into(),
                             items: Some(vec![Word { raw: "a".into() }]),
@@ -3852,6 +3947,7 @@ mod tests {
                     and_or: AndOr {
                         first: Pipeline {
                             negated: false,
+                            timed: TimedMode::Off,
                             commands: vec![Command::Simple(SimpleCommand {
                                 words: vec![Word { raw: "true".into() }],
                                 ..SimpleCommand::default()
@@ -3886,6 +3982,7 @@ mod tests {
                     and_or: AndOr {
                         first: Pipeline {
                             negated: false,
+                            timed: TimedMode::Off,
                             commands: vec![Command::Simple(SimpleCommand {
                                 words: vec![Word { raw: "true".into() }],
                                 ..SimpleCommand::default()
@@ -4429,6 +4526,7 @@ mod tests {
                 let node = AndOr {
                     first: Pipeline {
                         negated: false,
+                        timed: TimedMode::Off,
                         commands: vec![Command::Simple(SimpleCommand {
                             words: vec![Word {
                                 raw: "true".to_string(),
@@ -4440,6 +4538,7 @@ mod tests {
                         LogicalOp::And,
                         Pipeline {
                             negated: false,
+                            timed: TimedMode::Off,
                             commands: vec![Command::Simple(SimpleCommand {
                                 words: vec![Word {
                                     raw: ":".to_string(),
@@ -5032,6 +5131,7 @@ mod tests {
                 let node = AndOr {
                     first: Pipeline {
                         negated: false,
+                        timed: TimedMode::Off,
                         commands: vec![Command::Simple(SimpleCommand {
                             words: vec![Word {
                                 raw: "true".to_string(),
@@ -5054,6 +5154,7 @@ mod tests {
                 and_or: AndOr {
                     first: Pipeline {
                         negated: false,
+                        timed: TimedMode::Off,
                         commands: vec![Command::Simple(SimpleCommand {
                             words: vec![Word { raw: "true".into() }],
                             ..SimpleCommand::default()
@@ -5117,6 +5218,7 @@ mod tests {
                 and_or: AndOr {
                     first: Pipeline {
                         negated: false,
+                        timed: TimedMode::Off,
                         commands: vec![Command::Simple(SimpleCommand {
                             words: vec![Word { raw: "true".into() }],
                             ..SimpleCommand::default()
@@ -5157,6 +5259,7 @@ mod tests {
                 and_or: AndOr {
                     first: Pipeline {
                         negated: false,
+                        timed: TimedMode::Off,
                         commands: vec![Command::Simple(SimpleCommand {
                             words: vec![Word { raw: "true".into() }],
                             ..SimpleCommand::default()
@@ -5182,5 +5285,68 @@ mod tests {
                 assert!(result.is_err());
             },
         );
+    }
+
+    fn time_snapshot_trace_pair(before_ns: i64, after_ns: i64) -> Vec<TraceEntry> {
+        vec![
+            t("monotonic_clock_ns", vec![], TraceResult::Int(before_ns)),
+            t("times", vec![ArgMatcher::Any], TraceResult::Int(0)),
+            t(
+                "sysconf",
+                vec![ArgMatcher::Int(libc::_SC_CLK_TCK as i64)],
+                TraceResult::Int(100),
+            ),
+            t("monotonic_clock_ns", vec![], TraceResult::Int(after_ns)),
+            t("times", vec![ArgMatcher::Any], TraceResult::Int(0)),
+            t(
+                "sysconf",
+                vec![ArgMatcher::Int(libc::_SC_CLK_TCK as i64)],
+                TraceResult::Int(100),
+            ),
+        ]
+    }
+
+    #[test]
+    fn time_default_mode_reports_to_stderr() {
+        let mut trace = time_snapshot_trace_pair(1_000_000_000, 2_000_000_000);
+        trace.push(t("write", vec![ArgMatcher::Int(2), ArgMatcher::Any], TraceResult::Auto));
+        trace.push(t("write", vec![ArgMatcher::Int(2), ArgMatcher::Any], TraceResult::Auto));
+        trace.push(t("write", vec![ArgMatcher::Int(2), ArgMatcher::Any], TraceResult::Auto));
+
+        run_trace(trace, || {
+            let mut shell = test_shell();
+            let pipeline = Pipeline {
+                negated: false,
+                timed: TimedMode::Default,
+                commands: vec![Command::Simple(SimpleCommand {
+                    words: vec![Word { raw: "true".into() }],
+                    ..SimpleCommand::default()
+                })],
+            };
+            let status = execute_pipeline(&mut shell, &pipeline, false).expect("execute");
+            assert_eq!(status, 0);
+        });
+    }
+
+    #[test]
+    fn time_posix_mode_reports_to_stderr() {
+        let mut trace = time_snapshot_trace_pair(1_000_000_000, 2_000_000_000);
+        trace.push(t("write", vec![ArgMatcher::Int(2), ArgMatcher::Any], TraceResult::Auto));
+        trace.push(t("write", vec![ArgMatcher::Int(2), ArgMatcher::Any], TraceResult::Auto));
+        trace.push(t("write", vec![ArgMatcher::Int(2), ArgMatcher::Any], TraceResult::Auto));
+
+        run_trace(trace, || {
+            let mut shell = test_shell();
+            let pipeline = Pipeline {
+                negated: false,
+                timed: TimedMode::Posix,
+                commands: vec![Command::Simple(SimpleCommand {
+                    words: vec![Word { raw: "true".into() }],
+                    ..SimpleCommand::default()
+                })],
+            };
+            let status = execute_pipeline(&mut shell, &pipeline, false).expect("execute");
+            assert_eq!(status, 0);
+        });
     }
 }

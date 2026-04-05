@@ -137,7 +137,7 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet, HashMap};
 
     use crate::sys::test_support::{
-        ArgMatcher, TraceEntry, TraceResult, assert_no_syscalls, run_trace, t, t_fork,
+        ArgMatcher, TraceEntry, TraceResult, assert_no_syscalls, run_trace, t,
     };
 
     fn read_line_trace(input: &[u8]) -> Vec<TraceEntry> {
