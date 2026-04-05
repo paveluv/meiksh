@@ -24,9 +24,17 @@ pub enum LogicalOp {
     Or,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TimedMode {
+    Off,
+    Default,
+    Posix,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pipeline {
     pub negated: bool,
+    pub timed: TimedMode,
     pub commands: Vec<Command>,
 }
 
@@ -970,6 +978,17 @@ impl Parser {
 
     fn parse_pipeline(&mut self) -> Result<Pipeline, ParseError> {
         self.expand_alias_at_command_start()?;
+        let timed = if self.consume_word("time") {
+            self.expand_alias_at_command_start()?;
+            if self.consume_word("-p") {
+                self.expand_alias_at_command_start()?;
+                TimedMode::Posix
+            } else {
+                TimedMode::Default
+            }
+        } else {
+            TimedMode::Off
+        };
         let negated = self.consume_bang();
         self.expand_alias_at_command_start()?;
         let mut commands = vec![self.parse_command()?];
@@ -978,7 +997,11 @@ impl Parser {
             self.skip_linebreaks();
             commands.push(self.parse_command()?);
         }
-        Ok(Pipeline { negated, commands })
+        Ok(Pipeline {
+            negated,
+            timed,
+            commands,
+        })
     }
 
     fn parse_command(&mut self) -> Result<Command, ParseError> {
@@ -995,6 +1018,8 @@ impl Parser {
                 name: function_name,
                 body: Box::new(body),
             })
+        } else if self.peek_reserved_word("function") {
+            self.parse_function_keyword()?
         } else if self.peek_reserved_word("if") {
             self.parse_if_command()?
         } else if self.peek_reserved_word("while") {
@@ -1217,6 +1242,30 @@ impl Parser {
         Ok(Command::Case(CaseCommand { word, arms }))
     }
 
+    fn parse_function_keyword(&mut self) -> Result<Command, ParseError> {
+        self.expect_reserved_word("function")?;
+        let name = match self.peek_kind().clone() {
+            TokenKind::Word(name) if is_name(&name) => {
+                self.index += 1;
+                name
+            }
+            _ => {
+                return Err(ParseError {
+                    message: "expected function name".to_string(),
+                });
+            }
+        };
+        if matches!(self.peek_kind(), TokenKind::LParen) {
+            self.index += 1;
+            self.expect(TokenKind::RParen, "expected ')' after '('")?;
+        }
+        let body = self.parse_command()?;
+        Ok(Command::FunctionDef(FunctionDef {
+            name,
+            body: Box::new(body),
+        }))
+    }
+
     fn parse_simple_command(&mut self) -> Result<SimpleCommand, ParseError> {
         let mut command = SimpleCommand::default();
 
@@ -1373,6 +1422,15 @@ impl Parser {
 
     fn consume_amp(&mut self) -> bool {
         if matches!(self.peek_kind(), TokenKind::Amp) {
+            self.index += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn consume_word(&mut self, word: &str) -> bool {
+        if matches!(self.peek_kind(), TokenKind::Word(text) if text == word) {
             self.index += 1;
             true
         } else {
@@ -1563,6 +1621,7 @@ fn is_reserved_word(word: &str) -> bool {
             | "until"
             | "for"
             | "in"
+            | "function"
     )
 }
 
@@ -2539,5 +2598,46 @@ mod tests {
     fn until_empty_condition_is_parse_error() {
         let error = parse("until do true; done").expect_err("empty until condition");
         assert!(error.message.contains("expected command list after 'until'"));
+    }
+
+    #[test]
+    fn time_default_pipeline() {
+        let program = parse("time echo hello").expect("parse time default");
+        let pipeline = &program.items[0].and_or.first;
+        assert_eq!(pipeline.timed, TimedMode::Default);
+        assert!(!pipeline.negated);
+        assert!(matches!(&pipeline.commands[0], Command::Simple(cmd) if cmd.words[0].raw == "echo"));
+    }
+
+    #[test]
+    fn time_posix_pipeline() {
+        let program = parse("time -p echo hello").expect("parse time -p");
+        let pipeline = &program.items[0].and_or.first;
+        assert_eq!(pipeline.timed, TimedMode::Posix);
+        assert!(matches!(&pipeline.commands[0], Command::Simple(cmd) if cmd.words[0].raw == "echo"));
+    }
+
+    #[test]
+    fn function_keyword_basic() {
+        let program = parse("function foo { echo hi; }").expect("parse function keyword");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::FunctionDef(fd) if fd.name == "foo"
+        ));
+    }
+
+    #[test]
+    fn function_keyword_with_parens() {
+        let program = parse("function foo() { echo hi; }").expect("parse function keyword parens");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::FunctionDef(fd) if fd.name == "foo"
+        ));
+    }
+
+    #[test]
+    fn function_keyword_invalid_name() {
+        let error = parse("function 123").expect_err("bad function name");
+        assert_eq!(error.message, "expected function name");
     }
 }
