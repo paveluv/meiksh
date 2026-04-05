@@ -2140,10 +2140,10 @@ mod tests {
                 assert!(stdin_parse_error_requires_more_input(&error), "{source}");
             }
 
-            let error =
+            let program =
                 syntax::parse("999999999999999999999999999999999999999999999999999999999999<in")
-                    .expect_err("syntax error");
-            assert!(!stdin_parse_error_requires_more_input(&error));
+                    .expect("overflowing number is a word, not an io_number");
+            assert_eq!(program.items.len(), 1);
         });
     }
 
