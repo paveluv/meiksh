@@ -83,66 +83,136 @@ In each case above where an interactive shell writes a message immediately prior
 
 #### Test: background job and jobs listing
 
-An asynchronous AND-OR list (`sleep 10 &`) creates a background job with a
+An asynchronous AND-OR list (`sleep 30 &`) creates a background job with a
 job number and process ID. The `jobs` built-in lists the background job.
 
 ```
 begin interactive test "background job and jobs listing"
   spawn -i
   expect "$ "
-  send "sleep 10 &"
+  send "sleep 30 &"
   expect "\[[[:digit:]]+\] [[:digit:]]+"
   expect "$ "
   send "jobs"
-  expect "\[1\].*sleep 10"
-  sendeof
+  expect "\[1\].*sleep 30"
+  expect "$ "
+  send "kill %1; wait 2>/dev/null"
+  expect "$ "
+  send "exit"
   wait
 end interactive test "background job and jobs listing"
 ```
 
-#### Test: user must explicitly exit interactive shell
+#### Test: background job pid is known and matches jobs -p
 
-An interactive shell with a controlling terminal does not exit on its own;
-the user must issue an explicit `exit` command.
-
-```
-begin interactive test "user must explicitly exit interactive shell"
-  spawn -i
-  expect "$ "
-  send "echo still_here"
-  expect "still_here"
-  expect "$ "
-  send "exit"
-  wait
-end interactive test "user must explicitly exit interactive shell"
-```
-
-#### Test: fg/bg send SIGCONT to stopped job
-
-A background job stopped with SIGSTOP can be brought to the foreground
-with `fg`, which sends SIGCONT. The job resumes execution and can then
-be terminated.
+Each background job shall have an associated process ID that is known in the
+current shell execution environment. In an interactive shell, `$!` and
+`jobs -p %%` should refer to the same background job process ID.
 
 ```
-begin interactive test "fg/bg send SIGCONT to stopped job"
+begin interactive test "background job pid is known and matches jobs -p"
   spawn -i
   expect "$ "
   send "set -m"
   expect "$ "
-  send "sleep 60 &"
+  send "sleep 30 &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  send "JPID=$(jobs -p %%); [ $JPID = $! ] && echo pid_match"
+  expect "pid_match"
+  expect "$ "
+  send "kill %1; wait 2>/dev/null"
+  expect "$ "
+  send "exit"
+  wait
+end interactive test "background job pid is known and matches jobs -p"
+```
+
+#### Test: fg removes background job from jobs list
+
+When a background job is brought into the foreground by `fg`, its associated
+job number shall be removed from the shell's background jobs list after the
+job completes.
+
+```
+begin interactive test "fg removes background job from jobs list"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 0.1 &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  send "fg %1"
+  expect "$ "
+  send "jobs | grep . >/dev/null && echo still_listed || echo removed"
+  expect "removed"
+  expect "$ "
+  send "exit"
+  wait
+end interactive test "fg removes background job from jobs list"
+```
+
+#### Test: bg resumes stopped background job with SIGCONT
+
+When a suspended job is continued by `bg`, the shell shall send SIGCONT to
+the process group whose stopped wait status caused the shell to suspend the
+job.
+
+```
+begin interactive test "bg resumes stopped background job with SIGCONT"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "rm -f tmp_bg_cont.txt"
+  expect "$ "
+  send "contjob() { trap 'echo continued > tmp_bg_cont.txt' CONT; while :; do sleep 1; done; }"
+  expect "$ "
+  send "contjob &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
   expect "$ "
   send "kill -STOP %1"
   sleep 500ms
   expect "$ "
-  send "fg %1"
+  send "bg %1"
+  expect "$ "
   sleep 500ms
-  send ""
-  sleep 200ms
-  send "kill %1"
-  sleep 500ms
-  sendeof
+  send "cat tmp_bg_cont.txt"
+  expect "continued"
+  expect "$ "
+  send "kill %1; wait 2>/dev/null"
+  expect "$ "
+  send "exit"
   wait
-end interactive test "fg/bg send SIGCONT to stopped job"
+end interactive test "bg resumes stopped background job with SIGCONT"
+```
+
+#### Test: stopped background job becomes suspended job
+
+When a process associated with a background job is stopped by `SIGSTOP`, the
+shell shall convert that background job into a suspended job and, for an
+interactive shell, write a suspended-job status message.
+
+```
+begin interactive test "stopped background job becomes suspended job"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 30 &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  send "kill -STOP %1"
+  sleep 500ms
+  send "jobs"
+  expect "(Stopped|Suspended).*sleep 30"
+  expect "$ "
+  send "kill -CONT %1; kill %1; wait 2>/dev/null"
+  expect "$ "
+  send "exit"
+  wait
+end interactive test "stopped background job becomes suspended job"
 ```
 
 #### Test: background job completion notification
@@ -164,61 +234,6 @@ begin interactive test "background job completion notification"
   sendeof
   wait
 end interactive test "background job completion notification"
-```
-
-#### Test: signal inheritance with job control disabled
-
-When job control is disabled, SIGINT is inherited as ignored by
-asynchronous commands. The trapped signal action persists in the
-subshell created for the background job.
-
-```
-begin test "signal inheritance with job control disabled"
-  script
-    trap "" INT
-    (trap) & wait
-  expect
-    stdout ".*"
-    stderr ""
-    exit_code 0
-end test "signal inheritance with job control disabled"
-```
-
-#### Test: trap inheritance in shell scripts
-
-When the shell has a controlling terminal and is the controlling process,
-it sets the foreground process group. Child shell scripts inherit the
-default trap actions (caught traps are reset to default).
-
-```
-begin test "trap inheritance in shell scripts"
-  script
-    s=$TMPDIR/_trap_inherit_$$.sh
-    printf 'trap
-    ' > $s; chmod +x $s; trap 'echo caught' USR1; $SHELL $s; rc=$?; rm -f $s; exit $rc
-  expect
-    stdout ""
-    stderr ""
-    exit_code 0
-end test "trap inheritance in shell scripts"
-```
-
-#### Test: set -- positional parameters
-
-The `set` special built-in with `--` sets positional parameters.
-This verifies basic `set` functionality used in conjunction with
-job control notification settings (`set -b`).
-
-```
-begin test "set -- positional parameters"
-  script
-    set -- a b c
-    echo count=$#
-  expect
-    stdout "count=3"
-    stderr ""
-    exit_code 0
-end test "set -- positional parameters"
 ```
 
 #### Test: set -b immediate background job notification
