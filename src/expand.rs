@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -17,11 +18,22 @@ impl fmt::Display for ExpandError {
 
 impl std::error::Error for ExpandError {}
 
+fn char_at(s: &str, i: usize) -> char {
+    s.as_bytes().get(i).map_or('\0', |&b| {
+        if b < 0x80 { b as char } else { s[i..].chars().next().unwrap_or('\0') }
+    })
+}
+
+fn char_len(s: &str, i: usize) -> usize {
+    let b = s.as_bytes()[i];
+    if b < 0x80 { 1 } else { s[i..].chars().next().map_or(1, |c| c.len_utf8()) }
+}
+
 pub trait Context {
-    fn env_var(&self, name: &str) -> Option<String>;
-    fn special_param(&self, name: char) -> Option<String>;
-    fn positional_param(&self, index: usize) -> Option<String>;
-    fn positional_params(&self) -> Vec<String>;
+    fn env_var(&self, name: &str) -> Option<Cow<'_, str>>;
+    fn special_param(&self, name: char) -> Option<Cow<'_, str>>;
+    fn positional_param(&self, index: usize) -> Option<Cow<'_, str>>;
+    fn positional_params(&self) -> &[String];
     fn set_var(&mut self, name: &str, value: String) -> Result<(), ExpandError>;
     fn nounset_enabled(&self) -> bool;
     fn pathname_expansion_enabled(&self) -> bool {
@@ -29,7 +41,7 @@ pub trait Context {
     }
     fn shell_name(&self) -> &str;
     fn command_substitute(&mut self, command: &str) -> Result<String, ExpandError>;
-    fn home_dir_for_user(&self, name: &str) -> Option<String>;
+    fn home_dir_for_user(&self, name: &str) -> Option<Cow<'_, str>>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,10 +91,11 @@ pub fn expand_word<C: Context>(ctx: &mut C, word: &Word) -> Result<Vec<String>, 
         .iter()
         .any(|seg| matches!(seg, Segment::Text(_, QuoteState::Expanded)));
 
+    let ifs_cow = ctx.env_var("IFS").unwrap_or(Cow::Borrowed(" \t\n"));
     let fields = if has_expanded {
         split_fields_from_segments(
             &expanded.segments,
-            &ctx.env_var("IFS").unwrap_or_else(|| " \t\n".to_string()),
+            &ifs_cow,
         )
     } else {
         let has_glob = expanded.segments.iter().any(|seg| {
@@ -125,10 +138,11 @@ pub fn expand_redirect_word<C: Context>(ctx: &mut C, word: &Word) -> Result<Stri
         .iter()
         .any(|seg| matches!(seg, Segment::Text(_, QuoteState::Expanded)));
 
+    let ifs_cow = ctx.env_var("IFS").unwrap_or(Cow::Borrowed(" \t\n"));
     let fields = if has_expanded {
         split_fields_from_segments(
             &expanded.segments,
-            &ctx.env_var("IFS").unwrap_or_else(|| " \t\n".to_string()),
+            &ifs_cow,
         )
     } else {
         vec![Field {
@@ -225,79 +239,80 @@ fn expand_word_text_assignment<C: Context>(
 }
 
 fn split_on_unquoted_colons(raw: &str) -> Vec<String> {
-    let chars: Vec<char> = raw.chars().collect();
     let mut parts = Vec::new();
     let mut current = String::new();
     let mut i = 0;
     let mut brace_depth = 0usize;
     let mut paren_depth = 0usize;
-    while i < chars.len() {
-        match chars[i] {
-            '\'' if brace_depth == 0 && paren_depth == 0 => {
-                current.push(chars[i]);
+    while i < raw.len() {
+        match raw.as_bytes()[i] {
+            b'\'' if brace_depth == 0 && paren_depth == 0 => {
+                current.push('\'');
                 i += 1;
-                while i < chars.len() && chars[i] != '\'' {
-                    current.push(chars[i]);
-                    i += 1;
+                while i < raw.len() && raw.as_bytes()[i] != b'\'' {
+                    let clen = char_len(raw, i);
+                    current.push_str(&raw[i..i + clen]);
+                    i += clen;
                 }
-                if i < chars.len() {
-                    current.push(chars[i]);
+                if i < raw.len() {
+                    current.push('\'');
                     i += 1;
                 }
             }
-            '"' if brace_depth == 0 && paren_depth == 0 => {
-                current.push(chars[i]);
+            b'"' if brace_depth == 0 && paren_depth == 0 => {
+                current.push('"');
                 i += 1;
-                while i < chars.len() && chars[i] != '"' {
-                    if chars[i] == '\\' && i + 1 < chars.len() {
-                        current.push(chars[i]);
+                while i < raw.len() && raw.as_bytes()[i] != b'"' {
+                    if raw.as_bytes()[i] == b'\\' && i + 1 < raw.len() {
+                        current.push('\\');
                         i += 1;
                     }
-                    current.push(chars[i]);
-                    i += 1;
+                    let clen = char_len(raw, i);
+                    current.push_str(&raw[i..i + clen]);
+                    i += clen;
                 }
-                if i < chars.len() {
-                    current.push(chars[i]);
+                if i < raw.len() {
+                    current.push('"');
                     i += 1;
                 }
             }
-            '\\' => {
-                current.push(chars[i]);
+            b'\\' => {
+                current.push('\\');
                 i += 1;
-                if i < chars.len() {
-                    current.push(chars[i]);
-                    i += 1;
+                if i < raw.len() {
+                    let clen = char_len(raw, i);
+                    current.push_str(&raw[i..i + clen]);
+                    i += clen;
                 }
             }
-            '$' if i + 1 < chars.len() && chars[i + 1] == '{' => {
-                current.push(chars[i]);
-                current.push(chars[i + 1]);
+            b'$' if i + 1 < raw.len() && raw.as_bytes()[i + 1] == b'{' => {
+                current.push_str("${");
                 brace_depth += 1;
                 i += 2;
             }
-            '}' if brace_depth > 0 => {
+            b'}' if brace_depth > 0 => {
                 brace_depth -= 1;
-                current.push(chars[i]);
+                current.push('}');
                 i += 1;
             }
-            '$' if i + 1 < chars.len() && chars[i + 1] == '(' => {
-                current.push(chars[i]);
-                current.push(chars[i + 1]);
+            b'$' if i + 1 < raw.len() && raw.as_bytes()[i + 1] == b'(' => {
+                current.push_str("$(");
                 paren_depth += 1;
                 i += 2;
             }
-            ')' if paren_depth > 0 => {
+            b')' if paren_depth > 0 => {
                 paren_depth -= 1;
-                current.push(chars[i]);
+                current.push(')');
                 i += 1;
             }
-            ':' if brace_depth == 0 && paren_depth == 0 => {
+            b':' if brace_depth == 0 && paren_depth == 0 => {
                 parts.push(std::mem::take(&mut current));
                 i += 1;
             }
-            ch => {
-                current.push(ch);
-                i += 1;
+            _ => {
+                let clen = char_len(raw, i);
+                current.push_str(&raw[i..i + clen]);
+                i += clen;
             }
         }
     }
@@ -306,18 +321,18 @@ fn split_on_unquoted_colons(raw: &str) -> Vec<String> {
 }
 
 pub fn expand_parameter_text<C: Context>(ctx: &mut C, raw: &str) -> Result<String, ExpandError> {
-    let chars: Vec<char> = raw.chars().collect();
     let mut result = String::new();
     let mut index = 0usize;
 
-    while index < chars.len() {
-        if chars[index] == '$' {
-            let (value, consumed) = expand_parameter_dollar(ctx, &chars[index..])?;
+    while index < raw.len() {
+        if raw.as_bytes()[index] == b'$' {
+            let (value, consumed) = expand_parameter_dollar(ctx, &raw[index..])?;
             result.push_str(&value);
             index += consumed;
         } else {
-            result.push(chars[index]);
-            index += 1;
+            let clen = char_len(raw, index);
+            result.push_str(&raw[index..index + clen]);
+            index += clen;
         }
     }
 
@@ -361,41 +376,40 @@ fn apply_expansion(
 }
 
 fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, ExpandError> {
-    let chars: Vec<char> = raw.chars().collect();
     let mut index = 0usize;
     let mut segments = Vec::new();
     let mut had_quoted_content = false;
     let mut had_quoted_null_outside_at = false;
     let mut has_at_expansion = false;
 
-    while index < chars.len() {
-        match chars[index] {
-            '\'' => {
+    while index < raw.len() {
+        match raw.as_bytes()[index] {
+            b'\'' => {
                 had_quoted_content = true;
                 had_quoted_null_outside_at = true;
                 index += 1;
                 let start = index;
-                while index < chars.len() && chars[index] != '\'' {
-                    index += 1;
+                while index < raw.len() && raw.as_bytes()[index] != b'\'' {
+                    index += char_len(raw, index);
                 }
-                if index >= chars.len() {
+                if index >= raw.len() {
                     return Err(ExpandError {
                         message: "unterminated single quote".to_string(),
                     });
                 }
-                push_segment(&mut segments, chars[start..index].iter().collect(), QuoteState::Quoted);
+                push_segment_str(&mut segments, &raw[start..index], QuoteState::Quoted);
                 index += 1;
             }
-            '"' => {
+            b'"' => {
                 had_quoted_content = true;
                 index += 1;
                 let mut buffer = String::new();
                 let at_before = has_at_expansion;
-                while index < chars.len() && chars[index] != '"' {
-                    match chars[index] {
-                        '\\' => {
-                            if index + 1 < chars.len() {
-                                let next = chars[index + 1];
+                while index < raw.len() && raw.as_bytes()[index] != b'"' {
+                    match raw.as_bytes()[index] {
+                        b'\\' => {
+                            if index + 1 < raw.len() {
+                                let next = raw.as_bytes()[index + 1] as char;
                                 if matches!(next, '$' | '`' | '"' | '\\' | '\n' | '}') {
                                     index += 1;
                                     if next != '\n' {
@@ -411,31 +425,32 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
                                 index += 1;
                             }
                         }
-                        '$' => {
+                        b'$' => {
                             if !buffer.is_empty() {
                                 push_segment(&mut segments, std::mem::take(&mut buffer), QuoteState::Quoted);
                             }
-                            let (expansion, consumed) = expand_dollar(ctx, &chars[index..], true)?;
+                            let (expansion, consumed) = expand_dollar(ctx, &raw[index..], true)?;
                             apply_expansion(&mut segments, expansion, true, &mut has_at_expansion);
                             index += consumed;
                         }
-                        '`' => {
+                        b'`' => {
                             if !buffer.is_empty() {
                                 push_segment(&mut segments, std::mem::take(&mut buffer), QuoteState::Quoted);
                             }
                             index += 1;
-                            let command = scan_backtick_command(&chars, &mut index, true)?;
+                            let command = scan_backtick_command(raw, &mut index, true)?;
                             let output = ctx.command_substitute(&command)?;
                             let trimmed = output.trim_end_matches('\n').to_string();
                             push_segment(&mut segments, trimmed, QuoteState::Quoted);
                         }
-                        ch => {
-                            buffer.push(ch);
-                            index += 1;
+                        _ => {
+                            let clen = char_len(raw, index);
+                            buffer.push_str(&raw[index..index + clen]);
+                            index += clen;
                         }
                     }
                 }
-                if index >= chars.len() {
+                if index >= raw.len() {
                     return Err(ExpandError {
                         message: "unterminated double quote".to_string(),
                     });
@@ -448,20 +463,21 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
                 }
                 index += 1;
             }
-            '\\' => {
+            b'\\' => {
                 had_quoted_null_outside_at = true;
                 index += 1;
-                if index < chars.len() {
-                    push_segment(&mut segments, chars[index].to_string(), QuoteState::Quoted);
-                    index += 1;
+                if index < raw.len() {
+                    let clen = char_len(raw, index);
+                    push_segment_str(&mut segments, &raw[index..index + clen], QuoteState::Quoted);
+                    index += clen;
                 }
             }
-            '$' => {
-                let dollar_single_quotes = chars.get(index + 1) == Some(&'\'');
+            b'$' => {
+                let dollar_single_quotes = raw.as_bytes().get(index + 1) == Some(&b'\'');
                 if dollar_single_quotes {
                     had_quoted_content = true;
                 }
-                let (expansion, consumed) = expand_dollar(ctx, &chars[index..], false)?;
+                let (expansion, consumed) = expand_dollar(ctx, &raw[index..], false)?;
                 apply_expansion(
                     &mut segments,
                     expansion,
@@ -470,57 +486,60 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
                 );
                 index += consumed;
             }
-            '`' => {
+            b'`' => {
                 index += 1;
-                let command = scan_backtick_command(&chars, &mut index, false)?;
+                let command = scan_backtick_command(raw, &mut index, false)?;
                 let output = ctx.command_substitute(&command)?;
                 let trimmed = output.trim_end_matches('\n').to_string();
                 push_segment(&mut segments, trimmed, QuoteState::Expanded);
             }
-            '~' if index == 0 => {
+            b'~' if index == 0 => {
                 index += 1;
                 let mut user = String::new();
                 let at_start = index;
-                while index < chars.len() && chars[index] != '/' {
-                    if chars[index] == '\''
-                        || chars[index] == '"'
-                        || chars[index] == '\\'
-                        || chars[index] == '$'
-                        || chars[index] == '`'
+                while index < raw.len() && raw.as_bytes()[index] != b'/' {
+                    let b = raw.as_bytes()[index];
+                    if b == b'\''
+                        || b == b'"'
+                        || b == b'\\'
+                        || b == b'$'
+                        || b == b'`'
                     {
                         break;
                     }
-                    user.push(chars[index]);
-                    index += 1;
+                    let clen = char_len(raw, index);
+                    user.push_str(&raw[index..index + clen]);
+                    index += clen;
                 }
                 let broke_on_non_login = index == at_start
-                    && index < chars.len()
-                    && chars[index] != '/';
+                    && index < raw.len()
+                    && raw.as_bytes()[index] != b'/';
                 if broke_on_non_login {
-                    push_segment(&mut segments, "~".to_string(), QuoteState::Literal);
+                    push_segment_str(&mut segments, "~", QuoteState::Literal);
                 } else if user.is_empty() {
                     match ctx.env_var("HOME") {
                         Some(home) if !home.is_empty() => {
-                            push_segment(&mut segments, home, QuoteState::Quoted);
+                            push_segment(&mut segments, home.into_owned(), QuoteState::Quoted);
                         }
                         Some(_) => {
                             segments.push(Segment::Text(String::new(), QuoteState::Quoted));
                         }
                         None => {
-                            push_segment(&mut segments, "~".to_string(), QuoteState::Literal);
+                            push_segment_str(&mut segments, "~", QuoteState::Literal);
                         }
                     }
                 } else if let Some(dir) = ctx.home_dir_for_user(&user) {
-                    push_segment(&mut segments, dir, QuoteState::Quoted);
+                    push_segment(&mut segments, dir.into_owned(), QuoteState::Quoted);
                 } else {
                     let mut literal = String::from('~');
                     literal.push_str(&user);
                     push_segment(&mut segments, literal, QuoteState::Literal);
                 }
             }
-            ch => {
-                push_segment(&mut segments, ch.to_string(), QuoteState::Literal);
-                index += 1;
+            _ => {
+                let clen = char_len(raw, index);
+                push_segment_str(&mut segments, &raw[index..index + clen], QuoteState::Literal);
+                index += clen;
             }
         }
     }
@@ -534,19 +553,19 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
 }
 
 fn scan_backtick_command(
-    chars: &[char],
+    source: &str,
     index: &mut usize,
     in_double_quotes: bool,
 ) -> Result<String, ExpandError> {
     let mut command = String::new();
-    while *index < chars.len() {
-        let ch = chars[*index];
-        if ch == '`' {
+    while *index < source.len() {
+        let ch = source.as_bytes()[*index];
+        if ch == b'`' {
             *index += 1;
             return Ok(command);
         }
-        if ch == '\\' && *index + 1 < chars.len() {
-            let next = chars[*index + 1];
+        if ch == b'\\' && *index + 1 < source.len() {
+            let next = source.as_bytes()[*index + 1] as char;
             let special = if in_double_quotes {
                 matches!(next, '$' | '`' | '\\' | '"' | '\n')
             } else {
@@ -558,7 +577,7 @@ fn scan_backtick_command(
                 continue;
             }
         }
-        command.push(ch);
+        command.push(ch as char);
         *index += 1;
     }
     Err(ExpandError {
@@ -567,47 +586,48 @@ fn scan_backtick_command(
 }
 
 pub fn expand_here_document<C: Context>(ctx: &mut C, text: &str) -> Result<String, ExpandError> {
-    let chars: Vec<char> = text.chars().collect();
     let mut result = String::new();
     let mut index = 0usize;
 
-    while index < chars.len() {
-        match chars[index] {
-            '\\' => {
+    while index < text.len() {
+        match text.as_bytes()[index] {
+            b'\\' => {
                 index += 1;
-                if index >= chars.len() {
+                if index >= text.len() {
                     result.push('\\');
                     break;
                 }
-                match chars[index] {
-                    '$' | '\\' => {
-                        result.push(chars[index]);
+                match text.as_bytes()[index] {
+                    b'$' | b'\\' => {
+                        result.push(text.as_bytes()[index] as char);
                         index += 1;
                     }
-                    '\n' => {
+                    b'\n' => {
                         index += 1;
                     }
-                    ch => {
+                    _ => {
                         result.push('\\');
-                        result.push(ch);
-                        index += 1;
+                        let clen = char_len(text, index);
+                        result.push_str(&text[index..index + clen]);
+                        index += clen;
                     }
                 }
             }
-            '$' => {
-                let (expansion, consumed) = expand_dollar(ctx, &chars[index..], false)?;
+            b'$' => {
+                let (expansion, consumed) = expand_dollar(ctx, &text[index..], false)?;
                 result.push_str(&flatten_expansion(expansion));
                 index += consumed;
             }
-            '`' => {
+            b'`' => {
                 index += 1;
-                let command = scan_backtick_command(&chars, &mut index, true)?;
+                let command = scan_backtick_command(text, &mut index, true)?;
                 let output = ctx.command_substitute(&command)?;
                 result.push_str(output.trim_end_matches('\n'));
             }
-            ch => {
-                result.push(ch);
-                index += 1;
+            _ => {
+                let clen = char_len(text, index);
+                result.push_str(&text[index..index + clen]);
+                index += clen;
             }
         }
     }
@@ -617,42 +637,42 @@ pub fn expand_here_document<C: Context>(ctx: &mut C, text: &str) -> Result<Strin
 
 fn expand_dollar<C: Context>(
     ctx: &mut C,
-    chars: &[char],
+    source: &str,
     quoted: bool,
 ) -> Result<(Expansion, usize), ExpandError> {
-    if chars.len() < 2 {
+    if source.len() < 2 {
         return Ok((Expansion::One("$".to_string()), 1));
     }
 
-    match chars[1] {
+    let c1 = source.as_bytes()[1] as char;
+    match c1 {
         '\'' if !quoted => {
-            let (s, n) = parse_dollar_single_quoted(chars)?;
+            let (s, n) = parse_dollar_single_quoted(source)?;
             Ok((Expansion::One(s), n))
         }
         '{' => {
-            let end = scan_to_closing_brace(chars, 2)?;
-            let expr: String = chars[2..end].iter().collect();
+            let end = scan_to_closing_brace(source, 2)?;
+            let expr = source[2..end].to_string();
             let expansion = expand_braced_parameter(ctx, &expr, quoted)?;
             Ok((expansion, end + 1))
         }
         '(' => {
-            if chars.get(2) == Some(&'(') {
+            if source.as_bytes().get(2) == Some(&b'(') {
                 let mut index = 3usize;
                 let mut depth = 1usize;
-                let mut expression = String::new();
-                while index < chars.len() {
-                    let ch = chars[index];
+                while index < source.len() {
+                    let ch = source.as_bytes()[index] as char;
                     if ch == '(' {
                         depth += 1;
                     } else if ch == ')' {
-                        if depth == 1 && chars.get(index + 1) == Some(&')') {
+                        if depth == 1 && source.as_bytes().get(index + 1) == Some(&b')') {
+                            let expression = source[3..index].to_string();
                             let pre_expanded = expand_arithmetic_expression(ctx, &expression)?;
                             let value = eval_arithmetic(ctx, &pre_expanded)?;
                             return Ok((Expansion::One(value.to_string()), index + 2));
                         }
                         depth = depth.saturating_sub(1);
                     }
-                    expression.push(ch);
                     index += 1;
                 }
                 Err(ExpandError {
@@ -661,20 +681,19 @@ fn expand_dollar<C: Context>(
             } else {
                 let mut index = 2usize;
                 let mut depth = 1usize;
-                let mut command = String::new();
-                while index < chars.len() {
-                    let ch = chars[index];
+                while index < source.len() {
+                    let ch = source.as_bytes()[index] as char;
                     if ch == '(' {
                         depth += 1;
                     } else if ch == ')' {
                         depth -= 1;
                         if depth == 0 {
+                            let command = source[2..index].to_string();
                             let output = ctx.command_substitute(&command)?;
                             let trimmed = output.trim_end_matches('\n').to_string();
                             return Ok((Expansion::One(trimmed), index + 1));
                         }
                     }
-                    command.push(ch);
                     index += 1;
                 }
                 Err(ExpandError {
@@ -684,7 +703,7 @@ fn expand_dollar<C: Context>(
         }
         '@' => {
             if quoted {
-                let params = ctx.positional_params();
+                let params = ctx.positional_params().to_vec();
                 Ok((Expansion::AtFields(params), 2))
             } else {
                 let value =
@@ -703,11 +722,10 @@ fn expand_dollar<C: Context>(
             Ok((Expansion::One(value), 2))
         }
         '?' | '$' | '!' | '#' | '-' | '0' => {
-            let ch = chars[1];
-            let value = if ch == '0' {
+            let value = if c1 == '0' {
                 require_set_parameter(ctx, "0", Some(ctx.shell_name().to_string()))?
             } else {
-                require_set_parameter(ctx, &ch.to_string(), ctx.special_param(ch))?
+                require_set_parameter(ctx, &c1.to_string(), ctx.special_param(c1).map(|c| c.into_owned()))?
             };
             Ok((Expansion::One(value), 2))
         }
@@ -715,19 +733,21 @@ fn expand_dollar<C: Context>(
             Expansion::One(require_set_parameter(
                 ctx,
                 &next.to_string(),
-                ctx.positional_param(next.to_digit(10).unwrap_or_default() as usize),
+                ctx.positional_param(next.to_digit(10).unwrap_or_default() as usize).map(|c| c.into_owned()),
             )?),
             2,
         )),
         next if next == '_' || next.is_ascii_alphabetic() => {
             let mut index = 1usize;
-            let mut name = String::new();
-            while index < chars.len()
-                && (chars[index] == '_' || chars[index].is_ascii_alphanumeric())
-            {
-                name.push(chars[index]);
-                index += 1;
+            while index < source.len() {
+                let b = source.as_bytes()[index];
+                if b == b'_' || (b as char).is_ascii_alphanumeric() {
+                    index += 1;
+                } else {
+                    break;
+                }
             }
+            let name = source[1..index].to_string();
             Ok((
                 Expansion::One(require_set_parameter(ctx, &name, lookup_param(ctx, &name))?),
                 index,
@@ -739,43 +759,45 @@ fn expand_dollar<C: Context>(
 
 fn expand_parameter_dollar<C: Context>(
     ctx: &mut C,
-    chars: &[char],
+    source: &str,
 ) -> Result<(String, usize), ExpandError> {
-    if chars.len() < 2 {
+    if source.len() < 2 {
         return Ok(("$".to_string(), 1));
     }
 
-    match chars[1] {
-        '\'' => parse_dollar_single_quoted(chars),
+    let c1 = source.as_bytes()[1] as char;
+    match c1 {
+        '\'' => parse_dollar_single_quoted(source),
         '{' => {
-            let end = scan_to_closing_brace(chars, 2)?;
-            let expr: String = chars[2..end].iter().collect();
+            let end = scan_to_closing_brace(source, 2)?;
+            let expr = source[2..end].to_string();
             let value = expand_braced_parameter_text(ctx, &expr)?;
             Ok((value, end + 1))
         }
         '?' | '$' | '!' | '#' | '*' | '@' | '-' | '0' => {
-            let ch = chars[1];
-            let value = if ch == '0' {
+            let value = if c1 == '0' {
                 require_set_parameter(ctx, "0", Some(ctx.shell_name().to_string()))?
             } else {
-                require_set_parameter(ctx, &ch.to_string(), ctx.special_param(ch))?
+                require_set_parameter(ctx, &c1.to_string(), ctx.special_param(c1).map(|c| c.into_owned()))?
             };
             Ok((value, 2))
         }
         next if next.is_ascii_digit() => {
             let name = next.to_string();
-            let value = ctx.positional_param(next.to_digit(10).unwrap_or_default() as usize);
+            let value = ctx.positional_param(next.to_digit(10).unwrap_or_default() as usize).map(|c| c.into_owned());
             Ok((require_set_parameter(ctx, &name, value)?, 2))
         }
         next if next == '_' || next.is_ascii_alphabetic() => {
             let mut index = 1usize;
-            let mut name = String::new();
-            while index < chars.len()
-                && (chars[index] == '_' || chars[index].is_ascii_alphanumeric())
-            {
-                name.push(chars[index]);
-                index += 1;
+            while index < source.len() {
+                let b = source.as_bytes()[index];
+                if b == b'_' || (b as char).is_ascii_alphanumeric() {
+                    index += 1;
+                } else {
+                    break;
+                }
             }
+            let name = source[1..index].to_string();
             Ok((
                 require_set_parameter(ctx, &name, lookup_param(ctx, &name))?,
                 index,
@@ -785,20 +807,20 @@ fn expand_parameter_dollar<C: Context>(
     }
 }
 
-fn parse_dollar_single_quoted(chars: &[char]) -> Result<(String, usize), ExpandError> {
+fn parse_dollar_single_quoted(source: &str) -> Result<(String, usize), ExpandError> {
     let mut index = 2usize;
     let mut result = String::new();
-    while index < chars.len() {
-        match chars[index] {
-            '\'' => return Ok((result, index + 1)),
-            '\\' => {
+    while index < source.len() {
+        match source.as_bytes()[index] {
+            b'\'' => return Ok((result, index + 1)),
+            b'\\' => {
                 index += 1;
-                if index >= chars.len() {
+                if index >= source.len() {
                     return Err(ExpandError {
                         message: "unterminated dollar-single-quotes".to_string(),
                     });
                 }
-                let ch = chars[index];
+                let ch = source.as_bytes()[index] as char;
                 match ch {
                     '"' => result.push('"'),
                     '\'' => result.push('\''),
@@ -813,21 +835,21 @@ fn parse_dollar_single_quoted(chars: &[char]) -> Result<(String, usize), ExpandE
                     'v' => result.push('\u{000b}'),
                     'c' => {
                         index += 1;
-                        if index >= chars.len() {
+                        if index >= source.len() {
                             return Err(ExpandError {
                                 message: "unterminated dollar-single-quotes".to_string(),
                             });
                         }
-                        if chars[index] == '\\' && index + 1 < chars.len() {
+                        if source.as_bytes()[index] == b'\\' && index + 1 < source.len() {
                             index += 1;
-                            result.push(control_escape(chars[index]));
+                            result.push(control_escape(source.as_bytes()[index] as char));
                         } else {
-                            result.push(control_escape(chars[index]));
+                            result.push(control_escape(source.as_bytes()[index] as char));
                         }
                     }
                     'x' => {
                         let (value, consumed) =
-                            parse_variable_base_escape(&chars[(index + 1)..], 16, 2);
+                            parse_variable_base_escape(&source[(index + 1)..], 16, 2);
                         if consumed == 0 {
                             result.push('x');
                         } else {
@@ -839,10 +861,10 @@ fn parse_dollar_single_quoted(chars: &[char]) -> Result<(String, usize), ExpandE
                         let mut digits = String::from(ch);
                         let mut consumed = 0usize;
                         while consumed < 2
-                            && index + 1 + consumed < chars.len()
-                            && matches!(chars[index + 1 + consumed], '0'..='7')
+                            && index + 1 + consumed < source.len()
+                            && matches!(source.as_bytes()[index + 1 + consumed], b'0'..=b'7')
                         {
-                            digits.push(chars[index + 1 + consumed]);
+                            digits.push(source.as_bytes()[index + 1 + consumed] as char);
                             consumed += 1;
                         }
                         let value = u8::from_str_radix(&digits, 8).unwrap_or_default();
@@ -853,9 +875,10 @@ fn parse_dollar_single_quoted(chars: &[char]) -> Result<(String, usize), ExpandE
                 }
                 index += 1;
             }
-            ch => {
-                result.push(ch);
-                index += 1;
+            _ => {
+                let clen = char_len(source, index);
+                result.push_str(&source[index..index + clen]);
+                index += clen;
             }
         }
     }
@@ -864,49 +887,49 @@ fn parse_dollar_single_quoted(chars: &[char]) -> Result<(String, usize), ExpandE
     })
 }
 
-fn scan_to_closing_brace(chars: &[char], start: usize) -> Result<usize, ExpandError> {
+fn scan_to_closing_brace(source: &str, start: usize) -> Result<usize, ExpandError> {
     let mut index = start;
-    while index < chars.len() {
-        match chars[index] {
-            '}' => return Ok(index),
-            '\\' => {
+    while index < source.len() {
+        match source.as_bytes()[index] {
+            b'}' => return Ok(index),
+            b'\\' => {
                 index += 2;
             }
-            '\'' => {
+            b'\'' => {
                 index += 1;
-                while index < chars.len() && chars[index] != '\'' {
+                while index < source.len() && source.as_bytes()[index] != b'\'' {
                     index += 1;
                 }
-                if index < chars.len() {
+                if index < source.len() {
                     index += 1;
                 }
             }
-            '"' => {
+            b'"' => {
                 index += 1;
-                while index < chars.len() && chars[index] != '"' {
-                    if chars[index] == '\\' {
+                while index < source.len() && source.as_bytes()[index] != b'"' {
+                    if source.as_bytes()[index] == b'\\' {
                         index += 1;
                     }
                     index += 1;
                 }
-                if index < chars.len() {
+                if index < source.len() {
                     index += 1;
                 }
             }
-            '$' if matches!(chars.get(index + 1), Some(&'{')) => {
+            b'$' if source.as_bytes().get(index + 1) == Some(&b'{') => {
                 index += 2;
-                let inner = scan_to_closing_brace(chars, index)?;
+                let inner = scan_to_closing_brace(source, index)?;
                 index = inner + 1;
             }
-            '$' if matches!(chars.get(index + 1), Some(&'(')) => {
-                if chars.get(index + 2) == Some(&'(') {
+            b'$' if source.as_bytes().get(index + 1) == Some(&b'(') => {
+                if source.as_bytes().get(index + 2) == Some(&b'(') {
                     index += 3;
                     let mut depth = 1usize;
-                    while index < chars.len() {
-                        if chars[index] == '(' {
+                    while index < source.len() {
+                        if source.as_bytes()[index] == b'(' {
                             depth += 1;
-                        } else if chars[index] == ')' {
-                            if depth == 1 && chars.get(index + 1) == Some(&')') {
+                        } else if source.as_bytes()[index] == b')' {
+                            if depth == 1 && source.as_bytes().get(index + 1) == Some(&b')') {
                                 index += 2;
                                 break;
                             }
@@ -917,10 +940,10 @@ fn scan_to_closing_brace(chars: &[char], start: usize) -> Result<usize, ExpandEr
                 } else {
                     index += 2;
                     let mut depth = 1usize;
-                    while index < chars.len() {
-                        if chars[index] == '(' {
+                    while index < source.len() {
+                        if source.as_bytes()[index] == b'(' {
                             depth += 1;
-                        } else if chars[index] == ')' {
+                        } else if source.as_bytes()[index] == b')' {
                             depth -= 1;
                             if depth == 0 {
                                 index += 1;
@@ -931,15 +954,15 @@ fn scan_to_closing_brace(chars: &[char], start: usize) -> Result<usize, ExpandEr
                     }
                 }
             }
-            '`' => {
+            b'`' => {
                 index += 1;
-                while index < chars.len() && chars[index] != '`' {
-                    if chars[index] == '\\' {
+                while index < source.len() && source.as_bytes()[index] != b'`' {
+                    if source.as_bytes()[index] == b'\\' {
                         index += 1;
                     }
                     index += 1;
                 }
-                if index < chars.len() {
+                if index < source.len() {
                     index += 1;
                 }
             }
@@ -961,18 +984,19 @@ fn control_escape(ch: char) -> char {
     }
 }
 
-fn parse_variable_base_escape(chars: &[char], base: u32, max_digits: usize) -> (u8, usize) {
-    let mut digits = String::new();
+fn parse_variable_base_escape(source: &str, base: u32, max_digits: usize) -> (u8, usize) {
     let mut consumed = 0usize;
-    while consumed < max_digits && consumed < chars.len() && chars[consumed].is_digit(base) {
-        digits.push(chars[consumed]);
+    while consumed < max_digits
+        && consumed < source.len()
+        && (source.as_bytes()[consumed] as char).is_digit(base)
+    {
         consumed += 1;
     }
-    if digits.is_empty() {
+    if consumed == 0 {
         return (0, 0);
     }
     (
-        u8::from_str_radix(&digits, base).unwrap_or_default(),
+        u8::from_str_radix(&source[..consumed], base).unwrap_or_default(),
         consumed,
     )
 }
@@ -1279,37 +1303,39 @@ fn expand_parameter_pattern_word<C: Context>(
 fn parse_parameter_expression(
     expr: &str,
 ) -> Result<(String, Option<String>, Option<String>), ExpandError> {
-    let chars: Vec<char> = expr.chars().collect();
-    if chars.is_empty() {
+    if expr.is_empty() {
         return Err(ExpandError {
             message: "empty parameter expansion".to_string(),
         });
     }
     let mut index = 0usize;
-    let name = if chars[0].is_ascii_digit() {
-        while index < chars.len() && chars[index].is_ascii_digit() {
+    let b0 = expr.as_bytes()[0];
+    let name: String = if b0.is_ascii_digit() {
+        while index < expr.len() && expr.as_bytes()[index].is_ascii_digit() {
             index += 1;
         }
-        chars[..index].iter().collect()
-    } else if matches!(chars[0], '?' | '$' | '!' | '#' | '*' | '@') {
+        expr[..index].to_string()
+    } else if matches!(b0, b'?' | b'$' | b'!' | b'#' | b'*' | b'@') {
         index = 1;
-        chars[..index].iter().collect()
-    } else if chars[0] == '_' || chars[0].is_ascii_alphabetic() {
-        while index < chars.len() && (chars[index] == '_' || chars[index].is_ascii_alphanumeric()) {
+        expr[..index].to_string()
+    } else if b0 == b'_' || b0.is_ascii_alphabetic() {
+        while index < expr.len()
+            && (expr.as_bytes()[index] == b'_' || expr.as_bytes()[index].is_ascii_alphanumeric())
+        {
             index += 1;
         }
-        chars[..index].iter().collect()
+        expr[..index].to_string()
     } else {
         return Err(ExpandError {
             message: "invalid parameter expansion".to_string(),
         });
     };
 
-    if index == chars.len() {
+    if index == expr.len() {
         return Ok((name, None, None));
     }
 
-    let rest: String = chars[index..].iter().collect();
+    let rest = &expr[index..];
     for op in [
         ":-", ":=", ":?", ":+", "%%", "##", "-", "=", "?", "+", "%", "#",
     ] {
@@ -1332,15 +1358,15 @@ fn lookup_param<C: Context>(ctx: &C, name: &str) -> Option<String> {
         return name
             .parse::<usize>()
             .ok()
-            .and_then(|index| ctx.positional_param(index));
+            .and_then(|index| ctx.positional_param(index).map(|c| c.into_owned()));
     }
     let mut chars = name.chars();
     if let (Some(ch), None) = (chars.next(), chars.next()) {
         if let Some(value) = ctx.special_param(ch) {
-            return Some(value);
+            return Some(value.into_owned());
         }
     }
-    ctx.env_var(name)
+    ctx.env_var(name).map(|c| c.into_owned())
 }
 
 fn require_set_parameter<C: Context>(
@@ -1457,6 +1483,19 @@ fn push_segment(segments: &mut Vec<Segment>, text: String, state: QuoteState) {
     segments.push(Segment::Text(text, state));
 }
 
+fn push_segment_str(segments: &mut Vec<Segment>, text: &str, state: QuoteState) {
+    if text.is_empty() {
+        return;
+    }
+    if let Some(Segment::Text(last, last_state)) = segments.last_mut() {
+        if *last_state == state {
+            last.push_str(text);
+            return;
+        }
+    }
+    segments.push(Segment::Text(text.to_string(), state));
+}
+
 fn flatten_segments(segments: &[Segment]) -> String {
     let mut result = String::new();
     for seg in segments {
@@ -1507,33 +1546,42 @@ fn remove_parameter_pattern(
     pattern: &str,
     mode: PatternRemoval,
 ) -> Result<String, ExpandError> {
-    let chars: Vec<char> = value.chars().collect();
+    let boundaries: Vec<usize> = {
+        let mut v = Vec::new();
+        let mut i = 0;
+        while i < value.len() {
+            v.push(i);
+            i += char_len(&value, i);
+        }
+        v.push(value.len());
+        v
+    };
     match mode {
         PatternRemoval::SmallestPrefix => {
-            for end in 0..=chars.len() {
-                if pattern_matches(&chars[..end].iter().collect::<String>(), pattern) {
-                    return Ok(chars[end..].iter().collect());
+            for &end in &boundaries {
+                if pattern_matches(&value[..end], pattern) {
+                    return Ok(value[end..].to_string());
                 }
             }
         }
         PatternRemoval::LargestPrefix => {
-            for end in (0..=chars.len()).rev() {
-                if pattern_matches(&chars[..end].iter().collect::<String>(), pattern) {
-                    return Ok(chars[end..].iter().collect());
+            for &end in boundaries.iter().rev() {
+                if pattern_matches(&value[..end], pattern) {
+                    return Ok(value[end..].to_string());
                 }
             }
         }
         PatternRemoval::SmallestSuffix => {
-            for start in (0..=chars.len()).rev() {
-                if pattern_matches(&chars[start..].iter().collect::<String>(), pattern) {
-                    return Ok(chars[..start].iter().collect());
+            for &start in boundaries.iter().rev() {
+                if pattern_matches(&value[start..], pattern) {
+                    return Ok(value[..start].to_string());
                 }
             }
         }
         PatternRemoval::LargestSuffix => {
-            for start in 0..=chars.len() {
-                if pattern_matches(&chars[start..].iter().collect::<String>(), pattern) {
-                    return Ok(chars[..start].iter().collect());
+            for &start in &boundaries {
+                if pattern_matches(&value[start..], pattern) {
+                    return Ok(value[..start].to_string());
                 }
             }
         }
@@ -1606,37 +1654,78 @@ fn expand_path_segments(
 }
 
 fn pattern_matches(text: &str, pattern: &str) -> bool {
-    let text: Vec<char> = text.chars().collect();
-    let pattern: Vec<char> = pattern.chars().collect();
-    pattern_matches_inner(&text, 0, &pattern, 0)
+    pattern_matches_inner(text, 0, pattern, 0)
 }
 
-fn pattern_matches_inner(text: &[char], ti: usize, pattern: &[char], pi: usize) -> bool {
+fn pattern_matches_inner(text: &str, ti: usize, pattern: &str, pi: usize) -> bool {
     if pi == pattern.len() {
         return ti == text.len();
     }
-    match pattern[pi] {
-        '*' => (ti..=text.len()).any(|next| pattern_matches_inner(text, next, pattern, pi + 1)),
-        '?' => ti < text.len() && pattern_matches_inner(text, ti + 1, pattern, pi + 1),
-        '[' => match match_bracket(text.get(ti).copied(), pattern, pi) {
-            Some((matched, next_pi)) => {
-                matched && pattern_matches_inner(text, ti + 1, pattern, next_pi)
+    let pc = char_at(pattern, pi);
+    let pclen = char_len(pattern, pi);
+    match pc {
+        '*' => {
+            let mut pos = ti;
+            loop {
+                if pattern_matches_inner(text, pos, pattern, pi + 1) {
+                    return true;
+                }
+                if pos == text.len() {
+                    break;
+                }
+                pos += char_len(text, pos);
             }
-            None => {
-                ti < text.len()
-                    && text[ti] == '['
-                    && pattern_matches_inner(text, ti + 1, pattern, pi + 1)
-            }
-        },
-        '\\' if pi + 1 < pattern.len() => {
+            false
+        }
+        '?' => {
             ti < text.len()
-                && text[ti] == pattern[pi + 1]
-                && pattern_matches_inner(text, ti + 1, pattern, pi + 2)
+                && pattern_matches_inner(text, ti + char_len(text, ti), pattern, pi + 1)
+        }
+        '[' => {
+            let tc = if ti < text.len() {
+                Some(char_at(text, ti))
+            } else {
+                None
+            };
+            match match_bracket(tc, pattern, pi) {
+                Some((matched, next_pi)) => {
+                    matched
+                        && ti < text.len()
+                        && pattern_matches_inner(
+                            text,
+                            ti + char_len(text, ti),
+                            pattern,
+                            next_pi,
+                        )
+                }
+                None => {
+                    ti < text.len()
+                        && char_at(text, ti) == '['
+                        && pattern_matches_inner(
+                            text,
+                            ti + char_len(text, ti),
+                            pattern,
+                            pi + 1,
+                        )
+                }
+            }
+        }
+        '\\' if pi + pclen < pattern.len() => {
+            let escaped = char_at(pattern, pi + pclen);
+            let eclen = char_len(pattern, pi + pclen);
+            ti < text.len()
+                && char_at(text, ti) == escaped
+                && pattern_matches_inner(
+                    text,
+                    ti + char_len(text, ti),
+                    pattern,
+                    pi + pclen + eclen,
+                )
         }
         ch => {
             ti < text.len()
-                && text[ti] == ch
-                && pattern_matches_inner(text, ti + 1, pattern, pi + 1)
+                && char_at(text, ti) == ch
+                && pattern_matches_inner(text, ti + char_len(text, ti), pattern, pi + pclen)
         }
     }
 }
@@ -1645,7 +1734,7 @@ fn match_charclass(class: &str, ch: char) -> bool {
     crate::sys::classify_char(class, ch)
 }
 
-fn match_bracket(current: Option<char>, pattern: &[char], start: usize) -> Option<(bool, usize)> {
+fn match_bracket(current: Option<char>, pattern: &str, start: usize) -> Option<(bool, usize)> {
     let current = current?;
     let mut index = start + 1;
     if index >= pattern.len() {
@@ -1653,17 +1742,17 @@ fn match_bracket(current: Option<char>, pattern: &[char], start: usize) -> Optio
     }
 
     let mut negate = false;
-    if matches!(pattern.get(index), Some('!') | Some('^')) {
+    if index < pattern.len() && matches!(pattern.as_bytes()[index], b'!' | b'^') {
         negate = true;
         index += 1;
     }
 
-    let first_elem = true;
     let mut matched = false;
     let mut saw_closer = false;
-    let mut first_elem = first_elem;
+    let mut first_elem = true;
     while index < pattern.len() {
-        if pattern[index] == ']' && !first_elem {
+        let pc = char_at(pattern, index);
+        if pc == ']' && !first_elem {
             saw_closer = true;
             index += 1;
             break;
@@ -1671,32 +1760,46 @@ fn match_bracket(current: Option<char>, pattern: &[char], start: usize) -> Optio
 
         first_elem = false;
 
-        if pattern[index] == '[' && index + 1 < pattern.len() && pattern[index + 1] == ':' {
-            if let Some(end) = pattern[index + 2..]
-                .iter()
-                .zip(pattern[index + 3..].iter())
-                .position(|(&a, &b)| a == ':' && b == ']')
-            {
-                let class_name: String = pattern[index + 2..index + 2 + end].iter().collect();
+        if pc == '['
+            && index + 1 < pattern.len()
+            && pattern.as_bytes()[index + 1] == b':'
+        {
+            let class_start = index + 2;
+            let mut found_end = None;
+            let mut ci = class_start;
+            while ci + 1 < pattern.len() {
+                if pattern.as_bytes()[ci] == b':' && pattern.as_bytes()[ci + 1] == b']' {
+                    found_end = Some(ci);
+                    break;
+                }
+                ci += 1;
+            }
+            if let Some(end) = found_end {
+                let class_name = pattern[class_start..end].to_string();
                 matched |= match_charclass(&class_name, current);
-                index = index + 2 + end + 2;
+                index = end + 2;
                 continue;
             }
         }
 
-        let first = if pattern[index] == '\\' && index + 1 < pattern.len() {
+        let first = if pc == '\\' && index + 1 < pattern.len() {
             index += 1;
-            pattern[index]
+            char_at(pattern, index)
         } else {
-            pattern[index]
+            pc
         };
-        if index + 2 < pattern.len() && pattern[index + 1] == '-' && pattern[index + 2] != ']' {
-            let last = pattern[index + 2];
+        let first_clen = char_len(pattern, index);
+        if index + first_clen + 1 < pattern.len()
+            && pattern.as_bytes()[index + first_clen] == b'-'
+            && char_at(pattern, index + first_clen + 1) != ']'
+        {
+            let last = char_at(pattern, index + first_clen + 1);
+            let last_clen = char_len(pattern, index + first_clen + 1);
             matched |= first <= current && current <= last;
-            index += 3;
+            index += first_clen + 1 + last_clen;
         } else {
             matched |= current == first;
-            index += 1;
+            index += first_clen;
         }
     }
 
@@ -1717,12 +1820,11 @@ fn expand_arithmetic_expression<C: Context>(
     ctx: &mut C,
     expression: &str,
 ) -> Result<String, ExpandError> {
-    let chars: Vec<char> = expression.chars().collect();
     let mut result = String::new();
     let mut i = 0;
-    while i < chars.len() {
-        if chars[i] == '$' {
-            let (expansion, consumed) = expand_dollar(ctx, &chars[i..], true)?;
+    while i < expression.len() {
+        if expression.as_bytes()[i] == b'$' {
+            let (expansion, consumed) = expand_dollar(ctx, &expression[i..], true)?;
             match expansion {
                 Expansion::One(s) => result.push_str(&s),
                 Expansion::AtFields(fields) => {
@@ -1730,14 +1832,15 @@ fn expand_arithmetic_expression<C: Context>(
                 }
             }
             i += consumed;
-        } else if chars[i] == '`' {
+        } else if expression.as_bytes()[i] == b'`' {
             i += 1;
-            let command = scan_backtick_command(&chars, &mut i, true)?;
+            let command = scan_backtick_command(expression, &mut i, true)?;
             let output = ctx.command_substitute(&command)?;
             result.push_str(output.trim_end_matches('\n'));
         } else {
-            result.push(chars[i]);
-            i += 1;
+            let clen = char_len(expression, i);
+            result.push_str(&expression[i..i + clen]);
+            i += clen;
         }
     }
     Ok(result)
@@ -1756,7 +1859,7 @@ fn eval_arithmetic<C: Context>(ctx: &mut C, expression: &str) -> Result<i64, Exp
 }
 
 struct ArithmeticParser<'a, C> {
-    chars: Vec<char>,
+    source: String,
     index: usize,
     ctx: &'a mut C,
 }
@@ -1770,7 +1873,7 @@ fn arith_err(msg: &str) -> ExpandError {
 impl<'a, C: Context> ArithmeticParser<'a, C> {
     fn new(ctx: &'a mut C, raw: &str) -> Self {
         Self {
-            chars: raw.chars().collect(),
+            source: raw.to_string(),
             index: 0,
             ctx,
         }
@@ -1800,7 +1903,7 @@ impl<'a, C: Context> ArithmeticParser<'a, C> {
     }
 
     fn try_consume_assign_op(&mut self) -> Option<String> {
-        let remaining: String = self.chars[self.index..].iter().collect();
+        let remaining = &self.source[self.index..];
         for op in &[
             "<<=", ">>=", "&=", "^=", "|=", "*=", "/=", "%=", "+=", "-=", "=",
         ] {
@@ -2057,36 +2160,38 @@ impl<'a, C: Context> ArithmeticParser<'a, C> {
             if self.peek() == Some('x') || self.peek() == Some('X') {
                 self.index += 1;
                 let hex_start = self.index;
-                while self.index < self.chars.len() && self.chars[self.index].is_ascii_hexdigit() {
+                while self.index < self.source.len()
+                    && self.source.as_bytes()[self.index].is_ascii_hexdigit()
+                {
                     self.index += 1;
                 }
                 if self.index == hex_start {
                     return Err(arith_err("invalid hex constant"));
                 }
-                let hex_str: String = self.chars[hex_start..self.index].iter().collect();
-                return i64::from_str_radix(&hex_str, 16)
+                return i64::from_str_radix(&self.source[hex_start..self.index], 16)
                     .map_err(|_| arith_err("invalid hex constant"));
             }
             if self.peek().map_or(false, |c| c.is_ascii_digit()) {
-                while self.index < self.chars.len() && self.chars[self.index].is_ascii_digit() {
+                while self.index < self.source.len()
+                    && self.source.as_bytes()[self.index].is_ascii_digit()
+                {
                     self.index += 1;
                 }
-                let oct_str: String = self.chars[start + 1..self.index].iter().collect();
-                return i64::from_str_radix(&oct_str, 8)
+                return i64::from_str_radix(&self.source[start + 1..self.index], 8)
                     .map_err(|_| arith_err("invalid octal constant"));
             }
             return Ok(0);
         }
 
-        while self.index < self.chars.len() && self.chars[self.index].is_ascii_digit() {
+        while self.index < self.source.len()
+            && self.source.as_bytes()[self.index].is_ascii_digit()
+        {
             self.index += 1;
         }
         if start == self.index {
             return Err(arith_err("expected arithmetic operand"));
         }
-        self.chars[start..self.index]
-            .iter()
-            .collect::<String>()
+        self.source[start..self.index]
             .parse::<i64>()
             .map_err(|_| arith_err("invalid arithmetic operand"))
     }
@@ -2094,19 +2199,22 @@ impl<'a, C: Context> ArithmeticParser<'a, C> {
     fn try_scan_name(&mut self) -> Option<String> {
         self.skip_ws();
         let start = self.index;
-        if self.index < self.chars.len()
-            && (self.chars[self.index].is_ascii_alphabetic() || self.chars[self.index] == '_')
-        {
-            self.index += 1;
-            while self.index < self.chars.len()
-                && (self.chars[self.index].is_ascii_alphanumeric() || self.chars[self.index] == '_')
-            {
+        if self.index < self.source.len() {
+            let b = self.source.as_bytes()[self.index];
+            if b.is_ascii_alphabetic() || b == b'_' {
                 self.index += 1;
+                while self.index < self.source.len() {
+                    let b2 = self.source.as_bytes()[self.index];
+                    if b2.is_ascii_alphanumeric() || b2 == b'_' {
+                        self.index += 1;
+                    } else {
+                        break;
+                    }
+                }
+                return Some(self.source[start..self.index].to_string());
             }
-            Some(self.chars[start..self.index].iter().collect())
-        } else {
-            None
         }
+        None
     }
 
     fn resolve_var(&mut self, name: &str) -> Result<i64, ExpandError> {
@@ -2132,13 +2240,15 @@ impl<'a, C: Context> ArithmeticParser<'a, C> {
     }
 
     fn skip_ws(&mut self) {
-        while self.index < self.chars.len() && self.chars[self.index].is_whitespace() {
+        while self.index < self.source.len()
+            && self.source.as_bytes()[self.index].is_ascii_whitespace()
+        {
             self.index += 1;
         }
     }
 
     fn consume(&mut self, ch: char) -> bool {
-        if self.chars.get(self.index) == Some(&ch) {
+        if self.source.as_bytes().get(self.index) == Some(&(ch as u8)) {
             self.index += 1;
             true
         } else {
@@ -2147,11 +2257,8 @@ impl<'a, C: Context> ArithmeticParser<'a, C> {
     }
 
     fn consume_str(&mut self, s: &str) -> bool {
-        let s_chars: Vec<char> = s.chars().collect();
-        if self.index + s_chars.len() <= self.chars.len()
-            && self.chars[self.index..self.index + s_chars.len()] == s_chars[..]
-        {
-            self.index += s_chars.len();
+        if self.source[self.index..].starts_with(s) {
+            self.index += s.len();
             true
         } else {
             false
@@ -2159,15 +2266,18 @@ impl<'a, C: Context> ArithmeticParser<'a, C> {
     }
 
     fn peek(&self) -> Option<char> {
-        self.chars.get(self.index).copied()
+        self.source.as_bytes().get(self.index).map(|&b| b as char)
     }
 
     fn peek_at(&self, offset: usize) -> Option<char> {
-        self.chars.get(self.index + offset).copied()
+        self.source
+            .as_bytes()
+            .get(self.index + offset)
+            .map(|&b| b as char)
     }
 
     fn is_eof(&self) -> bool {
-        self.index >= self.chars.len()
+        self.index >= self.source.len()
     }
 }
 
@@ -2230,30 +2340,30 @@ mod tests {
     }
 
     impl Context for FakeContext {
-        fn env_var(&self, name: &str) -> Option<String> {
-            self.env.get(name).cloned()
+        fn env_var(&self, name: &str) -> Option<Cow<'_, str>> {
+            self.env.get(name).map(|v| Cow::Borrowed(v.as_str()))
         }
 
-        fn special_param(&self, name: char) -> Option<String> {
+        fn special_param(&self, name: char) -> Option<Cow<'_, str>> {
             match name {
-                '?' => Some("0".to_string()),
-                '#' => Some(self.positional.len().to_string()),
-                '-' => Some("aC".to_string()),
-                '*' | '@' => Some(self.positional.join(" ")),
+                '?' => Some(Cow::Owned("0".to_string())),
+                '#' => Some(Cow::Owned(self.positional.len().to_string())),
+                '-' => Some(Cow::Owned("aC".to_string())),
+                '*' | '@' => Some(Cow::Owned(self.positional.join(" "))),
                 _ => None,
             }
         }
 
-        fn positional_param(&self, index: usize) -> Option<String> {
+        fn positional_param(&self, index: usize) -> Option<Cow<'_, str>> {
             if index == 0 {
-                Some("meiksh".to_string())
+                Some(Cow::Owned("meiksh".to_string()))
             } else {
-                self.positional.get(index - 1).cloned()
+                self.positional.get(index - 1).map(|v| Cow::Borrowed(v.as_str()))
             }
         }
 
-        fn positional_params(&self) -> Vec<String> {
-            self.positional.clone()
+        fn positional_params(&self) -> &[String] {
+            &self.positional
         }
 
         fn set_var(&mut self, name: &str, value: String) -> Result<(), ExpandError> {
@@ -2277,9 +2387,9 @@ mod tests {
             Ok(format!("{command}\n"))
         }
 
-        fn home_dir_for_user(&self, name: &str) -> Option<String> {
+        fn home_dir_for_user(&self, name: &str) -> Option<Cow<'_, str>> {
             match name {
-                "testuser" => Some("/home/testuser".to_string()),
+                "testuser" => Some(Cow::Owned("/home/testuser".to_string())),
                 _ => None,
             }
         }
@@ -2445,11 +2555,9 @@ mod tests {
 
     #[test]
     fn dollar_single_quote_helpers_cover_escape_matrix() {
-        let chars: Vec<char> = "$'\\\"\\'\\\\\\a\\b\\e\\f\\n\\r\\t\\v\\cA\\c\\\\\\x41\\101Z'"
-            .chars()
-            .collect();
-        let (value, consumed) = parse_dollar_single_quoted(&chars).expect("parse");
-        assert_eq!(consumed, chars.len());
+        let input = "$'\\\"\\'\\\\\\a\\b\\e\\f\\n\\r\\t\\v\\cA\\c\\\\\\x41\\101Z'";
+        let (value, consumed) = parse_dollar_single_quoted(input).expect("parse");
+        assert_eq!(consumed, input.len());
         assert_eq!(
             value,
             format!(
@@ -2458,37 +2566,32 @@ mod tests {
             )
         );
 
-        let unterminated_backslash: Vec<char> = "$'\\".chars().collect();
-        assert!(parse_dollar_single_quoted(&unterminated_backslash).is_err());
+        assert!(parse_dollar_single_quoted("$'\\").is_err());
 
-        let unterminated_control: Vec<char> = "$'\\c".chars().collect();
-        assert!(parse_dollar_single_quoted(&unterminated_control).is_err());
+        assert!(parse_dollar_single_quoted("$'\\c").is_err());
 
-        let no_hex_digits: Vec<char> = "$'\\xZ'".chars().collect();
-        let (value, _) = parse_dollar_single_quoted(&no_hex_digits).expect("parse no hex");
+        let (value, _) = parse_dollar_single_quoted("$'\\xZ'").expect("parse no hex");
         assert_eq!(value, "xZ");
 
-        let hex_digits: Vec<char> = "$'\\x41'".chars().collect();
-        let (value, _) = parse_dollar_single_quoted(&hex_digits).expect("parse hex");
+        let (value, _) = parse_dollar_single_quoted("$'\\x41'").expect("parse hex");
         assert_eq!(value, "A");
 
-        let unspecified_escape: Vec<char> = "$'\\z'".chars().collect();
         let (value, _) =
-            parse_dollar_single_quoted(&unspecified_escape).expect("parse unspecified");
+            parse_dollar_single_quoted("$'\\z'").expect("parse unspecified");
         assert_eq!(value, "z");
 
         assert_eq!(control_escape('\\'), '\u{001c}');
         assert_eq!(control_escape('?'), '\u{007f}');
         assert_eq!(control_escape('A'), '\u{0001}');
         assert_eq!(
-            parse_variable_base_escape(&['4', '1', '2'], 16, 2),
+            parse_variable_base_escape("412", 16, 2),
             (0x41, 2)
         );
         assert_eq!(
-            parse_variable_base_escape(&['1', '0', '1', '7'], 8, 3),
+            parse_variable_base_escape("1017", 8, 3),
             (0o101, 3)
         );
-        assert_eq!(parse_variable_base_escape(&['Z'], 16, 2), (0, 0));
+        assert_eq!(parse_variable_base_escape("Z", 16, 2), (0, 0));
     }
 
     #[test]
@@ -2843,9 +2946,9 @@ mod tests {
         assert_eq!(lookup_param(&ctx, "99"), None);
         assert_eq!(
             ctx.positional_params(),
-            vec!["alpha".to_string(), "beta".to_string()]
+            &["alpha".to_string(), "beta".to_string()][..]
         );
-        assert_eq!(ctx.positional_param(0), Some("meiksh".to_string()));
+        assert_eq!(ctx.positional_param(0).as_deref(), Some("meiksh"));
 
         let mut segs = Vec::new();
         push_segment(&mut segs, "a".into(), QuoteState::Expanded);
@@ -2938,24 +3041,24 @@ mod tests {
     }
 
     impl Context for DefaultPathContext {
-        fn env_var(&self, name: &str) -> Option<String> {
-            self.env.get(name).cloned()
+        fn env_var(&self, name: &str) -> Option<Cow<'_, str>> {
+            self.env.get(name).map(|v| Cow::Borrowed(v.as_str()))
         }
 
-        fn special_param(&self, _name: char) -> Option<String> {
+        fn special_param(&self, _name: char) -> Option<Cow<'_, str>> {
             None
         }
 
-        fn positional_param(&self, index: usize) -> Option<String> {
+        fn positional_param(&self, index: usize) -> Option<Cow<'_, str>> {
             if index == 0 {
-                Some("meiksh".to_string())
+                Some(Cow::Owned("meiksh".to_string()))
             } else {
                 None
             }
         }
 
-        fn positional_params(&self) -> Vec<String> {
-            Vec::new()
+        fn positional_params(&self) -> &[String] {
+            &[]
         }
 
         fn set_var(&mut self, name: &str, value: String) -> Result<(), ExpandError> {
@@ -2975,7 +3078,7 @@ mod tests {
             Ok(format!("{command}\n"))
         }
 
-        fn home_dir_for_user(&self, _name: &str) -> Option<String> {
+        fn home_dir_for_user(&self, _name: &str) -> Option<Cow<'_, str>> {
             None
         }
     }
@@ -2992,20 +3095,20 @@ mod tests {
     fn direct_expand_dollar_covers_fallbacks_and_nesting() {
         let mut ctx = FakeContext::new();
         assert_eq!(
-            expect_one(expand_dollar(&mut ctx, &['$'], false)),
+            expect_one(expand_dollar(&mut ctx, "$", false)),
             ("$".to_string(), 1)
         );
         assert_eq!(
-            expect_one(expand_dollar(&mut ctx, &['$', '-'], false)),
+            expect_one(expand_dollar(&mut ctx, "$-", false)),
             ("aC".to_string(), 2)
         );
         assert_eq!(
-            expect_one(expand_dollar(&mut ctx, &['$', '$'], false)),
+            expect_one(expand_dollar(&mut ctx, "$$", false)),
             ("".to_string(), 2)
         );
 
         let (at_expansion, at_consumed) =
-            expand_dollar(&mut ctx, &['$', '@'], true).expect("quoted at");
+            expand_dollar(&mut ctx, "$@", true).expect("quoted at");
         assert_eq!(at_consumed, 2);
         match at_expansion {
             Expansion::AtFields(fields) => {
@@ -3014,16 +3117,16 @@ mod tests {
             _ => panic!("expected AtFields for quoted $@"),
         }
 
-        let arithmetic_chars: Vec<char> = "$((1 + (2 * 3)))".chars().collect();
+        let arithmetic_input = "$((1 + (2 * 3)))";
         assert_eq!(
-            expect_one(expand_dollar(&mut ctx, &arithmetic_chars, false)),
-            ("7".to_string(), arithmetic_chars.len())
+            expect_one(expand_dollar(&mut ctx, arithmetic_input, false)),
+            ("7".to_string(), arithmetic_input.len())
         );
 
-        let command_chars: Vec<char> = "$(printf (hi))".chars().collect();
+        let command_input = "$(printf (hi))";
         assert_eq!(
-            expect_one(expand_dollar(&mut ctx, &command_chars, false)),
-            ("printf (hi)".to_string(), command_chars.len())
+            expect_one(expand_dollar(&mut ctx, command_input, false)),
+            ("printf (hi)".to_string(), command_input.len())
         );
     }
 
@@ -3052,29 +3155,32 @@ mod tests {
         let mut ctx = FakeContext::new();
         ctx.env.insert("HOME".into(), "/tmp/home".into());
         assert_eq!(
-            expand_parameter_dollar(&mut ctx, &['$'],).expect("single"),
+            expand_parameter_dollar(&mut ctx, "$").expect("single"),
             ("$".to_string(), 1)
         );
-        let unterminated: Vec<char> = "${HOME".chars().collect();
-        assert!(expand_parameter_dollar(&mut ctx, &unterminated).is_err());
+        assert!(expand_parameter_dollar(&mut ctx, "${HOME").is_err());
         assert_eq!(
-            expand_parameter_dollar(&mut ctx, &['$', '0']).expect("zero"),
+            expand_parameter_dollar(&mut ctx, "$0").expect("zero"),
             ("meiksh".to_string(), 2)
         );
         assert_eq!(
-            expand_parameter_dollar(&mut ctx, &['$', '?']).expect("special"),
+            expand_parameter_dollar(&mut ctx, "$?").expect("special"),
             ("0".to_string(), 2)
         );
         assert_eq!(
-            expand_parameter_dollar(&mut ctx, &['$', '1']).expect("positional"),
+            expand_parameter_dollar(&mut ctx, "$1").expect("positional"),
             ("alpha".to_string(), 2)
         );
         assert_eq!(
-            expand_parameter_dollar(&mut ctx, &['$', 'H', 'O', 'M', 'E']).expect("name"),
+            expand_parameter_dollar(&mut ctx, "$HOME").expect("name"),
             ("/tmp/home".to_string(), 5)
         );
         assert_eq!(
-            expand_parameter_dollar(&mut ctx, &['$', '-']).expect("dash"),
+            expand_parameter_dollar(&mut ctx, "$HOME+rest").expect("name stops at +"),
+            ("/tmp/home".to_string(), 5)
+        );
+        assert_eq!(
+            expand_parameter_dollar(&mut ctx, "$-").expect("dash"),
             ("aC".to_string(), 2)
         );
     }
@@ -3362,11 +3468,12 @@ mod tests {
         assert!(!pattern_matches("g", "[[:xdigit:]]"));
         assert!(!pattern_matches("a", "[[:bogus:]]"));
         assert!(pattern_matches("x", "[[:x]"));
+        assert!(!pattern_matches("", "[a-z]"));
 
-        assert_eq!(match_bracket(None, &['[', 'a', ']'], 0), None);
-        assert_eq!(match_bracket(Some('a'), &['['], 0), None);
+        assert_eq!(match_bracket(None, "[a]", 0), None);
+        assert_eq!(match_bracket(Some('a'), "[", 0), None);
         assert_eq!(
-            match_bracket(Some(']'), &['[', '\\', ']', ']'], 0),
+            match_bracket(Some(']'), "[\\]]", 0),
             Some((true, 4))
         );
         assert_eq!(
@@ -3526,10 +3633,10 @@ mod tests {
     fn default_pathname_context_trait_impl() {
         let mut ctx = DefaultPathContext::new();
         assert_eq!(ctx.special_param('?'), None);
-        assert_eq!(ctx.positional_param(0), Some("meiksh".to_string()));
+        assert_eq!(ctx.positional_param(0).as_deref(), Some("meiksh"));
         assert_eq!(ctx.positional_param(1), None);
         ctx.set_var("NAME", "value".to_string()).expect("set var");
-        assert_eq!(ctx.env_var("NAME"), Some("value".to_string()));
+        assert_eq!(ctx.env_var("NAME").as_deref(), Some("value"));
         assert_eq!(ctx.shell_name(), "meiksh");
         assert_eq!(
             ctx.command_substitute("printf ok").expect("substitute"),
@@ -3563,7 +3670,7 @@ mod tests {
 
     #[test]
     fn bracket_helpers_cover_missing_closer() {
-        assert_eq!(match_bracket(Some('a'), &['[', 'a'], 0), None);
+        assert_eq!(match_bracket(Some('a'), "[a", 0), None);
     }
 
     #[test]
@@ -3918,8 +4025,7 @@ mod tests {
 
     #[test]
     fn scan_to_closing_brace_error_on_unterminated() {
-        let chars: Vec<char> = "${var".chars().collect();
-        let err = scan_to_closing_brace(&chars, 2).expect_err("unterminated");
+        let err = scan_to_closing_brace("${var", 2).expect_err("unterminated");
         assert_eq!(err.message, "unterminated parameter expansion");
     }
 
@@ -3956,17 +4062,15 @@ mod tests {
 
     #[test]
     fn scan_backtick_command_unterminated() {
-        let chars: Vec<char> = "`unterminated".chars().collect();
         let mut index = 1usize;
-        let err = scan_backtick_command(&chars, &mut index, false).expect_err("unterminated");
+        let err = scan_backtick_command("`unterminated", &mut index, false).expect_err("unterminated");
         assert_eq!(err.message, "unterminated backquote");
     }
 
     #[test]
     fn scan_backtick_command_escape_outside_dq() {
-        let chars: Vec<char> = "`echo \\\\ok`".chars().collect();
         let mut index = 1usize;
-        let result = scan_backtick_command(&chars, &mut index, false).expect("bt escape");
+        let result = scan_backtick_command("`echo \\\\ok`", &mut index, false).expect("bt escape");
         assert_eq!(result, "echo \\ok");
     }
 
@@ -4097,9 +4201,8 @@ mod tests {
 
     #[test]
     fn scan_backtick_non_special_escape_in_dquote() {
-        let chars: Vec<char> = "`echo \\x`".chars().collect();
         let mut index = 1usize;
-        let result = scan_backtick_command(&chars, &mut index, true).expect("non-special escape");
+        let result = scan_backtick_command("`echo \\x`", &mut index, true).expect("non-special escape");
         assert_eq!(result, "echo \\x");
     }
 
@@ -5102,8 +5205,7 @@ mod tests {
     #[test]
     fn scan_to_closing_brace_skips_backslash() {
         assert_no_syscalls(|| {
-            let input: Vec<char> = "a\\}b}".chars().collect();
-            let pos = scan_to_closing_brace(&input, 0).unwrap();
+            let pos = scan_to_closing_brace("a\\}b}", 0).unwrap();
             assert_eq!(pos, 4);
         });
     }

@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
@@ -1206,37 +1207,37 @@ impl Shell {
 }
 
 impl expand::Context for Shell {
-    fn env_var(&self, name: &str) -> Option<String> {
-        self.get_var(name)
+    fn env_var(&self, name: &str) -> Option<Cow<'_, str>> {
+        self.env.get(name).map(|v| Cow::Borrowed(v.as_str()))
     }
 
-    fn special_param(&self, name: char) -> Option<String> {
+    fn special_param(&self, name: char) -> Option<Cow<'_, str>> {
         match name {
-            '?' => Some(self.last_status.to_string()),
-            '$' => Some(self.pid.to_string()),
-            '!' => self.last_background.map(|pid| pid.to_string()),
-            '#' => Some(self.positional.len().to_string()),
-            '-' => Some(self.active_option_flags()),
-            '*' | '@' => Some(self.positional.join(" ")),
-            '0' => Some(self.shell_name.clone()),
+            '?' => Some(Cow::Owned(self.last_status.to_string())),
+            '$' => Some(Cow::Owned(self.pid.to_string())),
+            '!' => self.last_background.map(|pid| Cow::Owned(pid.to_string())),
+            '#' => Some(Cow::Owned(self.positional.len().to_string())),
+            '-' => Some(Cow::Owned(self.active_option_flags())),
+            '*' | '@' => Some(Cow::Owned(self.positional.join(" "))),
+            '0' => Some(Cow::Borrowed(&self.shell_name)),
             digit if digit.is_ascii_digit() => {
                 let index = digit.to_digit(10)? as usize;
-                self.positional.get(index.saturating_sub(1)).cloned()
+                self.positional.get(index.saturating_sub(1)).map(|v| Cow::Borrowed(v.as_str()))
             }
             _ => None,
         }
     }
 
-    fn positional_param(&self, index: usize) -> Option<String> {
+    fn positional_param(&self, index: usize) -> Option<Cow<'_, str>> {
         if index == 0 {
-            Some(self.shell_name.clone())
+            Some(Cow::Borrowed(&self.shell_name))
         } else {
-            self.positional.get(index - 1).cloned()
+            self.positional.get(index - 1).map(|v| Cow::Borrowed(v.as_str()))
         }
     }
 
-    fn positional_params(&self) -> Vec<String> {
-        self.positional.clone()
+    fn positional_params(&self) -> &[String] {
+        &self.positional
     }
 
     fn set_var(&mut self, name: &str, value: String) -> Result<(), ExpandError> {
@@ -1263,8 +1264,8 @@ impl expand::Context for Shell {
         })
     }
 
-    fn home_dir_for_user(&self, name: &str) -> Option<String> {
-        sys::home_dir_for_user(name)
+    fn home_dir_for_user(&self, name: &str) -> Option<Cow<'_, str>> {
+        sys::home_dir_for_user(name).map(Cow::Owned)
     }
 }
 
