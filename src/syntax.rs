@@ -1446,8 +1446,15 @@ impl<'src> Parser<'src> {
             if command.words.is_empty() {
                 if let Some(text) = self.peek_word_text() {
                     if let Some((name, value)) = split_assignment(&text) {
-                        let name = Cow::Owned(name.to_string());
-                        let value = Word { raw: Cow::Owned(value.to_string()) };
+                        let (name, value) = match &text {
+                            Cow::Borrowed(s) => {
+                                let (n, v) = split_assignment(s).unwrap();
+                                (Cow::Borrowed(n), Word { raw: Cow::Borrowed(v) })
+                            }
+                            Cow::Owned(_) => {
+                                (Cow::Owned(name.to_string()), Word { raw: Cow::Owned(value.to_string()) })
+                            }
+                        };
                         self.index += 1;
                         command.assignments.push(Assignment { name, value });
                         continue;
@@ -1813,6 +1820,14 @@ mod tests {
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.assignments.len() == 1 && cmd.words[0].raw == "echo"
+        ));
+
+        let owned = parse("FO\\\nO=bar echo ok").expect("parse backslash-newline assignment");
+        assert!(matches!(
+            &owned.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.assignments.len() == 1
+                && cmd.assignments[0].name == "FOO"
+                && cmd.assignments[0].value.raw == "bar"
         ));
     }
 
