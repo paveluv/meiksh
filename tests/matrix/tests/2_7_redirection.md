@@ -601,6 +601,25 @@ begin test "greater-pipe output redirection overwrites despite noclobber"
 end test "greater-pipe output redirection overwrites despite noclobber"
 ```
 
+#### Test: greater-pipe output redirection creates non-existent file
+
+Even if `noclobber` is set or unset, the `>|` format creates the target file
+if it does not already exist.
+
+```
+begin test "greater-pipe output redirection creates non-existent file"
+  script
+    set -C
+    rm -f tmp_greater_pipe_create.txt
+    echo "created" >| tmp_greater_pipe_create.txt
+    cat tmp_greater_pipe_create.txt
+  expect
+    stdout "created"
+    stderr ""
+    exit_code 0
+end test "greater-pipe output redirection creates non-existent file"
+```
+
 ## 2.7.3 Appending Redirected Output
 
 Appended output redirection shall cause the file whose name results from the expansion of word to be opened for output on the designated file descriptor. The file shall be opened as if the [*open*()](docs/posix/md/functions/open.md) function as defined in the System Interfaces volume of POSIX.1-2024 was called with the O_APPEND flag set. If the file does not exist, it shall be created.
@@ -879,6 +898,25 @@ begin test "here-document backslashes behave as in double quotes"
 end test "here-document backslashes behave as in double quotes"
 ```
 
+#### Test: here-document backslash does not escape double quote
+
+Because double-quotes are not treated specially within an unquoted here-document
+(unless inside a substitution), a backslash preceding a double-quote does not
+escape it; both characters are preserved literally.
+
+```
+begin test "here-document backslash does not escape double quote"
+  script
+    cat <<EOF
+    \"
+    EOF
+  expect
+    stdout "\\"""
+    stderr ""
+    exit_code 0
+end test "here-document backslash does not escape double quote"
+```
+
 #### Test: here-document not expanded when command is not executed
 
 If the redirection operator is never evaluated (because the command is not
@@ -1058,6 +1096,27 @@ begin test "here-document terminator line allows no blanks before delimiter"
     stderr ""
     exit_code 0
 end test "here-document terminator line allows no blanks before delimiter"
+```
+
+#### Test: here-document trailing delimiter not recognized after line continuation
+
+The search for the trailing delimiter occurs while processing `<backslash><newline>`
+line continuation. As a consequence, if a `<newline>` immediately precedes the
+delimiter but is removed by line continuation, the delimiter is not recognized.
+
+```
+begin test "here-document trailing delimiter not recognized after line continuation"
+  script
+    cat <<EOF
+    body\
+    EOF
+    real body
+    EOF
+  expect
+    stdout "bodyEOF\nreal body"
+    stderr ""
+    exit_code 0
+end test "here-document trailing delimiter not recognized after line continuation"
 ```
 
 #### Test: outer double-quotes around command substitution do not suppress here-document expansion
@@ -1259,6 +1318,26 @@ begin test "duplicate input fd to explicit fd number"
 end test "duplicate input fd to explicit fd number"
 ```
 
+#### Test: duplicate input fd uses expanded word for target fd
+
+The `word` in `[n]<&word` is expanded. A variable that expands to a file
+descriptor number acts as the target descriptor.
+
+```
+begin test "duplicate input fd uses expanded word for target fd"
+  script
+    echo "data" > tmp_var_fd.txt
+    exec 5<tmp_var_fd.txt
+    fd=5
+    cat <&$fd
+    exec 5<&-
+  expect
+    stdout "data"
+    stderr ""
+    exit_code 0
+end test "duplicate input fd uses expanded word for target fd"
+```
+
 #### Test: closing specific input fd with n<&-
 
 When *word* evaluates to `'-'` in `[n]<&word`, file descriptor *n* shall be
@@ -1378,6 +1457,26 @@ begin test "duplicate output fd to explicit fd number"
     stderr ""
     exit_code 0
 end test "duplicate output fd to explicit fd number"
+```
+
+#### Test: duplicate output fd uses expanded word for target fd
+
+The `word` in `[n]>&word` is expanded. A variable that expands to a file
+descriptor number acts as the target descriptor.
+
+```
+begin test "duplicate output fd uses expanded word for target fd"
+  script
+    exec 5>tmp_var_out_fd.txt
+    fd=5
+    echo "data" >&$fd
+    exec 5>&-
+    cat tmp_var_out_fd.txt
+  expect
+    stdout "data"
+    stderr ""
+    exit_code 0
+end test "duplicate output fd uses expanded word for target fd"
 ```
 
 #### Test: closing specific output fd with n>&-
