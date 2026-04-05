@@ -449,7 +449,9 @@ struct MdCitation {
 }
 
 fn is_citation_heading(name: &str) -> bool {
-    name.chars().next().map_or(false, |c| c.is_ascii_digit()) || name.starts_with("utility: ")
+    name.chars().next().map_or(false, |c| c.is_ascii_digit())
+        || name.starts_with("utility: ")
+        || name.starts_with("xbd: ")
 }
 
 fn extract_md_citations(content: &str) -> Vec<MdCitation> {
@@ -714,6 +716,13 @@ fn source_file_for_section(section_name: &str, md_root: &Path) -> Option<PathBuf
     Some(md_root.join("utilities").join(filename))
 }
 
+fn source_file_for_xbd_section(section_name: &str, md_root: &Path) -> Option<PathBuf> {
+    let chapter: &str = section_name.split('.').next()?;
+    let chap_num: u32 = chapter.parse().ok()?;
+    let filename = format!("V1_chap{:02}.md", chap_num);
+    Some(md_root.join("basedefs").join(filename))
+}
+
 fn check_md_citations(md_files: &[PathBuf], md_root: &Path) -> (Vec<String>, usize) {
     let mut errors = Vec::new();
     let mut source_cache: HashMap<PathBuf, Vec<SourceSection>> = HashMap::new();
@@ -742,6 +751,17 @@ fn check_md_citations(md_files: &[PathBuf], md_root: &Path) -> (Vec<String>, usi
                 if let Some(util_name) = citation.section_name.strip_prefix("utility: ") {
                     let p = md_root.join("utilities").join(format!("{util_name}.md"));
                     (p, citation.section_name.clone())
+                } else if let Some(xbd_section) = citation.section_name.strip_prefix("xbd: ") {
+                    match source_file_for_xbd_section(xbd_section, md_root) {
+                        Some(p) => (p, xbd_section.to_string()),
+                        None => {
+                            errors.push(format!(
+                                "{filename}: line {}: cannot determine XBD source file for section {:?}",
+                                citation.line_num, citation.section_name
+                            ));
+                            continue;
+                        }
+                    }
                 } else {
                     match source_file_for_section(&citation.section_name, md_root) {
                         Some(p) => (p, citation.section_name.clone()),
