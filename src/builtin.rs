@@ -41,6 +41,7 @@ pub fn run(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellEr
         "wait" => wait(shell, argv)?,
         "kill" => kill(shell, argv)?,
         "read" => read(shell, argv)?,
+        "getopts" => getopts(shell, argv)?,
         "alias" => alias(shell, argv)?,
         "unalias" => unalias(shell, argv)?,
         "return" => return_builtin(shell, argv)?,
@@ -72,6 +73,7 @@ pub fn is_builtin(name: &str) -> bool {
             | "export"
             | "false"
             | "fg"
+            | "getopts"
             | "jobs"
             | "kill"
             | "pwd"
@@ -1120,6 +1122,147 @@ fn trim_read_ifs_whitespace(chars: &[(char, bool)], ifs_ws: &[char]) -> String {
         end -= 1;
     }
     chars[start..end].iter().map(|(ch, _)| *ch).collect()
+}
+
+fn getopts_set(shell: &mut Shell, name: &str, value: String) -> Result<(), BuiltinOutcome> {
+    shell.set_var(name, value).map_err(|e| {
+        write_stderr(&format!("getopts: {}\n", e.message));
+        BuiltinOutcome::Status(2)
+    })
+}
+
+fn getopts(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
+    if argv.len() < 3 {
+        write_stderr("getopts: usage: getopts optstring name [arg ...]\n");
+        return Ok(BuiltinOutcome::Status(2));
+    }
+    let optstring = &argv[1];
+    let name = &argv[2];
+    let silent = optstring.starts_with(':');
+    let opts = if silent { &optstring[1..] } else { optstring.as_str() };
+
+    let params: Vec<String> = if argv.len() > 3 {
+        argv[3..].to_vec()
+    } else {
+        shell.positional.clone()
+    };
+
+    let optind: usize = shell
+        .get_var("OPTIND")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
+
+    let charind: usize = shell
+        .get_var("_GETOPTS_CIND")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+
+    match getopts_inner(shell, name, opts, silent, &params, optind, charind) {
+        Ok(status) => Ok(status),
+        Err(outcome) => Ok(outcome),
+    }
+}
+
+fn getopts_inner(
+    shell: &mut Shell,
+    name: &str,
+    opts: &str,
+    silent: bool,
+    params: &[String],
+    optind: usize,
+    charind: usize,
+) -> Result<BuiltinOutcome, BuiltinOutcome> {
+    if optind < 1 || optind > params.len() {
+        getopts_set(shell, name, "?".into())?;
+        let _ = shell.unset_var("OPTARG");
+        getopts_set(shell, "OPTIND", (params.len() + 1).to_string())?;
+        return Ok(BuiltinOutcome::Status(1));
+    }
+
+    let arg = &params[optind - 1];
+    let arg_chars: Vec<char> = arg.chars().collect();
+
+    if charind == 0 {
+        if arg == "--" {
+            getopts_set(shell, name, "?".into())?;
+            let _ = shell.unset_var("OPTARG");
+            getopts_set(shell, "OPTIND", (optind + 1).to_string())?;
+            shell.env.remove("_GETOPTS_CIND");
+            return Ok(BuiltinOutcome::Status(1));
+        }
+        if arg_chars.len() < 2 || arg_chars[0] != '-' {
+            getopts_set(shell, name, "?".into())?;
+            let _ = shell.unset_var("OPTARG");
+            getopts_set(shell, "OPTIND", optind.to_string())?;
+            shell.env.remove("_GETOPTS_CIND");
+            return Ok(BuiltinOutcome::Status(1));
+        }
+    }
+
+    let ci = if charind == 0 { 1 } else { charind };
+    let opt_char = arg_chars[ci];
+    let next_ci = ci + 1;
+
+    if let Some(pos) = opts.find(opt_char) {
+        let takes_arg = opts.as_bytes().get(pos + 1) == Some(&b':');
+
+        if takes_arg {
+            if next_ci < arg_chars.len() {
+                let optarg: String = arg_chars[next_ci..].iter().collect();
+                getopts_set(shell, "OPTARG", optarg)?;
+                getopts_set(shell, "OPTIND", (optind + 1).to_string())?;
+                shell.env.remove("_GETOPTS_CIND");
+            } else if optind < params.len() {
+                let optarg = params[optind].clone();
+                getopts_set(shell, "OPTARG", optarg)?;
+                getopts_set(shell, "OPTIND", (optind + 2).to_string())?;
+                shell.env.remove("_GETOPTS_CIND");
+            } else {
+                if silent {
+                    getopts_set(shell, name, ":".into())?;
+                    getopts_set(shell, "OPTARG", opt_char.to_string())?;
+                } else {
+                    write_stderr(&format!(
+                        "{}: option requires an argument -- {}\n",
+                        shell.shell_name, opt_char
+                    ));
+                    getopts_set(shell, name, "?".into())?;
+                    let _ = shell.unset_var("OPTARG");
+                }
+                getopts_set(shell, "OPTIND", (optind + 1).to_string())?;
+                shell.env.remove("_GETOPTS_CIND");
+                return Ok(BuiltinOutcome::Status(0));
+            }
+        } else {
+            let _ = shell.unset_var("OPTARG");
+            if next_ci < arg_chars.len() {
+                shell.env.insert("_GETOPTS_CIND".into(), next_ci.to_string());
+            } else {
+                getopts_set(shell, "OPTIND", (optind + 1).to_string())?;
+                shell.env.remove("_GETOPTS_CIND");
+            }
+        }
+        getopts_set(shell, name, opt_char.to_string())?;
+        Ok(BuiltinOutcome::Status(0))
+    } else {
+        if silent {
+            getopts_set(shell, "OPTARG", opt_char.to_string())?;
+        } else {
+            write_stderr(&format!(
+                "{}: illegal option -- {}\n",
+                shell.shell_name, opt_char
+            ));
+            let _ = shell.unset_var("OPTARG");
+        }
+        getopts_set(shell, name, "?".into())?;
+        if next_ci < arg_chars.len() {
+            shell.env.insert("_GETOPTS_CIND".into(), next_ci.to_string());
+        } else {
+            getopts_set(shell, "OPTIND", (optind + 1).to_string())?;
+            shell.env.remove("_GETOPTS_CIND");
+        }
+        Ok(BuiltinOutcome::Status(0))
+    }
 }
 
 fn alias(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {

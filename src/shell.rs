@@ -293,6 +293,7 @@ impl Shell {
         let ignored_on_entry = Self::probe_ignored_signals();
         env.insert("IFS".into(), " \t\n".into());
         env.insert("PPID".into(), sys::parent_pid().to_string());
+        env.insert("OPTIND".into(), "1".into());
         Self::init_pwd(&mut env);
         Ok(Self {
             positional: options.positional.clone(),
