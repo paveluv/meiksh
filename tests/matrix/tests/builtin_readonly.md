@@ -207,3 +207,21 @@ begin test "readonly -p generates eval-able output"
     exit_code 0
 end test "readonly -p generates eval-able output"
 ```
+
+#### Test: readonly -p shows readonly variable
+
+`readonly -p` lists all readonly variables in a format suitable for
+reinput. A variable declared readonly must appear in the output.
+
+```
+begin test "readonly -p shows readonly variable"
+  script
+    ROVAR=roval
+    readonly ROVAR
+    readonly -p | grep ROVAR
+  expect
+    stdout ".*readonly.*ROVAR.*roval.*"
+    stderr ""
+    exit_code 0
+end test "readonly -p shows readonly variable"
+```

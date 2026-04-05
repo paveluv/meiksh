@@ -177,3 +177,19 @@ begin test "shift greater than $# fails and leaves parameters intact"
     exit_code 0
 end test "shift greater than $# fails and leaves parameters intact"
 ```
+
+#### Test: shift with valid bounds returns 0
+
+When the shift count does not exceed the number of positional
+parameters, `shift` succeeds with exit status 0.
+
+```
+begin test "shift with valid bounds returns 0"
+  script
+    $SHELL -c 'shift 1; echo "$?"' sh arg1
+  expect
+    stdout "0"
+    stderr ""
+    exit_code 0
+end test "shift with valid bounds returns 0"
+```

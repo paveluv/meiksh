@@ -259,3 +259,40 @@ begin test "export as declaration utility"
     exit_code 0
 end test "export as declaration utility"
 ```
+
+#### Test: export -p shows exported variable
+
+`export -p` lists all exported variables in a format suitable for
+reinput. A variable that has been exported must appear in the
+output.
+
+```
+begin test "export -p shows exported variable"
+  script
+    MYEXPORTVAR=hello
+    export MYEXPORTVAR
+    export -p | grep MYEXPORTVAR
+  expect
+    stdout ".*export.*MYEXPORTVAR.*hello.*"
+    stderr ""
+    exit_code 0
+end test "export -p shows exported variable"
+```
+
+#### Test: export -p handles spaces in values
+
+The `export -p` output must correctly quote values that contain
+spaces so they can be used as shell input.
+
+```
+begin test "export -p handles spaces in values"
+  script
+    TESTV="has spaces"
+    export TESTV
+    export -p | grep TESTV
+  expect
+    stdout ".*export.*TESTV.*"
+    stderr ""
+    exit_code 0
+end test "export -p handles spaces in values"
+```
