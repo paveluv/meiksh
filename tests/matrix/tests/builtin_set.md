@@ -347,296 +347,496 @@ from Section 2.15 of the POSIX.1-2024 Shell Command Language specification.
 
 ### Tests
 
-#### Test: set lists all shell variables
+#### Test: set with no arguments lists shell variables
 
-`set` with no options or arguments writes all shell variable names
-and values.
+With no options or arguments, `set` shall write names and values of all
+shell variables, each on a separate line in the format `name=value`.
 
 ```
-begin test "set lists all shell variables"
+begin test "set with no arguments lists shell variables"
   script
-    MY_TEST_VAR="hello_set"
-    set | grep -q "^MY_TEST_VAR=hello_set$" && echo "found"
+    MY_SET_VAR=hello_set
+    set | grep -q '^MY_SET_VAR=hello_set$' && printf 'found\n'
   expect
     stdout "found"
     stderr ""
     exit_code 0
-end test "set lists all shell variables"
+end test "set with no arguments lists shell variables"
 ```
 
-#### Test: set -- assigns positional parameters
+#### Test: set variable listing follows collation sequence
 
-`set --` followed by arguments assigns positional parameters.
+The variable names shall be written in the collation sequence of the
+current locale.
 
 ```
-begin test "set -- assigns positional parameters"
+begin test "set variable listing follows collation sequence"
   script
-    set -- a b c
-    echo "$1 $2 $3"
+    ZZ_coltest=z
+    AA_coltest=a
+    MM_coltest=m
+    set | sed -n 's/^\(AA_coltest\|MM_coltest\|ZZ_coltest\)=.*/\1/p' | uniq
   expect
-    stdout "a b c"
+    stdout "AA_coltest\nMM_coltest\nZZ_coltest"
     stderr ""
     exit_code 0
-end test "set -- assigns positional parameters"
+end test "set variable listing follows collation sequence"
 ```
 
-#### Test: set -- without args clears positional parameters
+#### Test: set output is suitable for reinput
 
-`set --` without arguments unsets all positional parameters and
-sets `$#` to zero.
+The value strings in `set` output shall be written with appropriate
+quoting so the output is suitable for reinput to the shell.
 
 ```
-begin test "set -- without args clears positional parameters"
+begin test "set output is suitable for reinput"
+  script
+    my_quoted_var="has spaces and \"quotes\""
+    line=$(set | grep '^my_quoted_var=')
+    unset my_quoted_var
+    eval "$line"
+    printf '%s\n' "$my_quoted_var"
+  expect
+    stdout "has spaces and ""quotes"""
+    stderr ""
+    exit_code 0
+end test "set output is suitable for reinput"
+```
+
+#### Test: set -- assigns positional parameters and updates sharp
+
+When arguments follow `set --`, they shall be assigned to the
+positional parameters in order and `$#` shall reflect the count.
+
+```
+begin test "set -- assigns positional parameters and updates sharp"
+  script
+    set -- a b c
+    printf '%s %s %s %s\n' "$1" "$2" "$3" "$#"
+  expect
+    stdout "a b c 3"
+    stderr ""
+    exit_code 0
+end test "set -- assigns positional parameters and updates sharp"
+```
+
+#### Test: set -- unsets old positional parameters first
+
+All positional parameters shall be unset before any new values are
+assigned, so old excess parameters do not persist.
+
+```
+begin test "set -- unsets old positional parameters first"
+  script
+    set -- old1 old2 old3
+    set -- new1
+    printf '1=%s 2=%s sharp=%s\n' "$1" "${2-unset}" "$#"
+  expect
+    stdout "1=new1 2=unset sharp=1"
+    stderr ""
+    exit_code 0
+end test "set -- unsets old positional parameters first"
+```
+
+#### Test: set -- without arguments clears all positional parameters
+
+`set --` with no arguments shall unset all positional parameters and
+set `$#` to zero.
+
+```
+begin test "set -- without arguments clears all positional parameters"
   script
     set -- x y z
     set --
-    echo "$#"
+    printf '%s\n' "$#"
   expect
     stdout "0"
     stderr ""
     exit_code 0
-end test "set -- without args clears positional parameters"
+end test "set -- without arguments clears all positional parameters"
 ```
 
-#### Test: options default to off (-e is off)
+#### Test: set -- delimits arguments beginning with plus or minus
 
-The default for all set options is off unless stated otherwise.
+The `--` argument shall delimit arguments so that a first argument
+beginning with `+` or `-` is treated as a positional parameter, not
+as an option.
 
 ```
-begin test "options default to off (-e is off)"
+begin test "set -- delimits arguments beginning with plus or minus"
   script
-    false
-    echo "survived"
+    set -- -x +o foo
+    printf '1=%s 2=%s 3=%s sharp=%s\n' "$1" "$2" "$3" "$#"
   expect
-    stdout "survived"
+    stdout "1=\-x 2=\+o 3=foo sharp=3"
     stderr ""
     exit_code 0
-end test "options default to off (-e is off)"
+end test "set -- delimits arguments beginning with plus or minus"
 ```
 
-#### Test: set output is suitable for reinput with quoting
+#### Test: options and positional parameters combined
 
-The output of `set` (listing variables) is formatted so it can be
-used as shell input to recreate the same variable assignments, even
-when values contain spaces and quotes.
+Setting or unsetting attributes and positional parameters can be
+combined in a single invocation of `set`.
 
 ```
-begin test "set output is suitable for reinput with quoting"
+begin test "options and positional parameters combined"
   script
-    my_weird_var="space and literal and \"quotes\""
-    output=$(set | grep "^my_weird_var=")
-    unset my_weird_var
-    eval "$output"
-    echo "$my_weird_var"
+    set -f a b c
+    printf '1=%s sharp=%s glob=%s\n' "$1" "$#" "$(printf '%s\n' *.nonexistent)"
   expect
-    stdout "space and literal and ""quotes"""
+    stdout "1=a sharp=3 glob=\*.nonexistent"
     stderr ""
     exit_code 0
-end test "set output is suitable for reinput with quoting"
+end test "options and positional parameters combined"
+```
+
+#### Test: plus form disables an option
+
+Options specified with a leading `+` shall disable the corresponding
+option that was previously enabled with `-`.
+
+```
+begin test "plus form disables an option"
+  script
+    set -f
+    set +f
+    touch _set_plusf_probe.txt
+    printf '%s\n' _set_plusf_probe*
+    rm -f _set_plusf_probe.txt
+  expect
+    stdout "_set_plusf_probe.txt"
+    stderr ""
+    exit_code 0
+end test "plus form disables an option"
 ```
 
 #### Test: set -a causes variables to be auto-exported
 
-The `-a` (allexport) option causes all subsequent variable
-assignments to be automatically exported to the environment.
+When `-a` is set, every subsequent variable assignment in the current
+shell execution environment shall have the export attribute set.
 
 ```
 begin test "set -a causes variables to be auto-exported"
   script
     set -a
-    auto_exported="yes"
-    env | grep -q "^auto_exported=yes$" && echo "exported"
+    auto_exported=yes
+    sh -c 'printf "%s\n" "$auto_exported"'
   expect
-    stdout "exported"
+    stdout "yes"
     stderr ""
     exit_code 0
 end test "set -a causes variables to be auto-exported"
 ```
 
-#### Test: set -b is accepted without error
+#### Test: set -a applies to side-effect assignments
 
-The `-b` (notify) option causes the shell to report background
-job completions immediately. Setting and unsetting it must succeed.
+The `-a` export attribute shall apply to all forms of assignment,
+including those made as a side-effect of variable expansions.
 
 ```
-begin test "set -b is accepted without error"
+begin test "set -a applies to side-effect assignments"
+  script
+    set -a
+    : ${sideeffect_set_var=default_val}
+    sh -c 'printf "%s\n" "$sideeffect_set_var"'
+  expect
+    stdout "default_val"
+    stderr ""
+    exit_code 0
+end test "set -a applies to side-effect assignments"
+```
+
+#### Test: set -b is accepted
+
+The `-b` (notify) option shall be supported. Setting and unsetting it
+shall succeed without error.
+
+```
+begin test "set -b is accepted"
   script
     set -b
     set +b
+    printf 'ok\n'
   expect
-    stdout ""
+    stdout "ok"
     stderr ""
     exit_code 0
-end test "set -b is accepted without error"
+end test "set -b is accepted"
 ```
 
-#### Test: noclobber prevents overwrite with >
+#### Test: set -m is accepted
 
-When the `-C` (noclobber) option is set, redirection with `>`
-shall fail if the target file already exists.
+The `-m` (monitor) option shall be supported. Setting it in a
+non-interactive script shall not produce an error.
 
 ```
-begin test "noclobber prevents overwrite with >"
+begin test "set -m is accepted"
   script
-    _f=_noclobber_test
-    echo original > $_f
+    set -m 2>/dev/null
+    printf 'ok\n'
+  expect
+    stdout "ok"
+    stderr ""
+    exit_code 0
+end test "set -m is accepted"
+```
+
+#### Test: set -C prevents overwriting existing regular files
+
+When `-C` is set, the `>` redirection operator shall not overwrite
+an existing regular file.
+
+```
+begin test "set -C prevents overwriting existing regular files"
+  script
+    tmp=$(mktemp)
+    printf 'original\n' > "$tmp"
     set -C
-    echo overwritten > $_f 2>/dev/null
-    cat $_f
+    { printf 'overwritten\n' > "$tmp"; } 2>/dev/null
+    cat "$tmp"
+    rm -f "$tmp"
   expect
     stdout "original"
-    stderr ".+"
+    stderr ""
     exit_code 0
-end test "noclobber prevents overwrite with >"
+end test "set -C prevents overwriting existing regular files"
 ```
 
-#### Test: >| overrides noclobber
+#### Test: noclobber only protects regular files
 
-The `>|` operator forces output redirection even when the
-noclobber option is set.
+The `-C` option prevents overwriting existing *regular files*; special
+files such as `/dev/null` shall not be blocked.
 
 ```
-begin test ">| overrides noclobber"
+begin test "noclobber only protects regular files"
   script
-    _f=_noclobber_test2
-    echo original > $_f
     set -C
-    echo forced >| $_f
-    cat $_f
+    printf 'ok\n' > /dev/null
+    printf 'status=%s\n' "$?"
+  expect
+    stdout "status=0"
+    stderr ""
+    exit_code 0
+end test "noclobber only protects regular files"
+```
+
+#### Test: clobber operator overrides noclobber
+
+The `>|` operator shall override the noclobber option for an individual
+file.
+
+```
+begin test "clobber operator overrides noclobber"
+  script
+    tmp=$(mktemp)
+    printf 'original\n' > "$tmp"
+    set -C
+    printf 'forced\n' >| "$tmp"
+    cat "$tmp"
+    rm -f "$tmp"
   expect
     stdout "forced"
     stderr ""
     exit_code 0
-end test ">| overrides noclobber"
+end test "clobber operator overrides noclobber"
 ```
 
-#### Test: errexit exits on command failure
+#### Test: errexit exits on simple command failure
 
-The `-e` (errexit) option causes the shell to exit immediately
-when a simple command fails (returns non-zero).
+When `-e` is set, the shell shall exit immediately when any command
+fails by returning a non-zero exit status.
 
 ```
-begin test "errexit exits on command failure"
+begin test "errexit exits on simple command failure"
   script
     set -e
-    echo "start"
+    printf 'start\n'
     false
-    echo "should not run"
+    printf 'should not run\n'
   expect
     stdout "start"
     stderr ""
     exit_code !=0
-end test "errexit exits on command failure"
+end test "errexit exits on simple command failure"
 ```
 
-#### Test: errexit ignores failures in if/while/until and AND-OR lists
+#### Test: errexit preserves failing command exit status
 
-With `-e` set, commands that are part of the condition in `if`,
-`while`, `until`, or AND-OR lists do not cause the shell to exit
-on failure.
+When `-e` causes the shell to exit, it shall exit as if by executing
+`exit` with no arguments, meaning the exit status is that of the
+failing command.
 
 ```
-begin test "errexit ignores failures in if/while/until and AND-OR lists"
+begin test "errexit preserves failing command exit status"
   script
     set -e
-    if false; then
-      echo "no"
-    fi
-    false || true
-    true && false || true
-    while false; do
-      echo "no"
-    done
-    echo "survived"
+    (exit 42)
+    printf 'should not run\n'
+  expect
+    stdout ""
+    stderr ""
+    exit_code 42
+end test "errexit preserves failing command exit status"
+```
+
+#### Test: errexit ignored in if, elif, while, and until conditions
+
+The `-e` setting shall be ignored when executing the compound list
+following `if`, `elif`, `while`, or `until`.
+
+```
+begin test "errexit ignored in if, elif, while, and until conditions"
+  script
+    set -e
+    if false; then echo no; fi
+    if true; then true; elif false; then echo no; fi
+    while false; do echo no; done
+    until true; do echo no; done
+    printf 'survived\n'
   expect
     stdout "survived"
     stderr ""
     exit_code 0
-end test "errexit ignores failures in if/while/until and AND-OR lists"
+end test "errexit ignored in if, elif, while, and until conditions"
 ```
 
-#### Test: errexit does not exit on ! pipeline
+#### Test: errexit ignored in negated pipeline
 
-The `!` reserved word negates the exit status of a pipeline. With
-`-e` set, `! false` succeeds and the shell does not exit.
+The `-e` setting shall be ignored for a pipeline beginning with the
+`!` reserved word.
 
 ```
-begin test "errexit does not exit on ! pipeline"
+begin test "errexit ignored in negated pipeline"
   script
     set -e
     ! false
-    echo "survived_not"
+    printf 'survived\n'
   expect
-    stdout "survived_not"
+    stdout "survived"
     stderr ""
     exit_code 0
-end test "errexit does not exit on ! pipeline"
+end test "errexit ignored in negated pipeline"
 ```
 
-#### Test: errexit triggers on pipeline failure (last command)
+#### Test: errexit ignored in non-last AND-OR list commands
 
-With `-e` set, the exit status of a pipeline is the exit status
-of the last command; if it fails, the shell exits.
+The `-e` setting shall be ignored for any command of an AND-OR list
+other than the last.
 
 ```
-begin test "errexit triggers on pipeline failure (last command)"
+begin test "errexit ignored in non-last AND-OR list commands"
   script
     set -e
-    echo ok | false
-    echo should_not_appear
+    false || true
+    true && false || true
+    printf 'survived\n'
   expect
-    stdout "(.|\n)*"
+    stdout "survived"
+    stderr ""
+    exit_code 0
+end test "errexit ignored in non-last AND-OR list commands"
+```
+
+#### Test: errexit triggers on pipeline failure
+
+The failure of the pipeline itself (not individual commands in a
+multi-command pipeline) shall be considered under `-e`.
+
+```
+begin test "errexit triggers on pipeline failure"
+  script
+    set -e
+    printf 'ok\n' | false
+    printf 'should not run\n'
+  expect
+    stdout ""
     stderr ""
     exit_code !=0
-end test "errexit triggers on pipeline failure (last command)"
+end test "errexit triggers on pipeline failure"
+```
+
+#### Test: errexit applies separately to subshell environments
+
+The `-e` requirement applies to each subshell environment separately.
+A `false` in a subshell exits that subshell, but the pipeline exit
+status determines the parent shell's fate.
+
+```
+begin test "errexit applies separately to subshell environments"
+  script
+    set -e
+    (false; echo one) | cat
+    printf 'two\n'
+  expect
+    stdout "two"
+    stderr ""
+    exit_code 0
+end test "errexit applies separately to subshell environments"
+```
+
+#### Test: errexit ignores command substitution subshell failure
+
+Subshell environments created for command substitution during word
+expansion are exempt from causing the parent shell to exit under `-e`.
+
+```
+begin test "errexit ignores command substitution subshell failure"
+  script
+    set -e
+    printf '%s two\n' "$(false; echo one)"
+  expect
+    stdout " two"
+    stderr ""
+    exit_code 0
+end test "errexit ignores command substitution subshell failure"
+```
+
+#### Test: errexit exception 3 for compound command in ignored context
+
+If the exit status of a compound command (other than a subshell) was the
+result of a failure while `-e` was being ignored, `-e` shall not apply
+to that command.
+
+```
+begin test "errexit exception 3 for compound command in ignored context"
+  script
+    set -e
+    f() { false; printf 'inner\n'; }
+    f || printf 'caught\n'
+    printf 'after\n'
+  expect
+    stdout "inner\nafter"
+    stderr ""
+    exit_code 0
+end test "errexit exception 3 for compound command in ignored context"
 ```
 
 #### Test: set -f disables pathname expansion
 
-The `-f` (noglob) option disables pathname expansion, so pattern
-characters are treated literally.
+When `-f` is set, the shell shall disable pathname expansion.
 
 ```
 begin test "set -f disables pathname expansion"
   script
     set -f
-    touch tmp_set_f.txt
-    echo tmp_set_*.txt
+    printf '%s\n' tmp_set_f_*
   expect
-    stdout "tmp_set_\*.txt"
+    stdout "tmp_set_f_\*"
     stderr ""
     exit_code 0
 end test "set -f disables pathname expansion"
 ```
 
-#### Test: set -m is accepted without error
-
-The `-m` (monitor) option enables job control. Setting it must
-not produce an error.
-
-```
-begin test "set -m is accepted without error"
-  script
-    set -m 2>/dev/null
-    true
-  expect
-    stdout ""
-    stderr ""
-    exit_code 0
-end test "set -m is accepted without error"
-```
-
 #### Test: set -n suppresses command execution
 
-The `-n` (noexec) option causes the shell to read commands but
-not execute them. No output is produced from commands in the
-script.
+When `-n` is set, the shell shall read commands but not execute them.
 
 ```
 begin test "set -n suppresses command execution"
   script
     set -n
-    echo "should not run"
+    printf 'should not run\n'
   expect
     stdout ""
     stderr ""
@@ -644,110 +844,343 @@ begin test "set -n suppresses command execution"
 end test "set -n suppresses command execution"
 ```
 
-#### Test: nounset exits on unset variable expansion
+#### Test: nounset fails on unset parameter expansion
 
-The `-u` (nounset) option causes the shell to write a diagnostic
-message and exit when an unset variable is expanded.
+When `-u` is set, expanding an unset parameter in a parameter expansion
+shall write a diagnostic to stderr and the expansion shall fail.
 
 ```
-begin test "nounset exits on unset variable expansion"
+begin test "nounset fails on unset parameter expansion"
   script
     set -u
-    echo "start"
-    echo "${this_var_is_definitely_unset}"
-    echo "should not run"
+    printf 'start\n'
+    printf '%s\n' "${this_is_definitely_unset}"
+    printf 'should not run\n'
   expect
     stdout "start"
     stderr ".+"
     exit_code !=0
-end test "nounset exits on unset variable expansion"
+end test "nounset fails on unset parameter expansion"
 ```
 
-#### Test: nounset does not trigger on $@ and $*
+#### Test: nounset fails on unset arithmetic expansion
 
-With `-u` set, expanding `$@` or `$*` when there are no
-positional parameters is not an error.
+The `-u` option shall also apply to arithmetic expansions that reference
+unset parameters.
 
 ```
-begin test "nounset does not trigger on $@ and $*"
+begin test "nounset fails on unset arithmetic expansion"
   script
     set -u
-    for i in "$@"; do
-      echo $i
-    done
-    echo "survived"
+    printf 'start\n'
+    : $((unset_arith_var_xyz + 1))
+    printf 'should not run\n'
   expect
-    stdout "survived"
+    stdout "start"
+    stderr ".+"
+    exit_code !=0
+end test "nounset fails on unset arithmetic expansion"
+```
+
+#### Test: nounset does not trigger on at and star
+
+The `@` and `*` special parameters are explicitly excluded from the
+`-u` check even when no positional parameters are set.
+
+```
+begin test "nounset does not trigger on at and star"
+  script
+    set --
+    set -u
+    for i in "$@"; do printf '%s\n' "$i"; done
+    printf '%s\n' "$*"
+    printf 'survived\n'
+  expect
+    stdout "\nsurvived"
     stderr ""
     exit_code 0
-end test "nounset does not trigger on $@ and $*"
+end test "nounset does not trigger on at and star"
 ```
 
-#### Test: set -v echoes input to stderr
+#### Test: set -v writes input to stderr
 
-The `-v` (verbose) option causes the shell to write each input
-line to standard error as it is read.
+When `-v` is set, the shell shall write its input to standard error as
+it is read.
 
 ```
-begin test "set -v echoes input to stderr"
+begin test "set -v writes input to stderr"
   script
     set -v
-    echo "testing_verbose"
+    printf 'testing_verbose\n'
   expect
-    stdout "(.|\n)*"
-    stderr "(.|\n)*echo.*testing_verbose(.|\n)*"
+    stdout "testing_verbose"
+    stderr "(.|\n)*printf.*testing_verbose(.|\n)*"
     exit_code 0
-end test "set -v echoes input to stderr"
+end test "set -v writes input to stderr"
 ```
 
 #### Test: set -x traces expanded commands to stderr
 
-The `-x` (xtrace) option causes the shell to write each command
-and its arguments to standard error after expansion.
+When `-x` is set, the shell shall write to stderr a trace for each
+command after it expands the command and before it executes it. The
+trace shall show the expanded form, not the unexpanded source.
 
 ```
 begin test "set -x traces expanded commands to stderr"
   script
+    myvar=expanded_val
     set -x
-    echo "testing_xtrace"
+    printf '%s\n' "$myvar"
   expect
-    stdout "(.|\n)*"
-    stderr "(.|\n)*echo testing_xtrace(.|\n)*"
+    stdout "expanded_val"
+    stderr "(.|\n)*printf.*expanded_val(.|\n)*"
     exit_code 0
 end test "set -x traces expanded commands to stderr"
 ```
 
-#### Test: set -o succeeds
+#### Test: set -o writes current option settings
 
-`set -o` without an option-argument writes the current setting of
+`set -o` without an option-argument shall write the current settings of
 all options to standard output.
 
 ```
-begin test "set -o succeeds"
+begin test "set -o writes current option settings"
   script
-    set -o 2>/dev/null
-    true
+    set -o | grep -q 'errexit' && printf 'found\n'
   expect
-    stdout "(.|\n)*"
+    stdout "found"
     stderr ""
     exit_code 0
-end test "set -o succeeds"
+end test "set -o writes current option settings"
 ```
 
-#### Test: set -o allexport exports all assignments
+#### Test: set +o writes restorable option settings
 
-The `allexport` option (equivalent to `-a`) causes all subsequent
-variable assignments to be marked for export.
+`set +o` shall write the current option settings in a format suitable
+for reinput to the shell to achieve the same settings. A save/restore
+roundtrip shall undo multiple option changes.
 
 ```
-begin test "set -o allexport exports all assignments"
+begin test "set +o writes restorable option settings"
+  script
+    saved=$(set +o)
+    set -e -f -u
+    eval "$saved"
+    false
+    touch _set_restore_x1.tmp
+    printf '%s\n' _set_restore_x1*
+    rm -f _set_restore_x1.tmp
+    printf 'survived\n'
+  expect
+    stdout "_set_restore_x1.tmp\nsurvived"
+    stderr ""
+    exit_code 0
+end test "set +o writes restorable option settings"
+```
+
+#### Test: -o allexport is equivalent to -a
+
+`set -o allexport` shall be equivalent to `set -a`.
+
+```
+begin test "-o allexport is equivalent to -a"
   script
     set -o allexport
-    ALLEXP_VAR=allexp_val
-    env | grep ALLEXP_VAR
+    olong_exp_var=yes
+    sh -c 'printf "%s\n" "$olong_exp_var"'
   expect
-    stdout ".*ALLEXP_VAR=allexp_val.*"
+    stdout "yes"
     stderr ""
     exit_code 0
-end test "set -o allexport exports all assignments"
+end test "-o allexport is equivalent to -a"
+```
+
+#### Test: -o errexit is equivalent to -e
+
+`set -o errexit` shall be equivalent to `set -e`.
+
+```
+begin test "-o errexit is equivalent to -e"
+  script
+    set -o errexit
+    printf 'start\n'
+    false
+    printf 'should not run\n'
+  expect
+    stdout "start"
+    stderr ""
+    exit_code !=0
+end test "-o errexit is equivalent to -e"
+```
+
+#### Test: -o noclobber is equivalent to -C
+
+`set -o noclobber` shall be equivalent to `set -C`.
+
+```
+begin test "-o noclobber is equivalent to -C"
+  script
+    tmp=$(mktemp)
+    printf 'original\n' > "$tmp"
+    set -o noclobber
+    { printf 'overwritten\n' > "$tmp"; } 2>/dev/null
+    cat "$tmp"
+    rm -f "$tmp"
+  expect
+    stdout "original"
+    stderr ""
+    exit_code 0
+end test "-o noclobber is equivalent to -C"
+```
+
+#### Test: -o noglob is equivalent to -f
+
+`set -o noglob` shall be equivalent to `set -f`.
+
+```
+begin test "-o noglob is equivalent to -f"
+  script
+    set -o noglob
+    printf '%s\n' noglob_probe_*
+  expect
+    stdout "noglob_probe_\*"
+    stderr ""
+    exit_code 0
+end test "-o noglob is equivalent to -f"
+```
+
+#### Test: -o noexec is equivalent to -n
+
+`set -o noexec` shall be equivalent to `set -n`.
+
+```
+begin test "-o noexec is equivalent to -n"
+  script
+    set -o noexec
+    printf 'should not run\n'
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "-o noexec is equivalent to -n"
+```
+
+#### Test: -o nounset is equivalent to -u
+
+`set -o nounset` shall be equivalent to `set -u`.
+
+```
+begin test "-o nounset is equivalent to -u"
+  script
+    set -o nounset
+    printf '%s\n' "${definitely_unset_olong}"
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
+end test "-o nounset is equivalent to -u"
+```
+
+#### Test: -o verbose is equivalent to -v
+
+`set -o verbose` shall be equivalent to `set -v`.
+
+```
+begin test "-o verbose is equivalent to -v"
+  script
+    set -o verbose
+    printf 'verbose_probe\n'
+  expect
+    stdout "verbose_probe"
+    stderr "(.|\n)*printf.*verbose_probe(.|\n)*"
+    exit_code 0
+end test "-o verbose is equivalent to -v"
+```
+
+#### Test: -o xtrace is equivalent to -x
+
+`set -o xtrace` shall be equivalent to `set -x`.
+
+```
+begin test "-o xtrace is equivalent to -x"
+  script
+    set -o xtrace
+    printf 'xtrace_probe\n'
+  expect
+    stdout "xtrace_probe"
+    stderr "(.|\n)*printf.*xtrace_probe(.|\n)*"
+    exit_code 0
+end test "-o xtrace is equivalent to -x"
+```
+
+#### Test: -o pipefail derives exit status from all pipeline commands
+
+When `pipefail` is set, the exit status of a pipeline shall be derived
+from the exit statuses of all commands in the pipeline, not just the
+last.
+
+```
+begin test "-o pipefail derives exit status from all pipeline commands"
+  script
+    set -o pipefail
+    false | true
+    printf '%s\n' "$?"
+  expect
+    stdout "1"
+    stderr ""
+    exit_code 0
+end test "-o pipefail derives exit status from all pipeline commands"
+```
+
+#### Test: +o option-name disables a long-name option
+
+The `+o` form with an option name shall disable that option.
+
+```
+begin test "+o option-name disables a long-name option"
+  script
+    set -o errexit
+    set +o errexit
+    false
+    printf 'survived\n'
+  expect
+    stdout "survived"
+    stderr ""
+    exit_code 0
+end test "+o option-name disables a long-name option"
+```
+
+#### Test: options default to off
+
+The default for all options shall be off unless stated otherwise in the
+description of the option.
+
+```
+begin test "options default to off"
+  script
+    false
+    printf 'survived\n'
+  expect
+    stdout "survived"
+    stderr ""
+    exit_code 0
+end test "options default to off"
+```
+
+#### Test: invalid option produces non-zero exit status
+
+An invalid option shall cause `set` to exit with a non-zero status.
+Because `set` is a special built-in, an option error may cause the
+enclosing script to exit, so we test in a subshell.
+
+```
+begin test "invalid option produces non-zero exit status"
+  script
+    (set -Z) 2>/dev/null
+    printf '%s\n' "$?"
+  expect
+    stdout "[1-9][0-9]*"
+    stderr ""
+    exit_code 0
+end test "invalid option produces non-zero exit status"
 ```
