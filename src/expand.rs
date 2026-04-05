@@ -113,6 +113,33 @@ pub fn expand_word<C: Context>(ctx: &mut C, word: &Word) -> Result<Vec<String>, 
     Ok(result)
 }
 
+pub fn expand_redirect_word<C: Context>(ctx: &mut C, word: &Word) -> Result<String, ExpandError> {
+    let expanded = expand_raw(ctx, &word.raw)?;
+
+    if expanded.segments.is_empty() {
+        return Ok(String::new());
+    }
+
+    let has_expanded = expanded
+        .segments
+        .iter()
+        .any(|seg| matches!(seg, Segment::Text(_, QuoteState::Expanded)));
+
+    let fields = if has_expanded {
+        split_fields_from_segments(
+            &expanded.segments,
+            &ctx.env_var("IFS").unwrap_or_else(|| " \t\n".to_string()),
+        )
+    } else {
+        vec![Field {
+            text: flatten_segments(&expanded.segments),
+            has_unquoted_glob: false,
+        }]
+    };
+
+    Ok(fields.into_iter().map(|f| f.text).collect::<Vec<_>>().join(" "))
+}
+
 fn expand_word_with_at_fields(
     expanded: &ExpandedWord,
     had_quoted_null_outside_at: bool,
@@ -571,6 +598,12 @@ pub fn expand_here_document<C: Context>(ctx: &mut C, text: &str) -> Result<Strin
                 let (expansion, consumed) = expand_dollar(ctx, &chars[index..], false)?;
                 result.push_str(&flatten_expansion(expansion));
                 index += consumed;
+            }
+            '`' => {
+                index += 1;
+                let command = scan_backtick_command(&chars, &mut index, true)?;
+                let output = ctx.command_substitute(&command)?;
+                result.push_str(output.trim_end_matches('\n'));
             }
             ch => {
                 result.push(ch);
@@ -5100,6 +5133,47 @@ mod tests {
                 .unwrap(),
                 vec!["".to_string()]
             );
+        });
+    }
+
+    #[test]
+    fn redirect_word_no_pathname_expansion() {
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            let result = expand_redirect_word(&mut ctx, &Word { raw: "file_*.txt".into() })
+                .expect("redirect word");
+            assert_eq!(result, "file_*.txt");
+        });
+    }
+
+    #[test]
+    fn redirect_word_empty_expansion() {
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            let result = expand_redirect_word(&mut ctx, &Word { raw: "$UNSET_VAR".into() })
+                .expect("redirect word empty");
+            assert_eq!(result, "");
+        });
+    }
+
+    #[test]
+    fn redirect_word_with_expanded_field_splitting() {
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.env.insert("V".into(), "a b".into());
+            let result = expand_redirect_word(&mut ctx, &Word { raw: "$V".into() })
+                .expect("redirect word split");
+            assert_eq!(result, "a b");
+        });
+    }
+
+    #[test]
+    fn here_doc_backtick_substitution() {
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            let result = expand_here_document(&mut ctx, "`echo ok`\n")
+                .expect("here doc backtick");
+            assert_eq!(result, "echo ok\n");
         });
     }
 }

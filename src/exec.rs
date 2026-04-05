@@ -876,8 +876,8 @@ fn expand_simple(
             };
             (here_doc.delimiter.clone(), Some(body))
         } else {
-            let fields = expand::expand_word(shell, &redirection.target)?;
-            (fields.first().cloned().unwrap_or_default(), None)
+            let target = expand::expand_redirect_word(shell, &redirection.target)?;
+            (target, None)
         };
         redirections.push(ExpandedRedirection {
             fd,
@@ -914,8 +914,8 @@ fn expand_redirections(
             };
             (here_doc.delimiter.clone(), Some(body))
         } else {
-            let fields = expand::expand_word(shell, &redirection.target)?;
-            (fields.first().cloned().unwrap_or_default(), None)
+            let target = expand::expand_redirect_word(shell, &redirection.target)?;
+            (target, None)
         };
         expanded.push(ExpandedRedirection {
             fd,
@@ -987,7 +987,10 @@ fn spawn_prepared(
             }
             ProcessGroupPlan::None => {}
         }
-        let _ = apply_child_fd_actions(&prepared_redirections.actions);
+        if let Err(err) = apply_child_fd_actions(&prepared_redirections.actions) {
+            sys_eprintln!("{}: {}", prepared.argv[0], err);
+            sys::exit_process(1);
+        }
 
         for (key, value) in &prepared.child_env {
             let _ = sys::env_set_var(key, value);
@@ -2540,7 +2543,7 @@ mod tests {
     fn execute_nested_program_sets_up_heredoc_fd() {
         run_trace(
             vec![
-                t("dup", vec![ArgMatcher::Fd(0)], TraceResult::Err(sys::EBADF)),
+                t("fcntl", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1030), ArgMatcher::Int(10)], TraceResult::Err(sys::EBADF)),
                 t("pipe", vec![], TraceResult::Fds(10, 11)),
                 t(
                     "write",
@@ -3295,7 +3298,7 @@ mod tests {
         run_trace(
             vec![
                 // apply_shell_redirections: save fd 42, open write, dup2+close, open append, dup2+close
-                t("dup", vec![ArgMatcher::Fd(42)], TraceResult::Fd(92)),
+                t("fcntl", vec![ArgMatcher::Fd(42), ArgMatcher::Int(1030), ArgMatcher::Int(10)], TraceResult::Fd(92)),
                 t(
                     "open",
                     vec![
@@ -3530,10 +3533,10 @@ mod tests {
                 ),
                 // Guard drop with saved=(99, None) → close(99)
                 t("close", vec![ArgMatcher::Fd(99)], TraceResult::Int(0)),
-                // apply_shell_redirections with dup returning EBADF for high fd → treated as absent
+                // apply_shell_redirections with fcntl returning EBADF for high fd → treated as absent
                 t(
-                    "dup",
-                    vec![ArgMatcher::Fd(123_456)],
+                    "fcntl",
+                    vec![ArgMatcher::Fd(123_456), ArgMatcher::Int(1030), ArgMatcher::Int(10)],
                     TraceResult::Err(sys::EBADF),
                 ),
                 t(
@@ -3546,10 +3549,10 @@ mod tests {
                     vec![ArgMatcher::Fd(123_456)],
                     TraceResult::Err(sys::EBADF),
                 ),
-                // apply_shell_redirections with dup failure (errno 22)
+                // apply_shell_redirections with fcntl failure (errno 22)
                 t(
-                    "dup",
-                    vec![ArgMatcher::Fd(42)],
+                    "fcntl",
+                    vec![ArgMatcher::Fd(42), ArgMatcher::Int(1030), ArgMatcher::Int(10)],
                     TraceResult::Err(sys::EINVAL),
                 ),
             ],
@@ -3993,7 +3996,7 @@ mod tests {
         run_trace(
             vec![
                 // Append: save fd 1, open file, dup2, close; then guard restores
-                t("dup", vec![ArgMatcher::Fd(1)], TraceResult::Fd(51)),
+                t("fcntl", vec![ArgMatcher::Fd(1), ArgMatcher::Int(1030), ArgMatcher::Int(10)], TraceResult::Fd(51)),
                 t(
                     "open",
                     vec![
@@ -4016,7 +4019,7 @@ mod tests {
                 ),
                 t("close", vec![ArgMatcher::Fd(51)], TraceResult::Int(0)),
                 // ReadWrite: save fd 0, open file, dup2, close; then guard restores
-                t("dup", vec![ArgMatcher::Fd(0)], TraceResult::Fd(53)),
+                t("fcntl", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1030), ArgMatcher::Int(10)], TraceResult::Fd(53)),
                 t(
                     "open",
                     vec![
