@@ -527,16 +527,16 @@ end interactive test "interactive shell does not exit on dot read error"
 #### Test: redirection error with other utility does not cause exit
 
 A redirection error on a non-special-built-in utility shall not cause the
-shell to exit.
+shell to exit. The shell shall write a diagnostic message.
 
 ```
 begin test "redirection error with other utility does not cause exit"
   script
-    cat < /nonexistent_util_redir_2j 2>/dev/null
+    cat < /nonexistent_util_redir_2j
     echo "survived"
   expect
     stdout "survived"
-    stderr "(.|\n)*"
+    stderr ".+"
     exit_code 0
 end test "redirection error with other utility does not cause exit"
 ```
@@ -576,21 +576,21 @@ begin test "redirection error writes diagnostic to stderr"
 end test "redirection error writes diagnostic to stderr"
 ```
 
-#### Test: readonly assignment before special built-in causes exit
+#### Test: variable assignment error causes non-interactive shell to exit
 
-A variable assignment error (assigning to a readonly variable) preceding a
-special built-in utility shall cause a non-interactive shell to exit.
+A variable assignment error (such as assigning to a readonly variable) shall
+cause a non-interactive shell to exit with a non-zero status.
 
 ```
-begin test "readonly assignment before special built-in causes exit"
+begin test "variable assignment error causes non-interactive shell to exit"
   script
-    echo 'readonly RO_VAR=1; RO_VAR=2 export OTHER=3; echo "survived"' > tmp_err2.sh
+    echo 'readonly V=1; V=2; echo "survived"' > tmp_err2.sh
     $SHELL tmp_err2.sh 2>/dev/null
   expect
     stdout ""
     stderr ""
     exit_code !=0
-end test "readonly assignment before special built-in causes exit"
+end test "variable assignment error causes non-interactive shell to exit"
 ```
 
 #### Test: variable assignment error writes diagnostic to stderr
@@ -794,6 +794,52 @@ begin interactive test "interactive shell does not exit on command not found"
   sendeof
   wait
 end interactive test "interactive shell does not exit on command not found"
+```
+
+#### Test: unrecoverable read error causes non-interactive shell to exit
+
+An unrecoverable read error when reading commands shall cause a non-interactive
+shell to exit with a non-zero status. Attempting to execute a directory as a
+script triggers a read error.
+
+```
+begin test "unrecoverable read error causes non-interactive shell to exit"
+  script
+    $SHELL / 2>/dev/null
+  expect
+    stdout ""
+    stderr ""
+    exit_code !=0
+end test "unrecoverable read error causes non-interactive shell to exit"
+```
+
+#### Test: unrecoverable read error writes diagnostic to stderr
+
+The shell shall write a diagnostic message when an unrecoverable read error
+occurs while reading commands.
+
+```
+begin test "unrecoverable read error writes diagnostic to stderr"
+  script
+    $SHELL /
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
+end test "unrecoverable read error writes diagnostic to stderr"
+```
+
+#### Test: unrecoverable read error causes interactive shell to exit
+
+Unlike other error types, an unrecoverable read error when reading commands
+shall cause even an interactive shell to exit.
+
+```
+begin interactive test "unrecoverable read error causes interactive shell to exit"
+  spawn -i /
+  expect ".+"
+  wait
+end interactive test "unrecoverable read error causes interactive shell to exit"
 ```
 
 ## 2.8.2 Exit Status for Commands
