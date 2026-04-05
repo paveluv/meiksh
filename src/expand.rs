@@ -32,9 +32,16 @@ pub trait Context {
     fn home_dir_for_user(&self, name: &str) -> Option<String>;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QuoteState {
+    Quoted,
+    Literal,
+    Expanded,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Segment {
-    Text(String, bool),
+    Text(String, QuoteState),
     AtBreak,
     AtEmpty,
 }
@@ -67,18 +74,25 @@ pub fn expand_word<C: Context>(ctx: &mut C, word: &Word) -> Result<Vec<String>, 
         return Ok(Vec::new());
     }
 
-    let all_quoted = !expanded
+    let has_expanded = expanded
         .segments
         .iter()
-        .any(|seg| matches!(seg, Segment::Text(_, false)));
-    if all_quoted {
-        return Ok(vec![flatten_segments(&expanded.segments)]);
-    }
+        .any(|seg| matches!(seg, Segment::Text(_, QuoteState::Expanded)));
 
-    let fields = split_fields_from_segments(
-        &expanded.segments,
-        &ctx.env_var("IFS").unwrap_or_else(|| " \t\n".to_string()),
-    );
+    let fields = if has_expanded {
+        split_fields_from_segments(
+            &expanded.segments,
+            &ctx.env_var("IFS").unwrap_or_else(|| " \t\n".to_string()),
+        )
+    } else {
+        let has_glob = expanded.segments.iter().any(|seg| {
+            matches!(seg, Segment::Text(text, QuoteState::Literal) if text.chars().any(is_glob_char))
+        });
+        vec![Field {
+            text: flatten_segments(&expanded.segments),
+            has_unquoted_glob: has_glob,
+        }]
+    };
     if fields.is_empty() {
         return Ok(Vec::new());
     }
@@ -113,13 +127,13 @@ fn expand_word_with_at_fields(
         .any(|s| matches!(s, Segment::AtBreak));
 
     if has_at_empty && !has_at_break {
-        if had_quoted_null_outside_at {
-            let mut text = String::new();
-            for seg in &expanded.segments {
-                if let Segment::Text(t, _) = seg {
-                    text.push_str(t);
-                }
+        let mut text = String::new();
+        for seg in &expanded.segments {
+            if let Segment::Text(t, _) = seg {
+                text.push_str(t);
             }
+        }
+        if !text.is_empty() || had_quoted_null_outside_at {
             return Ok(vec![text]);
         }
         return Ok(Vec::new());
@@ -296,8 +310,13 @@ fn apply_expansion(
     quoted: bool,
     has_at: &mut bool,
 ) {
+    let state = if quoted {
+        QuoteState::Quoted
+    } else {
+        QuoteState::Expanded
+    };
     match expansion {
-        Expansion::One(s) => push_segment(segments, s, quoted),
+        Expansion::One(s) => push_segment(segments, s, state),
         Expansion::AtFields(params) => {
             *has_at = true;
             if params.is_empty() {
@@ -307,7 +326,7 @@ fn apply_expansion(
                     if i > 0 {
                         segments.push(Segment::AtBreak);
                     }
-                    push_segment(segments, param, true);
+                    push_segment(segments, param, QuoteState::Quoted);
                 }
             }
         }
@@ -337,7 +356,7 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
                         message: "unterminated single quote".to_string(),
                     });
                 }
-                push_segment(&mut segments, chars[start..index].iter().collect(), true);
+                push_segment(&mut segments, chars[start..index].iter().collect(), QuoteState::Quoted);
                 index += 1;
             }
             '"' => {
@@ -367,7 +386,7 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
                         }
                         '$' => {
                             if !buffer.is_empty() {
-                                push_segment(&mut segments, std::mem::take(&mut buffer), true);
+                                push_segment(&mut segments, std::mem::take(&mut buffer), QuoteState::Quoted);
                             }
                             let (expansion, consumed) = expand_dollar(ctx, &chars[index..], true)?;
                             apply_expansion(&mut segments, expansion, true, &mut has_at_expansion);
@@ -375,13 +394,13 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
                         }
                         '`' => {
                             if !buffer.is_empty() {
-                                push_segment(&mut segments, std::mem::take(&mut buffer), true);
+                                push_segment(&mut segments, std::mem::take(&mut buffer), QuoteState::Quoted);
                             }
                             index += 1;
                             let command = scan_backtick_command(&chars, &mut index, true)?;
                             let output = ctx.command_substitute(&command)?;
                             let trimmed = output.trim_end_matches('\n').to_string();
-                            push_segment(&mut segments, trimmed, true);
+                            push_segment(&mut segments, trimmed, QuoteState::Quoted);
                         }
                         ch => {
                             buffer.push(ch);
@@ -395,7 +414,7 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
                     });
                 }
                 if !buffer.is_empty() {
-                    push_segment(&mut segments, buffer, true);
+                    push_segment(&mut segments, buffer, QuoteState::Quoted);
                 }
                 if !has_at_expansion || at_before == has_at_expansion {
                     had_quoted_null_outside_at = true;
@@ -406,7 +425,7 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
                 had_quoted_null_outside_at = true;
                 index += 1;
                 if index < chars.len() {
-                    push_segment(&mut segments, chars[index].to_string(), true);
+                    push_segment(&mut segments, chars[index].to_string(), QuoteState::Quoted);
                     index += 1;
                 }
             }
@@ -429,11 +448,12 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
                 let command = scan_backtick_command(&chars, &mut index, false)?;
                 let output = ctx.command_substitute(&command)?;
                 let trimmed = output.trim_end_matches('\n').to_string();
-                push_segment(&mut segments, trimmed, false);
+                push_segment(&mut segments, trimmed, QuoteState::Expanded);
             }
             '~' if index == 0 => {
                 index += 1;
                 let mut user = String::new();
+                let at_start = index;
                 while index < chars.len() && chars[index] != '/' {
                     if chars[index] == '\''
                         || chars[index] == '"'
@@ -446,19 +466,33 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
                     user.push(chars[index]);
                     index += 1;
                 }
-                if user.is_empty() {
-                    let home = ctx.env_var("HOME").unwrap_or_else(|| "~".to_string());
-                    push_segment(&mut segments, home, true);
+                let broke_on_non_login = index == at_start
+                    && index < chars.len()
+                    && chars[index] != '/';
+                if broke_on_non_login {
+                    push_segment(&mut segments, "~".to_string(), QuoteState::Literal);
+                } else if user.is_empty() {
+                    match ctx.env_var("HOME") {
+                        Some(home) if !home.is_empty() => {
+                            push_segment(&mut segments, home, QuoteState::Quoted);
+                        }
+                        Some(_) => {
+                            segments.push(Segment::Text(String::new(), QuoteState::Quoted));
+                        }
+                        None => {
+                            push_segment(&mut segments, "~".to_string(), QuoteState::Literal);
+                        }
+                    }
                 } else if let Some(dir) = ctx.home_dir_for_user(&user) {
-                    push_segment(&mut segments, dir, true);
+                    push_segment(&mut segments, dir, QuoteState::Quoted);
                 } else {
                     let mut literal = String::from('~');
                     literal.push_str(&user);
-                    push_segment(&mut segments, literal, false);
+                    push_segment(&mut segments, literal, QuoteState::Literal);
                 }
             }
             ch => {
-                push_segment(&mut segments, ch.to_string(), false);
+                push_segment(&mut segments, ch.to_string(), QuoteState::Literal);
                 index += 1;
             }
         }
@@ -1307,9 +1341,9 @@ fn split_fields_from_segments(segments: &[Segment], ifs: &str) -> Vec<Field> {
     if ifs.is_empty() {
         return vec![Field {
             text: flatten_segments(segments),
-            has_unquoted_glob: segments.iter().any(
-                |seg| matches!(seg, Segment::Text(text, false) if text.chars().any(is_glob_char)),
-            ),
+            has_unquoted_glob: segments.iter().any(|seg| {
+                matches!(seg, Segment::Text(text, state) if *state != QuoteState::Quoted && text.chars().any(is_glob_char))
+            }),
         }];
     }
 
@@ -1329,20 +1363,24 @@ fn split_fields_from_segments(segments: &[Segment], ifs: &str) -> Vec<Field> {
     let mut index = 0usize;
 
     while index < chars.len() {
-        let (ch, quoted) = chars[index];
-        if !quoted && ifs_other.contains(&ch) {
+        let (ch, state) = chars[index];
+        let splittable = state == QuoteState::Expanded;
+        if splittable && ifs_other.contains(&ch) {
             fields.push(Field {
                 text: std::mem::take(&mut current),
                 has_unquoted_glob: current_glob,
             });
             current_glob = false;
             index += 1;
-            while index < chars.len() && !chars[index].1 && ifs_ws.contains(&chars[index].0) {
+            while index < chars.len()
+                && chars[index].1 == QuoteState::Expanded
+                && ifs_ws.contains(&chars[index].0)
+            {
                 index += 1;
             }
             continue;
         }
-        if !quoted && ifs_ws.contains(&ch) {
+        if splittable && ifs_ws.contains(&ch) {
             if !current.is_empty() {
                 fields.push(Field {
                     text: std::mem::take(&mut current),
@@ -1350,12 +1388,15 @@ fn split_fields_from_segments(segments: &[Segment], ifs: &str) -> Vec<Field> {
                 });
                 current_glob = false;
             }
-            while index < chars.len() && !chars[index].1 && ifs_ws.contains(&chars[index].0) {
+            while index < chars.len()
+                && chars[index].1 == QuoteState::Expanded
+                && ifs_ws.contains(&chars[index].0)
+            {
                 index += 1;
             }
             continue;
         }
-        current_glob |= !quoted && is_glob_char(ch);
+        current_glob |= state != QuoteState::Quoted && is_glob_char(ch);
         current.push(ch);
         index += 1;
     }
@@ -1370,17 +1411,17 @@ fn split_fields_from_segments(segments: &[Segment], ifs: &str) -> Vec<Field> {
     fields
 }
 
-fn push_segment(segments: &mut Vec<Segment>, text: String, quoted: bool) {
+fn push_segment(segments: &mut Vec<Segment>, text: String, state: QuoteState) {
     if text.is_empty() {
         return;
     }
-    if let Some(Segment::Text(last, last_quoted)) = segments.last_mut() {
-        if *last_quoted == quoted {
+    if let Some(Segment::Text(last, last_state)) = segments.last_mut() {
+        if *last_state == state {
             last.push_str(&text);
             return;
         }
     }
-    segments.push(Segment::Text(text, quoted));
+    segments.push(Segment::Text(text, state));
 }
 
 fn flatten_segments(segments: &[Segment]) -> String {
@@ -1393,12 +1434,12 @@ fn flatten_segments(segments: &[Segment]) -> String {
     result
 }
 
-fn flatten_segment_chars(segments: &[Segment]) -> Vec<(char, bool)> {
+fn flatten_segment_chars(segments: &[Segment]) -> Vec<(char, QuoteState)> {
     let mut chars = Vec::new();
     for seg in segments {
-        if let Segment::Text(text, quoted) = seg {
+        if let Segment::Text(text, state) = seg {
             for ch in text.chars() {
-                chars.push((ch, *quoted));
+                chars.push((ch, *state));
             }
         }
     }
@@ -1407,8 +1448,8 @@ fn flatten_segment_chars(segments: &[Segment]) -> Vec<(char, bool)> {
 
 fn render_pattern_from_segments(segments: &[Segment]) -> String {
     let mut pattern = String::new();
-    for (ch, quoted) in flatten_segment_chars(segments) {
-        if quoted {
+    for (ch, state) in flatten_segment_chars(segments) {
+        if state == QuoteState::Quoted {
             pattern.push('\\');
         }
         pattern.push(ch);
@@ -2774,15 +2815,15 @@ mod tests {
         assert_eq!(ctx.positional_param(0), Some("meiksh".to_string()));
 
         let mut segs = Vec::new();
-        push_segment(&mut segs, "a".into(), false);
-        push_segment(&mut segs, String::new(), false);
-        push_segment(&mut segs, "b".into(), false);
-        push_segment(&mut segs, "c".into(), true);
+        push_segment(&mut segs, "a".into(), QuoteState::Expanded);
+        push_segment(&mut segs, String::new(), QuoteState::Expanded);
+        push_segment(&mut segs, "b".into(), QuoteState::Expanded);
+        push_segment(&mut segs, "c".into(), QuoteState::Quoted);
         assert_eq!(
             segs,
             vec![
-                Segment::Text("ab".to_string(), false),
-                Segment::Text("c".to_string(), true)
+                Segment::Text("ab".to_string(), QuoteState::Expanded),
+                Segment::Text("c".to_string(), QuoteState::Quoted)
             ]
         );
 
@@ -3212,7 +3253,7 @@ mod tests {
                 TraceResult::Err(crate::sys::ENOENT),
             )],
             || {
-        let segs = vec![Segment::Text("*.txt".to_string(), false)];
+        let segs = vec![Segment::Text("*.txt".to_string(), QuoteState::Expanded)];
         assert_eq!(
             split_fields_from_segments(&segs, ""),
             vec![Field {
@@ -3222,7 +3263,7 @@ mod tests {
         );
 
         assert_eq!(
-            split_fields_from_segments(&[Segment::Text("alpha,  beta".to_string(), false)], " ,"),
+            split_fields_from_segments(&[Segment::Text("alpha,  beta".to_string(), QuoteState::Expanded)], " ,"),
             vec![
                 Field {
                     text: "alpha".to_string(),
@@ -3296,7 +3337,7 @@ mod tests {
             Some((true, 4))
         );
         assert_eq!(
-            render_pattern_from_segments(&[Segment::Text("*".to_string(), true)]),
+            render_pattern_from_segments(&[Segment::Text("*".to_string(), QuoteState::Quoted)]),
             "\\*".to_string()
         );
             },
@@ -3590,7 +3631,7 @@ mod tests {
                 }
             )
             .expect("prefix empty"),
-            Vec::<String>::new()
+            vec!["presuf"]
         );
     }
 
@@ -3834,12 +3875,12 @@ mod tests {
     #[test]
     fn flatten_segment_chars_skips_at_break() {
         let segs = vec![
-            Segment::Text("a".into(), false),
+            Segment::Text("a".into(), QuoteState::Expanded),
             Segment::AtBreak,
-            Segment::Text("b".into(), true),
+            Segment::Text("b".into(), QuoteState::Quoted),
         ];
         let chars = flatten_segment_chars(&segs);
-        assert_eq!(chars, vec![('a', false), ('b', true)]);
+        assert_eq!(chars, vec![('a', QuoteState::Expanded), ('b', QuoteState::Quoted)]);
     }
 
     #[test]
@@ -4860,7 +4901,7 @@ mod tests {
             },
         )
         .expect("tilde quoted");
-        assert_eq!(fields, vec!["/tmp/homeuser"]);
+        assert_eq!(fields, vec!["~user"]);
     }
 
     #[test]

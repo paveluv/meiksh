@@ -1773,6 +1773,39 @@ fn tilde_in_assignment_after_colon() {
 }
 
 #[test]
+fn tilde_null_home_produces_empty_field() {
+    let output = Command::new(meiksh())
+        .args(["-c", "HOME=''; set -- ~; echo $#; printf '<%s>\\n' \"$1\""])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "1\n<>");
+}
+
+#[test]
+fn tilde_unset_home_stays_literal() {
+    let output = Command::new(meiksh())
+        .args(["-c", "unset HOME; echo ~"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "~");
+}
+
+#[test]
+fn tilde_not_expanded_with_non_login_chars() {
+    let output = Command::new(meiksh())
+        .args(["-c", "HOME=/my/home; echo ~$(echo /foo)"])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "~/foo");
+}
+
+#[test]
 fn subshell_resets_command_traps() {
     let output = Command::new(meiksh())
         .args(["-c", "trap 'echo PARENT' TERM; (trap)"])
