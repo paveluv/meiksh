@@ -1502,3 +1502,80 @@ begin test "for wordlist with newline as sequential separator"
     exit_code 0
 end test "for wordlist with newline as sequential separator"
 ```
+#### Test: empty program is valid grammar
+```
+begin test "empty program is valid grammar"
+  script
+    
+    
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "empty program is valid grammar"
+```
+
+#### Test: equals sign in embedded expansion construct yields WORD
+```
+begin test "equals sign in embedded expansion construct yields WORD"
+  script
+    unset a
+    $(echo a=b) 2>/dev/null
+    echo "a=${a-unset}"
+  expect
+    stdout "a=unset"
+    stderr ""
+    exit_code 0
+end test "equals sign in embedded expansion construct yields WORD"
+```
+
+#### Test: quoted in in case statement is parsed as WORD
+```
+begin test "quoted in in case statement is parsed as WORD"
+  script
+    case foo 'in' foo) echo ok ;; esac
+  expect
+    stdout ""
+    stderr "(.|\n)+"
+    exit_code !=0
+end test "quoted in in case statement is parsed as WORD"
+```
+
+#### Test: quoted in in for loop is parsed as WORD
+```
+begin test "quoted in in for loop is parsed as WORD"
+  script
+    for x "in" a b; do echo "$x"; done
+  expect
+    stdout ""
+    stderr "(.|\n)+"
+    exit_code !=0
+end test "quoted in in for loop is parsed as WORD"
+```
+
+#### Test: quoted do in for loop is parsed as WORD
+```
+begin test "quoted do in for loop is parsed as WORD"
+  script
+    for x in a b; "do" echo "$x"; done
+  expect
+    stdout ""
+    stderr "(.|\n)+"
+    exit_code !=0
+end test "quoted do in for loop is parsed as WORD"
+```
+
+#### Test: for loop with name and semicolon separator
+```
+begin test "for loop with name and semicolon separator"
+  script
+    set -- a b
+    for i; do
+      echo "$i"
+    done
+  expect
+    stdout "a\nb"
+    stderr ""
+    exit_code 0
+end test "for loop with name and semicolon separator"
+```
