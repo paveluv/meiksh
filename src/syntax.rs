@@ -236,6 +236,39 @@ impl ParseSession {
     }
 }
 
+/// Scan a `$'...'` (dollar-single-quote) token, preserving it raw for
+/// expansion to handle later.  Backslash escapes inside `$'...'` are
+/// meaningful (unlike regular single-quotes), so `\'` does NOT terminate
+/// the string.
+fn scan_dollar_single_quote(
+    chars: &[char],
+    index: &mut usize,
+    current: &mut String,
+) -> Result<(), ParseError> {
+    current.push('$');
+    current.push('\'');
+    *index += 2; // skip $'
+    while *index < chars.len() {
+        let ch = chars[*index];
+        if ch == '\'' {
+            current.push('\'');
+            *index += 1;
+            return Ok(());
+        }
+        if ch == '\\' && *index + 1 < chars.len() {
+            current.push('\\');
+            current.push(chars[*index + 1]);
+            *index += 2;
+            continue;
+        }
+        current.push(ch);
+        *index += 1;
+    }
+    Err(ParseError {
+        message: "unterminated dollar-single-quotes".to_string(),
+    })
+}
+
 fn scan_dollar_construct(
     chars: &[char],
     index: &mut usize,
@@ -703,6 +736,9 @@ fn tokenize(source: &str) -> Result<Tokenized, ParseError> {
             }
             '$' if matches!(chars.get(index + 1), Some('(' | '{')) => {
                 scan_dollar_construct(&chars, &mut index, &mut current)?;
+            }
+            '$' if matches!(chars.get(index + 1), Some('\'')) => {
+                scan_dollar_single_quote(&chars, &mut index, &mut current)?;
             }
             '`' => {
                 current.push('`');

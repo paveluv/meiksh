@@ -875,7 +875,12 @@ fn build_process_from_expanded(
     let program = expanded.argv.first().ok_or_else(|| ShellError {
         message: "empty command".to_string(),
     })?;
-    let resolved = resolve_command_path(shell, program);
+    let prefix_path = expanded
+        .assignments
+        .iter()
+        .find(|(name, _)| name == "PATH")
+        .map(|(_, value)| value.as_str());
+    let resolved = resolve_command_path(shell, program, prefix_path);
     let path_verified = resolved.is_some();
     let exec_path = resolved
         .unwrap_or_else(|| PathBuf::from(program))
@@ -1090,13 +1095,18 @@ fn prepare_redirections(
     Ok(prepared)
 }
 
-fn resolve_command_path(shell: &Shell, program: &str) -> Option<PathBuf> {
+fn resolve_command_path(
+    shell: &Shell,
+    program: &str,
+    path_override: Option<&str>,
+) -> Option<PathBuf> {
     if program.contains('/') {
         return Some(PathBuf::from(program));
     }
 
-    let path = shell
-        .get_var("PATH")
+    let path = path_override
+        .map(|s| s.to_string())
+        .or_else(|| shell.get_var("PATH"))
         .or_else(|| sys::env_var("PATH"))
         .unwrap_or_default();
 

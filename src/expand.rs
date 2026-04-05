@@ -730,7 +730,12 @@ fn parse_dollar_single_quoted(chars: &[char]) -> Result<(String, usize), ExpandE
                                 message: "unterminated dollar-single-quotes".to_string(),
                             });
                         }
-                        result.push(control_escape(chars[index]));
+                        if chars[index] == '\\' && index + 1 < chars.len() {
+                            index += 1;
+                            result.push(control_escape(chars[index]));
+                        } else {
+                            result.push(control_escape(chars[index]));
+                        }
                     }
                     'x' => {
                         let (value, consumed) =
