@@ -110,6 +110,30 @@ end test "descriptive test name"
   `exit_code`. All three are **required**.
 - The `begin test` / `end test` lines are at column 0.
 
+### Environment variables (`setenv`)
+
+A test can set environment variables that will be present when the shell
+process is spawned, using `setenv` directives between `begin test` and
+`script`/`spawn`:
+
+```
+begin test "bracket expression in custom locale"
+  setenv "LC_ALL" "C.UTF-8"
+  script
+    case "a" in [[:alpha:]]) echo match;; esac
+  expect
+    stdout "match"
+    stderr ""
+    exit_code 0
+end test "bracket expression in custom locale"
+```
+
+- `setenv` takes two double-quoted arguments: the variable name and the value.
+- Quoted strings in `setenv` support backslash escapes: `\"`, `\\`, `\n`,
+  `\r`, `\t`.
+- Multiple `setenv` directives are allowed per test.
+- `setenv` works in both non-interactive and interactive tests.
+
 ### Interactive tests
 
 ```
