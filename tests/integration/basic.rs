@@ -2234,3 +2234,247 @@ fn string_to_bytes_round_trips_non_ascii() {
     assert!(output.status.success());
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "e9");
 }
+
+#[test]
+fn getopts_parses_positional_params_and_explicit_params() {
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            r#"
+OPTIND=1; set -- -a -b; r=
+while getopts ab name; do r="${r}${name}"; done
+printf '%s\n' "$r"
+OPTIND=1; r=
+while getopts xy name -x -y; do r="${r}${name}"; done
+printf '%s:%s\n' "$r" "$OPTIND"
+"#,
+        ])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "ab\nxy:3"
+    );
+}
+
+#[test]
+fn getopts_option_with_separate_and_attached_arg() {
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            r#"
+OPTIND=1; set -- -f value
+getopts f: name
+printf 'name=%s optarg=%s optind=%s\n' "$name" "$OPTARG" "$OPTIND"
+OPTIND=1; set -- -fvalue
+getopts f: name
+printf 'name=%s optarg=%s optind=%s\n' "$name" "$OPTARG" "$OPTIND"
+"#,
+        ])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "name=f optarg=value optind=3\nname=f optarg=value optind=2"
+    );
+}
+
+#[test]
+fn getopts_unsets_optarg_for_options_without_argument() {
+    let out = Command::new(meiksh())
+        .args(["-c", r#"OPTIND=1; OPTARG=stale; set -- -a; getopts a name; printf '%s\n' "${OPTARG-unset}""#])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "unset");
+}
+
+#[test]
+fn getopts_invalid_option_normal_and_silent_mode() {
+    let out = Command::new(meiksh())
+        .args(["-c", r#"OPTIND=1; set -- -z; getopts ab name 2>/dev/null; printf 'name=%s optarg=%s\n' "$name" "${OPTARG-unset}""#])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "name=? optarg=unset"
+    );
+
+    let out2 = Command::new(meiksh())
+        .args(["-c", r#"OPTIND=1; set -- -z; getopts :ab name 2>/dev/null; printf 'name=%s optarg=%s\n' "$name" "$OPTARG""#])
+        .output()
+        .expect("run");
+    assert!(out2.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out2.stdout).trim(),
+        "name=? optarg=z"
+    );
+}
+
+#[test]
+fn getopts_missing_argument_normal_and_silent_mode() {
+    let out = Command::new(meiksh())
+        .args(["-c", r#"OPTIND=1; set -- -f; getopts f: name 2>/dev/null; printf 'name=%s optarg=%s\n' "$name" "${OPTARG-unset}""#])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "name=? optarg=unset"
+    );
+
+    let out2 = Command::new(meiksh())
+        .args(["-c", r#"OPTIND=1; set -- -f; getopts :f: name 2>/dev/null; printf 'name=%s optarg=%s\n' "$name" "$OPTARG""#])
+        .output()
+        .expect("run");
+    assert!(out2.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out2.stdout).trim(),
+        "name=: optarg=f"
+    );
+}
+
+#[test]
+fn getopts_double_dash_ends_options() {
+    let out = Command::new(meiksh())
+        .args(["-c", r#"OPTIND=1; set -- -a -- -b; getopts a name; getopts a name; printf 'name=%s optind=%s status=%s\n' "$name" "$OPTIND" "$?""#])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "name=? optind=3 status=1"
+    );
+}
+
+#[test]
+fn getopts_non_option_operand_ends_options() {
+    let out = Command::new(meiksh())
+        .args(["-c", r#"OPTIND=1; set -- -a operand; getopts a name; getopts a name; printf 'name=%s optind=%s status=%s\n' "$name" "$OPTIND" "$?""#])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "name=? optind=2 status=1"
+    );
+}
+
+#[test]
+fn getopts_empty_param_list_reports_end() {
+    let out = Command::new(meiksh())
+        .args(["-c", r#"OPTIND=1; set --; getopts a name; printf 'name=%s optind=%s status=%s\n' "$name" "$OPTIND" "$?""#])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "name=? optind=1 status=1"
+    );
+}
+
+#[test]
+fn getopts_combined_short_options() {
+    let out = Command::new(meiksh())
+        .args(["-c", r#"OPTIND=1; set -- -abc; r=; while getopts abc name; do r="${r}${name}"; done; printf '%s\n' "$r""#])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "abc");
+}
+
+#[test]
+fn getopts_grouped_with_trailing_argument() {
+    let out = Command::new(meiksh())
+        .args(["-c", r#"OPTIND=1; set -- -abf file.txt; r=; a=; while getopts abf: name; do r="${r}${name}"; [ "$name" = f ] && a=$OPTARG; done; printf '%s:%s\n' "$r" "$a""#])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "abf:file.txt"
+    );
+}
+
+#[test]
+fn getopts_invalid_option_within_group_resumes() {
+    let out = Command::new(meiksh())
+        .args(["-c", r#"OPTIND=1; set -- -za; getopts ab name 2>/dev/null; getopts ab name 2>/dev/null; printf 'name=%s status=%s\n' "$name" "$?""#])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "name=a status=0"
+    );
+}
+
+#[test]
+fn getopts_resumes_after_invalid_option() {
+    let out = Command::new(meiksh())
+        .args(["-c", r#"OPTIND=1; set -- -z -a; getopts ab name 2>/dev/null; getopts ab name 2>/dev/null; printf 'name=%s status=%s\n' "$name" "$?""#])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "name=a status=0"
+    );
+}
+
+#[test]
+fn getopts_readonly_errors() {
+    for script in &[
+        "readonly name; OPTIND=1; set -- -a; getopts a name 2>/dev/null",
+        "OPTIND=1; readonly OPTIND; set -- -a; getopts a name 2>/dev/null",
+        "OPTIND=1; readonly OPTARG; set -- -f val; getopts f: name 2>/dev/null",
+    ] {
+        let out = Command::new(meiksh())
+            .args(["-c", script])
+            .output()
+            .expect("run");
+        assert!(
+            out.status.code().unwrap_or(0) > 1,
+            "expected >1 for: {script}, got {}",
+            out.status.code().unwrap_or(0)
+        );
+    }
+}
+
+#[test]
+fn getopts_usage_error() {
+    let out = Command::new(meiksh())
+        .args(["-c", "getopts ab 2>/dev/null"])
+        .output()
+        .expect("run");
+    assert_eq!(out.status.code(), Some(2));
+}
+
+#[test]
+fn getopts_optind_initialized_to_one() {
+    let out = Command::new(meiksh())
+        .args(["-c", "printf '%s\\n' \"$OPTIND\""])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "1");
+}
+
+#[test]
+fn getopts_reset_optind_allows_reparsing() {
+    let out = Command::new(meiksh())
+        .args(["-c", r#"
+OPTIND=1; set -- -a -b; r=
+while getopts ab name; do r="${r}${name}"; done
+OPTIND=1; set -- -x -y
+while getopts xy name; do r="${r}${name}"; done
+printf '%s\n' "$r"
+"#])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "abxy");
+}
