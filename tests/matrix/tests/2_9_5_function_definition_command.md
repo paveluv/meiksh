@@ -113,6 +113,28 @@ begin test "command substitution in function body is deferred until call"
 end test "command substitution in function body is deferred until call"
 ```
 
+#### Test: expansions performed fresh each time function is called
+
+The standard requires that all expansions shall be performed as normal
+"each time" the function is called. Calling a function twice with
+different variable values between calls shall produce different results,
+confirming that expansions are re-evaluated on every invocation.
+
+```
+begin test "expansions performed fresh each time function is called"
+  script
+    myfunc() { echo "$VAR"; }
+    VAR=first
+    myfunc
+    VAR=second
+    myfunc
+  expect
+    stdout "first\nsecond"
+    stderr ""
+    exit_code 0
+end test "expansions performed fresh each time function is called"
+```
+
 #### Test: assignments in function body are performed during execution
 
 Variable assignments within the compound-command are performed when the
@@ -310,6 +332,29 @@ begin test "return resumes with next command after function call"
 end test "return resumes with next command after function call"
 ```
 
+#### Test: return without operand preserves last command exit status
+
+When `return` is executed without an operand inside a function, the
+function's exit status shall be the exit status of the last command
+executed before `return` (since `return` without *n* is equivalent to
+`return $?`).
+
+```
+begin test "return without operand preserves last command exit status"
+  script
+    myfunc() {
+        false
+        return
+    }
+    myfunc
+    echo "$?"
+  expect
+    stdout "1"
+    stderr ""
+    exit_code 0
+end test "return without operand preserves last command exit status"
+```
+
 #### Test: successful function definition exits zero
 
 A function definition that succeeds has an exit status of zero.
@@ -384,6 +429,25 @@ begin test "function exit status is last command exit status"
 end test "function exit status is last command exit status"
 ```
 
+#### Test: function call with successful redirection
+
+Redirections on a function invocation are applied during execution of the
+function. A successful redirection causes the function's output to go to
+the specified target.
+
+```
+begin test "function call with successful redirection"
+  script
+    myfunc() { echo "redirected"; }
+    myfunc > tmp_func_redir.txt
+    cat tmp_func_redir.txt
+  expect
+    stdout "redirected"
+    stderr ""
+    exit_code 0
+end test "function call with successful redirection"
+```
+
 #### Test: redirection error on function call yields non-zero exit
 
 Redirections on a function call are performed during execution; a redirection
@@ -402,6 +466,27 @@ begin test "redirection error on function call yields non-zero exit"
     stderr ".+"
     exit_code !=0
 end test "redirection error on function call yields non-zero exit"
+```
+
+#### Test: assignment error in function body exits non-interactive shell
+
+The standard references 2.8.1 for consequences of assignment failures
+during function execution. Per the 2.8.1 table, a variable assignment
+error (such as writing to a readonly variable) in a non-interactive shell
+shall cause the shell to exit — this applies even inside a function body.
+
+```
+begin test "assignment error in function body exits non-interactive shell"
+  script
+    readonly RO=fixed
+    myfunc() { RO=changed; }
+    myfunc
+    echo "should not reach"
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
+end test "assignment error in function body exits non-interactive shell"
 ```
 
 #### Test: function definition redirection is deferred until function call
@@ -447,6 +532,25 @@ begin test "function with syntax error in body causes non-interactive shell to e
     stderr ""
     exit_code !=0
 end test "function with syntax error in body causes non-interactive shell to exit"
+```
+
+#### Test: function shadows external command of same name
+
+When a function is defined with the same name as an external command, the
+function shall be executed (per the command search and execution order in
+2.9.1.4, which checks functions before PATH).
+
+```
+begin test "function shadows external command of same name"
+  script
+    echo() { printf "func:%s\n" "$1"; }
+    echo hello
+    unset -f echo
+  expect
+    stdout "func:hello"
+    stderr ""
+    exit_code 0
+end test "function shadows external command of same name"
 ```
 
 #### Test: failed function definition returns non-zero status
