@@ -1227,6 +1227,24 @@ impl Parser {
                 continue;
             }
 
+            if command.words.is_empty() {
+                if let Some(text) = self.peek_word_text() {
+                    if split_assignment(&text).is_some() {
+                        let (name, value) =
+                            split_assignment(&text).unwrap();
+                        self.index += 1;
+                        command.assignments.push(Assignment {
+                            name,
+                            value: Word { raw: value },
+                        });
+                        continue;
+                    }
+                }
+                if !command.assignments.is_empty() || !command.redirections.is_empty() {
+                    self.expand_alias_at_command_start()?;
+                }
+            }
+
             let word = match self.peek_kind().clone() {
                 TokenKind::Word(text) => {
                     self.index += 1;
@@ -1234,16 +1252,6 @@ impl Parser {
                 }
                 _ => break,
             };
-
-            if command.words.is_empty() {
-                if let Some((name, value)) = split_assignment(&word.raw) {
-                    command.assignments.push(Assignment {
-                        name,
-                        value: Word { raw: value },
-                    });
-                    continue;
-                }
-            }
 
             command.words.push(word);
         }
@@ -1254,6 +1262,12 @@ impl Parser {
         {
             return Err(ParseError {
                 message: "expected command".to_string(),
+            });
+        }
+
+        if !command.words.is_empty() && matches!(self.peek_kind(), TokenKind::LParen) {
+            return Err(ParseError {
+                message: "syntax error near unexpected token `('".to_string(),
             });
         }
 
@@ -1388,6 +1402,13 @@ impl Parser {
 
     fn peek_kind(&self) -> &TokenKind {
         &self.tokens[self.index].kind
+    }
+
+    fn peek_word_text(&self) -> Option<String> {
+        match &self.tokens[self.index].kind {
+            TokenKind::Word(text) => Some(text.clone()),
+            _ => None,
+        }
     }
 
     fn expand_alias_at_command_start(&mut self) -> Result<(), ParseError> {
@@ -2056,6 +2077,41 @@ mod tests {
         ));
         assert!(alias_has_trailing_blank("value "));
         assert!(!alias_has_trailing_blank("value"));
+    }
+
+    #[test]
+    fn alias_expansion_after_assignment_and_redirection() {
+        let mut aliases = HashMap::new();
+        aliases.insert("foo".to_string(), "echo aliased".to_string());
+        let program =
+            parse_with_aliases("VAR=value foo", &aliases).expect("alias after assignment");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(simple)
+                if simple.words.iter().map(|w| w.raw.as_str()).collect::<Vec<_>>() == vec!["echo", "aliased"]
+                    && simple.assignments.len() == 1
+        ));
+
+        let program = parse_with_aliases("</dev/null foo", &aliases)
+            .expect("alias after redirection");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(simple)
+                if simple.words.iter().map(|w| w.raw.as_str()).collect::<Vec<_>>() == vec!["echo", "aliased"]
+                    && simple.redirections.len() == 1
+        ));
+    }
+
+    #[test]
+    fn lparen_after_simple_command_is_syntax_error() {
+        let mut aliases = HashMap::new();
+        aliases.insert("foo".to_string(), "echo aliased".to_string());
+        let err = parse_with_aliases("foo () { true; }", &aliases).unwrap_err();
+        assert!(
+            err.message.contains("("),
+            "error should mention '(': {}",
+            err.message
+        );
     }
 
     #[test]

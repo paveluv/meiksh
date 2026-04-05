@@ -249,15 +249,8 @@ fn spawn_pipeline(
             None => ProcessGroupPlan::NewGroup,
         };
 
-        let handle = match command {
-            Command::Simple(simple) => {
-                let prepared = build_process(shell, simple)?;
-                spawn_prepared(shell, &prepared, previous_stdout_fd.take(), !is_last, plan)?
-            }
-            _ => {
-                fork_and_execute_command(shell, command, previous_stdout_fd.take(), !is_last, plan)?
-            }
-        };
+        let handle =
+            fork_and_execute_command(shell, command, previous_stdout_fd.take(), !is_last, plan)?;
 
         if pgid.is_none() {
             let child_pgid = handle.pid;
@@ -711,8 +704,7 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
             sys_eprintln!("{}: not found", expanded.argv[0]);
             return Ok(127);
         }
-        let handle = match spawn_prepared(shell, &prepared, None, false, ProcessGroupPlan::NewGroup)
-        {
+        let handle = match spawn_prepared(shell, &prepared, ProcessGroupPlan::NewGroup) {
             Ok(h) => h,
             Err(error) => {
                 sys_eprintln!("{}", error.display_message());
@@ -770,8 +762,6 @@ enum ChildFdAction {
 
 #[derive(Debug, Default)]
 struct PreparedRedirections {
-    stdin_redirected: bool,
-    stdout_redirected: bool,
     actions: Vec<ChildFdAction>,
 }
 
@@ -858,11 +848,6 @@ fn expand_redirections(
     Ok(expanded)
 }
 
-fn build_process(shell: &mut Shell, simple: &SimpleCommand) -> Result<PreparedProcess, ShellError> {
-    let expanded = expand_simple(shell, simple)?;
-    build_process_from_expanded(shell, &expanded)
-}
-
 fn build_process_from_expanded(
     shell: &Shell,
     expanded: &ExpandedSimpleCommand,
@@ -898,8 +883,6 @@ fn build_process_from_expanded(
 fn spawn_prepared(
     shell: &Shell,
     prepared: &PreparedProcess,
-    stdin_fd: Option<i32>,
-    pipe_stdout: bool,
     process_group: ProcessGroupPlan,
 ) -> Result<sys::ChildHandle, ShellError> {
     if !prepared.path_verified && !prepared.exec_path.is_empty() && prepared.exec_path.contains('/')
@@ -914,27 +897,8 @@ fn spawn_prepared(
 
     let prepared_redirections = prepare_redirections(&prepared.redirections, prepared.noclobber)?;
 
-    let effective_stdin = if !prepared_redirections.stdin_redirected {
-        stdin_fd
-    } else {
-        if let Some(fd) = stdin_fd {
-            let _ = sys::close_fd(fd);
-        }
-        None
-    };
-
-    let effective_pipe_stdout = pipe_stdout && !prepared_redirections.stdout_redirected;
-
-    let stdout_pipe = if effective_pipe_stdout {
-        let (r, w) = sys::create_pipe()?;
-        Some((r, w))
-    } else {
-        None
-    };
-
     let pid = sys::fork_process()?;
     if pid == 0 {
-        // Child: set up process group, stdin, stdout, redirections
         match process_group {
             ProcessGroupPlan::NewGroup => {
                 let _ = sys::set_process_group(0, 0);
@@ -943,15 +907,6 @@ fn spawn_prepared(
                 let _ = sys::set_process_group(0, pgid);
             }
             ProcessGroupPlan::None => {}
-        }
-        if let Some(fd) = effective_stdin {
-            let _ = sys::duplicate_fd(fd, sys::STDIN_FILENO);
-            let _ = sys::close_fd(fd);
-        }
-        if let Some((r, w)) = stdout_pipe {
-            let _ = sys::close_fd(r);
-            let _ = sys::duplicate_fd(w, sys::STDOUT_FILENO);
-            let _ = sys::close_fd(w);
         }
         let _ = apply_child_fd_actions(&prepared_redirections.actions);
 
@@ -976,14 +931,6 @@ fn spawn_prepared(
         }
     }
 
-    // Parent: clean up fds
-    if let Some(fd) = effective_stdin {
-        let _ = sys::close_fd(fd);
-    }
-    let stdout_read = stdout_pipe.map(|(r, w)| {
-        let _ = sys::close_fd(w);
-        r
-    });
     for action in &prepared_redirections.actions {
         if let ChildFdAction::DupRawFd {
             fd,
@@ -997,7 +944,7 @@ fn spawn_prepared(
 
     Ok(sys::ChildHandle {
         pid,
-        stdout_fd: stdout_read,
+        stdout_fd: None,
     })
 }
 
@@ -1007,12 +954,6 @@ fn prepare_redirections(
 ) -> Result<PreparedRedirections, ShellError> {
     let mut prepared = PreparedRedirections::default();
     for redirection in redirections {
-        if redirection.fd == 0 {
-            prepared.stdin_redirected = true;
-        }
-        if redirection.fd == 1 {
-            prepared.stdout_redirected = true;
-        }
         match redirection.kind {
             RedirectionKind::Read => {
                 let fd = sys::open_file(&redirection.target, sys::O_RDONLY | sys::O_CLOEXEC, 0)?;
@@ -1715,22 +1656,12 @@ mod tests {
     fn execute_pipeline_async_single_command() {
         run_trace(
             vec![
-                t(
-                    "stat",
-                    vec![ArgMatcher::Str("/usr/bin/true".into()), ArgMatcher::Any],
-                    TraceResult::StatFile(0o755),
-                ),
                 t_fork(
                     TraceResult::Pid(1000),
                     vec![
                         t(
                             "setpgid",
                             vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
-                            TraceResult::Int(0),
-                        ),
-                        t(
-                            "execvp",
-                            vec![ArgMatcher::Str("/usr/bin/true".into()), ArgMatcher::Any],
                             TraceResult::Int(0),
                         ),
                     ],
@@ -1761,20 +1692,10 @@ mod tests {
     fn execute_pipeline_negated_multi_command() {
         run_trace(
             vec![
-                t(
-                    "stat",
-                    vec![ArgMatcher::Str("/usr/bin/printf".into()), ArgMatcher::Any],
-                    TraceResult::StatFile(0o755),
-                ),
                 t("pipe", vec![], TraceResult::Fds(200, 201)),
                 t_fork(
                     TraceResult::Pid(1000),
                     vec![
-                        t(
-                            "setpgid",
-                            vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
-                            TraceResult::Int(0),
-                        ),
                         t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
                         t(
                             "dup2",
@@ -1783,9 +1704,50 @@ mod tests {
                         ),
                         t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
                         t(
-                            "execvp",
-                            vec![ArgMatcher::Str("/usr/bin/printf".into()), ArgMatcher::Any],
+                            "setpgid",
+                            vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
                             TraceResult::Int(0),
+                        ),
+                        t(
+                            "stat",
+                            vec![
+                                ArgMatcher::Str("/usr/bin/printf".into()),
+                                ArgMatcher::Any,
+                            ],
+                            TraceResult::StatFile(0o755),
+                        ),
+                        t_fork(
+                            TraceResult::Pid(1500),
+                            vec![
+                                t(
+                                    "setpgid",
+                                    vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
+                                    TraceResult::Int(0),
+                                ),
+                                t(
+                                    "execvp",
+                                    vec![
+                                        ArgMatcher::Str("/usr/bin/printf".into()),
+                                        ArgMatcher::Any,
+                                    ],
+                                    TraceResult::Int(0),
+                                ),
+                            ],
+                        ),
+                        t(
+                            "setpgid",
+                            vec![ArgMatcher::Int(1500), ArgMatcher::Int(1500)],
+                            TraceResult::Int(0),
+                        ),
+                        t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
+                        t(
+                            "waitpid",
+                            vec![
+                                ArgMatcher::Int(1500),
+                                ArgMatcher::Any,
+                                ArgMatcher::Int(sys::WUNTRACED as i64),
+                            ],
+                            TraceResult::Status(0),
                         ),
                     ],
                 ),
@@ -1795,19 +1757,9 @@ mod tests {
                     vec![ArgMatcher::Int(1000), ArgMatcher::Int(1000)],
                     TraceResult::Int(0),
                 ),
-                t(
-                    "stat",
-                    vec![ArgMatcher::Str("/usr/bin/wc".into()), ArgMatcher::Any],
-                    TraceResult::StatFile(0o755),
-                ),
                 t_fork(
                     TraceResult::Pid(1001),
                     vec![
-                        t(
-                            "setpgid",
-                            vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)],
-                            TraceResult::Int(0),
-                        ),
                         t(
                             "dup2",
                             vec![ArgMatcher::Fd(200), ArgMatcher::Fd(0)],
@@ -1815,9 +1767,47 @@ mod tests {
                         ),
                         t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
                         t(
-                            "execvp",
-                            vec![ArgMatcher::Str("/usr/bin/wc".into()), ArgMatcher::Any],
+                            "setpgid",
+                            vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)],
                             TraceResult::Int(0),
+                        ),
+                        t(
+                            "stat",
+                            vec![ArgMatcher::Str("/usr/bin/wc".into()), ArgMatcher::Any],
+                            TraceResult::StatFile(0o755),
+                        ),
+                        t_fork(
+                            TraceResult::Pid(1501),
+                            vec![
+                                t(
+                                    "setpgid",
+                                    vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
+                                    TraceResult::Int(0),
+                                ),
+                                t(
+                                    "execvp",
+                                    vec![
+                                        ArgMatcher::Str("/usr/bin/wc".into()),
+                                        ArgMatcher::Any,
+                                    ],
+                                    TraceResult::Int(0),
+                                ),
+                            ],
+                        ),
+                        t(
+                            "setpgid",
+                            vec![ArgMatcher::Int(1501), ArgMatcher::Int(1501)],
+                            TraceResult::Int(0),
+                        ),
+                        t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
+                        t(
+                            "waitpid",
+                            vec![
+                                ArgMatcher::Int(1501),
+                                ArgMatcher::Any,
+                                ArgMatcher::Int(sys::WUNTRACED as i64),
+                            ],
+                            TraceResult::Status(0),
                         ),
                     ],
                 ),
@@ -1959,7 +1949,7 @@ mod tests {
                     noclobber: false,
                     path_verified: true,
                 };
-                let child = spawn_prepared(&shell, &prepared, None, false, ProcessGroupPlan::None)
+                let child = spawn_prepared(&shell, &prepared, ProcessGroupPlan::None)
                     .expect("enoexec fallback spawn");
                 let output = child.wait_with_output().expect("output");
                 assert!(output.status.success());
@@ -1989,7 +1979,7 @@ mod tests {
                 };
                 let shell = test_shell();
                 assert!(
-                    spawn_prepared(&shell, &missing, None, false, ProcessGroupPlan::None).is_err()
+                    spawn_prepared(&shell, &missing, ProcessGroupPlan::None).is_err()
                 );
             },
         );
@@ -2096,8 +2086,6 @@ mod tests {
                     false,
                 )
                 .expect("prepare");
-                assert!(prepared.stdin_redirected);
-                assert!(prepared.stdout_redirected);
                 assert_eq!(prepared.actions.len(), 2);
             },
         );
@@ -2213,7 +2201,6 @@ mod tests {
                     false,
                 )
                 .expect("prepare heredoc");
-                assert!(prepared.stdin_redirected);
                 assert_eq!(prepared.actions.len(), 1);
             },
         );
@@ -3655,7 +3642,7 @@ mod tests {
                     path_verified: false,
                 };
                 let child =
-                    spawn_prepared(&shell, &prepared, None, false, ProcessGroupPlan::NewGroup)
+                    spawn_prepared(&shell, &prepared, ProcessGroupPlan::NewGroup)
                         .expect("spawn newgroup");
                 assert!(
                     child
@@ -3714,7 +3701,7 @@ mod tests {
                     noclobber: false,
                     path_verified: false,
                 };
-                let child = spawn_prepared(&shell, &prepared, None, false, ProcessGroupPlan::None)
+                let child = spawn_prepared(&shell, &prepared, ProcessGroupPlan::None)
                     .expect("spawn with stdout redirect");
                 assert!(child.wait().expect("wait").success());
             },
@@ -3767,7 +3754,7 @@ mod tests {
                     path_verified: false,
                 };
                 let child =
-                    spawn_prepared(&shell, &prepared, None, false, ProcessGroupPlan::Join(42))
+                    spawn_prepared(&shell, &prepared, ProcessGroupPlan::Join(42))
                         .expect("spawn join");
                 assert!(child.wait().expect("wait").success());
             },
@@ -4072,7 +4059,7 @@ mod tests {
                     noclobber: false,
                 };
                 let handle =
-                    spawn_prepared(&mut shell, &prepared, None, false, ProcessGroupPlan::None)
+                    spawn_prepared(&mut shell, &prepared, ProcessGroupPlan::None)
                         .expect("spawn");
                 let ws = sys::wait_pid(handle.pid, false)
                     .expect("wait")
@@ -4083,7 +4070,7 @@ mod tests {
     }
 
     #[test]
-    fn spawn_prepared_stdin_closed_when_redirected() {
+    fn spawn_prepared_with_stdin_redirect() {
         run_trace(
             vec![
                 t(
@@ -4095,7 +4082,6 @@ mod tests {
                     ],
                     TraceResult::Fd(60),
                 ),
-                t("close", vec![ArgMatcher::Fd(100)], TraceResult::Int(0)),
                 t_fork(
                     TraceResult::Pid(1000),
                     vec![
@@ -4131,8 +4117,6 @@ mod tests {
                 let _handle = spawn_prepared(
                     &mut shell,
                     &prepared,
-                    Some(100),
-                    false,
                     ProcessGroupPlan::None,
                 )
                 .expect("spawn");
@@ -4172,7 +4156,7 @@ mod tests {
                     noclobber: false,
                 };
                 let _handle =
-                    spawn_prepared(&mut shell, &prepared, None, false, ProcessGroupPlan::None)
+                    spawn_prepared(&mut shell, &prepared, ProcessGroupPlan::None)
                         .expect("spawn");
             },
         );
@@ -4324,7 +4308,7 @@ mod tests {
                     noclobber: false,
                     path_verified: false,
                 };
-                let err = spawn_prepared(&shell, &prepared, None, false, ProcessGroupPlan::None)
+                let err = spawn_prepared(&shell, &prepared, ProcessGroupPlan::None)
                     .unwrap_err();
                 assert!(
                     err.message.contains("Permission denied") || err.message.contains("errno 13")
@@ -4362,7 +4346,7 @@ mod tests {
                     path_verified: true,
                 };
                 let _handle =
-                    spawn_prepared(&shell, &prepared, None, false, ProcessGroupPlan::NewGroup)
+                    spawn_prepared(&shell, &prepared, ProcessGroupPlan::NewGroup)
                         .expect("spawn");
             },
         );
@@ -4397,7 +4381,7 @@ mod tests {
                     path_verified: true,
                 };
                 let _handle =
-                    spawn_prepared(&shell, &prepared, None, false, ProcessGroupPlan::NewGroup)
+                    spawn_prepared(&shell, &prepared, ProcessGroupPlan::NewGroup)
                         .expect("spawn");
             },
         );
@@ -4870,11 +4854,6 @@ mod tests {
     fn execute_list_item_async_with_monitor_enabled() {
         run_trace(
             vec![
-                t(
-                    "stat",
-                    vec![ArgMatcher::Str("/usr/bin/sleep".into()), ArgMatcher::Any],
-                    TraceResult::StatFile(0o755),
-                ),
                 t_fork(
                     TraceResult::Pid(9100),
                     vec![
@@ -4884,9 +4863,45 @@ mod tests {
                             TraceResult::Int(0),
                         ),
                         t(
-                            "execvp",
-                            vec![ArgMatcher::Str("/usr/bin/sleep".into()), ArgMatcher::Any],
+                            "stat",
+                            vec![
+                                ArgMatcher::Str("/usr/bin/sleep".into()),
+                                ArgMatcher::Any,
+                            ],
+                            TraceResult::StatFile(0o755),
+                        ),
+                        t_fork(
+                            TraceResult::Pid(9101),
+                            vec![
+                                t(
+                                    "setpgid",
+                                    vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
+                                    TraceResult::Int(0),
+                                ),
+                                t(
+                                    "execvp",
+                                    vec![
+                                        ArgMatcher::Str("/usr/bin/sleep".into()),
+                                        ArgMatcher::Any,
+                                    ],
+                                    TraceResult::Int(0),
+                                ),
+                            ],
+                        ),
+                        t(
+                            "setpgid",
+                            vec![ArgMatcher::Int(9101), ArgMatcher::Int(9101)],
                             TraceResult::Int(0),
+                        ),
+                        t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
+                        t(
+                            "waitpid",
+                            vec![
+                                ArgMatcher::Int(9101),
+                                ArgMatcher::Any,
+                                ArgMatcher::Int(sys::WUNTRACED as i64),
+                            ],
+                            TraceResult::Status(0),
                         ),
                     ],
                 ),
@@ -4912,11 +4927,6 @@ mod tests {
     fn execute_list_item_async_interactive_prints_job_id() {
         run_trace(
             vec![
-                t(
-                    "stat",
-                    vec![ArgMatcher::Str("/usr/bin/sleep".into()), ArgMatcher::Any],
-                    TraceResult::StatFile(0o755),
-                ),
                 t_fork(
                     TraceResult::Pid(9200),
                     vec![
@@ -4926,9 +4936,45 @@ mod tests {
                             TraceResult::Int(0),
                         ),
                         t(
-                            "execvp",
-                            vec![ArgMatcher::Str("/usr/bin/sleep".into()), ArgMatcher::Any],
+                            "stat",
+                            vec![
+                                ArgMatcher::Str("/usr/bin/sleep".into()),
+                                ArgMatcher::Any,
+                            ],
+                            TraceResult::StatFile(0o755),
+                        ),
+                        t_fork(
+                            TraceResult::Pid(9201),
+                            vec![
+                                t(
+                                    "setpgid",
+                                    vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
+                                    TraceResult::Int(0),
+                                ),
+                                t(
+                                    "execvp",
+                                    vec![
+                                        ArgMatcher::Str("/usr/bin/sleep".into()),
+                                        ArgMatcher::Any,
+                                    ],
+                                    TraceResult::Int(0),
+                                ),
+                            ],
+                        ),
+                        t(
+                            "setpgid",
+                            vec![ArgMatcher::Int(9201), ArgMatcher::Int(9201)],
                             TraceResult::Int(0),
+                        ),
+                        t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
+                        t(
+                            "waitpid",
+                            vec![
+                                ArgMatcher::Int(9201),
+                                ArgMatcher::Any,
+                                ArgMatcher::Int(sys::WUNTRACED as i64),
+                            ],
+                            TraceResult::Status(0),
                         ),
                     ],
                 ),
@@ -4963,22 +5009,12 @@ mod tests {
     fn spawn_and_or_with_monitor_delegates_to_spawn_pipeline() {
         run_trace(
             vec![
-                t(
-                    "stat",
-                    vec![ArgMatcher::Str("/usr/bin/true".into()), ArgMatcher::Any],
-                    TraceResult::StatFile(0o755),
-                ),
                 t_fork(
                     TraceResult::Pid(9300),
                     vec![
                         t(
                             "setpgid",
                             vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
-                            TraceResult::Int(0),
-                        ),
-                        t(
-                            "execvp",
-                            vec![ArgMatcher::Str("/usr/bin/true".into()), ArgMatcher::Any],
                             TraceResult::Int(0),
                         ),
                     ],
