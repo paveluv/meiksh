@@ -168,19 +168,37 @@ begin test "failed redirection to read-only directory fails the command"
 end test "failed redirection to read-only directory fails the command"
 ```
 
+#### Test: failed input redirection fails the command
+
+A failure to open a file shall cause a redirection to fail. Attempting to
+redirect input from a file that does not exist causes the command to fail.
+
+```
+begin test "failed input redirection fails the command"
+  script
+    cat < does_not_exist_file.txt
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
+end test "failed input redirection fails the command"
+```
+
 #### Test: pathname expansion does not occur on redirection word
 
 Pathname expansion shall not be performed on the redirection word by a
-non-interactive shell. A literal `*` in the redirection target creates a file
-with that name rather than expanding against existing filenames.
+non-interactive shell. Even if multiple matching files exist, a literal `*` in
+the redirection target creates a file with that exact literal name.
 
 ```
 begin test "pathname expansion does not occur on redirection word"
   script
+    touch tmp_1_redir.txt tmp_2_redir.txt
     echo "literal" > tmp_*_redir.txt
     ls tmp_*_redir.txt
+    rm tmp_1_redir.txt tmp_2_redir.txt "tmp_*_redir.txt"
   expect
-    stdout "tmp_\*_redir.txt"
+    stdout "tmp_\*_redir\.txt\ntmp_1_redir\.txt\ntmp_2_redir\.txt"
     stderr ""
     exit_code 0
 end test "pathname expansion does not occur on redirection word"
@@ -761,6 +779,26 @@ begin test "here-document with variable expansion"
 end test "here-document with variable expansion"
 ```
 
+#### Test: here-document lines expanded after delimiter is located
+
+All lines of the here-document shall be expanded *after* the trailing delimiter
+has been located. A word containing an expansion that evaluates to the delimiter
+does not act as the delimiter.
+
+```
+begin test "here-document lines expanded after delimiter is located"
+  script
+    EOF="EOF"
+    cat <<EOF
+    $EOF
+    EOF
+  expect
+    stdout "EOF"
+    stderr ""
+    exit_code 0
+end test "here-document lines expanded after delimiter is located"
+```
+
 #### Test: here-document performs command and arithmetic expansion
 
 When the delimiter word is not quoted, here-document lines shall also be
@@ -1265,6 +1303,26 @@ begin test "closing an unopened input fd is not an error"
 end test "closing an unopened input fd is not an error"
 ```
 
+#### Test: duplicate input fd evaluates word to dash for closing
+
+If word evaluates to '-', file descriptor `n` (or standard input) shall be
+closed. This applies after `word` is expanded.
+
+```
+begin test "duplicate input fd evaluates word to dash for closing"
+  script
+    echo "data" > tmp_var_dash_in.txt
+    exec 5<tmp_var_dash_in.txt
+    var="-"
+    exec 5<&$var
+    (cat <&5) 2>/dev/null || echo "fd5_closed"
+  expect
+    stdout "fd5_closed"
+    stderr ""
+    exit_code 0
+end test "duplicate input fd evaluates word to dash for closing"
+```
+
 #### Test: duplicate input from non-open file descriptor is a redirection error
 
 If *word* in `[n]<&word` evaluates to digits that do not represent an already
@@ -1404,6 +1462,25 @@ begin test "closing an unopened output fd is not an error"
     stderr ""
     exit_code 0
 end test "closing an unopened output fd is not an error"
+```
+
+#### Test: duplicate output fd evaluates word to dash for closing
+
+If word evaluates to '-', file descriptor `n` (or standard output) shall be
+closed. This applies after `word` is expanded.
+
+```
+begin test "duplicate output fd evaluates word to dash for closing"
+  script
+    exec 5>tmp_var_dash_out.txt
+    var="-"
+    exec 5>&$var
+    (echo "fail" >&5) 2>/dev/null || echo "fd5_closed"
+  expect
+    stdout "fd5_closed"
+    stderr ""
+    exit_code 0
+end test "duplicate output fd evaluates word to dash for closing"
 ```
 
 #### Test: duplicate output from non-open file descriptor is a redirection error
