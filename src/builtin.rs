@@ -585,7 +585,7 @@ fn jobs(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
             if !selected_contains(*id) {
                 continue;
             }
-            if let crate::shell::JobState::Done(status) = state {
+            if let crate::shell::ReapedJobState::Done(status) = state {
                 let marker = job_current_marker(*id, current_id, previous_id);
                 let state_str = if *status == 0 {
                     "Done".to_string()
@@ -6308,6 +6308,137 @@ mod tests {
                 let mut shell = test_shell();
                 let outcome =
                     run(&mut shell, &["kill".into(), "--".into(), "-1".into()]).expect("kill -1");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn search_path_uses_default_path() {
+        run_trace(
+            vec![t(
+                "access",
+                vec![ArgMatcher::Str("/usr/bin/ls".into()), ArgMatcher::Int(0)],
+                TraceResult::Int(0),
+            )],
+            || {
+                let shell = test_shell();
+                let result = search_path("ls", &shell, true, path_exists);
+                assert_eq!(result, Some(PathBuf::from("/usr/bin/ls")));
+            },
+        );
+    }
+
+    #[test]
+    fn search_path_empty_dir_maps_to_dot() {
+        run_trace(
+            vec![
+                t(
+                    "access",
+                    vec![
+                        ArgMatcher::Str("./myscript".into()),
+                        ArgMatcher::Int(0),
+                    ],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "getcwd",
+                    vec![ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::CwdStr("/home".into()),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert("PATH".into(), "".into());
+                let result = search_path("myscript", &shell, false, path_exists);
+                assert_eq!(
+                    result,
+                    Some(PathBuf::from("/home/myscript"))
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn absolute_path_resolves_relative() {
+        run_trace(
+            vec![t(
+                "getcwd",
+                vec![ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::CwdStr("/work".into()),
+            )],
+            || {
+                let result = absolute_path(Path::new("relative.sh"));
+                assert_eq!(result, Some(PathBuf::from("/work/relative.sh")));
+            },
+        );
+    }
+
+    #[test]
+    fn execute_command_utility_spawn_enoent_and_other_error() {
+        run_trace(
+            vec![
+                t("access", vec![ArgMatcher::Str("/usr/bin/cmd".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
+                t("access", vec![ArgMatcher::Str("/usr/bin/cmd".into()), ArgMatcher::Any], TraceResult::Int(0)),
+                t("fork", vec![], TraceResult::Err(sys::ENOENT)),
+                t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Bytes(b"command: cmd: not found\n".to_vec())], TraceResult::Auto),
+                // Second call: fork fails with EIO (non-ENOENT)
+                t("access", vec![ArgMatcher::Str("/usr/bin/cmd".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
+                t("access", vec![ArgMatcher::Str("/usr/bin/cmd".into()), ArgMatcher::Any], TraceResult::Int(0)),
+                t("fork", vec![], TraceResult::Err(sys::EIO)),
+                t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Bytes(b"command: cmd: Input/output error\n".to_vec())], TraceResult::Auto),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert("PATH".into(), "/usr/bin".into());
+
+                let outcome = execute_command_utility(
+                    &mut shell,
+                    &["cmd".into()],
+                    false,
+                )
+                .expect("enoent");
+                assert!(matches!(outcome, BuiltinOutcome::Status(127)));
+
+                let outcome = execute_command_utility(
+                    &mut shell,
+                    &["cmd".into()],
+                    false,
+                )
+                .expect("eio");
+                assert!(matches!(outcome, BuiltinOutcome::Status(126)));
+            },
+        );
+    }
+
+    #[test]
+    fn execute_command_utility_with_default_path() {
+        run_trace(
+            vec![
+                t("access", vec![ArgMatcher::Str("/usr/bin/ls".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
+                t("access", vec![ArgMatcher::Str("/usr/bin/ls".into()), ArgMatcher::Any], TraceResult::Int(0)),
+                // spawn_child: fork succeeds
+                t_fork(
+                    TraceResult::Pid(2000),
+                    vec![
+                        t("setenv", vec![ArgMatcher::Any, ArgMatcher::Any], TraceResult::Int(0)),
+                        t("execvp", vec![ArgMatcher::Any, ArgMatcher::Any], TraceResult::Int(-1)),
+                    ],
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(2000), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Status(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome = execute_command_utility(
+                    &mut shell,
+                    &["ls".into()],
+                    true,
+                )
+                .expect("command -p");
                 assert!(matches!(outcome, BuiltinOutcome::Status(0)));
             },
         );

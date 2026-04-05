@@ -13,13 +13,12 @@ pub fn run(shell: &mut Shell) -> Result<i32, ShellError> {
 fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
     loop {
         for (id, state) in shell.reap_jobs() {
-            use crate::shell::JobState;
+            use crate::shell::ReapedJobState;
             let msg = match state {
-                JobState::Done(status) => format!("[{id}] Done {status}\n"),
-                JobState::Stopped(sig) => {
+                ReapedJobState::Done(status) => format!("[{id}] Done {status}\n"),
+                ReapedJobState::Stopped(sig) => {
                     format!("[{id}] Stopped ({})\n", sys::signal_name(sig))
                 }
-                JobState::Running => continue,
             };
             let _ = sys::write_all_fd(sys::STDERR_FILENO, msg.as_bytes());
         }

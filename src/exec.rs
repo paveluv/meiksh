@@ -705,13 +705,8 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
             }
         })
     } else {
-        let prepared = match build_process_from_expanded(shell, &expanded) {
-            Ok(p) => p,
-            Err(error) => {
-                sys_eprintln!("{}", error.display_message());
-                return Ok(error.exit_status());
-            }
-        };
+        let prepared = build_process_from_expanded(shell, &expanded)
+            .expect("argv is non-empty");
         if !prepared.path_verified && !prepared.exec_path.contains('/') {
             sys_eprintln!("{}: not found", expanded.argv[0]);
             return Ok(127);

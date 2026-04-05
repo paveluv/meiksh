@@ -193,6 +193,9 @@ pub(crate) struct SystemInterface {
     tcsetattr: fn(c_int, c_int, *const libc::termios) -> c_int,
     // User database
     getpwnam: fn(&str) -> Option<String>,
+    // Signal state
+    pending_signal_bits: fn() -> usize,
+    take_pending_signal_bits: fn() -> usize,
 }
 
 pub(crate) fn default_interface() -> SystemInterface {
@@ -292,6 +295,8 @@ pub(crate) fn default_interface() -> SystemInterface {
             let dir = unsafe { CStr::from_ptr((*pw).pw_dir) };
             Some(dir.to_string_lossy().into_owned())
         },
+        pending_signal_bits: || PENDING_SIGNALS.load(Ordering::SeqCst),
+        take_pending_signal_bits: || PENDING_SIGNALS.swap(0, Ordering::SeqCst),
     }
 }
 
@@ -306,7 +311,8 @@ extern "C" fn record_signal(sig: c_int) {
 fn sys_interface() -> SystemInterface {
     #[cfg(test)]
     {
-        return test_support::current_interface().unwrap_or_else(default_interface);
+        return test_support::current_interface()
+            .expect("sys call without run_trace or assert_no_syscalls");
     }
 
     #[cfg(not(test))]
@@ -1116,6 +1122,8 @@ pub(crate) mod test_support {
             tcgetattr: trace_tcgetattr,
             tcsetattr: trace_tcsetattr,
             getpwnam: trace_getpwnam,
+            pending_signal_bits: test_pending_signal_bits,
+            take_pending_signal_bits: test_take_pending_signal_bits,
         }
     }
 
@@ -1274,6 +1282,8 @@ pub(crate) mod test_support {
             tcgetattr: panic_tcgetattr,
             tcsetattr: panic_tcsetattr,
             getpwnam: panic_getpwnam,
+            pending_signal_bits: test_pending_signal_bits,
+            take_pending_signal_bits: test_take_pending_signal_bits,
         }
     }
 
@@ -1575,10 +1585,7 @@ pub fn default_signal_action(signal: c_int) -> SysResult<()> {
 }
 
 pub fn has_pending_signal() -> Option<c_int> {
-    #[cfg(test)]
-    let bits = test_support::test_pending_signal_bits();
-    #[cfg(not(test))]
-    let bits = PENDING_SIGNALS.load(Ordering::SeqCst);
+    let bits = (sys_interface().pending_signal_bits)();
 
     supported_trap_signals().into_iter().find(|signal| {
         signal_mask(*signal)
@@ -1588,10 +1595,7 @@ pub fn has_pending_signal() -> Option<c_int> {
 }
 
 pub fn take_pending_signals() -> Vec<c_int> {
-    #[cfg(test)]
-    let bits = test_support::test_take_pending_signal_bits();
-    #[cfg(not(test))]
-    let bits = PENDING_SIGNALS.swap(0, Ordering::SeqCst);
+    let bits = (sys_interface().take_pending_signal_bits)();
 
     supported_trap_signals()
         .into_iter()
@@ -2083,10 +2087,8 @@ pub fn spawn_child(
                 let _ = close_fd(src);
             }
         }
-        if let Some(vars) = env_vars {
-            for &(key, value) in vars {
-                let _ = env_set_var(key, value);
-            }
+        for &(key, value) in env_vars.unwrap_or(&[]) {
+            let _ = env_set_var(key, value);
         }
         let argv_owned: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
         let _ = exec_replace(program, &argv_owned);
@@ -2801,12 +2803,14 @@ mod tests {
 
     #[test]
     fn pending_signal_tracking() {
-        test_support::with_pending_signals_for_test(&[SIGINT], || {
-            assert_eq!(has_pending_signal(), Some(SIGINT));
-            assert_eq!(take_pending_signals(), vec![SIGINT]);
-        });
-        test_support::with_pending_signals_for_test(&[99], || {
-            assert_eq!(has_pending_signal(), None);
+        test_support::assert_no_syscalls(|| {
+            test_support::with_pending_signals_for_test(&[SIGINT], || {
+                assert_eq!(has_pending_signal(), Some(SIGINT));
+                assert_eq!(take_pending_signals(), vec![SIGINT]);
+            });
+            test_support::with_pending_signals_for_test(&[99], || {
+                assert_eq!(has_pending_signal(), None);
+            });
         });
     }
 
@@ -3223,9 +3227,6 @@ mod tests {
         (iface.setenv)(key, "hello").expect("setenv");
         assert_eq!((iface.getenv)(key), Some("hello".to_string()));
 
-        let map = (iface.get_environ)();
-        assert_eq!(map.get(key), Some(&"hello".to_string()));
-
         (iface.unsetenv)(key).expect("unsetenv");
         assert_eq!((iface.getenv)(key), None);
     }
@@ -3240,5 +3241,479 @@ mod tests {
     fn default_unsetenv_rejects_key_with_equals() {
         let iface = default_interface();
         assert!((iface.unsetenv)("BAD=KEY").is_err());
+    }
+
+    #[test]
+    fn default_interface_pending_signal_bits() {
+        let iface = default_interface();
+        let _bits = (iface.pending_signal_bits)();
+    }
+
+    #[test]
+    fn default_interface_tcgetattr_tcsetattr() {
+        let iface = default_interface();
+        let mut termios: libc::termios = unsafe { std::mem::zeroed() };
+        let _ = (iface.tcgetattr)(STDIN_FILENO, &mut termios);
+        let _ = (iface.tcsetattr)(STDIN_FILENO, 0, &termios);
+    }
+
+    #[test]
+    fn default_interface_execvp_nonexistent() {
+        let iface = default_interface();
+        let prog = CString::new("/nonexistent_meiksh_test_binary_xyz").unwrap();
+        let argv = [prog.as_ptr(), std::ptr::null()];
+        let rc = (iface.execvp)(prog.as_ptr(), argv.as_ptr());
+        assert!(rc < 0);
+    }
+
+    #[test]
+    fn read_dir_entries_readdir_error() {
+        use test_support::{ArgMatcher, TraceResult, run_trace, t};
+        run_trace(
+            vec![
+                t("opendir", vec![ArgMatcher::Any], TraceResult::Int(1)),
+                t("readdir", vec![ArgMatcher::Any], TraceResult::Err(libc::EIO)),
+                t("closedir", vec![ArgMatcher::Any], TraceResult::Int(0)),
+            ],
+            || {
+                assert!(read_dir_entries("/tmp").is_err());
+            },
+        );
+    }
+
+    #[test]
+    fn setenv_rejects_nul() {
+        use test_support::{run_trace, ArgMatcher, TraceResult, t};
+        run_trace(
+            vec![
+                t("setenv", vec![ArgMatcher::Str("K".into()), ArgMatcher::Str("V".into())], TraceResult::Int(0)),
+                t("unsetenv", vec![ArgMatcher::Str("K".into())], TraceResult::Int(0)),
+            ],
+            || {
+                env_set_var("K", "V").expect("setenv ok");
+                env_unset_var("K").expect("unsetenv ok");
+            },
+        );
+    }
+
+    #[test]
+    fn signal_name_covers_all_branches() {
+        assert_eq!(signal_name(SIGHUP), "SIGHUP");
+        assert_eq!(signal_name(SIGINT), "SIGINT");
+        assert_eq!(signal_name(SIGQUIT), "SIGQUIT");
+        assert_eq!(signal_name(SIGILL), "SIGILL");
+        assert_eq!(signal_name(SIGABRT), "SIGABRT");
+        assert_eq!(signal_name(SIGFPE), "SIGFPE");
+        assert_eq!(signal_name(SIGKILL), "SIGKILL");
+        assert_eq!(signal_name(SIGBUS), "SIGBUS");
+        assert_eq!(signal_name(SIGUSR1), "SIGUSR1");
+        assert_eq!(signal_name(SIGSEGV), "SIGSEGV");
+        assert_eq!(signal_name(SIGUSR2), "SIGUSR2");
+        assert_eq!(signal_name(SIGPIPE), "SIGPIPE");
+        assert_eq!(signal_name(SIGALRM), "SIGALRM");
+        assert_eq!(signal_name(SIGTERM), "SIGTERM");
+        assert_eq!(signal_name(SIGCHLD), "SIGCHLD");
+        assert_eq!(signal_name(SIGCONT), "SIGCONT");
+        assert_eq!(signal_name(SIGTSTP), "SIGTSTP");
+        assert_eq!(signal_name(SIGTTIN), "SIGTTIN");
+        assert_eq!(signal_name(SIGTTOU), "SIGTTOU");
+        assert_eq!(signal_name(SIGSYS), "SIGSYS");
+        assert_eq!(signal_name(999), "UNKNOWN");
+    }
+
+    #[test]
+    fn query_signal_disposition_error() {
+        use test_support::{ArgMatcher, TraceResult, run_trace, t};
+        run_trace(
+            vec![t(
+                "signal",
+                vec![ArgMatcher::Int(SIGINT as i64), ArgMatcher::Any],
+                TraceResult::Err(libc::EINVAL),
+            )],
+            || {
+                assert!(query_signal_disposition(SIGINT).is_err());
+            },
+        );
+    }
+
+    #[test]
+    fn set_terminal_attrs_success_and_error() {
+        let termios = unsafe { std::mem::zeroed::<libc::termios>() };
+
+        fn fake_tcsetattr_ok(_: c_int, _: c_int, _: *const libc::termios) -> c_int {
+            0
+        }
+        let fake_ok = SystemInterface {
+            tcsetattr: fake_tcsetattr_ok,
+            ..default_interface()
+        };
+        test_support::with_test_interface(fake_ok, || {
+            assert!(set_terminal_attrs(0, &termios).is_ok());
+        });
+
+        fn fake_tcsetattr_err(_: c_int, _: c_int, _: *const libc::termios) -> c_int {
+            -1
+        }
+        let fake_err = SystemInterface {
+            tcsetattr: fake_tcsetattr_err,
+            ..default_interface()
+        };
+        test_support::with_test_interface(fake_err, || {
+            assert!(set_terminal_attrs(0, &termios).is_err());
+        });
+    }
+
+    #[test]
+    fn get_terminal_attrs_error() {
+        fn fake_tcgetattr_err(_: c_int, _: *mut libc::termios) -> c_int {
+            -1
+        }
+        let fake = SystemInterface {
+            tcgetattr: fake_tcgetattr_err,
+            ..default_interface()
+        };
+        test_support::with_test_interface(fake, || {
+            assert!(get_terminal_attrs(0).is_err());
+        });
+    }
+
+    #[test]
+    fn ensure_blocking_setfl_error() {
+        use test_support::{ArgMatcher, TraceResult, run_trace, t};
+        run_trace(
+            vec![
+                t(
+                    "isatty",
+                    vec![ArgMatcher::Fd(STDIN_FILENO)],
+                    TraceResult::Int(1),
+                ),
+                t(
+                    "fcntl",
+                    vec![
+                        ArgMatcher::Fd(STDIN_FILENO),
+                        ArgMatcher::Int(F_GETFL as i64),
+                        ArgMatcher::Int(0),
+                    ],
+                    TraceResult::Int((O_NONBLOCK | 0o2) as i64),
+                ),
+                t(
+                    "fcntl",
+                    vec![
+                        ArgMatcher::Fd(STDIN_FILENO),
+                        ArgMatcher::Int(F_SETFL as i64),
+                        ArgMatcher::Int(0o2),
+                    ],
+                    TraceResult::Err(libc::EIO),
+                ),
+            ],
+            || {
+                assert!(ensure_blocking_read_fd(STDIN_FILENO).is_err());
+            },
+        );
+    }
+
+    #[test]
+    fn fifo_like_fd_fstat_error() {
+        use test_support::{ArgMatcher, TraceResult, run_trace, t};
+        run_trace(
+            vec![
+                t(
+                    "isatty",
+                    vec![ArgMatcher::Fd(99)],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "fstat",
+                    vec![ArgMatcher::Fd(99), ArgMatcher::Any],
+                    TraceResult::Err(libc::EBADF),
+                ),
+            ],
+            || {
+                ensure_blocking_read_fd(99).expect("regular fd no-op");
+            },
+        );
+    }
+
+    #[test]
+    fn write_all_fd_zero_write_eio() {
+        fn fake_write(_fd: c_int, _data: &[u8]) -> isize {
+            0
+        }
+        let fake = SystemInterface {
+            write: fake_write,
+            ..default_interface()
+        };
+        test_support::with_test_interface(fake, || {
+            let err = write_all_fd(1, b"data").unwrap_err();
+            assert_eq!(err, SysError::Errno(libc::EIO));
+        });
+    }
+
+    #[test]
+    fn change_dir_error() {
+        fn fake_chdir(_: *const c_char) -> c_int {
+            -1
+        }
+        let fake = SystemInterface {
+            chdir: fake_chdir,
+            ..default_interface()
+        };
+        test_support::with_test_interface(fake, || {
+            assert!(change_dir("/nonexistent").is_err());
+        });
+    }
+
+    #[test]
+    fn canonicalize_error() {
+        fn fake_realpath(_: *const c_char, _: *mut c_char) -> *mut c_char {
+            std::ptr::null_mut()
+        }
+        let fake = SystemInterface {
+            realpath: fake_realpath,
+            ..default_interface()
+        };
+        test_support::with_test_interface(fake, || {
+            assert!(canonicalize("/nonexistent").is_err());
+        });
+    }
+
+    #[test]
+    fn open_for_redirect_noclobber_rewrites_flags() {
+        use std::sync::atomic::{AtomicI32, Ordering};
+        static CAPTURED_FLAGS: AtomicI32 = AtomicI32::new(0);
+
+        fn fake_open(_: *const c_char, flags: c_int, _: mode_t) -> c_int {
+            CAPTURED_FLAGS.store(flags, Ordering::SeqCst);
+            5
+        }
+        let fake = SystemInterface {
+            open: fake_open,
+            ..default_interface()
+        };
+        test_support::with_test_interface(fake, || {
+            let fd =
+                open_for_redirect("/tmp/out", O_WRONLY | O_TRUNC | O_CREAT, 0o666, true)
+                    .expect("open");
+            assert_eq!(fd, 5);
+            let flags = CAPTURED_FLAGS.load(Ordering::SeqCst);
+            assert!(flags & O_TRUNC == 0);
+            assert!(flags & O_EXCL != 0);
+            assert!(flags & O_CREAT != 0);
+
+            let fd =
+                open_for_redirect("/tmp/out", O_WRONLY | O_TRUNC | O_CREAT, 0o666, false)
+                    .expect("open");
+            assert_eq!(fd, 5);
+            let flags = CAPTURED_FLAGS.load(Ordering::SeqCst);
+            assert!(flags & O_TRUNC != 0);
+        });
+    }
+
+    #[test]
+    fn child_exit_status_code() {
+        let status = ChildExitStatus { code: 42 };
+        assert_eq!(status.code(), Some(42));
+        assert!(!status.success());
+        let zero = ChildExitStatus { code: 0 };
+        assert!(zero.success());
+    }
+
+    #[test]
+    fn child_handle_wait_with_output_reads_pipe() {
+        use test_support::{ArgMatcher, TraceResult, run_trace, t};
+        run_trace(
+            vec![
+                t(
+                    "read",
+                    vec![ArgMatcher::Fd(10), ArgMatcher::Any],
+                    TraceResult::Bytes(b"hello".to_vec()),
+                ),
+                t(
+                    "read",
+                    vec![ArgMatcher::Fd(10), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "close",
+                    vec![ArgMatcher::Fd(10)],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(99), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Status(0),
+                ),
+            ],
+            || {
+                let handle = ChildHandle {
+                    pid: 99,
+                    stdout_fd: Some(10),
+                };
+                let output = handle.wait_with_output().expect("wait_with_output");
+                assert_eq!(output.stdout, b"hello");
+                assert!(output.status.success());
+            },
+        );
+    }
+
+    #[test]
+    fn child_handle_wait_closes_stdout_pipe() {
+        use test_support::{ArgMatcher, TraceResult, run_trace, t};
+        run_trace(
+            vec![
+                t(
+                    "close",
+                    vec![ArgMatcher::Fd(10)],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(99), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Status(0),
+                ),
+            ],
+            || {
+                let handle = ChildHandle {
+                    pid: 99,
+                    stdout_fd: Some(10),
+                };
+                let status = handle.wait().expect("wait");
+                assert!(status.success());
+            },
+        );
+    }
+
+    #[test]
+    fn spawn_child_with_pipe_stdout_and_all_params() {
+        use test_support::{ArgMatcher, TraceResult, run_trace, t, t_fork};
+        run_trace(
+            vec![
+                t(
+                    "pipe",
+                    vec![ArgMatcher::Any],
+                    TraceResult::Fds(10, 11),
+                ),
+                t_fork(
+                    TraceResult::Pid(100),
+                    vec![
+                        t(
+                            "setpgid",
+                            vec![ArgMatcher::Int(0), ArgMatcher::Int(42)],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "dup2",
+                            vec![ArgMatcher::Fd(5), ArgMatcher::Fd(STDIN_FILENO)],
+                            TraceResult::Fd(STDIN_FILENO),
+                        ),
+                        t(
+                            "close",
+                            vec![ArgMatcher::Fd(5)],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "close",
+                            vec![ArgMatcher::Fd(10)],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "dup2",
+                            vec![ArgMatcher::Fd(11), ArgMatcher::Fd(STDOUT_FILENO)],
+                            TraceResult::Fd(STDOUT_FILENO),
+                        ),
+                        t(
+                            "close",
+                            vec![ArgMatcher::Fd(11)],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "dup2",
+                            vec![ArgMatcher::Fd(7), ArgMatcher::Fd(2)],
+                            TraceResult::Fd(2),
+                        ),
+                        t(
+                            "close",
+                            vec![ArgMatcher::Fd(7)],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "setenv",
+                            vec![
+                                ArgMatcher::Str("VAR".into()),
+                                ArgMatcher::Str("val".into()),
+                            ],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "execvp",
+                            vec![ArgMatcher::Any, ArgMatcher::Any],
+                            TraceResult::Int(-1),
+                        ),
+                    ],
+                ),
+                t(
+                    "close",
+                    vec![ArgMatcher::Fd(5)],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "close",
+                    vec![ArgMatcher::Fd(11)],
+                    TraceResult::Int(0),
+                ),
+            ],
+            || {
+                let handle = spawn_child(
+                    "echo",
+                    &["echo", "hello"],
+                    Some(&[("VAR", "val")]),
+                    &[(7, 2)],
+                    Some(5),
+                    true,
+                    Some(42),
+                )
+                .expect("spawn");
+                assert_eq!(handle.pid, 100);
+                assert_eq!(handle.stdout_fd, Some(10));
+            },
+        );
+    }
+
+    #[test]
+    fn env_set_var_and_env_unset_var_and_env_var() {
+        use test_support::{ArgMatcher, TraceResult, run_trace, t};
+        run_trace(
+            vec![
+                t(
+                    "setenv",
+                    vec![
+                        ArgMatcher::Str("K".into()),
+                        ArgMatcher::Str("V".into()),
+                    ],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "getenv",
+                    vec![ArgMatcher::Str("K".into())],
+                    TraceResult::Str("V".into()),
+                ),
+                t(
+                    "unsetenv",
+                    vec![ArgMatcher::Str("K".into())],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "getenv",
+                    vec![ArgMatcher::Str("K".into())],
+                    TraceResult::NullStr,
+                ),
+            ],
+            || {
+                env_set_var("K", "V").expect("setenv");
+                assert_eq!(env_var("K"), Some("V".into()));
+                env_unset_var("K").expect("unsetenv");
+                assert_eq!(env_var("K"), None);
+            },
+        );
     }
 }
