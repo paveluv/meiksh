@@ -356,7 +356,7 @@ impl<'src> ParseSession<'src> {
         &mut self,
         aliases: &HashMap<String, String>,
     ) -> Result<Option<ListItem<'src>>, ParseError> {
-        self.parser.aliases = aliases.clone();
+        self.parser.set_aliases(aliases);
         self.parser.skip_separators();
         self.parser.expand_alias_at_command_start()?;
         if self.parser.is_eof() {
@@ -1094,6 +1094,10 @@ impl<'src> Parser<'src> {
             alias_expansions_remaining: 1024,
             index: 0,
         }
+    }
+
+    fn set_aliases(&mut self, aliases: &HashMap<String, String>) {
+        self.aliases.clone_from(aliases);
     }
 
     fn parse_program_until(

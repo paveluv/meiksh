@@ -514,7 +514,13 @@ impl Shell {
                 Some(item) => item,
                 None => break,
             };
-            self.env.insert("LINENO".into(), lineno.to_string());
+            if let Some(v) = self.env.get_mut("LINENO") {
+                v.clear();
+                use std::fmt::Write;
+                let _ = write!(v, "{lineno}");
+            } else {
+                self.env.insert("LINENO".into(), lineno.to_string());
+            }
             status = self.execute_program(&Program { items: vec![item] })?;
             self.run_pending_traps()?;
             if !self.running || self.has_pending_control() {
@@ -581,7 +587,7 @@ impl Shell {
         Ok(text)
     }
 
-    pub fn env_for_child(&self) -> HashMap<String, String> {
+    pub fn env_for_child(&self) -> Vec<(String, String)> {
         self.exported
             .iter()
             .filter_map(|name| {
@@ -592,8 +598,8 @@ impl Shell {
             .collect()
     }
 
-    pub fn get_var(&self, name: &str) -> Option<String> {
-        self.env.get(name).cloned()
+    pub fn get_var(&self, name: &str) -> Option<&str> {
+        self.env.get(name).map(String::as_str)
     }
 
     pub fn input_is_incomplete(&self, error: &crate::syntax::ParseError) -> bool {
@@ -610,8 +616,12 @@ impl Shell {
                 message: format!("{name}: readonly variable"),
             });
         }
-        self.env.insert(name.to_string(), value);
-        if self.options.allexport {
+        if let Some(existing) = self.env.get_mut(name) {
+            *existing = value;
+        } else {
+            self.env.insert(name.to_string(), value);
+        }
+        if self.options.allexport && !self.exported.contains(name) {
             self.exported.insert(name.to_string());
         }
         Ok(())
@@ -621,7 +631,9 @@ impl Shell {
         if let Some(value) = value {
             self.set_var(name, value)?;
         }
-        self.exported.insert(name.to_string());
+        if !self.exported.contains(name) {
+            self.exported.insert(name.to_string());
+        }
         Ok(())
     }
 
@@ -1413,6 +1425,7 @@ fn resolve_script_path(shell: &Shell, script: &Path) -> Option<PathBuf> {
 fn search_script_path(shell: &Shell, name: &str) -> Option<PathBuf> {
     let path_env = shell
         .get_var("PATH")
+        .map(|s| s.to_string())
         .or_else(|| sys::env_var("PATH"))
         .unwrap_or_default();
     for dir in path_env.split(':') {
@@ -1607,13 +1620,19 @@ mod tests {
             shell.env.insert("B".into(), "2".into());
             shell.exported.insert("A".into());
             let env = shell.env_for_child();
-            assert_eq!(env.get("A").map(String::as_str), Some("1"));
-            assert!(!env.contains_key("B"));
+            assert_eq!(
+                env.iter().find(|(k, _)| k == "A").map(|(_, v)| v.as_str()),
+                Some("1")
+            );
+            assert!(!env.iter().any(|(k, _)| k == "B"));
 
             shell.options.allexport = true;
             shell.set_var("B", "3".into()).expect("allexport set");
             let env = shell.env_for_child();
-            assert_eq!(env.get("B").map(String::as_str), Some("3"));
+            assert_eq!(
+                env.iter().find(|(k, _)| k == "B").map(|(_, v)| v.as_str()),
+                Some("3")
+            );
         });
     }
 
@@ -1782,7 +1801,7 @@ mod tests {
                     .source_path(Path::new("/tmp/source-test.sh"))
                     .expect("source");
                 assert_eq!(status, 0);
-                assert_eq!(shell.get_var("VALUE").as_deref(), Some("42"));
+                assert_eq!(shell.get_var("VALUE"), Some("42"));
             },
         );
     }
@@ -1838,8 +1857,8 @@ mod tests {
                 )
                 .expect("builtin");
             assert!(matches!(flow, FlowSignal::Continue(0)));
-            assert_eq!(shell.get_var("ASSIGN").as_deref(), Some("2"));
-            assert_eq!(shell.get_var("FLOW").as_deref(), Some("1"));
+            assert_eq!(shell.get_var("ASSIGN"), Some("2"));
+            assert_eq!(shell.get_var("FLOW"), Some("1"));
 
             let flow = shell
                 .run_builtin(&["exit".into(), "9".into()], &[])
@@ -1945,7 +1964,7 @@ mod tests {
                 Some("meiksh")
             );
             expand::Context::set_var(&mut shell, "CTX_SET", "7".into()).expect("ctx set");
-            assert_eq!(shell.get_var("CTX_SET").as_deref(), Some("7"));
+            assert_eq!(shell.get_var("CTX_SET"), Some("7"));
             shell.mark_readonly("CTX_SET");
             let error = expand::Context::set_var(&mut shell, "CTX_SET", "8".into())
                 .expect_err("readonly ctx set");
@@ -2102,7 +2121,7 @@ mod tests {
                 shell.options.script_path = Some(PathBuf::from("/tmp/run-test.sh"));
                 let status = shell.run().expect("run");
                 assert_eq!(status, 0);
-                assert_eq!(shell.get_var("VALUE").as_deref(), Some("77"));
+                assert_eq!(shell.get_var("VALUE"), Some("77"));
             },
         );
     }
@@ -2225,7 +2244,7 @@ mod tests {
             shell.options.command_string = Some("VALUE=13".into());
             let status = shell.run().expect("run command string");
             assert_eq!(status, 0);
-            assert_eq!(shell.get_var("VALUE").as_deref(), Some("13"));
+            assert_eq!(shell.get_var("VALUE"), Some("13"));
         });
     }
 
@@ -2325,26 +2344,26 @@ mod tests {
                 .expect("define alias");
             let status = shell.execute_string("setok").expect("run alias");
             assert_eq!(status, 0);
-            assert_eq!(shell.get_var("VALUE").as_deref(), Some("ok"));
+            assert_eq!(shell.get_var("VALUE"), Some("ok"));
 
             let status = shell
                 .execute_string("alias same='export SAME=1'; same")
                 .expect("run same-source alias");
             assert_eq!(status, 0);
-            assert_eq!(shell.get_var("SAME").as_deref(), Some("1"));
+            assert_eq!(shell.get_var("SAME"), Some("1"));
 
             shell.aliases.insert("cond".into(), "if".into());
             let status = shell
                 .execute_string("cond true; then export BRANCH=hit; fi")
                 .expect("run reserved-word alias");
             assert_eq!(status, 0);
-            assert_eq!(shell.get_var("BRANCH").as_deref(), Some("hit"));
+            assert_eq!(shell.get_var("BRANCH"), Some("hit"));
 
             let status = shell
                 .execute_string("alias cond2='if'; cond2 true; then export TOP=ok; fi")
                 .expect("run same-source reserved alias");
             assert_eq!(status, 0);
-            assert_eq!(shell.get_var("TOP").as_deref(), Some("ok"));
+            assert_eq!(shell.get_var("TOP"), Some("ok"));
 
             shell.aliases.insert("chain".into(), "eval ".into());
             shell.aliases.insert("word".into(), "VALUE=chain".into());
@@ -2352,7 +2371,7 @@ mod tests {
                 .execute_string("chain word")
                 .expect("run blank alias chain");
             assert_eq!(status, 0);
-            assert_eq!(shell.get_var("VALUE").as_deref(), Some("chain"));
+            assert_eq!(shell.get_var("VALUE"), Some("chain"));
         });
     }
 

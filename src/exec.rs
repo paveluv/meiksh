@@ -350,19 +350,19 @@ fn spawn_pipeline(
 
 fn wait_for_children(
     shell: &mut Shell,
-    spawned: SpawnedProcesses,
+    mut spawned: SpawnedProcesses,
     command_desc: Option<&str>,
 ) -> Result<i32, ShellError> {
     let saved_foreground = handoff_foreground(spawned.pgid);
     let mut status = 0;
-    for handle in &spawned.children {
-        match shell.wait_for_child_pid(handle.pid, false)? {
+    for i in 0..spawned.children.len() {
+        match shell.wait_for_child_pid(spawned.children[i].pid, false)? {
             ChildWaitResult::Exited(code) => status = code,
             ChildWaitResult::Stopped(sig) => {
                 restore_foreground(saved_foreground);
                 let desc = command_desc.unwrap_or("").to_string();
-                let id =
-                    shell.register_background_job(desc, spawned.pgid, spawned.children.clone());
+                let children = std::mem::take(&mut spawned.children);
+                let id = shell.register_background_job(desc, spawned.pgid, children);
                 let idx = shell.jobs.iter().position(|j| j.id == id).unwrap();
                 shell.jobs[idx].state = JobState::Stopped(sig);
                 if shell.interactive {
@@ -628,7 +628,7 @@ fn save_vars(shell: &Shell, assignments: &[(String, String)]) -> Vec<SavedVar> {
         .iter()
         .map(|(name, _)| SavedVar {
             name: name.clone(),
-            value: shell.get_var(name),
+            value: shell.get_var(name).map(|s| s.to_string()),
             was_exported: shell.exported.contains(name),
         })
         .collect()
@@ -670,7 +670,7 @@ fn write_xtrace(shell: &mut Shell, expanded: &ExpandedSimpleCommand) {
     if !shell.options.xtrace {
         return;
     }
-    let ps4_raw = shell.get_var("PS4").unwrap_or_else(|| "+ ".to_string());
+    let ps4_raw = shell.get_var("PS4").unwrap_or("+ ").to_string();
     let prefix = expand::expand_parameter_text(shell, &ps4_raw).unwrap_or_else(|_| "+ ".into());
     let mut line = prefix;
     for (name, value) in &expanded.assignments {
@@ -778,10 +778,11 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
             }
         })
     } else {
-        let prepared = build_process_from_expanded(shell, &expanded)
+        let command_name = expanded.argv[0].clone();
+        let prepared = build_process_from_expanded(shell, expanded)
             .expect("argv is non-empty");
         if !prepared.path_verified && !prepared.exec_path.contains('/') {
-            sys_eprintln!("{}: not found", expanded.argv[0]);
+            sys_eprintln!("{}: not found", command_name);
             return Ok(127);
         }
         let handle = match spawn_prepared(shell, &prepared, ProcessGroupPlan::NewGroup) {
@@ -793,7 +794,7 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
         };
         let pgid = handle.pid;
         let _ = sys::set_process_group(pgid, pgid);
-        let desc = expanded.argv.join(" ");
+        let desc = prepared.argv.join(" ");
         let status = wait_for_external_child(shell, &handle, Some(pgid), Some(&desc))?;
         Ok(status)
     }
@@ -930,7 +931,7 @@ fn expand_redirections(
 
 fn build_process_from_expanded(
     shell: &Shell,
-    expanded: &ExpandedSimpleCommand,
+    expanded: ExpandedSimpleCommand,
 ) -> Result<PreparedProcess, ShellError> {
     let program = expanded.argv.first().ok_or_else(|| ShellError {
         message: "empty command".to_string(),
@@ -946,15 +947,13 @@ fn build_process_from_expanded(
         .unwrap_or_else(|| PathBuf::from(program))
         .display()
         .to_string();
-    let mut child_env: Vec<(String, String)> = shell.env_for_child().into_iter().collect();
-    for (name, value) in &expanded.assignments {
-        child_env.push((name.clone(), value.clone()));
-    }
+    let mut child_env = shell.env_for_child();
+    child_env.extend(expanded.assignments);
     Ok(PreparedProcess {
         exec_path,
-        argv: expanded.argv.clone(),
+        argv: expanded.argv,
         child_env,
-        redirections: expanded.redirections.clone(),
+        redirections: expanded.redirections,
         noclobber: shell.options.noclobber,
         path_verified,
     })
@@ -1125,7 +1124,7 @@ fn resolve_command_path(
 
     let path = path_override
         .map(|s| s.to_string())
-        .or_else(|| shell.get_var("PATH"))
+        .or_else(|| shell.get_var("PATH").map(|s| s.to_string()))
         .or_else(|| sys::env_var("PATH"))
         .unwrap_or_default();
 
@@ -1335,130 +1334,54 @@ fn default_fd_for_redirection(kind: RedirectionKind) -> i32 {
 }
 
 fn case_pattern_matches(text: &str, pattern: &str) -> bool {
-    let text: Vec<char> = text.chars().collect();
-    let pattern: Vec<char> = pattern.chars().collect();
-    match_pattern(&text, 0, &pattern, 0)
+    expand::pattern_matches(text, pattern)
 }
 
-fn match_pattern(text: &[char], ti: usize, pattern: &[char], pi: usize) -> bool {
-    if pi == pattern.len() {
-        return ti == text.len();
-    }
-
-    match pattern[pi] {
-        '*' => (ti..=text.len()).any(|next_ti| match_pattern(text, next_ti, pattern, pi + 1)),
-        '?' => ti < text.len() && match_pattern(text, ti + 1, pattern, pi + 1),
-        '[' => match match_bracket(text.get(ti).copied(), pattern, pi) {
-            Some((matched, next_pi)) => matched && match_pattern(text, ti + 1, pattern, next_pi),
-            None => {
-                ti < text.len() && text[ti] == '[' && match_pattern(text, ti + 1, pattern, pi + 1)
-            }
-        },
-        '\\' if pi + 1 < pattern.len() => {
-            ti < text.len()
-                && text[ti] == pattern[pi + 1]
-                && match_pattern(text, ti + 1, pattern, pi + 2)
-        }
-        ch => ti < text.len() && text[ti] == ch && match_pattern(text, ti + 1, pattern, pi + 1),
-    }
-}
-
-fn match_charclass(class: &str, ch: char) -> bool {
-    crate::sys::classify_char(class, ch)
-}
-
-fn match_bracket(current: Option<char>, pattern: &[char], start: usize) -> Option<(bool, usize)> {
-    let current = current?;
-    let mut index = start + 1;
-    if index >= pattern.len() {
-        return None;
-    }
-
-    let mut negate = false;
-    if matches!(pattern.get(index), Some('!') | Some('^')) {
-        negate = true;
-        index += 1;
-    }
-
-    let first_elem = true;
-    let mut matched = false;
-    let mut saw_closer = false;
-    let mut first_elem = first_elem;
-    while index < pattern.len() {
-        if pattern[index] == ']' && !first_elem {
-            saw_closer = true;
-            index += 1;
-            break;
-        }
-
-        first_elem = false;
-
-        if pattern[index] == '[' && index + 1 < pattern.len() && pattern[index + 1] == ':' {
-            if let Some(end) = pattern[index + 2..]
-                .iter()
-                .zip(pattern[index + 3..].iter())
-                .position(|(&a, &b)| a == ':' && b == ']')
-            {
-                let class_name: String = pattern[index + 2..index + 2 + end].iter().collect();
-                matched |= match_charclass(&class_name, current);
-                index = index + 2 + end + 2;
-                continue;
-            }
-        }
-
-        let first = if pattern[index] == '\\' && index + 1 < pattern.len() {
-            index += 1;
-            pattern[index]
-        } else {
-            pattern[index]
-        };
-
-        if index + 2 < pattern.len() && pattern[index + 1] == '-' && pattern[index + 2] != ']' {
-            let last = pattern[index + 2];
-            matched |= first <= current && current <= last;
-            index += 3;
-        } else {
-            matched |= current == first;
-            index += 1;
-        }
-    }
-
-    if saw_closer {
-        Some((if negate { !matched } else { matched }, index))
-    } else {
-        None
-    }
-}
-
+#[cfg(test)]
 fn render_program(program: &Program) -> String {
-    let mut text = String::new();
+    let mut buf = String::new();
+    render_program_into(program, &mut buf);
+    buf
+}
+
+fn render_program_into(program: &Program, buf: &mut String) {
     for (index, item) in program.items.iter().enumerate() {
         if index > 0 {
-            text.push('\n');
+            buf.push('\n');
         }
-        text.push_str(&render_list_item(item));
+        render_list_item_into(item, buf);
     }
-    text
 }
 
+#[cfg(test)]
 fn render_list_item(item: &ListItem) -> String {
-    let mut text = render_and_or(&item.and_or);
+    let mut buf = String::new();
+    render_list_item_into(item, &mut buf);
+    buf
+}
+
+fn render_list_item_into(item: &ListItem, buf: &mut String) {
+    render_and_or_into(&item.and_or, buf);
     if item.asynchronous {
-        text.push_str(" &");
+        buf.push_str(" &");
     }
-    text
 }
 
 fn render_and_or(and_or: &AndOr) -> String {
-    let mut text = render_pipeline(&and_or.first);
+    let mut buf = String::new();
+    render_and_or_into(and_or, &mut buf);
+    buf
+}
+
+fn render_and_or_into(and_or: &AndOr, buf: &mut String) {
+    render_pipeline_into(&and_or.first, buf);
     for (op, pipeline) in &and_or.rest {
         match op {
-            LogicalOp::And => text.push_str(" && "),
-            LogicalOp::Or => text.push_str(" || "),
+            LogicalOp::And => buf.push_str(" && "),
+            LogicalOp::Or => buf.push_str(" || "),
         }
-        text.push_str(&render_pipeline(pipeline));
+        render_pipeline_into(pipeline, buf);
     }
-    text
 }
 
 fn execute_nested_program(shell: &mut Shell, program: &Program) -> Result<i32, ShellError> {
@@ -1475,144 +1398,213 @@ fn execute_nested_program(shell: &mut Shell, program: &Program) -> Result<i32, S
 }
 
 fn render_command(command: &Command) -> String {
+    let mut buf = String::new();
+    render_command_into(command, &mut buf);
+    buf
+}
+
+fn render_command_into(command: &Command, buf: &mut String) {
     match command {
-        Command::Simple(simple) => render_simple(simple),
-        Command::Subshell(program) => format!("({})", render_program(program)),
-        Command::Group(program) => format!("{{ {}; }}", render_program(program)),
-        Command::FunctionDef(function) => render_function(function),
-        Command::If(if_command) => render_if(if_command),
-        Command::Loop(loop_command) => render_loop(loop_command),
-        Command::For(for_command) => render_for(for_command),
-        Command::Case(case_command) => render_case(case_command),
+        Command::Simple(simple) => render_simple_into(simple, buf),
+        Command::Subshell(program) => {
+            buf.push('(');
+            render_program_into(program, buf);
+            buf.push(')');
+        }
+        Command::Group(program) => {
+            buf.push_str("{ ");
+            render_program_into(program, buf);
+            buf.push_str("; }");
+        }
+        Command::FunctionDef(function) => render_function_into(function, buf),
+        Command::If(if_command) => render_if_into(if_command, buf),
+        Command::Loop(loop_command) => render_loop_into(loop_command, buf),
+        Command::For(for_command) => render_for_into(for_command, buf),
+        Command::Case(case_command) => render_case_into(case_command, buf),
         Command::Redirected(command, redirections) => {
-            render_redirected_command(command, redirections)
+            render_redirected_command_into(command, redirections, buf);
         }
     }
 }
 
 fn render_pipeline(pipeline: &Pipeline) -> String {
-    let mut parts = Vec::new();
-    for command in &pipeline.commands {
-        parts.push(render_command(command));
-    }
-    let text = parts.join(" | ");
+    let mut buf = String::new();
+    render_pipeline_into(pipeline, &mut buf);
+    buf
+}
+
+fn render_pipeline_into(pipeline: &Pipeline, buf: &mut String) {
     if pipeline.negated {
-        format!("! {text}")
-    } else {
-        text
+        buf.push_str("! ");
+    }
+    for (i, command) in pipeline.commands.iter().enumerate() {
+        if i > 0 {
+            buf.push_str(" | ");
+        }
+        render_command_into(command, buf);
     }
 }
 
+#[cfg(test)]
 fn render_function(function: &FunctionDef) -> String {
-    format!(
-        "{}() {}",
-        function.name,
-        render_pipeline(&Pipeline {
+    let mut buf = String::new();
+    render_function_into(function, &mut buf);
+    buf
+}
+
+fn render_function_into(function: &FunctionDef, buf: &mut String) {
+    buf.push_str(&function.name);
+    buf.push_str("() ");
+    render_pipeline_into(
+        &Pipeline {
             negated: false,
             timed: TimedMode::Off,
             commands: vec![(*function.body).clone()],
-        })
-    )
+        },
+        buf,
+    );
 }
 
+#[cfg(test)]
 fn render_if(if_command: &IfCommand) -> String {
-    let mut text = format!(
-        "if {}\nthen\n{}",
-        render_program(&if_command.condition),
-        render_program(&if_command.then_branch)
-    );
+    let mut buf = String::new();
+    render_if_into(if_command, &mut buf);
+    buf
+}
+
+fn render_if_into(if_command: &IfCommand, buf: &mut String) {
+    buf.push_str("if ");
+    render_program_into(&if_command.condition, buf);
+    buf.push_str("\nthen\n");
+    render_program_into(&if_command.then_branch, buf);
     for branch in &if_command.elif_branches {
-        text.push_str(&format!(
-            "\nelif {}\nthen\n{}",
-            render_program(&branch.condition),
-            render_program(&branch.body)
-        ));
+        buf.push_str("\nelif ");
+        render_program_into(&branch.condition, buf);
+        buf.push_str("\nthen\n");
+        render_program_into(&branch.body, buf);
     }
     if let Some(else_branch) = &if_command.else_branch {
-        text.push_str(&format!("\nelse\n{}", render_program(else_branch)));
+        buf.push_str("\nelse\n");
+        render_program_into(else_branch, buf);
     }
-    text.push_str("\nfi");
-    text
+    buf.push_str("\nfi");
 }
 
+#[cfg(test)]
 fn render_loop(loop_command: &LoopCommand) -> String {
+    let mut buf = String::new();
+    render_loop_into(loop_command, &mut buf);
+    buf
+}
+
+fn render_loop_into(loop_command: &LoopCommand, buf: &mut String) {
     let keyword = match loop_command.kind {
         LoopKind::While => "while",
         LoopKind::Until => "until",
     };
-    format!(
-        "{keyword} {}\ndo\n{}\ndone",
-        render_program(&loop_command.condition),
-        render_program(&loop_command.body)
-    )
+    buf.push_str(keyword);
+    buf.push(' ');
+    render_program_into(&loop_command.condition, buf);
+    buf.push_str("\ndo\n");
+    render_program_into(&loop_command.body, buf);
+    buf.push_str("\ndone");
 }
 
+#[cfg(test)]
 fn render_for(for_command: &ForCommand) -> String {
-    let mut text = format!("for {}", for_command.name);
+    let mut buf = String::new();
+    render_for_into(for_command, &mut buf);
+    buf
+}
+
+fn render_for_into(for_command: &ForCommand, buf: &mut String) {
+    buf.push_str("for ");
+    buf.push_str(&for_command.name);
     if let Some(items) = &for_command.items {
-        text.push_str(" in");
+        buf.push_str(" in");
         for item in items {
-            text.push(' ');
-            text.push_str(&item.raw);
+            buf.push(' ');
+            buf.push_str(&item.raw);
         }
     }
-    text.push_str(&format!(
-        "\ndo\n{}\ndone",
-        render_program(&for_command.body)
-    ));
-    text
+    buf.push_str("\ndo\n");
+    render_program_into(&for_command.body, buf);
+    buf.push_str("\ndone");
 }
 
+#[cfg(test)]
 fn render_case(case_command: &CaseCommand) -> String {
-    let mut text = format!("case {} in", case_command.word.raw);
+    let mut buf = String::new();
+    render_case_into(case_command, &mut buf);
+    buf
+}
+
+fn render_case_into(case_command: &CaseCommand, buf: &mut String) {
+    buf.push_str("case ");
+    buf.push_str(&case_command.word.raw);
+    buf.push_str(" in");
     for arm in &case_command.arms {
-        text.push('\n');
-        let patterns = arm
-            .patterns
-            .iter()
-            .map(|pattern| pattern.raw.as_ref())
-            .collect::<Vec<_>>()
-            .join(" | ");
-        text.push_str(&patterns);
-        text.push_str(")\n");
-        text.push_str(&render_program(&arm.body));
-        text.push_str("\n;;");
+        buf.push('\n');
+        for (i, pattern) in arm.patterns.iter().enumerate() {
+            if i > 0 {
+                buf.push_str(" | ");
+            }
+            buf.push_str(&pattern.raw);
+        }
+        buf.push_str(")\n");
+        render_program_into(&arm.body, buf);
+        buf.push_str("\n;;");
     }
-    text.push_str("\nesac");
-    text
+    buf.push_str("\nesac");
 }
 
+#[cfg(test)]
 fn render_simple(simple: &SimpleCommand) -> String {
-    render_command_line_with_redirections(
-        {
-            let mut parts = Vec::new();
-            for assignment in &simple.assignments {
-                parts.push(format!("{}={}", assignment.name, assignment.value.raw));
-            }
-            for word in &simple.words {
-                parts.push(word.raw.to_string());
-            }
-            parts.join(" ")
-        },
-        &simple.redirections,
-    )
+    let mut buf = String::new();
+    render_simple_into(simple, &mut buf);
+    buf
 }
 
-fn render_redirections_with_bodies(
+fn render_simple_into(simple: &SimpleCommand, buf: &mut String) {
+    let mut base = String::new();
+    for (i, assignment) in simple.assignments.iter().enumerate() {
+        if i > 0 {
+            base.push(' ');
+        }
+        base.push_str(&assignment.name);
+        base.push('=');
+        base.push_str(&assignment.value.raw);
+    }
+    for word in &simple.words {
+        if !base.is_empty() {
+            base.push(' ');
+        }
+        base.push_str(&word.raw);
+    }
+    render_command_line_with_redirections_into(base, &simple.redirections, buf);
+}
+
+fn render_redirections_into(
     redirections: &[crate::syntax::Redirection],
-) -> (String, Vec<String>) {
-    let mut parts = Vec::new();
-    let mut heredocs = Vec::new();
-    for redirection in redirections {
-        parts.push(render_redirection_operator(redirection));
+    redir_buf: &mut String,
+    heredocs: &mut Vec<String>,
+) {
+    for (i, redirection) in redirections.iter().enumerate() {
+        if i > 0 {
+            redir_buf.push(' ');
+        }
+        render_redirection_operator_into(redirection, redir_buf);
         if let Some(here_doc) = &redirection.here_doc {
             heredocs.push(render_here_doc_body(here_doc));
         }
     }
-    (parts.join(" "), heredocs)
 }
 
-fn render_redirection_operator(redirection: &crate::syntax::Redirection) -> String {
+fn render_redirection_operator_into(redirection: &crate::syntax::Redirection, buf: &mut String) {
+    if let Some(fd) = redirection.fd {
+        use std::fmt::Write;
+        let _ = write!(buf, "{fd}");
+    }
     let op = match redirection.kind {
         RedirectionKind::Read => "<",
         RedirectionKind::Write => ">",
@@ -1633,8 +1625,8 @@ fn render_redirection_operator(redirection: &crate::syntax::Redirection) -> Stri
         RedirectionKind::DupInput => "<&",
         RedirectionKind::DupOutput => ">&",
     };
-    let fd = redirection.fd.map(|fd| fd.to_string()).unwrap_or_default();
-    format!("{fd}{op}{}", redirection.target.raw)
+    buf.push_str(op);
+    buf.push_str(&redirection.target.raw);
 }
 
 fn render_here_doc_body(here_doc: &HereDoc) -> String {
@@ -1645,30 +1637,34 @@ fn render_here_doc_body(here_doc: &HereDoc) -> String {
     }
 }
 
-fn render_command_line_with_redirections(
+fn render_command_line_with_redirections_into(
     base: String,
     redirections: &[crate::syntax::Redirection],
-) -> String {
-    let (redir_text, heredocs) = render_redirections_with_bodies(redirections);
-    let mut line = base;
+    buf: &mut String,
+) {
+    let mut redir_text = String::new();
+    let mut heredocs = Vec::new();
+    render_redirections_into(redirections, &mut redir_text, &mut heredocs);
+    buf.push_str(&base);
     if !redir_text.is_empty() {
-        if !line.is_empty() {
-            line.push(' ');
+        if !base.is_empty() {
+            buf.push(' ');
         }
-        line.push_str(&redir_text);
+        buf.push_str(&redir_text);
     }
-    if heredocs.is_empty() {
-        line
-    } else {
-        format!("{line}\n{}", heredocs.join("\n"))
+    if !heredocs.is_empty() {
+        buf.push('\n');
+        buf.push_str(&heredocs.join("\n"));
     }
 }
 
-fn render_redirected_command(
+fn render_redirected_command_into(
     command: &Command,
     redirections: &[crate::syntax::Redirection],
-) -> String {
-    render_command_line_with_redirections(render_command(command), redirections)
+    buf: &mut String,
+) {
+    let base = render_command(command);
+    render_command_line_with_redirections_into(base, redirections, buf);
 }
 
 #[cfg(test)]
@@ -1943,7 +1939,7 @@ mod tests {
             let shell = test_shell();
             let error = build_process_from_expanded(
                 &shell,
-                &ExpandedSimpleCommand {
+                ExpandedSimpleCommand {
                     assignments: Vec::new(),
                     argv: Vec::new(),
                     redirections: Vec::new(),
@@ -1956,7 +1952,7 @@ mod tests {
             shell.env.insert("PATH".into(), String::new());
             let prepared = build_process_from_expanded(
                 &shell,
-                &ExpandedSimpleCommand {
+                ExpandedSimpleCommand {
                     assignments: vec![("ASSIGN_VAR".to_string(), "works".to_string())],
                     argv: vec!["echo".to_string(), "hello".to_string()],
                     redirections: Vec::new(),
@@ -2368,6 +2364,16 @@ mod tests {
             };
             assert_eq!(render_simple(&simple), "X=1 echo >out");
 
+            let multi_assign = SimpleCommand {
+                assignments: vec![
+                    Assignment { name: "A".into(), value: Word { raw: "1".into() } },
+                    Assignment { name: "B".into(), value: Word { raw: "2".into() } },
+                ],
+                words: vec![],
+                redirections: vec![],
+            };
+            assert_eq!(render_simple(&multi_assign), "A=1 B=2");
+
             let pipeline = Pipeline {
                 negated: true,
                 timed: TimedMode::Off,
@@ -2581,7 +2587,7 @@ mod tests {
             .expect("parse");
             let status = execute_program(&mut shell, &if_program).expect("execute");
             assert_eq!(status, 0);
-            assert_eq!(shell.get_var("VALUE").as_deref(), Some("yes"));
+            assert_eq!(shell.get_var("VALUE"), Some("yes"));
 
             let mut shell = test_shell();
             let while_program = crate::syntax::parse(
@@ -2590,7 +2596,7 @@ mod tests {
             .expect("parse");
             let status = execute_program(&mut shell, &while_program).expect("execute");
             assert_eq!(status, 0);
-            assert_eq!(shell.get_var("FLAG").as_deref(), Some("done"));
+            assert_eq!(shell.get_var("FLAG"), Some("done"));
 
             let mut shell = test_shell();
             let until_program = crate::syntax::parse(
@@ -2599,7 +2605,7 @@ mod tests {
             .expect("parse");
             let status = execute_program(&mut shell, &until_program).expect("execute");
             assert_eq!(status, 0);
-            assert_eq!(shell.get_var("VALUE").as_deref(), Some("ready"));
+            assert_eq!(shell.get_var("VALUE"), Some("ready"));
         });
     }
 
@@ -2611,14 +2617,14 @@ mod tests {
                 crate::syntax::parse("for item in a b c; do LAST=$item; done").expect("parse");
             let status = execute_program(&mut shell, &program).expect("execute");
             assert_eq!(status, 0);
-            assert_eq!(shell.get_var("LAST").as_deref(), Some("c"));
+            assert_eq!(shell.get_var("LAST"), Some("c"));
 
             let mut shell = test_shell();
             shell.positional = vec!["alpha".into(), "beta".into()];
             let program = crate::syntax::parse("for item; do LAST=$item; done").expect("parse");
             let status = execute_program(&mut shell, &program).expect("execute");
             assert_eq!(status, 0);
-            assert_eq!(shell.get_var("LAST").as_deref(), Some("beta"));
+            assert_eq!(shell.get_var("LAST"), Some("beta"));
         });
     }
 
@@ -2632,7 +2638,7 @@ mod tests {
             .expect("parse");
             let status = execute_program(&mut shell, &program).expect("execute");
             assert_eq!(status, 0);
-            assert_eq!(shell.get_var("VALUE").as_deref(), Some("yes"));
+            assert_eq!(shell.get_var("VALUE"), Some("yes"));
 
             let mut shell = test_shell();
             let program =
@@ -2655,14 +2661,14 @@ mod tests {
                 crate::syntax::parse("if true; then VALUE=yes; else VALUE=no; fi").expect("parse");
             let status = execute_program(&mut shell, &if_program).expect("exec");
             assert_eq!(status, 0);
-            assert_eq!(shell.get_var("VALUE").as_deref(), Some("yes"));
+            assert_eq!(shell.get_var("VALUE"), Some("yes"));
 
             let mut shell = test_shell();
             let if_program =
                 crate::syntax::parse("if false; then VALUE=yes; else VALUE=no; fi").expect("parse");
             let status = execute_program(&mut shell, &if_program).expect("exec");
             assert_eq!(status, 0);
-            assert_eq!(shell.get_var("VALUE").as_deref(), Some("no"));
+            assert_eq!(shell.get_var("VALUE"), Some("no"));
 
             let mut shell = test_shell();
             let if_program = crate::syntax::parse(
@@ -2671,7 +2677,7 @@ mod tests {
             .expect("parse");
             let status = execute_program(&mut shell, &if_program).expect("exec");
             assert_eq!(status, 0);
-            assert_eq!(shell.get_var("VALUE").as_deref(), Some("no"));
+            assert_eq!(shell.get_var("VALUE"), Some("no"));
         });
     }
 
@@ -3128,7 +3134,7 @@ mod tests {
             let status = execute_program(&mut shell, &for_program).expect("exec");
             assert_eq!(status, 9);
             assert!(!shell.running);
-            assert_eq!(shell.get_var("item").as_deref(), Some("a"));
+            assert_eq!(shell.get_var("item"), Some("a"));
 
             let mut shell = test_shell();
             let loop_program = crate::syntax::parse("while true; do exit 7; done").expect("parse");
@@ -3141,7 +3147,7 @@ mod tests {
                 crate::syntax::parse("greet() { RESULT=$X; }; X=ok greet").expect("parse");
             let status = execute_program(&mut shell, &program).expect("exec");
             assert_eq!(status, 0);
-            assert_eq!(shell.get_var("RESULT").as_deref(), Some("ok"));
+            assert_eq!(shell.get_var("RESULT"), Some("ok"));
         });
     }
 
@@ -3163,7 +3169,7 @@ mod tests {
             let status = execute_program(&mut shell, &program).expect("exec");
             assert_eq!(status, 0);
             assert_eq!(shell.get_var("VALUE"), None);
-            assert_eq!(shell.get_var("outer").as_deref(), Some("y"));
+            assert_eq!(shell.get_var("outer"), Some("y"));
 
             let mut shell = test_shell();
             let program = crate::syntax::parse(
@@ -3173,7 +3179,7 @@ mod tests {
             let status = execute_program(&mut shell, &program).expect("exec");
             assert_eq!(status, 0);
             assert_eq!(shell.get_var("VALUE"), None);
-            assert_eq!(shell.get_var("outer").as_deref(), Some("x"));
+            assert_eq!(shell.get_var("outer"), Some("x"));
 
             let mut shell = test_shell();
             let program =
@@ -3218,7 +3224,7 @@ mod tests {
             .expect("parse");
             let status = execute_program(&mut shell, &program).expect("exec");
             assert_eq!(status, 0);
-            assert_eq!(shell.get_var("COUNT").as_deref(), Some("0"));
+            assert_eq!(shell.get_var("COUNT"), Some("0"));
 
             let mut shell = test_shell();
             let program = crate::syntax::parse(
@@ -3227,7 +3233,7 @@ mod tests {
             .expect("parse");
             let status = execute_program(&mut shell, &program).expect("exec");
             assert_eq!(status, 0);
-            assert_eq!(shell.get_var("COUNT").as_deref(), Some("0"));
+            assert_eq!(shell.get_var("COUNT"), Some("0"));
 
             let mut shell = test_shell();
             let program = crate::syntax::parse("f() { for item in a; do return 5; done; }; f")
@@ -4301,11 +4307,11 @@ mod tests {
 
             shell.set_var("FOO", "temp".into()).unwrap();
             shell.set_var("BAR", "new".into()).unwrap();
-            assert_eq!(shell.get_var("FOO"), Some("temp".into()));
-            assert_eq!(shell.get_var("BAR"), Some("new".into()));
+            assert_eq!(shell.get_var("FOO"), Some("temp"));
+            assert_eq!(shell.get_var("BAR"), Some("new"));
 
             restore_vars(&mut shell, saved);
-            assert_eq!(shell.get_var("FOO"), Some("original".into()));
+            assert_eq!(shell.get_var("FOO"), Some("original"));
             assert!(shell.exported.contains("FOO"));
             assert_eq!(shell.get_var("BAR"), None);
             assert!(!shell.exported.contains("BAR"));
@@ -4320,7 +4326,7 @@ mod tests {
             let program = crate::syntax::parse("FOO=temp true").expect("parse");
             let status = execute_program(&mut shell, &program).expect("execute");
             assert_eq!(status, 0);
-            assert_eq!(shell.get_var("FOO"), Some("original".into()));
+            assert_eq!(shell.get_var("FOO"), Some("original"));
         });
     }
 
@@ -4331,7 +4337,7 @@ mod tests {
             let program = crate::syntax::parse("FOO=permanent :").expect("parse");
             let status = execute_program(&mut shell, &program).expect("execute");
             assert_eq!(status, 0);
-            assert_eq!(shell.get_var("FOO"), Some("permanent".into()));
+            assert_eq!(shell.get_var("FOO"), Some("permanent"));
         });
     }
 
@@ -4343,7 +4349,7 @@ mod tests {
             let program = crate::syntax::parse("myfn() { :; }; FOO=temp myfn").expect("parse");
             let status = execute_program(&mut shell, &program).expect("execute");
             assert_eq!(status, 0);
-            assert_eq!(shell.get_var("FOO"), Some("original".into()));
+            assert_eq!(shell.get_var("FOO"), Some("original"));
         });
     }
 
@@ -4366,7 +4372,7 @@ mod tests {
             shell.env.insert("X".into(), "a b c".into());
             let program = crate::syntax::parse("Y=$X").expect("parse");
             let _status = execute_program(&mut shell, &program).expect("execute");
-            assert_eq!(shell.get_var("Y"), Some("a b c".into()));
+            assert_eq!(shell.get_var("Y"), Some("a b c"));
         });
     }
 

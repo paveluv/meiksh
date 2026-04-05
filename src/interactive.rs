@@ -112,7 +112,7 @@ fn read_line() -> sys::SysResult<Option<String>> {
 }
 
 fn expand_prompt(shell: &mut Shell, var: &str, default: &str) -> String {
-    let raw = shell.get_var(var).unwrap_or_else(|| default.to_string());
+    let raw = shell.get_var(var).unwrap_or(default).to_string();
     let histnum = shell.history_number();
     let expanded = expand::expand_parameter_text(shell, &raw).unwrap_or(raw);
     expand_prompt_exclamation(&expanded, histnum)
@@ -142,8 +142,8 @@ pub fn load_env_file(shell: &mut Shell) -> Result<(), ShellError> {
     if !sys::has_same_real_and_effective_ids() {
         return Ok(());
     }
-    let env_file = shell
-        .get_var("ENV")
+    let env_value = shell.get_var("ENV").map(|s| s.to_string());
+    let env_file = env_value
         .map(|value| expand::expand_parameter_text(shell, &value))
         .transpose()?
         .map(PathBuf::from);
@@ -337,7 +337,7 @@ mod tests {
                 let mut shell = test_shell();
                 shell.env.insert("ENV".into(), "/tmp/env.sh".into());
                 load_env_file(&mut shell).expect("source env file");
-                assert_eq!(shell.get_var("FROM_ENV_FILE").as_deref(), Some("1"));
+                assert_eq!(shell.get_var("FROM_ENV_FILE"), Some("1"));
             },
         );
     }
@@ -380,7 +380,7 @@ mod tests {
                 shell.env.insert("HOME".into(), "/home/user".into());
                 shell.env.insert("ENV".into(), "${HOME}/env.sh".into());
                 load_env_file(&mut shell).expect("expanded env file");
-                assert_eq!(shell.get_var("FROM_EXPANDED_ENV").as_deref(), Some("1"));
+                assert_eq!(shell.get_var("FROM_EXPANDED_ENV"), Some("1"));
             },
         );
     }
@@ -946,7 +946,7 @@ mod tests {
                     .expect("trap");
                 let status = run_loop(&mut shell).expect("trap at prompt");
                 assert_eq!(status, 0);
-                assert_eq!(shell.get_var("TRAPPED").as_deref(), Some("yes"));
+                assert_eq!(shell.get_var("TRAPPED"), Some("yes"));
             },
         );
     }
