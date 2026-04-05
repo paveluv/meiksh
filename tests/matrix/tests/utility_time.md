@@ -221,8 +221,8 @@ behavior shall be as specified for the `time` utility.
 
 #### Test: time invokes utility and passes through stdout
 
-The `time` utility shall invoke the utility named by the *utility*
-operand. The invoked utility's stdout shall pass through normally.
+The `time` utility shall invoke the named utility, and the timed
+utility's standard output shall still be written to stdout.
 
 ```
 begin test "time invokes utility and passes through stdout"
@@ -237,9 +237,8 @@ end test "time invokes utility and passes through stdout"
 
 #### Test: time writes timing statistics to stderr
 
-The `time` utility shall write a message to standard error that lists
-timing statistics. The specific default format is unspecified, but stderr
-must be non-empty.
+When the timed utility itself is silent, `time` shall still write its
+timing statistics to standard error and not to standard output.
 
 ```
 begin test "time writes timing statistics to stderr"
@@ -254,113 +253,93 @@ end test "time writes timing statistics to stderr"
 
 #### Test: time passes arguments to utility
 
-The `time` utility shall invoke the utility with the *argument* operands
-supplied on the command line passed through to it.
+The *argument* operands shall be passed through unchanged to the utility
+that `time` invokes.
 
 ```
 begin test "time passes arguments to utility"
   script
-    time echo "arg1" "arg2"
+    time sh -c 'printf "<%s><%s><%s>\n" "$1" "$2" "$3"' sh "arg 1" "*" ""
   expect
-    stdout "arg1 arg2"
+    stdout "<arg 1><\*><>"
     stderr "(.|\n)*.+"
     exit_code 0
 end test "time passes arguments to utility"
 ```
 
+#### Test: time uses PATH to locate utility
+
+The `PATH` environment variable shall be used to locate the utility named
+by the *utility* operand.
+
+```
+begin test "time uses PATH to locate utility"
+  script
+    tmpdir=$(mktemp -d)
+    printf '#!/bin/sh\nprintf '\''from-path\\n'\''\n' >"$tmpdir/timed-probe"
+    chmod +x "$tmpdir/timed-probe"
+    PATH="$tmpdir:$PATH"
+    time timed-probe
+    status=$?
+    rm -rf "$tmpdir"
+    exit "$status"
+  expect
+    stdout "from-path"
+    stderr "(.|\n)*.+"
+    exit_code 0
+end test "time uses PATH to locate utility"
+```
+
+#### Test: time preserves utility stderr on stderr
+
+The timed utility and the `time` utility share standard error; output
+written by the timed utility to stderr shall still appear there.
+
+```
+begin test "time preserves utility stderr on stderr"
+  script
+    time sh -c 'printf "utility-stderr\n" >&2'
+  expect
+    stdout ""
+    stderr "(.|\n)*utility-stderr(.|\n)*"
+    exit_code 0
+end test "time preserves utility stderr on stderr"
+```
+
 #### Test: time -p produces POSIX format on stderr
 
-When `-p` is specified, the timing output on stderr shall use the POSIX
-locale format: three lines labeled `real`, `user`, and `sys`, each
-followed by a floating-point number in seconds.
+With `-p`, the timing statistics shall be written to stderr in the POSIX
+locale format using `real`, `user`, and `sys` lines with seconds-valued
+floating-point numbers. This test asserts the POSIX requirement directly,
+even though `bash --posix` currently deviates here.
 
 ```
 begin test "time -p produces POSIX format on stderr"
+  setenv "LC_ALL" "C"
   script
-    # Bash requires TIMEFORMAT to match POSIX format for the `time` reserved word.
-    TIMEFORMAT=$'real %R\nuser %U\nsys %S'
-    if true; then time true; fi 2>&1
+    time -p true
   expect
-    stdout "(.|\n)*real [0-9]+\.[0-9]+\nuser [0-9]+\.[0-9]+\nsys [0-9]+\.[0-9]+(.|\n)*"
-    stderr ""
+    stdout ""
+    stderr "\n?real [0-9]+\.[0-9]+\nuser [0-9]+\.[0-9]+\nsys [0-9]+\.[0-9]+(.|\n)*"
     exit_code 0
 end test "time -p produces POSIX format on stderr"
 ```
 
-#### Test: time -p values are expressed in seconds with radix
-
-Each floating-point value in `-p` output shall be expressed in seconds.
-The number of digits following the radix character shall be no less than
-one, even if this always results in a trailing zero.
-
-```
-begin test "time -p values are expressed in seconds with radix"
-  script
-    TIMEFORMAT=$'real %R\nuser %U\nsys %S'
-    output=$(if true; then time true; fi 2>&1)
-    echo "$output" | grep '^real ' | sed 's/real //' | grep '\.[0-9]' >/dev/null && echo "real ok"
-    echo "$output" | grep '^user ' | sed 's/user //' | grep '\.[0-9]' >/dev/null && echo "user ok"
-    echo "$output" | grep '^sys '  | sed 's/sys //'  | grep '\.[0-9]' >/dev/null && echo "sys ok"
-  expect
-    stdout "real ok\nuser ok\nsys ok"
-    stderr ""
-    exit_code 0
-end test "time -p values are expressed in seconds with radix"
-```
-
-#### Test: time -p may prepend a single empty line
-
-The standard permits the implementation to prepend a single empty line
-before the POSIX format. A conforming implementation must still include
-the `real`, `user`, and `sys` lines even if an extra leading blank line
-is present.
-
-```
-begin test "time -p may prepend a single empty line"
-  script
-    TIMEFORMAT=$'real %R\nuser %U\nsys %S'
-    output=$(if true; then time true; fi 2>&1)
-    echo "$output" | grep -c '^real '
-  expect
-    stdout "1"
-    stderr ""
-    exit_code 0
-end test "time -p may prepend a single empty line"
-```
-
 #### Test: time exit status equals invoked utility exit status
 
-The exit status of `time` shall be the exit status of the invoked
-utility. A zero-exit utility produces zero; a non-zero utility produces
-that same non-zero status.
+If the utility is invoked, `time` shall exit with the same status as the
+timed utility, both for success and for non-zero exits.
 
 ```
 begin test "time exit status equals invoked utility exit status"
   script
     time true; echo "true:$?"
-    time false; echo "false:$?"
+    time sh -c 'exit 42'; echo "forty-two:$?"
   expect
-    stdout "true:0\nfalse:1"
+    stdout "true:0\nforty-two:42"
     stderr "(.|\n)*"
     exit_code 0
 end test "time exit status equals invoked utility exit status"
-```
-
-#### Test: time propagates arbitrary non-zero exit status
-
-The exit status propagation is not limited to 0 and 1. When the invoked
-utility exits with an arbitrary status (e.g. 42), `time` shall propagate
-that same value.
-
-```
-begin test "time propagates arbitrary non-zero exit status"
-  script
-    time sh -c 'exit 42'; echo $?
-  expect
-    stdout "42"
-    stderr "(.|\n)*"
-    exit_code 0
-end test "time propagates arbitrary non-zero exit status"
 ```
 
 #### Test: time exit status 127 for utility not found
@@ -372,11 +351,10 @@ shall exit with status 127.
 begin test "time exit status 127 for utility not found"
   script
     time no_such_utility_xyzzy_$$
-    echo $?
   expect
-    stdout "127"
+    stdout ""
     stderr "(.|\n)*.+"
-    exit_code 0
+    exit_code 127
 end test "time exit status 127 for utility not found"
 ```
 
@@ -390,204 +368,103 @@ with status 126.
 begin test "time exit status 126 for utility not executable"
   script
     tmp=$(mktemp)
-    chmod -x "$tmp"
+    chmod 644 "$tmp"
     time "$tmp"
-    echo $?
-    rm -f "$tmp"
-  expect
-    stdout "126"
-    stderr "(.|\n)*.+"
-    exit_code 0
-end test "time exit status 126 for utility not executable"
-```
-
-#### Test: time with grouping command overcomes pipeline limitation
-
-The standard notes that piping `time` directly in a simple command is
-unspecified, but embedding it in a grouping command and piping the
-compound command produces specified behavior. The timing output appears
-on the compound command's stderr, which can then be redirected or piped.
-
-```
-begin test "time with grouping command overcomes pipeline limitation"
-  script
-    result=$({ time echo hello; } 2>&1 | wc -l)
-    # At least 2 lines: "hello" plus at least one timing line
-    [ "$result" -ge 2 ] && echo "ok" || echo "fail:$result"
-  expect
-    stdout "ok"
-    stderr ""
-    exit_code 0
-end test "time with grouping command overcomes pipeline limitation"
-```
-
-#### Test: quoting time avoids reserved word limitations
-
-The standard says the unspecified-behavior limitations can be avoided by
-quoting all or part of the word `time`. When `time` is quoted, it is
-looked up as a regular command rather than treated as a reserved word.
-If no external `time` command is installed, this shall fail with 127.
-
-```
-begin test "quoting time avoids reserved word limitations"
-  script
-    "time" echo hello 2>/dev/null
     status=$?
-    # Either it ran an external time (status 0) or was not found (127)
-    if [ "$status" -eq 0 ] || [ "$status" -eq 127 ]; then
-      echo "ok"
-    else
-      echo "unexpected:$status"
-    fi
-  expect
-    stdout "(hello\n)?ok"
-    stderr ""
-    exit_code 0
-end test "quoting time avoids reserved word limitations"
-```
-
-#### Test: time measures elapsed real time
-
-The timing statistics shall include the elapsed (real) time between
-invocation and termination. A command that sleeps for a measurable
-duration must produce a non-zero real time value.
-
-```
-begin test "time measures elapsed real time"
-  script
-    output=$({ time -p sleep 1; } 2>&1)
-    real_val=$(echo "$output" | grep '^real ' | sed 's/real //')
-    # The real value must be >= 1.0 (we slept for 1 second)
-    if echo "$real_val" | grep -q '^[1-9]'; then
-      echo "ok"
-    elif echo "$real_val" | grep -q '^0\.'; then
-      echo "too_small"
-    else
-      echo "ok"
-    fi
-  expect
-    stdout "ok"
-    stderr ""
-    exit_code 0
-end test "time measures elapsed real time"
-```
-
-#### Test: time stderr used for diagnostics when utility not found
-
-When the utility is not invoked (e.g. not found), the standard error
-shall be used to write diagnostic messages. The shell emits both the
-"not found" diagnostic and the timing statistics on stderr.
-
-```
-begin test "time stderr used for diagnostics when utility not found"
-  script
-    time no_such_cmd_xyzzy_$$
+    rm -f "$tmp"
+    exit "$status"
   expect
     stdout ""
     stderr "(.|\n)*.+"
-    exit_code 127
-end test "time stderr used for diagnostics when utility not found"
+    exit_code 126
+end test "time exit status 126 for utility not executable"
 ```
 
-#### Test: time execution with special built-in is unspecified
+#### Test: quoted time avoids reserved word limitations
 
-If the utility names a special built-in utility, the results are
-unspecified. A conforming shell shall not crash.
+Quoting the word `time` avoids the reserved-word limitations and causes
+the shell to locate a utility named `time` through `PATH` instead.
 
 ```
-begin test "time execution with special built-in is unspecified"
+begin test "quoted time avoids reserved word limitations"
   script
-    ( time shift ) >/dev/null 2>&1 || true
-    echo "alive"
+    tmpdir=$(mktemp -d)
+    printf '#!/bin/sh\nprintf '\''quoted:%%s\\n'\'' "$*"\n' >"$tmpdir/time"
+    chmod +x "$tmpdir/time"
+    PATH="$tmpdir:$PATH"
+    "time" echo hello
+    status=$?
+    rm -rf "$tmpdir"
+    exit "$status"
   expect
-    stdout "alive"
+    stdout "quoted:echo hello"
     stderr ""
     exit_code 0
-end test "time execution with special built-in is unspecified"
+end test "quoted time avoids reserved word limitations"
 ```
 
-#### Test: time execution with intrinsic utility is unspecified
+#### Test: expanded command name avoids reserved word limitations
 
-If the utility names an intrinsic utility, the results are unspecified. A
-conforming shell shall not crash.
+Expanding the command name from a variable also avoids the reserved-word
+limitations, because the command name is no longer the literal token
+`time` during parsing.
 
 ```
-begin test "time execution with intrinsic utility is unspecified"
+begin test "expanded command name avoids reserved word limitations"
   script
-    ( time cd / ) >/dev/null 2>&1 || true
-    echo "alive"
+    tmpdir=$(mktemp -d)
+    printf '#!/bin/sh\nprintf '\''expanded:%%s\\n'\'' "$*"\n' >"$tmpdir/time"
+    chmod +x "$tmpdir/time"
+    PATH="$tmpdir:$PATH"
+    t=time
+    $t echo hello
+    status=$?
+    rm -rf "$tmpdir"
+    exit "$status"
   expect
-    stdout "alive"
+    stdout "expanded:echo hello"
     stderr ""
     exit_code 0
-end test "time execution with intrinsic utility is unspecified"
+end test "expanded command name avoids reserved word limitations"
 ```
 
-#### Test: time execution with function is unspecified
+#### Test: grouping command allows redirection around time
 
-If the utility names a function, the results are unspecified. A
-conforming shell shall not crash.
+The standard says the simple-command redirection limitation can be
+avoided by timing a compound command and applying the redirection to that
+compound command instead.
 
 ```
-begin test "time execution with function is unspecified"
+begin test "grouping command allows redirection around time"
   script
-    myfunc() { true; }
-    ( time myfunc ) >/dev/null 2>&1 || true
-    echo "alive"
+    tmp=$(mktemp)
+    { time echo grouped-output; } 2>"$tmp"
+    if [ -s "$tmp" ]; then
+      echo "timing-captured"
+    else
+      echo "timing-missing"
+    fi
+    rm -f "$tmp"
   expect
-    stdout "alive"
+    stdout "grouped-output\ntiming-captured"
     stderr ""
     exit_code 0
-end test "time execution with function is unspecified"
+end test "grouping command allows redirection around time"
 ```
 
-#### Test: time execution with pipeline is unspecified
+#### Test: grouping command allows pipeline around time
 
-If time is a simple command and is part of a pipeline, results are
-unspecified. A conforming shell shall not crash.
+The standard also says the pipeline limitation can be avoided by timing a
+grouping command and then piping that compound command.
 
 ```
-begin test "time execution with pipeline is unspecified"
+begin test "grouping command allows pipeline around time"
   script
-    ( echo a | time cat ) >/dev/null 2>&1 || true
-    echo "alive"
+    lines=$({ time echo hello; } 2>&1 | wc -l)
+    [ "$lines" -ge 2 ] && echo "ok" || echo "bad:$lines"
   expect
-    stdout "alive"
+    stdout "ok"
     stderr ""
     exit_code 0
-end test "time execution with pipeline is unspecified"
-```
-
-#### Test: time execution with redirection is unspecified
-
-If time is a simple command and includes one or more redirections,
-results are unspecified. A conforming shell shall not crash.
-
-```
-begin test "time execution with redirection is unspecified"
-  script
-    ( time true >/dev/null ) >/dev/null 2>&1 || true
-    echo "alive"
-  expect
-    stdout "alive"
-    stderr ""
-    exit_code 0
-end test "time execution with redirection is unspecified"
-```
-
-#### Test: time followed by reserved word is unspecified
-
-If the next word is a reserved word, results are unspecified. A
-conforming shell shall not crash.
-
-```
-begin test "time followed by reserved word is unspecified"
-  script
-    ( time while false; do true; done ) >/dev/null 2>&1 || true
-    echo "alive"
-  expect
-    stdout "alive"
-    stderr ""
-    exit_code 0
-end test "time followed by reserved word is unspecified"
+end test "grouping command allows pipeline around time"
 ```
