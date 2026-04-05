@@ -2291,7 +2291,7 @@ mod tests {
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "~/$USER".to_string(),
+                raw: "~/$USER".into(),
             },
         )
         .expect("expand");
@@ -2305,7 +2305,7 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((1 + 2 * 3))".to_string()
+                    raw: "$((1 + 2 * 3))".into()
                 }
             )
             .expect("expand"),
@@ -2321,10 +2321,10 @@ mod tests {
                 &mut ctx,
                 &[
                     Word {
-                        raw: "$WORDS".to_string()
+                        raw: "$WORDS".into()
                     },
                     Word {
-                        raw: "$(printf hi)".to_string()
+                        raw: "$(printf hi)".into()
                     },
                 ],
             )
@@ -2346,7 +2346,7 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"$0 $1\"".to_string()
+                    raw: "\"$0 $1\"".into()
                 }
             )
             .expect("expand"),
@@ -2356,7 +2356,7 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\\$HOME".to_string()
+                    raw: "\\$HOME".into()
                 }
             )
             .expect("expand"),
@@ -2366,7 +2366,7 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "a\\ b".to_string()
+                    raw: "a\\ b".into()
                 }
             )
             .expect("expand"),
@@ -2376,7 +2376,7 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "'literal text'".to_string()
+                    raw: "'literal text'".into()
                 }
             )
             .expect("expand"),
@@ -2386,7 +2386,7 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"cost:\\$USER\"".to_string()
+                    raw: "\"cost:\\$USER\"".into()
                 }
             )
             .expect("expand"),
@@ -2396,7 +2396,7 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$'a b'".to_string()
+                    raw: "$'a b'".into()
                 }
             )
             .expect("expand"),
@@ -2406,7 +2406,7 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$'line\\nnext'".to_string()
+                    raw: "$'line\\nnext'".into()
                 }
             )
             .expect("expand"),
@@ -2416,7 +2416,7 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"$'a b'\"".to_string()
+                    raw: "\"$'a b'\"".into()
                 }
             )
             .expect("expand"),
@@ -2435,7 +2435,7 @@ mod tests {
             let error = expand_word(
                 &mut ctx,
                 &Word {
-                    raw: raw.to_string(),
+                    raw: raw.to_string().into(),
                 },
             )
             .expect_err("error");
@@ -2498,7 +2498,7 @@ mod tests {
             let error = expand_word(
                 &mut ctx,
                 &Word {
-                    raw: raw.to_string(),
+                    raw: raw.to_string().into(),
                 },
             )
             .expect_err("error");
@@ -2825,7 +2825,7 @@ mod tests {
                 expand_word(
                     &mut ctx,
                     &Word {
-                        raw: pattern.clone()
+                        raw: pattern.clone().into()
                     }
                 )
                 .expect("noglob"),
@@ -3551,7 +3551,7 @@ mod tests {
                     expand_word(
                         &mut ctx,
                         &Word {
-                            raw: "*.definitely-no-match".to_string()
+                            raw: "*.definitely-no-match".into()
                         }
                     )
                     .expect("unmatched glob"),
@@ -4251,7 +4251,7 @@ mod tests {
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: r#""\a\b\c""#.to_string(),
+                raw: r#""\a\b\c""#.into(),
             },
         )
         .expect("dquote bs");
@@ -4309,7 +4309,7 @@ mod tests {
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "\"ab\\\ncd\"".to_string(),
+                raw: "\"ab\\\ncd\"".into(),
             },
         )
         .expect("line continuation");
@@ -4918,7 +4918,7 @@ mod tests {
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: r#""abc\"#.to_string(),
+                raw: r#""abc\"#.into(),
             },
         );
         assert!(fields.is_err());

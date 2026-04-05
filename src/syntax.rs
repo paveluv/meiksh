@@ -1,21 +1,22 @@
+use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Program {
-    pub items: Vec<ListItem>,
+pub struct Program<'src> {
+    pub items: Vec<ListItem<'src>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ListItem {
-    pub and_or: AndOr,
+pub struct ListItem<'src> {
+    pub and_or: AndOr<'src>,
     pub asynchronous: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AndOr {
-    pub first: Pipeline,
-    pub rest: Vec<(LogicalOp, Pipeline)>,
+pub struct AndOr<'src> {
+    pub first: Pipeline<'src>,
+    pub rest: Vec<(LogicalOp, Pipeline<'src>)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -32,103 +33,234 @@ pub enum TimedMode {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Pipeline {
+pub struct Pipeline<'src> {
     pub negated: bool,
     pub timed: TimedMode,
-    pub commands: Vec<Command>,
+    pub commands: Vec<Command<'src>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Command {
-    Simple(SimpleCommand),
-    Subshell(Program),
-    Group(Program),
-    FunctionDef(FunctionDef),
-    If(IfCommand),
-    Loop(LoopCommand),
-    For(ForCommand),
-    Case(CaseCommand),
-    Redirected(Box<Command>, Vec<Redirection>),
+pub enum Command<'src> {
+    Simple(SimpleCommand<'src>),
+    Subshell(Program<'src>),
+    Group(Program<'src>),
+    FunctionDef(FunctionDef<'src>),
+    If(IfCommand<'src>),
+    Loop(LoopCommand<'src>),
+    For(ForCommand<'src>),
+    Case(CaseCommand<'src>),
+    Redirected(Box<Command<'src>>, Vec<Redirection<'src>>),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct SimpleCommand {
-    pub assignments: Vec<Assignment>,
-    pub words: Vec<Word>,
-    pub redirections: Vec<Redirection>,
+pub struct SimpleCommand<'src> {
+    pub assignments: Vec<Assignment<'src>>,
+    pub words: Vec<Word<'src>>,
+    pub redirections: Vec<Redirection<'src>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Assignment {
-    pub name: String,
-    pub value: Word,
+pub struct Assignment<'src> {
+    pub name: Cow<'src, str>,
+    pub value: Word<'src>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Word {
-    pub raw: String,
+pub struct Word<'src> {
+    pub raw: Cow<'src, str>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Redirection {
+pub struct Redirection<'src> {
     pub fd: Option<i32>,
     pub kind: RedirectionKind,
-    pub target: Word,
-    pub here_doc: Option<HereDoc>,
+    pub target: Word<'src>,
+    pub here_doc: Option<HereDoc<'src>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FunctionDef {
-    pub name: String,
-    pub body: Box<Command>,
+pub struct FunctionDef<'src> {
+    pub name: Cow<'src, str>,
+    pub body: Box<Command<'src>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct IfCommand {
-    pub condition: Program,
-    pub then_branch: Program,
-    pub elif_branches: Vec<ElifBranch>,
-    pub else_branch: Option<Program>,
+pub struct IfCommand<'src> {
+    pub condition: Program<'src>,
+    pub then_branch: Program<'src>,
+    pub elif_branches: Vec<ElifBranch<'src>>,
+    pub else_branch: Option<Program<'src>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ElifBranch {
-    pub condition: Program,
-    pub body: Program,
+pub struct ElifBranch<'src> {
+    pub condition: Program<'src>,
+    pub body: Program<'src>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LoopCommand {
+pub struct LoopCommand<'src> {
     pub kind: LoopKind,
-    pub condition: Program,
-    pub body: Program,
+    pub condition: Program<'src>,
+    pub body: Program<'src>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ForCommand {
-    pub name: String,
-    pub items: Option<Vec<Word>>,
-    pub body: Program,
+pub struct ForCommand<'src> {
+    pub name: Cow<'src, str>,
+    pub items: Option<Vec<Word<'src>>>,
+    pub body: Program<'src>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CaseCommand {
-    pub word: Word,
-    pub arms: Vec<CaseArm>,
+pub struct CaseCommand<'src> {
+    pub word: Word<'src>,
+    pub arms: Vec<CaseArm<'src>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CaseArm {
-    pub patterns: Vec<Word>,
-    pub body: Program,
+pub struct CaseArm<'src> {
+    pub patterns: Vec<Word<'src>>,
+    pub body: Program<'src>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HereDoc {
-    pub delimiter: String,
-    pub body: String,
+pub struct HereDoc<'src> {
+    pub delimiter: Cow<'src, str>,
+    pub body: Cow<'src, str>,
     pub expand: bool,
     pub strip_tabs: bool,
+}
+
+impl<'src> Command<'src> {
+    pub fn into_static(self) -> Command<'static> {
+        match self {
+            Command::Simple(cmd) => Command::Simple(SimpleCommand {
+                assignments: cmd
+                    .assignments
+                    .into_iter()
+                    .map(|a| Assignment {
+                        name: Cow::Owned(a.name.into_owned()),
+                        value: Word {
+                            raw: Cow::Owned(a.value.raw.into_owned()),
+                        },
+                    })
+                    .collect(),
+                words: cmd
+                    .words
+                    .into_iter()
+                    .map(|w| Word {
+                        raw: Cow::Owned(w.raw.into_owned()),
+                    })
+                    .collect(),
+                redirections: cmd.redirections.into_iter().map(redir_static).collect(),
+            }),
+            Command::Subshell(p) => Command::Subshell(program_static(p)),
+            Command::Group(p) => Command::Group(program_static(p)),
+            Command::FunctionDef(f) => Command::FunctionDef(FunctionDef {
+                name: Cow::Owned(f.name.into_owned()),
+                body: Box::new(f.body.into_static()),
+            }),
+            Command::If(c) => Command::If(IfCommand {
+                condition: program_static(c.condition),
+                then_branch: program_static(c.then_branch),
+                elif_branches: c
+                    .elif_branches
+                    .into_iter()
+                    .map(|b| ElifBranch {
+                        condition: program_static(b.condition),
+                        body: program_static(b.body),
+                    })
+                    .collect(),
+                else_branch: c.else_branch.map(program_static),
+            }),
+            Command::Loop(c) => Command::Loop(LoopCommand {
+                kind: c.kind,
+                condition: program_static(c.condition),
+                body: program_static(c.body),
+            }),
+            Command::For(c) => Command::For(ForCommand {
+                name: Cow::Owned(c.name.into_owned()),
+                items: c.items.map(|items| {
+                    items
+                        .into_iter()
+                        .map(|w| Word {
+                            raw: Cow::Owned(w.raw.into_owned()),
+                        })
+                        .collect()
+                }),
+                body: program_static(c.body),
+            }),
+            Command::Case(c) => Command::Case(CaseCommand {
+                word: Word {
+                    raw: Cow::Owned(c.word.raw.into_owned()),
+                },
+                arms: c
+                    .arms
+                    .into_iter()
+                    .map(|arm| CaseArm {
+                        patterns: arm
+                            .patterns
+                            .into_iter()
+                            .map(|w| Word {
+                                raw: Cow::Owned(w.raw.into_owned()),
+                            })
+                            .collect(),
+                        body: program_static(arm.body),
+                    })
+                    .collect(),
+            }),
+            Command::Redirected(cmd, redirs) => Command::Redirected(
+                Box::new(cmd.into_static()),
+                redirs.into_iter().map(redir_static).collect(),
+            ),
+        }
+    }
+}
+
+fn program_static(p: Program<'_>) -> Program<'static> {
+    Program {
+        items: p
+            .items
+            .into_iter()
+            .map(|item| ListItem {
+                and_or: AndOr {
+                    first: pipeline_static(item.and_or.first),
+                    rest: item
+                        .and_or
+                        .rest
+                        .into_iter()
+                        .map(|(op, pl)| (op, pipeline_static(pl)))
+                        .collect(),
+                },
+                asynchronous: item.asynchronous,
+            })
+            .collect(),
+    }
+}
+
+fn pipeline_static(p: Pipeline<'_>) -> Pipeline<'static> {
+    Pipeline {
+        negated: p.negated,
+        timed: p.timed,
+        commands: p.commands.into_iter().map(|c| c.into_static()).collect(),
+    }
+}
+
+fn redir_static(r: Redirection<'_>) -> Redirection<'static> {
+    Redirection {
+        fd: r.fd,
+        kind: r.kind,
+        target: Word {
+            raw: Cow::Owned(r.target.raw.into_owned()),
+        },
+        here_doc: r.here_doc.map(|hd| HereDoc {
+            delimiter: Cow::Owned(hd.delimiter.into_owned()),
+            body: Cow::Owned(hd.body.into_owned()),
+            expand: hd.expand,
+            strip_tabs: hd.strip_tabs,
+        }),
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -163,8 +295,8 @@ impl fmt::Display for ParseError {
 impl std::error::Error for ParseError {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum TokenKind {
-    Word(String),
+enum Token<'src> {
+    Word(Cow<'src, str>),
     Newline,
     Semi,
     DSemi,
@@ -187,24 +319,19 @@ enum TokenKind {
     Eof,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Token {
-    kind: TokenKind,
+struct Tokenized<'src> {
+    tokens: Vec<Token<'src>>,
+    here_docs: VecDeque<HereDoc<'src>>,
 }
 
-struct Tokenized {
-    tokens: Vec<Token>,
-    here_docs: VecDeque<HereDoc>,
-}
-
-pub fn parse(source: &str) -> Result<Program, ParseError> {
+pub fn parse(source: &str) -> Result<Program<'_>, ParseError> {
     parse_with_aliases(source, &HashMap::new())
 }
 
-pub fn parse_with_aliases(
-    source: &str,
+pub fn parse_with_aliases<'src>(
+    source: &'src str,
     aliases: &HashMap<String, String>,
-) -> Result<Program, ParseError> {
+) -> Result<Program<'src>, ParseError> {
     let tokenized = tokenize(source)?;
     Parser::new(tokenized.tokens, tokenized.here_docs, aliases.clone()).parse_program_until(
         false,
@@ -213,12 +340,12 @@ pub fn parse_with_aliases(
     )
 }
 
-pub struct ParseSession {
-    parser: Parser,
+pub struct ParseSession<'src> {
+    parser: Parser<'src>,
 }
 
-impl ParseSession {
-    pub fn new(source: &str) -> Result<Self, ParseError> {
+impl<'src> ParseSession<'src> {
+    pub fn new(source: &'src str) -> Result<Self, ParseError> {
         let tokenized = tokenize(source)?;
         Ok(Self {
             parser: Parser::new(tokenized.tokens, tokenized.here_docs, HashMap::new()),
@@ -228,7 +355,7 @@ impl ParseSession {
     pub fn next_item(
         &mut self,
         aliases: &HashMap<String, String>,
-    ) -> Result<Option<ListItem>, ParseError> {
+    ) -> Result<Option<ListItem<'src>>, ParseError> {
         self.parser.aliases = aliases.clone();
         self.parser.skip_separators();
         self.parser.expand_alias_at_command_start()?;
@@ -247,143 +374,136 @@ impl ParseSession {
     pub fn current_line(&self) -> usize {
         self.parser.tokens[..self.parser.index]
             .iter()
-            .filter(|t| matches!(t.kind, TokenKind::Newline))
+            .filter(|t| matches!(t, Token::Newline))
             .count()
             + 1
     }
 }
 
-/// Scan a `$'...'` (dollar-single-quote) token, preserving it raw for
-/// expansion to handle later.  Backslash escapes inside `$'...'` are
-/// meaningful (unlike regular single-quotes), so `\'` does NOT terminate
-/// the string.
-fn scan_dollar_single_quote(
-    chars: &[char],
-    index: &mut usize,
-    current: &mut String,
-) -> Result<(), ParseError> {
-    current.push('$');
-    current.push('\'');
-    *index += 2; // skip $'
-    while *index < chars.len() {
-        let ch = chars[*index];
+fn next_char(source: &str, index: usize) -> Option<char> {
+    source[index..].chars().next()
+}
+
+fn peek_byte(source: &str, index: usize) -> Option<u8> {
+    source.as_bytes().get(index).copied()
+}
+
+fn char_len_at(source: &str, index: usize) -> usize {
+    next_char(source, index).map_or(0, |ch| ch.len_utf8())
+}
+
+fn skip_scan(source: &str, index: &mut usize) -> Result<(), ParseError> {
+    let ch = next_char(source, *index).unwrap();
+    match ch {
+        '\'' => {
+            *index += 1;
+            while *index < source.len() {
+                let c = next_char(source, *index).unwrap();
+                *index += c.len_utf8();
+                if c == '\'' {
+                    return Ok(());
+                }
+            }
+            Err(ParseError {
+                message: "unterminated single quote".to_string(),
+            })
+        }
+        '"' => {
+            *index += 1;
+            skip_dquote_body(source, index)
+        }
+        '\\' => {
+            *index += 1;
+            if *index < source.len() {
+                *index += char_len_at(source, *index);
+            }
+            Ok(())
+        }
+        '$' if matches!(peek_byte(source, *index + 1), Some(b'(' | b'{')) => {
+            skip_dollar_construct(source, index)
+        }
+        '$' if peek_byte(source, *index + 1) == Some(b'\'') => {
+            skip_dollar_single_quote(source, index)
+        }
+        '`' => skip_backtick_body(source, index),
+        _ => {
+            *index += ch.len_utf8();
+            Ok(())
+        }
+    }
+}
+
+fn skip_dollar_single_quote(source: &str, index: &mut usize) -> Result<(), ParseError> {
+    *index += 2;
+    while *index < source.len() {
+        let ch = next_char(source, *index).unwrap();
         if ch == '\'' {
-            current.push('\'');
             *index += 1;
             return Ok(());
         }
-        if ch == '\\' && *index + 1 < chars.len() {
-            current.push('\\');
-            current.push(chars[*index + 1]);
-            *index += 2;
+        if ch == '\\' && *index + 1 < source.len() {
+            *index += 1;
+            *index += char_len_at(source, *index);
             continue;
         }
-        current.push(ch);
-        *index += 1;
+        *index += ch.len_utf8();
     }
     Err(ParseError {
         message: "unterminated dollar-single-quotes".to_string(),
     })
 }
 
-fn scan_dollar_construct(
-    chars: &[char],
-    index: &mut usize,
-    current: &mut String,
-) -> Result<(), ParseError> {
-    current.push('$');
-    let next = chars[*index + 1];
-    if next == '(' {
-        if chars.get(*index + 2) == Some(&'(') {
-            current.push('(');
-            current.push('(');
+fn skip_dollar_construct(source: &str, index: &mut usize) -> Result<(), ParseError> {
+    let next = source.as_bytes()[*index + 1];
+    if next == b'(' {
+        if source.as_bytes().get(*index + 2) == Some(&b'(') {
             *index += 3;
             let mut depth = 1usize;
-            while *index < chars.len() {
-                let ch = chars[*index];
-                current.push(ch);
+            while *index < source.len() {
+                let ch = next_char(source, *index).unwrap();
                 if ch == '(' {
                     depth += 1;
                 } else if ch == ')' {
-                    if depth == 1 && chars.get(*index + 1) == Some(&')') {
-                        current.push(')');
+                    if depth == 1 && source.as_bytes().get(*index + 1) == Some(&b')') {
                         *index += 2;
                         return Ok(());
                     }
                     depth = depth.saturating_sub(1);
                 }
-                *index += 1;
+                *index += ch.len_utf8();
             }
             return Err(ParseError {
                 message: "unterminated arithmetic expansion".to_string(),
             });
         }
-        current.push('(');
         *index += 2;
-        scan_paren_body(chars, index, current)?;
-        return Ok(());
+        return skip_paren_body(source, index);
     }
-    current.push('{');
     *index += 2;
-    scan_brace_body(chars, index, current)
+    skip_brace_body(source, index)
 }
 
-fn scan_paren_body(
-    chars: &[char],
-    index: &mut usize,
-    current: &mut String,
-) -> Result<(), ParseError> {
+fn skip_paren_body(source: &str, index: &mut usize) -> Result<(), ParseError> {
     let mut depth = 1usize;
-    while *index < chars.len() {
-        let ch = chars[*index];
+    while *index < source.len() {
+        let ch = next_char(source, *index).unwrap();
         match ch {
             '(' => {
                 depth += 1;
-                current.push(ch);
                 *index += 1;
             }
             ')' => {
                 depth -= 1;
-                current.push(ch);
                 *index += 1;
                 if depth == 0 {
                     return Ok(());
                 }
             }
-            '\'' => {
-                current.push(ch);
-                *index += 1;
-                while *index < chars.len() {
-                    current.push(chars[*index]);
-                    if chars[*index] == '\'' {
-                        *index += 1;
-                        break;
-                    }
-                    *index += 1;
-                }
-            }
-            '"' => {
-                current.push(ch);
-                *index += 1;
-                scan_dquote_body(chars, index, current)?;
-            }
-            '\\' => {
-                current.push(ch);
-                *index += 1;
-                if *index < chars.len() {
-                    current.push(chars[*index]);
-                    *index += 1;
-                }
-            }
-            '$' if matches!(chars.get(*index + 1), Some('(' | '{')) => {
-                scan_dollar_construct(chars, index, current)?;
-            }
-            '`' => {
-                scan_backtick_body(chars, index, current)?;
+            '\'' | '"' | '\\' | '$' | '`' => {
+                skip_scan(source, index)?;
             }
             _ => {
-                current.push(ch);
-                *index += 1;
+                *index += ch.len_utf8();
             }
         }
     }
@@ -392,53 +512,19 @@ fn scan_paren_body(
     })
 }
 
-fn scan_brace_body(
-    chars: &[char],
-    index: &mut usize,
-    current: &mut String,
-) -> Result<(), ParseError> {
-    while *index < chars.len() {
-        let ch = chars[*index];
+fn skip_brace_body(source: &str, index: &mut usize) -> Result<(), ParseError> {
+    while *index < source.len() {
+        let ch = next_char(source, *index).unwrap();
         match ch {
             '}' => {
-                current.push(ch);
                 *index += 1;
                 return Ok(());
             }
-            '\\' => {
-                current.push(ch);
-                *index += 1;
-                if *index < chars.len() {
-                    current.push(chars[*index]);
-                    *index += 1;
-                }
-            }
-            '\'' => {
-                current.push(ch);
-                *index += 1;
-                while *index < chars.len() {
-                    current.push(chars[*index]);
-                    if chars[*index] == '\'' {
-                        *index += 1;
-                        break;
-                    }
-                    *index += 1;
-                }
-            }
-            '"' => {
-                current.push(ch);
-                *index += 1;
-                scan_dquote_body(chars, index, current)?;
-            }
-            '$' if matches!(chars.get(*index + 1), Some('(' | '{')) => {
-                scan_dollar_construct(chars, index, current)?;
-            }
-            '`' => {
-                scan_backtick_body(chars, index, current)?;
+            '\'' | '"' | '\\' | '$' | '`' => {
+                skip_scan(source, index)?;
             }
             _ => {
-                current.push(ch);
-                *index += 1;
+                *index += ch.len_utf8();
             }
         }
     }
@@ -447,23 +533,17 @@ fn scan_brace_body(
     })
 }
 
-fn scan_backtick_body(
-    chars: &[char],
-    index: &mut usize,
-    current: &mut String,
-) -> Result<(), ParseError> {
-    current.push('`');
+fn skip_backtick_body(source: &str, index: &mut usize) -> Result<(), ParseError> {
     *index += 1;
-    while *index < chars.len() {
-        let next = chars[*index];
-        current.push(next);
-        if next == '\\' && *index + 1 < chars.len() {
-            current.push(chars[*index + 1]);
-            *index += 2;
+    while *index < source.len() {
+        let ch = next_char(source, *index).unwrap();
+        if ch == '\\' && *index + 1 < source.len() {
+            *index += 1;
+            *index += char_len_at(source, *index);
             continue;
         }
-        *index += 1;
-        if next == '`' {
+        *index += ch.len_utf8();
+        if ch == '`' {
             return Ok(());
         }
     }
@@ -472,48 +552,40 @@ fn scan_backtick_body(
     })
 }
 
-fn scan_dquote_body(
-    chars: &[char],
-    index: &mut usize,
-    current: &mut String,
-) -> Result<(), ParseError> {
-    while *index < chars.len() {
-        let ch = chars[*index];
-        current.push(ch);
+fn skip_dquote_body(source: &str, index: &mut usize) -> Result<(), ParseError> {
+    while *index < source.len() {
+        let ch = next_char(source, *index).unwrap();
         match ch {
             '\\' => {
                 *index += 1;
-                if *index < chars.len() {
-                    current.push(chars[*index]);
-                    *index += 1;
+                if *index < source.len() {
+                    *index += char_len_at(source, *index);
                 }
             }
             '"' => {
                 *index += 1;
                 return Ok(());
             }
-            '$' if matches!(chars.get(*index + 1), Some('(' | '{')) => {
-                current.pop();
-                scan_dollar_construct(chars, index, current)?;
+            '$' if matches!(peek_byte(source, *index + 1), Some(b'(' | b'{')) => {
+                skip_dollar_construct(source, index)?;
             }
             '`' => {
                 *index += 1;
-                while *index < chars.len() {
-                    let next = chars[*index];
-                    current.push(next);
-                    if next == '\\' && *index + 1 < chars.len() {
-                        current.push(chars[*index + 1]);
-                        *index += 2;
+                while *index < source.len() {
+                    let next = next_char(source, *index).unwrap();
+                    if next == '\\' && *index + 1 < source.len() {
+                        *index += 1;
+                        *index += char_len_at(source, *index);
                         continue;
                     }
-                    *index += 1;
+                    *index += next.len_utf8();
                     if next == '`' {
                         break;
                     }
                 }
             }
             _ => {
-                *index += 1;
+                *index += ch.len_utf8();
             }
         }
     }
@@ -522,289 +594,342 @@ fn scan_dquote_body(
     })
 }
 
-fn tokenize(source: &str) -> Result<Tokenized, ParseError> {
-    let chars: Vec<char> = source.chars().collect();
-    let mut tokens = Vec::new();
-    let mut here_docs = VecDeque::new();
-    let mut pending_here_docs = VecDeque::new();
+/// Word accumulator that tracks either a zero-copy slice into the source
+/// or falls back to an owned `String` when the content diverges (e.g.
+/// backslash-newline continuation).
+enum WordBuf<'src> {
+    /// Verbatim span: word is `source[start..current_pos]`.
+    Slice { start: usize, source: &'src str },
+    /// Modified span: the owned buffer plus a trailing slice
+    /// `source[tail..current_pos]` that hasn't been copied yet.
+    Owned { buf: String, tail: usize, source: &'src str },
+}
+
+impl<'src> WordBuf<'src> {
+    fn take(&mut self, end: usize) -> Option<Cow<'src, str>> {
+        match self {
+            WordBuf::Slice { start, source } => {
+                if *start >= end {
+                    return None;
+                }
+                let s = &source[*start..end];
+                *start = end;
+                Some(Cow::Borrowed(s))
+            }
+            WordBuf::Owned { buf, tail, source } => {
+                buf.push_str(&source[*tail..end]);
+                if buf.is_empty() {
+                    return None;
+                }
+                let result = std::mem::take(buf);
+                *tail = end;
+                Some(Cow::Owned(result))
+            }
+        }
+    }
+
+    fn switch_to_owned(&mut self, end: usize) {
+        if let WordBuf::Slice { start, source } = *self {
+            let buf = source[start..end].to_string();
+            *self = WordBuf::Owned { buf, tail: end, source };
+        } else if let WordBuf::Owned { buf, tail, source } = self {
+            buf.push_str(&source[*tail..end]);
+            *tail = end;
+        }
+    }
+
+    fn is_word_empty(&self, end: usize) -> bool {
+        match self {
+            WordBuf::Slice { start, source: _ } => *start >= end,
+            WordBuf::Owned { buf, tail, .. } => {
+                buf.is_empty() && *tail >= end
+            }
+        }
+    }
+
+    fn try_parse_io_number(&mut self, end: usize) -> Option<i32> {
+        match self {
+            WordBuf::Slice { start, source } => {
+                let text = &source[*start..end];
+                if text.is_empty() || !text.bytes().all(|b| b.is_ascii_digit()) {
+                    return None;
+                }
+                let fd = text.parse::<i32>().ok()?;
+                *start = end;
+                Some(fd)
+            }
+            WordBuf::Owned { buf, tail, source } => {
+                let trailing = &source[*tail..end];
+                let all_digits = buf.bytes().all(|b| b.is_ascii_digit())
+                    && trailing.bytes().all(|b| b.is_ascii_digit());
+                if !all_digits || (buf.is_empty() && trailing.is_empty()) {
+                    return None;
+                }
+                let mut full = std::mem::take(buf);
+                full.push_str(trailing);
+                let fd = full.parse::<i32>().ok()?;
+                *tail = end;
+                Some(fd)
+            }
+        }
+    }
+
+    fn set_tail(&mut self, pos: usize) {
+        if let WordBuf::Owned { tail, .. } = self {
+            *tail = pos;
+        }
+    }
+
+    fn reset_slice(&mut self, pos: usize) {
+        match self {
+            WordBuf::Slice { start, .. } => *start = pos,
+            WordBuf::Owned { buf, tail, .. } => {
+                buf.clear();
+                *tail = pos;
+            }
+        }
+    }
+}
+
+fn tokenize<'src>(source: &'src str) -> Result<Tokenized<'src>, ParseError> {
+    let mut tokens: Vec<Token<'src>> = Vec::new();
+    let mut here_docs: VecDeque<HereDoc<'src>> = VecDeque::new();
+    let mut pending_here_docs: VecDeque<(String, bool, bool)> = VecDeque::new();
     let mut expect_here_doc_target = false;
     let mut index = 0usize;
-    let mut current = String::new();
+    let mut word = WordBuf::Slice {
+        start: 0,
+        source,
+    };
 
-    while index < chars.len() {
-        let ch = chars[index];
+    while index < source.len() {
+        let ch = next_char(source, index).unwrap();
         match ch {
             ' ' | '\t' | '\r' => {
                 flush_word(
-                    &mut current,
+                    &mut word,
+                    index,
                     &mut tokens,
                     &mut expect_here_doc_target,
                     &mut pending_here_docs,
                 );
                 index += 1;
+                word.reset_slice(index);
             }
             '\n' => {
                 flush_word(
-                    &mut current,
+                    &mut word,
+                    index,
                     &mut tokens,
                     &mut expect_here_doc_target,
                     &mut pending_here_docs,
                 );
-                tokens.push(Token {
-                    kind: TokenKind::Newline,
-                });
+                tokens.push(Token::Newline);
                 index += 1;
                 while let Some((delimiter, expand, strip_tabs)) = pending_here_docs.pop_front() {
-                    let body =
-                        read_here_doc_body(&chars, &mut index, &delimiter, strip_tabs, expand)?;
+                    let body = read_here_doc_body(source, &mut index, &delimiter, strip_tabs, expand)?;
                     here_docs.push_back(HereDoc {
-                        delimiter,
-                        body,
+                        delimiter: Cow::Owned(delimiter),
+                        body: Cow::Owned(body),
                         expand,
                         strip_tabs,
                     });
                 }
+                word.reset_slice(index);
             }
-            '#' if current.is_empty() => {
-                while index < chars.len() && chars[index] != '\n' {
-                    index += 1;
+            '#' if word.is_word_empty(index) => {
+                while index < source.len() && peek_byte(source, index) != Some(b'\n') {
+                    index += char_len_at(source, index);
                 }
+                word.reset_slice(index);
             }
             '\'' => {
-                current.push(ch);
+                let start_of_quote = index;
                 index += 1;
-                while index < chars.len() {
-                    current.push(chars[index]);
-                    if chars[index] == '\'' {
-                        index += 1;
+                loop {
+                    if index >= source.len() {
+                        return Err(ParseError {
+                            message: "unterminated single quote".to_string(),
+                        });
+                    }
+                    let c = next_char(source, index).unwrap();
+                    index += c.len_utf8();
+                    if c == '\'' {
                         break;
                     }
-                    index += 1;
                 }
-                if !current.ends_with('\'') {
-                    return Err(ParseError {
-                        message: "unterminated single quote".to_string(),
-                    });
-                }
+                let _ = start_of_quote;
             }
             '"' => {
-                current.push(ch);
                 index += 1;
-                scan_dquote_body(&chars, &mut index, &mut current)?;
+                skip_dquote_body(source, &mut index)?;
             }
             '\\' => {
-                if index + 1 < chars.len() && chars[index + 1] == '\n' {
+                if peek_byte(source, index + 1) == Some(b'\n') {
+                    word.switch_to_owned(index);
                     index += 2;
+                    word.set_tail(index);
                 } else {
-                    current.push(ch);
                     index += 1;
-                    if index < chars.len() {
-                        current.push(chars[index]);
-                        index += 1;
+                    if index < source.len() {
+                        index += char_len_at(source, index);
                     }
                 }
             }
             ';' => {
                 flush_word(
-                    &mut current,
+                    &mut word,
+                    index,
                     &mut tokens,
                     &mut expect_here_doc_target,
                     &mut pending_here_docs,
                 );
-                if matches!(chars.get(index + 1), Some(';')) {
-                    tokens.push(Token {
-                        kind: TokenKind::DSemi,
-                    });
+                if peek_byte(source, index + 1) == Some(b';') {
+                    tokens.push(Token::DSemi);
                     index += 2;
                 } else {
-                    tokens.push(Token {
-                        kind: TokenKind::Semi,
-                    });
+                    tokens.push(Token::Semi);
                     index += 1;
                 }
+                word.reset_slice(index);
             }
             '&' => {
                 flush_word(
-                    &mut current,
+                    &mut word,
+                    index,
                     &mut tokens,
                     &mut expect_here_doc_target,
                     &mut pending_here_docs,
                 );
-                if matches!(chars.get(index + 1), Some('&')) {
-                    tokens.push(Token {
-                        kind: TokenKind::AndIf,
-                    });
+                if peek_byte(source, index + 1) == Some(b'&') {
+                    tokens.push(Token::AndIf);
                     index += 2;
                 } else {
-                    tokens.push(Token {
-                        kind: TokenKind::Amp,
-                    });
+                    tokens.push(Token::Amp);
                     index += 1;
                 }
+                word.reset_slice(index);
             }
             '|' => {
                 flush_word(
-                    &mut current,
+                    &mut word,
+                    index,
                     &mut tokens,
                     &mut expect_here_doc_target,
                     &mut pending_here_docs,
                 );
-                if matches!(chars.get(index + 1), Some('|')) {
-                    tokens.push(Token {
-                        kind: TokenKind::OrIf,
-                    });
+                if peek_byte(source, index + 1) == Some(b'|') {
+                    tokens.push(Token::OrIf);
                     index += 2;
                 } else {
-                    tokens.push(Token {
-                        kind: TokenKind::Pipe,
-                    });
+                    tokens.push(Token::Pipe);
                     index += 1;
                 }
+                word.reset_slice(index);
             }
             '(' => {
                 flush_word(
-                    &mut current,
+                    &mut word,
+                    index,
                     &mut tokens,
                     &mut expect_here_doc_target,
                     &mut pending_here_docs,
                 );
-                tokens.push(Token {
-                    kind: TokenKind::LParen,
-                });
+                tokens.push(Token::LParen);
                 index += 1;
+                word.reset_slice(index);
             }
             ')' => {
                 flush_word(
-                    &mut current,
+                    &mut word,
+                    index,
                     &mut tokens,
                     &mut expect_here_doc_target,
                     &mut pending_here_docs,
                 );
-                tokens.push(Token {
-                    kind: TokenKind::RParen,
-                });
+                tokens.push(Token::RParen);
                 index += 1;
+                word.reset_slice(index);
             }
             '<' => {
-                if !current.is_empty() && current.chars().all(|c| c.is_ascii_digit()) {
-                    if let Ok(fd) = current.parse::<i32>() {
-                        current.clear();
-                        tokens.push(Token {
-                            kind: TokenKind::IoNumber(fd),
-                        });
-                    }
+                if let Some(fd) = word.try_parse_io_number(index) {
+                    tokens.push(Token::IoNumber(fd));
                 }
                 flush_word(
-                    &mut current,
+                    &mut word,
+                    index,
                     &mut tokens,
                     &mut expect_here_doc_target,
                     &mut pending_here_docs,
                 );
-                if matches!(chars.get(index + 1), Some('<')) {
-                    if matches!(chars.get(index + 2), Some('-')) {
-                        tokens.push(Token {
-                            kind: TokenKind::DLessDash,
-                        });
+                if peek_byte(source, index + 1) == Some(b'<') {
+                    if peek_byte(source, index + 2) == Some(b'-') {
+                        tokens.push(Token::DLessDash);
                         expect_here_doc_target = true;
                         index += 3;
                     } else {
-                        tokens.push(Token {
-                            kind: TokenKind::DLess,
-                        });
+                        tokens.push(Token::DLess);
                         expect_here_doc_target = true;
                         index += 2;
                     }
-                } else if matches!(chars.get(index + 1), Some('&')) {
-                    tokens.push(Token {
-                        kind: TokenKind::LessAnd,
-                    });
+                } else if peek_byte(source, index + 1) == Some(b'&') {
+                    tokens.push(Token::LessAnd);
                     index += 2;
-                } else if matches!(chars.get(index + 1), Some('>')) {
-                    tokens.push(Token {
-                        kind: TokenKind::LessGreat,
-                    });
+                } else if peek_byte(source, index + 1) == Some(b'>') {
+                    tokens.push(Token::LessGreat);
                     index += 2;
                 } else {
-                    tokens.push(Token {
-                        kind: TokenKind::Less,
-                    });
+                    tokens.push(Token::Less);
                     index += 1;
                 }
+                word.reset_slice(index);
             }
             '>' => {
-                if !current.is_empty() && current.chars().all(|c| c.is_ascii_digit()) {
-                    if let Ok(fd) = current.parse::<i32>() {
-                        current.clear();
-                        tokens.push(Token {
-                            kind: TokenKind::IoNumber(fd),
-                        });
-                    }
+                if let Some(fd) = word.try_parse_io_number(index) {
+                    tokens.push(Token::IoNumber(fd));
                 }
                 flush_word(
-                    &mut current,
+                    &mut word,
+                    index,
                     &mut tokens,
                     &mut expect_here_doc_target,
                     &mut pending_here_docs,
                 );
-                if matches!(chars.get(index + 1), Some('>')) {
-                    tokens.push(Token {
-                        kind: TokenKind::DGreat,
-                    });
+                if peek_byte(source, index + 1) == Some(b'>') {
+                    tokens.push(Token::DGreat);
                     index += 2;
-                } else if matches!(chars.get(index + 1), Some('&')) {
-                    tokens.push(Token {
-                        kind: TokenKind::GreatAnd,
-                    });
+                } else if peek_byte(source, index + 1) == Some(b'&') {
+                    tokens.push(Token::GreatAnd);
                     index += 2;
-                } else if matches!(chars.get(index + 1), Some('|')) {
-                    tokens.push(Token {
-                        kind: TokenKind::Clobber,
-                    });
+                } else if peek_byte(source, index + 1) == Some(b'|') {
+                    tokens.push(Token::Clobber);
                     index += 2;
                 } else {
-                    tokens.push(Token {
-                        kind: TokenKind::Greater,
-                    });
+                    tokens.push(Token::Greater);
                     index += 1;
                 }
+                word.reset_slice(index);
             }
-            '$' if matches!(chars.get(index + 1), Some('(' | '{')) => {
-                scan_dollar_construct(&chars, &mut index, &mut current)?;
+            '$' if matches!(peek_byte(source, index + 1), Some(b'(' | b'{')) => {
+                skip_dollar_construct(source, &mut index)?;
             }
-            '$' if matches!(chars.get(index + 1), Some('\'')) => {
-                scan_dollar_single_quote(&chars, &mut index, &mut current)?;
+            '$' if peek_byte(source, index + 1) == Some(b'\'') => {
+                skip_dollar_single_quote(source, &mut index)?;
             }
             '`' => {
-                current.push('`');
-                index += 1;
-                while index < chars.len() {
-                    let next = chars[index];
-                    current.push(next);
-                    if next == '\\' && index + 1 < chars.len() {
-                        current.push(chars[index + 1]);
-                        index += 2;
-                        continue;
-                    }
-                    index += 1;
-                    if next == '`' {
-                        break;
-                    }
-                }
-                if !current.ends_with('`') {
-                    return Err(ParseError {
-                        message: "unterminated backquote".to_string(),
-                    });
-                }
+                let bt_start = index;
+                skip_backtick_body(source, &mut index)?;
+                let _ = bt_start;
             }
             _ => {
-                current.push(ch);
-                index += 1;
+                index += ch.len_utf8();
             }
         }
     }
 
     flush_word(
-        &mut current,
+        &mut word,
+        index,
         &mut tokens,
         &mut expect_here_doc_target,
         &mut pending_here_docs,
@@ -814,77 +939,78 @@ fn tokenize(source: &str) -> Result<Tokenized, ParseError> {
             message: "unterminated here-document".to_string(),
         });
     }
-    tokens.push(Token {
-        kind: TokenKind::Eof,
-    });
+    tokens.push(Token::Eof);
     Ok(Tokenized { tokens, here_docs })
 }
 
-fn flush_word(
-    current: &mut String,
-    tokens: &mut Vec<Token>,
+fn flush_word<'src>(
+    word: &mut WordBuf<'src>,
+    end: usize,
+    tokens: &mut Vec<Token<'src>>,
     expect_here_doc_target: &mut bool,
     pending_here_docs: &mut VecDeque<(String, bool, bool)>,
 ) {
-    if current.is_empty() {
+    let Some(cow) = word.take(end) else {
         return;
-    }
-    let word = std::mem::take(current);
+    };
     if *expect_here_doc_target {
         let strip_tabs = matches!(
-            tokens.last().map(|token| &token.kind),
-            Some(TokenKind::DLessDash)
+            tokens.last(),
+            Some(Token::DLessDash)
         );
-        let (delimiter, expand) = parse_here_doc_delimiter(&word);
+        let (delimiter, expand) = parse_here_doc_delimiter(&cow);
         pending_here_docs.push_back((delimiter, expand, strip_tabs));
         *expect_here_doc_target = false;
     }
-    tokens.push(Token {
-        kind: TokenKind::Word(word),
-    });
+    tokens.push(Token::Word(cow));
 }
 
 fn parse_here_doc_delimiter(raw: &str) -> (String, bool) {
     let mut delimiter = String::new();
-    let chars: Vec<char> = raw.chars().collect();
     let mut index = 0usize;
     let mut expand = true;
 
-    while index < chars.len() {
-        match chars[index] {
+    while index < raw.len() {
+        let ch = next_char(raw, index).unwrap();
+        match ch {
             '\'' => {
                 expand = false;
                 index += 1;
-                while index < chars.len() && chars[index] != '\'' {
-                    delimiter.push(chars[index]);
-                    index += 1;
-                }
-                if index < chars.len() {
-                    index += 1;
+                while index < raw.len() {
+                    let c = next_char(raw, index).unwrap();
+                    if c == '\'' {
+                        index += 1;
+                        break;
+                    }
+                    delimiter.push(c);
+                    index += c.len_utf8();
                 }
             }
             '"' => {
                 expand = false;
                 index += 1;
-                while index < chars.len() && chars[index] != '"' {
-                    delimiter.push(chars[index]);
-                    index += 1;
-                }
-                if index < chars.len() {
-                    index += 1;
+                while index < raw.len() {
+                    let c = next_char(raw, index).unwrap();
+                    if c == '"' {
+                        index += 1;
+                        break;
+                    }
+                    delimiter.push(c);
+                    index += c.len_utf8();
                 }
             }
             '\\' => {
                 expand = false;
                 index += 1;
-                if index < chars.len() {
-                    delimiter.push(chars[index]);
-                    index += 1;
+                if index < raw.len() {
+                    let c = next_char(raw, index).unwrap();
+                    delimiter.push(c);
+                    index += c.len_utf8();
                 }
             }
-            ch => {
+            _ => {
                 delimiter.push(ch);
-                index += 1;
+                index += ch.len_utf8();
             }
         }
     }
@@ -893,7 +1019,7 @@ fn parse_here_doc_delimiter(raw: &str) -> (String, bool) {
 }
 
 fn read_here_doc_body(
-    chars: &[char],
+    source: &str,
     index: &mut usize,
     delimiter: &str,
     strip_tabs: bool,
@@ -906,11 +1032,11 @@ fn read_here_doc_body(
         let mut had_newline;
         loop {
             let line_start = *index;
-            while *index < chars.len() && chars[*index] != '\n' {
-                *index += 1;
+            while *index < source.len() && peek_byte(source, *index) != Some(b'\n') {
+                *index += char_len_at(source, *index);
             }
-            let raw: String = chars[line_start..*index].iter().collect();
-            had_newline = *index < chars.len() && chars[*index] == '\n';
+            let raw = &source[line_start..*index];
+            had_newline = peek_byte(source, *index) == Some(b'\n');
             if had_newline {
                 *index += 1;
             }
@@ -922,7 +1048,7 @@ fn read_here_doc_body(
                     continue;
                 }
             }
-            line.push_str(&raw);
+            line.push_str(raw);
             break;
         }
 
@@ -945,19 +1071,19 @@ fn read_here_doc_body(
     }
 }
 
-struct Parser {
-    tokens: Vec<Token>,
-    here_docs: VecDeque<HereDoc>,
+struct Parser<'src> {
+    tokens: Vec<Token<'src>>,
+    here_docs: VecDeque<HereDoc<'src>>,
     aliases: HashMap<String, String>,
     alias_expand_next_word_at: Option<usize>,
     alias_expansions_remaining: usize,
     index: usize,
 }
 
-impl Parser {
+impl<'src> Parser<'src> {
     fn new(
-        tokens: Vec<Token>,
-        here_docs: VecDeque<HereDoc>,
+        tokens: Vec<Token<'src>>,
+        here_docs: VecDeque<HereDoc<'src>>,
         aliases: HashMap<String, String>,
     ) -> Self {
         Self {
@@ -975,7 +1101,7 @@ impl Parser {
         stop_on_closer: bool,
         stop_words: &[&str],
         stop_on_dsemi: bool,
-    ) -> Result<Program, ParseError> {
+    ) -> Result<Program<'src>, ParseError> {
         let mut items = Vec::new();
         self.skip_separators();
 
@@ -984,7 +1110,7 @@ impl Parser {
             if self.is_eof()
                 || (stop_on_closer && self.at_closer())
                 || self.at_reserved_stop(stop_words)
-                || (stop_on_dsemi && matches!(self.peek_kind(), TokenKind::DSemi))
+                || (stop_on_dsemi && matches!(self.peek(), Token::DSemi))
             {
                 break;
             }
@@ -1000,13 +1126,13 @@ impl Parser {
         Ok(Program { items })
     }
 
-    fn parse_and_or(&mut self) -> Result<AndOr, ParseError> {
+    fn parse_and_or(&mut self) -> Result<AndOr<'src>, ParseError> {
         let first = self.parse_pipeline()?;
         let mut rest = Vec::new();
         loop {
-            let op = match self.peek_kind() {
-                TokenKind::AndIf => LogicalOp::And,
-                TokenKind::OrIf => LogicalOp::Or,
+            let op = match self.peek() {
+                Token::AndIf => LogicalOp::And,
+                Token::OrIf => LogicalOp::Or,
                 _ => break,
             };
             self.index += 1;
@@ -1017,7 +1143,7 @@ impl Parser {
         Ok(AndOr { first, rest })
     }
 
-    fn parse_pipeline(&mut self) -> Result<Pipeline, ParseError> {
+    fn parse_pipeline(&mut self) -> Result<Pipeline<'src>, ParseError> {
         self.expand_alias_at_command_start()?;
         let timed = if self.consume_word("time") {
             self.expand_alias_at_command_start()?;
@@ -1033,7 +1159,7 @@ impl Parser {
         let negated = self.consume_bang();
         self.expand_alias_at_command_start()?;
         let mut commands = vec![self.parse_command()?];
-        while matches!(self.peek_kind(), TokenKind::Pipe) {
+        while matches!(self.peek(), Token::Pipe) {
             self.index += 1;
             self.skip_linebreaks();
             commands.push(self.parse_command()?);
@@ -1045,7 +1171,7 @@ impl Parser {
         })
     }
 
-    fn parse_command(&mut self) -> Result<Command, ParseError> {
+    fn parse_command(&mut self) -> Result<Command<'src>, ParseError> {
         self.expand_alias_at_command_start()?;
         if self.peek_bang_word() {
             return Err(ParseError {
@@ -1072,14 +1198,14 @@ impl Parser {
         } else if self.peek_reserved_word("case") {
             self.parse_case_command()?
         } else {
-            match self.peek_kind() {
-                TokenKind::LParen => {
+            match self.peek() {
+                Token::LParen => {
                     self.index += 1;
                     let body = self.parse_program_until(true, &[], false)?;
-                    self.expect(TokenKind::RParen, "expected ')' to close subshell")?;
+                    self.expect(Token::RParen, "expected ')' to close subshell")?;
                     Command::Subshell(body)
                 }
-                TokenKind::Word(text) if text == "{" => {
+                Token::Word(text) if text == "{" => {
                     self.index += 1;
                     let body = self.parse_program_until(true, &[], false)?;
                     self.expect_reserved_word("}")?;
@@ -1091,7 +1217,7 @@ impl Parser {
         self.parse_command_redirections(command)
     }
 
-    fn parse_command_redirections(&mut self, command: Command) -> Result<Command, ParseError> {
+    fn parse_command_redirections(&mut self, command: Command<'src>) -> Result<Command<'src>, ParseError> {
         if matches!(command, Command::Simple(_)) {
             return Ok(command);
         }
@@ -1106,7 +1232,7 @@ impl Parser {
         }
     }
 
-    fn parse_if_command(&mut self) -> Result<Command, ParseError> {
+    fn parse_if_command(&mut self) -> Result<Command<'src>, ParseError> {
         self.expect_reserved_word("if")?;
         let condition = self.parse_program_until(false, &["then"], false)?;
         if condition.items.is_empty() {
@@ -1147,7 +1273,7 @@ impl Parser {
         }))
     }
 
-    fn parse_loop_command(&mut self, kind: LoopKind) -> Result<Command, ParseError> {
+    fn parse_loop_command(&mut self, kind: LoopKind) -> Result<Command<'src>, ParseError> {
         let keyword = match kind {
             LoopKind::While => "while",
             LoopKind::Until => "until",
@@ -1169,10 +1295,10 @@ impl Parser {
         }))
     }
 
-    fn parse_for_command(&mut self) -> Result<Command, ParseError> {
+    fn parse_for_command(&mut self) -> Result<Command<'src>, ParseError> {
         self.expect_reserved_word("for")?;
-        let name = match self.peek_kind().clone() {
-            TokenKind::Word(text) if is_name(&text) => {
+        let name = match self.peek().clone() {
+            Token::Word(text) if is_name(&text) => {
                 self.index += 1;
                 text
             }
@@ -1188,10 +1314,10 @@ impl Parser {
             self.index += 1;
             let mut items = Vec::new();
             while !self.is_eof()
-                && !matches!(self.peek_kind(), TokenKind::Semi | TokenKind::Newline)
+                && !matches!(self.peek(), Token::Semi | Token::Newline)
             {
-                match self.peek_kind().clone() {
-                    TokenKind::Word(text) => {
+                match self.peek().clone() {
+                    Token::Word(text) => {
                         self.index += 1;
                         items.push(Word { raw: text });
                     }
@@ -1214,10 +1340,10 @@ impl Parser {
         Ok(Command::For(ForCommand { name, items, body }))
     }
 
-    fn parse_case_command(&mut self) -> Result<Command, ParseError> {
+    fn parse_case_command(&mut self) -> Result<Command<'src>, ParseError> {
         self.expect_reserved_word("case")?;
-        let word = match self.peek_kind().clone() {
-            TokenKind::Word(text) => {
+        let word = match self.peek().clone() {
+            Token::Word(text) => {
                 self.index += 1;
                 Word { raw: text }
             }
@@ -1239,14 +1365,14 @@ impl Parser {
 
         let mut arms = Vec::new();
         while !self.peek_reserved_word("esac") && !self.is_eof() {
-            if matches!(self.peek_kind(), TokenKind::LParen) {
+            if matches!(self.peek(), Token::LParen) {
                 self.index += 1;
             }
 
             let mut patterns = Vec::new();
             loop {
-                match self.peek_kind().clone() {
-                    TokenKind::Word(text) => {
+                match self.peek().clone() {
+                    Token::Word(text) => {
                         self.index += 1;
                         patterns.push(Word { raw: text });
                     }
@@ -1257,19 +1383,19 @@ impl Parser {
                     }
                 }
 
-                if matches!(self.peek_kind(), TokenKind::Pipe) {
+                if matches!(self.peek(), Token::Pipe) {
                     self.index += 1;
                     continue;
                 }
                 break;
             }
 
-            self.expect(TokenKind::RParen, "expected ')' after case pattern")?;
+            self.expect(Token::RParen, "expected ')' after case pattern")?;
             self.skip_separators();
             let body = self.parse_program_until(false, &["esac"], true)?;
             arms.push(CaseArm { patterns, body });
 
-            if matches!(self.peek_kind(), TokenKind::DSemi) {
+            if matches!(self.peek(), Token::DSemi) {
                 self.index += 1;
                 self.skip_separators();
             } else if !self.peek_reserved_word("esac") {
@@ -1283,10 +1409,10 @@ impl Parser {
         Ok(Command::Case(CaseCommand { word, arms }))
     }
 
-    fn parse_function_keyword(&mut self) -> Result<Command, ParseError> {
+    fn parse_function_keyword(&mut self) -> Result<Command<'src>, ParseError> {
         self.expect_reserved_word("function")?;
-        let name = match self.peek_kind().clone() {
-            TokenKind::Word(name) if is_name(&name) => {
+        let name = match self.peek().clone() {
+            Token::Word(name) if is_name(&name) => {
                 self.index += 1;
                 name
             }
@@ -1296,9 +1422,9 @@ impl Parser {
                 });
             }
         };
-        if matches!(self.peek_kind(), TokenKind::LParen) {
+        if matches!(self.peek(), Token::LParen) {
             self.index += 1;
-            self.expect(TokenKind::RParen, "expected ')' after '('")?;
+            self.expect(Token::RParen, "expected ')' after '('")?;
         }
         let body = self.parse_command()?;
         Ok(Command::FunctionDef(FunctionDef {
@@ -1307,7 +1433,7 @@ impl Parser {
         }))
     }
 
-    fn parse_simple_command(&mut self) -> Result<SimpleCommand, ParseError> {
+    fn parse_simple_command(&mut self) -> Result<SimpleCommand<'src>, ParseError> {
         let mut command = SimpleCommand::default();
 
         loop {
@@ -1319,14 +1445,11 @@ impl Parser {
 
             if command.words.is_empty() {
                 if let Some(text) = self.peek_word_text() {
-                    if split_assignment(&text).is_some() {
-                        let (name, value) =
-                            split_assignment(&text).unwrap();
+                    if let Some((name, value)) = split_assignment(&text) {
+                        let name = Cow::Owned(name.to_string());
+                        let value = Word { raw: Cow::Owned(value.to_string()) };
                         self.index += 1;
-                        command.assignments.push(Assignment {
-                            name,
-                            value: Word { raw: value },
-                        });
+                        command.assignments.push(Assignment { name, value });
                         continue;
                     }
                 }
@@ -1335,8 +1458,8 @@ impl Parser {
                 }
             }
 
-            let word = match self.peek_kind().clone() {
-                TokenKind::Word(text) => {
+            let word = match self.peek().clone() {
+                Token::Word(text) => {
                     self.index += 1;
                     Word { raw: text }
                 }
@@ -1355,7 +1478,7 @@ impl Parser {
             });
         }
 
-        if !command.words.is_empty() && matches!(self.peek_kind(), TokenKind::LParen) {
+        if !command.words.is_empty() && matches!(self.peek(), Token::LParen) {
             return Err(ParseError {
                 message: "syntax error near unexpected token `('".to_string(),
             });
@@ -1364,9 +1487,9 @@ impl Parser {
         Ok(command)
     }
 
-    fn try_parse_redirection(&mut self) -> Result<Option<Redirection>, ParseError> {
-        let (fd, kind) = match self.peek_kind().clone() {
-            TokenKind::IoNumber(fd) => {
+    fn try_parse_redirection(&mut self) -> Result<Option<Redirection<'src>>, ParseError> {
+        let (fd, kind) = match self.peek().clone() {
+            Token::IoNumber(fd) => {
                 let kind = self.redirection_kind_at(self.index + 1)?;
                 self.index += 1;
                 (Some(fd), kind)
@@ -1379,8 +1502,8 @@ impl Parser {
         let kind = kind.expect("checked above");
         self.index += 1;
 
-        let target = match self.peek_kind().clone() {
-            TokenKind::Word(text) => {
+        let target = match self.peek().clone() {
+            Token::Word(text) => {
                 self.index += 1;
                 Word { raw: text }
             }
@@ -1408,15 +1531,15 @@ impl Parser {
     }
 
     fn redirection_kind_at(&self, index: usize) -> Result<Option<RedirectionKind>, ParseError> {
-        let kind = match self.tokens.get(index).map(|token| &token.kind) {
-            Some(TokenKind::Less) => RedirectionKind::Read,
-            Some(TokenKind::Greater) => RedirectionKind::Write,
-            Some(TokenKind::Clobber) => RedirectionKind::ClobberWrite,
-            Some(TokenKind::DGreat) => RedirectionKind::Append,
-            Some(TokenKind::DLess | TokenKind::DLessDash) => RedirectionKind::HereDoc,
-            Some(TokenKind::LessAnd) => RedirectionKind::DupInput,
-            Some(TokenKind::GreatAnd) => RedirectionKind::DupOutput,
-            Some(TokenKind::LessGreat) => RedirectionKind::ReadWrite,
+        let kind = match self.tokens.get(index) {
+            Some(Token::Less) => RedirectionKind::Read,
+            Some(Token::Greater) => RedirectionKind::Write,
+            Some(Token::Clobber) => RedirectionKind::ClobberWrite,
+            Some(Token::DGreat) => RedirectionKind::Append,
+            Some(Token::DLess | Token::DLessDash) => RedirectionKind::HereDoc,
+            Some(Token::LessAnd) => RedirectionKind::DupInput,
+            Some(Token::GreatAnd) => RedirectionKind::DupOutput,
+            Some(Token::LessGreat) => RedirectionKind::ReadWrite,
             Some(_) => return Ok(None),
             None => {
                 return Err(ParseError {
@@ -1428,19 +1551,19 @@ impl Parser {
     }
 
     fn skip_separators(&mut self) {
-        while matches!(self.peek_kind(), TokenKind::Newline | TokenKind::Semi) {
+        while matches!(self.peek(), Token::Newline | Token::Semi) {
             self.index += 1;
         }
     }
 
     fn skip_linebreaks(&mut self) {
-        while matches!(self.peek_kind(), TokenKind::Newline) {
+        while matches!(self.peek(), Token::Newline) {
             self.index += 1;
         }
     }
 
     fn consume_amp(&mut self) -> bool {
-        if matches!(self.peek_kind(), TokenKind::Amp) {
+        if matches!(self.peek(), Token::Amp) {
             self.index += 1;
             true
         } else {
@@ -1449,7 +1572,7 @@ impl Parser {
     }
 
     fn consume_word(&mut self, word: &str) -> bool {
-        if matches!(self.peek_kind(), TokenKind::Word(text) if text == word) {
+        if matches!(self.peek(), Token::Word(text) if text == word) {
             self.index += 1;
             true
         } else {
@@ -1458,7 +1581,7 @@ impl Parser {
     }
 
     fn consume_bang(&mut self) -> bool {
-        if matches!(self.peek_kind(), TokenKind::Word(text) if text == "!") {
+        if matches!(self.peek(), Token::Word(text) if text == "!") {
             self.index += 1;
             true
         } else {
@@ -1466,8 +1589,8 @@ impl Parser {
         }
     }
 
-    fn expect(&mut self, expected: TokenKind, message: &str) -> Result<(), ParseError> {
-        if std::mem::discriminant(self.peek_kind()) == std::mem::discriminant(&expected) {
+    fn expect(&mut self, expected: Token<'src>, message: &str) -> Result<(), ParseError> {
+        if std::mem::discriminant(self.peek()) == std::mem::discriminant(&expected) {
             self.index += 1;
             Ok(())
         } else {
@@ -1477,13 +1600,13 @@ impl Parser {
         }
     }
 
-    fn peek_kind(&self) -> &TokenKind {
-        &self.tokens[self.index].kind
+    fn peek(&self) -> &Token<'src> {
+        &self.tokens[self.index]
     }
 
-    fn peek_word_text(&self) -> Option<String> {
-        match &self.tokens[self.index].kind {
-            TokenKind::Word(text) => Some(text.clone()),
+    fn peek_word_text(&self) -> Option<Cow<'src, str>> {
+        match &self.tokens[self.index] {
+            Token::Word(text) => Some(text.clone()),
             _ => None,
         }
     }
@@ -1509,14 +1632,13 @@ impl Parser {
     }
 
     fn expand_alias_at_current_token(&mut self) -> Result<bool, ParseError> {
-        let Some(TokenKind::Word(text)) = self.tokens.get(self.index).map(|token| &token.kind)
-        else {
+        let Some(Token::Word(text)) = self.tokens.get(self.index) else {
             return Ok(false);
         };
         if !is_alias_word(text) {
             return Ok(false);
         }
-        let Some(replacement) = self.aliases.get(text).cloned() else {
+        let Some(replacement) = self.aliases.get(text.as_ref()).cloned() else {
             return Ok(false);
         };
         if self.alias_expansions_remaining == 0 {
@@ -1526,10 +1648,14 @@ impl Parser {
         };
         self.alias_expansions_remaining -= 1;
         let tokenized = tokenize(&replacement)?;
-        let mut replacement_tokens = tokenized.tokens;
+        let mut replacement_tokens: Vec<Token<'src>> = tokenized
+            .tokens
+            .into_iter()
+            .map(own_token)
+            .collect();
         if replacement_tokens
             .last()
-            .is_some_and(|t| matches!(t.kind, TokenKind::Eof))
+            .is_some_and(|t| matches!(t, Token::Eof))
         {
             replacement_tokens.pop();
         }
@@ -1542,9 +1668,9 @@ impl Parser {
         Ok(true)
     }
 
-    fn try_peek_function_name(&self) -> Option<String> {
-        let name = match self.tokens.get(self.index)?.kind.clone() {
-            TokenKind::Word(name) => name,
+    fn try_peek_function_name(&self) -> Option<Cow<'src, str>> {
+        let name = match self.tokens.get(self.index)?.clone() {
+            Token::Word(name) => name,
             _ => return None,
         };
         if is_reserved_word(&name) {
@@ -1553,26 +1679,26 @@ impl Parser {
         if !is_name(&name) {
             return None;
         }
-        if !matches!(self.tokens.get(self.index + 1)?.kind, TokenKind::LParen) {
+        if !matches!(self.tokens.get(self.index + 1), Some(Token::LParen)) {
             return None;
         }
-        if !matches!(self.tokens.get(self.index + 2)?.kind, TokenKind::RParen) {
+        if !matches!(self.tokens.get(self.index + 2), Some(Token::RParen)) {
             return None;
         }
         Some(name)
     }
 
     fn peek_reserved_word(&self, word: &str) -> bool {
-        matches!(self.peek_kind(), TokenKind::Word(text) if text == word)
+        matches!(self.peek(), Token::Word(text) if text == word)
     }
 
     fn peek_bang_word(&self) -> bool {
-        matches!(self.peek_kind(), TokenKind::Word(text) if text == "!")
+        matches!(self.peek(), Token::Word(text) if text == "!")
     }
 
     fn at_reserved_stop(&self, stop_words: &[&str]) -> bool {
-        match self.peek_kind() {
-            TokenKind::Word(text) => stop_words.iter().any(|word| text == word),
+        match self.peek() {
+            Token::Word(text) => stop_words.iter().any(|word| text == word),
             _ => false,
         }
     }
@@ -1590,20 +1716,46 @@ impl Parser {
     }
 
     fn is_eof(&self) -> bool {
-        matches!(self.peek_kind(), TokenKind::Eof)
+        matches!(self.peek(), Token::Eof)
     }
 
     fn at_closer(&self) -> bool {
-        matches!(self.peek_kind(), TokenKind::RParen) || self.peek_reserved_word("}")
+        matches!(self.peek(), Token::RParen) || self.peek_reserved_word("}")
     }
 }
 
-fn split_assignment(input: &str) -> Option<(String, String)> {
+fn own_token<'a>(token: Token<'_>) -> Token<'a> {
+    match token {
+        Token::Word(cow) => Token::Word(Cow::Owned(cow.into_owned())),
+        Token::IoNumber(fd) => Token::IoNumber(fd),
+        Token::Newline => Token::Newline,
+        Token::Semi => Token::Semi,
+        Token::DSemi => Token::DSemi,
+        Token::Amp => Token::Amp,
+        Token::Pipe => Token::Pipe,
+        Token::AndIf => Token::AndIf,
+        Token::OrIf => Token::OrIf,
+        Token::LParen => Token::LParen,
+        Token::RParen => Token::RParen,
+        Token::Less => Token::Less,
+        Token::Greater => Token::Greater,
+        Token::DGreat => Token::DGreat,
+        Token::DLess => Token::DLess,
+        Token::DLessDash => Token::DLessDash,
+        Token::LessAnd => Token::LessAnd,
+        Token::GreatAnd => Token::GreatAnd,
+        Token::LessGreat => Token::LessGreat,
+        Token::Clobber => Token::Clobber,
+        Token::Eof => Token::Eof,
+    }
+}
+
+fn split_assignment(input: &str) -> Option<(&str, &str)> {
     let (name, value) = input.split_once('=')?;
     if !is_name(name) {
         return None;
     }
-    Some((name.to_string(), value.to_string()))
+    Some((name, value))
 }
 
 fn is_alias_word(word: &str) -> bool {
@@ -1706,7 +1858,7 @@ mod tests {
                 if cmd.redirections.len() == 1
                     && cmd.redirections[0].kind == RedirectionKind::HereDoc
                     && cmd.redirections[0].target.raw == "EOF"
-                    && cmd.redirections[0].here_doc.as_ref().map(|doc| doc.body.as_str()) == Some("hello $USER\n")
+                    && cmd.redirections[0].here_doc.as_ref().map(|doc| doc.body.as_ref()) == Some("hello $USER\n")
                     && cmd.redirections[0].here_doc.as_ref().map(|doc| doc.expand) == Some(true)
         ));
 
@@ -1714,7 +1866,7 @@ mod tests {
         assert!(matches!(
             &quoted.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
-                if cmd.redirections[0].here_doc.as_ref().map(|doc| doc.delimiter.as_str()) == Some("EOF")
+                if cmd.redirections[0].here_doc.as_ref().map(|doc| doc.delimiter.as_ref()) == Some("EOF")
                     && cmd.redirections[0].here_doc.as_ref().map(|doc| doc.expand) == Some(false)
         ));
 
@@ -1722,7 +1874,7 @@ mod tests {
         assert!(matches!(
             &tab_stripped.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
-                if cmd.redirections[0].here_doc.as_ref().map(|doc| doc.body.as_str()) == Some("one\n")
+                if cmd.redirections[0].here_doc.as_ref().map(|doc| doc.body.as_ref()) == Some("one\n")
                     && cmd.redirections[0].here_doc.as_ref().map(|doc| doc.strip_tabs) == Some(true)
         ));
     }
@@ -1770,7 +1922,7 @@ mod tests {
         assert!(matches!(
             &closer_literal.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|word| word.raw.as_str()).collect::<Vec<_>>() == vec!["echo", "}"]
+                if simple.words.iter().map(|word| word.raw.as_ref()).collect::<Vec<_>>() == vec!["echo", "}"]
         ));
     }
 
@@ -1879,7 +2031,7 @@ mod tests {
             &linebreak_before_in.items[0].and_or.first.commands[0],
             Command::For(for_command)
                 if for_command.name == "item"
-                    && for_command.items.as_ref().map(|items| items.iter().map(|word| word.raw.as_str()).collect::<Vec<_>>())
+                    && for_command.items.as_ref().map(|items| items.iter().map(|word| word.raw.as_ref()).collect::<Vec<_>>())
                         == Some(vec!["a", "b"])
         ));
 
@@ -1888,7 +2040,7 @@ mod tests {
         assert!(matches!(
             &reserved_words_as_items.items[0].and_or.first.commands[0],
             Command::For(for_command)
-                if for_command.items.as_ref().map(|items| items.iter().map(|word| word.raw.as_str()).collect::<Vec<_>>())
+                if for_command.items.as_ref().map(|items| items.iter().map(|word| word.raw.as_ref()).collect::<Vec<_>>())
                     == Some(vec!["do", "done"])
         ));
     }
@@ -1963,19 +2115,13 @@ mod tests {
         assert!(!parser.peek_reserved_word("if"));
         assert!(!parser.at_reserved_stop(&["then"]));
         assert!(parser.expect_reserved_word("if").is_err());
-        assert!(parser.expect(TokenKind::Semi, "semi").is_err());
+        assert!(parser.expect(Token::Semi, "semi").is_err());
 
         let mut parser = Parser::new(
             vec![
-                Token {
-                    kind: TokenKind::Newline,
-                },
-                Token {
-                    kind: TokenKind::Word("do".into()),
-                },
-                Token {
-                    kind: TokenKind::Eof,
-                },
+                Token::Newline,
+                Token::Word("do".into()),
+                Token::Eof,
             ],
             VecDeque::new(),
             HashMap::new(),
@@ -1987,9 +2133,7 @@ mod tests {
         let parser = Parser::new(func_tokens.tokens, VecDeque::new(), HashMap::new());
         assert_eq!(parser.try_peek_function_name(), None);
 
-        let closer_tokens = vec![Token {
-            kind: TokenKind::Word("}".into()),
-        }];
+        let closer_tokens = vec![Token::Word("}".into())];
         let parser = Parser::new(closer_tokens, VecDeque::new(), HashMap::new());
         assert!(parser.at_closer());
 
@@ -2010,12 +2154,8 @@ mod tests {
     fn alias_helper_paths_cover_pending_and_depth_guard() {
         let mut parser = Parser::new(
             vec![
-                Token {
-                    kind: TokenKind::Word("word".into()),
-                },
-                Token {
-                    kind: TokenKind::Eof,
-                },
+                Token::Word("word".into()),
+                Token::Eof,
             ],
             VecDeque::new(),
             HashMap::from([(String::from("word"), String::from("ok"))]),
@@ -2024,16 +2164,12 @@ mod tests {
         parser
             .expand_alias_after_blank_in_simple_command()
             .expect("expand pending alias");
-        assert!(matches!(parser.peek_kind(), TokenKind::Word(text) if text == "ok"));
+        assert!(matches!(parser.peek(), Token::Word(text) if text == "ok"));
 
         let mut parser = Parser::new(
             vec![
-                Token {
-                    kind: TokenKind::Word("loop".into()),
-                },
-                Token {
-                    kind: TokenKind::Eof,
-                },
+                Token::Word("loop".into()),
+                Token::Eof,
             ],
             VecDeque::new(),
             HashMap::from([(String::from("loop"), String::from("loop "))]),
@@ -2046,12 +2182,8 @@ mod tests {
 
         let mut parser = Parser::new(
             vec![
-                Token {
-                    kind: TokenKind::Word("tail".into()),
-                },
-                Token {
-                    kind: TokenKind::Eof,
-                },
+                Token::Word("tail".into()),
+                Token::Eof,
             ],
             VecDeque::new(),
             HashMap::new(),
@@ -2083,7 +2215,7 @@ mod tests {
         assert!(matches!(
             &second.and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|word| word.raw.as_str()).collect::<Vec<_>>() == vec!["printf", "ok"]
+                if simple.words.iter().map(|word| word.raw.as_ref()).collect::<Vec<_>>() == vec!["printf", "ok"]
         ));
 
         assert!(session.next_item(&HashMap::new()).expect("eof").is_none());
@@ -2097,7 +2229,7 @@ mod tests {
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|word| word.raw.as_str()).collect::<Vec<_>>() == vec!["printf", "hi"]
+                if simple.words.iter().map(|word| word.raw.as_ref()).collect::<Vec<_>>() == vec!["printf", "hi"]
         ));
 
         let mut aliases = HashMap::new();
@@ -2116,14 +2248,14 @@ mod tests {
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|word| word.raw.as_str()).collect::<Vec<_>>() == vec!["echo", "!"]
+                if simple.words.iter().map(|word| word.raw.as_ref()).collect::<Vec<_>>() == vec!["echo", "!"]
         ));
 
         let program = parse("!true").expect("parse bang word");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|word| word.raw.as_str()).collect::<Vec<_>>() == vec!["!true"]
+                if simple.words.iter().map(|word| word.raw.as_ref()).collect::<Vec<_>>() == vec!["!true"]
         ));
 
         let program = parse("! true").expect("parse negation");
@@ -2139,7 +2271,7 @@ mod tests {
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|word| word.raw.as_str()).collect::<Vec<_>>() == vec!["printf", "%s", "ok"]
+                if simple.words.iter().map(|word| word.raw.as_ref()).collect::<Vec<_>>() == vec!["printf", "%s", "ok"]
         ));
     }
 
@@ -2151,7 +2283,7 @@ mod tests {
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|word| word.raw.as_str()).collect::<Vec<_>>() == vec!["loop", "ok"]
+                if simple.words.iter().map(|word| word.raw.as_ref()).collect::<Vec<_>>() == vec!["loop", "ok"]
         ));
         assert!(alias_has_trailing_blank("value "));
         assert!(!alias_has_trailing_blank("value"));
@@ -2166,7 +2298,7 @@ mod tests {
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|w| w.raw.as_str()).collect::<Vec<_>>() == vec!["echo", "aliased"]
+                if simple.words.iter().map(|w| w.raw.as_ref()).collect::<Vec<_>>() == vec!["echo", "aliased"]
                     && simple.assignments.len() == 1
         ));
 
@@ -2175,7 +2307,7 @@ mod tests {
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|w| w.raw.as_str()).collect::<Vec<_>>() == vec!["echo", "aliased"]
+                if simple.words.iter().map(|w| w.raw.as_ref()).collect::<Vec<_>>() == vec!["echo", "aliased"]
                     && simple.redirections.len() == 1
         ));
     }
@@ -2196,15 +2328,9 @@ mod tests {
     fn parse_case_command_error_paths_are_covered() {
         let mut parser = Parser::new(
             vec![
-                Token {
-                    kind: TokenKind::Word("case".into()),
-                },
-                Token {
-                    kind: TokenKind::Semi,
-                },
-                Token {
-                    kind: TokenKind::Eof,
-                },
+                Token::Word("case".into()),
+                Token::Semi,
+                Token::Eof,
             ],
             VecDeque::new(),
             HashMap::new(),
@@ -2219,21 +2345,11 @@ mod tests {
 
         let mut parser = Parser::new(
             vec![
-                Token {
-                    kind: TokenKind::Word("case".into()),
-                },
-                Token {
-                    kind: TokenKind::Word("name".into()),
-                },
-                Token {
-                    kind: TokenKind::Newline,
-                },
-                Token {
-                    kind: TokenKind::Word("esac".into()),
-                },
-                Token {
-                    kind: TokenKind::Eof,
-                },
+                Token::Word("case".into()),
+                Token::Word("name".into()),
+                Token::Newline,
+                Token::Word("esac".into()),
+                Token::Eof,
             ],
             VecDeque::new(),
             HashMap::new(),
@@ -2245,24 +2361,12 @@ mod tests {
 
         let mut parser = Parser::new(
             vec![
-                Token {
-                    kind: TokenKind::Word("case".into()),
-                },
-                Token {
-                    kind: TokenKind::Word("name".into()),
-                },
-                Token {
-                    kind: TokenKind::Word("in".into()),
-                },
-                Token {
-                    kind: TokenKind::RParen,
-                },
-                Token {
-                    kind: TokenKind::Word("esac".into()),
-                },
-                Token {
-                    kind: TokenKind::Eof,
-                },
+                Token::Word("case".into()),
+                Token::Word("name".into()),
+                Token::Word("in".into()),
+                Token::RParen,
+                Token::Word("esac".into()),
+                Token::Eof,
             ],
             VecDeque::new(),
             HashMap::new(),
@@ -2277,33 +2381,15 @@ mod tests {
 
         let mut parser = Parser::new(
             vec![
-                Token {
-                    kind: TokenKind::Word("case".into()),
-                },
-                Token {
-                    kind: TokenKind::Word("name".into()),
-                },
-                Token {
-                    kind: TokenKind::Word("in".into()),
-                },
-                Token {
-                    kind: TokenKind::Word("foo".into()),
-                },
-                Token {
-                    kind: TokenKind::RParen,
-                },
-                Token {
-                    kind: TokenKind::Word("echo".into()),
-                },
-                Token {
-                    kind: TokenKind::Word("hi".into()),
-                },
-                Token {
-                    kind: TokenKind::Semi,
-                },
-                Token {
-                    kind: TokenKind::Eof,
-                },
+                Token::Word("case".into()),
+                Token::Word("name".into()),
+                Token::Word("in".into()),
+                Token::Word("foo".into()),
+                Token::RParen,
+                Token::Word("echo".into()),
+                Token::Word("hi".into()),
+                Token::Semi,
+                Token::Eof,
             ],
             VecDeque::new(),
             HashMap::new(),
@@ -2322,24 +2408,24 @@ mod tests {
         assert_eq!(parse_here_doc_delimiter("\"EOF\""), ("EOF".into(), false));
         assert_eq!(parse_here_doc_delimiter("\\EOF"), ("EOF".into(), false));
 
-        let chars: Vec<char> = "line".chars().collect();
+        let source = "line";
         let mut index = 0usize;
         assert_eq!(
-            read_here_doc_body(&chars, &mut index, "EOF", false, true)
+            read_here_doc_body(source, &mut index, "EOF", false, true)
                 .expect_err("unterminated body")
                 .message,
             "unterminated here-document"
         );
 
-        let chars: Vec<char> = "EO\\\nF\n".chars().collect();
+        let source = "EO\\\nF\n";
         let mut index = 0usize;
-        let body = read_here_doc_body(&chars, &mut index, "EOF", false, true)
+        let body = read_here_doc_body(source, &mut index, "EOF", false, true)
             .expect("continuation delimiter");
         assert_eq!(body, "");
 
-        let chars2: Vec<char> = "body\\\nEOF\nreal body\nEOF\n".chars().collect();
+        let source2 = "body\\\nEOF\nreal body\nEOF\n";
         let mut index2 = 0usize;
-        let body2 = read_here_doc_body(&chars2, &mut index2, "EOF", false, true)
+        let body2 = read_here_doc_body(source2, &mut index2, "EOF", false, true)
             .expect("continuation body");
         assert_eq!(body2, "bodyEOF\nreal body\n");
 
@@ -2350,15 +2436,9 @@ mod tests {
 
         let mut parser = Parser::new(
             vec![
-                Token {
-                    kind: TokenKind::DLess,
-                },
-                Token {
-                    kind: TokenKind::Word("EOF".into()),
-                },
-                Token {
-                    kind: TokenKind::Eof,
-                },
+                Token::DLess,
+                Token::Word("EOF".into()),
+                Token::Eof,
             ],
             VecDeque::new(),
             HashMap::new(),
@@ -2373,18 +2453,10 @@ mod tests {
 
         let mut parser = Parser::new(
             vec![
-                Token {
-                    kind: TokenKind::IoNumber(2),
-                },
-                Token {
-                    kind: TokenKind::Greater,
-                },
-                Token {
-                    kind: TokenKind::Word("out".into()),
-                },
-                Token {
-                    kind: TokenKind::Eof,
-                },
+                Token::IoNumber(2),
+                Token::Greater,
+                Token::Word("out".into()),
+                Token::Eof,
             ],
             VecDeque::new(),
             HashMap::new(),
@@ -2397,9 +2469,7 @@ mod tests {
         assert_eq!(redir.kind, RedirectionKind::Write);
 
         let parser = Parser::new(
-            vec![Token {
-                kind: TokenKind::Eof,
-            }],
+            vec![Token::Eof],
             VecDeque::new(),
             HashMap::new(),
         );
@@ -2599,25 +2669,25 @@ mod tests {
     #[test]
     fn tokenizer_emits_io_number_for_adjacent_digits() {
         let t = tokenize("2>err").expect("tokenize");
-        assert_eq!(t.tokens[0].kind, TokenKind::IoNumber(2));
-        assert_eq!(t.tokens[1].kind, TokenKind::Greater);
-        assert_eq!(t.tokens[2].kind, TokenKind::Word("err".into()));
+        assert_eq!(t.tokens[0], Token::IoNumber(2));
+        assert_eq!(t.tokens[1], Token::Greater);
+        assert_eq!(t.tokens[2], Token::Word("err".into()));
 
         let t = tokenize("0<in").expect("tokenize");
-        assert_eq!(t.tokens[0].kind, TokenKind::IoNumber(0));
-        assert_eq!(t.tokens[1].kind, TokenKind::Less);
+        assert_eq!(t.tokens[0], Token::IoNumber(0));
+        assert_eq!(t.tokens[1], Token::Less);
 
         let t = tokenize("2 >err").expect("tokenize");
-        assert_eq!(t.tokens[0].kind, TokenKind::Word("2".into()));
-        assert_eq!(t.tokens[1].kind, TokenKind::Greater);
+        assert_eq!(t.tokens[0], Token::Word("2".into()));
+        assert_eq!(t.tokens[1], Token::Greater);
 
         let t = tokenize("abc>err").expect("tokenize");
-        assert_eq!(t.tokens[0].kind, TokenKind::Word("abc".into()));
-        assert_eq!(t.tokens[1].kind, TokenKind::Greater);
+        assert_eq!(t.tokens[0], Token::Word("abc".into()));
+        assert_eq!(t.tokens[1], Token::Greater);
 
         let t = tokenize("999999999999999999999>out").expect("tokenize");
-        assert_eq!(t.tokens[0].kind, TokenKind::Word("999999999999999999999".into()));
-        assert_eq!(t.tokens[1].kind, TokenKind::Greater);
+        assert_eq!(t.tokens[0], Token::Word("999999999999999999999".into()));
+        assert_eq!(t.tokens[1], Token::Greater);
     }
 
     #[test]
@@ -2693,5 +2763,224 @@ mod tests {
     fn function_keyword_invalid_name() {
         let error = parse("function 123").expect_err("bad function name");
         assert_eq!(error.message, "expected function name");
+    }
+
+    #[test]
+    fn into_static_covers_all_command_variants() {
+        use std::borrow::Cow;
+
+        let simple = Command::Simple(SimpleCommand {
+            assignments: vec![Assignment {
+                name: Cow::Borrowed("X"),
+                value: Word {
+                    raw: Cow::Borrowed("1"),
+                },
+            }],
+            words: vec![Word {
+                raw: Cow::Borrowed("echo"),
+            }],
+            redirections: vec![Redirection {
+                fd: Some(2),
+                kind: RedirectionKind::Write,
+                target: Word {
+                    raw: Cow::Borrowed("err"),
+                },
+                here_doc: None,
+            }],
+        });
+        let s: Command<'static> = simple.into_static();
+        assert!(matches!(s, Command::Simple(ref sc) if sc.words[0].raw == "echo"));
+
+        let subshell = Command::Subshell(Program {
+            items: vec![ListItem {
+                and_or: AndOr {
+                    first: Pipeline {
+                        negated: false,
+                        timed: TimedMode::Off,
+                        commands: vec![s.clone()],
+                    },
+                    rest: vec![],
+                },
+                asynchronous: false,
+            }],
+        });
+        assert!(matches!(subshell.clone().into_static(), Command::Subshell(_)));
+
+        let group = Command::Group(Program { items: vec![] });
+        assert!(matches!(group.into_static(), Command::Group(_)));
+
+        let func = Command::FunctionDef(FunctionDef {
+            name: Cow::Borrowed("f"),
+            body: Box::new(s.clone()),
+        });
+        assert!(matches!(func.into_static(), Command::FunctionDef(fd) if fd.name == "f"));
+
+        let if_cmd = Command::If(IfCommand {
+            condition: Program { items: vec![] },
+            then_branch: Program { items: vec![] },
+            elif_branches: vec![ElifBranch {
+                condition: Program { items: vec![] },
+                body: Program { items: vec![] },
+            }],
+            else_branch: Some(Program { items: vec![] }),
+        });
+        assert!(matches!(if_cmd.into_static(), Command::If(_)));
+
+        let loop_cmd = Command::Loop(LoopCommand {
+            kind: LoopKind::While,
+            condition: Program { items: vec![] },
+            body: Program { items: vec![] },
+        });
+        assert!(matches!(loop_cmd.into_static(), Command::Loop(_)));
+
+        let for_cmd = Command::For(ForCommand {
+            name: Cow::Borrowed("i"),
+            items: Some(vec![Word {
+                raw: Cow::Borrowed("a"),
+            }]),
+            body: Program { items: vec![] },
+        });
+        let for_static = for_cmd.into_static();
+        assert!(matches!(&for_static, Command::For(fc) if fc.name == "i"));
+
+        let case_cmd = Command::Case(CaseCommand {
+            word: Word {
+                raw: Cow::Borrowed("x"),
+            },
+            arms: vec![CaseArm {
+                patterns: vec![Word {
+                    raw: Cow::Borrowed("*"),
+                }],
+                body: Program { items: vec![] },
+            }],
+        });
+        assert!(matches!(case_cmd.into_static(), Command::Case(_)));
+
+        let redir = Command::Redirected(
+            Box::new(s.clone()),
+            vec![Redirection {
+                fd: None,
+                kind: RedirectionKind::Write,
+                target: Word {
+                    raw: Cow::Borrowed("out"),
+                },
+                here_doc: Some(HereDoc {
+                    delimiter: Cow::Borrowed("EOF"),
+                    body: Cow::Borrowed("test\n"),
+                    expand: true,
+                    strip_tabs: false,
+                }),
+            }],
+        );
+        assert!(matches!(redir.into_static(), Command::Redirected(_, _)));
+    }
+
+    #[test]
+    fn alias_expansion_produces_non_word_tokens() {
+        let mut aliases = HashMap::new();
+        aliases.insert("both".to_string(), "echo a; echo b".to_string());
+        let program =
+            parse_with_aliases("both", &aliases).expect("parse alias with semicolon");
+        assert_eq!(program.items.len(), 2);
+    }
+
+    #[test]
+    fn backslash_newline_mid_word_produces_owned_cow() {
+        let program = parse("ec\\\nho ok").expect("continuation in command");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.words[0].raw == "echo" && cmd.words[1].raw == "ok"
+        ));
+
+        let program = parse("echo a\\\nb\\\nc").expect("multiple continuations");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.words[1].raw == "abc"
+        ));
+
+        let program = parse("2\\\n>err echo ok").expect("continuation in digit");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.words[0].raw == "echo"
+        ));
+    }
+
+    #[test]
+    fn own_token_all_variants() {
+        use std::borrow::Cow;
+        let cases: Vec<Token<'_>> = vec![
+            Token::Word(Cow::Borrowed("hello")),
+            Token::IoNumber(3),
+            Token::Newline,
+            Token::Semi,
+            Token::DSemi,
+            Token::Amp,
+            Token::Pipe,
+            Token::AndIf,
+            Token::OrIf,
+            Token::LParen,
+            Token::RParen,
+            Token::Less,
+            Token::Greater,
+            Token::DGreat,
+            Token::DLess,
+            Token::DLessDash,
+            Token::LessAnd,
+            Token::GreatAnd,
+            Token::LessGreat,
+            Token::Clobber,
+            Token::Eof,
+        ];
+        for token in cases {
+            let owned: Token<'static> = own_token(token);
+            match owned {
+                Token::Word(cow) => assert_eq!(&*cow, "hello"),
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn skip_scan_covers_dollar_single_quote_and_default_in_subshell() {
+        let program = parse("echo $(echo $'hi' done)").expect("dollar-sq in paren");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.words.len() == 2
+        ));
+
+        let program = parse("echo $(echo $VAR done)").expect("bare dollar in paren");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.words.len() == 2
+        ));
+
+        let err = parse("echo $(echo 'unterminated)").expect_err("sq in paren");
+        assert!(err.message.contains("unterminated"));
+    }
+
+    #[test]
+    fn backslash_newline_before_comment_does_not_start_comment() {
+        let program = parse("a\\\n#b").expect("continuation before hash");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.words[0].raw == "a#b"
+        ));
+    }
+
+    #[test]
+    fn backslash_newline_before_operator_resets_owned_mode() {
+        let program = parse("echo a\\\nb; echo c").expect("continuation before semi");
+        assert_eq!(program.items.len(), 2);
+    }
+
+    #[test]
+    fn backslash_newline_non_digit_before_redirect_is_not_io_number() {
+        let program = parse("a\\\nb>out").expect("non-digit continuation before redir");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.words[0].raw == "ab"
+                && cmd.redirections.len() == 1
+                && cmd.redirections[0].fd.is_none()
+        ));
     }
 }
