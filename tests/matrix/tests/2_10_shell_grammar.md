@@ -89,23 +89,23 @@ begin test "space before redirection not parsed as IO_NUMBER"
 end test "space before redirection not parsed as IO_NUMBER"
 ```
 
-#### Test: quoted here-document delimiter suppresses expansion
+#### Test: quoted here-document delimiter is quote-removed
 
-When the here-document delimiter is quoted, the token identification rules
-preserve the quoting, and no parameter expansion is performed within the
-here-document body.
+Rule 3 applies quote removal to the here-document delimiter word to determine
+the delimiter text. A quoted delimiter still ends on the unquoted delimiter
+line, and expansions inside the body are suppressed.
 
 ```
-begin test "quoted here-document delimiter suppresses expansion"
+begin test "quoted here-document delimiter is quote-removed"
   script
-    cat << "EOF"
+    cat << \EOF
     $var
     EOF
   expect
     stdout "\$var"
     stderr ""
     exit_code 0
-end test "quoted here-document delimiter suppresses expansion"
+end test "quoted here-document delimiter is quote-removed"
 ```
 
 #### Test: assignment word in command prefix
@@ -395,22 +395,41 @@ begin test "redirection filename expansion occurs at execution time"
 end test "redirection filename expansion occurs at execution time"
 ```
 
-#### Test: case statement with in and esac
+#### Test: case statement recognizes in after newline
 
-Rule 4 (case termination) recognizes `esac` as a reserved word; rule 6a
-recognizes `in` in the third word position of a case statement.
+Rule 6a recognizes `in` in the third word position of a `case` statement even
+when it follows a linebreak.
 
 ```
-begin test "case statement with in and esac"
+begin test "case statement recognizes in after newline"
   script
-    case "foo" in
+    case "foo"
+    in
         foo) echo "matched" ;;
     esac
   expect
     stdout "matched"
     stderr ""
     exit_code 0
-end test "case statement with in and esac"
+end test "case statement recognizes in after newline"
+```
+
+#### Test: quoted esac in case pattern is parsed as WORD
+
+Rule 4 recognizes `esac` as the case terminator only when the token is exactly
+the reserved word. A quoted `esac` token in a pattern list is parsed as WORD.
+
+```
+begin test "quoted esac in case pattern is parsed as WORD"
+  script
+    case esac in
+      'esac') echo matched ;;
+    esac
+  expect
+    stdout "matched"
+    stderr ""
+    exit_code 0
+end test "quoted esac in case pattern is parsed as WORD"
 ```
 
 #### Test: invalid identifier in for loop causes syntax error
@@ -432,54 +451,60 @@ begin test "invalid identifier in for loop causes syntax error"
 end test "invalid identifier in for loop causes syntax error"
 ```
 
-#### Test: for-in loop with valid identifier
+#### Test: for loop recognizes do after newline
 
-When the token after `for` is a valid NAME (rule 5) and `in` is recognized
-as a reserved word (rule 6b), the for loop parses and executes correctly.
+Rule 6b recognizes `do` in a `for` command even when it follows a linebreak.
+This allows a `for name` loop with omitted `in` to parse correctly.
 
 ```
-begin test "for-in loop with valid identifier"
+begin test "for loop recognizes do after newline"
   script
-    for i in a; do
-      echo $i
+    set -- a b
+    for i
+    do
+      echo "$i"
+    done
+  expect
+    stdout "a\nb"
+    stderr ""
+    exit_code 0
+end test "for loop recognizes do after newline"
+```
+
+#### Test: for loop name may be spelled in
+
+Rule 5 applies in the `for` name position, so a token that meets the
+requirements for a NAME is recognized as NAME there even if its text is `in`.
+
+```
+begin test "for loop name may be spelled in"
+  script
+    for in in a; do
+      echo "$in"
     done
   expect
     stdout "a"
     stderr ""
     exit_code 0
-end test "for-in loop with valid identifier"
+end test "for loop name may be spelled in"
 ```
 
-#### Test: valid assignment prefix scopes to command
+#### Test: quoted reserved word is parsed as WORD
 
-Rule 7 identifies ASSIGNMENT_WORD tokens in the command prefix. The
-assignment `var=1` is scoped to the command's environment.
+Rule 1 recognizes reserved words only when the token is exactly the reserved
+word. A quoted `if` token is not the reserved word and is parsed as a simple
+command name instead.
 
 ```
-begin test "valid assignment prefix scopes to command"
+begin test "quoted reserved word is parsed as WORD"
   script
-    var=1 env | grep -q "^var=1$" && echo "assigned"
+    'if' true 2>/dev/null
+    echo $?
   expect
-    stdout "assigned"
+    stdout "127"
     stderr ""
     exit_code 0
-end test "valid assignment prefix scopes to command"
-```
-
-#### Test: invalid name cannot be assignment
-
-A token that begins with a digit cannot form a valid name, so it is not
-recognized as ASSIGNMENT_WORD and causes an error.
-
-```
-begin test "invalid name cannot be assignment"
-  script
-    1invalid=true sh -c "echo executed"
-  expect
-    stdout ""
-    stderr ".+"
-    exit_code !=0
-end test "invalid name cannot be assignment"
+end test "quoted reserved word is parsed as WORD"
 ```
 
 #### Test: string starting with = is just a WORD
