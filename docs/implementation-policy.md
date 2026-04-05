@@ -105,6 +105,7 @@ The following `std` types and methods are banned from production code (enforced 
 
 - Unit tests and integration tests must not spawn `/bin/sh` or any other system shell as an oracle for expected behavior.
 - Integration tests live in `tests/integration/`; unit tests live alongside production code in `#[cfg(test)]` modules.
+- `tests/matrix/` is a separate conformance test suite that runs the built shell binary as a black box. It does not contribute to production-code line coverage and is not counted by `scripts/coverage.sh`.
 
 ### Syscall trace model
 
@@ -124,7 +125,7 @@ All unit tests that exercise OS-interacting code paths use the **trace model** i
 
 - Optimize shell-owned overhead first: startup, parsing, expansion, builtin dispatch, command lookup, and pipeline construction.
 - Prefer clearer, auditable low-level bindings over opaque abstractions when the syscall path materially affects shell semantics or latency.
-- Production-code line coverage must remain at or above 99.90% as measured by `./scripts/coverage.sh`, using the repository's production-only metric that excludes inline `#[cfg(test)]` modules from the final percentage. The remaining uncovered lines are limited to: (a) `default_interface()` function pointers in `sys.rs` that are only exercised via the real binary, not the mock trace system; and (b) exhaustive match arms for enum variants that `reap_jobs()` contractually never returns.
+- Production-code line coverage must be **100.00%** as measured by `./scripts/coverage.sh`. The script determines production lines by instrumenting the real (non-test) binary, so `#[cfg(test)]` code is excluded automatically by the compiler — no manual annotation or source parsing is needed. There is no escape-hatch mechanism for exempting individual lines; every instrumented production line must be covered by tests. Every production code change must be accompanied by unit or integration tests that maintain 100% coverage; this threshold must not be lowered to work around missing tests.
 
 ## Pending Policy Items
 

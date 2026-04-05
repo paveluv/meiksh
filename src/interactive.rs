@@ -19,7 +19,7 @@ fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
                 JobState::Stopped(sig) => {
                     format!("[{id}] Stopped ({})\n", sys::signal_name(sig))
                 }
-                JobState::Running => continue, // LCOV_EXCL_LINE: reap_jobs never returns Running
+                JobState::Running => continue,
             };
             let _ = sys::write_all_fd(sys::STDERR_FILENO, msg.as_bytes());
         }

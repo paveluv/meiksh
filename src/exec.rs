@@ -707,10 +707,10 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
     } else {
         let prepared = match build_process_from_expanded(shell, &expanded) {
             Ok(p) => p,
-            Err(error) => { // LCOV_EXCL_LINE: argv is non-empty here
-                sys_eprintln!("{}", error.display_message()); // LCOV_EXCL_LINE
-                return Ok(error.exit_status()); // LCOV_EXCL_LINE
-            } // LCOV_EXCL_LINE
+            Err(error) => {
+                sys_eprintln!("{}", error.display_message());
+                return Ok(error.exit_status());
+            }
         };
         if !prepared.path_verified && !prepared.exec_path.contains('/') {
             sys_eprintln!("{}: not found", expanded.argv[0]);
