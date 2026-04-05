@@ -361,6 +361,7 @@ exit status of the command shall be zero.
 ```
 begin test "for loop exit status zero when no items"
   script
+    false
     for i in; do
       false
     done
@@ -533,6 +534,7 @@ If no patterns match, the exit status of `case` is zero.
 ```
 begin test "case exit status zero when no match"
   script
+    false
     case "xyz" in
     abc) false ;;
     esac
@@ -1087,6 +1089,7 @@ of the `if` command shall be zero.
 ```
 begin test "if exit status zero when no branch body executes"
   script
+    false
     if false; then
       echo if
     elif false; then
@@ -1215,6 +1218,7 @@ If the body is never executed, the exit status of the while loop is zero.
 ```
 begin test "while loop exit status zero when body never executes"
   script
+    false
     while false; do
     true
     done
@@ -1336,6 +1340,7 @@ zero.
 ```
 begin test "until loop exit status zero when body never executes"
   script
+    false
     until true; do
       false
     done
