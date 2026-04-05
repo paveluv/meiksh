@@ -108,6 +108,27 @@ begin test "quoted here-document delimiter is quote-removed"
 end test "quoted here-document delimiter is quote-removed"
 ```
 
+#### Test: double-quoted here-document delimiter suppresses expansion
+
+Rule 3 applies quote removal to the delimiter word. When the delimiter
+is double-quoted (`"EOF"`), the quotes are removed to determine the
+actual delimiter text, and parameter expansion inside the here-document
+body is suppressed — the same behavior as backslash-quoting.
+
+```
+begin test "double-quoted here-document delimiter suppresses expansion"
+  script
+    var=hello
+    cat <<"EOF"
+    $var
+    EOF
+  expect
+    stdout "\$var"
+    stderr ""
+    exit_code 0
+end test "double-quoted here-document delimiter suppresses expansion"
+```
+
 #### Test: assignment word in command prefix
 
 A TOKEN containing an unquoted `=` with a valid name prefix is classified as
@@ -1424,4 +1445,60 @@ begin test "terminated items before unterminated last item"
     stderr ""
     exit_code 0
 end test "terminated items before unterminated last item"
+```
+
+#### Test: line joining produces reserved word before tokenization
+
+The Rule 1 Note states that line joining (backslash-newline removal)
+is done before tokenization. A reserved word split across lines with
+an escaped newline is reassembled and recognized as the reserved word.
+
+```
+begin test "line joining produces reserved word before tokenization"
+  script
+    i\
+    f true; then echo yes; fi
+  expect
+    stdout "yes"
+    stderr ""
+    exit_code 0
+end test "line joining produces reserved word before tokenization"
+```
+
+#### Test: dollar-sign single-quote prevents reserved word recognition
+
+The Rule 1 Note lists `$'...'` as a quoting character retained in the
+token during reserved word classification. Since `$'if'` is not exactly
+the token `if`, it is returned as WORD, not as the `If` reserved word.
+
+```
+begin test "dollar-sign single-quote prevents reserved word recognition"
+  script
+    $'if' true 2>/dev/null
+    echo $?
+  expect
+    stdout "127"
+    stderr ""
+    exit_code 0
+end test "dollar-sign single-quote prevents reserved word recognition"
+```
+
+#### Test: for wordlist with newline as sequential separator
+
+The grammar production `For name linebreak in wordlist sequential_sep
+do_group` allows a newline (via `sequential_sep : newline_list`) between
+the last word in the wordlist and the `do` keyword.
+
+```
+begin test "for wordlist with newline as sequential separator"
+  script
+    for x in a b c
+    do
+      echo "$x"
+    done
+  expect
+    stdout "a\nb\nc"
+    stderr ""
+    exit_code 0
+end test "for wordlist with newline as sequential separator"
 ```
