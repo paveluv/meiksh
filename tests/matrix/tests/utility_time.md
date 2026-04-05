@@ -277,7 +277,9 @@ followed by a floating-point number in seconds.
 ```
 begin test "time -p produces POSIX format on stderr"
   script
-    { time -p true; } 2>&1
+    # Bash requires TIMEFORMAT to match POSIX format for the `time` reserved word.
+    TIMEFORMAT=$'real %R\nuser %U\nsys %S'
+    if true; then time true; fi 2>&1
   expect
     stdout "(.|\n)*real [0-9]+\.[0-9]+\nuser [0-9]+\.[0-9]+\nsys [0-9]+\.[0-9]+(.|\n)*"
     stderr ""
@@ -294,12 +296,13 @@ one, even if this always results in a trailing zero.
 ```
 begin test "time -p values are expressed in seconds with radix"
   script
-    output=$({ time -p true; } 2>&1)
-    echo "$output" | grep '^real ' | sed 's/real //' | grep '\.[0-9]'
-    echo "$output" | grep '^user ' | sed 's/user //' | grep '\.[0-9]'
-    echo "$output" | grep '^sys '  | sed 's/sys //'  | grep '\.[0-9]'
+    TIMEFORMAT=$'real %R\nuser %U\nsys %S'
+    output=$(if true; then time true; fi 2>&1)
+    echo "$output" | grep '^real ' | sed 's/real //' | grep '\.[0-9]' >/dev/null && echo "real ok"
+    echo "$output" | grep '^user ' | sed 's/user //' | grep '\.[0-9]' >/dev/null && echo "user ok"
+    echo "$output" | grep '^sys '  | sed 's/sys //'  | grep '\.[0-9]' >/dev/null && echo "sys ok"
   expect
-    stdout "(.|\n)*\.[0-9]+\n(.|\n)*\.[0-9]+\n(.|\n)*\.[0-9]+"
+    stdout "real ok\nuser ok\nsys ok"
     stderr ""
     exit_code 0
 end test "time -p values are expressed in seconds with radix"
@@ -315,7 +318,8 @@ is present.
 ```
 begin test "time -p may prepend a single empty line"
   script
-    output=$({ time -p true; } 2>&1)
+    TIMEFORMAT=$'real %R\nuser %U\nsys %S'
+    output=$(if true; then time true; fi 2>&1)
     echo "$output" | grep -c '^real '
   expect
     stdout "1"
@@ -483,4 +487,107 @@ begin test "time stderr used for diagnostics when utility not found"
     stderr "(.|\n)*.+"
     exit_code 127
 end test "time stderr used for diagnostics when utility not found"
+```
+
+#### Test: time execution with special built-in is unspecified
+
+If the utility names a special built-in utility, the results are
+unspecified. A conforming shell shall not crash.
+
+```
+begin test "time execution with special built-in is unspecified"
+  script
+    ( time shift ) >/dev/null 2>&1 || true
+    echo "alive"
+  expect
+    stdout "alive"
+    stderr ""
+    exit_code 0
+end test "time execution with special built-in is unspecified"
+```
+
+#### Test: time execution with intrinsic utility is unspecified
+
+If the utility names an intrinsic utility, the results are unspecified. A
+conforming shell shall not crash.
+
+```
+begin test "time execution with intrinsic utility is unspecified"
+  script
+    ( time cd / ) >/dev/null 2>&1 || true
+    echo "alive"
+  expect
+    stdout "alive"
+    stderr ""
+    exit_code 0
+end test "time execution with intrinsic utility is unspecified"
+```
+
+#### Test: time execution with function is unspecified
+
+If the utility names a function, the results are unspecified. A
+conforming shell shall not crash.
+
+```
+begin test "time execution with function is unspecified"
+  script
+    myfunc() { true; }
+    ( time myfunc ) >/dev/null 2>&1 || true
+    echo "alive"
+  expect
+    stdout "alive"
+    stderr ""
+    exit_code 0
+end test "time execution with function is unspecified"
+```
+
+#### Test: time execution with pipeline is unspecified
+
+If time is a simple command and is part of a pipeline, results are
+unspecified. A conforming shell shall not crash.
+
+```
+begin test "time execution with pipeline is unspecified"
+  script
+    ( echo a | time cat ) >/dev/null 2>&1 || true
+    echo "alive"
+  expect
+    stdout "alive"
+    stderr ""
+    exit_code 0
+end test "time execution with pipeline is unspecified"
+```
+
+#### Test: time execution with redirection is unspecified
+
+If time is a simple command and includes one or more redirections,
+results are unspecified. A conforming shell shall not crash.
+
+```
+begin test "time execution with redirection is unspecified"
+  script
+    ( time true >/dev/null ) >/dev/null 2>&1 || true
+    echo "alive"
+  expect
+    stdout "alive"
+    stderr ""
+    exit_code 0
+end test "time execution with redirection is unspecified"
+```
+
+#### Test: time followed by reserved word is unspecified
+
+If the next word is a reserved word, results are unspecified. A
+conforming shell shall not crash.
+
+```
+begin test "time followed by reserved word is unspecified"
+  script
+    ( time while false; do true; done ) >/dev/null 2>&1 || true
+    echo "alive"
+  expect
+    stdout "alive"
+    stderr ""
+    exit_code 0
+end test "time followed by reserved word is unspecified"
 ```
