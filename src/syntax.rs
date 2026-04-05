@@ -164,7 +164,7 @@ impl std::error::Error for ParseError {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum TokenKind {
-    Word(String),
+    Word(String, bool),
     Newline,
     Semi,
     DSemi,
@@ -539,6 +539,7 @@ fn tokenize(source: &str) -> Result<Tokenized, ParseError> {
                     &mut tokens,
                     &mut expect_here_doc_target,
                     &mut pending_here_docs,
+                    true,
                 );
                 index += 1;
             }
@@ -548,13 +549,15 @@ fn tokenize(source: &str) -> Result<Tokenized, ParseError> {
                     &mut tokens,
                     &mut expect_here_doc_target,
                     &mut pending_here_docs,
+                    true,
                 );
                 tokens.push(Token {
                     kind: TokenKind::Newline,
                 });
                 index += 1;
                 while let Some((delimiter, expand, strip_tabs)) = pending_here_docs.pop_front() {
-                    let body = read_here_doc_body(&chars, &mut index, &delimiter, strip_tabs)?;
+                    let body =
+                        read_here_doc_body(&chars, &mut index, &delimiter, strip_tabs, expand)?;
                     here_docs.push_back(HereDoc {
                         delimiter,
                         body,
@@ -608,6 +611,7 @@ fn tokenize(source: &str) -> Result<Tokenized, ParseError> {
                     &mut tokens,
                     &mut expect_here_doc_target,
                     &mut pending_here_docs,
+                    false,
                 );
                 if matches!(chars.get(index + 1), Some(';')) {
                     tokens.push(Token {
@@ -627,6 +631,7 @@ fn tokenize(source: &str) -> Result<Tokenized, ParseError> {
                     &mut tokens,
                     &mut expect_here_doc_target,
                     &mut pending_here_docs,
+                    false,
                 );
                 if matches!(chars.get(index + 1), Some('&')) {
                     tokens.push(Token {
@@ -646,6 +651,7 @@ fn tokenize(source: &str) -> Result<Tokenized, ParseError> {
                     &mut tokens,
                     &mut expect_here_doc_target,
                     &mut pending_here_docs,
+                    false,
                 );
                 if matches!(chars.get(index + 1), Some('|')) {
                     tokens.push(Token {
@@ -665,6 +671,7 @@ fn tokenize(source: &str) -> Result<Tokenized, ParseError> {
                     &mut tokens,
                     &mut expect_here_doc_target,
                     &mut pending_here_docs,
+                    false,
                 );
                 tokens.push(Token {
                     kind: TokenKind::LParen,
@@ -677,6 +684,7 @@ fn tokenize(source: &str) -> Result<Tokenized, ParseError> {
                     &mut tokens,
                     &mut expect_here_doc_target,
                     &mut pending_here_docs,
+                    false,
                 );
                 tokens.push(Token {
                     kind: TokenKind::RParen,
@@ -689,6 +697,7 @@ fn tokenize(source: &str) -> Result<Tokenized, ParseError> {
                     &mut tokens,
                     &mut expect_here_doc_target,
                     &mut pending_here_docs,
+                    false,
                 );
                 if matches!(chars.get(index + 1), Some('<')) {
                     if matches!(chars.get(index + 2), Some('-')) {
@@ -727,6 +736,7 @@ fn tokenize(source: &str) -> Result<Tokenized, ParseError> {
                     &mut tokens,
                     &mut expect_here_doc_target,
                     &mut pending_here_docs,
+                    false,
                 );
                 if matches!(chars.get(index + 1), Some('>')) {
                     tokens.push(Token {
@@ -790,6 +800,7 @@ fn tokenize(source: &str) -> Result<Tokenized, ParseError> {
         &mut tokens,
         &mut expect_here_doc_target,
         &mut pending_here_docs,
+        true,
     );
     if !pending_here_docs.is_empty() {
         return Err(ParseError {
@@ -807,6 +818,7 @@ fn flush_word(
     tokens: &mut Vec<Token>,
     expect_here_doc_target: &mut bool,
     pending_here_docs: &mut VecDeque<(String, bool, bool)>,
+    spaced: bool,
 ) {
     if current.is_empty() {
         return;
@@ -822,7 +834,7 @@ fn flush_word(
         *expect_here_doc_target = false;
     }
     tokens.push(Token {
-        kind: TokenKind::Word(word),
+        kind: TokenKind::Word(word, spaced),
     });
 }
 
@@ -879,18 +891,33 @@ fn read_here_doc_body(
     index: &mut usize,
     delimiter: &str,
     strip_tabs: bool,
+    expand: bool,
 ) -> Result<String, ParseError> {
     let mut body = String::new();
 
     loop {
-        let line_start = *index;
-        while *index < chars.len() && chars[*index] != '\n' {
-            *index += 1;
-        }
-        let mut line: String = chars[line_start..*index].iter().collect();
-        let had_newline = *index < chars.len() && chars[*index] == '\n';
-        if had_newline {
-            *index += 1;
+        let mut line = String::new();
+        let mut had_newline;
+        loop {
+            let line_start = *index;
+            while *index < chars.len() && chars[*index] != '\n' {
+                *index += 1;
+            }
+            let raw: String = chars[line_start..*index].iter().collect();
+            had_newline = *index < chars.len() && chars[*index] == '\n';
+            if had_newline {
+                *index += 1;
+            }
+
+            if expand && had_newline {
+                let trailing = raw.bytes().rev().take_while(|&b| b == b'\\').count();
+                if trailing % 2 == 1 {
+                    line.push_str(&raw[..raw.len() - 1]);
+                    continue;
+                }
+            }
+            line.push_str(&raw);
+            break;
         }
 
         if strip_tabs {
@@ -1046,7 +1073,7 @@ impl Parser {
                     self.expect(TokenKind::RParen, "expected ')' to close subshell")?;
                     Command::Subshell(body)
                 }
-                TokenKind::Word(text) if text == "{" => {
+                TokenKind::Word(text, _) if text == "{" => {
                     self.index += 1;
                     let body = self.parse_program_until(true, &[], false)?;
                     self.expect_reserved_word("}")?;
@@ -1139,7 +1166,7 @@ impl Parser {
     fn parse_for_command(&mut self) -> Result<Command, ParseError> {
         self.expect_reserved_word("for")?;
         let name = match self.peek_kind().clone() {
-            TokenKind::Word(text) if is_name(&text) => {
+            TokenKind::Word(text, _) if is_name(&text) => {
                 self.index += 1;
                 text
             }
@@ -1158,7 +1185,7 @@ impl Parser {
                 && !matches!(self.peek_kind(), TokenKind::Semi | TokenKind::Newline)
             {
                 match self.peek_kind().clone() {
-                    TokenKind::Word(text) => {
+                    TokenKind::Word(text, _) => {
                         self.index += 1;
                         items.push(Word { raw: text });
                     }
@@ -1184,7 +1211,7 @@ impl Parser {
     fn parse_case_command(&mut self) -> Result<Command, ParseError> {
         self.expect_reserved_word("case")?;
         let word = match self.peek_kind().clone() {
-            TokenKind::Word(text) => {
+            TokenKind::Word(text, _) => {
                 self.index += 1;
                 Word { raw: text }
             }
@@ -1213,7 +1240,7 @@ impl Parser {
             let mut patterns = Vec::new();
             loop {
                 match self.peek_kind().clone() {
-                    TokenKind::Word(text) => {
+                    TokenKind::Word(text, _) => {
                         self.index += 1;
                         patterns.push(Word { raw: text });
                     }
@@ -1253,7 +1280,7 @@ impl Parser {
     fn parse_function_keyword(&mut self) -> Result<Command, ParseError> {
         self.expect_reserved_word("function")?;
         let name = match self.peek_kind().clone() {
-            TokenKind::Word(name) if is_name(&name) => {
+            TokenKind::Word(name, _) if is_name(&name) => {
                 self.index += 1;
                 name
             }
@@ -1303,7 +1330,7 @@ impl Parser {
             }
 
             let word = match self.peek_kind().clone() {
-                TokenKind::Word(text) => {
+                TokenKind::Word(text, _) => {
                     self.index += 1;
                     Word { raw: text }
                 }
@@ -1333,8 +1360,9 @@ impl Parser {
 
     fn try_parse_redirection(&mut self) -> Result<Option<Redirection>, ParseError> {
         let (fd, kind) = match self.peek_kind().clone() {
-            TokenKind::Word(text)
-                if text.chars().all(|ch| ch.is_ascii_digit())
+            TokenKind::Word(text, spaced)
+                if !spaced
+                    && text.chars().all(|ch| ch.is_ascii_digit())
                     && self
                         .tokens
                         .get(self.index + 1)
@@ -1369,7 +1397,7 @@ impl Parser {
         self.index += 1;
 
         let target = match self.peek_kind().clone() {
-            TokenKind::Word(text) => {
+            TokenKind::Word(text, _) => {
                 self.index += 1;
                 Word { raw: text }
             }
@@ -1438,7 +1466,7 @@ impl Parser {
     }
 
     fn consume_word(&mut self, word: &str) -> bool {
-        if matches!(self.peek_kind(), TokenKind::Word(text) if text == word) {
+        if matches!(self.peek_kind(), TokenKind::Word(text, _) if text == word) {
             self.index += 1;
             true
         } else {
@@ -1447,7 +1475,7 @@ impl Parser {
     }
 
     fn consume_bang(&mut self) -> bool {
-        if matches!(self.peek_kind(), TokenKind::Word(text) if text == "!") {
+        if matches!(self.peek_kind(), TokenKind::Word(text, _) if text == "!") {
             self.index += 1;
             true
         } else {
@@ -1472,7 +1500,7 @@ impl Parser {
 
     fn peek_word_text(&self) -> Option<String> {
         match &self.tokens[self.index].kind {
-            TokenKind::Word(text) => Some(text.clone()),
+            TokenKind::Word(text, _) => Some(text.clone()),
             _ => None,
         }
     }
@@ -1498,7 +1526,7 @@ impl Parser {
     }
 
     fn expand_alias_at_current_token(&mut self) -> Result<bool, ParseError> {
-        let Some(TokenKind::Word(text)) = self.tokens.get(self.index).map(|token| &token.kind)
+        let Some(TokenKind::Word(text, _)) = self.tokens.get(self.index).map(|token| &token.kind)
         else {
             return Ok(false);
         };
@@ -1533,7 +1561,7 @@ impl Parser {
 
     fn try_peek_function_name(&self) -> Option<String> {
         let name = match self.tokens.get(self.index)?.kind.clone() {
-            TokenKind::Word(name) => name,
+            TokenKind::Word(name, _) => name,
             _ => return None,
         };
         if is_reserved_word(&name) {
@@ -1552,16 +1580,16 @@ impl Parser {
     }
 
     fn peek_reserved_word(&self, word: &str) -> bool {
-        matches!(self.peek_kind(), TokenKind::Word(text) if text == word)
+        matches!(self.peek_kind(), TokenKind::Word(text, _) if text == word)
     }
 
     fn peek_bang_word(&self) -> bool {
-        matches!(self.peek_kind(), TokenKind::Word(text) if text == "!")
+        matches!(self.peek_kind(), TokenKind::Word(text, _) if text == "!")
     }
 
     fn at_reserved_stop(&self, stop_words: &[&str]) -> bool {
         match self.peek_kind() {
-            TokenKind::Word(text) => stop_words.iter().any(|word| text == word),
+            TokenKind::Word(text, _) => stop_words.iter().any(|word| text == word),
             _ => false,
         }
     }
@@ -1960,7 +1988,7 @@ mod tests {
                     kind: TokenKind::Newline,
                 },
                 Token {
-                    kind: TokenKind::Word("do".into()),
+                    kind: TokenKind::Word("do".into(), false),
                 },
                 Token {
                     kind: TokenKind::Eof,
@@ -1977,7 +2005,7 @@ mod tests {
         assert_eq!(parser.try_peek_function_name(), None);
 
         let closer_tokens = vec![Token {
-            kind: TokenKind::Word("}".into()),
+            kind: TokenKind::Word("}".into(), false),
         }];
         let parser = Parser::new(closer_tokens, VecDeque::new(), HashMap::new());
         assert!(parser.at_closer());
@@ -2000,7 +2028,7 @@ mod tests {
         let mut parser = Parser::new(
             vec![
                 Token {
-                    kind: TokenKind::Word("word".into()),
+                    kind: TokenKind::Word("word".into(), false),
                 },
                 Token {
                     kind: TokenKind::Eof,
@@ -2013,12 +2041,12 @@ mod tests {
         parser
             .expand_alias_after_blank_in_simple_command()
             .expect("expand pending alias");
-        assert!(matches!(parser.peek_kind(), TokenKind::Word(text) if text == "ok"));
+        assert!(matches!(parser.peek_kind(), TokenKind::Word(text, _) if text == "ok"));
 
         let mut parser = Parser::new(
             vec![
                 Token {
-                    kind: TokenKind::Word("loop".into()),
+                    kind: TokenKind::Word("loop".into(), false),
                 },
                 Token {
                     kind: TokenKind::Eof,
@@ -2036,7 +2064,7 @@ mod tests {
         let mut parser = Parser::new(
             vec![
                 Token {
-                    kind: TokenKind::Word("tail".into()),
+                    kind: TokenKind::Word("tail".into(), false),
                 },
                 Token {
                     kind: TokenKind::Eof,
@@ -2186,7 +2214,7 @@ mod tests {
         let mut parser = Parser::new(
             vec![
                 Token {
-                    kind: TokenKind::Word("case".into()),
+                    kind: TokenKind::Word("case".into(), false),
                 },
                 Token {
                     kind: TokenKind::Semi,
@@ -2209,16 +2237,16 @@ mod tests {
         let mut parser = Parser::new(
             vec![
                 Token {
-                    kind: TokenKind::Word("case".into()),
+                    kind: TokenKind::Word("case".into(), false),
                 },
                 Token {
-                    kind: TokenKind::Word("name".into()),
+                    kind: TokenKind::Word("name".into(), false),
                 },
                 Token {
                     kind: TokenKind::Newline,
                 },
                 Token {
-                    kind: TokenKind::Word("esac".into()),
+                    kind: TokenKind::Word("esac".into(), false),
                 },
                 Token {
                     kind: TokenKind::Eof,
@@ -2235,19 +2263,19 @@ mod tests {
         let mut parser = Parser::new(
             vec![
                 Token {
-                    kind: TokenKind::Word("case".into()),
+                    kind: TokenKind::Word("case".into(), false),
                 },
                 Token {
-                    kind: TokenKind::Word("name".into()),
+                    kind: TokenKind::Word("name".into(), false),
                 },
                 Token {
-                    kind: TokenKind::Word("in".into()),
+                    kind: TokenKind::Word("in".into(), false),
                 },
                 Token {
                     kind: TokenKind::RParen,
                 },
                 Token {
-                    kind: TokenKind::Word("esac".into()),
+                    kind: TokenKind::Word("esac".into(), false),
                 },
                 Token {
                     kind: TokenKind::Eof,
@@ -2267,25 +2295,25 @@ mod tests {
         let mut parser = Parser::new(
             vec![
                 Token {
-                    kind: TokenKind::Word("case".into()),
+                    kind: TokenKind::Word("case".into(), false),
                 },
                 Token {
-                    kind: TokenKind::Word("name".into()),
+                    kind: TokenKind::Word("name".into(), false),
                 },
                 Token {
-                    kind: TokenKind::Word("in".into()),
+                    kind: TokenKind::Word("in".into(), false),
                 },
                 Token {
-                    kind: TokenKind::Word("foo".into()),
+                    kind: TokenKind::Word("foo".into(), false),
                 },
                 Token {
                     kind: TokenKind::RParen,
                 },
                 Token {
-                    kind: TokenKind::Word("echo".into()),
+                    kind: TokenKind::Word("echo".into(), false),
                 },
                 Token {
-                    kind: TokenKind::Word("hi".into()),
+                    kind: TokenKind::Word("hi".into(), false),
                 },
                 Token {
                     kind: TokenKind::Semi,
@@ -2314,11 +2342,23 @@ mod tests {
         let chars: Vec<char> = "line".chars().collect();
         let mut index = 0usize;
         assert_eq!(
-            read_here_doc_body(&chars, &mut index, "EOF", false)
+            read_here_doc_body(&chars, &mut index, "EOF", false, true)
                 .expect_err("unterminated body")
                 .message,
             "unterminated here-document"
         );
+
+        let chars: Vec<char> = "EO\\\nF\n".chars().collect();
+        let mut index = 0usize;
+        let body = read_here_doc_body(&chars, &mut index, "EOF", false, true)
+            .expect("continuation delimiter");
+        assert_eq!(body, "");
+
+        let chars2: Vec<char> = "body\\\nEOF\nreal body\nEOF\n".chars().collect();
+        let mut index2 = 0usize;
+        let body2 = read_here_doc_body(&chars2, &mut index2, "EOF", false, true)
+            .expect("continuation body");
+        assert_eq!(body2, "bodyEOF\nreal body\n");
 
         let tokenized = tokenize("cat <<A <<'B'\nfirst\nA\nsecond\nB\n").expect("tokenize");
         assert_eq!(tokenized.here_docs.len(), 2);
@@ -2331,7 +2371,7 @@ mod tests {
                     kind: TokenKind::DLess,
                 },
                 Token {
-                    kind: TokenKind::Word("EOF".into()),
+                    kind: TokenKind::Word("EOF".into(), false),
                 },
                 Token {
                     kind: TokenKind::Eof,
@@ -2351,13 +2391,13 @@ mod tests {
         let mut parser = Parser::new(
             vec![
                 Token {
-                    kind: TokenKind::Word("999999999999999999999".into()),
+                    kind: TokenKind::Word("999999999999999999999".into(), false),
                 },
                 Token {
                     kind: TokenKind::Greater,
                 },
                 Token {
-                    kind: TokenKind::Word("out".into()),
+                    kind: TokenKind::Word("out".into(), false),
                 },
                 Token {
                     kind: TokenKind::Eof,

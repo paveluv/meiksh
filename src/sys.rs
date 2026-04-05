@@ -28,6 +28,7 @@ type ClockTicks = libc::clock_t;
 const SC_CLK_TCK: c_int = libc::_SC_CLK_TCK;
 const F_GETFL: c_int = libc::F_GETFL;
 const F_SETFL: c_int = libc::F_SETFL;
+const F_DUPFD_CLOEXEC: c_int = libc::F_DUPFD_CLOEXEC;
 const O_NONBLOCK: c_int = libc::O_NONBLOCK;
 
 pub const STDIN_FILENO: c_int = libc::STDIN_FILENO;
@@ -160,7 +161,6 @@ pub(crate) struct SystemInterface {
     tcsetpgrp: fn(c_int, Pid) -> c_int,
     setpgid: fn(Pid, Pid) -> c_int,
     pipe: fn(&mut [c_int; 2]) -> c_int,
-    dup: fn(c_int) -> c_int,
     dup2: fn(c_int, c_int) -> c_int,
     close: fn(c_int) -> c_int,
     fcntl: fn(c_int, c_int, c_int) -> c_int,
@@ -215,7 +215,6 @@ pub(crate) fn default_interface() -> SystemInterface {
         tcsetpgrp: |fd, pgrp| unsafe { libc::tcsetpgrp(fd, pgrp) },
         setpgid: |pid, pgid| unsafe { libc::setpgid(pid, pgid) },
         pipe: |fds| unsafe { libc::pipe(fds.as_mut_ptr()) },
-        dup: |fd| unsafe { libc::dup(fd) },
         dup2: |oldfd, newfd| unsafe { libc::dup2(oldfd, newfd) },
         close: |fd| unsafe { libc::close(fd) },
         fcntl: |fd, cmd, arg| unsafe { libc::fcntl(fd, cmd, arg) },
@@ -758,10 +757,6 @@ pub(crate) mod test_support {
             }
         }
     }
-    fn trace_dup(fd: c_int) -> c_int {
-        let entry = trace_dispatch("dup", &[ArgMatcher::Fd(fd)]);
-        apply_trace_result_int(&entry)
-    }
     fn trace_dup2(oldfd: c_int, newfd: c_int) -> c_int {
         let entry = trace_dispatch("dup2", &[ArgMatcher::Fd(oldfd), ArgMatcher::Fd(newfd)]);
         apply_trace_result_int(&entry)
@@ -1171,7 +1166,6 @@ pub(crate) mod test_support {
             tcsetpgrp: trace_tcsetpgrp,
             setpgid: trace_setpgid,
             pipe: trace_pipe,
-            dup: trace_dup,
             dup2: trace_dup2,
             close: trace_close,
             fcntl: trace_fcntl,
@@ -1238,9 +1232,6 @@ pub(crate) mod test_support {
         }
         fn panic_pipe(_: &mut [c_int; 2]) -> c_int {
             panic!("unexpected syscall 'pipe' in pure-logic test")
-        }
-        fn panic_dup(_: c_int) -> c_int {
-            panic!("unexpected syscall 'dup' in pure-logic test")
         }
         fn panic_dup2(_: c_int, _: c_int) -> c_int {
             panic!("unexpected syscall 'dup2' in pure-logic test")
@@ -1361,7 +1352,6 @@ pub(crate) mod test_support {
             tcsetpgrp: panic_tcsetpgrp,
             setpgid: panic_setpgid,
             pipe: panic_pipe,
-            dup: panic_dup,
             dup2: panic_dup2,
             close: panic_close,
             fcntl: panic_fcntl,
@@ -1816,7 +1806,7 @@ pub fn duplicate_fd(oldfd: c_int, newfd: c_int) -> SysResult<()> {
 }
 
 pub fn duplicate_fd_to_new(fd: c_int) -> SysResult<c_int> {
-    let result = (sys_interface().dup)(fd);
+    let result = (sys_interface().fcntl)(fd, F_DUPFD_CLOEXEC, 10);
     if result >= 0 {
         Ok(result)
     } else {
@@ -2764,8 +2754,12 @@ mod tests {
             fds[1] = 11;
             0
         }
-        fn fake_dup(fd: c_int) -> c_int {
-            fd + 100
+        fn fake_fcntl(fd: c_int, cmd: c_int, _arg: c_int) -> c_int {
+            if cmd == F_DUPFD_CLOEXEC {
+                fd + 100
+            } else {
+                -1
+            }
         }
         fn fake_dup2(oldfd: c_int, _newfd: c_int) -> c_int {
             oldfd
@@ -2776,7 +2770,7 @@ mod tests {
 
         let fake = SystemInterface {
             pipe: fake_pipe,
-            dup: fake_dup,
+            fcntl: fake_fcntl,
             dup2: fake_dup2,
             close: fake_close,
             ..default_interface()
@@ -3049,7 +3043,7 @@ mod tests {
         fn fake_pipe(_fds: &mut [c_int; 2]) -> c_int {
             -1
         }
-        fn fake_dup(_fd: c_int) -> c_int {
+        fn fake_fcntl(_fd: c_int, _cmd: c_int, _arg: c_int) -> c_int {
             -1
         }
         fn fake_dup2(_oldfd: c_int, _newfd: c_int) -> c_int {
@@ -3061,7 +3055,7 @@ mod tests {
 
         let fake = SystemInterface {
             pipe: fake_pipe,
-            dup: fake_dup,
+            fcntl: fake_fcntl,
             dup2: fake_dup2,
             close: fake_close,
             ..default_interface()

@@ -2497,6 +2497,95 @@ fn getopts_optind_initialized_to_one() {
 }
 
 #[test]
+fn redirect_word_not_globbed() {
+    let tmp = TempDir::new("redirect-glob");
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            &format!(
+                "cd {d}; touch a_1.txt a_2.txt; echo literal > a_*.txt; cat a_\\*.txt",
+                d = tmp.path.display()
+            ),
+        ])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "literal");
+}
+
+#[test]
+fn redirect_word_with_unquoted_expansion() {
+    let tmp = TempDir::new("redirect-expand");
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            &format!(
+                "x={d}/redir_out.txt; echo content > $x; cat {d}/redir_out.txt",
+                d = tmp.path.display()
+            ),
+        ])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "content");
+}
+
+#[test]
+fn here_document_backtick_expansion() {
+    let out = Command::new(meiksh())
+        .args(["-c", "cat <<EOF\n`echo hello`\nEOF\n"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+}
+
+#[test]
+fn here_document_backslash_newline_continuation() {
+    let out = Command::new(meiksh())
+        .args(["-c", "cat <<EOF\nEO\\\nF\necho after\n"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("after"), "stdout: {stdout}");
+}
+
+#[test]
+fn fd_close_via_exec_and_child_error() {
+    let tmp = TempDir::new("fd-close");
+    let script = format!(
+        "exec 4>{d}/out.txt; echo ok >&4; exec 4>&-; echo fail >&4",
+        d = tmp.path.display()
+    );
+    let out = Command::new(meiksh())
+        .args(["-c", &script])
+        .output()
+        .expect("run");
+    assert_ne!(out.status.code(), Some(0));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Bad file descriptor"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn blank_between_fd_and_redirect_operator() {
+    let tmp = TempDir::new("blank-fd");
+    let script = format!(
+        "echo literal 2 > {d}/out.txt; cat {d}/out.txt",
+        d = tmp.path.display()
+    );
+    let out = Command::new(meiksh())
+        .args(["-c", &script])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "literal 2");
+}
+
+#[test]
 fn getopts_reset_optind_allows_reparsing() {
     let out = Command::new(meiksh())
         .args(["-c", r#"
