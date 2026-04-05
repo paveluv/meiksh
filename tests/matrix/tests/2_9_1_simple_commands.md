@@ -126,6 +126,41 @@ begin test "first expanded field is command name and remaining fields are argume
 end test "first expanded field is command name and remaining fields are arguments"
 ```
 
+#### Test: subsequent words undergo field splitting
+
+For all command names, words after the word that produced the command name
+shall be subject to regular expansion, which includes field splitting.
+
+```
+begin test "subsequent words undergo field splitting"
+  script
+    IFS=":"
+    args="a:b:c"
+    printf "%s\n" $args
+  expect
+    stdout "a\nb\nc"
+    stderr ""
+    exit_code 0
+end test "subsequent words undergo field splitting"
+```
+
+#### Test: subsequent words undergo pathname expansion
+
+For all command names, words after the word that produced the command name
+shall be subject to regular expansion, which includes pathname expansion.
+
+```
+begin test "subsequent words undergo pathname expansion"
+  script
+    touch tmp_glob_args_1 tmp_glob_args_2
+    echo tmp_glob_args_*
+  expect
+    stdout "tmp_glob_args_1 tmp_glob_args_2"
+    stderr ""
+    exit_code 0
+end test "subsequent words undergo pathname expansion"
+```
+
 #### Test: redirection with no command creates file
 
 Redirections are performed even when there is no command name (step 3).
@@ -336,6 +371,75 @@ begin test "assignment values do not undergo pathname expansion"
     stderr ""
     exit_code 0
 end test "assignment values do not undergo pathname expansion"
+```
+
+#### Test: declaration utility assignment allows parameter expansion
+
+When the command name is a declaration utility, assignment-like arguments
+are expanded as variable assignments, which includes parameter expansion.
+
+```
+begin test "declaration utility assignment allows parameter expansion"
+  script
+    var=val
+    command export X=$var
+    echo "$X"
+  expect
+    stdout "val"
+    stderr ""
+    exit_code 0
+end test "declaration utility assignment allows parameter expansion"
+```
+
+#### Test: declaration utility assignment allows command substitution
+
+When the command name is a declaration utility, assignment-like arguments
+are expanded as variable assignments, which includes command substitution.
+
+```
+begin test "declaration utility assignment allows command substitution"
+  script
+    command export X=$(echo val)
+    echo "$X"
+  expect
+    stdout "val"
+    stderr ""
+    exit_code 0
+end test "declaration utility assignment allows command substitution"
+```
+
+#### Test: declaration utility assignment allows arithmetic expansion
+
+When the command name is a declaration utility, assignment-like arguments
+are expanded as variable assignments, which includes arithmetic expansion.
+
+```
+begin test "declaration utility assignment allows arithmetic expansion"
+  script
+    command export X=$((1+1))
+    echo "$X"
+  expect
+    stdout "2"
+    stderr ""
+    exit_code 0
+end test "declaration utility assignment allows arithmetic expansion"
+```
+
+#### Test: declaration utility assignment allows quote removal
+
+When the command name is a declaration utility, assignment-like arguments
+are expanded as variable assignments, which includes quote removal.
+
+```
+begin test "declaration utility assignment allows quote removal"
+  script
+    command export X="v a l"
+    echo "$X"
+  expect
+    stdout "v a l"
+    stderr ""
+    exit_code 0
+end test "declaration utility assignment allows quote removal"
 ```
 
 #### Test: assignment values do not undergo field splitting
