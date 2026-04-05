@@ -79,27 +79,6 @@ begin test "expansion order: param, split, pathname"
 end test "expansion order: param, split, pathname"
 ```
 
-#### Test: brace expansion generates multiple fields
-
-The shell may support an implementation-defined form of expansion using braces
-(`{...}`) that creates multiple fields from a single word. If supported, it
-must be applied before all other word expansions.
-
-```
-begin test "brace expansion generates multiple fields"
-  script
-    # The shell may support brace expansion (implementation-defined form)
-    # If supported, it applies before all other expansions.
-    for i in a{b,c}d; do
-      echo "arg: $i"
-    done
-  expect
-    stdout "arg: abd\narg: acd"
-    stderr ""
-    exit_code 0
-end test "brace expansion generates multiple fields"
-```
-
 #### Test: expansion in for-loop word list uses current environment
 
 When expansions occur outside the context of preparing a command for execution
