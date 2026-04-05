@@ -442,6 +442,25 @@ begin test "declaration utility assignment allows quote removal"
 end test "declaration utility assignment allows quote removal"
 ```
 
+#### Test: declaration utility non-assignment arguments undergo regular expansion
+
+When the command name is a declaration utility, arguments that do not look like
+variable assignments shall be subject to regular expansion (including pathname
+expansion).
+
+```
+begin test "declaration utility non-assignment arguments undergo regular expansion"
+  script
+    touch tmp_decl_glob_export
+    command export var=1 tmp_decl_glob_e*
+    export -p | grep tmp_decl_glob_export >/dev/null && echo "globbed"
+  expect
+    stdout "globbed"
+    stderr ""
+    exit_code 0
+end test "declaration utility non-assignment arguments undergo regular expansion"
+```
+
 #### Test: assignment values do not undergo field splitting
 
 Variable assignments (step 4) undergo tilde expansion, parameter expansion,
