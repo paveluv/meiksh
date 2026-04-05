@@ -652,8 +652,8 @@ fn expand_dollar<C: Context>(
         }
         '{' => {
             let end = scan_to_closing_brace(source, 2)?;
-            let expr = source[2..end].to_string();
-            let expansion = expand_braced_parameter(ctx, &expr, quoted)?;
+            let expr = &source[2..end];
+            let expansion = expand_braced_parameter(ctx, expr, quoted)?;
             Ok((expansion, end + 1))
         }
         '(' => {
@@ -707,7 +707,7 @@ fn expand_dollar<C: Context>(
                 Ok((Expansion::AtFields(params), 2))
             } else {
                 let value =
-                    require_set_parameter(ctx, "@", Some(ctx.positional_params().join(" ")))?;
+                    require_set_parameter(ctx, "@", Some(Cow::Owned(ctx.positional_params().join(" "))))?;
                 Ok((Expansion::One(value), 2))
             }
         }
@@ -722,18 +722,19 @@ fn expand_dollar<C: Context>(
             Ok((Expansion::One(value), 2))
         }
         '?' | '$' | '!' | '#' | '-' | '0' => {
+            let ch_str = &source[1..2];
             let value = if c1 == '0' {
-                require_set_parameter(ctx, "0", Some(ctx.shell_name().to_string()))?
+                require_set_parameter(ctx, "0", Some(Cow::Borrowed(ctx.shell_name())))?
             } else {
-                require_set_parameter(ctx, &c1.to_string(), ctx.special_param(c1).map(|c| c.into_owned()))?
+                require_set_parameter(ctx, ch_str, ctx.special_param(c1))?
             };
             Ok((Expansion::One(value), 2))
         }
         next if next.is_ascii_digit() => Ok((
             Expansion::One(require_set_parameter(
                 ctx,
-                &next.to_string(),
-                ctx.positional_param(next.to_digit(10).unwrap_or_default() as usize).map(|c| c.into_owned()),
+                &source[1..2],
+                ctx.positional_param(next.to_digit(10).unwrap_or_default() as usize),
             )?),
             2,
         )),
@@ -747,9 +748,9 @@ fn expand_dollar<C: Context>(
                     break;
                 }
             }
-            let name = source[1..index].to_string();
+            let name = &source[1..index];
             Ok((
-                Expansion::One(require_set_parameter(ctx, &name, lookup_param(ctx, &name))?),
+                Expansion::One(require_set_parameter(ctx, name, lookup_param(ctx, name))?),
                 index,
             ))
         }
@@ -770,22 +771,22 @@ fn expand_parameter_dollar<C: Context>(
         '\'' => parse_dollar_single_quoted(source),
         '{' => {
             let end = scan_to_closing_brace(source, 2)?;
-            let expr = source[2..end].to_string();
-            let value = expand_braced_parameter_text(ctx, &expr)?;
+            let expr = &source[2..end];
+            let value = expand_braced_parameter_text(ctx, expr)?;
             Ok((value, end + 1))
         }
         '?' | '$' | '!' | '#' | '*' | '@' | '-' | '0' => {
+            let ch_str = &source[1..2];
             let value = if c1 == '0' {
-                require_set_parameter(ctx, "0", Some(ctx.shell_name().to_string()))?
+                require_set_parameter(ctx, "0", Some(Cow::Borrowed(ctx.shell_name())))?
             } else {
-                require_set_parameter(ctx, &c1.to_string(), ctx.special_param(c1).map(|c| c.into_owned()))?
+                require_set_parameter(ctx, ch_str, ctx.special_param(c1))?
             };
             Ok((value, 2))
         }
         next if next.is_ascii_digit() => {
-            let name = next.to_string();
-            let value = ctx.positional_param(next.to_digit(10).unwrap_or_default() as usize).map(|c| c.into_owned());
-            Ok((require_set_parameter(ctx, &name, value)?, 2))
+            let value = ctx.positional_param(next.to_digit(10).unwrap_or_default() as usize);
+            Ok((require_set_parameter(ctx, &source[1..2], value)?, 2))
         }
         next if next == '_' || next.is_ascii_alphabetic() => {
             let mut index = 1usize;
@@ -797,9 +798,9 @@ fn expand_parameter_dollar<C: Context>(
                     break;
                 }
             }
-            let name = source[1..index].to_string();
+            let name = &source[1..index];
             Ok((
-                require_set_parameter(ctx, &name, lookup_param(ctx, &name))?,
+                require_set_parameter(ctx, name, lookup_param(ctx, name))?,
                 index,
             ))
         }
@@ -1007,7 +1008,7 @@ fn expand_braced_parameter<C: Context>(
     quoted: bool,
 ) -> Result<Expansion, ExpandError> {
     if expr == "#" {
-        return Ok(Expansion::One(lookup_param(ctx, "#").unwrap_or_default()));
+        return Ok(Expansion::One(lookup_param(ctx, "#").map(|c| c.into_owned()).unwrap_or_default()));
     }
     if let Some(name) = expr.strip_prefix('#') {
         let value = require_set_parameter(ctx, name, lookup_param(ctx, name))?;
@@ -1015,82 +1016,84 @@ fn expand_braced_parameter<C: Context>(
     }
 
     let (name, op, word) = parse_parameter_expression(expr)?;
-    let value = lookup_param(ctx, &name);
+    let value = lookup_param(ctx, name);
     let is_set = value.is_some();
     let is_null = value.as_deref().map(|s| s.is_empty()).unwrap_or(true);
 
-    match op.as_deref() {
-        None => Ok(Expansion::One(require_set_parameter(ctx, &name, value)?)),
+    match op {
+        None => Ok(Expansion::One(require_set_parameter(ctx, name, value)?)),
         Some(":-") => {
             if !is_set || is_null {
-                expand_parameter_word_as_expansion(ctx, &word.unwrap_or_default(), quoted)
+                expand_parameter_word_as_expansion(ctx, word.unwrap_or_default(), quoted)
             } else {
-                Ok(Expansion::One(value.unwrap_or_default()))
+                Ok(Expansion::One(value.map(|c| c.into_owned()).unwrap_or_default()))
             }
         }
         Some("-") => {
             if !is_set {
-                expand_parameter_word_as_expansion(ctx, &word.unwrap_or_default(), quoted)
+                expand_parameter_word_as_expansion(ctx, word.unwrap_or_default(), quoted)
             } else {
-                Ok(Expansion::One(value.unwrap_or_default()))
+                Ok(Expansion::One(value.map(|c| c.into_owned()).unwrap_or_default()))
             }
         }
         Some(":=") => {
             if !is_set || is_null {
-                Ok(Expansion::One(assign_parameter(ctx, &name, &word.unwrap_or_default(), quoted)?))
+                Ok(Expansion::One(assign_parameter(ctx, name, word.unwrap_or_default(), quoted)?))
             } else {
-                Ok(Expansion::One(value.unwrap_or_default()))
+                Ok(Expansion::One(value.map(|c| c.into_owned()).unwrap_or_default()))
             }
         }
         Some("=") => {
             if !is_set {
-                Ok(Expansion::One(assign_parameter(ctx, &name, &word.unwrap_or_default(), quoted)?))
+                Ok(Expansion::One(assign_parameter(ctx, name, word.unwrap_or_default(), quoted)?))
             } else {
-                Ok(Expansion::One(value.unwrap_or_default()))
+                Ok(Expansion::One(value.map(|c| c.into_owned()).unwrap_or_default()))
             }
         }
         Some(":?") => {
             if !is_set || is_null {
+                let default_msg = format!("{name}: parameter null or not set");
                 let message = expand_parameter_word(
                     ctx,
-                    &word.unwrap_or_else(|| format!("{name}: parameter null or not set")),
+                    word.unwrap_or(&default_msg),
                     quoted,
                 )?;
                 Err(ExpandError { message })
             } else {
-                Ok(Expansion::One(value.unwrap_or_default()))
+                Ok(Expansion::One(value.map(|c| c.into_owned()).unwrap_or_default()))
             }
         }
         Some("?") => {
             if !is_set {
+                let default_msg = format!("{name}: parameter not set");
                 let message = expand_parameter_word(
                     ctx,
-                    &word.unwrap_or_else(|| format!("{name}: parameter not set")),
+                    word.unwrap_or(&default_msg),
                     quoted,
                 )?;
                 Err(ExpandError { message })
             } else {
-                Ok(Expansion::One(value.unwrap_or_default()))
+                Ok(Expansion::One(value.map(|c| c.into_owned()).unwrap_or_default()))
             }
         }
         Some(":+") => {
             if is_set && !is_null {
-                expand_parameter_word_as_expansion(ctx, &word.unwrap_or_default(), quoted)
+                expand_parameter_word_as_expansion(ctx, word.unwrap_or_default(), quoted)
             } else {
                 Ok(Expansion::One(String::new()))
             }
         }
         Some("+") => {
             if is_set {
-                expand_parameter_word_as_expansion(ctx, &word.unwrap_or_default(), quoted)
+                expand_parameter_word_as_expansion(ctx, word.unwrap_or_default(), quoted)
             } else {
                 Ok(Expansion::One(String::new()))
             }
         }
         Some("%" | "%%" | "#" | "##") => {
-            let val = require_set_parameter(ctx, &name, value)?;
-            let pat = expand_parameter_pattern_word(ctx, &word.unwrap_or_default())?;
-            let mode = match op.as_deref().unwrap() {
+            let val = require_set_parameter(ctx, name, value)?;
+            let pat = expand_parameter_pattern_word(ctx, word.unwrap_or_default())?;
+            let mode = match op.unwrap() {
                 "%" => PatternRemoval::SmallestSuffix,
                 "%%" => PatternRemoval::LargestSuffix,
                 "#" => PatternRemoval::SmallestPrefix,
@@ -1109,7 +1112,7 @@ fn expand_braced_parameter_text<C: Context>(
     expr: &str,
 ) -> Result<String, ExpandError> {
     if expr == "#" {
-        return Ok(lookup_param(ctx, "#").unwrap_or_default());
+        return Ok(lookup_param(ctx, "#").map(|c| c.into_owned()).unwrap_or_default());
     }
     if let Some(name) = expr.strip_prefix('#') {
         let value = require_set_parameter(ctx, name, lookup_param(ctx, name))?;
@@ -1117,94 +1120,94 @@ fn expand_braced_parameter_text<C: Context>(
     }
 
     let (name, op, word) = parse_parameter_expression(expr)?;
-    let value = lookup_param(ctx, &name);
+    let value = lookup_param(ctx, name);
     let is_set = value.is_some();
     let is_null = value.as_deref().map(|s| s.is_empty()).unwrap_or(true);
 
-    match op.as_deref() {
-        None => require_set_parameter(ctx, &name, value),
+    match op {
+        None => require_set_parameter(ctx, name, value),
         Some(":-") => {
             if !is_set || is_null {
-                expand_parameter_text(ctx, &word.unwrap_or_default())
+                expand_parameter_text(ctx, word.unwrap_or_default())
             } else {
-                Ok(value.unwrap_or_default())
+                Ok(value.map(|c| c.into_owned()).unwrap_or_default())
             }
         }
         Some("-") => {
             if !is_set {
-                expand_parameter_text(ctx, &word.unwrap_or_default())
+                expand_parameter_text(ctx, word.unwrap_or_default())
             } else {
-                Ok(value.unwrap_or_default())
+                Ok(value.map(|c| c.into_owned()).unwrap_or_default())
             }
         }
         Some(":=") => {
             if !is_set || is_null {
-                assign_parameter_text(ctx, &name, &word.unwrap_or_default())
+                assign_parameter_text(ctx, name, word.unwrap_or_default())
             } else {
-                Ok(value.unwrap_or_default())
+                Ok(value.map(|c| c.into_owned()).unwrap_or_default())
             }
         }
         Some("=") => {
             if !is_set {
-                assign_parameter_text(ctx, &name, &word.unwrap_or_default())
+                assign_parameter_text(ctx, name, word.unwrap_or_default())
             } else {
-                Ok(value.unwrap_or_default())
+                Ok(value.map(|c| c.into_owned()).unwrap_or_default())
             }
         }
         Some(":?") => {
             if !is_set || is_null {
                 let message = expand_parameter_error_text(
                     ctx,
-                    name.as_str(),
+                    name,
                     word,
                     "parameter null or not set",
                 )?;
                 Err(ExpandError { message })
             } else {
-                Ok(value.unwrap_or_default())
+                Ok(value.map(|c| c.into_owned()).unwrap_or_default())
             }
         }
         Some("?") => {
             if !is_set {
                 let message =
-                    expand_parameter_error_text(ctx, name.as_str(), word, "parameter not set")?;
+                    expand_parameter_error_text(ctx, name, word, "parameter not set")?;
                 Err(ExpandError { message })
             } else {
-                Ok(value.unwrap_or_default())
+                Ok(value.map(|c| c.into_owned()).unwrap_or_default())
             }
         }
         Some(":+") => {
             if is_set && !is_null {
-                expand_parameter_text(ctx, &word.unwrap_or_default())
+                expand_parameter_text(ctx, word.unwrap_or_default())
             } else {
                 Ok(String::new())
             }
         }
         Some("+") => {
             if is_set {
-                expand_parameter_text(ctx, &word.unwrap_or_default())
+                expand_parameter_text(ctx, word.unwrap_or_default())
             } else {
                 Ok(String::new())
             }
         }
         Some("%") => remove_parameter_pattern(
-            require_set_parameter(ctx, &name, value)?,
-            &expand_parameter_text(ctx, &word.unwrap_or_default())?,
+            require_set_parameter(ctx, name, value)?,
+            &expand_parameter_text(ctx, word.unwrap_or_default())?,
             PatternRemoval::SmallestSuffix,
         ),
         Some("%%") => remove_parameter_pattern(
-            require_set_parameter(ctx, &name, value)?,
-            &expand_parameter_text(ctx, &word.unwrap_or_default())?,
+            require_set_parameter(ctx, name, value)?,
+            &expand_parameter_text(ctx, word.unwrap_or_default())?,
             PatternRemoval::LargestSuffix,
         ),
         Some("#") => remove_parameter_pattern(
-            require_set_parameter(ctx, &name, value)?,
-            &expand_parameter_text(ctx, &word.unwrap_or_default())?,
+            require_set_parameter(ctx, name, value)?,
+            &expand_parameter_text(ctx, word.unwrap_or_default())?,
             PatternRemoval::SmallestPrefix,
         ),
         Some("##") => remove_parameter_pattern(
-            require_set_parameter(ctx, &name, value)?,
-            &expand_parameter_text(ctx, &word.unwrap_or_default())?,
+            require_set_parameter(ctx, name, value)?,
+            &expand_parameter_text(ctx, word.unwrap_or_default())?,
             PatternRemoval::LargestPrefix,
         ),
         Some(_) => Err(ExpandError {
@@ -1247,11 +1250,18 @@ fn assign_parameter_text<C: Context>(
 fn expand_parameter_error_text<C: Context>(
     ctx: &mut C,
     name: &str,
-    word: Option<String>,
+    word: Option<&str>,
     default_message: &str,
 ) -> Result<String, ExpandError> {
-    let raw = word.unwrap_or_else(|| format!("{name}: {default_message}"));
-    expand_parameter_text(ctx, &raw)
+    let owned;
+    let raw = match word {
+        Some(w) => w,
+        None => {
+            owned = format!("{name}: {default_message}");
+            &owned
+        }
+    };
+    expand_parameter_text(ctx, raw)
 }
 
 fn expand_parameter_word<C: Context>(
@@ -1302,7 +1312,7 @@ fn expand_parameter_pattern_word<C: Context>(
 
 fn parse_parameter_expression(
     expr: &str,
-) -> Result<(String, Option<String>, Option<String>), ExpandError> {
+) -> Result<(&str, Option<&str>, Option<&str>), ExpandError> {
     if expr.is_empty() {
         return Err(ExpandError {
             message: "empty parameter expansion".to_string(),
@@ -1310,21 +1320,21 @@ fn parse_parameter_expression(
     }
     let mut index = 0usize;
     let b0 = expr.as_bytes()[0];
-    let name: String = if b0.is_ascii_digit() {
+    let name: &str = if b0.is_ascii_digit() {
         while index < expr.len() && expr.as_bytes()[index].is_ascii_digit() {
             index += 1;
         }
-        expr[..index].to_string()
+        &expr[..index]
     } else if matches!(b0, b'?' | b'$' | b'!' | b'#' | b'*' | b'@') {
         index = 1;
-        expr[..index].to_string()
+        &expr[..index]
     } else if b0 == b'_' || b0.is_ascii_alphabetic() {
         while index < expr.len()
             && (expr.as_bytes()[index] == b'_' || expr.as_bytes()[index].is_ascii_alphanumeric())
         {
             index += 1;
         }
-        expr[..index].to_string()
+        &expr[..index]
     } else {
         return Err(ExpandError {
             message: "invalid parameter expansion".to_string(),
@@ -1340,46 +1350,46 @@ fn parse_parameter_expression(
         ":-", ":=", ":?", ":+", "%%", "##", "-", "=", "?", "+", "%", "#",
     ] {
         if let Some(word) = rest.strip_prefix(op) {
-            return Ok((name, Some(op.to_string()), Some(word.to_string())));
+            return Ok((name, Some(op), Some(word)));
         }
     }
     Ok((
         name,
-        Some(rest.chars().next().unwrap_or_default().to_string()),
-        Some(rest.chars().skip(1).collect()),
+        Some(&rest[..1]),
+        Some(&rest[1..]),
     ))
 }
 
-fn lookup_param<C: Context>(ctx: &C, name: &str) -> Option<String> {
+fn lookup_param<'a, C: Context>(ctx: &'a C, name: &str) -> Option<Cow<'a, str>> {
     if name == "0" {
-        return Some(ctx.shell_name().to_string());
+        return Some(Cow::Borrowed(ctx.shell_name()));
     }
-    if !name.is_empty() && name.chars().all(|ch| ch.is_ascii_digit()) {
+    if !name.is_empty() && name.as_bytes().iter().all(|b| b.is_ascii_digit()) {
         return name
             .parse::<usize>()
             .ok()
-            .and_then(|index| ctx.positional_param(index).map(|c| c.into_owned()));
+            .and_then(|index| ctx.positional_param(index));
     }
     let mut chars = name.chars();
     if let (Some(ch), None) = (chars.next(), chars.next()) {
         if let Some(value) = ctx.special_param(ch) {
-            return Some(value.into_owned());
+            return Some(value);
         }
     }
-    ctx.env_var(name).map(|c| c.into_owned())
+    ctx.env_var(name)
 }
 
 fn require_set_parameter<C: Context>(
     ctx: &C,
     name: &str,
-    value: Option<String>,
+    value: Option<Cow<'_, str>>,
 ) -> Result<String, ExpandError> {
     if value.is_none() && ctx.nounset_enabled() && name != "@" && name != "*" {
         return Err(ExpandError {
             message: format!("{name}: parameter not set"),
         });
     }
-    Ok(value.unwrap_or_default())
+    Ok(value.map(|c| c.into_owned()).unwrap_or_default())
 }
 
 #[derive(Debug)]
@@ -1394,6 +1404,16 @@ struct ExpandedWord {
 struct Field {
     text: String,
     has_unquoted_glob: bool,
+}
+
+fn segment_chars(segments: &[Segment]) -> impl Iterator<Item = (char, QuoteState)> + '_ {
+    segments.iter().flat_map(|seg| match seg {
+        Segment::Text(text, state) => {
+            let s = *state;
+            Some(text.chars().map(move |ch| (ch, s)))
+        }
+        _ => None,
+    }).flatten()
 }
 
 fn split_fields_from_segments(segments: &[Segment], ifs: &str) -> Vec<Field> {
@@ -1414,7 +1434,7 @@ fn split_fields_from_segments(segments: &[Segment], ifs: &str) -> Vec<Field> {
         .chars()
         .filter(|ch| !matches!(ch, ' ' | '\t' | '\n'))
         .collect();
-    let chars = flatten_segment_chars(segments);
+    let chars: Vec<(char, QuoteState)> = segment_chars(segments).collect();
 
     let mut fields = Vec::new();
     let mut current = String::new();
@@ -1506,25 +1526,19 @@ fn flatten_segments(segments: &[Segment]) -> String {
     result
 }
 
-fn flatten_segment_chars(segments: &[Segment]) -> Vec<(char, QuoteState)> {
-    let mut chars = Vec::new();
-    for seg in segments {
-        if let Segment::Text(text, state) = seg {
-            for ch in text.chars() {
-                chars.push((ch, *state));
-            }
-        }
-    }
-    chars
-}
-
 fn render_pattern_from_segments(segments: &[Segment]) -> String {
     let mut pattern = String::new();
-    for (ch, state) in flatten_segment_chars(segments) {
-        if state == QuoteState::Quoted {
-            pattern.push('\\');
+    for seg in segments {
+        if let Segment::Text(text, state) = seg {
+            if *state == QuoteState::Quoted {
+                for ch in text.chars() {
+                    pattern.push('\\');
+                    pattern.push(ch);
+                }
+            } else {
+                pattern.push_str(text);
+            }
         }
-        pattern.push(ch);
     }
     pattern
 }
@@ -1653,7 +1667,7 @@ fn expand_path_segments(
     }
 }
 
-fn pattern_matches(text: &str, pattern: &str) -> bool {
+pub fn pattern_matches(text: &str, pattern: &str) -> bool {
     pattern_matches_inner(text, 0, pattern, 0)
 }
 
@@ -1858,8 +1872,8 @@ fn eval_arithmetic<C: Context>(ctx: &mut C, expression: &str) -> Result<i64, Exp
     Ok(value)
 }
 
-struct ArithmeticParser<'a, C> {
-    source: String,
+struct ArithmeticParser<'a, 'src, C> {
+    source: &'src str,
     index: usize,
     ctx: &'a mut C,
 }
@@ -1870,10 +1884,10 @@ fn arith_err(msg: &str) -> ExpandError {
     }
 }
 
-impl<'a, C: Context> ArithmeticParser<'a, C> {
-    fn new(ctx: &'a mut C, raw: &str) -> Self {
+impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
+    fn new(ctx: &'a mut C, raw: &'src str) -> Self {
         Self {
-            source: raw.to_string(),
+            source: raw,
             index: 0,
             ctx,
         }
@@ -2940,9 +2954,9 @@ mod tests {
     #[test]
     fn helper_paths_cover_remaining_branches() {
         let ctx = FakeContext::new();
-        assert_eq!(lookup_param(&ctx, "?"), Some("0".to_string()));
-        assert_eq!(lookup_param(&ctx, "0"), Some("meiksh".to_string()));
-        assert_eq!(lookup_param(&ctx, "X"), Some("fallback".to_string()));
+        assert_eq!(lookup_param(&ctx, "?").as_deref(), Some("0"));
+        assert_eq!(lookup_param(&ctx, "0").as_deref(), Some("meiksh"));
+        assert_eq!(lookup_param(&ctx, "X").as_deref(), Some("fallback"));
         assert_eq!(lookup_param(&ctx, "99"), None);
         assert_eq!(
             ctx.positional_params(),
@@ -2969,6 +2983,9 @@ mod tests {
         let mut ctx2 = FakeContext::new();
         assert_eq!(eval_arithmetic(&mut ctx2, "42").expect("direct eval"), 42);
         assert!(eval_arithmetic(&mut ctx2, "(1 + 2").is_err());
+
+        let arith_bt = expand_arithmetic_expression(&mut ctx2, "`printf 5`").expect("backtick in arith");
+        assert_eq!(arith_bt, "printf 5");
 
         let mut parser = ArithmeticParser::new(&mut ctx2, "9");
         parser.index = 99;
@@ -3224,6 +3241,11 @@ mod tests {
             "/tmp/home"
         );
         assert!(assign_parameter_text(&mut ctx, "1", "value").is_err());
+
+        let err = expand_braced_parameter_text(&mut ctx, "MISSING4?").expect_err("? no word");
+        assert_eq!(err.message, "");
+        let text = expand_parameter_error_text(&mut ctx, "X", None, "my default").expect("no word");
+        assert_eq!(text, "X: my default");
     }
 
     #[test]
@@ -3354,7 +3376,7 @@ mod tests {
         assert_eq!(error.message, "1: cannot assign in parameter expansion");
 
         let parsed = parse_parameter_expression("@").expect("special name");
-        assert_eq!(parsed, ("@".to_string(), None, None));
+        assert_eq!(parsed, ("@", None, None));
 
         let error = parse_parameter_expression("").expect_err("empty expr");
         assert_eq!(error.message, "empty parameter expansion");
@@ -3363,19 +3385,11 @@ mod tests {
         assert_eq!(error.message, "invalid parameter expansion");
         assert_eq!(
             parse_parameter_expression("USER%%tail").expect("largest suffix"),
-            (
-                "USER".to_string(),
-                Some("%%".to_string()),
-                Some("tail".to_string())
-            )
+            ("USER", Some("%%"), Some("tail"))
         );
         assert_eq!(
             parse_parameter_expression("USER/tail").expect("unknown operator"),
-            (
-                "USER".to_string(),
-                Some("/".to_string()),
-                Some("tail".to_string())
-            )
+            ("USER", Some("/"), Some("tail"))
         );
 
         let error =
@@ -3479,6 +3493,18 @@ mod tests {
         assert_eq!(
             render_pattern_from_segments(&[Segment::Text("*".to_string(), QuoteState::Quoted)]),
             "\\*".to_string()
+        );
+        assert_eq!(
+            render_pattern_from_segments(&[Segment::Text("ab".to_string(), QuoteState::Literal)]),
+            "ab".to_string()
+        );
+        assert_eq!(
+            render_pattern_from_segments(&[
+                Segment::Text("x".to_string(), QuoteState::Literal),
+                Segment::AtBreak,
+                Segment::Text("y".to_string(), QuoteState::Expanded),
+            ]),
+            "xy".to_string()
         );
             },
         );
@@ -4013,13 +4039,13 @@ mod tests {
     }
 
     #[test]
-    fn flatten_segment_chars_skips_at_break() {
+    fn segment_chars_skips_at_break() {
         let segs = vec![
             Segment::Text("a".into(), QuoteState::Expanded),
             Segment::AtBreak,
             Segment::Text("b".into(), QuoteState::Quoted),
         ];
-        let chars = flatten_segment_chars(&segs);
+        let chars: Vec<_> = segment_chars(&segs).collect();
         assert_eq!(chars, vec![('a', QuoteState::Expanded), ('b', QuoteState::Quoted)]);
     }
 

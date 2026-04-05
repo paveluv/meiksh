@@ -208,7 +208,7 @@ fn parse_cd_target(
     }
     let Some(target) = argv.get(index) else {
         return Ok((
-            shell.get_var("HOME").unwrap_or_else(|| ".".to_string()),
+            shell.get_var("HOME").unwrap_or(".").to_string(),
             false,
             physical,
             check_pwd,
@@ -223,7 +223,7 @@ fn parse_cd_target(
         return Ok((
             shell.get_var("OLDPWD").ok_or_else(|| ShellError {
                 message: "cd: OLDPWD not set".to_string(),
-            })?,
+            })?.to_string(),
             true,
             physical,
             check_pwd,
@@ -307,7 +307,7 @@ fn expand_assignment_tilde(shell: &Shell, value: &str) -> String {
     let prefix_end = slash_pos.unwrap_or(value.len());
     let user = &value[1..prefix_end];
     let replacement = if user.is_empty() {
-        shell.get_var("HOME").unwrap_or_else(|| "~".to_string())
+        shell.get_var("HOME").unwrap_or("~").to_string()
     } else {
         match sys::home_dir_for_user(user) {
             Some(dir) => dir,
@@ -919,7 +919,7 @@ fn read_with_input(
             return Ok(BuiltinOutcome::Status(2));
         }
     };
-    let values = split_read_assignments(&pieces, &vars, shell.get_var("IFS"));
+    let values = split_read_assignments(&pieces, &vars, shell.get_var("IFS").map(|s| s.to_string()));
     for (name, value) in vars.iter().zip(values) {
         if let Err(error) = shell.set_var(name, value) {
             write_stderr(&format!("read: {}\n", error.message));
@@ -992,7 +992,7 @@ fn read_logical_line(
                 push_read_piece(&mut pieces, &mut current, current_quoted);
                 current_quoted = false;
                 if shell.is_interactive() {
-                    let prompt = shell.get_var("PS2").unwrap_or_else(|| "> ".to_string());
+                    let prompt = shell.get_var("PS2").unwrap_or("> ");
                     let _ = sys::write_all_fd(sys::STDERR_FILENO, prompt.as_bytes());
                 }
                 continue;
@@ -1828,9 +1828,9 @@ fn readonly_lines(shell: &Shell) -> Vec<String> {
         .collect()
 }
 
-fn declaration_line(prefix: &str, name: &str, value: Option<String>) -> String {
+fn declaration_line(prefix: &str, name: &str, value: Option<&str>) -> String {
     match value {
-        Some(value) => format!("{prefix} {name}={}", shell_quote(&value)),
+        Some(value) => format!("{prefix} {name}={}", shell_quote(value)),
         None => format!("{prefix} {name}"),
     }
 }
@@ -1845,10 +1845,10 @@ fn pwd_output(shell: &Shell, logical: bool) -> Result<String, ShellError> {
 fn current_logical_pwd(shell: &Shell) -> Result<String, ShellError> {
     let cwd = sys::get_cwd()?;
     if let Some(pwd) = shell.get_var("PWD")
-        && logical_pwd_is_valid(&pwd)
-        && paths_match_logically(&pwd, &cwd)
+        && logical_pwd_is_valid(pwd)
+        && paths_match_logically(pwd, &cwd)
     {
-        return Ok(pwd);
+        return Ok(pwd.to_string());
     }
     Ok(cwd)
 }
@@ -2030,7 +2030,8 @@ fn execute_command_utility(
 
     let mut child_env = shell.env_for_child();
     if use_default_path {
-        child_env.insert("PATH".to_string(), DEFAULT_COMMAND_PATH.to_string());
+        child_env.retain(|(k, _)| k != "PATH");
+        child_env.push(("PATH".to_string(), DEFAULT_COMMAND_PATH.to_string()));
     }
     let env_pairs: Vec<(&str, &str)> = child_env
         .iter()
@@ -2085,6 +2086,7 @@ fn search_path(
     } else {
         shell
             .get_var("PATH")
+            .map(|s| s.to_string())
             .or_else(|| sys::env_var("PATH"))
             .unwrap_or_default()
     };
@@ -2221,7 +2223,7 @@ mod tests {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
             run(&mut shell, &["export".into(), "NAME=value".into()]).expect("export");
-            assert_eq!(shell.get_var("NAME").as_deref(), Some("value"));
+            assert_eq!(shell.get_var("NAME"), Some("value"));
             assert!(shell.exported.contains("NAME"));
         });
     }
@@ -2650,7 +2652,7 @@ mod tests {
                 read_with_input(&mut shell, &["read".into()], empty_fd).expect("read into REPLY"),
                 BuiltinOutcome::Status(1)
             ));
-            assert_eq!(shell.get_var("REPLY").as_deref(), Some(""));
+            assert_eq!(shell.get_var("REPLY"), Some(""));
             sys::close_fd(empty_fd).ok();
 
             let empty_fd2 = sys::open_file("/tmp/empty", sys::O_RDONLY, 0).expect("open empty2");
@@ -2690,7 +2692,7 @@ mod tests {
                     .expect("continued read"),
                 BuiltinOutcome::Status(0)
             ));
-            assert_eq!(shell.get_var("JOINED").as_deref(), Some("linecontinued"));
+            assert_eq!(shell.get_var("JOINED"), Some("linecontinued"));
             sys::close_fd(cont_fd).ok();
 
             shell.options.force_interactive = false;
@@ -2715,7 +2717,7 @@ mod tests {
                     .expect("escaped read"),
                 BuiltinOutcome::Status(0)
             ));
-            assert_eq!(shell.get_var("ESCAPED").as_deref(), Some("left right"));
+            assert_eq!(shell.get_var("ESCAPED"), Some("left right"));
             sys::close_fd(esc_fd).ok();
 
             let tail_fd = sys::open_file("/tmp/tail_bs", sys::O_RDONLY, 0).expect("open tail");
@@ -2724,7 +2726,7 @@ mod tests {
                     .expect("tail read"),
                 BuiltinOutcome::Status(1)
             ));
-            assert_eq!(shell.get_var("TAIL").as_deref(), Some("tail\\"));
+            assert_eq!(shell.get_var("TAIL"), Some("tail\\"));
             sys::close_fd(tail_fd).ok();
         });
     }
@@ -3101,7 +3103,7 @@ mod tests {
             shell.last_status = 0;
             let outcome = run(&mut shell, &["eval".into(), "VALUE=42".into()]).expect("eval");
             assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-            assert_eq!(shell.get_var("VALUE").as_deref(), Some("42"));
+            assert_eq!(shell.get_var("VALUE"), Some("42"));
 
             let outcome = run(&mut shell, &["set".into(), "-a".into()]).expect("set -a");
             assert!(matches!(outcome, BuiltinOutcome::Status(0)));
@@ -3157,7 +3159,7 @@ mod tests {
                 let outcome =
                     run(&mut shell, &[".".into(), "/tmp/dot-script.sh".into()]).expect("dot");
                 assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-                assert_eq!(shell.get_var("FROM_DOT").as_deref(), Some("1"));
+                assert_eq!(shell.get_var("FROM_DOT"), Some("1"));
             },
         );
     }
@@ -4241,8 +4243,8 @@ mod tests {
 
                 let outcome = run(&mut shell, &["cd".into(), "-".into()]).expect("cd dash");
                 assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-                assert_eq!(shell.get_var("PWD").as_deref(), Some("/previous"));
-                assert_eq!(shell.get_var("OLDPWD").as_deref(), Some("/home"));
+                assert_eq!(shell.get_var("PWD"), Some("/previous"));
+                assert_eq!(shell.get_var("OLDPWD"), Some("/home"));
             },
         );
     }
@@ -4281,7 +4283,7 @@ mod tests {
                 )
                 .expect("cd -Pe");
                 assert!(matches!(outcome, BuiltinOutcome::Status(1)));
-                assert_eq!(shell.get_var("OLDPWD").as_deref(), Some("/old"));
+                assert_eq!(shell.get_var("OLDPWD"), Some("/old"));
             },
         );
     }
@@ -4317,7 +4319,7 @@ mod tests {
                 let outcome = run(&mut shell, &["cd".into(), "-P".into(), "/somewhere".into()])
                     .expect("cd -P fallback");
                 assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-                assert_eq!(shell.get_var("PWD").as_deref(), Some("/somewhere"));
+                assert_eq!(shell.get_var("PWD"), Some("/somewhere"));
             },
         );
     }
@@ -4362,8 +4364,8 @@ mod tests {
                 shell.env.insert("PWD".into(), "/".into());
                 let outcome = run(&mut shell, &["cd".into(), "tmp".into()]).expect("cd from root");
                 assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-                assert_eq!(shell.get_var("PWD").as_deref(), Some("/tmp"));
-                assert_eq!(shell.get_var("OLDPWD").as_deref(), Some("/"));
+                assert_eq!(shell.get_var("PWD"), Some("/tmp"));
+                assert_eq!(shell.get_var("OLDPWD"), Some("/"));
             },
         );
     }
@@ -4828,7 +4830,7 @@ mod tests {
                 let status =
                     run(&mut shell, &[".".into(), "dot-script.sh".into()]).expect("dot path");
                 assert!(matches!(status, BuiltinOutcome::Status(0)));
-                assert_eq!(shell.get_var("M6_DOT").as_deref(), Some("loaded"));
+                assert_eq!(shell.get_var("M6_DOT"), Some("loaded"));
                 assert!(resolve_dot_path(&shell, "missing-dot.sh").is_err());
             },
         );
