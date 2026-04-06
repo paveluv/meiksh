@@ -148,7 +148,8 @@ end test "external utility does not change parent environment"
 #### Test: subshell traps reset to default
 
 A subshell duplicates the shell environment, but traps not being ignored
-are reset to their default action.
+are reset to their default action. Bash `--posix` does not comply: it
+preserves caught traps in subshells (known non-compliance #5).
 
 ```
 begin test "subshell traps reset to default"
@@ -474,4 +475,151 @@ begin test "utility redirection additions do not affect parent open files"
     stderr ""
     exit_code 0
 end test "utility redirection additions do not affect parent open files"
+```
+
+#### Test: pipeline commands run in subshell
+
+Each command of a multi-command pipeline is in a subshell environment.
+Variable changes in a pipeline component do not propagate to the parent.
+
+```
+begin test "pipeline commands run in subshell"
+  script
+    var=before
+    { var=inside; echo a; } | cat
+    echo "$var"
+  expect
+    stdout "a\nbefore"
+    stderr ""
+    exit_code 0
+end test "pipeline commands run in subshell"
+```
+
+#### Test: subshell inherits open file descriptors
+
+A subshell is a duplicate of the shell environment, including open file
+descriptors controlled by `exec`. The subshell can write to a file
+descriptor opened by the parent.
+
+```
+begin test "subshell inherits open file descriptors"
+  script
+    exec 3>tmp_sub_fd.txt
+    (echo from_subshell >&3)
+    exec 3>&-
+    cat tmp_sub_fd.txt
+  expect
+    stdout "from_subshell"
+    stderr ""
+    exit_code 0
+end test "subshell inherits open file descriptors"
+```
+
+#### Test: subshell function changes do not propagate
+
+Changes to shell functions made in a subshell shall not affect the parent
+shell environment. A function redefined in a subshell retains its original
+definition in the parent.
+
+```
+begin test "subshell function changes do not propagate"
+  script
+    myfunc() { echo original; }
+    (myfunc() { echo modified; })
+    myfunc
+  expect
+    stdout "original"
+    stderr ""
+    exit_code 0
+end test "subshell function changes do not propagate"
+```
+
+#### Test: subshell working directory changes do not propagate
+
+Changes to the working directory in a subshell shall not affect the parent
+shell environment. A `cd` in a subshell does not change the parent's PWD.
+
+```
+begin test "subshell working directory changes do not propagate"
+  script
+    parent=$PWD
+    (cd /tmp)
+    [ "$PWD" = "$parent" ] && echo unchanged
+  expect
+    stdout "unchanged"
+    stderr ""
+    exit_code 0
+end test "subshell working directory changes do not propagate"
+```
+
+#### Test: subshell umask changes do not propagate
+
+The file creation mask is part of the shell environment. Changes to
+`umask` in a subshell shall not affect the parent shell.
+
+```
+begin test "subshell umask changes do not propagate"
+  script
+    umask 0022
+    (umask 0077)
+    umask
+  expect
+    stdout "0022"
+    stderr ""
+    exit_code 0
+end test "subshell umask changes do not propagate"
+```
+
+#### Test: duration-of-command export does not persist in parent
+
+Variables explicitly exported for the duration of a command (`VAR=val cmd`)
+are passed to the utility but shall not remain set in the parent shell
+after the command completes.
+
+```
+begin test "duration-of-command export does not persist in parent"
+  script
+    TMPVAR=value sh -c 'echo done'
+    echo "${TMPVAR:-unset}"
+  expect
+    stdout "done\nunset"
+    stderr ""
+    exit_code 0
+end test "duration-of-command export does not persist in parent"
+```
+
+#### Test: for loop executes in current environment
+
+The `for` compound command is not a subshell context. Variable changes
+inside a `for` loop persist in the current shell environment.
+
+```
+begin test "for loop executes in current environment"
+  script
+    var=before
+    for x in a b; do var=$x; done
+    echo "$var"
+  expect
+    stdout "b"
+    stderr ""
+    exit_code 0
+end test "for loop executes in current environment"
+```
+
+#### Test: case construct executes in current environment
+
+The `case` compound command is not a subshell context. Variable changes
+inside a `case` branch persist in the current shell environment.
+
+```
+begin test "case construct executes in current environment"
+  script
+    var=before
+    case x in x) var=matched;; esac
+    echo "$var"
+  expect
+    stdout "matched"
+    stderr ""
+    exit_code 0
+end test "case construct executes in current environment"
 ```
