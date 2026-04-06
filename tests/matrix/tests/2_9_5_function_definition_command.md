@@ -603,3 +603,200 @@ begin test "failed function definition returns non-zero status"
     exit_code 0
 end test "failed function definition returns non-zero status"
 ```
+
+#### Test: call-site stdin redirect is active during function body
+
+Call-site redirections shall be performed during execution of the function
+itself. A stdin redirect on the call causes the body to read from that
+source.
+
+```
+begin test "call-site stdin redirect is active during function body"
+  script
+    printf 'from_file\n' > tmp_func_stdin.txt
+    myfunc() { read line; echo "$line"; }
+    myfunc < tmp_func_stdin.txt
+  expect
+    stdout "from_file"
+    stderr ""
+    exit_code 0
+end test "call-site stdin redirect is active during function body"
+```
+
+#### Test: call-site stderr redirect captures function output to fd 2
+
+Call-site redirections shall be performed during execution of the function
+itself. A stderr redirect on the call causes explicit writes to fd 2 inside
+the body to go to the redirected target.
+
+```
+begin test "call-site stderr redirect captures function output to fd 2"
+  script
+    myfunc() { echo diag >&2; echo out; }
+    myfunc 2>tmp_func_stderr.txt
+    printf "captured:"
+    cat tmp_func_stderr.txt
+  expect
+    stdout "out\ncaptured:diag"
+    stderr ""
+    exit_code 0
+end test "call-site stderr redirect captures function output to fd 2"
+```
+
+#### Test: call-site combined stdout and stderr redirects
+
+Multiple call-site redirections shall all be applied during function
+execution.
+
+```
+begin test "call-site combined stdout and stderr redirects"
+  script
+    myfunc() { echo out; echo err >&2; }
+    myfunc >tmp_func_out.txt 2>tmp_func_err.txt
+    printf "stdout:"
+    cat tmp_func_out.txt
+    printf "stderr:"
+    cat tmp_func_err.txt
+  expect
+    stdout "stdout:out\nstderr:err"
+    stderr ""
+    exit_code 0
+end test "call-site combined stdout and stderr redirects"
+```
+
+#### Test: call-site append redirect appends during function execution
+
+An append redirect on the function call appends to the file during body
+execution rather than truncating it.
+
+```
+begin test "call-site append redirect appends during function execution"
+  script
+    printf 'first\n' > tmp_func_append.txt
+    myfunc() { echo "second"; }
+    myfunc >> tmp_func_append.txt
+    cat tmp_func_append.txt
+  expect
+    stdout "first\nsecond"
+    stderr ""
+    exit_code 0
+end test "call-site append redirect appends during function execution"
+```
+
+#### Test: definition redirect and call-site redirect both applied
+
+When a function definition has a trailing redirect and the call site adds
+another, both shall be applied during function execution.
+
+```
+begin test "definition redirect and call-site redirect both applied"
+  script
+    myfunc() { echo body; echo diag >&2; } 2>tmp_func_def_err.txt
+    myfunc >tmp_func_call_out.txt
+    printf "out:"
+    cat tmp_func_call_out.txt
+    printf "err:"
+    cat tmp_func_def_err.txt
+  expect
+    stdout "out:body\nerr:diag"
+    stderr ""
+    exit_code 0
+end test "definition redirect and call-site redirect both applied"
+```
+
+#### Test: eval syntax error diagnostic respects call-site stderr redirect
+
+A syntax error from `eval` inside a function body shall write its
+diagnostic to fd 2. When the call site redirects fd 2, the diagnostic
+shall go to the redirected target, not the original stderr. Per 2.9.5 the
+syntax error causes the non-interactive shell to exit, so we verify by
+checking nothing leaked to the original stderr.
+
+```
+begin test "eval syntax error diagnostic respects call-site stderr redirect"
+  script
+    myfunc() { eval 'if'; }
+    myfunc 2>tmp_func_eval_err.txt
+    echo "should not reach"
+  expect
+    stdout ""
+    stderr ""
+    exit_code !=0
+end test "eval syntax error diagnostic respects call-site stderr redirect"
+```
+
+#### Test: command not found diagnostic respects call-site stderr redirect
+
+A "not found" diagnostic from a command inside a function body shall go to
+the call-site's redirected fd 2.
+
+```
+begin test "command not found diagnostic respects call-site stderr redirect"
+  script
+    myfunc() { nonexistent_command_xyz_1234; }
+    myfunc 2>tmp_func_notfound_err.txt
+    cat tmp_func_notfound_err.txt
+  expect
+    stdout ".+"
+    stderr ""
+    exit_code 0
+end test "command not found diagnostic respects call-site stderr redirect"
+```
+
+#### Test: readonly assignment diagnostic respects call-site stderr redirect
+
+A readonly variable assignment error inside a function body shall write its
+diagnostic to the call-site's redirected fd 2. Per 2.8.1 the shell exits,
+so we verify by checking that nothing leaked to the original stderr.
+
+```
+begin test "readonly assignment diagnostic respects call-site stderr redirect"
+  script
+    readonly RO=fixed
+    myfunc() { RO=changed; }
+    myfunc 2>tmp_func_ro_err.txt
+    echo "should not reach"
+  expect
+    stdout ""
+    stderr ""
+    exit_code !=0
+end test "readonly assignment diagnostic respects call-site stderr redirect"
+```
+
+#### Test: nounset expansion diagnostic respects call-site stderr redirect
+
+An expansion error from `set -u` inside a function body shall write its
+diagnostic to the call-site's redirected fd 2. Per 2.8.1 the shell exits,
+so we verify by checking that nothing leaked to the original stderr.
+
+```
+begin test "nounset expansion diagnostic respects call-site stderr redirect"
+  script
+    set -u
+    myfunc() { echo "$UNSET_VAR_XYZ_REDIR"; }
+    myfunc 2>tmp_func_nounset_err.txt
+    echo "should not reach"
+  expect
+    stdout ""
+    stderr ""
+    exit_code !=0
+end test "nounset expansion diagnostic respects call-site stderr redirect"
+```
+
+#### Test: body redirection error diagnostic respects call-site stderr redirect
+
+When a redirect inside the function body fails, the error message shall go
+through the call-site's redirected fd 2, not the original stderr.
+
+```
+begin test "body redirection error diagnostic respects call-site stderr redirect"
+  script
+    myfunc() { echo hello > /no/such/dir/file; }
+    myfunc 2>tmp_func_badredir_err.txt
+    cat tmp_func_badredir_err.txt
+  expect
+    stdout ".+"
+    stderr ""
+    exit_code 0
+end test "body redirection error diagnostic respects call-site stderr redirect"
+```
