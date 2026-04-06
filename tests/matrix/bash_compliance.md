@@ -245,7 +245,7 @@ Observed:
 
 This file is intentionally strict: only independently reproducible, standards-backed bash deviations are included.
 
-## 6) `! !` multiple pipeline negations accepted
+## 8) `! !` multiple pipeline negations accepted
 
 **POSIX passage (exact quote)**  
 From `docs/posix/md/utilities/V3_chap02.md`:
@@ -272,5 +272,37 @@ Expected:
 Observed:
 - `exit=0`
 - no error
+
+---
+
+## 9) Variable assignment error before regular command does not exit
+
+**POSIX passage (exact quote)**  
+From `docs/posix/md/utilities/V3_chap02.md`, 2.8.1 Consequences of Shell Errors:
+
+> | **Error** | **Non-Interactive Shell** | **Interactive Shell** | **Shell Diagnostic Message Required** |
+> | --- | --- | --- | --- |
+> | Variable assignment error | shall exit | shall not exit | yes |
+
+**Why this is non-compliant**  
+The 2.8.1 table requires a non-interactive shell to exit on any variable assignment error, with no exception based on the type of command that follows. Bash in `--posix` mode only exits when the assignment precedes a special built-in utility; when it precedes a regular command (e.g., `env`), bash writes a diagnostic but continues execution.
+
+**Reproduction (portable shell commands)**
+
+```sh
+/usr/bin/bash --posix -c '
+  readonly X=1
+  X=2 env >/dev/null
+  echo "survived rc=$?"
+'
+```
+
+Expected:
+- shell exits before `echo survived`
+- non-zero exit status
+
+Observed:
+- `survived rc=1`
+- shell continues execution
 
 ---

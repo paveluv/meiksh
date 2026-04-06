@@ -795,31 +795,10 @@ begin test "assignment to readonly variable fails"
 end test "assignment to readonly variable fails"
 ```
 
-#### Test: readonly assignment before regular command is an error
-
-If a variable assignment attempts to modify a readonly variable, a variable
-assignment error shall occur even when the assignment precedes a regular
-command.
-
-```
-begin test "readonly assignment before regular command is an error"
-  script
-    readonly X=1
-    X=2 env >/dev/null
-    printf "%s\n" "$?"
-    echo survived
-  expect
-    stdout "1\nsurvived"
-    stderr ".+"
-    exit_code 0
-end test "readonly assignment before regular command is an error"
-```
-
 #### Test: readonly prefix assignment before special built-in exits shell
 
-A variable assignment error before a special built-in utility causes the
-(non-interactive) shell to exit, unlike before a regular command where the
-shell continues execution (see [2.8.1 Consequences of Shell Errors](#281-consequences-of-shell-errors)).
+A variable assignment error causes a non-interactive shell to exit
+(see [2.8.1 Consequences of Shell Errors](#281-consequences-of-shell-errors)).
 
 ```
 begin test "readonly prefix assignment before special built-in exits shell"
@@ -834,6 +813,27 @@ begin test "readonly prefix assignment before special built-in exits shell"
     stderr ".+"
     exit_code !=0
 end test "readonly prefix assignment before special built-in exits shell"
+```
+
+#### Test: readonly prefix assignment before regular command exits shell
+
+A variable assignment error causes a non-interactive shell to exit regardless
+of whether the command is a special built-in or a regular command
+(see [2.8.1 Consequences of Shell Errors](#281-consequences-of-shell-errors)).
+Known `bash --posix` non-compliance #9: bash only exits when the assignment
+precedes a special built-in, surviving when it precedes a regular command.
+
+```
+begin test "readonly prefix assignment before regular command exits shell"
+  script
+    readonly FOO=1
+    FOO=2 env >/dev/null
+    echo "survived"
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
+end test "readonly prefix assignment before regular command exits shell"
 ```
 
 #### Test: function call with var assignment affects function environment
@@ -856,14 +856,15 @@ end test "function call with var assignment affects function environment"
 
 #### Test: special built-in modifications to assigned variables persist
 
-If an assigned variable is further modified by a special built-in utility, the
-modification made by the utility shall persist after the command completes.
+If the command name is a special built-in utility and the utility further
+modifies an assigned variable, the modifications made by the utility shall
+persist after the command completes.
 
 ```
 begin test "special built-in modifications to assigned variables persist"
   script
-    OPTIND=1 getopts a opt -a >/dev/null 2>&1
-    printf "%s\n" "$OPTIND"
+    FOO=1 eval 'FOO=2'
+    printf "%s\n" "$FOO"
   expect
     stdout "2"
     stderr ""
