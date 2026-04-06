@@ -40,9 +40,7 @@ fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
             Some(line) => line,
             None => {
                 if !accumulated.is_empty() {
-                    let msg = format!(
-                        "meiksh: unexpected EOF while looking for matching token\n"
-                    );
+                    let msg = format!("meiksh: unexpected EOF while looking for matching token\n");
                     let _ = sys::write_all_fd(sys::STDERR_FILENO, msg.as_bytes());
                     accumulated.clear();
                 }
@@ -635,16 +633,14 @@ mod tests {
 
     #[test]
     fn run_loop_recovers_from_parse_error() {
-        let mut trace = vec![
-            t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(b"$ ".to_vec()),
-                ],
-                TraceResult::Auto,
-            ),
-        ];
+        let mut trace = vec![t(
+            "write",
+            vec![
+                ArgMatcher::Fd(sys::STDERR_FILENO),
+                ArgMatcher::Bytes(b"$ ".to_vec()),
+            ],
+            TraceResult::Auto,
+        )];
         for b in b"echo 'unterminated\n" {
             trace.push(t(
                 "read",
@@ -671,8 +667,7 @@ mod tests {
                 vec![
                     ArgMatcher::Fd(sys::STDERR_FILENO),
                     ArgMatcher::Bytes(
-                        b"meiksh: unexpected EOF while looking for matching token\n"
-                            .to_vec(),
+                        b"meiksh: unexpected EOF while looking for matching token\n".to_vec(),
                     ),
                 ],
                 TraceResult::Auto,
@@ -1160,7 +1155,10 @@ mod tests {
 
         let prompt = t(
             "write",
-            vec![ArgMatcher::Fd(sys::STDERR_FILENO), ArgMatcher::Bytes(b"$ ".to_vec())],
+            vec![
+                ArgMatcher::Fd(sys::STDERR_FILENO),
+                ArgMatcher::Bytes(b"$ ".to_vec()),
+            ],
             TraceResult::Int(2),
         );
         trace.push(prompt.clone());
@@ -1168,7 +1166,11 @@ mod tests {
 
         trace.push(t(
             "open",
-            vec![ArgMatcher::Str("/tmp/hist".into()), ArgMatcher::Any, ArgMatcher::Any],
+            vec![
+                ArgMatcher::Str("/tmp/hist".into()),
+                ArgMatcher::Any,
+                ArgMatcher::Any,
+            ],
             TraceResult::Fd(10),
         ));
         trace.push(t(
@@ -1181,7 +1183,10 @@ mod tests {
         let err_msg = b"meiksh: unterminated command substitution\n";
         trace.push(t(
             "write",
-            vec![ArgMatcher::Fd(sys::STDERR_FILENO), ArgMatcher::Bytes(err_msg.to_vec())],
+            vec![
+                ArgMatcher::Fd(sys::STDERR_FILENO),
+                ArgMatcher::Bytes(err_msg.to_vec()),
+            ],
             TraceResult::Int(err_msg.len() as i64),
         ));
 

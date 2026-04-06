@@ -57,39 +57,14 @@ pub fn run(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellEr
     Ok(outcome)
 }
 
+const BUILTIN_NAMES: &[&str] = &[
+    ".", ":", "alias", "bg", "break", "cd", "command", "continue", "eval", "exec", "exit",
+    "export", "false", "fg", "getopts", "jobs", "kill", "pwd", "read", "readonly", "return", "set",
+    "shift", "times", "trap", "true", "umask", "unalias", "unset", "wait",
+];
+
 pub fn is_builtin(name: &str) -> bool {
-    matches!(
-        name,
-        ":" | "."
-            | "alias"
-            | "bg"
-            | "break"
-            | "cd"
-            | "command"
-            | "continue"
-            | "eval"
-            | "exec"
-            | "exit"
-            | "export"
-            | "false"
-            | "fg"
-            | "getopts"
-            | "jobs"
-            | "kill"
-            | "pwd"
-            | "read"
-            | "readonly"
-            | "return"
-            | "set"
-            | "shift"
-            | "times"
-            | "trap"
-            | "true"
-            | "unalias"
-            | "umask"
-            | "unset"
-            | "wait"
-    )
+    BUILTIN_NAMES.binary_search(&name).is_ok()
 }
 
 const DEFAULT_COMMAND_PATH: &str = "/usr/bin:/bin";
@@ -221,9 +196,12 @@ fn parse_cd_target(
     }
     if target == "-" {
         return Ok((
-            shell.get_var("OLDPWD").ok_or_else(|| ShellError {
-                message: "cd: OLDPWD not set".into(),
-            })?.to_string(),
+            shell
+                .get_var("OLDPWD")
+                .ok_or_else(|| ShellError {
+                    message: "cd: OLDPWD not set".into(),
+                })?
+                .to_string(),
             true,
             physical,
             check_pwd,
@@ -441,9 +419,7 @@ fn shift(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellErro
         })?
         .unwrap_or(1);
     if count > shell.positional.len() {
-        write_stderr(&format!(
-            "shift: {count}: shift count out of range\n"
-        ));
+        write_stderr(&format!("shift: {count}: shift count out of range\n"));
         return Ok(BuiltinOutcome::Status(1));
     }
     shell.positional.drain(0..count);
@@ -845,10 +821,7 @@ fn kill(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
                 shell
                     .jobs
                     .iter()
-                    .find(|j| {
-                        j.children.iter().any(|c| c.pid == pid)
-                            || j.last_pid == Some(pid)
-                    })
+                    .find(|j| j.children.iter().any(|c| c.pid == pid) || j.last_pid == Some(pid))
                     .and_then(|j| j.pgid)
                     .map(|pgid| -pgid)
                     .unwrap_or(pid)
@@ -919,7 +892,8 @@ fn read_with_input(
             return Ok(BuiltinOutcome::Status(2));
         }
     };
-    let values = split_read_assignments(&pieces, &vars, shell.get_var("IFS").map(|s| s.to_string()));
+    let values =
+        split_read_assignments(&pieces, &vars, shell.get_var("IFS").map(|s| s.to_string()));
     for (name, value) in vars.iter().zip(values) {
         if let Err(error) = shell.set_var(name, value) {
             write_stderr(&format!("read: {}\n", error.message));
@@ -1139,7 +1113,11 @@ fn getopts(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellEr
     let optstring = &argv[1];
     let name = &argv[2];
     let silent = optstring.starts_with(':');
-    let opts = if silent { &optstring[1..] } else { optstring.as_str() };
+    let opts = if silent {
+        &optstring[1..]
+    } else {
+        optstring.as_str()
+    };
 
     let params: Vec<String> = if argv.len() > 3 {
         argv[3..].to_vec()
@@ -1236,7 +1214,9 @@ fn getopts_inner(
         } else {
             let _ = shell.unset_var("OPTARG");
             if next_ci < arg_chars.len() {
-                shell.env.insert("_GETOPTS_CIND".into(), next_ci.to_string());
+                shell
+                    .env
+                    .insert("_GETOPTS_CIND".into(), next_ci.to_string());
             } else {
                 getopts_set(shell, "OPTIND", (optind + 1).to_string())?;
                 shell.env.remove("_GETOPTS_CIND");
@@ -1256,7 +1236,9 @@ fn getopts_inner(
         }
         getopts_set(shell, name, "?".into())?;
         if next_ci < arg_chars.len() {
-            shell.env.insert("_GETOPTS_CIND".into(), next_ci.to_string());
+            shell
+                .env
+                .insert("_GETOPTS_CIND".into(), next_ci.to_string());
         } else {
             getopts_set(shell, "OPTIND", (optind + 1).to_string())?;
             shell.env.remove("_GETOPTS_CIND");
@@ -2121,24 +2103,13 @@ fn absolute_path(path: &Path) -> Option<PathBuf> {
     sys::get_cwd().ok().map(|cwd| PathBuf::from(cwd).join(path))
 }
 
+const SPECIAL_BUILTIN_NAMES: &[&str] = &[
+    ".", ":", "break", "continue", "eval", "exec", "exit", "export", "readonly", "return", "set",
+    "shift", "times", "trap", "unset",
+];
+
 pub fn is_special_builtin(name: &str) -> bool {
-    matches!(
-        name,
-        "." | ":"
-            | "break"
-            | "continue"
-            | "eval"
-            | "exec"
-            | "exit"
-            | "export"
-            | "readonly"
-            | "return"
-            | "set"
-            | "shift"
-            | "times"
-            | "trap"
-            | "unset"
-    )
+    SPECIAL_BUILTIN_NAMES.binary_search(&name).is_ok()
 }
 
 fn is_reserved_word_name(word: &str) -> bool {
@@ -2165,9 +2136,9 @@ fn is_reserved_word_name(word: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::arena::StringArena;
     use crate::shell::ShellOptions;
     use crate::syntax::Word;
-    use crate::arena::StringArena;
     use std::collections::{BTreeMap, BTreeSet, HashMap};
 
     use crate::sys::test_support::{
@@ -3257,7 +3228,6 @@ mod tests {
 
                         words: vec![literal("printf"), literal("hello")].into_boxed_slice(),
                         redirections: Vec::new().into_boxed_slice(),
-
                     }),
                 );
                 shell.exported.insert("NAME".into());
@@ -3359,7 +3329,10 @@ mod tests {
                 &["export".into(), "-p".into(), "NAME".into()],
             )
             .expect_err("export -p operands");
-            assert_eq!(&*export_error.message, "export: -p does not accept operands");
+            assert_eq!(
+                &*export_error.message,
+                "export: -p does not accept operands"
+            );
 
             let readonly_error =
                 parse_declaration_listing_flag("readonly", &["readonly".into(), "-x".into()])
@@ -5131,7 +5104,6 @@ mod tests {
 
                     words: vec![literal("printf"), literal("ok")].into_boxed_slice(),
                     redirections: Vec::new().into_boxed_slice(),
-
                 }),
             );
             run(&mut shell, &["unset".into(), "-f".into(), "ll".into()]).expect("unset function");
@@ -6486,10 +6458,7 @@ mod tests {
             vec![
                 t(
                     "access",
-                    vec![
-                        ArgMatcher::Str("./myscript".into()),
-                        ArgMatcher::Int(0),
-                    ],
+                    vec![ArgMatcher::Str("./myscript".into()), ArgMatcher::Int(0)],
                     TraceResult::Int(0),
                 ),
                 t(
@@ -6502,10 +6471,7 @@ mod tests {
                 let mut shell = test_shell();
                 shell.env.insert("PATH".into(), "".into());
                 let result = search_path("myscript", &shell, false, path_exists);
-                assert_eq!(
-                    result,
-                    Some(PathBuf::from("/home/myscript"))
-                );
+                assert_eq!(result, Some(PathBuf::from("/home/myscript")));
             },
         );
     }
@@ -6529,34 +6495,56 @@ mod tests {
     fn execute_command_utility_spawn_enoent_and_other_error() {
         run_trace(
             vec![
-                t("access", vec![ArgMatcher::Str("/usr/bin/cmd".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
-                t("access", vec![ArgMatcher::Str("/usr/bin/cmd".into()), ArgMatcher::Any], TraceResult::Int(0)),
+                t(
+                    "access",
+                    vec![ArgMatcher::Str("/usr/bin/cmd".into()), ArgMatcher::Int(0)],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "access",
+                    vec![ArgMatcher::Str("/usr/bin/cmd".into()), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
                 t("fork", vec![], TraceResult::Err(sys::ENOENT)),
-                t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Bytes(b"command: cmd: not found\n".to_vec())], TraceResult::Auto),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(2),
+                        ArgMatcher::Bytes(b"command: cmd: not found\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
                 // Second call: fork fails with EIO (non-ENOENT)
-                t("access", vec![ArgMatcher::Str("/usr/bin/cmd".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
-                t("access", vec![ArgMatcher::Str("/usr/bin/cmd".into()), ArgMatcher::Any], TraceResult::Int(0)),
+                t(
+                    "access",
+                    vec![ArgMatcher::Str("/usr/bin/cmd".into()), ArgMatcher::Int(0)],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "access",
+                    vec![ArgMatcher::Str("/usr/bin/cmd".into()), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
                 t("fork", vec![], TraceResult::Err(sys::EIO)),
-                t("write", vec![ArgMatcher::Fd(2), ArgMatcher::Bytes(b"command: cmd: Input/output error\n".to_vec())], TraceResult::Auto),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(2),
+                        ArgMatcher::Bytes(b"command: cmd: Input/output error\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
             ],
             || {
                 let mut shell = test_shell();
                 shell.env.insert("PATH".into(), "/usr/bin".into());
 
-                let outcome = execute_command_utility(
-                    &mut shell,
-                    &["cmd".into()],
-                    false,
-                )
-                .expect("enoent");
+                let outcome =
+                    execute_command_utility(&mut shell, &["cmd".into()], false).expect("enoent");
                 assert!(matches!(outcome, BuiltinOutcome::Status(127)));
 
-                let outcome = execute_command_utility(
-                    &mut shell,
-                    &["cmd".into()],
-                    false,
-                )
-                .expect("eio");
+                let outcome =
+                    execute_command_utility(&mut shell, &["cmd".into()], false).expect("eio");
                 assert!(matches!(outcome, BuiltinOutcome::Status(126)));
             },
         );
@@ -6566,14 +6554,30 @@ mod tests {
     fn execute_command_utility_with_default_path() {
         run_trace(
             vec![
-                t("access", vec![ArgMatcher::Str("/usr/bin/ls".into()), ArgMatcher::Int(0)], TraceResult::Int(0)),
-                t("access", vec![ArgMatcher::Str("/usr/bin/ls".into()), ArgMatcher::Any], TraceResult::Int(0)),
+                t(
+                    "access",
+                    vec![ArgMatcher::Str("/usr/bin/ls".into()), ArgMatcher::Int(0)],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "access",
+                    vec![ArgMatcher::Str("/usr/bin/ls".into()), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
                 // spawn_child: fork succeeds
                 t_fork(
                     TraceResult::Pid(2000),
                     vec![
-                        t("setenv", vec![ArgMatcher::Any, ArgMatcher::Any], TraceResult::Int(0)),
-                        t("execvp", vec![ArgMatcher::Any, ArgMatcher::Any], TraceResult::Int(-1)),
+                        t(
+                            "setenv",
+                            vec![ArgMatcher::Any, ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "execvp",
+                            vec![ArgMatcher::Any, ArgMatcher::Any],
+                            TraceResult::Int(-1),
+                        ),
                     ],
                 ),
                 t(
@@ -6584,12 +6588,8 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let outcome = execute_command_utility(
-                    &mut shell,
-                    &["ls".into()],
-                    true,
-                )
-                .expect("command -p");
+                let outcome =
+                    execute_command_utility(&mut shell, &["ls".into()], true).expect("command -p");
                 assert!(matches!(outcome, BuiltinOutcome::Status(0)));
             },
         );

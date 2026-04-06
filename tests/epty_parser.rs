@@ -187,7 +187,8 @@ pub fn parse_suite(text: &str, filename: &str) -> Result<TestSuite, String> {
             if suite_name.is_some() {
                 return Err(format!("line {line_num}: duplicate testsuite directive"));
             }
-            suite_name = Some(extract_quoted(rest.trim()).map_err(|e| format!("line {line_num}: {e}"))?);
+            suite_name =
+                Some(extract_quoted(rest.trim()).map_err(|e| format!("line {line_num}: {e}"))?);
             lineno += 1;
             continue;
         }
@@ -262,7 +263,8 @@ pub fn parse_suite(text: &str, filename: &str) -> Result<TestSuite, String> {
                     "line {line_num}: expected {expected} to match begin, got: {line}"
                 ));
             }
-            let end_name = extract_quoted(rest.trim()).map_err(|e| format!("line {line_num}: {e}"))?;
+            let end_name =
+                extract_quoted(rest.trim()).map_err(|e| format!("line {line_num}: {e}"))?;
             if end_name != test_name {
                 return Err(format!(
                     "line {line_num}: end test {:?} does not match begin test {:?}",
@@ -318,12 +320,13 @@ pub fn parse_suite(text: &str, filename: &str) -> Result<TestSuite, String> {
             }
             if let Some(rest) = line.strip_prefix("setenv ") {
                 let rest = rest.trim();
-                let key_end =
-                    find_closing_quote(rest).map_err(|e| format!("line {line_num}: setenv key: {e}"))?;
+                let key_end = find_closing_quote(rest)
+                    .map_err(|e| format!("line {line_num}: setenv key: {e}"))?;
                 let key = extract_quoted(&rest[..key_end + 1])
                     .map_err(|e| format!("line {line_num}: setenv key: {e}"))?;
                 let val_part = rest[key_end + 1..].trim();
-                let val = extract_quoted(val_part).map_err(|e| format!("line {line_num}: setenv value: {e}"))?;
+                let val = extract_quoted(val_part)
+                    .map_err(|e| format!("line {line_num}: setenv value: {e}"))?;
                 test_env.push((key, val));
             } else {
                 test_lines.push((line_num, raw_line.to_string()));

@@ -21,13 +21,21 @@ impl std::error::Error for ExpandError {}
 
 fn char_at(s: &str, i: usize) -> char {
     s.as_bytes().get(i).map_or('\0', |&b| {
-        if b < 0x80 { b as char } else { s[i..].chars().next().unwrap_or('\0') }
+        if b < 0x80 {
+            b as char
+        } else {
+            s[i..].chars().next().unwrap_or('\0')
+        }
     })
 }
 
 fn char_len(s: &str, i: usize) -> usize {
     let b = s.as_bytes()[i];
-    if b < 0x80 { 1 } else { s[i..].chars().next().map_or(1, |c| c.len_utf8()) }
+    if b < 0x80 {
+        1
+    } else {
+        s[i..].chars().next().map_or(1, |c| c.len_utf8())
+    }
 }
 
 pub trait Context {
@@ -65,7 +73,11 @@ enum Expansion {
     AtFields(Vec<String>),
 }
 
-pub fn expand_words<'a, C: Context>(ctx: &mut C, words: &[Word], arena: &'a StringArena) -> Result<Vec<&'a str>, ExpandError> {
+pub fn expand_words<'a, C: Context>(
+    ctx: &mut C,
+    words: &[Word],
+    arena: &'a StringArena,
+) -> Result<Vec<&'a str>, ExpandError> {
     let mut result = Vec::new();
     for word in words {
         result.extend(expand_word(ctx, word, arena)?);
@@ -73,7 +85,11 @@ pub fn expand_words<'a, C: Context>(ctx: &mut C, words: &[Word], arena: &'a Stri
     Ok(result)
 }
 
-pub fn expand_word<'a, C: Context>(ctx: &mut C, word: &Word, arena: &'a StringArena) -> Result<Vec<&'a str>, ExpandError> {
+pub fn expand_word<'a, C: Context>(
+    ctx: &mut C,
+    word: &Word,
+    arena: &'a StringArena,
+) -> Result<Vec<&'a str>, ExpandError> {
     let expanded = expand_raw(ctx, &word.raw)?;
 
     if expanded.has_at_expansion {
@@ -95,10 +111,7 @@ pub fn expand_word<'a, C: Context>(ctx: &mut C, word: &Word, arena: &'a StringAr
 
     let ifs_cow = ctx.env_var("IFS").unwrap_or(Cow::Borrowed(" \t\n"));
     let fields = if has_expanded {
-        split_fields_from_segments(
-            &expanded.segments,
-            &ifs_cow,
-        )
+        split_fields_from_segments(&expanded.segments, &ifs_cow)
     } else {
         let has_glob = expanded.segments.iter().any(|seg| {
             matches!(seg, Segment::Text(text, QuoteState::Literal) if text.chars().any(is_glob_char))
@@ -130,7 +143,11 @@ pub fn expand_word<'a, C: Context>(ctx: &mut C, word: &Word, arena: &'a StringAr
     Ok(result)
 }
 
-pub fn expand_redirect_word<'a, C: Context>(ctx: &mut C, word: &Word, arena: &'a StringArena) -> Result<&'a str, ExpandError> {
+pub fn expand_redirect_word<'a, C: Context>(
+    ctx: &mut C,
+    word: &Word,
+    arena: &'a StringArena,
+) -> Result<&'a str, ExpandError> {
     let expanded = expand_raw(ctx, &word.raw)?;
 
     if expanded.segments.is_empty() {
@@ -144,10 +161,7 @@ pub fn expand_redirect_word<'a, C: Context>(ctx: &mut C, word: &Word, arena: &'a
 
     let ifs_cow = ctx.env_var("IFS").unwrap_or(Cow::Borrowed(" \t\n"));
     let fields = if has_expanded {
-        split_fields_from_segments(
-            &expanded.segments,
-            &ifs_cow,
-        )
+        split_fields_from_segments(&expanded.segments, &ifs_cow)
     } else {
         vec![Field {
             text: flatten_segments(&expanded.segments),
@@ -155,7 +169,13 @@ pub fn expand_redirect_word<'a, C: Context>(ctx: &mut C, word: &Word, arena: &'a
         }]
     };
 
-    Ok(arena.intern(fields.into_iter().map(|f| f.text).collect::<Vec<_>>().join(" ")))
+    Ok(arena.intern(
+        fields
+            .into_iter()
+            .map(|f| f.text)
+            .collect::<Vec<_>>()
+            .join(" "),
+    ))
 }
 
 fn expand_word_with_at_fields(
@@ -203,11 +223,19 @@ fn expand_word_with_at_fields(
     Ok(fields)
 }
 
-pub fn expand_word_text<'a, C: Context>(ctx: &mut C, word: &Word, arena: &'a StringArena) -> Result<&'a str, ExpandError> {
+pub fn expand_word_text<'a, C: Context>(
+    ctx: &mut C,
+    word: &Word,
+    arena: &'a StringArena,
+) -> Result<&'a str, ExpandError> {
     expand_word_text_assignment(ctx, word, false, arena)
 }
 
-pub fn expand_word_pattern<'a, C: Context>(ctx: &mut C, word: &Word, arena: &'a StringArena) -> Result<&'a str, ExpandError> {
+pub fn expand_word_pattern<'a, C: Context>(
+    ctx: &mut C,
+    word: &Word,
+    arena: &'a StringArena,
+) -> Result<&'a str, ExpandError> {
     let expanded = expand_raw(ctx, &word.raw)?;
     Ok(arena.intern(render_pattern_from_segments(&expanded.segments)))
 }
@@ -326,7 +354,11 @@ fn split_on_unquoted_colons(raw: &str) -> Vec<String> {
     parts
 }
 
-pub fn expand_parameter_text<'a, C: Context>(ctx: &mut C, raw: &str, arena: &'a StringArena) -> Result<&'a str, ExpandError> {
+pub fn expand_parameter_text<'a, C: Context>(
+    ctx: &mut C,
+    raw: &str,
+    arena: &'a StringArena,
+) -> Result<&'a str, ExpandError> {
     Ok(arena.intern(expand_parameter_text_owned(ctx, raw)?))
 }
 
@@ -437,7 +469,11 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
                         }
                         b'$' => {
                             if !buffer.is_empty() {
-                                push_segment(&mut segments, std::mem::take(&mut buffer), QuoteState::Quoted);
+                                push_segment(
+                                    &mut segments,
+                                    std::mem::take(&mut buffer),
+                                    QuoteState::Quoted,
+                                );
                             }
                             let (expansion, consumed) = expand_dollar(ctx, &raw[index..], true)?;
                             apply_expansion(&mut segments, expansion, true, &mut has_at_expansion);
@@ -445,7 +481,11 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
                         }
                         b'`' => {
                             if !buffer.is_empty() {
-                                push_segment(&mut segments, std::mem::take(&mut buffer), QuoteState::Quoted);
+                                push_segment(
+                                    &mut segments,
+                                    std::mem::take(&mut buffer),
+                                    QuoteState::Quoted,
+                                );
                             }
                             index += 1;
                             let command = scan_backtick_command(raw, &mut index, true)?;
@@ -509,21 +549,15 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
                 let at_start = index;
                 while index < raw.len() && raw.as_bytes()[index] != b'/' {
                     let b = raw.as_bytes()[index];
-                    if b == b'\''
-                        || b == b'"'
-                        || b == b'\\'
-                        || b == b'$'
-                        || b == b'`'
-                    {
+                    if b == b'\'' || b == b'"' || b == b'\\' || b == b'$' || b == b'`' {
                         break;
                     }
                     let clen = char_len(raw, index);
                     user.push_str(&raw[index..index + clen]);
                     index += clen;
                 }
-                let broke_on_non_login = index == at_start
-                    && index < raw.len()
-                    && raw.as_bytes()[index] != b'/';
+                let broke_on_non_login =
+                    index == at_start && index < raw.len() && raw.as_bytes()[index] != b'/';
                 if broke_on_non_login {
                     push_segment_str(&mut segments, "~", QuoteState::Literal);
                 } else if user.is_empty() {
@@ -548,7 +582,11 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
             }
             _ => {
                 let clen = char_len(raw, index);
-                push_segment_str(&mut segments, &raw[index..index + clen], QuoteState::Literal);
+                push_segment_str(
+                    &mut segments,
+                    &raw[index..index + clen],
+                    QuoteState::Literal,
+                );
                 index += clen;
             }
         }
@@ -595,7 +633,11 @@ fn scan_backtick_command(
     })
 }
 
-pub fn expand_here_document<'a, C: Context>(ctx: &mut C, text: &str, arena: &'a StringArena) -> Result<&'a str, ExpandError> {
+pub fn expand_here_document<'a, C: Context>(
+    ctx: &mut C,
+    text: &str,
+    arena: &'a StringArena,
+) -> Result<&'a str, ExpandError> {
     let mut result = String::new();
     let mut index = 0usize;
 
@@ -716,8 +758,8 @@ fn expand_dollar<C: Context>(
                 let params = ctx.positional_params().to_vec();
                 Ok((Expansion::AtFields(params), 2))
             } else {
-                let value =
-                    require_set_parameter(ctx, "@", Some(Cow::Owned(ctx.positional_params().join(" "))))?;
+                let joined = Cow::Owned(ctx.positional_params().join(" "));
+                let value = require_set_parameter(ctx, "@", Some(joined))?;
                 Ok((Expansion::One(value), 2))
             }
         }
@@ -1018,7 +1060,11 @@ fn expand_braced_parameter<C: Context>(
     quoted: bool,
 ) -> Result<Expansion, ExpandError> {
     if expr == "#" {
-        return Ok(Expansion::One(lookup_param(ctx, "#").map(|c| c.into_owned()).unwrap_or_default()));
+        return Ok(Expansion::One(
+            lookup_param(ctx, "#")
+                .map(|c| c.into_owned())
+                .unwrap_or_default(),
+        ));
     }
     if let Some(name) = expr.strip_prefix('#') {
         let value = require_set_parameter(ctx, name, lookup_param(ctx, name))?;
@@ -1036,54 +1082,64 @@ fn expand_braced_parameter<C: Context>(
             if !is_set || is_null {
                 expand_parameter_word_as_expansion(ctx, word.unwrap_or_default(), quoted)
             } else {
-                Ok(Expansion::One(value.map(|c| c.into_owned()).unwrap_or_default()))
+                Ok(Expansion::One(
+                    value.map(|c| c.into_owned()).unwrap_or_default(),
+                ))
             }
         }
         Some("-") => {
             if !is_set {
                 expand_parameter_word_as_expansion(ctx, word.unwrap_or_default(), quoted)
             } else {
-                Ok(Expansion::One(value.map(|c| c.into_owned()).unwrap_or_default()))
+                Ok(Expansion::One(
+                    value.map(|c| c.into_owned()).unwrap_or_default(),
+                ))
             }
         }
         Some(":=") => {
             if !is_set || is_null {
-                Ok(Expansion::One(assign_parameter(ctx, name, word.unwrap_or_default(), quoted)?))
+                let val = assign_parameter(ctx, name, word.unwrap_or_default(), quoted)?;
+                Ok(Expansion::One(val))
             } else {
-                Ok(Expansion::One(value.map(|c| c.into_owned()).unwrap_or_default()))
+                Ok(Expansion::One(
+                    value.map(|c| c.into_owned()).unwrap_or_default(),
+                ))
             }
         }
         Some("=") => {
             if !is_set {
-                Ok(Expansion::One(assign_parameter(ctx, name, word.unwrap_or_default(), quoted)?))
+                let val = assign_parameter(ctx, name, word.unwrap_or_default(), quoted)?;
+                Ok(Expansion::One(val))
             } else {
-                Ok(Expansion::One(value.map(|c| c.into_owned()).unwrap_or_default()))
+                Ok(Expansion::One(
+                    value.map(|c| c.into_owned()).unwrap_or_default(),
+                ))
             }
         }
         Some(":?") => {
             if !is_set || is_null {
                 let default_msg = format!("{name}: parameter null or not set");
-                let message = expand_parameter_word(
-                    ctx,
-                    word.unwrap_or(&default_msg),
-                    quoted,
-                )?;
-                Err(ExpandError { message: message.into() })
+                let message = expand_parameter_word(ctx, word.unwrap_or(&default_msg), quoted)?;
+                Err(ExpandError {
+                    message: message.into(),
+                })
             } else {
-                Ok(Expansion::One(value.map(|c| c.into_owned()).unwrap_or_default()))
+                Ok(Expansion::One(
+                    value.map(|c| c.into_owned()).unwrap_or_default(),
+                ))
             }
         }
         Some("?") => {
             if !is_set {
                 let default_msg = format!("{name}: parameter not set");
-                let message = expand_parameter_word(
-                    ctx,
-                    word.unwrap_or(&default_msg),
-                    quoted,
-                )?;
-                Err(ExpandError { message: message.into() })
+                let message = expand_parameter_word(ctx, word.unwrap_or(&default_msg), quoted)?;
+                Err(ExpandError {
+                    message: message.into(),
+                })
             } else {
-                Ok(Expansion::One(value.map(|c| c.into_owned()).unwrap_or_default()))
+                Ok(Expansion::One(
+                    value.map(|c| c.into_owned()).unwrap_or_default(),
+                ))
             }
         }
         Some(":+") => {
@@ -1122,7 +1178,9 @@ fn expand_braced_parameter_text<C: Context>(
     expr: &str,
 ) -> Result<String, ExpandError> {
     if expr == "#" {
-        return Ok(lookup_param(ctx, "#").map(|c| c.into_owned()).unwrap_or_default());
+        return Ok(lookup_param(ctx, "#")
+            .map(|c| c.into_owned())
+            .unwrap_or_default());
     }
     if let Some(name) = expr.strip_prefix('#') {
         let value = require_set_parameter(ctx, name, lookup_param(ctx, name))?;
@@ -1166,22 +1224,21 @@ fn expand_braced_parameter_text<C: Context>(
         }
         Some(":?") => {
             if !is_set || is_null {
-                let message = expand_parameter_error_text(
-                    ctx,
-                    name,
-                    word,
-                    "parameter null or not set",
-                )?;
-                Err(ExpandError { message: message.into() })
+                let message =
+                    expand_parameter_error_text(ctx, name, word, "parameter null or not set")?;
+                Err(ExpandError {
+                    message: message.into(),
+                })
             } else {
                 Ok(value.map(|c| c.into_owned()).unwrap_or_default())
             }
         }
         Some("?") => {
             if !is_set {
-                let message =
-                    expand_parameter_error_text(ctx, name, word, "parameter not set")?;
-                Err(ExpandError { message: message.into() })
+                let message = expand_parameter_error_text(ctx, name, word, "parameter not set")?;
+                Err(ExpandError {
+                    message: message.into(),
+                })
             } else {
                 Ok(value.map(|c| c.into_owned()).unwrap_or_default())
             }
@@ -1356,18 +1413,26 @@ fn parse_parameter_expression(
     }
 
     let rest = &expr[index..];
-    for op in [
-        ":-", ":=", ":?", ":+", "%%", "##", "-", "=", "?", "+", "%", "#",
-    ] {
-        if let Some(word) = rest.strip_prefix(op) {
-            return Ok((name, Some(op), Some(word)));
-        }
-    }
-    Ok((
-        name,
-        Some(&rest[..1]),
-        Some(&rest[1..]),
-    ))
+    let bytes = rest.as_bytes();
+    let (op, word) = match bytes[0] {
+        b':' if bytes.len() > 1 => match bytes[1] {
+            b'-' => (":-", &rest[2..]),
+            b'=' => (":=", &rest[2..]),
+            b'?' => (":?", &rest[2..]),
+            b'+' => (":+", &rest[2..]),
+            _ => (&rest[..1], &rest[1..]),
+        },
+        b'%' if bytes.len() > 1 && bytes[1] == b'%' => ("%%", &rest[2..]),
+        b'#' if bytes.len() > 1 && bytes[1] == b'#' => ("##", &rest[2..]),
+        b'-' => ("-", &rest[1..]),
+        b'=' => ("=", &rest[1..]),
+        b'?' => ("?", &rest[1..]),
+        b'+' => ("+", &rest[1..]),
+        b'%' => ("%", &rest[1..]),
+        b'#' => ("#", &rest[1..]),
+        _ => (&rest[..1], &rest[1..]),
+    };
+    Ok((name, Some(op), Some(word)))
 }
 
 fn lookup_param<'a, C: Context>(ctx: &'a C, name: &str) -> Option<Cow<'a, str>> {
@@ -1417,13 +1482,16 @@ struct Field {
 }
 
 fn segment_chars(segments: &[Segment]) -> impl Iterator<Item = (char, QuoteState)> + '_ {
-    segments.iter().flat_map(|seg| match seg {
-        Segment::Text(text, state) => {
-            let s = *state;
-            Some(text.chars().map(move |ch| (ch, s)))
-        }
-        _ => None,
-    }).flatten()
+    segments
+        .iter()
+        .flat_map(|seg| match seg {
+            Segment::Text(text, state) => {
+                let s = *state;
+                Some(text.chars().map(move |ch| (ch, s)))
+            }
+            _ => None,
+        })
+        .flatten()
 }
 
 fn split_fields_from_segments(segments: &[Segment], ifs: &str) -> Vec<Field> {
@@ -1702,8 +1770,7 @@ fn pattern_matches_inner(text: &str, ti: usize, pattern: &str, pi: usize) -> boo
             false
         }
         '?' => {
-            ti < text.len()
-                && pattern_matches_inner(text, ti + char_len(text, ti), pattern, pi + 1)
+            ti < text.len() && pattern_matches_inner(text, ti + char_len(text, ti), pattern, pi + 1)
         }
         '[' => {
             let tc = if ti < text.len() {
@@ -1715,22 +1782,12 @@ fn pattern_matches_inner(text: &str, ti: usize, pattern: &str, pi: usize) -> boo
                 Some((matched, next_pi)) => {
                     matched
                         && ti < text.len()
-                        && pattern_matches_inner(
-                            text,
-                            ti + char_len(text, ti),
-                            pattern,
-                            next_pi,
-                        )
+                        && pattern_matches_inner(text, ti + char_len(text, ti), pattern, next_pi)
                 }
                 None => {
                     ti < text.len()
                         && char_at(text, ti) == '['
-                        && pattern_matches_inner(
-                            text,
-                            ti + char_len(text, ti),
-                            pattern,
-                            pi + 1,
-                        )
+                        && pattern_matches_inner(text, ti + char_len(text, ti), pattern, pi + 1)
                 }
             }
         }
@@ -1739,12 +1796,7 @@ fn pattern_matches_inner(text: &str, ti: usize, pattern: &str, pi: usize) -> boo
             let eclen = char_len(pattern, pi + pclen);
             ti < text.len()
                 && char_at(text, ti) == escaped
-                && pattern_matches_inner(
-                    text,
-                    ti + char_len(text, ti),
-                    pattern,
-                    pi + pclen + eclen,
-                )
+                && pattern_matches_inner(text, ti + char_len(text, ti), pattern, pi + pclen + eclen)
         }
         ch => {
             ti < text.len()
@@ -1784,10 +1836,7 @@ fn match_bracket(current: Option<char>, pattern: &str, start: usize) -> Option<(
 
         first_elem = false;
 
-        if pc == '['
-            && index + 1 < pattern.len()
-            && pattern.as_bytes()[index + 1] == b':'
-        {
+        if pc == '[' && index + 1 < pattern.len() && pattern.as_bytes()[index + 1] == b':' {
             let class_start = index + 2;
             let mut found_end = None;
             let mut ci = class_start;
@@ -2207,8 +2256,7 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
             return Ok(0);
         }
 
-        while self.index < self.source.len()
-            && self.source.as_bytes()[self.index].is_ascii_digit()
+        while self.index < self.source.len() && self.source.as_bytes()[self.index].is_ascii_digit()
         {
             self.index += 1;
         }
@@ -2382,7 +2430,9 @@ mod tests {
             if index == 0 {
                 Some(Cow::Owned("meiksh".to_string()))
             } else {
-                self.positional.get(index - 1).map(|v| Cow::Borrowed(v.as_str()))
+                self.positional
+                    .get(index - 1)
+                    .map(|v| Cow::Borrowed(v.as_str()))
             }
         }
 
@@ -2582,14 +2632,7 @@ mod tests {
         let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         for raw in ["'oops", "\"oops", "${USER", "$(echo", "$((1 + 2)", "$'oops"] {
-            let error = expand_word(
-                &mut ctx,
-                &Word {
-                    raw,
-                },
-                &arena,
-            )
-            .expect_err("error");
+            let error = expand_word(&mut ctx, &Word { raw }, &arena).expect_err("error");
             assert!(!error.message.is_empty());
         }
     }
@@ -2617,21 +2660,14 @@ mod tests {
         let (value, _) = parse_dollar_single_quoted("$'\\x41'").expect("parse hex");
         assert_eq!(value, "A");
 
-        let (value, _) =
-            parse_dollar_single_quoted("$'\\z'").expect("parse unspecified");
+        let (value, _) = parse_dollar_single_quoted("$'\\z'").expect("parse unspecified");
         assert_eq!(value, "z");
 
         assert_eq!(control_escape('\\'), '\u{001c}');
         assert_eq!(control_escape('?'), '\u{007f}');
         assert_eq!(control_escape('A'), '\u{0001}');
-        assert_eq!(
-            parse_variable_base_escape("412", 16, 2),
-            (0x41, 2)
-        );
-        assert_eq!(
-            parse_variable_base_escape("1017", 8, 3),
-            (0o101, 3)
-        );
+        assert_eq!(parse_variable_base_escape("412", 16, 2), (0x41, 2));
+        assert_eq!(parse_variable_base_escape("1017", 8, 3), (0o101, 3));
         assert_eq!(parse_variable_base_escape("Z", 16, 2), (0, 0));
     }
 
@@ -2640,14 +2676,7 @@ mod tests {
         let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         for raw in ["$((1 / 0))", "$((1 + ))", "$((1 1))"] {
-            let error = expand_word(
-                &mut ctx,
-                &Word {
-                    raw,
-                },
-                &arena,
-            )
-            .expect_err("error");
+            let error = expand_word(&mut ctx, &Word { raw }, &arena).expect_err("error");
             assert!(!error.message.is_empty());
         }
     }
@@ -2993,14 +3022,7 @@ mod tests {
             ctx.pathname_expansion_enabled = false;
             let pattern = "/testdir/*.txt";
             assert_eq!(
-                expand_word(
-                    &mut ctx,
-                    &Word {
-                        raw: pattern
-                    },
-                    &arena,
-                )
-                .expect("noglob"),
+                expand_word(&mut ctx, &Word { raw: pattern }, &arena,).expect("noglob"),
                 vec![pattern]
             );
         });
@@ -3039,7 +3061,8 @@ mod tests {
         assert_eq!(eval_arithmetic(&mut ctx2, "42").expect("direct eval"), 42);
         assert!(eval_arithmetic(&mut ctx2, "(1 + 2").is_err());
 
-        let arith_bt = expand_arithmetic_expression(&mut ctx2, "`printf 5`").expect("backtick in arith");
+        let arith_bt =
+            expand_arithmetic_expression(&mut ctx2, "`printf 5`").expect("backtick in arith");
         assert_eq!(arith_bt, "printf 5");
 
         let mut parser = ArithmeticParser::new(&mut ctx2, "9");
@@ -3073,8 +3096,8 @@ mod tests {
         .expect_err("nounset braced");
         assert_eq!(&*error.message, "UNSET: parameter not set");
 
-        let error =
-            expand_word(&mut ctx, &Word { raw: "$9".into() }, &arena).expect_err("nounset positional");
+        let error = expand_word(&mut ctx, &Word { raw: "$9".into() }, &arena)
+            .expect_err("nounset positional");
         assert_eq!(&*error.message, "9: parameter not set");
 
         assert_eq!(
@@ -3184,8 +3207,7 @@ mod tests {
             ("".to_string(), 2)
         );
 
-        let (at_expansion, at_consumed) =
-            expand_dollar(&mut ctx, "$@", true).expect("quoted at");
+        let (at_expansion, at_consumed) = expand_dollar(&mut ctx, "$@", true).expect("quoted at");
         assert_eq!(at_consumed, 2);
         match at_expansion {
             Expansion::AtFields(fields) => {
@@ -3215,15 +3237,18 @@ mod tests {
         ctx.env.insert("EMPTY".into(), String::new());
 
         assert_eq!(
-            expand_parameter_text(&mut ctx, "${HOME:-/fallback}/.shrc", &arena).expect("parameter text"),
+            expand_parameter_text(&mut ctx, "${HOME:-/fallback}/.shrc", &arena)
+                .expect("parameter text"),
             "/tmp/home/.shrc"
         );
         assert_eq!(
-            expand_parameter_text(&mut ctx, "${EMPTY:-$HOME}/nested", &arena).expect("nested default"),
+            expand_parameter_text(&mut ctx, "${EMPTY:-$HOME}/nested", &arena)
+                .expect("nested default"),
             "/tmp/home/nested"
         );
         assert_eq!(
-            expand_parameter_text(&mut ctx, "$(printf nope)${HOME}", &arena).expect("literal command"),
+            expand_parameter_text(&mut ctx, "$(printf nope)${HOME}", &arena)
+                .expect("literal command"),
             "$(printf nope)/tmp/home"
         );
     }
@@ -3467,106 +3492,115 @@ mod tests {
                 TraceResult::Err(crate::sys::ENOENT),
             )],
             || {
-        let segs = vec![Segment::Text("*.txt".to_string(), QuoteState::Expanded)];
-        assert_eq!(
-            split_fields_from_segments(&segs, ""),
-            vec![Field {
-                text: "*.txt".to_string(),
-                has_unquoted_glob: true,
-            }]
-        );
+                let segs = vec![Segment::Text("*.txt".to_string(), QuoteState::Expanded)];
+                assert_eq!(
+                    split_fields_from_segments(&segs, ""),
+                    vec![Field {
+                        text: "*.txt".to_string(),
+                        has_unquoted_glob: true,
+                    }]
+                );
 
-        assert_eq!(
-            split_fields_from_segments(&[Segment::Text("alpha,  beta".to_string(), QuoteState::Expanded)], " ,"),
-            vec![
-                Field {
-                    text: "alpha".to_string(),
-                    has_unquoted_glob: false,
-                },
-                Field {
-                    text: "beta".to_string(),
-                    has_unquoted_glob: false,
-                },
-            ]
-        );
+                assert_eq!(
+                    split_fields_from_segments(
+                        &[Segment::Text(
+                            "alpha,  beta".to_string(),
+                            QuoteState::Expanded
+                        )],
+                        " ,"
+                    ),
+                    vec![
+                        Field {
+                            text: "alpha".to_string(),
+                            has_unquoted_glob: false,
+                        },
+                        Field {
+                            text: "beta".to_string(),
+                            has_unquoted_glob: false,
+                        },
+                    ]
+                );
 
-        assert_eq!(expand_pathname("plain.txt"), vec!["plain.txt".to_string()]);
+                assert_eq!(expand_pathname("plain.txt"), vec!["plain.txt".to_string()]);
 
-        let mut matches = Vec::new();
-        expand_path_segments(
-            Path::new("/definitely/not/a/real/dir"),
-            &["*.txt"],
-            0,
-            false,
-            &mut matches,
-        );
-        assert!(matches.is_empty());
+                let mut matches = Vec::new();
+                expand_path_segments(
+                    Path::new("/definitely/not/a/real/dir"),
+                    &["*.txt"],
+                    0,
+                    false,
+                    &mut matches,
+                );
+                assert!(matches.is_empty());
 
-        let mut matches = Vec::new();
-        expand_path_segments(Path::new("."), &[], 0, false, &mut matches);
-        assert_eq!(matches, vec![".".to_string()]);
+                let mut matches = Vec::new();
+                expand_path_segments(Path::new("."), &[], 0, false, &mut matches);
+                assert_eq!(matches, vec![".".to_string()]);
 
-        assert!(pattern_matches("x", "?"));
-        assert!(pattern_matches("[", "["));
-        assert!(pattern_matches("]", r"\]"));
-        assert!(pattern_matches("b", "[a-c]"));
-        assert!(pattern_matches("d", "[!a-c]"));
+                assert!(pattern_matches("x", "?"));
+                assert!(pattern_matches("[", "["));
+                assert!(pattern_matches("]", r"\]"));
+                assert!(pattern_matches("b", "[a-c]"));
+                assert!(pattern_matches("d", "[!a-c]"));
 
-        assert!(pattern_matches("a", "[[:alpha:]]"));
-        assert!(pattern_matches("Z", "[[:alpha:]]"));
-        assert!(!pattern_matches("5", "[[:alpha:]]"));
-        assert!(pattern_matches("3", "[[:alnum:]]"));
-        assert!(pattern_matches("z", "[[:alnum:]]"));
-        assert!(!pattern_matches("!", "[[:alnum:]]"));
-        assert!(pattern_matches(" ", "[[:blank:]]"));
-        assert!(pattern_matches("\t", "[[:blank:]]"));
-        assert!(!pattern_matches("a", "[[:blank:]]"));
-        assert!(pattern_matches("\x01", "[[:cntrl:]]"));
-        assert!(!pattern_matches("a", "[[:cntrl:]]"));
-        assert!(pattern_matches("9", "[[:digit:]]"));
-        assert!(!pattern_matches("a", "[[:digit:]]"));
-        assert!(pattern_matches("!", "[[:graph:]]"));
-        assert!(!pattern_matches(" ", "[[:graph:]]"));
-        assert!(pattern_matches("a", "[[:lower:]]"));
-        assert!(!pattern_matches("A", "[[:lower:]]"));
-        assert!(pattern_matches(" ", "[[:print:]]"));
-        assert!(pattern_matches("a", "[[:print:]]"));
-        assert!(!pattern_matches("\x01", "[[:print:]]"));
-        assert!(pattern_matches(".", "[[:punct:]]"));
-        assert!(!pattern_matches("a", "[[:punct:]]"));
-        assert!(pattern_matches("\n", "[[:space:]]"));
-        assert!(!pattern_matches("a", "[[:space:]]"));
-        assert!(pattern_matches("A", "[[:upper:]]"));
-        assert!(!pattern_matches("a", "[[:upper:]]"));
-        assert!(pattern_matches("f", "[[:xdigit:]]"));
-        assert!(pattern_matches("F", "[[:xdigit:]]"));
-        assert!(!pattern_matches("g", "[[:xdigit:]]"));
-        assert!(!pattern_matches("a", "[[:bogus:]]"));
-        assert!(pattern_matches("x", "[[:x]"));
-        assert!(!pattern_matches("", "[a-z]"));
+                assert!(pattern_matches("a", "[[:alpha:]]"));
+                assert!(pattern_matches("Z", "[[:alpha:]]"));
+                assert!(!pattern_matches("5", "[[:alpha:]]"));
+                assert!(pattern_matches("3", "[[:alnum:]]"));
+                assert!(pattern_matches("z", "[[:alnum:]]"));
+                assert!(!pattern_matches("!", "[[:alnum:]]"));
+                assert!(pattern_matches(" ", "[[:blank:]]"));
+                assert!(pattern_matches("\t", "[[:blank:]]"));
+                assert!(!pattern_matches("a", "[[:blank:]]"));
+                assert!(pattern_matches("\x01", "[[:cntrl:]]"));
+                assert!(!pattern_matches("a", "[[:cntrl:]]"));
+                assert!(pattern_matches("9", "[[:digit:]]"));
+                assert!(!pattern_matches("a", "[[:digit:]]"));
+                assert!(pattern_matches("!", "[[:graph:]]"));
+                assert!(!pattern_matches(" ", "[[:graph:]]"));
+                assert!(pattern_matches("a", "[[:lower:]]"));
+                assert!(!pattern_matches("A", "[[:lower:]]"));
+                assert!(pattern_matches(" ", "[[:print:]]"));
+                assert!(pattern_matches("a", "[[:print:]]"));
+                assert!(!pattern_matches("\x01", "[[:print:]]"));
+                assert!(pattern_matches(".", "[[:punct:]]"));
+                assert!(!pattern_matches("a", "[[:punct:]]"));
+                assert!(pattern_matches("\n", "[[:space:]]"));
+                assert!(!pattern_matches("a", "[[:space:]]"));
+                assert!(pattern_matches("A", "[[:upper:]]"));
+                assert!(!pattern_matches("a", "[[:upper:]]"));
+                assert!(pattern_matches("f", "[[:xdigit:]]"));
+                assert!(pattern_matches("F", "[[:xdigit:]]"));
+                assert!(!pattern_matches("g", "[[:xdigit:]]"));
+                assert!(!pattern_matches("a", "[[:bogus:]]"));
+                assert!(pattern_matches("x", "[[:x]"));
+                assert!(!pattern_matches("", "[a-z]"));
 
-        assert_eq!(match_bracket(None, "[a]", 0), None);
-        assert_eq!(match_bracket(Some('a'), "[", 0), None);
-        assert_eq!(
-            match_bracket(Some(']'), "[\\]]", 0),
-            Some((true, 4))
-        );
-        assert_eq!(
-            render_pattern_from_segments(&[Segment::Text("*".to_string(), QuoteState::Quoted)]),
-            "\\*".to_string()
-        );
-        assert_eq!(
-            render_pattern_from_segments(&[Segment::Text("ab".to_string(), QuoteState::Literal)]),
-            "ab".to_string()
-        );
-        assert_eq!(
-            render_pattern_from_segments(&[
-                Segment::Text("x".to_string(), QuoteState::Literal),
-                Segment::AtBreak,
-                Segment::Text("y".to_string(), QuoteState::Expanded),
-            ]),
-            "xy".to_string()
-        );
+                assert_eq!(match_bracket(None, "[a]", 0), None);
+                assert_eq!(match_bracket(Some('a'), "[", 0), None);
+                assert_eq!(match_bracket(Some(']'), "[\\]]", 0), Some((true, 4)));
+                assert_eq!(
+                    render_pattern_from_segments(&[Segment::Text(
+                        "*".to_string(),
+                        QuoteState::Quoted
+                    )]),
+                    "\\*".to_string()
+                );
+                assert_eq!(
+                    render_pattern_from_segments(&[Segment::Text(
+                        "ab".to_string(),
+                        QuoteState::Literal
+                    )]),
+                    "ab".to_string()
+                );
+                assert_eq!(
+                    render_pattern_from_segments(&[
+                        Segment::Text("x".to_string(), QuoteState::Literal),
+                        Segment::AtBreak,
+                        Segment::Text("y".to_string(), QuoteState::Expanded),
+                    ]),
+                    "xy".to_string()
+                );
             },
         );
     }
@@ -3779,12 +3813,13 @@ mod tests {
     fn expands_here_documents_without_field_splitting() {
         let arena = StringArena::new();
         let mut ctx = FakeContext::new();
-        let expanded = expand_here_document(&mut ctx, "hello $USER\n$(printf hi)\n$((1 + 2))\n", &arena)
-            .expect("expand heredoc");
+        let expanded =
+            expand_here_document(&mut ctx, "hello $USER\n$(printf hi)\n$((1 + 2))\n", &arena)
+                .expect("expand heredoc");
         assert_eq!(expanded, "hello meiksh\nprintf hi\n3\n");
 
-        let escaped =
-            expand_here_document(&mut ctx, "\\$USER\nline\\\ncontinued\n", &arena).expect("expand heredoc");
+        let escaped = expand_here_document(&mut ctx, "\\$USER\nline\\\ncontinued\n", &arena)
+            .expect("expand heredoc");
         assert_eq!(escaped, "$USER\nlinecontinued\n");
 
         let trailing = expand_here_document(&mut ctx, "keep\\", &arena).expect("expand heredoc");
@@ -3793,8 +3828,8 @@ mod tests {
         let literal = expand_here_document(&mut ctx, "\\x", &arena).expect("expand heredoc");
         assert_eq!(literal, "\\x");
 
-        let double_backslash =
-            expand_here_document(&mut ctx, "a\\\\b\n", &arena).expect("expand heredoc double backslash");
+        let double_backslash = expand_here_document(&mut ctx, "a\\\\b\n", &arena)
+            .expect("expand heredoc double backslash");
         assert_eq!(double_backslash, "a\\b\n");
     }
 
@@ -4156,7 +4191,10 @@ mod tests {
             Segment::Text("b".into(), QuoteState::Quoted),
         ];
         let chars: Vec<_> = segment_chars(&segs).collect();
-        assert_eq!(chars, vec![('a', QuoteState::Expanded), ('b', QuoteState::Quoted)]);
+        assert_eq!(
+            chars,
+            vec![('a', QuoteState::Expanded), ('b', QuoteState::Quoted)]
+        );
     }
 
     #[test]
@@ -4203,7 +4241,8 @@ mod tests {
     #[test]
     fn scan_backtick_command_unterminated() {
         let mut index = 1usize;
-        let err = scan_backtick_command("`unterminated", &mut index, false).expect_err("unterminated");
+        let err =
+            scan_backtick_command("`unterminated", &mut index, false).expect_err("unterminated");
         assert_eq!(&*err.message, "unterminated backquote");
     }
 
@@ -4355,7 +4394,8 @@ mod tests {
     #[test]
     fn scan_backtick_non_special_escape_in_dquote() {
         let mut index = 1usize;
-        let result = scan_backtick_command("`echo \\x`", &mut index, true).expect("non-special escape");
+        let result =
+            scan_backtick_command("`echo \\x`", &mut index, true).expect("non-special escape");
         assert_eq!(result, "echo \\x");
     }
 
@@ -5510,8 +5550,14 @@ mod tests {
         let arena = StringArena::new();
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
-            let result = expand_redirect_word(&mut ctx, &Word { raw: "file_*.txt".into() }, &arena)
-                .expect("redirect word");
+            let result = expand_redirect_word(
+                &mut ctx,
+                &Word {
+                    raw: "file_*.txt".into(),
+                },
+                &arena,
+            )
+            .expect("redirect word");
             assert_eq!(result, "file_*.txt");
         });
     }
@@ -5521,8 +5567,14 @@ mod tests {
         let arena = StringArena::new();
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
-            let result = expand_redirect_word(&mut ctx, &Word { raw: "$UNSET_VAR".into() }, &arena)
-                .expect("redirect word empty");
+            let result = expand_redirect_word(
+                &mut ctx,
+                &Word {
+                    raw: "$UNSET_VAR".into(),
+                },
+                &arena,
+            )
+            .expect("redirect word empty");
             assert_eq!(result, "");
         });
     }
@@ -5544,9 +5596,17 @@ mod tests {
         let arena = StringArena::new();
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
-            let result = expand_here_document(&mut ctx, "`echo ok`\n", &arena)
-                .expect("here doc backtick");
+            let result =
+                expand_here_document(&mut ctx, "`echo ok`\n", &arena).expect("here doc backtick");
             assert_eq!(result, "echo ok\n");
         });
+    }
+
+    #[test]
+    fn char_at_and_char_len_handle_multibyte() {
+        assert_eq!(char_at("café", 3), 'é');
+        assert_eq!(char_len("café", 3), 2);
+        assert_eq!(char_at("日本", 0), '日');
+        assert_eq!(char_len("日本", 0), 3);
     }
 }

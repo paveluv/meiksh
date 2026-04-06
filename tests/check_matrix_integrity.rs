@@ -1,7 +1,7 @@
-#[path = "json.rs"]
-mod json;
 #[path = "epty_parser.rs"]
 mod epty_parser;
+#[path = "json.rs"]
+mod json;
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -82,7 +82,11 @@ fn load_requirements(path: &Path) -> Result<Vec<ReqEntry>, String> {
                 })
                 .collect::<Result<Vec<_>, String>>()?,
             Some(json::JsonValue::Null) | None => Vec::new(),
-            _ => return Err(format!("{path_str}[{i}] ({id}): \"tests\" must be an array or null")),
+            _ => {
+                return Err(format!(
+                    "{path_str}[{i}] ({id}): \"tests\" must be an array or null"
+                ));
+            }
         };
         entries.push(ReqEntry {
             id,
@@ -549,7 +553,10 @@ fn extract_source_sections(content: &str) -> Vec<SourceSection> {
         if let Some(sec) = sections.iter_mut().find(|s| s.name == *parent_name) {
             if let Some(cut) = sec.body_lines.iter().position(|l| l == "#### NAME") {
                 let mut preamble = sec.body_lines[..cut].to_vec();
-                while preamble.last().map_or(false, |l| l.is_empty() || l == "---") {
+                while preamble
+                    .last()
+                    .map_or(false, |l| l.is_empty() || l == "---")
+                {
                     preamble.pop();
                 }
                 sec.body_lines = preamble;
@@ -747,58 +754,56 @@ fn check_md_citations(md_files: &[PathBuf], md_root: &Path) -> (Vec<String>, usi
         }
 
         for citation in &citations {
-            let (source_path, source_section_name) =
-                if let Some(util_name) = citation.section_name.strip_prefix("utility: ") {
-                    let p = md_root.join("utilities").join(format!("{util_name}.md"));
-                    (p, citation.section_name.clone())
-                } else if let Some(xbd_section) = citation.section_name.strip_prefix("xbd: ") {
-                    match source_file_for_xbd_section(xbd_section, md_root) {
-                        Some(p) => (p, xbd_section.to_string()),
-                        None => {
-                            errors.push(format!(
+            let (source_path, source_section_name) = if let Some(util_name) =
+                citation.section_name.strip_prefix("utility: ")
+            {
+                let p = md_root.join("utilities").join(format!("{util_name}.md"));
+                (p, citation.section_name.clone())
+            } else if let Some(xbd_section) = citation.section_name.strip_prefix("xbd: ") {
+                match source_file_for_xbd_section(xbd_section, md_root) {
+                    Some(p) => (p, xbd_section.to_string()),
+                    None => {
+                        errors.push(format!(
                                 "{filename}: line {}: cannot determine XBD source file for section {:?}",
                                 citation.line_num, citation.section_name
                             ));
-                            continue;
-                        }
-                    }
-                } else {
-                    match source_file_for_section(&citation.section_name, md_root) {
-                        Some(p) => (p, citation.section_name.clone()),
-                        None => {
-                            errors.push(format!(
-                                "{filename}: line {}: cannot determine source file for section {:?}",
-                                citation.line_num, citation.section_name
-                            ));
-                            continue;
-                        }
-                    }
-                };
-            let source_path_for_stem = source_path.clone();
-            let source_sections = source_cache.entry(source_path.clone()).or_insert_with(|| {
-                match fs::read_to_string(&source_path_for_stem) {
-                    Ok(c) => {
-                        let mut secs = extract_source_sections(&c);
-                        let stem = source_path_for_stem
-                            .file_stem()
-                            .and_then(|s| s.to_str())
-                            .map(|s| s.to_string());
-                        extract_standalone_utility_page(
-                            &c,
-                            &mut secs,
-                            stem.as_deref(),
-                        );
-                        secs
-                    }
-                    Err(e) => {
-                        errors.push(format!(
-                            "{filename}: cannot read source {}: {e}",
-                            source_path.to_string_lossy()
-                        ));
-                        Vec::new()
+                        continue;
                     }
                 }
-            });
+            } else {
+                match source_file_for_section(&citation.section_name, md_root) {
+                    Some(p) => (p, citation.section_name.clone()),
+                    None => {
+                        errors.push(format!(
+                            "{filename}: line {}: cannot determine source file for section {:?}",
+                            citation.line_num, citation.section_name
+                        ));
+                        continue;
+                    }
+                }
+            };
+            let source_path_for_stem = source_path.clone();
+            let source_sections =
+                source_cache.entry(source_path.clone()).or_insert_with(
+                    || match fs::read_to_string(&source_path_for_stem) {
+                        Ok(c) => {
+                            let mut secs = extract_source_sections(&c);
+                            let stem = source_path_for_stem
+                                .file_stem()
+                                .and_then(|s| s.to_str())
+                                .map(|s| s.to_string());
+                            extract_standalone_utility_page(&c, &mut secs, stem.as_deref());
+                            secs
+                        }
+                        Err(e) => {
+                            errors.push(format!(
+                                "{filename}: cannot read source {}: {e}",
+                                source_path.to_string_lossy()
+                            ));
+                            Vec::new()
+                        }
+                    },
+                );
             let source = match source_sections
                 .iter()
                 .find(|s| s.name == source_section_name)
@@ -918,7 +923,10 @@ fn main() {
         let text = match fs::read_to_string(file) {
             Ok(t) => t,
             Err(e) => {
-                eprintln!("check_integrity: cannot read {}: {e}", file.to_string_lossy());
+                eprintln!(
+                    "check_integrity: cannot read {}: {e}",
+                    file.to_string_lossy()
+                );
                 std::process::exit(2);
             }
         };
@@ -952,7 +960,9 @@ fn main() {
         }
     };
     all_errors.extend(check_requirements_integrity(
-        &req_entries, &suites, &html_root,
+        &req_entries,
+        &suites,
+        &html_root,
     ));
 
     let mut citation_count = 0usize;
@@ -1045,10 +1055,18 @@ mod tests {
 
     #[test]
     fn integrity_doc_mismatch() {
-        let reqs = vec![make_req_entry("REQ-1", "Correct text.", true, &[("S", "t")])];
+        let reqs = vec![make_req_entry(
+            "REQ-1",
+            "Correct text.",
+            true,
+            &[("S", "t")],
+        )];
         let suite = make_suite("S", "s.epty", vec![("t", vec![("REQ-1", "Wrong text.")])]);
         let errs = check_requirements_integrity(&reqs, &[("s.epty".into(), suite)], Path::new("/"));
-        assert!(errs.iter().any(|e| e.contains("doc mismatch")), "got: {errs:?}");
+        assert!(
+            errs.iter().any(|e| e.contains("doc mismatch")),
+            "got: {errs:?}"
+        );
     }
 
     #[test]
@@ -1056,7 +1074,10 @@ mod tests {
         let reqs = vec![make_req_entry("REQ-1", "Text.", false, &[])];
         let suite = make_suite("S", "s.epty", vec![("t", vec![("REQ-1", "Text.")])]);
         let errs = check_requirements_integrity(&reqs, &[("s.epty".into(), suite)], Path::new("/"));
-        assert!(errs.iter().any(|e| e.contains("untestable")), "got: {errs:?}");
+        assert!(
+            errs.iter().any(|e| e.contains("untestable")),
+            "got: {errs:?}"
+        );
     }
 
     #[test]
@@ -1078,8 +1099,14 @@ mod tests {
             make_req_entry("REQ-1", "Same text.", true, &[]),
         ];
         let errs = check_requirements_integrity(&reqs, &[], Path::new("/"));
-        assert!(errs.iter().any(|e| e.contains("duplicate id")), "got: {errs:?}");
-        assert!(errs.iter().any(|e| e.contains("duplicate text")), "got: {errs:?}");
+        assert!(
+            errs.iter().any(|e| e.contains("duplicate id")),
+            "got: {errs:?}"
+        );
+        assert!(
+            errs.iter().any(|e| e.contains("duplicate text")),
+            "got: {errs:?}"
+        );
     }
 
     #[test]
@@ -1094,7 +1121,12 @@ mod tests {
 
     #[test]
     fn integrity_json_extra_and_missing_test_pairs() {
-        let reqs = vec![make_req_entry("REQ-1", "Text.", true, &[("S", "t"), ("S", "ghost")])];
+        let reqs = vec![make_req_entry(
+            "REQ-1",
+            "Text.",
+            true,
+            &[("S", "t"), ("S", "ghost")],
+        )];
         let suite = make_suite("S", "s.epty", vec![("t", vec![("REQ-1", "Text.")])]);
         let errs = check_requirements_integrity(&reqs, &[("s.epty".into(), suite)], Path::new("/"));
         assert!(
@@ -1218,10 +1250,7 @@ Sub text.
 ";
         let sections = extract_source_sections(src);
         assert_eq!(sections[0].name, "2.1 Sec");
-        assert_eq!(
-            sections[0].body_lines,
-            vec!["Line one.", "", "Line two."]
-        );
+        assert_eq!(sections[0].body_lines, vec!["Line one.", "", "Line two."]);
     }
 
     #[test]
@@ -1291,19 +1320,31 @@ Preamble text.
         assert_eq!(sections[0].name, "2.15 Special Built-In Utilities");
         assert_eq!(sections[0].body_lines, vec!["Preamble text."]);
 
-        let brk = sections.iter().find(|s| s.name == "2.15 Special Built-In Utilities break").unwrap();
+        let brk = sections
+            .iter()
+            .find(|s| s.name == "2.15 Special Built-In Utilities break")
+            .unwrap();
         assert_eq!(brk.body_lines[0], "#### NAME");
         assert!(brk.body_lines.last().unwrap() == "*End of informative text.*");
 
-        let colon = sections.iter().find(|s| s.name == "2.15 Special Built-In Utilities colon").unwrap();
+        let colon = sections
+            .iter()
+            .find(|s| s.name == "2.15 Special Built-In Utilities colon")
+            .unwrap();
         assert_eq!(colon.body_lines[0], "#### NAME");
         assert!(colon.body_lines.last().unwrap() == "*End of informative text.*");
     }
 
     #[test]
     fn parse_utility_desc_basic() {
-        assert_eq!(parse_utility_desc("> break — exit from loop"), Some("break".to_string()));
-        assert_eq!(parse_utility_desc("> colon — null utility"), Some("colon".to_string()));
+        assert_eq!(
+            parse_utility_desc("> break — exit from loop"),
+            Some("break".to_string())
+        );
+        assert_eq!(
+            parse_utility_desc("> colon — null utility"),
+            Some("colon".to_string())
+        );
         assert_eq!(parse_utility_desc("not a desc line"), None);
     }
 }

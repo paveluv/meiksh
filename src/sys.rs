@@ -385,9 +385,13 @@ pub(crate) fn set_errno(errno: c_int) {
 #[cfg(not(test))]
 unsafe fn errno_ptr() -> *mut c_int {
     #[cfg(target_os = "macos")]
-    { unsafe { libc::__error() } }
+    {
+        unsafe { libc::__error() }
+    }
     #[cfg(target_os = "linux")]
-    { unsafe { libc::__errno_location() } }
+    {
+        unsafe { libc::__errno_location() }
+    }
 }
 
 fn last_error() -> SysError {
@@ -820,7 +824,9 @@ pub(crate) mod test_support {
         match &entry.result {
             TraceResult::Int(ns) => *ns as u64,
             other => {
-                panic!("trace result type mismatch for 'monotonic_clock_ns': expected Int, got {other:?}")
+                panic!(
+                    "trace result type mismatch for 'monotonic_clock_ns': expected Int, got {other:?}"
+                )
             }
         }
     }
@@ -2755,11 +2761,7 @@ mod tests {
             0
         }
         fn fake_fcntl(fd: c_int, cmd: c_int, _arg: c_int) -> c_int {
-            if cmd == F_DUPFD_CLOEXEC {
-                fd + 100
-            } else {
-                -1
-            }
+            if cmd == F_DUPFD_CLOEXEC { fd + 100 } else { -1 }
         }
         fn fake_dup2(oldfd: c_int, _newfd: c_int) -> c_int {
             oldfd
@@ -3410,7 +3412,11 @@ mod tests {
         run_trace(
             vec![
                 t("opendir", vec![ArgMatcher::Any], TraceResult::Int(1)),
-                t("readdir", vec![ArgMatcher::Any], TraceResult::Err(libc::EIO)),
+                t(
+                    "readdir",
+                    vec![ArgMatcher::Any],
+                    TraceResult::Err(libc::EIO),
+                ),
                 t("closedir", vec![ArgMatcher::Any], TraceResult::Int(0)),
             ],
             || {
@@ -3421,11 +3427,19 @@ mod tests {
 
     #[test]
     fn setenv_rejects_nul() {
-        use test_support::{run_trace, ArgMatcher, TraceResult, t};
+        use test_support::{ArgMatcher, TraceResult, run_trace, t};
         run_trace(
             vec![
-                t("setenv", vec![ArgMatcher::Str("K".into()), ArgMatcher::Str("V".into())], TraceResult::Int(0)),
-                t("unsetenv", vec![ArgMatcher::Str("K".into())], TraceResult::Int(0)),
+                t(
+                    "setenv",
+                    vec![ArgMatcher::Str("K".into()), ArgMatcher::Str("V".into())],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "unsetenv",
+                    vec![ArgMatcher::Str("K".into())],
+                    TraceResult::Int(0),
+                ),
             ],
             || {
                 env_set_var("K", "V").expect("setenv ok");
@@ -3555,11 +3569,7 @@ mod tests {
         use test_support::{ArgMatcher, TraceResult, run_trace, t};
         run_trace(
             vec![
-                t(
-                    "isatty",
-                    vec![ArgMatcher::Fd(99)],
-                    TraceResult::Int(0),
-                ),
+                t("isatty", vec![ArgMatcher::Fd(99)], TraceResult::Int(0)),
                 t(
                     "fstat",
                     vec![ArgMatcher::Fd(99), ArgMatcher::Any],
@@ -3629,18 +3639,16 @@ mod tests {
             ..default_interface()
         };
         test_support::with_test_interface(fake, || {
-            let fd =
-                open_for_redirect("/tmp/out", O_WRONLY | O_TRUNC | O_CREAT, 0o666, true)
-                    .expect("open");
+            let fd = open_for_redirect("/tmp/out", O_WRONLY | O_TRUNC | O_CREAT, 0o666, true)
+                .expect("open");
             assert_eq!(fd, 5);
             let flags = CAPTURED_FLAGS.load(Ordering::SeqCst);
             assert!(flags & O_TRUNC == 0);
             assert!(flags & O_EXCL != 0);
             assert!(flags & O_CREAT != 0);
 
-            let fd =
-                open_for_redirect("/tmp/out", O_WRONLY | O_TRUNC | O_CREAT, 0o666, false)
-                    .expect("open");
+            let fd = open_for_redirect("/tmp/out", O_WRONLY | O_TRUNC | O_CREAT, 0o666, false)
+                .expect("open");
             assert_eq!(fd, 5);
             let flags = CAPTURED_FLAGS.load(Ordering::SeqCst);
             assert!(flags & O_TRUNC != 0);
@@ -3671,11 +3679,7 @@ mod tests {
                     vec![ArgMatcher::Fd(10), ArgMatcher::Any],
                     TraceResult::Int(0),
                 ),
-                t(
-                    "close",
-                    vec![ArgMatcher::Fd(10)],
-                    TraceResult::Int(0),
-                ),
+                t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
                 t(
                     "waitpid",
                     vec![ArgMatcher::Int(99), ArgMatcher::Any, ArgMatcher::Any],
@@ -3699,11 +3703,7 @@ mod tests {
         use test_support::{ArgMatcher, TraceResult, run_trace, t};
         run_trace(
             vec![
-                t(
-                    "close",
-                    vec![ArgMatcher::Fd(10)],
-                    TraceResult::Int(0),
-                ),
+                t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
                 t(
                     "waitpid",
                     vec![ArgMatcher::Int(99), ArgMatcher::Any, ArgMatcher::Any],
@@ -3726,11 +3726,7 @@ mod tests {
         use test_support::{ArgMatcher, TraceResult, run_trace, t, t_fork};
         run_trace(
             vec![
-                t(
-                    "pipe",
-                    vec![ArgMatcher::Any],
-                    TraceResult::Fds(10, 11),
-                ),
+                t("pipe", vec![ArgMatcher::Any], TraceResult::Fds(10, 11)),
                 t_fork(
                     TraceResult::Pid(100),
                     vec![
@@ -3744,42 +3740,23 @@ mod tests {
                             vec![ArgMatcher::Fd(5), ArgMatcher::Fd(STDIN_FILENO)],
                             TraceResult::Fd(STDIN_FILENO),
                         ),
-                        t(
-                            "close",
-                            vec![ArgMatcher::Fd(5)],
-                            TraceResult::Int(0),
-                        ),
-                        t(
-                            "close",
-                            vec![ArgMatcher::Fd(10)],
-                            TraceResult::Int(0),
-                        ),
+                        t("close", vec![ArgMatcher::Fd(5)], TraceResult::Int(0)),
+                        t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
                         t(
                             "dup2",
                             vec![ArgMatcher::Fd(11), ArgMatcher::Fd(STDOUT_FILENO)],
                             TraceResult::Fd(STDOUT_FILENO),
                         ),
-                        t(
-                            "close",
-                            vec![ArgMatcher::Fd(11)],
-                            TraceResult::Int(0),
-                        ),
+                        t("close", vec![ArgMatcher::Fd(11)], TraceResult::Int(0)),
                         t(
                             "dup2",
                             vec![ArgMatcher::Fd(7), ArgMatcher::Fd(2)],
                             TraceResult::Fd(2),
                         ),
-                        t(
-                            "close",
-                            vec![ArgMatcher::Fd(7)],
-                            TraceResult::Int(0),
-                        ),
+                        t("close", vec![ArgMatcher::Fd(7)], TraceResult::Int(0)),
                         t(
                             "setenv",
-                            vec![
-                                ArgMatcher::Str("VAR".into()),
-                                ArgMatcher::Str("val".into()),
-                            ],
+                            vec![ArgMatcher::Str("VAR".into()), ArgMatcher::Str("val".into())],
                             TraceResult::Int(0),
                         ),
                         t(
@@ -3789,16 +3766,8 @@ mod tests {
                         ),
                     ],
                 ),
-                t(
-                    "close",
-                    vec![ArgMatcher::Fd(5)],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "close",
-                    vec![ArgMatcher::Fd(11)],
-                    TraceResult::Int(0),
-                ),
+                t("close", vec![ArgMatcher::Fd(5)], TraceResult::Int(0)),
+                t("close", vec![ArgMatcher::Fd(11)], TraceResult::Int(0)),
             ],
             || {
                 let handle = spawn_child(
@@ -3824,10 +3793,7 @@ mod tests {
             vec![
                 t(
                     "setenv",
-                    vec![
-                        ArgMatcher::Str("K".into()),
-                        ArgMatcher::Str("V".into()),
-                    ],
+                    vec![ArgMatcher::Str("K".into()), ArgMatcher::Str("V".into())],
                     TraceResult::Int(0),
                 ),
                 t(

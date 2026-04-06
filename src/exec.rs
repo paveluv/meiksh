@@ -701,9 +701,10 @@ fn has_command_substitution(simple: &SimpleCommand) -> bool {
     simple.assignments.iter().any(|a| {
         let raw = &a.value.raw;
         raw.contains("$(") || raw.contains('`')
-    }) || simple.words.iter().any(|w| {
-        w.raw.contains("$(") || w.raw.contains('`')
-    })
+    }) || simple
+        .words
+        .iter()
+        .any(|w| w.raw.contains("$(") || w.raw.contains('`'))
 }
 
 fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, ShellError> {
@@ -715,7 +716,11 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
     }
 
     let owned_argv: Vec<String> = expanded.argv.iter().map(|s| s.to_string()).collect();
-    let owned_assignments: Vec<(String, String)> = expanded.assignments.iter().map(|&(n, v)| (n.to_string(), v.to_string())).collect();
+    let owned_assignments: Vec<(String, String)> = expanded
+        .assignments
+        .iter()
+        .map(|&(n, v)| (n.to_string(), v.to_string()))
+        .collect();
 
     if expanded.argv.is_empty() {
         let cmd_sub_status = if has_command_substitution(simple) {
@@ -853,17 +858,33 @@ trait RedirectionRef {
 }
 
 impl<'a> RedirectionRef for ExpandedRedirection<'a> {
-    fn fd(&self) -> i32 { self.fd }
-    fn kind(&self) -> RedirectionKind { self.kind }
-    fn target(&self) -> &str { self.target }
-    fn here_doc_body(&self) -> Option<&str> { self.here_doc_body }
+    fn fd(&self) -> i32 {
+        self.fd
+    }
+    fn kind(&self) -> RedirectionKind {
+        self.kind
+    }
+    fn target(&self) -> &str {
+        self.target
+    }
+    fn here_doc_body(&self) -> Option<&str> {
+        self.here_doc_body
+    }
 }
 
 impl RedirectionRef for ProcessRedirection {
-    fn fd(&self) -> i32 { self.fd }
-    fn kind(&self) -> RedirectionKind { self.kind }
-    fn target(&self) -> &str { &self.target }
-    fn here_doc_body(&self) -> Option<&str> { self.here_doc_body.as_deref() }
+    fn fd(&self) -> i32 {
+        self.fd
+    }
+    fn kind(&self) -> RedirectionKind {
+        self.kind
+    }
+    fn target(&self) -> &str {
+        &self.target
+    }
+    fn here_doc_body(&self) -> Option<&str> {
+        self.here_doc_body.as_deref()
+    }
 }
 
 #[derive(Debug)]
@@ -994,16 +1015,28 @@ fn build_process_from_expanded(
         .to_string();
     let mut child_env = shell.env_for_child();
     child_env.extend(owned_assignments);
-    let redirections = expanded.redirections.into_iter().map(|r| ProcessRedirection {
-        fd: r.fd,
-        kind: r.kind,
-        target: r.target.to_string().into(),
-        here_doc_body: r.here_doc_body.map(|s| s.to_string().into()),
-    }).collect();
+    let redirections = expanded
+        .redirections
+        .into_iter()
+        .map(|r| ProcessRedirection {
+            fd: r.fd,
+            kind: r.kind,
+            target: r.target.to_string().into(),
+            here_doc_body: r.here_doc_body.map(|s| s.to_string().into()),
+        })
+        .collect();
     Ok(PreparedProcess {
         exec_path: exec_path.into(),
-        argv: owned_argv.into_iter().map(String::into_boxed_str).collect::<Vec<_>>().into_boxed_slice(),
-        child_env: child_env.into_iter().map(|(k, v)| (k.into_boxed_str(), v.into_boxed_str())).collect::<Vec<_>>().into_boxed_slice(),
+        argv: owned_argv
+            .into_iter()
+            .map(String::into_boxed_str)
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+        child_env: child_env
+            .into_iter()
+            .map(|(k, v)| (k.into_boxed_str(), v.into_boxed_str()))
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
         redirections,
         noclobber: shell.options.noclobber,
         path_verified,
@@ -1052,7 +1085,10 @@ fn spawn_prepared(
                 let mut child_shell = shell.clone();
                 let _ = child_shell.reset_traps_for_subshell();
                 child_shell.shell_name = prepared.argv[0].clone();
-                child_shell.positional = prepared.argv[1..].iter().map(|s| String::from(&**s)).collect();
+                child_shell.positional = prepared.argv[1..]
+                    .iter()
+                    .map(|s| String::from(&**s))
+                    .collect();
                 let status = child_shell
                     .source_path(std::path::Path::new(&*prepared.exec_path))
                     .unwrap_or(126);
@@ -1122,10 +1158,7 @@ fn prepare_redirections<R: RedirectionRef>(
                 let (read_fd, write_fd) = sys::create_pipe()?;
                 sys::write_all_fd(
                     write_fd,
-                    redirection
-                        .here_doc_body()
-                        .unwrap_or("")
-                        .as_bytes(),
+                    redirection.here_doc_body().unwrap_or("").as_bytes(),
                 )?;
                 sys::close_fd(write_fd)?;
                 prepared.actions.push(ChildFdAction::DupRawFd {
@@ -1149,9 +1182,14 @@ fn prepare_redirections<R: RedirectionRef>(
                         target_fd: redirection.fd(),
                     });
                 } else {
-                    let source_fd = redirection.target().parse::<i32>().map_err(|_| ShellError {
-                        message: "redirection target must be a file descriptor or '-'".into(),
-                    })?;
+                    let source_fd =
+                        redirection
+                            .target()
+                            .parse::<i32>()
+                            .map_err(|_| ShellError {
+                                message: "redirection target must be a file descriptor or '-'"
+                                    .into(),
+                            })?;
                     prepared.actions.push(ChildFdAction::DupFd {
                         source_fd,
                         target_fd: redirection.fd(),
@@ -1324,10 +1362,7 @@ fn apply_shell_redirection<R: RedirectionRef>(
             let (read_fd, write_fd) = sys::create_pipe()?;
             sys::write_all_fd(
                 write_fd,
-                redirection
-                    .here_doc_body()
-                    .unwrap_or("")
-                    .as_bytes(),
+                redirection.here_doc_body().unwrap_or("").as_bytes(),
             )?;
             sys::close_fd(write_fd)?;
             replace_shell_fd(read_fd, redirection.fd())?;
@@ -1341,9 +1376,12 @@ fn apply_shell_redirection<R: RedirectionRef>(
             if redirection.target() == "-" {
                 close_shell_fd(redirection.fd())?;
             } else {
-                let source_fd = redirection.target().parse::<i32>().map_err(|_| ShellError {
-                    message: "redirection target must be a file descriptor or '-'".into(),
-                })?;
+                let source_fd = redirection
+                    .target()
+                    .parse::<i32>()
+                    .map_err(|_| ShellError {
+                        message: "redirection target must be a file descriptor or '-'".into(),
+                    })?;
                 sys::duplicate_fd(source_fd, redirection.fd())?;
             }
         }
@@ -1781,13 +1819,11 @@ mod tests {
             vec![
                 t_fork(
                     TraceResult::Pid(1000),
-                    vec![
-                        t(
-                            "setpgid",
-                            vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
-                            TraceResult::Int(0),
-                        ),
-                    ],
+                    vec![t(
+                        "setpgid",
+                        vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
+                        TraceResult::Int(0),
+                    )],
                 ),
                 t(
                     "setpgid",
@@ -1804,7 +1840,8 @@ mod tests {
                     commands: vec![Command::Simple(SimpleCommand {
                         words: vec![Word { raw: "true".into() }].into_boxed_slice(),
                         ..SimpleCommand::default()
-                    })].into_boxed_slice(),
+                    })]
+                    .into_boxed_slice(),
                 };
                 let status = execute_pipeline(&mut shell, &pipeline, true).expect("async");
                 assert_eq!(status, 0);
@@ -1834,10 +1871,7 @@ mod tests {
                         ),
                         t(
                             "stat",
-                            vec![
-                                ArgMatcher::Str("/usr/bin/printf".into()),
-                                ArgMatcher::Any,
-                            ],
+                            vec![ArgMatcher::Str("/usr/bin/printf".into()), ArgMatcher::Any],
                             TraceResult::StatFile(0o755),
                         ),
                         t_fork(
@@ -1910,10 +1944,7 @@ mod tests {
                                 ),
                                 t(
                                     "execvp",
-                                    vec![
-                                        ArgMatcher::Str("/usr/bin/wc".into()),
-                                        ArgMatcher::Any,
-                                    ],
+                                    vec![ArgMatcher::Str("/usr/bin/wc".into()), ArgMatcher::Any],
                                     TraceResult::Int(0),
                                 ),
                             ],
@@ -1974,14 +2005,17 @@ mod tests {
                                     raw: "printf".into(),
                                 },
                                 Word { raw: "ok".into() },
-                            ].into_boxed_slice(),
+                            ]
+                            .into_boxed_slice(),
                             ..SimpleCommand::default()
                         }),
                         Command::Simple(SimpleCommand {
-                            words: vec![Word { raw: "wc".into() }, Word { raw: "-c".into() }].into_boxed_slice(),
+                            words: vec![Word { raw: "wc".into() }, Word { raw: "-c".into() }]
+                                .into_boxed_slice(),
                             ..SimpleCommand::default()
                         }),
-                    ].into_boxed_slice(),
+                    ]
+                    .into_boxed_slice(),
                 };
                 let status =
                     execute_pipeline(&mut shell, &pipeline, false).expect("negated pipeline");
@@ -2003,7 +2037,6 @@ mod tests {
                     argv: Vec::new(),
 
                     redirections: Vec::new(),
-
                 },
                 Vec::new(),
                 Vec::new(),
@@ -2017,22 +2050,24 @@ mod tests {
                 assignments: vec![(arena.intern_str("ASSIGN_VAR"), arena.intern_str("works"))],
                 argv: vec![arena.intern_str("echo"), arena.intern_str("hello")],
                 redirections: Vec::new(),
-
             };
             let owned_argv: Vec<String> = expanded.argv.iter().map(|s| s.to_string()).collect();
-            let owned_assignments: Vec<(String, String)> = expanded.assignments.iter().map(|&(n, v)| (n.to_string(), v.to_string())).collect();
-            let prepared = build_process_from_expanded(
-                &shell,
-                expanded,
-                owned_argv,
-                owned_assignments,
-            )
-            .expect("process");
+            let owned_assignments: Vec<(String, String)> = expanded
+                .assignments
+                .iter()
+                .map(|&(n, v)| (n.to_string(), v.to_string()))
+                .collect();
+            let prepared =
+                build_process_from_expanded(&shell, expanded, owned_argv, owned_assignments)
+                    .expect("process");
             assert_eq!(
                 &*prepared.child_env,
                 &[(Box::from("ASSIGN_VAR"), Box::from("works"))] as &[(Box<str>, Box<str>)]
             );
-            assert_eq!(&*prepared.argv, &[Box::from("echo"), Box::from("hello")] as &[Box<str>]);
+            assert_eq!(
+                &*prepared.argv,
+                &[Box::from("echo"), Box::from("hello")] as &[Box<str>]
+            );
         });
     }
 
@@ -2085,7 +2120,6 @@ mod tests {
 
                     redirections: Vec::new(),
 
-
                     noclobber: false,
                     path_verified: true,
                 };
@@ -2116,14 +2150,11 @@ mod tests {
 
                     redirections: Vec::new(),
 
-
                     noclobber: false,
                     path_verified: false,
                 };
                 let shell = test_shell();
-                assert!(
-                    spawn_prepared(&shell, &missing, ProcessGroupPlan::None).is_err()
-                );
+                assert!(spawn_prepared(&shell, &missing, ProcessGroupPlan::None).is_err());
             },
         );
     }
@@ -2188,7 +2219,8 @@ mod tests {
                         target: Word { raw: "-".into() },
                         here_doc: None,
                     },
-                ].into_boxed_slice(),
+                ]
+                .into_boxed_slice(),
                 ..SimpleCommand::default()
             };
             let rendered = render_simple(&simple);
@@ -2248,7 +2280,8 @@ mod tests {
                         kind: RedirectionKind::HereDoc,
                         target: Word { raw: "EOF".into() },
                         here_doc: None,
-                    }].into_boxed_slice(),
+                    }]
+                    .into_boxed_slice(),
                     ..SimpleCommand::default()
                 },
                 &arena,
@@ -2391,17 +2424,16 @@ mod tests {
                             negated: false,
                             timed: TimedMode::Off,
                             commands: vec![Command::Simple(SimpleCommand {
-                                words: vec![Word {
-                                    raw: "true".into(),
-                                }].into_boxed_slice(),
+                                words: vec![Word { raw: "true".into() }].into_boxed_slice(),
                                 ..SimpleCommand::default()
-                            })].into_boxed_slice(),
+                            })]
+                            .into_boxed_slice(),
                         },
                         rest: Vec::new().into_boxed_slice(),
-
                     },
                     asynchronous: false,
-                }].into_boxed_slice(),
+                }]
+                .into_boxed_slice(),
             };
 
             let function = FunctionDef {
@@ -2428,33 +2460,35 @@ mod tests {
             let simple = SimpleCommand {
                 assignments: vec![Assignment {
                     name: "X".into(),
-                    value: Word {
-                        raw: "1".into(),
-                    },
-                }].into_boxed_slice(),
-                words: vec![Word {
-                    raw: "echo".into(),
-                }].into_boxed_slice(),
+                    value: Word { raw: "1".into() },
+                }]
+                .into_boxed_slice(),
+                words: vec![Word { raw: "echo".into() }].into_boxed_slice(),
                 redirections: vec![Redirection {
                     fd: None,
                     kind: RedirectionKind::Write,
-                    target: Word {
-                        raw: "out".into(),
-                    },
+                    target: Word { raw: "out".into() },
                     here_doc: None,
-                }].into_boxed_slice(),
+                }]
+                .into_boxed_slice(),
             };
             assert_eq!(render_simple(&simple), "X=1 echo >out");
 
             let multi_assign = SimpleCommand {
                 assignments: vec![
-                    Assignment { name: "A".into(), value: Word { raw: "1".into() } },
-                    Assignment { name: "B".into(), value: Word { raw: "2".into() } },
-                ].into_boxed_slice(),
+                    Assignment {
+                        name: "A".into(),
+                        value: Word { raw: "1".into() },
+                    },
+                    Assignment {
+                        name: "B".into(),
+                        value: Word { raw: "2".into() },
+                    },
+                ]
+                .into_boxed_slice(),
                 words: vec![].into_boxed_slice(),
 
                 redirections: vec![].into_boxed_slice(),
-
             };
             assert_eq!(render_simple(&multi_assign), "A=1 B=2");
 
@@ -2467,7 +2501,8 @@ mod tests {
                     Command::FunctionDef(function),
                     Command::If(if_command),
                     Command::Loop(loop_command),
-                ].into_boxed_slice(),
+                ]
+                .into_boxed_slice(),
             };
             assert!(render_pipeline(&pipeline).starts_with("! "));
         });
@@ -2482,17 +2517,16 @@ mod tests {
                         negated: false,
                         timed: TimedMode::Off,
                         commands: vec![Command::Simple(SimpleCommand {
-                            words: vec![Word {
-                                raw: "true".into(),
-                            }].into_boxed_slice(),
+                            words: vec![Word { raw: "true".into() }].into_boxed_slice(),
                             ..SimpleCommand::default()
-                        })].into_boxed_slice(),
+                        })]
+                        .into_boxed_slice(),
                     },
                     rest: Vec::new().into_boxed_slice(),
-
                 },
                 asynchronous: false,
-            }].into_boxed_slice(),
+            }]
+            .into_boxed_slice(),
         };
 
         run_trace(
@@ -2573,7 +2607,8 @@ mod tests {
                         commands: vec![
                             Command::Subshell(program.clone()),
                             Command::Group(program.clone()),
-                        ].into_boxed_slice(),
+                        ]
+                        .into_boxed_slice(),
                     },
                     None,
                 )
@@ -2598,10 +2633,10 @@ mod tests {
                                 commands: vec![Command::Simple(SimpleCommand {
                                     words: vec![Word { raw: "true".into() }].into_boxed_slice(),
                                     ..SimpleCommand::default()
-                                })].into_boxed_slice(),
+                                })]
+                                .into_boxed_slice(),
                             },
                             rest: Vec::new().into_boxed_slice(),
-
                         },
                         asynchronous: true,
                     },
@@ -2613,22 +2648,23 @@ mod tests {
                                 commands: vec![Command::Simple(SimpleCommand {
                                     words: vec![Word {
                                         raw: "false".into(),
-                                    }].into_boxed_slice(),
+                                    }]
+                                    .into_boxed_slice(),
                                     ..SimpleCommand::default()
-                                })].into_boxed_slice(),
+                                })]
+                                .into_boxed_slice(),
                             },
                             rest: Vec::new().into_boxed_slice(),
-
                         },
                         asynchronous: false,
                     },
-                ].into_boxed_slice(),
+                ]
+                .into_boxed_slice(),
             };
             assert_eq!(render_list_item(&async_program.items[0]), "true &");
             assert_eq!(render_program(&async_program), "true &\nfalse");
 
-            let heredoc_program =
-                parse_test(": <<EOF\nhello\nEOF\n").expect("parse heredoc");
+            let heredoc_program = parse_test(": <<EOF\nhello\nEOF\n").expect("parse heredoc");
             assert_eq!(render_program(&heredoc_program), ": <<EOF\nhello\nEOF");
         });
     }
@@ -2637,7 +2673,15 @@ mod tests {
     fn execute_nested_program_sets_up_heredoc_fd() {
         run_trace(
             vec![
-                t("fcntl", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1030), ArgMatcher::Int(10)], TraceResult::Err(sys::EBADF)),
+                t(
+                    "fcntl",
+                    vec![
+                        ArgMatcher::Fd(0),
+                        ArgMatcher::Int(1030),
+                        ArgMatcher::Int(10),
+                    ],
+                    TraceResult::Err(sys::EBADF),
+                ),
                 t("pipe", vec![], TraceResult::Fds(10, 11)),
                 t(
                     "write",
@@ -2654,8 +2698,7 @@ mod tests {
                 t("close", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
             ],
             || {
-                let heredoc_program =
-                    parse_test(": <<EOF\nhello\nEOF\n").expect("parse heredoc");
+                let heredoc_program = parse_test(": <<EOF\nhello\nEOF\n").expect("parse heredoc");
                 let mut shell = test_shell();
                 let status = execute_nested_program(&mut shell, &heredoc_program)
                     .expect("execute heredoc nested");
@@ -2700,8 +2743,7 @@ mod tests {
     fn execute_for_commands() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            let program =
-                parse_test("for item in a b c; do LAST=$item; done").expect("parse");
+            let program = parse_test("for item in a b c; do LAST=$item; done").expect("parse");
             let status = execute_program(&mut shell, &program).expect("execute");
             assert_eq!(status, 0);
             assert_eq!(shell.get_var("LAST"), Some("c"));
@@ -2719,18 +2761,16 @@ mod tests {
     fn execute_case_commands() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            let program = parse_test(
-                "name=beta; case $name in alpha) VALUE=no ;; b*) VALUE=yes ;; esac",
-            )
-            .expect("parse");
+            let program =
+                parse_test("name=beta; case $name in alpha) VALUE=no ;; b*) VALUE=yes ;; esac")
+                    .expect("parse");
             let status = execute_program(&mut shell, &program).expect("execute");
             assert_eq!(status, 0);
             assert_eq!(shell.get_var("VALUE"), Some("yes"));
 
             let mut shell = test_shell();
-            let program =
-                parse_test("name=zeta; case $name in alpha|beta) VALUE=hit ;; esac")
-                    .expect("parse");
+            let program = parse_test("name=zeta; case $name in alpha|beta) VALUE=hit ;; esac")
+                .expect("parse");
             let status = execute_program(&mut shell, &program).expect("execute");
             assert_eq!(status, 0);
             assert_eq!(shell.get_var("VALUE"), None);
@@ -2778,7 +2818,8 @@ mod tests {
                     commands: vec![Command::Simple(SimpleCommand {
                         words: vec![Word { raw: "true".into() }].into_boxed_slice(),
                         ..SimpleCommand::default()
-                    })].into_boxed_slice(),
+                    })]
+                    .into_boxed_slice(),
                 },
                 rest: vec![(
                     LogicalOp::And,
@@ -2788,11 +2829,14 @@ mod tests {
                         commands: vec![Command::Simple(SimpleCommand {
                             words: vec![Word {
                                 raw: "false".into(),
-                            }].into_boxed_slice(),
+                            }]
+                            .into_boxed_slice(),
                             ..SimpleCommand::default()
-                        })].into_boxed_slice(),
+                        })]
+                        .into_boxed_slice(),
                     },
-                )].into_boxed_slice(),
+                )]
+                .into_boxed_slice(),
             });
             assert!(render.contains("&&"));
         });
@@ -2809,13 +2853,14 @@ mod tests {
                         commands: vec![Command::Simple(SimpleCommand {
                             words: vec![Word { raw: "true".into() }].into_boxed_slice(),
                             ..SimpleCommand::default()
-                        })].into_boxed_slice(),
+                        })]
+                        .into_boxed_slice(),
                     },
                     rest: Vec::new().into_boxed_slice(),
-
                 },
                 asynchronous: false,
-            }].into_boxed_slice(),
+            }]
+            .into_boxed_slice(),
         };
         let pipeline = Pipeline {
             negated: false,
@@ -2831,7 +2876,8 @@ mod tests {
                     elif_branches: vec![crate::syntax::ElifBranch {
                         condition: program.clone(),
                         body: program.clone(),
-                    }].into_boxed_slice(),
+                    }]
+                    .into_boxed_slice(),
                     else_branch: Some(program.clone()),
                 }),
                 Command::Loop(LoopCommand {
@@ -2849,9 +2895,11 @@ mod tests {
                     arms: vec![crate::syntax::CaseArm {
                         patterns: vec![Word { raw: "item".into() }].into_boxed_slice(),
                         body: Program::default(),
-                    }].into_boxed_slice(),
+                    }]
+                    .into_boxed_slice(),
                 }),
-            ].into_boxed_slice(),
+            ]
+            .into_boxed_slice(),
         };
         run_trace(
             vec![
@@ -3041,7 +3089,9 @@ mod tests {
         assert_no_syscalls(|| {
             let for_command = ForCommand {
                 name: "item".into(),
-                items: Some(vec![Word { raw: "a".into() }, Word { raw: "b".into() }].into_boxed_slice()),
+                items: Some(
+                    vec![Word { raw: "a".into() }, Word { raw: "b".into() }].into_boxed_slice(),
+                ),
                 body: Program::default(),
             };
             assert!(render_for(&for_command).contains("in a b"));
@@ -3080,7 +3130,8 @@ mod tests {
                             strip_tabs: false,
                         }),
                     },
-                ].into_boxed_slice(),
+                ]
+                .into_boxed_slice(),
                 ..SimpleCommand::default()
             };
             let rendered = render_simple(&simple);
@@ -3101,7 +3152,8 @@ mod tests {
                         expand: false,
                         strip_tabs: true,
                     }),
-                }].into_boxed_slice(),
+                }]
+                .into_boxed_slice(),
                 ..SimpleCommand::default()
             };
             let rendered = render_simple(&strip_tabs);
@@ -3113,9 +3165,11 @@ mod tests {
                     raw: "$item".into(),
                 },
                 arms: vec![crate::syntax::CaseArm {
-                    patterns: vec![Word { raw: "a*".into() }, Word { raw: "b".into() }].into_boxed_slice(),
+                    patterns: vec![Word { raw: "a*".into() }, Word { raw: "b".into() }]
+                        .into_boxed_slice(),
                     body: Program::default(),
-                }].into_boxed_slice(),
+                }]
+                .into_boxed_slice(),
             };
             assert!(render_case(&case_command).contains("a* | b)"));
             assert!(
@@ -3185,9 +3239,11 @@ mod tests {
                     commands: vec![Command::Simple(SimpleCommand {
                         words: vec![Word {
                             raw: "false".into(),
-                        }].into_boxed_slice(),
+                        }]
+                        .into_boxed_slice(),
                         ..SimpleCommand::default()
-                    })].into_boxed_slice(),
+                    })]
+                    .into_boxed_slice(),
                 },
                 rest: vec![(
                     LogicalOp::Or,
@@ -3198,9 +3254,11 @@ mod tests {
                             name: "item".into(),
                             items: Some(vec![Word { raw: "a".into() }].into_boxed_slice()),
                             body: Program::default(),
-                        })].into_boxed_slice(),
+                        })]
+                        .into_boxed_slice(),
                     },
-                )].into_boxed_slice(),
+                )]
+                .into_boxed_slice(),
             });
             assert!(render.contains("||"));
             assert!(render.contains("for item in a"));
@@ -3217,8 +3275,7 @@ mod tests {
             assert_eq!(shell.get_var("VALUE"), None);
 
             let mut shell = test_shell();
-            let for_program =
-                parse_test("for item in a b; do exit 9; done").expect("parse");
+            let for_program = parse_test("for item in a b; do exit 9; done").expect("parse");
             let status = execute_program(&mut shell, &for_program).expect("exec");
             assert_eq!(status, 9);
             assert!(!shell.running);
@@ -3231,8 +3288,7 @@ mod tests {
             assert!(!shell.running);
 
             let mut shell = test_shell();
-            let program =
-                parse_test("greet() { RESULT=$X; }; X=ok greet").expect("parse");
+            let program = parse_test("greet() { RESULT=$X; }; X=ok greet").expect("parse");
             let status = execute_program(&mut shell, &program).expect("exec");
             assert_eq!(status, 0);
             assert_eq!(shell.get_var("RESULT"), Some("ok"));
@@ -3270,8 +3326,7 @@ mod tests {
             assert_eq!(shell.get_var("outer"), Some("x"));
 
             let mut shell = test_shell();
-            let program =
-                parse_test("f() { while true; do return 4; done; }; f").expect("parse");
+            let program = parse_test("f() { while true; do return 4; done; }; f").expect("parse");
             let status = execute_program(&mut shell, &program).expect("exec");
             assert_eq!(status, 4);
             assert_eq!(shell.pending_control, None);
@@ -3282,10 +3337,9 @@ mod tests {
             assert_eq!(&*error.message, "break: only meaningful in a loop");
 
             let mut shell = test_shell();
-            let program = parse_test(
-                "for outer in x; do while break 2; do printf no; done; AFTER=bad; done",
-            )
-            .expect("parse");
+            let program =
+                parse_test("for outer in x; do while break 2; do printf no; done; AFTER=bad; done")
+                    .expect("parse");
             let status = execute_program(&mut shell, &program).expect("exec");
             assert_eq!(status, 0);
             assert_eq!(shell.get_var("AFTER"), None);
@@ -3300,8 +3354,8 @@ mod tests {
             assert_eq!(shell.get_var("AFTER"), None);
 
             let mut shell = test_shell();
-            let program = parse_test("f() { while return 3; do printf no; done; }; f")
-                .expect("parse");
+            let program =
+                parse_test("f() { while return 3; do printf no; done; }; f").expect("parse");
             let status = execute_program(&mut shell, &program).expect("exec");
             assert_eq!(status, 3);
 
@@ -3324,25 +3378,23 @@ mod tests {
             assert_eq!(shell.get_var("COUNT"), Some("0"));
 
             let mut shell = test_shell();
-            let program = parse_test("f() { for item in a; do return 5; done; }; f")
-                .expect("parse");
+            let program =
+                parse_test("f() { for item in a; do return 5; done; }; f").expect("parse");
             let status = execute_program(&mut shell, &program).expect("exec");
             assert_eq!(status, 5);
 
             let mut shell = test_shell();
-            let program = parse_test(
-                "for outer in x; do for inner in y; do break 2; done; DONE=no; done",
-            )
-            .expect("parse");
+            let program =
+                parse_test("for outer in x; do for inner in y; do break 2; done; DONE=no; done")
+                    .expect("parse");
             let status = execute_program(&mut shell, &program).expect("exec");
             assert_eq!(status, 0);
             assert_eq!(shell.get_var("DONE"), None);
 
             let mut shell = test_shell();
-            let program = parse_test(
-                "for outer in x; do for inner in y; do continue 2; done; DONE=no; done",
-            )
-            .expect("parse");
+            let program =
+                parse_test("for outer in x; do for inner in y; do continue 2; done; DONE=no; done")
+                    .expect("parse");
             let status = execute_program(&mut shell, &program).expect("exec");
             assert_eq!(status, 0);
             assert_eq!(shell.get_var("DONE"), None);
@@ -3381,7 +3433,8 @@ mod tests {
                     kind: RedirectionKind::ClobberWrite,
                     target: Word { raw: "out".into() },
                     here_doc: None,
-                }].into_boxed_slice(),
+                }]
+                .into_boxed_slice(),
                 ..SimpleCommand::default()
             };
             assert!(render_simple(&simple).contains(">|out"));
@@ -3393,7 +3446,15 @@ mod tests {
         run_trace(
             vec![
                 // apply_shell_redirections: save fd 42, open write, dup2+close, open append, dup2+close
-                t("fcntl", vec![ArgMatcher::Fd(42), ArgMatcher::Int(1030), ArgMatcher::Int(10)], TraceResult::Fd(92)),
+                t(
+                    "fcntl",
+                    vec![
+                        ArgMatcher::Fd(42),
+                        ArgMatcher::Int(1030),
+                        ArgMatcher::Int(10),
+                    ],
+                    TraceResult::Fd(92),
+                ),
                 t(
                     "open",
                     vec![
@@ -3631,7 +3692,11 @@ mod tests {
                 // apply_shell_redirections with fcntl returning EBADF for high fd → treated as absent
                 t(
                     "fcntl",
-                    vec![ArgMatcher::Fd(123_456), ArgMatcher::Int(1030), ArgMatcher::Int(10)],
+                    vec![
+                        ArgMatcher::Fd(123_456),
+                        ArgMatcher::Int(1030),
+                        ArgMatcher::Int(10),
+                    ],
                     TraceResult::Err(sys::EBADF),
                 ),
                 t(
@@ -3647,7 +3712,11 @@ mod tests {
                 // apply_shell_redirections with fcntl failure (errno 22)
                 t(
                     "fcntl",
-                    vec![ArgMatcher::Fd(42), ArgMatcher::Int(1030), ArgMatcher::Int(10)],
+                    vec![
+                        ArgMatcher::Fd(42),
+                        ArgMatcher::Int(1030),
+                        ArgMatcher::Int(10),
+                    ],
                     TraceResult::Err(sys::EINVAL),
                 ),
             ],
@@ -3765,7 +3834,8 @@ mod tests {
                     kind: RedirectionKind::Write,
                     target: Word { raw: "out".into() },
                     here_doc: None,
-                }].into_boxed_slice(),
+                }]
+                .into_boxed_slice(),
             );
             let rendered = render_command(&command);
             assert!(rendered.contains("{"));
@@ -3819,13 +3889,11 @@ mod tests {
 
                     redirections: Vec::new(),
 
-
                     noclobber: false,
                     path_verified: false,
                 };
-                let child =
-                    spawn_prepared(&shell, &prepared, ProcessGroupPlan::NewGroup)
-                        .expect("spawn newgroup");
+                let child = spawn_prepared(&shell, &prepared, ProcessGroupPlan::NewGroup)
+                    .expect("spawn newgroup");
                 assert!(
                     child
                         .wait_with_output()
@@ -3935,13 +4003,11 @@ mod tests {
 
                     redirections: Vec::new(),
 
-
                     noclobber: false,
                     path_verified: false,
                 };
-                let child =
-                    spawn_prepared(&shell, &prepared, ProcessGroupPlan::Join(42))
-                        .expect("spawn join");
+                let child = spawn_prepared(&shell, &prepared, ProcessGroupPlan::Join(42))
+                    .expect("spawn join");
                 assert!(child.wait().expect("wait").success());
             },
         );
@@ -4042,13 +4108,14 @@ mod tests {
                             commands: vec![Command::Simple(SimpleCommand {
                                 words: vec![Word { raw: "true".into() }].into_boxed_slice(),
                                 ..SimpleCommand::default()
-                            })].into_boxed_slice(),
+                            })]
+                            .into_boxed_slice(),
                         },
                         rest: Vec::new().into_boxed_slice(),
-
                     },
                     asynchronous: false,
-                }].into_boxed_slice(),
+                }]
+                .into_boxed_slice(),
             };
             let if_command = IfCommand {
                 condition: program.clone(),
@@ -4056,7 +4123,8 @@ mod tests {
                 elif_branches: vec![crate::syntax::ElifBranch {
                     condition: program.clone(),
                     body: program.clone(),
-                }].into_boxed_slice(),
+                }]
+                .into_boxed_slice(),
                 else_branch: Some(program),
             };
             let rendered = render_if(&if_command);
@@ -4078,13 +4146,14 @@ mod tests {
                             commands: vec![Command::Simple(SimpleCommand {
                                 words: vec![Word { raw: "true".into() }].into_boxed_slice(),
                                 ..SimpleCommand::default()
-                            })].into_boxed_slice(),
+                            })]
+                            .into_boxed_slice(),
                         },
                         rest: Vec::new().into_boxed_slice(),
-
                     },
                     asynchronous: false,
-                }].into_boxed_slice(),
+                }]
+                .into_boxed_slice(),
             };
             let rendered = render_loop(&LoopCommand {
                 kind: LoopKind::Until,
@@ -4100,7 +4169,15 @@ mod tests {
         run_trace(
             vec![
                 // Append: save fd 1, open file, dup2, close; then guard restores
-                t("fcntl", vec![ArgMatcher::Fd(1), ArgMatcher::Int(1030), ArgMatcher::Int(10)], TraceResult::Fd(51)),
+                t(
+                    "fcntl",
+                    vec![
+                        ArgMatcher::Fd(1),
+                        ArgMatcher::Int(1030),
+                        ArgMatcher::Int(10),
+                    ],
+                    TraceResult::Fd(51),
+                ),
                 t(
                     "open",
                     vec![
@@ -4123,7 +4200,15 @@ mod tests {
                 ),
                 t("close", vec![ArgMatcher::Fd(51)], TraceResult::Int(0)),
                 // ReadWrite: save fd 0, open file, dup2, close; then guard restores
-                t("fcntl", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1030), ArgMatcher::Int(10)], TraceResult::Fd(53)),
+                t(
+                    "fcntl",
+                    vec![
+                        ArgMatcher::Fd(0),
+                        ArgMatcher::Int(1030),
+                        ArgMatcher::Int(10),
+                    ],
+                    TraceResult::Fd(53),
+                ),
                 t(
                     "open",
                     vec![
@@ -4251,8 +4336,7 @@ mod tests {
                     noclobber: false,
                 };
                 let handle =
-                    spawn_prepared(&mut shell, &prepared, ProcessGroupPlan::None)
-                        .expect("spawn");
+                    spawn_prepared(&mut shell, &prepared, ProcessGroupPlan::None).expect("spawn");
                 let ws = sys::wait_pid(handle.pid, false)
                     .expect("wait")
                     .expect("status");
@@ -4307,12 +4391,8 @@ mod tests {
                     path_verified: true,
                     noclobber: false,
                 };
-                let _handle = spawn_prepared(
-                    &mut shell,
-                    &prepared,
-                    ProcessGroupPlan::None,
-                )
-                .expect("spawn");
+                let _handle =
+                    spawn_prepared(&mut shell, &prepared, ProcessGroupPlan::None).expect("spawn");
             },
         );
     }
@@ -4350,8 +4430,7 @@ mod tests {
                     noclobber: false,
                 };
                 let _handle =
-                    spawn_prepared(&mut shell, &prepared, ProcessGroupPlan::None)
-                        .expect("spawn");
+                    spawn_prepared(&mut shell, &prepared, ProcessGroupPlan::None).expect("spawn");
             },
         );
     }
@@ -4501,12 +4580,10 @@ mod tests {
 
                     redirections: Vec::new(),
 
-
                     noclobber: false,
                     path_verified: false,
                 };
-                let err = spawn_prepared(&shell, &prepared, ProcessGroupPlan::None)
-                    .unwrap_err();
+                let err = spawn_prepared(&shell, &prepared, ProcessGroupPlan::None).unwrap_err();
                 assert!(
                     err.message.contains("Permission denied") || err.message.contains("errno 13")
                 );
@@ -4541,13 +4618,11 @@ mod tests {
 
                     redirections: Vec::new(),
 
-
                     noclobber: false,
                     path_verified: true,
                 };
                 let _handle =
-                    spawn_prepared(&shell, &prepared, ProcessGroupPlan::NewGroup)
-                        .expect("spawn");
+                    spawn_prepared(&shell, &prepared, ProcessGroupPlan::NewGroup).expect("spawn");
             },
         );
     }
@@ -4579,13 +4654,11 @@ mod tests {
 
                     redirections: Vec::new(),
 
-
                     noclobber: false,
                     path_verified: true,
                 };
                 let _handle =
-                    spawn_prepared(&shell, &prepared, ProcessGroupPlan::NewGroup)
-                        .expect("spawn");
+                    spawn_prepared(&shell, &prepared, ProcessGroupPlan::NewGroup).expect("spawn");
             },
         );
     }
@@ -4634,11 +4707,10 @@ mod tests {
                         negated: false,
                         timed: TimedMode::Off,
                         commands: vec![Command::Simple(SimpleCommand {
-                            words: vec![Word {
-                                raw: "true".into(),
-                            }].into_boxed_slice(),
+                            words: vec![Word { raw: "true".into() }].into_boxed_slice(),
                             ..SimpleCommand::default()
-                        })].into_boxed_slice(),
+                        })]
+                        .into_boxed_slice(),
                     },
                     rest: vec![(
                         LogicalOp::And,
@@ -4646,13 +4718,13 @@ mod tests {
                             negated: false,
                             timed: TimedMode::Off,
                             commands: vec![Command::Simple(SimpleCommand {
-                                words: vec![Word {
-                                    raw: ":".into(),
-                                }].into_boxed_slice(),
+                                words: vec![Word { raw: ":".into() }].into_boxed_slice(),
                                 ..SimpleCommand::default()
-                            })].into_boxed_slice(),
+                            })]
+                            .into_boxed_slice(),
                         },
-                    )].into_boxed_slice(),
+                    )]
+                    .into_boxed_slice(),
                 };
                 let spawned = spawn_and_or(&mut shell, &node, Some(50)).expect("spawn");
                 assert_eq!(spawned.children.len(), 1);
@@ -4702,8 +4774,8 @@ mod tests {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
             shell.options.errexit = true;
-            let program = parse_test("if false; then :; elif false; then :; fi; true")
-                .expect("parse");
+            let program =
+                parse_test("if false; then :; elif false; then :; fi; true").expect("parse");
             let status = execute_program(&mut shell, &program).expect("execute");
             assert_eq!(status, 0);
             assert!(shell.running);
@@ -4845,7 +4917,6 @@ mod tests {
 
                     argv: vec!["echo", "hello"],
                     redirections: vec![],
-
                 };
                 write_xtrace(&mut shell, &expanded);
             },
@@ -4862,7 +4933,6 @@ mod tests {
 
                 argv: vec!["echo"],
                 redirections: vec![],
-
             };
             write_xtrace(&mut shell, &expanded);
         });
@@ -4886,7 +4956,6 @@ mod tests {
                     assignments: vec![("FOO", "bar")],
                     argv: vec!["cmd"],
                     redirections: vec![],
-
                 };
                 write_xtrace(&mut shell, &expanded);
             },
@@ -5074,10 +5143,7 @@ mod tests {
                         ),
                         t(
                             "stat",
-                            vec![
-                                ArgMatcher::Str("/usr/bin/sleep".into()),
-                                ArgMatcher::Any,
-                            ],
+                            vec![ArgMatcher::Str("/usr/bin/sleep".into()), ArgMatcher::Any],
                             TraceResult::StatFile(0o755),
                         ),
                         t_fork(
@@ -5090,10 +5156,7 @@ mod tests {
                                 ),
                                 t(
                                     "execvp",
-                                    vec![
-                                        ArgMatcher::Str("/usr/bin/sleep".into()),
-                                        ArgMatcher::Any,
-                                    ],
+                                    vec![ArgMatcher::Str("/usr/bin/sleep".into()), ArgMatcher::Any],
                                     TraceResult::Int(0),
                                 ),
                             ],
@@ -5147,10 +5210,7 @@ mod tests {
                         ),
                         t(
                             "stat",
-                            vec![
-                                ArgMatcher::Str("/usr/bin/sleep".into()),
-                                ArgMatcher::Any,
-                            ],
+                            vec![ArgMatcher::Str("/usr/bin/sleep".into()), ArgMatcher::Any],
                             TraceResult::StatFile(0o755),
                         ),
                         t_fork(
@@ -5163,10 +5223,7 @@ mod tests {
                                 ),
                                 t(
                                     "execvp",
-                                    vec![
-                                        ArgMatcher::Str("/usr/bin/sleep".into()),
-                                        ArgMatcher::Any,
-                                    ],
+                                    vec![ArgMatcher::Str("/usr/bin/sleep".into()), ArgMatcher::Any],
                                     TraceResult::Int(0),
                                 ),
                             ],
@@ -5221,13 +5278,11 @@ mod tests {
             vec![
                 t_fork(
                     TraceResult::Pid(9300),
-                    vec![
-                        t(
-                            "setpgid",
-                            vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
-                            TraceResult::Int(0),
-                        ),
-                    ],
+                    vec![t(
+                        "setpgid",
+                        vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
+                        TraceResult::Int(0),
+                    )],
                 ),
                 t(
                     "setpgid",
@@ -5244,14 +5299,12 @@ mod tests {
                         negated: false,
                         timed: TimedMode::Off,
                         commands: vec![Command::Simple(SimpleCommand {
-                            words: vec![Word {
-                                raw: "true".into(),
-                            }].into_boxed_slice(),
+                            words: vec![Word { raw: "true".into() }].into_boxed_slice(),
                             ..SimpleCommand::default()
-                        })].into_boxed_slice(),
+                        })]
+                        .into_boxed_slice(),
                     },
                     rest: vec![].into_boxed_slice(),
-
                 };
                 let spawned = spawn_and_or(&mut shell, &node, None).expect("spawn");
                 assert_eq!(spawned.children.len(), 1);
@@ -5270,13 +5323,14 @@ mod tests {
                         commands: vec![Command::Simple(SimpleCommand {
                             words: vec![Word { raw: "true".into() }].into_boxed_slice(),
                             ..SimpleCommand::default()
-                        })].into_boxed_slice(),
+                        })]
+                        .into_boxed_slice(),
                     },
                     rest: vec![].into_boxed_slice(),
-
                 },
                 asynchronous: false,
-            }].into_boxed_slice(),
+            }]
+            .into_boxed_slice(),
         };
         run_trace(
             vec![
@@ -5309,7 +5363,8 @@ mod tests {
             let cmd = SimpleCommand {
                 words: vec![Word {
                     raw: "echo `date`".into(),
-                }].into_boxed_slice(),
+                }]
+                .into_boxed_slice(),
                 ..SimpleCommand::default()
             };
             assert!(has_command_substitution(&cmd));
@@ -5317,7 +5372,8 @@ mod tests {
             let cmd_no_sub = SimpleCommand {
                 words: vec![Word {
                     raw: "plain".into(),
-                }].into_boxed_slice(),
+                }]
+                .into_boxed_slice(),
                 ..SimpleCommand::default()
             };
             assert!(!has_command_substitution(&cmd_no_sub));
@@ -5335,13 +5391,14 @@ mod tests {
                         commands: vec![Command::Simple(SimpleCommand {
                             words: vec![Word { raw: "true".into() }].into_boxed_slice(),
                             ..SimpleCommand::default()
-                        })].into_boxed_slice(),
+                        })]
+                        .into_boxed_slice(),
                     },
                     rest: vec![].into_boxed_slice(),
-
                 },
                 asynchronous: false,
-            }].into_boxed_slice(),
+            }]
+            .into_boxed_slice(),
         };
         run_trace(
             vec![
@@ -5377,13 +5434,14 @@ mod tests {
                         commands: vec![Command::Simple(SimpleCommand {
                             words: vec![Word { raw: "true".into() }].into_boxed_slice(),
                             ..SimpleCommand::default()
-                        })].into_boxed_slice(),
+                        })]
+                        .into_boxed_slice(),
                     },
                     rest: vec![].into_boxed_slice(),
-
                 },
                 asynchronous: false,
-            }].into_boxed_slice(),
+            }]
+            .into_boxed_slice(),
         };
         run_trace(
             vec![
@@ -5424,9 +5482,21 @@ mod tests {
     #[test]
     fn time_default_mode_reports_to_stderr() {
         let mut trace = time_snapshot_trace_pair(1_000_000_000, 2_000_000_000);
-        trace.push(t("write", vec![ArgMatcher::Int(2), ArgMatcher::Any], TraceResult::Auto));
-        trace.push(t("write", vec![ArgMatcher::Int(2), ArgMatcher::Any], TraceResult::Auto));
-        trace.push(t("write", vec![ArgMatcher::Int(2), ArgMatcher::Any], TraceResult::Auto));
+        trace.push(t(
+            "write",
+            vec![ArgMatcher::Int(2), ArgMatcher::Any],
+            TraceResult::Auto,
+        ));
+        trace.push(t(
+            "write",
+            vec![ArgMatcher::Int(2), ArgMatcher::Any],
+            TraceResult::Auto,
+        ));
+        trace.push(t(
+            "write",
+            vec![ArgMatcher::Int(2), ArgMatcher::Any],
+            TraceResult::Auto,
+        ));
 
         run_trace(trace, || {
             let mut shell = test_shell();
@@ -5436,7 +5506,8 @@ mod tests {
                 commands: vec![Command::Simple(SimpleCommand {
                     words: vec![Word { raw: "true".into() }].into_boxed_slice(),
                     ..SimpleCommand::default()
-                })].into_boxed_slice(),
+                })]
+                .into_boxed_slice(),
             };
             let status = execute_pipeline(&mut shell, &pipeline, false).expect("execute");
             assert_eq!(status, 0);
@@ -5446,9 +5517,21 @@ mod tests {
     #[test]
     fn time_posix_mode_reports_to_stderr() {
         let mut trace = time_snapshot_trace_pair(1_000_000_000, 2_000_000_000);
-        trace.push(t("write", vec![ArgMatcher::Int(2), ArgMatcher::Any], TraceResult::Auto));
-        trace.push(t("write", vec![ArgMatcher::Int(2), ArgMatcher::Any], TraceResult::Auto));
-        trace.push(t("write", vec![ArgMatcher::Int(2), ArgMatcher::Any], TraceResult::Auto));
+        trace.push(t(
+            "write",
+            vec![ArgMatcher::Int(2), ArgMatcher::Any],
+            TraceResult::Auto,
+        ));
+        trace.push(t(
+            "write",
+            vec![ArgMatcher::Int(2), ArgMatcher::Any],
+            TraceResult::Auto,
+        ));
+        trace.push(t(
+            "write",
+            vec![ArgMatcher::Int(2), ArgMatcher::Any],
+            TraceResult::Auto,
+        ));
 
         run_trace(trace, || {
             let mut shell = test_shell();
@@ -5458,7 +5541,8 @@ mod tests {
                 commands: vec![Command::Simple(SimpleCommand {
                     words: vec![Word { raw: "true".into() }].into_boxed_slice(),
                     ..SimpleCommand::default()
-                })].into_boxed_slice(),
+                })]
+                .into_boxed_slice(),
             };
             let status = execute_pipeline(&mut shell, &pipeline, false).expect("execute");
             assert_eq!(status, 0);

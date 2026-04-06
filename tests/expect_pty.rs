@@ -61,11 +61,11 @@
 //! - $SHELL env var is set to the --shell value (including flags, e.g. "/usr/bin/bash --posix").
 //! - All pattern matching uses the built-in regex engine (no external deps).
 
+#[path = "epty_parser.rs"]
+mod epty_parser;
 #[path = "json.rs"]
 #[allow(dead_code)]
 mod json;
-#[path = "epty_parser.rs"]
-mod epty_parser;
 #[path = "md_parser.rs"]
 mod md_parser;
 
@@ -162,12 +162,7 @@ impl PtySession {
             winp.ws_row = 24;
             winp.ws_col = 80;
 
-            let pid = forkpty(
-                &mut master,
-                std::ptr::null_mut(),
-                &mut termp,
-                &mut winp,
-            );
+            let pid = forkpty(&mut master, std::ptr::null_mut(), &mut termp, &mut winp);
 
             if pid < 0 {
                 return Err(io::Error::last_os_error());
@@ -263,7 +258,12 @@ impl PtySession {
 
     /// Wait for a regex match in the output buffer.
     /// On match, consumes all output up to and including the match end.
-    fn expect(&self, pattern: &[RegexNode], pattern_str: &str, timeout: Duration) -> Result<String, String> {
+    fn expect(
+        &self,
+        pattern: &[RegexNode],
+        pattern_str: &str,
+        timeout: Duration,
+    ) -> Result<String, String> {
         let start = Instant::now();
         loop {
             {
@@ -290,7 +290,12 @@ impl PtySession {
 
     /// Wait for the next complete line matching a regex pattern.
     /// Consumes non-matching lines while scanning forward.
-    fn expect_line(&self, pattern: &[RegexNode], pattern_str: &str, timeout: Duration) -> Result<String, String> {
+    fn expect_line(
+        &self,
+        pattern: &[RegexNode],
+        pattern_str: &str,
+        timeout: Duration,
+    ) -> Result<String, String> {
         let start = Instant::now();
         loop {
             {
@@ -324,7 +329,9 @@ impl PtySession {
     fn wait_child(&mut self, expected_code: Option<i32>) -> Result<i32, String> {
         // Close master fd so the PTY signals EOF to the child
         if self.master_fd >= 0 {
-            unsafe { libc::close(self.master_fd); }
+            unsafe {
+                libc::close(self.master_fd);
+            }
             self.master_fd = -1;
         }
 
@@ -349,9 +356,7 @@ impl PtySession {
 
         if let Some(expected) = expected_code {
             if code != expected {
-                return Err(format!(
-                    "wait: expected exit code {expected}, got {code}"
-                ));
+                return Err(format!("wait: expected exit code {expected}, got {code}"));
             }
         }
         Ok(code)
@@ -499,9 +504,9 @@ fn parse_timeout_value(val: &str) -> Result<Duration, String> {
 fn parse_expect_args(rest: &str) -> Result<(Option<Duration>, &str), String> {
     let rest = rest.trim();
     if let Some(after) = rest.strip_prefix("timeout=") {
-        let space = after
-            .find(' ')
-            .ok_or_else(|| "timeout= must be followed by a space and a quoted string".to_string())?;
+        let space = after.find(' ').ok_or_else(|| {
+            "timeout= must be followed by a space and a quoted string".to_string()
+        })?;
         let timeout = parse_timeout_value(&after[..space])?;
         let quoted = after[space..].trim();
         Ok((Some(timeout), quoted))
@@ -1033,19 +1038,14 @@ fn parse_re_atom(chars: &[char], pos: usize) -> Result<(RegexNode, usize), Strin
                 i += 1;
             }
             while i < chars.len() && chars[i] != ']' {
-                if i + 1 < chars.len()
-                    && chars[i] == '['
-                    && matches!(chars[i + 1], ':' | '.' | '=')
+                if i + 1 < chars.len() && chars[i] == '[' && matches!(chars[i + 1], ':' | '.' | '=')
                 {
                     let delim = chars[i + 1];
                     bracket.push(chars[i]);
                     bracket.push(chars[i + 1]);
                     i += 2;
                     while i < chars.len() {
-                        if chars[i] == delim
-                            && i + 1 < chars.len()
-                            && chars[i + 1] == ']'
-                        {
+                        if chars[i] == delim && i + 1 < chars.len() && chars[i + 1] == ']' {
                             bracket.push(chars[i]);
                             bracket.push(chars[i + 1]);
                             i += 2;
@@ -1230,7 +1230,6 @@ fn regex_find(pattern: &[RegexNode], text: &str) -> Option<(usize, usize)> {
     None
 }
 
-
 fn run_script(script_lines: &[String]) -> Result<(), String> {
     let mut session: Option<PtySession> = None;
     let mut log = Vec::<String>::new();
@@ -1260,10 +1259,7 @@ fn run_script(script_lines: &[String]) -> Result<(), String> {
                     return Err(format!("line {line_num}: spawn called twice"));
                 }
                 let expanded = expand_env(rest);
-                let words: Vec<String> = expanded
-                    .split_whitespace()
-                    .map(String::from)
-                    .collect();
+                let words: Vec<String> = expanded.split_whitespace().map(String::from).collect();
                 let mut env_vars: Vec<(String, String)> = Vec::new();
                 let mut cmd_start = 0;
                 for (i, w) in words.iter().enumerate() {
@@ -1291,11 +1287,15 @@ fn run_script(script_lines: &[String]) -> Result<(), String> {
                     .ok_or_else(|| format!("line {line_num}: expect before spawn"))?;
                 let (timeout, quoted_part) = parse_expect_args(rest)?;
                 let timeout = timeout.unwrap_or(Duration::from_millis(200));
-                let pattern_str = extract_pattern(quoted_part)
-                    .map_err(|e| format!("line {line_num}: {e}"))?;
+                let pattern_str =
+                    extract_pattern(quoted_part).map_err(|e| format!("line {line_num}: {e}"))?;
                 let pattern = parse_regex(&pattern_str)
                     .map_err(|e| format!("line {line_num}: bad regex: {e}"))?;
-                log.push(format!(">>> expect {:?} (timeout={:.1}s)", pattern_str, timeout.as_secs_f64()));
+                log.push(format!(
+                    ">>> expect {:?} (timeout={:.1}s)",
+                    pattern_str,
+                    timeout.as_secs_f64()
+                ));
                 match sess.expect(&pattern, &pattern_str, timeout) {
                     Ok(consumed) => {
                         log.push(format!("<<< matched (consumed {} bytes)", consumed.len()));
@@ -1317,14 +1317,21 @@ fn run_script(script_lines: &[String]) -> Result<(), String> {
                     .ok_or_else(|| format!("line {line_num}: expect_line before spawn"))?;
                 let (timeout, quoted_part) = parse_expect_args(rest)?;
                 let timeout = timeout.unwrap_or(Duration::from_millis(200));
-                let pattern_str = extract_pattern(quoted_part)
-                    .map_err(|e| format!("line {line_num}: {e}"))?;
+                let pattern_str =
+                    extract_pattern(quoted_part).map_err(|e| format!("line {line_num}: {e}"))?;
                 let pattern = parse_regex(&pattern_str)
                     .map_err(|e| format!("line {line_num}: bad regex: {e}"))?;
-                log.push(format!(">>> expect_line {:?} (timeout={:.1}s)", pattern_str, timeout.as_secs_f64()));
+                log.push(format!(
+                    ">>> expect_line {:?} (timeout={:.1}s)",
+                    pattern_str,
+                    timeout.as_secs_f64()
+                ));
                 match sess.expect_line(&pattern, &pattern_str, timeout) {
                     Ok(consumed) => {
-                        log.push(format!("<<< line matched (consumed {} bytes)", consumed.len()));
+                        log.push(format!(
+                            "<<< line matched (consumed {} bytes)",
+                            consumed.len()
+                        ));
                     }
                     Err(e) => {
                         eprintln!("--- expect_pty conversation log ---");
@@ -1341,8 +1348,7 @@ fn run_script(script_lines: &[String]) -> Result<(), String> {
                 let sess = session
                     .as_ref()
                     .ok_or_else(|| format!("line {line_num}: send before spawn"))?;
-                let text = extract_quoted(rest)
-                    .map_err(|e| format!("line {line_num}: {e}"))?;
+                let text = extract_quoted(rest).map_err(|e| format!("line {line_num}: {e}"))?;
                 let expanded = expand_env(&text);
                 log.push(format!(">>> send {:?}", expanded));
                 sess.send_line(&expanded)
@@ -1360,10 +1366,7 @@ fn run_script(script_lines: &[String]) -> Result<(), String> {
                         .map_err(|e| format!("line {line_num}: bad hex byte '{hex}': {e}"))?;
                     bytes.push(b);
                 }
-                log.push(format!(
-                    ">>> sendraw [{}]",
-                    hex_parts.join(" ")
-                ));
+                log.push(format!(">>> sendraw [{}]", hex_parts.join(" ")));
                 sess.write_bytes(&bytes)
                     .map_err(|e| format!("line {line_num}: sendraw failed: {e}"))?;
             }
@@ -1372,8 +1375,7 @@ fn run_script(script_lines: &[String]) -> Result<(), String> {
                 let sess = session
                     .as_ref()
                     .ok_or_else(|| format!("line {line_num}: signal before spawn"))?;
-                let sig = parse_signal(rest)
-                    .map_err(|e| format!("line {line_num}: {e}"))?;
+                let sig = parse_signal(rest).map_err(|e| format!("line {line_num}: {e}"))?;
                 log.push(format!(">>> signal {rest}"));
                 sess.send_signal(sig)
                     .map_err(|e| format!("line {line_num}: signal failed: {e}"))?;
@@ -1420,8 +1422,7 @@ fn run_script(script_lines: &[String]) -> Result<(), String> {
             }
 
             "sleep" => {
-                let dur = parse_timeout_value(rest)
-                    .map_err(|e| format!("line {line_num}: {e}"))?;
+                let dur = parse_timeout_value(rest).map_err(|e| format!("line {line_num}: {e}"))?;
                 log.push(format!(">>> sleep {}ms", dur.as_millis()));
                 thread::sleep(dur);
             }
@@ -1532,7 +1533,11 @@ fn strip_inline_comment(line: &str) -> &str {
 
 // ── Test isolation ───────────────────────────────────────────────────────────
 
-fn baseline_env(tmpdir: &str, shell_str: &str, locale_dir: Option<&str>) -> HashMap<String, String> {
+fn baseline_env(
+    tmpdir: &str,
+    shell_str: &str,
+    locale_dir: Option<&str>,
+) -> HashMap<String, String> {
     let mut env = HashMap::new();
     env.insert("PATH".into(), "/usr/bin:/bin".into());
     env.insert("HOME".into(), tmpdir.into());
@@ -1551,7 +1556,12 @@ fn baseline_env(tmpdir: &str, shell_str: &str, locale_dir: Option<&str>) -> Hash
     env
 }
 
-fn compile_locale_variant(locale_dir: &str, def_path: &str, charmap: &str, locale_name: &str) -> bool {
+fn compile_locale_variant(
+    locale_dir: &str,
+    def_path: &str,
+    charmap: &str,
+    locale_name: &str,
+) -> bool {
     let out_path = format!("{locale_dir}/{locale_name}");
     if std::path::Path::new(&out_path).is_dir() {
         return true;
@@ -1651,7 +1661,8 @@ fn run_command(
                 cmd.env(k, v);
             }
             cmd.current_dir(tmpdir);
-            let result = cmd.output()
+            let result = cmd
+                .output()
                 .map_err(|e| format!("failed to execute shell (tempfile): {e}"))?;
             let _ = fs::remove_file(&script_path);
             result
@@ -1671,12 +1682,14 @@ fn run_command(
                 cmd.env(k, v);
             }
             cmd.current_dir(tmpdir);
-            let mut child = cmd.spawn()
+            let mut child = cmd
+                .spawn()
                 .map_err(|e| format!("failed to execute shell (stdin): {e}"))?;
             if let Some(mut stdin) = child.stdin.take() {
                 let _ = stdin.write_all(script.as_bytes());
             }
-            child.wait_with_output()
+            child
+                .wait_with_output()
                 .map_err(|e| format!("failed to wait for shell (stdin): {e}"))?
         }
     };
@@ -1696,10 +1709,16 @@ fn run_suite_test(
     script_modes: &[ScriptMode],
     locale_dir: Option<&str>,
 ) -> Result<(), String> {
-    let tmpdir = make_test_tmpdir()
-        .map_err(|e| format!("failed to create tmpdir: {e}"))?;
+    let tmpdir = make_test_tmpdir().map_err(|e| format!("failed to create tmpdir: {e}"))?;
 
-    let result = run_suite_test_inner(test, shell_argv, shell_str, &tmpdir, script_modes, locale_dir);
+    let result = run_suite_test_inner(
+        test,
+        shell_argv,
+        shell_str,
+        &tmpdir,
+        script_modes,
+        locale_dir,
+    );
     remove_dir_all(&tmpdir);
     result
 }
@@ -1722,20 +1741,37 @@ fn run_suite_test_inner(
     let mut log = Vec::<String>::new();
 
     if let Some(ref script) = test.script {
-        log.push(format!(">>> script ({} modes) {:?}", script_modes.len(),
-            if script.len() > 80 { format!("{}...", &script[..80]) } else { script.clone() }));
+        log.push(format!(
+            ">>> script ({} modes) {:?}",
+            script_modes.len(),
+            if script.len() > 80 {
+                format!("{}...", &script[..80])
+            } else {
+                script.clone()
+            }
+        ));
         let mut reference: Option<RunResult> = None;
         for &mode in script_modes {
             let rr = run_command(script, shell_argv, &test_env, tmpdir, mode)?;
             if let Some(ref prev) = reference {
-                if rr.stdout != prev.stdout || rr.stderr != prev.stderr || rr.exit_code != prev.exit_code {
+                if rr.stdout != prev.stdout
+                    || rr.stderr != prev.stderr
+                    || rr.exit_code != prev.exit_code
+                {
                     return Err(format!(
                         "script mode divergence: {:?} vs {:?}\n\
                          --- {:?} ---\nstdout: {:?}\nstderr: {:?}\nexit: {}\n\
                          --- {:?} ---\nstdout: {:?}\nstderr: {:?}\nexit: {}",
-                        script_modes[0], mode,
-                        script_modes[0], prev.stdout, prev.stderr, prev.exit_code,
-                        mode, rr.stdout, rr.stderr, rr.exit_code,
+                        script_modes[0],
+                        mode,
+                        script_modes[0],
+                        prev.stdout,
+                        prev.stderr,
+                        prev.exit_code,
+                        mode,
+                        rr.stdout,
+                        rr.stderr,
+                        rr.exit_code,
                     ));
                 }
             } else {
@@ -1747,8 +1783,8 @@ fn run_suite_test_inner(
 
     if let Some(ref rr) = last_run {
         if let Some((line_num, ref raw_pattern)) = test.expect_stdout {
-            let pattern_str = extract_pattern(raw_pattern)
-                .map_err(|e| format!("line {line_num}: {e}"))?;
+            let pattern_str =
+                extract_pattern(raw_pattern).map_err(|e| format!("line {line_num}: {e}"))?;
             let pattern = parse_regex(&pattern_str)
                 .map_err(|e| format!("line {line_num}: bad regex: {e}"))?;
             log.push(format!(">>> stdout {:?}", pattern_str));
@@ -1761,8 +1797,8 @@ fn run_suite_test_inner(
             }
         }
         if let Some((line_num, ref raw_pattern)) = test.expect_stderr {
-            let pattern_str = extract_pattern(raw_pattern)
-                .map_err(|e| format!("line {line_num}: {e}"))?;
+            let pattern_str =
+                extract_pattern(raw_pattern).map_err(|e| format!("line {line_num}: {e}"))?;
             let pattern = parse_regex(&pattern_str)
                 .map_err(|e| format!("line {line_num}: bad regex: {e}"))?;
             log.push(format!(">>> stderr {:?}", pattern_str));
@@ -1775,8 +1811,8 @@ fn run_suite_test_inner(
             }
         }
         if let Some((line_num, ref raw_expr)) = test.expect_exit_code {
-            let expr = parse_exit_expr(raw_expr.trim())
-                .map_err(|e| format!("line {line_num}: {e}"))?;
+            let expr =
+                parse_exit_expr(raw_expr.trim()).map_err(|e| format!("line {line_num}: {e}"))?;
             log.push(format!(">>> exit_code {}", expr.display()));
             if !expr.eval(rr.exit_code) {
                 return Err(format!(
@@ -1847,8 +1883,8 @@ fn run_suite_test_inner(
                     .ok_or_else(|| format!("line {line_num}: expect before spawn"))?;
                 let (timeout, quoted_part) = parse_expect_args(rest)?;
                 let timeout = timeout.unwrap_or(Duration::from_millis(200));
-                let pattern_str = extract_pattern(quoted_part)
-                    .map_err(|e| format!("line {line_num}: {e}"))?;
+                let pattern_str =
+                    extract_pattern(quoted_part).map_err(|e| format!("line {line_num}: {e}"))?;
                 let pattern = parse_regex(&pattern_str)
                     .map_err(|e| format!("line {line_num}: bad regex: {e}"))?;
                 log.push(format!(
@@ -1873,8 +1909,8 @@ fn run_suite_test_inner(
                     .ok_or_else(|| format!("line {line_num}: expect_line before spawn"))?;
                 let (timeout, quoted_part) = parse_expect_args(rest)?;
                 let timeout = timeout.unwrap_or(Duration::from_millis(200));
-                let pattern_str = extract_pattern(quoted_part)
-                    .map_err(|e| format!("line {line_num}: {e}"))?;
+                let pattern_str =
+                    extract_pattern(quoted_part).map_err(|e| format!("line {line_num}: {e}"))?;
                 let pattern = parse_regex(&pattern_str)
                     .map_err(|e| format!("line {line_num}: bad regex: {e}"))?;
                 log.push(format!(
@@ -1884,7 +1920,10 @@ fn run_suite_test_inner(
                 ));
                 match sess.expect_line(&pattern, &pattern_str, timeout) {
                     Ok(consumed) => {
-                        log.push(format!("<<< line matched (consumed {} bytes)", consumed.len()));
+                        log.push(format!(
+                            "<<< line matched (consumed {} bytes)",
+                            consumed.len()
+                        ));
                     }
                     Err(e) => {
                         dump_log(&log);
@@ -1897,8 +1936,7 @@ fn run_suite_test_inner(
                 let sess = session
                     .as_ref()
                     .ok_or_else(|| format!("line {line_num}: send before spawn"))?;
-                let text = extract_quoted(rest)
-                    .map_err(|e| format!("line {line_num}: {e}"))?;
+                let text = extract_quoted(rest).map_err(|e| format!("line {line_num}: {e}"))?;
                 log.push(format!(">>> send {:?}", text));
                 sess.send_line(&text)
                     .map_err(|e| format!("line {line_num}: send failed: {e}"))?;
@@ -1924,8 +1962,7 @@ fn run_suite_test_inner(
                 let sess = session
                     .as_ref()
                     .ok_or_else(|| format!("line {line_num}: signal before spawn"))?;
-                let sig = parse_signal(rest)
-                    .map_err(|e| format!("line {line_num}: {e}"))?;
+                let sig = parse_signal(rest).map_err(|e| format!("line {line_num}: {e}"))?;
                 log.push(format!(">>> signal {rest}"));
                 sess.send_signal(sig)
                     .map_err(|e| format!("line {line_num}: signal failed: {e}"))?;
@@ -1968,8 +2005,7 @@ fn run_suite_test_inner(
             }
 
             "sleep" => {
-                let dur = parse_timeout_value(rest)
-                    .map_err(|e| format!("line {line_num}: {e}"))?;
+                let dur = parse_timeout_value(rest).map_err(|e| format!("line {line_num}: {e}"))?;
                 log.push(format!(">>> sleep {}ms", dur.as_millis()));
                 thread::sleep(dur);
             }
@@ -1998,7 +2034,13 @@ fn dump_log(log: &[String]) {
 
 // ── Suite runner ─────────────────────────────────────────────────────────────
 
-fn run_suite(suite: &TestSuite, shell_argv: &[String], shell_str: &str, script_modes: &[ScriptMode], locale_dir: Option<&str>) -> Vec<TestReport> {
+fn run_suite(
+    suite: &TestSuite,
+    shell_argv: &[String],
+    shell_str: &str,
+    script_modes: &[ScriptMode],
+    locale_dir: Option<&str>,
+) -> Vec<TestReport> {
     let mut reports = Vec::new();
     for test in &suite.tests {
         let outcome = match run_suite_test(test, shell_argv, shell_str, script_modes, locale_dir) {
@@ -2110,7 +2152,9 @@ fn main() {
         i += 1;
     }
 
-    let has_epty = files.iter().any(|f| f.ends_with(".epty") || f.ends_with(".md"));
+    let has_epty = files
+        .iter()
+        .any(|f| f.ends_with(".epty") || f.ends_with(".md"));
 
     if has_epty {
         // Suite mode
@@ -2153,10 +2197,7 @@ fn main() {
                 eprintln!("expect_pty: cannot read {file}: {e}");
                 std::process::exit(2);
             });
-            let filename = file
-                .rsplit('/')
-                .next()
-                .unwrap_or(file);
+            let filename = file.rsplit('/').next().unwrap_or(file);
             match parse_suite(&text, filename) {
                 Ok(s) => {
                     suites.push((file.clone(), s));
@@ -2200,7 +2241,13 @@ fn main() {
             if suite.tests.is_empty() {
                 continue;
             }
-            let reports = run_suite(suite, &shell_argv, &shell_str, &script_modes, locale_dir_ref);
+            let reports = run_suite(
+                suite,
+                &shell_argv,
+                &shell_str,
+                &script_modes,
+                locale_dir_ref,
+            );
             let (p, f) = print_suite_report(suite, &reports);
             total_passed += p;
             total_failed += f;
@@ -2214,12 +2261,8 @@ fn main() {
         let total_suites = suites_passed + suites_failed;
         let total_tests = total_passed + total_failed;
         eprintln!("=== Summary ===");
-        eprintln!(
-            "Suites: {suites_passed} passed, {suites_failed} failed (of {total_suites})"
-        );
-        eprintln!(
-            "Tests:  {total_passed} passed, {total_failed} failed (of {total_tests})"
-        );
+        eprintln!("Suites: {suites_passed} passed, {suites_failed} failed (of {total_suites})");
+        eprintln!("Tests:  {total_passed} passed, {total_failed} failed (of {total_tests})");
 
         if total_failed > 0 {
             std::process::exit(1);
@@ -2455,8 +2498,14 @@ mod tests {
 
     #[test]
     fn timeout_millis() {
-        assert_eq!(parse_timeout_value("500ms").unwrap(), Duration::from_millis(500));
-        assert_eq!(parse_timeout_value("2000ms").unwrap(), Duration::from_millis(2000));
+        assert_eq!(
+            parse_timeout_value("500ms").unwrap(),
+            Duration::from_millis(500)
+        );
+        assert_eq!(
+            parse_timeout_value("2000ms").unwrap(),
+            Duration::from_millis(2000)
+        );
     }
 
     #[test]
@@ -2539,7 +2588,10 @@ mod tests {
 
     #[test]
     fn pattern_regex_special_chars() {
-        assert_eq!(extract_pattern(r#"".*foo[0-9]+""#).unwrap(), r#".*foo[0-9]+"#);
+        assert_eq!(
+            extract_pattern(r#"".*foo[0-9]+""#).unwrap(),
+            r#".*foo[0-9]+"#
+        );
     }
 
     #[test]
@@ -2613,8 +2665,14 @@ end test \"with env\"
 ";
         let suite = parse_suite(input, "env.epty").unwrap();
         assert_eq!(suite.tests[0].env_overrides.len(), 2);
-        assert_eq!(suite.tests[0].env_overrides[0], ("FOO".into(), "bar".into()));
-        assert_eq!(suite.tests[0].env_overrides[1], ("BAZ".into(), "qux".into()));
+        assert_eq!(
+            suite.tests[0].env_overrides[0],
+            ("FOO".into(), "bar".into())
+        );
+        assert_eq!(
+            suite.tests[0].env_overrides[1],
+            ("BAZ".into(), "qux".into())
+        );
     }
 
     #[test]
@@ -2730,7 +2788,10 @@ begin test \"bare\"
 end test \"bare\"
 ";
         let err = parse_suite(input, "bad.epty").unwrap_err();
-        assert!(err.contains("missing doc"), "expected 'missing doc' error, got: {err}");
+        assert!(
+            err.contains("missing doc"),
+            "expected 'missing doc' error, got: {err}"
+        );
     }
 
     #[test]
@@ -2783,7 +2844,10 @@ begin test \"t\"
 end test \"t\"
 ";
         let err = parse_suite(input, "bad.epty").unwrap_err();
-        assert!(err.contains("must not end with"), "expected colon-dot error, got: {err}");
+        assert!(
+            err.contains("must not end with"),
+            "expected colon-dot error, got: {err}"
+        );
     }
 
     #[test]
@@ -2859,7 +2923,10 @@ begin test \"multi\"
 end test \"multi\"
 ";
         let suite = parse_suite(input, "test.epty").unwrap();
-        assert_eq!(suite.tests[0].script.as_deref(), Some("echo line1\necho line2\necho line3"));
+        assert_eq!(
+            suite.tests[0].script.as_deref(),
+            Some("echo line1\necho line2\necho line3")
+        );
     }
 
     #[test]
@@ -2878,7 +2945,10 @@ begin test \"blanks\"
 end test \"blanks\"
 ";
         let suite = parse_suite(input, "test.epty").unwrap();
-        assert_eq!(suite.tests[0].script.as_deref(), Some("echo before\n\necho after"));
+        assert_eq!(
+            suite.tests[0].script.as_deref(),
+            Some("echo before\n\necho after")
+        );
     }
 
     #[test]
@@ -2895,7 +2965,10 @@ begin test \"quotes\"
 end test \"quotes\"
 ";
         let suite = parse_suite(input, "test.epty").unwrap();
-        assert_eq!(suite.tests[0].script.as_deref(), Some("echo \"hello world\" '$var' $(cmd)"));
+        assert_eq!(
+            suite.tests[0].script.as_deref(),
+            Some("echo \"hello world\" '$var' $(cmd)")
+        );
     }
 
     #[test]
@@ -2944,9 +3017,18 @@ end test \"bad\"
 
     #[test]
     fn parse_script_modes_test() {
-        assert_eq!(parse_script_modes("dash-c").unwrap(), vec![ScriptMode::DashC]);
-        assert_eq!(parse_script_modes("tempfile").unwrap(), vec![ScriptMode::Tempfile]);
-        assert_eq!(parse_script_modes("stdin").unwrap(), vec![ScriptMode::Stdin]);
+        assert_eq!(
+            parse_script_modes("dash-c").unwrap(),
+            vec![ScriptMode::DashC]
+        );
+        assert_eq!(
+            parse_script_modes("tempfile").unwrap(),
+            vec![ScriptMode::Tempfile]
+        );
+        assert_eq!(
+            parse_script_modes("stdin").unwrap(),
+            vec![ScriptMode::Stdin]
+        );
         assert_eq!(
             parse_script_modes("dash-c,tempfile,stdin").unwrap(),
             vec![ScriptMode::DashC, ScriptMode::Tempfile, ScriptMode::Stdin]
@@ -3009,5 +3091,4 @@ end test \"alpha\"
         assert_eq!(suites[1].1.tests.len(), 1);
         assert_eq!(suites[1].1.tests[0].name, "alpha");
     }
-
 }

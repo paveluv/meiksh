@@ -2,11 +2,11 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
+use crate::arena::StringArena;
 use crate::builtin::{self, BuiltinOutcome};
 use crate::exec;
 use crate::expand::{self, ExpandError};
 use crate::interactive;
-use crate::arena::StringArena;
 use crate::syntax::{self, Program};
 use crate::sys;
 
@@ -524,7 +524,9 @@ impl Shell {
             } else {
                 self.env.insert("LINENO".into(), lineno.to_string());
             }
-            status = self.execute_program(&Program { items: vec![item].into_boxed_slice() })?;
+            status = self.execute_program(&Program {
+                items: vec![item].into_boxed_slice(),
+            })?;
             self.run_pending_traps()?;
             if !self.running || self.has_pending_control() {
                 break;
@@ -1238,7 +1240,9 @@ impl expand::Context for Shell {
             '0' => Some(Cow::Borrowed(&self.shell_name)),
             digit if digit.is_ascii_digit() => {
                 let index = digit.to_digit(10)? as usize;
-                self.positional.get(index.saturating_sub(1)).map(|v| Cow::Borrowed(v.as_str()))
+                self.positional
+                    .get(index.saturating_sub(1))
+                    .map(|v| Cow::Borrowed(v.as_str()))
             }
             _ => None,
         }
@@ -1248,7 +1252,9 @@ impl expand::Context for Shell {
         if index == 0 {
             Some(Cow::Borrowed(&self.shell_name))
         } else {
-            self.positional.get(index - 1).map(|v| Cow::Borrowed(v.as_str()))
+            self.positional
+                .get(index - 1)
+                .map(|v| Cow::Borrowed(v.as_str()))
         }
     }
 
@@ -2167,9 +2173,11 @@ mod tests {
             }
 
             let arena = StringArena::new();
-            let program =
-                syntax::parse("999999999999999999999999999999999999999999999999999999999999<in", &arena)
-                    .expect("overflowing number is a word, not an io_number");
+            let program = syntax::parse(
+                "999999999999999999999999999999999999999999999999999999999999<in",
+                &arena,
+            )
+            .expect("overflowing number is a word, not an io_number");
             assert_eq!(program.items.len(), 1);
         });
     }
@@ -2976,10 +2984,9 @@ mod tests {
                     TrapCondition::Signal(crate::sys::SIGTERM),
                     TrapAction::Command("echo trapped".into()),
                 );
-                shell.trap_actions.insert(
-                    TrapCondition::Exit,
-                    TrapAction::Command("echo bye".into()),
-                );
+                shell
+                    .trap_actions
+                    .insert(TrapCondition::Exit, TrapAction::Command("echo bye".into()));
 
                 shell.reset_traps_for_subshell().expect("reset");
 
@@ -3172,11 +3179,7 @@ mod tests {
                 t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
                 t(
                     "waitpid",
-                    vec![
-                        ArgMatcher::Int(1000),
-                        ArgMatcher::Any,
-                        ArgMatcher::Int(0),
-                    ],
+                    vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)],
                     TraceResult::Status(0),
                 ),
             ],
@@ -3190,18 +3193,11 @@ mod tests {
 
     #[test]
     fn command_substitute_maps_error() {
-        run_trace(
-            vec![t(
-                "pipe",
-                vec![],
-                TraceResult::Err(sys::EIO),
-            )],
-            || {
-                let mut shell = test_shell();
-                let result = crate::expand::Context::command_substitute(&mut shell, "true");
-                assert!(result.is_err());
-            },
-        );
+        run_trace(vec![t("pipe", vec![], TraceResult::Err(sys::EIO))], || {
+            let mut shell = test_shell();
+            let result = crate::expand::Context::command_substitute(&mut shell, "true");
+            assert!(result.is_err());
+        });
     }
 
     #[test]
@@ -3320,7 +3316,9 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 shell.register_background_job("sleep".into(), None, vec![fake_handle(4001)]);
-                let status = shell.wait_on_job_index(0, false).expect("wait stopped index");
+                let status = shell
+                    .wait_on_job_index(0, false)
+                    .expect("wait stopped index");
                 assert_eq!(status, 128 + 20);
             },
         );
@@ -3332,12 +3330,18 @@ mod tests {
             vec![
                 t(
                     "access",
-                    vec![ArgMatcher::Str("nonexistent-script".into()), ArgMatcher::Int(0)],
+                    vec![
+                        ArgMatcher::Str("nonexistent-script".into()),
+                        ArgMatcher::Int(0),
+                    ],
                     TraceResult::Err(sys::ENOENT),
                 ),
                 t(
                     "stat",
-                    vec![ArgMatcher::Str("/usr/bin/nonexistent-script".into()), ArgMatcher::Any],
+                    vec![
+                        ArgMatcher::Str("/usr/bin/nonexistent-script".into()),
+                        ArgMatcher::Any,
+                    ],
                     TraceResult::Err(sys::ENOENT),
                 ),
             ],
@@ -3363,7 +3367,11 @@ mod tests {
                 ),
                 t(
                     "open",
-                    vec![ArgMatcher::Str("binary-script".into()), ArgMatcher::Any, ArgMatcher::Any],
+                    vec![
+                        ArgMatcher::Str("binary-script".into()),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
                     TraceResult::Fd(10),
                 ),
                 t(
@@ -3376,11 +3384,7 @@ mod tests {
                     vec![ArgMatcher::Fd(10), ArgMatcher::Any],
                     TraceResult::Int(0),
                 ),
-                t(
-                    "close",
-                    vec![ArgMatcher::Fd(10)],
-                    TraceResult::Int(0),
-                ),
+                t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
             ],
             || {
                 let shell = test_shell();
@@ -3401,9 +3405,7 @@ mod tests {
                     vec![
                         ArgMatcher::Int(3001),
                         ArgMatcher::Any,
-                        ArgMatcher::Int(
-                            (sys::WUNTRACED | sys::WNOHANG) as i64,
-                        ),
+                        ArgMatcher::Int((sys::WUNTRACED | sys::WNOHANG) as i64),
                     ],
                     TraceResult::Int(0),
                 ),
@@ -3419,9 +3421,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(1),
-                        ArgMatcher::Bytes(
-                            b"[1] Stopped (SIGTSTP) sleep 99\n".to_vec(),
-                        ),
+                        ArgMatcher::Bytes(b"[1] Stopped (SIGTSTP) sleep 99\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -3505,16 +3505,16 @@ mod tests {
                 ),
                 t(
                     "stat",
-                    vec![ArgMatcher::Str("/nonexistent/missing".into()), ArgMatcher::Any],
+                    vec![
+                        ArgMatcher::Str("/nonexistent/missing".into()),
+                        ArgMatcher::Any,
+                    ],
                     TraceResult::Err(sys::ENOENT),
                 ),
             ],
             || {
                 let shell = test_shell();
-                assert_eq!(
-                    resolve_script_path(&shell, Path::new("missing")),
-                    None
-                );
+                assert_eq!(resolve_script_path(&shell, Path::new("missing")), None);
             },
         );
     }

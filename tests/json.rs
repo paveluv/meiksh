@@ -3,7 +3,6 @@
 //! Supports: objects, arrays, strings, booleans, null.
 //! Does NOT support: numbers (not needed for our use case).
 
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum JsonValue {
     Null,
@@ -87,7 +86,9 @@ impl<'a> Parser<'a> {
         if b != ch {
             Err(format!(
                 "expected {:?}, got {:?} at byte {}",
-                ch as char, b as char, self.pos - 1
+                ch as char,
+                b as char,
+                self.pos - 1
             ))
         } else {
             Ok(())
@@ -114,7 +115,9 @@ impl<'a> Parser<'a> {
             if got != b {
                 return Err(format!(
                     "expected {:?}, got {:?} at byte {}",
-                    b as char, got as char, self.pos - 1
+                    b as char,
+                    got as char,
+                    self.pos - 1
                 ));
             }
         }
