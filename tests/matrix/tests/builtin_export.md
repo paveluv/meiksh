@@ -296,3 +296,20 @@ begin test "export -p handles spaces in values"
     exit_code 0
 end test "export -p handles spaces in values"
 ```
+
+#### Test: export cannot change a readonly variable
+
+Assigning `name=word` to a readonly variable through `export` fails
+with a non-zero exit status.
+
+```
+begin test "export cannot change a readonly variable"
+  script
+    readonly RO_EXPORT=1
+    export RO_EXPORT=2
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
+end test "export cannot change a readonly variable"
+```

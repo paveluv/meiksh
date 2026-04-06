@@ -1167,6 +1167,24 @@ begin test "options default to off"
 end test "options default to off"
 ```
 
+#### Test: set -h is accepted
+
+The `-h` option is reserved for speeding up PATH lookups; the shell must
+accept turning it on and off without error.
+
+```
+begin test "set -h is accepted"
+  script
+    set -h
+    set +h
+    printf 'ok\n'
+  expect
+    stdout "ok"
+    stderr ""
+    exit_code 0
+end test "set -h is accepted"
+```
+
 #### Test: invalid option produces non-zero exit status
 
 An invalid option shall cause `set` to exit with a non-zero status.

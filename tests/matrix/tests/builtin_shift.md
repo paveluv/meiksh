@@ -160,20 +160,38 @@ begin test "shift 2 shifts $3 to $1"
 end test "shift 2 shifts $3 to $1"
 ```
 
+#### Test: shift 0 leaves positional parameters unchanged
+
+When `n` is 0, positional parameters and `$#` are not changed.
+
+```
+begin test "shift 0 leaves positional parameters unchanged"
+  script
+    set -- a b c
+    shift 0
+    echo "$1$2$3$#"
+  expect
+    stdout "abc3"
+    stderr ""
+    exit_code 0
+end test "shift 0 leaves positional parameters unchanged"
+```
+
 #### Test: shift greater than $# fails and leaves parameters intact
 
-When `n` exceeds `$#`, the shell reports an error and parameters
-are unchanged.
+When `n` exceeds `$#`, the shell returns a non-zero status, writes a
+warning to standard error, and leaves the positional parameters
+unchanged.
 
 ```
 begin test "shift greater than $# fails and leaves parameters intact"
   script
     set -- a b c
-    shift 5 2>/dev/null
+    shift 5
     echo "$? $1"
   expect
-    stdout ".*[1-9].* a"
-    stderr ""
+    stdout "1 a"
+    stderr ".+"
     exit_code 0
 end test "shift greater than $# fails and leaves parameters intact"
 ```

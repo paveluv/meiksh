@@ -119,7 +119,7 @@ impl ShellError {
         }
     }
 
-    fn with_status(status: i32, message: impl Into<String>) -> Self {
+    pub fn with_status(status: i32, message: impl Into<String>) -> Self {
         Self {
             message: format!("{STATUS_PREFIX}{status}:{}", message.into()).into_boxed_str(),
         }
@@ -190,6 +190,8 @@ pub struct Shell {
     pub ignored_on_entry: BTreeSet<TrapCondition>,
     pub loop_depth: usize,
     pub function_depth: usize,
+    /// Nesting depth of dot (`source_path`) files being executed.
+    pub source_depth: usize,
     pub pending_control: Option<PendingControl>,
     pub(crate) interactive: bool,
     pub(crate) errexit_suppressed: bool,
@@ -235,6 +237,7 @@ pub enum TrapAction {
 
 pub enum FlowSignal {
     Continue(i32),
+    UtilityError(i32),
     Exit(i32),
 }
 
@@ -316,6 +319,7 @@ impl Shell {
             ignored_on_entry,
             loop_depth: 0,
             function_depth: 0,
+            source_depth: 0,
             pending_control: None,
             interactive,
             errexit_suppressed: false,
@@ -374,6 +378,7 @@ impl Shell {
             ignored_on_entry: BTreeSet::new(),
             loop_depth: 0,
             function_depth: 0,
+            source_depth: 0,
             pending_control: None,
             errexit_suppressed: false,
             pid: sys::current_pid(),
@@ -393,19 +398,27 @@ impl Shell {
         if self.interactive {
             interactive::load_env_file(self)?;
         }
-        let status = if let Some(command) = self.options.command_string.clone() {
-            self.run_source("<command>", &command)?
+        let result = if let Some(command) = self.options.command_string.clone() {
+            self.run_source("<command>", &command)
         } else if let Some(script) = self.options.script_path.clone() {
             let (resolved, contents) = self.load_script_source(&script)?;
-            self.run_source(resolved.to_string_lossy().as_ref(), &contents)?
+            self.run_source(resolved.to_string_lossy().as_ref(), &contents)
+        } else if self.interactive {
+            interactive::run(self)
         } else {
-            if self.interactive {
-                interactive::run(self)?
-            } else {
-                self.run_standard_input()?
-            }
+            self.run_standard_input()
         };
-        self.run_exit_trap(status)
+        match result {
+            Ok(status) => self.run_exit_trap(status),
+            Err(error) => {
+                let status = error.exit_status();
+                let msg = error.display_message();
+                if !msg.is_empty() {
+                    sys_eprintln!("meiksh: {}", msg);
+                }
+                self.run_exit_trap(status)
+            }
+        }
     }
 
     fn setup_interactive_signals(&self) -> Result<(), ShellError> {
@@ -531,6 +544,12 @@ impl Shell {
             if !self.running || self.has_pending_control() {
                 break;
             }
+        }
+        if let Some(PendingControl::Return(rs)) = self.pending_control.take() {
+            if self.source_depth > 0 && self.function_depth == 0 {
+                return Ok(rs);
+            }
+            self.pending_control = Some(PendingControl::Return(rs));
         }
         Ok(status)
     }
@@ -833,7 +852,10 @@ impl Shell {
 
     pub fn source_path(&mut self, path: &Path) -> Result<i32, ShellError> {
         let contents = sys::read_file(&path.display().to_string())?;
-        self.execute_string(&contents)
+        self.source_depth += 1;
+        let result = self.execute_string(&contents);
+        self.source_depth -= 1;
+        result
     }
 
     fn load_script_source(&self, script: &Path) -> Result<(PathBuf, String), ShellError> {
@@ -883,6 +905,7 @@ impl Shell {
         }
         match builtin::run(self, argv)? {
             BuiltinOutcome::Status(status) => Ok(FlowSignal::Continue(status)),
+            BuiltinOutcome::UtilityError(status) => Ok(FlowSignal::UtilityError(status)),
             BuiltinOutcome::Exit(status) => Ok(FlowSignal::Exit(status)),
             BuiltinOutcome::Return(status) => {
                 self.pending_control = Some(PendingControl::Return(status));
@@ -1540,6 +1563,7 @@ mod tests {
             ignored_on_entry: BTreeSet::new(),
             loop_depth: 0,
             function_depth: 0,
+            source_depth: 0,
             pending_control: None,
             interactive: false,
             errexit_suppressed: false,

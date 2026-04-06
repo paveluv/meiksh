@@ -168,3 +168,21 @@ begin test "continue 2 returns to outer loop"
     exit_code 0
 end test "continue 2 returns to outer loop"
 ```
+
+#### Test: continue with invalid n returns non-zero in a loop
+
+If `n` is not an unsigned decimal integer greater than or equal to 1,
+the `continue` utility yields a non-zero exit status. The check runs in
+a subshell so the parent can report that exit status portably.
+
+```
+begin test "continue with invalid n returns non-zero in a loop"
+  script
+    ( for i in 1; do continue 0; done )
+    echo "outer=$?"
+  expect
+    stdout "outer=1"
+    stderr "(.|\n)*"
+    exit_code 0
+end test "continue with invalid n returns non-zero in a loop"
+```

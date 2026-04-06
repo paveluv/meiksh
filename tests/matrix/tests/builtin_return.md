@@ -152,3 +152,22 @@ begin test "return without n inherits previous exit status"
     exit_code 0
 end test "return without n inherits previous exit status"
 ```
+
+#### Test: return from dot-sourced file stops the dot command
+
+`return` ends execution of the current dot script; the dot command’s
+exit status becomes `n` when `n` is given.
+
+```
+begin test "return from dot-sourced file stops the dot command"
+  script
+    echo 'return 9' > tmp_dot_return.sh
+    . ./tmp_dot_return.sh
+    echo "status=$?"
+    rm -f tmp_dot_return.sh
+  expect
+    stdout "status=9"
+    stderr ""
+    exit_code 0
+end test "return from dot-sourced file stops the dot command"
+```

@@ -128,7 +128,9 @@ from Section 2.15 of the POSIX.1-2024 Shell Command Language specification.
 
 #### Test: times produces output with time format
 
-The `times` utility writes accumulated user and system times.
+Successful `times` writes two lines to standard output: shell user and
+system time on the first line, then the same pair for child processes,
+each using the POSIX locale `minutes`m`seconds`s fields.
 
 ```
 begin test "times produces output with time format"

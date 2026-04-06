@@ -161,21 +161,6 @@ from Section 2.15 of the POSIX.1-2024 Shell Command Language specification.
 
 ### Tests
 
-#### Test: special built-in: break exists
-
-Verifies that the `break` special built-in is recognized by the shell.
-
-```
-begin test "special built-in: break exists"
-  script
-    command -v break >/dev/null 2>&1 || true
-  expect
-    stdout ""
-    stderr ""
-    exit_code 0
-end test "special built-in: break exists"
-```
-
 #### Test: break without n defaults to 1
 
 When `n` is not specified, `break` exits from the innermost enclosing loop.
@@ -234,4 +219,23 @@ begin test "break n greater than enclosing loops"
     stderr ""
     exit_code 0
 end test "break n greater than enclosing loops"
+```
+
+#### Test: break with invalid n returns non-zero in a loop
+
+If `n` is not an unsigned decimal integer greater than or equal to 1,
+the `break` utility yields a non-zero exit status. The failure is
+exercised inside a subshell so the surrounding script can still print
+the subshell’s exit status.
+
+```
+begin test "break with invalid n returns non-zero in a loop"
+  script
+    ( for i in 1; do break 0; done )
+    echo "outer=$?"
+  expect
+    stdout "outer=1"
+    stderr "(.|\n)*"
+    exit_code 0
+end test "break with invalid n returns non-zero in a loop"
 ```

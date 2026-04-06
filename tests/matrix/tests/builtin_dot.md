@@ -166,3 +166,41 @@ begin test "dot sources file via PATH resolution"
     exit_code 0
 end test "dot sources file via PATH resolution"
 ```
+
+#### Test: dot on empty file yields zero status
+
+If the sourced file contains no commands, dot completes successfully
+with exit status zero.
+
+```
+begin test "dot on empty file yields zero status"
+  script
+    : > tmp_dot_empty.sh
+    . ./tmp_dot_empty.sh
+    echo "status=$?"
+    rm -f tmp_dot_empty.sh
+  expect
+    stdout "status=0"
+    stderr ""
+    exit_code 0
+end test "dot on empty file yields zero status"
+```
+
+#### Test: dot exit status is last command in file
+
+The exit status of dot is that of the last command executed from the
+file, or zero if nothing ran.
+
+```
+begin test "dot exit status is last command in file"
+  script
+    echo 'false' > tmp_dot_last.sh
+    . ./tmp_dot_last.sh
+    echo "status=$?"
+    rm -f tmp_dot_last.sh
+  expect
+    stdout "status=1"
+    stderr ""
+    exit_code 0
+end test "dot exit status is last command in file"
+```

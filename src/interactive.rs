@@ -228,6 +228,7 @@ mod tests {
             ignored_on_entry: BTreeSet::new(),
             loop_depth: 0,
             function_depth: 0,
+            source_depth: 0,
             pending_control: None,
             interactive: false,
             errexit_suppressed: false,

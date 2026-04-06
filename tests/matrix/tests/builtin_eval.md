@@ -179,3 +179,20 @@ begin test "eval with empty string returns 0"
     exit_code 0
 end test "eval with empty string returns 0"
 ```
+
+#### Test: eval exit status follows executed command
+
+Otherwise, eval returns the exit status of the command formed from its
+arguments.
+
+```
+begin test "eval exit status follows executed command"
+  script
+    eval false
+    echo "$?"
+  expect
+    stdout "1"
+    stderr ""
+    exit_code 0
+end test "eval exit status follows executed command"
+```
