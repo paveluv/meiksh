@@ -6332,4 +6332,40 @@ mod tests {
             },
         );
     }
+
+    #[test]
+    fn wait_for_pipeline_pipefail_returns_rightmost_nonzero() {
+        run_trace(
+            vec![
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(100), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Status(3),
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(101), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Status(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let spawned = SpawnedProcesses {
+                    children: vec![
+                        sys::ChildHandle {
+                            pid: 100,
+                            stdout_fd: None,
+                        },
+                        sys::ChildHandle {
+                            pid: 101,
+                            stdout_fd: None,
+                        },
+                    ],
+                    pgid: None,
+                };
+                let status = wait_for_pipeline(&mut shell, spawned, Some("pipe"), true).unwrap();
+                assert_eq!(status, 3);
+            },
+        );
+    }
 }
