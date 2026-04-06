@@ -1119,7 +1119,11 @@ fn expand_braced_parameter<C: Context>(
         Some(":?") => {
             if !is_set || is_null {
                 let default_msg = format!("{name}: parameter null or not set");
-                let message = expand_parameter_word(ctx, word.unwrap_or(&default_msg), quoted)?;
+                let raw = match word {
+                    Some(w) if !w.is_empty() => w,
+                    _ => &default_msg,
+                };
+                let message = expand_parameter_word(ctx, raw, quoted)?;
                 Err(ExpandError {
                     message: message.into(),
                 })
@@ -1132,7 +1136,11 @@ fn expand_braced_parameter<C: Context>(
         Some("?") => {
             if !is_set {
                 let default_msg = format!("{name}: parameter not set");
-                let message = expand_parameter_word(ctx, word.unwrap_or(&default_msg), quoted)?;
+                let raw = match word {
+                    Some(w) if !w.is_empty() => w,
+                    _ => &default_msg,
+                };
+                let message = expand_parameter_word(ctx, raw, quoted)?;
                 Err(ExpandError {
                     message: message.into(),
                 })
@@ -1322,8 +1330,8 @@ fn expand_parameter_error_text<C: Context>(
 ) -> Result<String, ExpandError> {
     let owned;
     let raw = match word {
-        Some(w) => w,
-        None => {
+        Some(w) if !w.is_empty() => w,
+        _ => {
             owned = format!("{name}: {default_message}");
             &owned
         }
@@ -3329,8 +3337,9 @@ mod tests {
         assert!(assign_parameter_text(&mut ctx, "1", "value").is_err());
 
         let err = expand_braced_parameter_text(&mut ctx, "MISSING4?").expect_err("? no word");
-        assert_eq!(&*err.message, "");
-        let text = expand_parameter_error_text(&mut ctx, "X", None, "my default").expect("no word");
+        assert_eq!(&*err.message, "MISSING4: parameter not set");
+        let text =
+            expand_parameter_error_text(&mut ctx, "X", Some(""), "my default").expect("empty word");
         assert_eq!(text, "X: my default");
     }
 
@@ -3368,10 +3377,10 @@ mod tests {
         assert_eq!(&*question.message, "boom");
         let colon_default =
             expand_braced_parameter_text(&mut ctx, "EMPTY:?").expect_err("colon default");
-        assert_eq!(&*colon_default.message, "");
+        assert_eq!(&*colon_default.message, "EMPTY: parameter null or not set");
         let question_default =
             expand_braced_parameter_text(&mut ctx, "MISSING?").expect_err("question default");
-        assert_eq!(&*question_default.message, "");
+        assert_eq!(&*question_default.message, "MISSING: parameter not set");
     }
 
     #[test]
@@ -4530,7 +4539,7 @@ mod tests {
             &arena,
         )
         .expect_err("? with unset");
-        assert_eq!(&*err.message, "");
+        assert_eq!(&*err.message, "NOVAR: parameter not set");
 
         ctx.env.insert("SET".into(), "val".into());
         assert_eq!(
@@ -4555,6 +4564,16 @@ mod tests {
             .expect("? success"),
             "val"
         );
+
+        let err_colon = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "${NOVAR:?}".into(),
+            },
+            &arena,
+        )
+        .expect_err(":? with unset");
+        assert_eq!(&*err_colon.message, "NOVAR: parameter null or not set");
     }
 
     #[test]
