@@ -109,6 +109,7 @@ Review every existing test in the suite and scrutinize that it doesn't contradic
 - Every test should exercise at least one "shall" normative statement quoted in the md file sections.
 - The tests shouldn't be tailored to any existing shell behaviors (such as bash or dash).
 - The tests shouldn't be overasserting (asserting something that POSIX doesn't explicitly specify).
+- The tests shouldn't be underasserting either. For example, if POSIX requires a diagnostic message on stderr, the stderr expect shouldn't be `""` or `".*"` (which allows no messages), but rather `".+"` or similar.
 - Does the expected exit code match exactly what the standard says?
 - Does the test description accurately paraphrase the standard's requirement?
 - Does the test have a proper description? Every test must have a brief,
