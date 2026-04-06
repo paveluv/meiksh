@@ -306,3 +306,53 @@ Observed:
 - shell continues execution
 
 ---
+
+## 10) `time -p` not recognized in POSIX mode
+
+**POSIX passage (exact quotes)**  
+From `docs/posix/md/utilities/time.md`:
+
+SYNOPSIS:
+
+> "`time [-p] utility [argument...]`"
+
+OPTIONS:
+
+> "The following option shall be supported:
+>
+> **-p**: Write the timing output to standard error in the format shown in the STDERR section."
+
+STDERR:
+
+> "If **-p** is specified, the following format shall be used for the timing statistics in the POSIX locale:
+>
+> `"real %f\nuser %f\nsys %f\n", <real seconds>, <user seconds>, <system seconds>`"
+
+**Why this is non-compliant**  
+Bash implements `time` as a shell reserved word. In `--posix` mode, the keyword does not recognize `-p` as an option; instead it treats `-p` as the utility operand to be timed, resulting in a command-not-found error. Outside POSIX mode, `time -p` works correctly. The POSIX standard requires `-p` to be supported regardless of whether `time` is implemented as a keyword or external utility.
+
+**Reproduction (portable shell commands)**
+
+```sh
+/usr/bin/bash --posix -c 'time -p true' 2>&1
+```
+
+Expected:
+- timing output on stderr in POSIX format (`real`, `user`, `sys` lines)
+- exit status `0`
+
+Observed:
+- `/usr/bin/bash: line 1: time: command not found`
+- exit status `127`
+
+Contrast with non-POSIX mode (works correctly):
+
+```sh
+/usr/bin/bash -c 'time -p true' 2>&1
+```
+
+Observed:
+- `real 0.00` / `user 0.00` / `sys 0.00`
+- exit status `0`
+
+---
