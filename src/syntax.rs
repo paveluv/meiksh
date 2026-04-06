@@ -123,6 +123,7 @@ pub struct CaseCommand<'src> {
 pub struct CaseArm<'src> {
     pub patterns: Box<[Word<'src>]>,
     pub body: Program<'src>,
+    pub fallthrough: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -230,6 +231,7 @@ impl<'src> Command<'src> {
                             .collect::<Vec<_>>()
                             .into_boxed_slice(),
                         body: program_convert(arm.body, arena),
+                        fallthrough: arm.fallthrough,
                     })
                     .collect::<Vec<_>>()
                     .into_boxed_slice(),
@@ -356,6 +358,7 @@ enum Token<'src> {
     Newline,
     Semi,
     DSemi,
+    SemiAmp,
     Amp,
     Pipe,
     AndIf,
@@ -859,6 +862,9 @@ fn tokenize<'src>(
                 if peek_byte(source, index + 1) == Some(b';') {
                     tokens.push(Token::DSemi);
                     index += 2;
+                } else if peek_byte(source, index + 1) == Some(b'&') {
+                    tokens.push(Token::SemiAmp);
+                    index += 2;
                 } else {
                     tokens.push(Token::Semi);
                     index += 1;
@@ -1243,7 +1249,7 @@ impl<'src> Parser<'src> {
             if self.is_eof()
                 || (stop_on_closer && self.at_closer())
                 || at_stop(self.peek())
-                || (stop_on_dsemi && matches!(self.peek(), Token::DSemi))
+                || (stop_on_dsemi && matches!(self.peek(), Token::DSemi | Token::SemiAmp))
             {
                 break;
             }
@@ -1533,17 +1539,19 @@ impl<'src> Parser<'src> {
             self.expect(Token::RParen, "expected ')' after case pattern")?;
             self.skip_separators();
             let body = self.parse_program_until(false, |t| matches!(t, Token::Esac), true)?;
+            let fallthrough = matches!(self.peek(), Token::SemiAmp);
             arms.push(CaseArm {
                 patterns: patterns.into_boxed_slice(),
                 body,
+                fallthrough,
             });
 
-            if matches!(self.peek(), Token::DSemi) {
+            if matches!(self.peek(), Token::DSemi | Token::SemiAmp) {
                 self.index += 1;
                 self.skip_separators();
             } else if !matches!(self.peek(), Token::Esac) {
                 return Err(ParseError {
-                    message: "expected ';;' or 'esac'".into(),
+                    message: "expected ';;', ';&', or 'esac'".into(),
                 });
             }
         }
@@ -1879,6 +1887,7 @@ fn intern_nonword_token<'a>(token: Token<'_>) -> Token<'a> {
         Token::Newline => Token::Newline,
         Token::Semi => Token::Semi,
         Token::DSemi => Token::DSemi,
+        Token::SemiAmp => Token::SemiAmp,
         Token::Amp => Token::Amp,
         Token::Pipe => Token::Pipe,
         Token::AndIf => Token::AndIf,
@@ -2252,6 +2261,21 @@ mod tests {
             &empty_after_linebreak.items[0].and_or.first.commands[0],
             Command::Case(case_command) if case_command.arms.is_empty()
         ));
+
+        let fallthrough =
+            parse_test("case a in a) echo one ;& b) echo two ;; esac").expect("parse fallthrough");
+        if let Command::Case(c) = &fallthrough.items[0].and_or.first.commands[0] {
+            assert_eq!(c.arms.len(), 2);
+            assert!(c.arms[0].fallthrough);
+            assert!(!c.arms[1].fallthrough);
+        } else {
+            panic!("expected Case");
+        }
+
+        let ft_static = fallthrough.items[0].and_or.first.commands[0]
+            .clone()
+            .into_static();
+        assert!(matches!(ft_static, Command::Case(ref cc) if cc.arms[0].fallthrough));
     }
 
     #[test]
@@ -2576,7 +2600,7 @@ mod tests {
                 .parse_case_command()
                 .expect_err("missing terminator")
                 .message,
-            "expected ';;' or 'esac'"
+            "expected ';;', ';&', or 'esac'"
         );
     }
 
@@ -3054,6 +3078,7 @@ mod tests {
                 body: Program {
                     items: vec![].into_boxed_slice(),
                 },
+                fallthrough: false,
             }]
             .into_boxed_slice(),
         });
@@ -3189,6 +3214,7 @@ mod tests {
             Token::Newline,
             Token::Semi,
             Token::DSemi,
+            Token::SemiAmp,
             Token::Amp,
             Token::Pipe,
             Token::AndIf,
