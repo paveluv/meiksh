@@ -4,6 +4,7 @@
 
 #[macro_use]
 pub mod sys;
+pub mod arena;
 pub mod builtin;
 pub mod exec;
 pub mod expand;

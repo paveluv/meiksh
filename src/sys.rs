@@ -2292,11 +2292,11 @@ pub fn string_to_bytes(s: &str) -> Vec<u8> {
         .collect()
 }
 
-pub fn exec_replace(file: &str, argv: &[String]) -> SysResult<()> {
+pub fn exec_replace<S: AsRef<str>>(file: &str, argv: &[S]) -> SysResult<()> {
     let c_file = CString::new(string_to_bytes(file)).map_err(|_| SysError::NulInPath)?;
     let mut owned = Vec::with_capacity(argv.len());
     for arg in argv {
-        owned.push(CString::new(string_to_bytes(arg)).map_err(|_| SysError::NulInPath)?);
+        owned.push(CString::new(string_to_bytes(arg.as_ref())).map_err(|_| SysError::NulInPath)?);
     }
 
     let mut pointers: Vec<*const c_char> = owned.iter().map(|arg| arg.as_ptr()).collect();
@@ -2595,7 +2595,7 @@ mod tests {
 
     #[test]
     fn exec_replace_rejects_nul_in_program_and_args() {
-        let err = exec_replace("bad\0program", &[]).unwrap_err();
+        let err = exec_replace::<String>("bad\0program", &[]).unwrap_err();
         assert_eq!(err, SysError::NulInPath);
         assert!(err.errno().is_none());
         assert!(!err.is_enoent());

@@ -6,6 +6,7 @@ use crate::builtin::{self, BuiltinOutcome};
 use crate::exec;
 use crate::expand::{self, ExpandError};
 use crate::interactive;
+use crate::arena::StringArena;
 use crate::syntax::{self, Program};
 use crate::sys;
 
@@ -23,7 +24,7 @@ pub fn run_from_env() -> i32 {
 #[derive(Clone, Debug, Default)]
 pub struct ShellOptions {
     pub allexport: bool,
-    pub command_string: Option<String>,
+    pub command_string: Option<Box<str>>,
     pub errexit: bool,
     pub syntax_check_only: bool,
     pub force_interactive: bool,
@@ -36,7 +37,7 @@ pub struct ShellOptions {
     pub verbose: bool,
     pub xtrace: bool,
     pub script_path: Option<PathBuf>,
-    pub shell_name_override: Option<String>,
+    pub shell_name_override: Option<Box<str>>,
     pub positional: Vec<String>,
 }
 
@@ -106,7 +107,7 @@ impl ShellOptions {
 
 #[derive(Debug)]
 pub struct ShellError {
-    pub message: String,
+    pub message: Box<str>,
 }
 
 const STATUS_PREFIX: &str = "__MEIKSH_STATUS__:";
@@ -114,13 +115,13 @@ const STATUS_PREFIX: &str = "__MEIKSH_STATUS__:";
 impl ShellError {
     fn new(message: impl Into<String>) -> Self {
         Self {
-            message: message.into(),
+            message: message.into().into_boxed_str(),
         }
     }
 
     fn with_status(status: i32, message: impl Into<String>) -> Self {
         Self {
-            message: format!("{STATUS_PREFIX}{status}:{}", message.into()),
+            message: format!("{STATUS_PREFIX}{status}:{}", message.into()).into_boxed_str(),
         }
     }
 
@@ -172,7 +173,7 @@ impl From<ExpandError> for ShellError {
 #[derive(Clone)]
 pub struct Shell {
     pub options: ShellOptions,
-    pub shell_name: String,
+    pub shell_name: Box<str>,
     pub env: HashMap<String, String>,
     pub exported: BTreeSet<String>,
     pub readonly: BTreeSet<String>,
@@ -211,7 +212,7 @@ pub enum ReapedJobState {
 #[derive(Clone, Debug)]
 pub struct Job {
     pub id: usize,
-    pub command: String,
+    pub command: Box<str>,
     pub pgid: Option<sys::Pid>,
     pub last_pid: Option<sys::Pid>,
     pub last_status: Option<i32>,
@@ -229,7 +230,7 @@ pub enum TrapCondition {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TrapAction {
     Ignore,
-    Command(String),
+    Command(Box<str>),
 }
 
 pub enum FlowSignal {
@@ -275,10 +276,10 @@ impl Shell {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
         let options = parse_options(&args)?;
-        let shell_name = options
+        let shell_name: Box<str> = options
             .shell_name_override
             .clone()
-            .unwrap_or_else(|| sys::shell_name_from_args(&args).to_string());
+            .unwrap_or_else(|| sys::shell_name_from_args(&args).to_string().into());
         let raw_env: HashMap<String, String> = sys::env_vars();
         let mut env = HashMap::new();
         let mut exported = BTreeSet::new();
@@ -349,10 +350,10 @@ impl Shell {
     pub(crate) fn from_args(args: &[&str]) -> Result<Self, ShellError> {
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         let options = parse_options(&args)?;
-        let shell_name = options
+        let shell_name: Box<str> = options
             .shell_name_override
             .clone()
-            .unwrap_or_else(|| sys::shell_name_from_args(&args).to_string());
+            .unwrap_or_else(|| sys::shell_name_from_args(&args).to_string().into());
         Ok(Self {
             positional: options.positional.clone(),
             interactive: options.force_interactive,
@@ -436,7 +437,8 @@ impl Shell {
 
     fn run_source_buffer(&mut self, source: &str) -> Result<i32, ShellError> {
         if self.options.syntax_check_only {
-            let _ = syntax::parse_with_aliases(source, &self.aliases)?;
+            let arena = StringArena::new();
+            let _ = syntax::parse_with_aliases(source, &self.aliases, &arena)?;
             return Ok(0);
         }
         self.execute_source_incrementally(source)
@@ -505,7 +507,8 @@ impl Shell {
     }
 
     fn execute_source_incrementally(&mut self, source: &str) -> Result<i32, ShellError> {
-        let mut session = syntax::ParseSession::new(source)?;
+        let arena = StringArena::new();
+        let mut session = syntax::ParseSession::new(source, &arena)?;
         let mut status = 0;
         self.run_pending_traps()?;
         loop {
@@ -521,7 +524,7 @@ impl Shell {
             } else {
                 self.env.insert("LINENO".into(), lineno.to_string());
             }
-            status = self.execute_program(&Program { items: vec![item] })?;
+            status = self.execute_program(&Program { items: vec![item].into_boxed_slice() })?;
             self.run_pending_traps()?;
             if !self.running || self.has_pending_control() {
                 break;
@@ -538,7 +541,8 @@ impl Shell {
         if source.is_empty() {
             return Ok(None);
         }
-        match syntax::parse_with_aliases(source, &self.aliases) {
+        let arena = StringArena::new();
+        match syntax::parse_with_aliases(source, &self.aliases, &arena) {
             Ok(_) => {
                 let buffered = std::mem::take(source);
                 self.run_source_buffer(&buffered).map(Some)
@@ -613,7 +617,7 @@ impl Shell {
     pub fn set_var(&mut self, name: &str, value: String) -> Result<(), ShellError> {
         if self.readonly.contains(name) {
             return Err(ShellError {
-                message: format!("{name}: readonly variable"),
+                message: format!("{name}: readonly variable").into(),
             });
         }
         if let Some(existing) = self.env.get_mut(name) {
@@ -644,7 +648,7 @@ impl Shell {
     pub fn unset_var(&mut self, name: &str) -> Result<(), ShellError> {
         if self.readonly.contains(name) {
             return Err(ShellError {
-                message: format!("{name}: readonly variable"),
+                message: format!("{name}: readonly variable").into(),
             });
         }
         self.env.remove(name);
@@ -658,7 +662,7 @@ impl Shell {
 
     pub fn register_background_job(
         &mut self,
-        command: String,
+        command: Box<str>,
         pgid: Option<sys::Pid>,
         children: Vec<sys::ChildHandle>,
     ) -> usize {
@@ -742,7 +746,7 @@ impl Shell {
             .iter()
             .position(|job| job.id == id)
             .ok_or_else(|| ShellError {
-                message: format!("job {id}: not found"),
+                message: format!("job {id}: not found").into(),
             })?;
         let pgid = self.jobs[index].pgid;
         if let Some(ref termios) = self.jobs[index].saved_termios {
@@ -806,7 +810,7 @@ impl Shell {
             .iter_mut()
             .find(|job| job.id == id)
             .ok_or_else(|| ShellError {
-                message: format!("job {id}: not found"),
+                message: format!("job {id}: not found").into(),
             })?;
         let was_stopped = matches!(job.state, JobState::Stopped(_));
         job.state = JobState::Running;
@@ -1114,7 +1118,7 @@ impl Shell {
                 {
                     let signal = sys::has_pending_signal().unwrap_or(sys::SIGINT);
                     return Err(ShellError {
-                        message: format!("wait interrupted:{}", 128 + signal),
+                        message: format!("wait interrupted:{}", 128 + signal).into(),
                     });
                 }
                 Err(error) if sys::interrupted(&error) => continue,
@@ -1290,8 +1294,8 @@ fn parse_options(args: &[String]) -> Result<ShellOptions, ShellError> {
             let command = args.get(index + 1).ok_or_else(|| ShellError {
                 message: ShellError::with_status(2, "-c requires an argument").message,
             })?;
-            options.command_string = Some(command.clone());
-            options.shell_name_override = args.get(index + 2).cloned();
+            options.command_string = Some(command.clone().into());
+            options.shell_name_override = args.get(index + 2).map(|s| s.clone().into());
             options.positional = args.iter().skip(index + 3).cloned().collect();
             return Ok(options);
         }
@@ -1336,8 +1340,8 @@ fn parse_options(args: &[String]) -> Result<ShellOptions, ShellError> {
                 let command = args.get(index + 1).ok_or_else(|| ShellError {
                     message: ShellError::with_status(2, "-c requires an argument").message,
                 })?;
-                options.command_string = Some(command.clone());
-                options.shell_name_override = args.get(index + 2).cloned();
+                options.command_string = Some(command.clone().into());
+                options.shell_name_override = args.get(index + 2).map(|s| s.clone().into());
                 options.positional = args.iter().skip(index + 3).cloned().collect();
                 return Ok(options);
             }
@@ -1349,7 +1353,7 @@ fn parse_options(args: &[String]) -> Result<ShellOptions, ShellError> {
             continue;
         }
         options.script_path = Some(PathBuf::from(arg));
-        options.shell_name_override = Some(arg.clone());
+        options.shell_name_override = Some(arg.clone().into());
         options.positional = args.iter().skip(index + 1).cloned().collect();
         return Ok(options);
     }
@@ -1454,7 +1458,7 @@ fn decode_stdin_chunk(bytes: Vec<u8>) -> sys::SysResult<String> {
 
 fn stdin_parse_error_requires_more_input(error: &syntax::ParseError) -> bool {
     matches!(
-        error.message.as_str(),
+        &*error.message,
         "unterminated single quote"
             | "unterminated double quote"
             | "unterminated here-document"
@@ -1513,7 +1517,7 @@ mod tests {
     fn test_shell() -> Shell {
         Shell {
             options: ShellOptions::default(),
-            shell_name: "meiksh".to_string(),
+            shell_name: "meiksh".into(),
             env: HashMap::new(),
             exported: BTreeSet::new(),
             readonly: BTreeSet::new(),
@@ -1643,9 +1647,9 @@ mod tests {
             shell.set_var("NAME", "value".into()).expect("set");
             shell.mark_readonly("NAME");
             let set_error = shell.set_var("NAME", "new".into()).expect_err("readonly");
-            assert_eq!(set_error.message, "NAME: readonly variable");
+            assert_eq!(&*set_error.message, "NAME: readonly variable");
             let unset_error = shell.unset_var("NAME").expect_err("readonly");
-            assert_eq!(unset_error.message, "NAME: readonly variable");
+            assert_eq!(&*unset_error.message, "NAME: readonly variable");
         });
     }
 
@@ -1908,10 +1912,10 @@ mod tests {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
             let error = shell.continue_job(99, false).expect_err("missing job");
-            assert_eq!(error.message, "job 99: not found");
+            assert_eq!(&*error.message, "job 99: not found");
 
             let error = shell.wait_for_job(99).expect_err("missing job");
-            assert_eq!(error.message, "job 99: not found");
+            assert_eq!(&*error.message, "job 99: not found");
         });
     }
 
@@ -1940,7 +1944,8 @@ mod tests {
     #[test]
     fn shell_error_converts_from_parse_and_expand_errors() {
         assert_no_syscalls(|| {
-            let parse_err = syntax::parse("echo 'unterminated").expect_err("parse");
+            let arena = StringArena::new();
+            let parse_err = syntax::parse("echo 'unterminated", &arena).expect_err("parse");
             let shell_err: ShellError = parse_err.into();
             assert!(!shell_err.message.is_empty());
 
@@ -1948,7 +1953,7 @@ mod tests {
                 message: "expand".into(),
             }
             .into();
-            assert_eq!(expand_err.message, "expand");
+            assert_eq!(&*expand_err.message, "expand");
             assert_eq!(shell_err.exit_status(), 2);
             assert_eq!(format!("{}", shell_err), shell_err.display_message());
         });
@@ -1968,7 +1973,7 @@ mod tests {
             shell.mark_readonly("CTX_SET");
             let error = expand::Context::set_var(&mut shell, "CTX_SET", "8".into())
                 .expect_err("readonly ctx set");
-            assert_eq!(error.message, "CTX_SET: readonly variable");
+            assert_eq!(&*error.message, "CTX_SET: readonly variable");
         });
     }
 
@@ -2156,12 +2161,14 @@ mod tests {
                 "echo \"unterminated",
                 "printf ok |\n",
             ] {
-                let error = syntax::parse(source).expect_err("incomplete parse");
+                let arena = StringArena::new();
+                let error = syntax::parse(source, &arena).expect_err("incomplete parse");
                 assert!(stdin_parse_error_requires_more_input(&error), "{source}");
             }
 
+            let arena = StringArena::new();
             let program =
-                syntax::parse("999999999999999999999999999999999999999999999999999999999999<in")
+                syntax::parse("999999999999999999999999999999999999999999999999999999999999<in", &arena)
                     .expect("overflowing number is a word, not an io_number");
             assert_eq!(program.items.len(), 1);
         });
@@ -2967,11 +2974,11 @@ mod tests {
                 );
                 shell.trap_actions.insert(
                     TrapCondition::Signal(crate::sys::SIGTERM),
-                    TrapAction::Command("echo trapped".to_string()),
+                    TrapAction::Command("echo trapped".into()),
                 );
                 shell.trap_actions.insert(
                     TrapCondition::Exit,
-                    TrapAction::Command("echo bye".to_string()),
+                    TrapAction::Command("echo bye".into()),
                 );
 
                 shell.reset_traps_for_subshell().expect("reset");

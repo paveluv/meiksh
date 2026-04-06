@@ -1,10 +1,11 @@
-use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 
+use crate::arena::StringArena;
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Program<'src> {
-    pub items: Vec<ListItem<'src>>,
+    pub items: Box<[ListItem<'src>]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -16,7 +17,7 @@ pub struct ListItem<'src> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AndOr<'src> {
     pub first: Pipeline<'src>,
-    pub rest: Vec<(LogicalOp, Pipeline<'src>)>,
+    pub rest: Box<[(LogicalOp, Pipeline<'src>)]>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,7 +37,7 @@ pub enum TimedMode {
 pub struct Pipeline<'src> {
     pub negated: bool,
     pub timed: TimedMode,
-    pub commands: Vec<Command<'src>>,
+    pub commands: Box<[Command<'src>]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -49,25 +50,25 @@ pub enum Command<'src> {
     Loop(LoopCommand<'src>),
     For(ForCommand<'src>),
     Case(CaseCommand<'src>),
-    Redirected(Box<Command<'src>>, Vec<Redirection<'src>>),
+    Redirected(Box<Command<'src>>, Box<[Redirection<'src>]>),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SimpleCommand<'src> {
-    pub assignments: Vec<Assignment<'src>>,
-    pub words: Vec<Word<'src>>,
-    pub redirections: Vec<Redirection<'src>>,
+    pub assignments: Box<[Assignment<'src>]>,
+    pub words: Box<[Word<'src>]>,
+    pub redirections: Box<[Redirection<'src>]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Assignment<'src> {
-    pub name: Cow<'src, str>,
+    pub name: &'src str,
     pub value: Word<'src>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Word<'src> {
-    pub raw: Cow<'src, str>,
+    pub raw: &'src str,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -80,7 +81,7 @@ pub struct Redirection<'src> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FunctionDef<'src> {
-    pub name: Cow<'src, str>,
+    pub name: &'src str,
     pub body: Box<Command<'src>>,
 }
 
@@ -88,7 +89,7 @@ pub struct FunctionDef<'src> {
 pub struct IfCommand<'src> {
     pub condition: Program<'src>,
     pub then_branch: Program<'src>,
-    pub elif_branches: Vec<ElifBranch<'src>>,
+    pub elif_branches: Box<[ElifBranch<'src>]>,
     pub else_branch: Option<Program<'src>>,
 }
 
@@ -107,156 +108,177 @@ pub struct LoopCommand<'src> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ForCommand<'src> {
-    pub name: Cow<'src, str>,
-    pub items: Option<Vec<Word<'src>>>,
+    pub name: &'src str,
+    pub items: Option<Box<[Word<'src>]>>,
     pub body: Program<'src>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CaseCommand<'src> {
     pub word: Word<'src>,
-    pub arms: Vec<CaseArm<'src>>,
+    pub arms: Box<[CaseArm<'src>]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CaseArm<'src> {
-    pub patterns: Vec<Word<'src>>,
+    pub patterns: Box<[Word<'src>]>,
     pub body: Program<'src>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HereDoc<'src> {
-    pub delimiter: Cow<'src, str>,
-    pub body: Cow<'src, str>,
+    pub delimiter: &'src str,
+    pub body: &'src str,
     pub expand: bool,
     pub strip_tabs: bool,
 }
 
 impl<'src> Command<'src> {
     pub fn into_static(self) -> Command<'static> {
+        let arena: &'static StringArena = Box::leak(Box::new(StringArena::new()));
+        self.convert_static(arena)
+    }
+
+    fn convert_static(self, arena: &'static StringArena) -> Command<'static> {
         match self {
             Command::Simple(cmd) => Command::Simple(SimpleCommand {
                 assignments: cmd
                     .assignments
+                    .into_vec()
                     .into_iter()
                     .map(|a| Assignment {
-                        name: Cow::Owned(a.name.into_owned()),
+                        name: arena.intern_str(a.name),
                         value: Word {
-                            raw: Cow::Owned(a.value.raw.into_owned()),
+                            raw: arena.intern_str(a.value.raw),
                         },
                     })
-                    .collect(),
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
                 words: cmd
                     .words
+                    .into_vec()
                     .into_iter()
                     .map(|w| Word {
-                        raw: Cow::Owned(w.raw.into_owned()),
+                        raw: arena.intern_str(w.raw),
                     })
-                    .collect(),
-                redirections: cmd.redirections.into_iter().map(redir_static).collect(),
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+                redirections: cmd.redirections.into_vec().into_iter().map(|r| redir_convert(r, arena)).collect::<Vec<_>>().into_boxed_slice(),
             }),
-            Command::Subshell(p) => Command::Subshell(program_static(p)),
-            Command::Group(p) => Command::Group(program_static(p)),
+            Command::Subshell(p) => Command::Subshell(program_convert(p, arena)),
+            Command::Group(p) => Command::Group(program_convert(p, arena)),
             Command::FunctionDef(f) => Command::FunctionDef(FunctionDef {
-                name: Cow::Owned(f.name.into_owned()),
-                body: Box::new(f.body.into_static()),
+                name: arena.intern_str(f.name),
+                body: Box::new(f.body.convert_static(arena)),
             }),
             Command::If(c) => Command::If(IfCommand {
-                condition: program_static(c.condition),
-                then_branch: program_static(c.then_branch),
+                condition: program_convert(c.condition, arena),
+                then_branch: program_convert(c.then_branch, arena),
                 elif_branches: c
                     .elif_branches
+                    .into_vec()
                     .into_iter()
                     .map(|b| ElifBranch {
-                        condition: program_static(b.condition),
-                        body: program_static(b.body),
+                        condition: program_convert(b.condition, arena),
+                        body: program_convert(b.body, arena),
                     })
-                    .collect(),
-                else_branch: c.else_branch.map(program_static),
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+                else_branch: c.else_branch.map(|p| program_convert(p, arena)),
             }),
             Command::Loop(c) => Command::Loop(LoopCommand {
                 kind: c.kind,
-                condition: program_static(c.condition),
-                body: program_static(c.body),
+                condition: program_convert(c.condition, arena),
+                body: program_convert(c.body, arena),
             }),
             Command::For(c) => Command::For(ForCommand {
-                name: Cow::Owned(c.name.into_owned()),
+                name: arena.intern_str(c.name),
                 items: c.items.map(|items| {
                     items
+                        .into_vec()
                         .into_iter()
                         .map(|w| Word {
-                            raw: Cow::Owned(w.raw.into_owned()),
+                            raw: arena.intern_str(w.raw),
                         })
-                        .collect()
+                        .collect::<Vec<_>>()
+                        .into_boxed_slice()
                 }),
-                body: program_static(c.body),
+                body: program_convert(c.body, arena),
             }),
             Command::Case(c) => Command::Case(CaseCommand {
                 word: Word {
-                    raw: Cow::Owned(c.word.raw.into_owned()),
+                    raw: arena.intern_str(c.word.raw),
                 },
                 arms: c
                     .arms
+                    .into_vec()
                     .into_iter()
                     .map(|arm| CaseArm {
                         patterns: arm
                             .patterns
+                            .into_vec()
                             .into_iter()
                             .map(|w| Word {
-                                raw: Cow::Owned(w.raw.into_owned()),
+                                raw: arena.intern_str(w.raw),
                             })
-                            .collect(),
-                        body: program_static(arm.body),
+                            .collect::<Vec<_>>()
+                            .into_boxed_slice(),
+                        body: program_convert(arm.body, arena),
                     })
-                    .collect(),
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
             }),
             Command::Redirected(cmd, redirs) => Command::Redirected(
-                Box::new(cmd.into_static()),
-                redirs.into_iter().map(redir_static).collect(),
+                Box::new(cmd.convert_static(arena)),
+                redirs.into_vec().into_iter().map(|r| redir_convert(r, arena)).collect::<Vec<_>>().into_boxed_slice(),
             ),
         }
     }
 }
 
-fn program_static(p: Program<'_>) -> Program<'static> {
+fn program_convert(p: Program<'_>, arena: &'static StringArena) -> Program<'static> {
     Program {
         items: p
             .items
+            .into_vec()
             .into_iter()
             .map(|item| ListItem {
                 and_or: AndOr {
-                    first: pipeline_static(item.and_or.first),
+                    first: pipeline_convert(item.and_or.first, arena),
                     rest: item
                         .and_or
                         .rest
+                        .into_vec()
                         .into_iter()
-                        .map(|(op, pl)| (op, pipeline_static(pl)))
-                        .collect(),
+                        .map(|(op, pl)| (op, pipeline_convert(pl, arena)))
+                        .collect::<Vec<_>>()
+                        .into_boxed_slice(),
                 },
                 asynchronous: item.asynchronous,
             })
-            .collect(),
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
     }
 }
 
-fn pipeline_static(p: Pipeline<'_>) -> Pipeline<'static> {
+fn pipeline_convert(p: Pipeline<'_>, arena: &'static StringArena) -> Pipeline<'static> {
     Pipeline {
         negated: p.negated,
         timed: p.timed,
-        commands: p.commands.into_iter().map(|c| c.into_static()).collect(),
+        commands: p.commands.into_vec().into_iter().map(|c| c.convert_static(arena)).collect::<Vec<_>>().into_boxed_slice(),
     }
 }
 
-fn redir_static(r: Redirection<'_>) -> Redirection<'static> {
+fn redir_convert(r: Redirection<'_>, arena: &'static StringArena) -> Redirection<'static> {
     Redirection {
         fd: r.fd,
         kind: r.kind,
         target: Word {
-            raw: Cow::Owned(r.target.raw.into_owned()),
+            raw: arena.intern_str(r.target.raw),
         },
         here_doc: r.here_doc.map(|hd| HereDoc {
-            delimiter: Cow::Owned(hd.delimiter.into_owned()),
-            body: Cow::Owned(hd.body.into_owned()),
+            delimiter: arena.intern_str(hd.delimiter),
+            body: arena.intern_str(hd.body),
             expand: hd.expand,
             strip_tabs: hd.strip_tabs,
         }),
@@ -283,7 +305,7 @@ pub enum RedirectionKind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParseError {
-    pub message: String,
+    pub message: Box<str>,
 }
 
 impl fmt::Display for ParseError {
@@ -296,7 +318,7 @@ impl std::error::Error for ParseError {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Token<'src> {
-    Word(Cow<'src, str>),
+    Word(&'src str),
     Newline,
     Semi,
     DSemi,
@@ -324,16 +346,17 @@ struct Tokenized<'src> {
     here_docs: VecDeque<HereDoc<'src>>,
 }
 
-pub fn parse(source: &str) -> Result<Program<'_>, ParseError> {
-    parse_with_aliases(source, &HashMap::new())
+pub fn parse<'src>(source: &'src str, arena: &'src StringArena) -> Result<Program<'src>, ParseError> {
+    parse_with_aliases(source, &HashMap::new(), arena)
 }
 
 pub fn parse_with_aliases<'src>(
     source: &'src str,
     aliases: &HashMap<String, String>,
+    arena: &'src StringArena,
 ) -> Result<Program<'src>, ParseError> {
-    let tokenized = tokenize(source)?;
-    Parser::new(tokenized.tokens, tokenized.here_docs, aliases.clone()).parse_program_until(
+    let tokenized = tokenize(source, arena)?;
+    Parser::new(tokenized.tokens, tokenized.here_docs, aliases.clone(), arena).parse_program_until(
         false,
         &[],
         false,
@@ -345,10 +368,10 @@ pub struct ParseSession<'src> {
 }
 
 impl<'src> ParseSession<'src> {
-    pub fn new(source: &'src str) -> Result<Self, ParseError> {
-        let tokenized = tokenize(source)?;
+    pub fn new(source: &'src str, arena: &'src StringArena) -> Result<Self, ParseError> {
+        let tokenized = tokenize(source, arena)?;
         Ok(Self {
-            parser: Parser::new(tokenized.tokens, tokenized.here_docs, HashMap::new()),
+            parser: Parser::new(tokenized.tokens, tokenized.here_docs, HashMap::new(), arena),
         })
     }
 
@@ -405,7 +428,7 @@ fn skip_scan(source: &str, index: &mut usize) -> Result<(), ParseError> {
                 }
             }
             Err(ParseError {
-                message: "unterminated single quote".to_string(),
+                message: "unterminated single quote".into(),
             })
         }
         '"' => {
@@ -449,7 +472,7 @@ fn skip_dollar_single_quote(source: &str, index: &mut usize) -> Result<(), Parse
         *index += ch.len_utf8();
     }
     Err(ParseError {
-        message: "unterminated dollar-single-quotes".to_string(),
+        message: "unterminated dollar-single-quotes".into(),
     })
 }
 
@@ -473,7 +496,7 @@ fn skip_dollar_construct(source: &str, index: &mut usize) -> Result<(), ParseErr
                 *index += ch.len_utf8();
             }
             return Err(ParseError {
-                message: "unterminated arithmetic expansion".to_string(),
+                message: "unterminated arithmetic expansion".into(),
             });
         }
         *index += 2;
@@ -508,7 +531,7 @@ fn skip_paren_body(source: &str, index: &mut usize) -> Result<(), ParseError> {
         }
     }
     Err(ParseError {
-        message: "unterminated command substitution".to_string(),
+        message: "unterminated command substitution".into(),
     })
 }
 
@@ -529,7 +552,7 @@ fn skip_brace_body(source: &str, index: &mut usize) -> Result<(), ParseError> {
         }
     }
     Err(ParseError {
-        message: "unterminated parameter expansion".to_string(),
+        message: "unterminated parameter expansion".into(),
     })
 }
 
@@ -548,7 +571,7 @@ fn skip_backtick_body(source: &str, index: &mut usize) -> Result<(), ParseError>
         }
     }
     Err(ParseError {
-        message: "unterminated backquote".to_string(),
+        message: "unterminated backquote".into(),
     })
 }
 
@@ -590,7 +613,7 @@ fn skip_dquote_body(source: &str, index: &mut usize) -> Result<(), ParseError> {
         }
     }
     Err(ParseError {
-        message: "unterminated double quote".to_string(),
+        message: "unterminated double quote".into(),
     })
 }
 
@@ -606,7 +629,7 @@ enum WordBuf<'src> {
 }
 
 impl<'src> WordBuf<'src> {
-    fn take(&mut self, end: usize) -> Option<Cow<'src, str>> {
+    fn take(&mut self, end: usize, arena: &'src StringArena) -> Option<&'src str> {
         match self {
             WordBuf::Slice { start, source } => {
                 if *start >= end {
@@ -614,7 +637,7 @@ impl<'src> WordBuf<'src> {
                 }
                 let s = &source[*start..end];
                 *start = end;
-                Some(Cow::Borrowed(s))
+                Some(s)
             }
             WordBuf::Owned { buf, tail, source } => {
                 buf.push_str(&source[*tail..end]);
@@ -623,7 +646,7 @@ impl<'src> WordBuf<'src> {
                 }
                 let result = std::mem::take(buf);
                 *tail = end;
-                Some(Cow::Owned(result))
+                Some(arena.intern(result))
             }
         }
     }
@@ -691,7 +714,7 @@ impl<'src> WordBuf<'src> {
     }
 }
 
-fn tokenize<'src>(source: &'src str) -> Result<Tokenized<'src>, ParseError> {
+fn tokenize<'src>(source: &'src str, arena: &'src StringArena) -> Result<Tokenized<'src>, ParseError> {
     let mut tokens: Vec<Token<'src>> = Vec::new();
     let mut here_docs: VecDeque<HereDoc<'src>> = VecDeque::new();
     let mut pending_here_docs: VecDeque<(String, bool, bool)> = VecDeque::new();
@@ -712,6 +735,7 @@ fn tokenize<'src>(source: &'src str) -> Result<Tokenized<'src>, ParseError> {
                     &mut tokens,
                     &mut expect_here_doc_target,
                     &mut pending_here_docs,
+                    arena,
                 );
                 index += 1;
                 word.reset_slice(index);
@@ -723,14 +747,15 @@ fn tokenize<'src>(source: &'src str) -> Result<Tokenized<'src>, ParseError> {
                     &mut tokens,
                     &mut expect_here_doc_target,
                     &mut pending_here_docs,
+                    arena,
                 );
                 tokens.push(Token::Newline);
                 index += 1;
                 while let Some((delimiter, expand, strip_tabs)) = pending_here_docs.pop_front() {
                     let body = read_here_doc_body(source, &mut index, &delimiter, strip_tabs, expand)?;
                     here_docs.push_back(HereDoc {
-                        delimiter: Cow::Owned(delimiter),
-                        body: Cow::Owned(body),
+                        delimiter: arena.intern(delimiter),
+                        body: arena.intern(body),
                         expand,
                         strip_tabs,
                     });
@@ -749,7 +774,7 @@ fn tokenize<'src>(source: &'src str) -> Result<Tokenized<'src>, ParseError> {
                 loop {
                     if index >= source.len() {
                         return Err(ParseError {
-                            message: "unterminated single quote".to_string(),
+                            message: "unterminated single quote".into(),
                         });
                     }
                     let c = next_char(source, index).unwrap();
@@ -783,6 +808,7 @@ fn tokenize<'src>(source: &'src str) -> Result<Tokenized<'src>, ParseError> {
                     &mut tokens,
                     &mut expect_here_doc_target,
                     &mut pending_here_docs,
+                    arena,
                 );
                 if peek_byte(source, index + 1) == Some(b';') {
                     tokens.push(Token::DSemi);
@@ -800,6 +826,7 @@ fn tokenize<'src>(source: &'src str) -> Result<Tokenized<'src>, ParseError> {
                     &mut tokens,
                     &mut expect_here_doc_target,
                     &mut pending_here_docs,
+                    arena,
                 );
                 if peek_byte(source, index + 1) == Some(b'&') {
                     tokens.push(Token::AndIf);
@@ -817,6 +844,7 @@ fn tokenize<'src>(source: &'src str) -> Result<Tokenized<'src>, ParseError> {
                     &mut tokens,
                     &mut expect_here_doc_target,
                     &mut pending_here_docs,
+                    arena,
                 );
                 if peek_byte(source, index + 1) == Some(b'|') {
                     tokens.push(Token::OrIf);
@@ -834,6 +862,7 @@ fn tokenize<'src>(source: &'src str) -> Result<Tokenized<'src>, ParseError> {
                     &mut tokens,
                     &mut expect_here_doc_target,
                     &mut pending_here_docs,
+                    arena,
                 );
                 tokens.push(Token::LParen);
                 index += 1;
@@ -846,6 +875,7 @@ fn tokenize<'src>(source: &'src str) -> Result<Tokenized<'src>, ParseError> {
                     &mut tokens,
                     &mut expect_here_doc_target,
                     &mut pending_here_docs,
+                    arena,
                 );
                 tokens.push(Token::RParen);
                 index += 1;
@@ -861,6 +891,7 @@ fn tokenize<'src>(source: &'src str) -> Result<Tokenized<'src>, ParseError> {
                     &mut tokens,
                     &mut expect_here_doc_target,
                     &mut pending_here_docs,
+                    arena,
                 );
                 if peek_byte(source, index + 1) == Some(b'<') {
                     if peek_byte(source, index + 2) == Some(b'-') {
@@ -894,6 +925,7 @@ fn tokenize<'src>(source: &'src str) -> Result<Tokenized<'src>, ParseError> {
                     &mut tokens,
                     &mut expect_here_doc_target,
                     &mut pending_here_docs,
+                    arena,
                 );
                 if peek_byte(source, index + 1) == Some(b'>') {
                     tokens.push(Token::DGreat);
@@ -933,10 +965,11 @@ fn tokenize<'src>(source: &'src str) -> Result<Tokenized<'src>, ParseError> {
         &mut tokens,
         &mut expect_here_doc_target,
         &mut pending_here_docs,
+        arena,
     );
     if !pending_here_docs.is_empty() {
         return Err(ParseError {
-            message: "unterminated here-document".to_string(),
+            message: "unterminated here-document".into(),
         });
     }
     tokens.push(Token::Eof);
@@ -949,8 +982,9 @@ fn flush_word<'src>(
     tokens: &mut Vec<Token<'src>>,
     expect_here_doc_target: &mut bool,
     pending_here_docs: &mut VecDeque<(String, bool, bool)>,
+    arena: &'src StringArena,
 ) {
-    let Some(cow) = word.take(end) else {
+    let Some(text) = word.take(end, arena) else {
         return;
     };
     if *expect_here_doc_target {
@@ -958,11 +992,11 @@ fn flush_word<'src>(
             tokens.last(),
             Some(Token::DLessDash)
         );
-        let (delimiter, expand) = parse_here_doc_delimiter(&cow);
+        let (delimiter, expand) = parse_here_doc_delimiter(text);
         pending_here_docs.push_back((delimiter, expand, strip_tabs));
         *expect_here_doc_target = false;
     }
-    tokens.push(Token::Word(cow));
+    tokens.push(Token::Word(text));
 }
 
 fn parse_here_doc_delimiter(raw: &str) -> (String, bool) {
@@ -1065,7 +1099,7 @@ fn read_here_doc_body(
             body.push('\n');
         } else {
             return Err(ParseError {
-                message: "unterminated here-document".to_string(),
+                message: "unterminated here-document".into(),
             });
         }
     }
@@ -1075,6 +1109,7 @@ struct Parser<'src> {
     tokens: Vec<Token<'src>>,
     here_docs: VecDeque<HereDoc<'src>>,
     aliases: HashMap<String, String>,
+    arena: &'src StringArena,
     alias_expand_next_word_at: Option<usize>,
     alias_expansions_remaining: usize,
     index: usize,
@@ -1085,11 +1120,13 @@ impl<'src> Parser<'src> {
         tokens: Vec<Token<'src>>,
         here_docs: VecDeque<HereDoc<'src>>,
         aliases: HashMap<String, String>,
+        arena: &'src StringArena,
     ) -> Self {
         Self {
             tokens,
             here_docs,
             aliases,
+            arena,
             alias_expand_next_word_at: None,
             alias_expansions_remaining: 1024,
             index: 0,
@@ -1127,7 +1164,7 @@ impl<'src> Parser<'src> {
             self.skip_separators();
         }
 
-        Ok(Program { items })
+        Ok(Program { items: items.into_boxed_slice() })
     }
 
     fn parse_and_or(&mut self) -> Result<AndOr<'src>, ParseError> {
@@ -1144,7 +1181,7 @@ impl<'src> Parser<'src> {
             let rhs = self.parse_pipeline()?;
             rest.push((op, rhs));
         }
-        Ok(AndOr { first, rest })
+        Ok(AndOr { first, rest: rest.into_boxed_slice() })
     }
 
     fn parse_pipeline(&mut self) -> Result<Pipeline<'src>, ParseError> {
@@ -1171,7 +1208,7 @@ impl<'src> Parser<'src> {
         Ok(Pipeline {
             negated,
             timed,
-            commands,
+            commands: commands.into_boxed_slice(),
         })
     }
 
@@ -1179,7 +1216,7 @@ impl<'src> Parser<'src> {
         self.expand_alias_at_command_start()?;
         if self.peek_bang_word() {
             return Err(ParseError {
-                message: "expected command".to_string(),
+                message: "expected command".into(),
             });
         }
         let command = if let Some(function_name) = self.try_peek_function_name() {
@@ -1209,7 +1246,7 @@ impl<'src> Parser<'src> {
                     self.expect(Token::RParen, "expected ')' to close subshell")?;
                     Command::Subshell(body)
                 }
-                Token::Word(text) if text == "{" => {
+                Token::Word(text) if *text == "{" => {
                     self.index += 1;
                     let body = self.parse_program_until(true, &[], false)?;
                     self.expect_reserved_word("}")?;
@@ -1232,7 +1269,7 @@ impl<'src> Parser<'src> {
         if redirections.is_empty() {
             Ok(command)
         } else {
-            Ok(Command::Redirected(Box::new(command), redirections))
+            Ok(Command::Redirected(Box::new(command), redirections.into_boxed_slice()))
         }
     }
 
@@ -1241,7 +1278,7 @@ impl<'src> Parser<'src> {
         let condition = self.parse_program_until(false, &["then"], false)?;
         if condition.items.is_empty() {
             return Err(ParseError {
-                message: "expected command list after 'if'".to_string(),
+                message: "expected command list after 'if'".into(),
             });
         }
         self.expect_reserved_word("then")?;
@@ -1253,7 +1290,7 @@ impl<'src> Parser<'src> {
             let condition = self.parse_program_until(false, &["then"], false)?;
             if condition.items.is_empty() {
                 return Err(ParseError {
-                    message: "expected command list after 'elif'".to_string(),
+                    message: "expected command list after 'elif'".into(),
                 });
             }
             self.expect_reserved_word("then")?;
@@ -1272,7 +1309,7 @@ impl<'src> Parser<'src> {
         Ok(Command::If(IfCommand {
             condition,
             then_branch,
-            elif_branches,
+            elif_branches: elif_branches.into_boxed_slice(),
             else_branch,
         }))
     }
@@ -1286,7 +1323,7 @@ impl<'src> Parser<'src> {
         let condition = self.parse_program_until(false, &["do"], false)?;
         if condition.items.is_empty() {
             return Err(ParseError {
-                message: format!("expected command list after '{keyword}'"),
+                message: format!("expected command list after '{keyword}'").into(),
             });
         }
         self.expect_reserved_word("do")?;
@@ -1302,13 +1339,13 @@ impl<'src> Parser<'src> {
     fn parse_for_command(&mut self) -> Result<Command<'src>, ParseError> {
         self.expect_reserved_word("for")?;
         let name = match self.peek().clone() {
-            Token::Word(text) if is_name(&text) => {
+            Token::Word(text) if is_name(text) => {
                 self.index += 1;
                 text
             }
             _ => {
                 return Err(ParseError {
-                    message: "expected for loop variable name".to_string(),
+                    message: "expected for loop variable name".into(),
                 });
             }
         };
@@ -1327,12 +1364,12 @@ impl<'src> Parser<'src> {
                     }
                     _ => {
                         return Err(ParseError {
-                            message: "expected for loop word list".to_string(),
+                            message: "expected for loop word list".into(),
                         });
                     }
                 }
             }
-            Some(items)
+            Some(items.into_boxed_slice())
         } else {
             None
         };
@@ -1353,7 +1390,7 @@ impl<'src> Parser<'src> {
             }
             _ => {
                 return Err(ParseError {
-                    message: "expected case word".to_string(),
+                    message: "expected case word".into(),
                 });
             }
         };
@@ -1362,7 +1399,7 @@ impl<'src> Parser<'src> {
             self.index += 1;
         } else {
             return Err(ParseError {
-                message: "expected 'in'".to_string(),
+                message: "expected 'in'".into(),
             });
         }
         self.skip_linebreaks();
@@ -1382,7 +1419,7 @@ impl<'src> Parser<'src> {
                     }
                     _ => {
                         return Err(ParseError {
-                            message: "expected case pattern".to_string(),
+                            message: "expected case pattern".into(),
                         });
                     }
                 }
@@ -1397,32 +1434,32 @@ impl<'src> Parser<'src> {
             self.expect(Token::RParen, "expected ')' after case pattern")?;
             self.skip_separators();
             let body = self.parse_program_until(false, &["esac"], true)?;
-            arms.push(CaseArm { patterns, body });
+            arms.push(CaseArm { patterns: patterns.into_boxed_slice(), body });
 
             if matches!(self.peek(), Token::DSemi) {
                 self.index += 1;
                 self.skip_separators();
             } else if !self.peek_reserved_word("esac") {
                 return Err(ParseError {
-                    message: "expected ';;' or 'esac'".to_string(),
+                    message: "expected ';;' or 'esac'".into(),
                 });
             }
         }
 
         self.expect_reserved_word("esac")?;
-        Ok(Command::Case(CaseCommand { word, arms }))
+        Ok(Command::Case(CaseCommand { word, arms: arms.into_boxed_slice() }))
     }
 
     fn parse_function_keyword(&mut self) -> Result<Command<'src>, ParseError> {
         self.expect_reserved_word("function")?;
         let name = match self.peek().clone() {
-            Token::Word(name) if is_name(&name) => {
+            Token::Word(name) if is_name(name) => {
                 self.index += 1;
                 name
             }
             _ => {
                 return Err(ParseError {
-                    message: "expected function name".to_string(),
+                    message: "expected function name".into(),
                 });
             }
         };
@@ -1438,33 +1475,26 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_simple_command(&mut self) -> Result<SimpleCommand<'src>, ParseError> {
-        let mut command = SimpleCommand::default();
+        let mut assignments = Vec::new();
+        let mut words = Vec::new();
+        let mut redirections = Vec::new();
 
         loop {
             self.expand_alias_after_blank_in_simple_command()?;
             if let Some(redirection) = self.try_parse_redirection()? {
-                command.redirections.push(redirection);
+                redirections.push(redirection);
                 continue;
             }
 
-            if command.words.is_empty() {
+            if words.is_empty() {
                 if let Some(text) = self.peek_word_text() {
-                    if let Some((name, value)) = split_assignment(&text) {
-                        let (name, value) = match &text {
-                            Cow::Borrowed(s) => {
-                                let (n, v) = split_assignment(s).unwrap();
-                                (Cow::Borrowed(n), Word { raw: Cow::Borrowed(v) })
-                            }
-                            Cow::Owned(_) => {
-                                (Cow::Owned(name.to_string()), Word { raw: Cow::Owned(value.to_string()) })
-                            }
-                        };
+                    if let Some((name, value)) = split_assignment(text) {
                         self.index += 1;
-                        command.assignments.push(Assignment { name, value });
+                        assignments.push(Assignment { name, value: Word { raw: value } });
                         continue;
                     }
                 }
-                if !command.assignments.is_empty() || !command.redirections.is_empty() {
+                if !assignments.is_empty() || !redirections.is_empty() {
                     self.expand_alias_at_command_start()?;
                 }
             }
@@ -1477,25 +1507,29 @@ impl<'src> Parser<'src> {
                 _ => break,
             };
 
-            command.words.push(word);
+            words.push(word);
         }
 
-        if command.words.is_empty()
-            && command.assignments.is_empty()
-            && command.redirections.is_empty()
+        if words.is_empty()
+            && assignments.is_empty()
+            && redirections.is_empty()
         {
             return Err(ParseError {
-                message: "expected command".to_string(),
+                message: "expected command".into(),
             });
         }
 
-        if !command.words.is_empty() && matches!(self.peek(), Token::LParen) {
+        if !words.is_empty() && matches!(self.peek(), Token::LParen) {
             return Err(ParseError {
-                message: "syntax error near unexpected token `('".to_string(),
+                message: "syntax error near unexpected token `('".into(),
             });
         }
 
-        Ok(command)
+        Ok(SimpleCommand {
+            assignments: assignments.into_boxed_slice(),
+            words: words.into_boxed_slice(),
+            redirections: redirections.into_boxed_slice(),
+        })
     }
 
     fn try_parse_redirection(&mut self) -> Result<Option<Redirection<'src>>, ParseError> {
@@ -1520,14 +1554,14 @@ impl<'src> Parser<'src> {
             }
             _ => {
                 return Err(ParseError {
-                    message: "expected redirection target".to_string(),
+                    message: "expected redirection target".into(),
                 });
             }
         };
 
         let here_doc = if kind == RedirectionKind::HereDoc {
             Some(self.here_docs.pop_front().ok_or_else(|| ParseError {
-                message: "missing here-document body".to_string(),
+                message: "missing here-document body".into(),
             })?)
         } else {
             None
@@ -1554,7 +1588,7 @@ impl<'src> Parser<'src> {
             Some(_) => return Ok(None),
             None => {
                 return Err(ParseError {
-                    message: "unexpected end of tokens".to_string(),
+                    message: "unexpected end of tokens".into(),
                 });
             }
         };
@@ -1583,7 +1617,7 @@ impl<'src> Parser<'src> {
     }
 
     fn consume_word(&mut self, word: &str) -> bool {
-        if matches!(self.peek(), Token::Word(text) if text == word) {
+        if matches!(self.peek(), Token::Word(text) if *text == word) {
             self.index += 1;
             true
         } else {
@@ -1592,7 +1626,7 @@ impl<'src> Parser<'src> {
     }
 
     fn consume_bang(&mut self) -> bool {
-        if matches!(self.peek(), Token::Word(text) if text == "!") {
+        if matches!(self.peek(), Token::Word(text) if *text == "!") {
             self.index += 1;
             true
         } else {
@@ -1606,7 +1640,7 @@ impl<'src> Parser<'src> {
             Ok(())
         } else {
             Err(ParseError {
-                message: message.to_string(),
+                message: message.into(),
             })
         }
     }
@@ -1615,9 +1649,9 @@ impl<'src> Parser<'src> {
         &self.tokens[self.index]
     }
 
-    fn peek_word_text(&self) -> Option<Cow<'src, str>> {
+    fn peek_word_text(&self) -> Option<&'src str> {
         match &self.tokens[self.index] {
-            Token::Word(text) => Some(text.clone()),
+            Token::Word(text) => Some(text),
             _ => None,
         }
     }
@@ -1649,27 +1683,26 @@ impl<'src> Parser<'src> {
         if !is_alias_word(text) {
             return Ok(false);
         }
-        let Some(replacement) = self.aliases.get(text.as_ref()).cloned() else {
+        let Some(replacement) = self.aliases.get(*text).cloned() else {
             return Ok(false);
         };
         if self.alias_expansions_remaining == 0 {
             return Err(ParseError {
-                message: "alias expansion too deep".to_string(),
+                message: "alias expansion too deep".into(),
             });
         };
         self.alias_expansions_remaining -= 1;
-        let tokenized = tokenize(&replacement)?;
-        let mut replacement_tokens: Vec<Token<'src>> = tokenized
+        let temp_arena = StringArena::new();
+        let tokenized = tokenize(&replacement, &temp_arena)?;
+        let replacement_tokens: Vec<Token<'src>> = tokenized
             .tokens
             .into_iter()
-            .map(own_token)
+            .filter(|t| !matches!(t, Token::Eof))
+            .map(|t| match t {
+                Token::Word(s) => Token::Word(self.arena.intern_str(s)),
+                other => intern_nonword_token(other),
+            })
             .collect();
-        if replacement_tokens
-            .last()
-            .is_some_and(|t| matches!(t, Token::Eof))
-        {
-            replacement_tokens.pop();
-        }
         let inserted_len = replacement_tokens.len();
         self.tokens
             .splice(self.index..=self.index, replacement_tokens);
@@ -1679,15 +1712,15 @@ impl<'src> Parser<'src> {
         Ok(true)
     }
 
-    fn try_peek_function_name(&self) -> Option<Cow<'src, str>> {
-        let name = match self.tokens.get(self.index)?.clone() {
-            Token::Word(name) => name,
+    fn try_peek_function_name(&self) -> Option<&'src str> {
+        let name = match self.tokens.get(self.index) {
+            Some(Token::Word(name)) => *name,
             _ => return None,
         };
-        if is_reserved_word(&name) {
+        if is_reserved_word(name) {
             return None;
         }
-        if !is_name(&name) {
+        if !is_name(name) {
             return None;
         }
         if !matches!(self.tokens.get(self.index + 1), Some(Token::LParen)) {
@@ -1700,11 +1733,11 @@ impl<'src> Parser<'src> {
     }
 
     fn peek_reserved_word(&self, word: &str) -> bool {
-        matches!(self.peek(), Token::Word(text) if text == word)
+        matches!(self.peek(), Token::Word(text) if *text == word)
     }
 
     fn peek_bang_word(&self) -> bool {
-        matches!(self.peek(), Token::Word(text) if text == "!")
+        matches!(self.peek(), Token::Word(text) if *text == "!")
     }
 
     fn at_reserved_stop(&self, stop_words: &[&str]) -> bool {
@@ -1721,7 +1754,7 @@ impl<'src> Parser<'src> {
             Ok(())
         } else {
             Err(ParseError {
-                message: format!("expected '{word}'"),
+                message: format!("expected '{word}'").into(),
             })
         }
     }
@@ -1735,9 +1768,8 @@ impl<'src> Parser<'src> {
     }
 }
 
-fn own_token<'a>(token: Token<'_>) -> Token<'a> {
+fn intern_nonword_token<'a>(token: Token<'_>) -> Token<'a> {
     match token {
-        Token::Word(cow) => Token::Word(Cow::Owned(cow.into_owned())),
         Token::IoNumber(fd) => Token::IoNumber(fd),
         Token::Newline => Token::Newline,
         Token::Semi => Token::Semi,
@@ -1757,7 +1789,7 @@ fn own_token<'a>(token: Token<'_>) -> Token<'a> {
         Token::GreatAnd => Token::GreatAnd,
         Token::LessGreat => Token::LessGreat,
         Token::Clobber => Token::Clobber,
-        Token::Eof => Token::Eof,
+        Token::Eof | Token::Word(_) => Token::Eof,
     }
 }
 
@@ -1811,22 +1843,41 @@ fn is_reserved_word(word: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn test_arena() -> &'static StringArena {
+        Box::leak(Box::new(StringArena::new()))
+    }
+
+    fn parse_test(source: &str) -> Result<Program<'_>, ParseError> {
+        parse(source, test_arena())
+    }
+
+    fn parse_with_aliases_test<'src>(
+        source: &'src str,
+        aliases: &HashMap<String, String>,
+    ) -> Result<Program<'src>, ParseError> {
+        parse_with_aliases(source, aliases, test_arena())
+    }
+
+    fn tokenize_test(source: &str) -> Result<Tokenized<'_>, ParseError> {
+        tokenize(source, test_arena())
+    }
+
     #[test]
     fn parses_simple_pipeline() {
-        let program = parse("echo hi | wc -c").expect("parse");
+        let program = parse_test("echo hi | wc -c").expect("parse");
         assert_eq!(program.items.len(), 1);
         assert_eq!(program.items[0].and_or.first.commands.len(), 2);
     }
 
     #[test]
     fn parses_assignments_and_groups() {
-        let program = parse("FOO=bar echo \"$FOO\"").expect("parse");
+        let program = parse_test("FOO=bar echo \"$FOO\"").expect("parse");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.assignments.len() == 1 && cmd.words[0].raw == "echo"
         ));
 
-        let owned = parse("FO\\\nO=bar echo ok").expect("parse backslash-newline assignment");
+        let owned = parse_test("FO\\\nO=bar echo ok").expect("parse backslash-newline assignment");
         assert!(matches!(
             &owned.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.assignments.len() == 1
@@ -1837,7 +1888,7 @@ mod tests {
 
     #[test]
     fn parses_logical_and_subshell_forms() {
-        let program = parse("(echo ok) && echo done || echo fail").expect("parse");
+        let program = parse_test("(echo ok) && echo done || echo fail").expect("parse");
         let and_or = &program.items[0].and_or;
         assert_eq!(and_or.rest.len(), 2);
         assert!(matches!(
@@ -1846,13 +1897,13 @@ mod tests {
         ));
 
         let linebreak_and_or =
-            parse("true &&\n echo done ||\n echo fail").expect("parse linebreak and-or");
+            parse_test("true &&\n echo done ||\n echo fail").expect("parse linebreak and-or");
         assert_eq!(linebreak_and_or.items[0].and_or.rest.len(), 2);
     }
 
     #[test]
     fn tokenizes_terminated_single_quotes() {
-        let program = parse("echo 'ok'").expect("parse");
+        let program = parse_test("echo 'ok'").expect("parse");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words.len() == 2 && cmd.words[1].raw == "'ok'"
@@ -1861,7 +1912,7 @@ mod tests {
 
     #[test]
     fn parses_case_arm_without_trailing_dsemi_before_esac() {
-        let program = parse("case x in x) esac").expect("parse");
+        let program = parse_test("case x in x) esac").expect("parse");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Case(case_cmd) if case_cmd.arms.len() == 1
@@ -1870,37 +1921,37 @@ mod tests {
 
     #[test]
     fn parses_heredoc_operator_shape() {
-        let program = parse("cat <<EOF\nhello $USER\nEOF\n").expect("parse");
+        let program = parse_test("cat <<EOF\nhello $USER\nEOF\n").expect("parse");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
                 if cmd.redirections.len() == 1
                     && cmd.redirections[0].kind == RedirectionKind::HereDoc
                     && cmd.redirections[0].target.raw == "EOF"
-                    && cmd.redirections[0].here_doc.as_ref().map(|doc| doc.body.as_ref()) == Some("hello $USER\n")
+                    && cmd.redirections[0].here_doc.as_ref().map(|doc| doc.body) == Some("hello $USER\n")
                     && cmd.redirections[0].here_doc.as_ref().map(|doc| doc.expand) == Some(true)
         ));
 
-        let quoted = parse("cat <<'EOF'\n$USER\nEOF\n").expect("parse");
+        let quoted = parse_test("cat <<'EOF'\n$USER\nEOF\n").expect("parse");
         assert!(matches!(
             &quoted.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
-                if cmd.redirections[0].here_doc.as_ref().map(|doc| doc.delimiter.as_ref()) == Some("EOF")
+                if cmd.redirections[0].here_doc.as_ref().map(|doc| doc.delimiter) == Some("EOF")
                     && cmd.redirections[0].here_doc.as_ref().map(|doc| doc.expand) == Some(false)
         ));
 
-        let tab_stripped = parse("cat <<-\tEOF\n\tone\n\tEOF\n").expect("parse");
+        let tab_stripped = parse_test("cat <<-\tEOF\n\tone\n\tEOF\n").expect("parse");
         assert!(matches!(
             &tab_stripped.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
-                if cmd.redirections[0].here_doc.as_ref().map(|doc| doc.body.as_ref()) == Some("one\n")
+                if cmd.redirections[0].here_doc.as_ref().map(|doc| doc.body) == Some("one\n")
                     && cmd.redirections[0].here_doc.as_ref().map(|doc| doc.strip_tabs) == Some(true)
         ));
     }
 
     #[test]
     fn parses_extended_redirection_forms() {
-        let program = parse("cat 3<in 2>out 4>>log 5<>rw 0<&3 1>&2 2>|force").expect("parse");
+        let program = parse_test("cat 3<in 2>out 4>>log 5<>rw 0<&3 1>&2 2>|force").expect("parse");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
@@ -1921,7 +1972,7 @@ mod tests {
 
     #[test]
     fn parses_redirections_on_compound_commands() {
-        let program = parse("{ echo hi; } >out").expect("parse");
+        let program = parse_test("{ echo hi; } >out").expect("parse");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Redirected(inner, redirections)
@@ -1931,69 +1982,69 @@ mod tests {
                     && redirections[0].target.raw == "out"
         ));
 
-        let not_a_group = parse("{echo hi; }").expect("parse brace word");
+        let not_a_group = parse_test("{echo hi; }").expect("parse brace word");
         assert!(matches!(
             &not_a_group.items[0].and_or.first.commands[0],
             Command::Simple(simple) if simple.words[0].raw == "{echo"
         ));
 
-        let closer_literal = parse("echo }").expect("parse literal closer");
+        let closer_literal = parse_test("echo }").expect("parse literal closer");
         assert!(matches!(
             &closer_literal.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|word| word.raw.as_ref()).collect::<Vec<_>>() == vec!["echo", "}"]
+                if simple.words.iter().map(|word| word.raw).collect::<Vec<_>>() == vec!["echo", "}"]
         ));
     }
 
     #[test]
     fn parses_function_definition() {
-        let program = parse("greet() { echo hi; }").expect("parse");
+        let program = parse_test("greet() { echo hi; }").expect("parse");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::FunctionDef(function) if function.name == "greet"
         ));
-        assert!(parse("if() { echo hi; }").is_err());
+        assert!(parse_test("if() { echo hi; }").is_err());
     }
 
     #[test]
     fn parses_negated_async_pipeline() {
-        let program = parse("! echo ok | wc -c &").expect("parse");
+        let program = parse_test("! echo ok | wc -c &").expect("parse");
         let item = &program.items[0];
         assert!(item.asynchronous);
         assert!(item.and_or.first.negated);
         assert_eq!(item.and_or.first.commands.len(), 2);
 
-        let linebreak_pipeline = parse("printf ok |\n wc -c").expect("parse linebreak pipeline");
+        let linebreak_pipeline = parse_test("printf ok |\n wc -c").expect("parse linebreak pipeline");
         assert_eq!(linebreak_pipeline.items[0].and_or.first.commands.len(), 2);
     }
 
     #[test]
     fn rejects_invalid_empty_command() {
-        let error = parse("| wc").expect_err("parse should fail");
-        assert_eq!(error.message, "expected command");
+        let error = parse_test("| wc").expect_err("parse should fail");
+        assert_eq!(&*error.message, "expected command");
 
-        let error = parse("echo hi | ! cat").expect_err("bang after pipe should fail");
-        assert_eq!(error.message, "expected command");
+        let error = parse_test("echo hi | ! cat").expect_err("bang after pipe should fail");
+        assert_eq!(&*error.message, "expected command");
     }
 
     #[test]
     fn rejects_unterminated_quotes() {
-        let error = parse("echo 'unterminated").expect_err("parse should fail");
-        assert_eq!(error.message, "unterminated single quote");
+        let error = parse_test("echo 'unterminated").expect_err("parse should fail");
+        assert_eq!(&*error.message, "unterminated single quote");
     }
 
     #[test]
     fn rejects_unterminated_dollar_single_quote() {
-        let error = parse("echo $'unterminated").expect_err("parse should fail");
-        assert_eq!(error.message, "unterminated dollar-single-quotes");
-        let error = parse(r"echo $'backslash at end\").expect_err("parse should fail");
-        assert_eq!(error.message, "unterminated dollar-single-quotes");
+        let error = parse_test("echo $'unterminated").expect_err("parse should fail");
+        assert_eq!(&*error.message, "unterminated dollar-single-quotes");
+        let error = parse_test(r"echo $'backslash at end\").expect_err("parse should fail");
+        assert_eq!(&*error.message, "unterminated dollar-single-quotes");
     }
 
     #[test]
     fn parses_if_with_elif_and_else() {
         let program =
-            parse("if true; then echo yes; elif false; then echo no; else echo maybe; fi")
+            parse_test("if true; then echo yes; elif false; then echo no; else echo maybe; fi")
                 .expect("parse");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
@@ -2001,7 +2052,7 @@ mod tests {
                 if if_command.elif_branches.len() == 1 && if_command.else_branch.is_some()
         ));
 
-        let simple_if = parse("if true; then echo yes; fi").expect("parse");
+        let simple_if = parse_test("if true; then echo yes; fi").expect("parse");
         assert!(matches!(
             &simple_if.items[0].and_or.first.commands[0],
             Command::If(if_command) if if_command.else_branch.is_none()
@@ -2010,7 +2061,7 @@ mod tests {
 
     #[test]
     fn parses_while_and_until_loops() {
-        let while_program = parse("while true; do echo yes; done").expect("parse");
+        let while_program = parse_test("while true; do echo yes; done").expect("parse");
         assert!(matches!(
             while_program.items[0].and_or.first.commands[0],
             Command::Loop(LoopCommand {
@@ -2019,7 +2070,7 @@ mod tests {
             })
         ));
 
-        let until_program = parse("until false; do echo yes; done").expect("parse");
+        let until_program = parse_test("until false; do echo yes; done").expect("parse");
         assert!(matches!(
             until_program.items[0].and_or.first.commands[0],
             Command::Loop(LoopCommand {
@@ -2031,35 +2082,35 @@ mod tests {
 
     #[test]
     fn parses_for_loops() {
-        let explicit = parse("for item in a b c; do echo $item; done").expect("parse");
+        let explicit = parse_test("for item in a b c; do echo $item; done").expect("parse");
         assert!(matches!(
             &explicit.items[0].and_or.first.commands[0],
             Command::For(for_command)
-                if for_command.name == "item" && for_command.items.as_ref().map(Vec::len) == Some(3)
+                if for_command.name == "item" && for_command.items.as_ref().map(|s| s.len()) == Some(3)
         ));
 
-        let positional = parse("for item; do echo $item; done").expect("parse");
+        let positional = parse_test("for item; do echo $item; done").expect("parse");
         assert!(matches!(
             &positional.items[0].and_or.first.commands[0],
             Command::For(for_command) if for_command.name == "item" && for_command.items.is_none()
         ));
 
         let linebreak_before_in =
-            parse("for item\nin a b; do echo $item; done").expect("parse linebreak before in");
+            parse_test("for item\nin a b; do echo $item; done").expect("parse linebreak before in");
         assert!(matches!(
             &linebreak_before_in.items[0].and_or.first.commands[0],
             Command::For(for_command)
                 if for_command.name == "item"
-                    && for_command.items.as_ref().map(|items| items.iter().map(|word| word.raw.as_ref()).collect::<Vec<_>>())
+                    && for_command.items.as_ref().map(|items| items.iter().map(|word| word.raw).collect::<Vec<_>>())
                         == Some(vec!["a", "b"])
         ));
 
-        let reserved_words_as_items = parse("for item in do done; do echo $item; done")
+        let reserved_words_as_items = parse_test("for item in do done; do echo $item; done")
             .expect("parse reserved words in wordlist");
         assert!(matches!(
             &reserved_words_as_items.items[0].and_or.first.commands[0],
             Command::For(for_command)
-                if for_command.items.as_ref().map(|items| items.iter().map(|word| word.raw.as_ref()).collect::<Vec<_>>())
+                if for_command.items.as_ref().map(|items| items.iter().map(|word| word.raw).collect::<Vec<_>>())
                     == Some(vec!["do", "done"])
         ));
     }
@@ -2067,7 +2118,7 @@ mod tests {
     #[test]
     fn parses_case_commands() {
         let program =
-            parse("case $name in foo|bar) echo hit ;; baz) echo miss ;; esac").expect("parse");
+            parse_test("case $name in foo|bar) echo hit ;; baz) echo miss ;; esac").expect("parse");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Case(case_command)
@@ -2076,21 +2127,21 @@ mod tests {
                     && case_command.arms[0].patterns.len() == 2
         ));
 
-        let with_optional_paren = parse("case x in (x) echo ok ;; esac").expect("parse");
+        let with_optional_paren = parse_test("case x in (x) echo ok ;; esac").expect("parse");
         assert!(matches!(
             &with_optional_paren.items[0].and_or.first.commands[0],
             Command::Case(case_command) if case_command.arms.len() == 1
         ));
 
         let with_linebreak_before_in =
-            parse("case x\nin\nx) echo ok ;;\nesac").expect("parse case linebreak");
+            parse_test("case x\nin\nx) echo ok ;;\nesac").expect("parse case linebreak");
         assert!(matches!(
             &with_linebreak_before_in.items[0].and_or.first.commands[0],
             Command::Case(case_command) if case_command.arms.len() == 1
         ));
 
         let empty_after_linebreak =
-            parse("case x\nin\nesac").expect("parse empty case after linebreak");
+            parse_test("case x\nin\nesac").expect("parse empty case after linebreak");
         assert!(matches!(
             &empty_after_linebreak.items[0].and_or.first.commands[0],
             Command::Case(case_command) if case_command.arms.is_empty()
@@ -2108,29 +2159,29 @@ mod tests {
             ),
             "x"
         );
-        assert!(parse("echo \"unterminated").is_err());
-        assert!(parse("cat <").is_err());
-        assert!(parse("for 1 in a; do echo hi; done").is_err());
-        assert!(parse("for item in ; do echo hi; done").is_ok());
-        assert!(parse("for item in ) ; do echo hi; done").is_err());
-        assert!(parse("case x in ; esac").is_err());
-        assert!(parse("case name in foo echo hi esac").is_err());
-        assert!(parse("cat <<EOF").is_err());
-        assert!(parse("echo 2>&").is_err());
-        assert!(parse("if true; echo hi; fi").is_err());
-        assert!(parse("while true; echo hi; done").is_err());
-        assert!(parse("# comment only\n").is_ok());
-        assert!(parse("echo foo\\ bar").is_ok());
-        assert!(parse("echo \"a\\\"b\"").is_ok());
-        assert!(parse("printf ok |\n wc -c").is_ok());
-        assert!(parse("true &&\n echo ok").is_ok());
-        assert!(parse("false ||\n echo ok").is_ok());
+        assert!(parse_test("echo \"unterminated").is_err());
+        assert!(parse_test("cat <").is_err());
+        assert!(parse_test("for 1 in a; do echo hi; done").is_err());
+        assert!(parse_test("for item in ; do echo hi; done").is_ok());
+        assert!(parse_test("for item in ) ; do echo hi; done").is_err());
+        assert!(parse_test("case x in ; esac").is_err());
+        assert!(parse_test("case name in foo echo hi esac").is_err());
+        assert!(parse_test("cat <<EOF").is_err());
+        assert!(parse_test("echo 2>&").is_err());
+        assert!(parse_test("if true; echo hi; fi").is_err());
+        assert!(parse_test("while true; echo hi; done").is_err());
+        assert!(parse_test("# comment only\n").is_ok());
+        assert!(parse_test("echo foo\\ bar").is_ok());
+        assert!(parse_test("echo \"a\\\"b\"").is_ok());
+        assert!(parse_test("printf ok |\n wc -c").is_ok());
+        assert!(parse_test("true &&\n echo ok").is_ok());
+        assert!(parse_test("false ||\n echo ok").is_ok());
     }
 
     #[test]
     fn parser_private_helpers_cover_remaining_branches() {
-        let tokenized = tokenize("echo hi").expect("tokenize");
-        let mut parser = Parser::new(tokenized.tokens.clone(), VecDeque::new(), HashMap::new());
+        let tokenized = tokenize_test("echo hi").expect("tokenize");
+        let mut parser = Parser::new(tokenized.tokens.clone(), VecDeque::new(), HashMap::new(), test_arena());
         assert!(!parser.peek_reserved_word("if"));
         assert!(!parser.at_reserved_stop(&["then"]));
         assert!(parser.expect_reserved_word("if").is_err());
@@ -2139,21 +2190,22 @@ mod tests {
         let mut parser = Parser::new(
             vec![
                 Token::Newline,
-                Token::Word("do".into()),
+                Token::Word("do"),
                 Token::Eof,
             ],
             VecDeque::new(),
             HashMap::new(),
+            test_arena(),
         );
         parser.skip_linebreaks();
         assert!(parser.peek_reserved_word("do"));
 
-        let func_tokens = tokenize("name( x").expect("tokenize");
-        let parser = Parser::new(func_tokens.tokens, VecDeque::new(), HashMap::new());
+        let func_tokens = tokenize_test("name( x").expect("tokenize");
+        let parser = Parser::new(func_tokens.tokens, VecDeque::new(), HashMap::new(), test_arena());
         assert_eq!(parser.try_peek_function_name(), None);
 
-        let closer_tokens = vec![Token::Word("}".into())];
-        let parser = Parser::new(closer_tokens, VecDeque::new(), HashMap::new());
+        let closer_tokens = vec![Token::Word("}")];
+        let parser = Parser::new(closer_tokens, VecDeque::new(), HashMap::new(), test_arena());
         assert!(parser.at_closer());
 
         assert_eq!(
@@ -2173,39 +2225,42 @@ mod tests {
     fn alias_helper_paths_cover_pending_and_depth_guard() {
         let mut parser = Parser::new(
             vec![
-                Token::Word("word".into()),
+                Token::Word("word"),
                 Token::Eof,
             ],
             VecDeque::new(),
             HashMap::from([(String::from("word"), String::from("ok"))]),
+            test_arena(),
         );
         parser.alias_expand_next_word_at = Some(0);
         parser
             .expand_alias_after_blank_in_simple_command()
             .expect("expand pending alias");
-        assert!(matches!(parser.peek(), Token::Word(text) if text == "ok"));
+        assert!(matches!(parser.peek(), Token::Word(text) if *text == "ok"));
 
         let mut parser = Parser::new(
             vec![
-                Token::Word("loop".into()),
+                Token::Word("loop"),
                 Token::Eof,
             ],
             VecDeque::new(),
             HashMap::from([(String::from("loop"), String::from("loop "))]),
+            test_arena(),
         );
         parser.alias_expansions_remaining = 0;
         let error = parser
             .expand_alias_at_current_token()
             .expect_err("depth guard");
-        assert_eq!(error.message, "alias expansion too deep");
+        assert_eq!(&*error.message, "alias expansion too deep");
 
         let mut parser = Parser::new(
             vec![
-                Token::Word("tail".into()),
+                Token::Word("tail"),
                 Token::Eof,
             ],
             VecDeque::new(),
             HashMap::new(),
+            test_arena(),
         );
         parser.index = 1;
         parser.alias_expand_next_word_at = Some(0);
@@ -2217,7 +2272,7 @@ mod tests {
 
     #[test]
     fn parse_session_uses_updated_aliases_between_items() {
-        let mut session = ParseSession::new("alias setok='printf ok'; setok").expect("session");
+        let mut session = ParseSession::new("alias setok='printf ok'; setok", test_arena()).expect("session");
         let first = session
             .next_item(&HashMap::new())
             .expect("first item")
@@ -2234,7 +2289,7 @@ mod tests {
         assert!(matches!(
             &second.and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|word| word.raw.as_ref()).collect::<Vec<_>>() == vec!["printf", "ok"]
+                if simple.words.iter().map(|word| word.raw).collect::<Vec<_>>() == vec!["printf", "ok"]
         ));
 
         assert!(session.next_item(&HashMap::new()).expect("eof").is_none());
@@ -2244,16 +2299,16 @@ mod tests {
     fn alias_expansion_in_simple_commands() {
         let mut aliases = HashMap::new();
         aliases.insert("say".to_string(), "printf hi".to_string());
-        let program = parse_with_aliases("say", &aliases).expect("parse alias");
+        let program = parse_with_aliases_test("say", &aliases).expect("parse alias");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|word| word.raw.as_ref()).collect::<Vec<_>>() == vec!["printf", "hi"]
+                if simple.words.iter().map(|word| word.raw).collect::<Vec<_>>() == vec!["printf", "hi"]
         ));
 
         let mut aliases = HashMap::new();
         aliases.insert("cond".to_string(), "if".to_string());
-        let program = parse_with_aliases("cond true; then echo ok; fi", &aliases)
+        let program = parse_with_aliases_test("cond true; then echo ok; fi", &aliases)
             .expect("parse reserved alias");
         assert!(matches!(
             program.items[0].and_or.first.commands[0],
@@ -2263,21 +2318,21 @@ mod tests {
 
     #[test]
     fn standalone_bang_is_context_sensitive() {
-        let program = parse("echo !").expect("parse echo bang");
+        let program = parse_test("echo !").expect("parse echo bang");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|word| word.raw.as_ref()).collect::<Vec<_>>() == vec!["echo", "!"]
+                if simple.words.iter().map(|word| word.raw).collect::<Vec<_>>() == vec!["echo", "!"]
         ));
 
-        let program = parse("!true").expect("parse bang word");
+        let program = parse_test("!true").expect("parse bang word");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|word| word.raw.as_ref()).collect::<Vec<_>>() == vec!["!true"]
+                if simple.words.iter().map(|word| word.raw).collect::<Vec<_>>() == vec!["!true"]
         ));
 
-        let program = parse("! true").expect("parse negation");
+        let program = parse_test("! true").expect("parse negation");
         assert!(program.items[0].and_or.first.negated);
     }
 
@@ -2286,11 +2341,11 @@ mod tests {
         let mut aliases = HashMap::new();
         aliases.insert("say".to_string(), "printf %s ".to_string());
         aliases.insert("word".to_string(), "ok".to_string());
-        let program = parse_with_aliases("say word", &aliases).expect("parse chained alias");
+        let program = parse_with_aliases_test("say word", &aliases).expect("parse chained alias");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|word| word.raw.as_ref()).collect::<Vec<_>>() == vec!["printf", "%s", "ok"]
+                if simple.words.iter().map(|word| word.raw).collect::<Vec<_>>() == vec!["printf", "%s", "ok"]
         ));
     }
 
@@ -2298,11 +2353,11 @@ mod tests {
     fn self_referential_aliases_do_not_loop_indefinitely() {
         let mut aliases = HashMap::new();
         aliases.insert("loop".to_string(), "loop ".to_string());
-        let program = parse_with_aliases("loop ok", &aliases).expect("self alias");
+        let program = parse_with_aliases_test("loop ok", &aliases).expect("self alias");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|word| word.raw.as_ref()).collect::<Vec<_>>() == vec!["loop", "ok"]
+                if simple.words.iter().map(|word| word.raw).collect::<Vec<_>>() == vec!["loop", "ok"]
         ));
         assert!(alias_has_trailing_blank("value "));
         assert!(!alias_has_trailing_blank("value"));
@@ -2313,20 +2368,20 @@ mod tests {
         let mut aliases = HashMap::new();
         aliases.insert("foo".to_string(), "echo aliased".to_string());
         let program =
-            parse_with_aliases("VAR=value foo", &aliases).expect("alias after assignment");
+            parse_with_aliases_test("VAR=value foo", &aliases).expect("alias after assignment");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|w| w.raw.as_ref()).collect::<Vec<_>>() == vec!["echo", "aliased"]
+                if simple.words.iter().map(|w| w.raw).collect::<Vec<_>>() == vec!["echo", "aliased"]
                     && simple.assignments.len() == 1
         ));
 
-        let program = parse_with_aliases("</dev/null foo", &aliases)
+        let program = parse_with_aliases_test("</dev/null foo", &aliases)
             .expect("alias after redirection");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|w| w.raw.as_ref()).collect::<Vec<_>>() == vec!["echo", "aliased"]
+                if simple.words.iter().map(|w| w.raw).collect::<Vec<_>>() == vec!["echo", "aliased"]
                     && simple.redirections.len() == 1
         ));
     }
@@ -2335,7 +2390,7 @@ mod tests {
     fn lparen_after_simple_command_is_syntax_error() {
         let mut aliases = HashMap::new();
         aliases.insert("foo".to_string(), "echo aliased".to_string());
-        let err = parse_with_aliases("foo () { true; }", &aliases).unwrap_err();
+        let err = parse_with_aliases_test("foo () { true; }", &aliases).unwrap_err();
         assert!(
             err.message.contains("("),
             "error should mention '(': {}",
@@ -2347,15 +2402,16 @@ mod tests {
     fn parse_case_command_error_paths_are_covered() {
         let mut parser = Parser::new(
             vec![
-                Token::Word("case".into()),
+                Token::Word("case"),
                 Token::Semi,
                 Token::Eof,
             ],
             VecDeque::new(),
             HashMap::new(),
+            test_arena(),
         );
         assert_eq!(
-            parser
+            &*parser
                 .parse_case_command()
                 .expect_err("missing word")
                 .message,
@@ -2364,34 +2420,36 @@ mod tests {
 
         let mut parser = Parser::new(
             vec![
-                Token::Word("case".into()),
-                Token::Word("name".into()),
+                Token::Word("case"),
+                Token::Word("name"),
                 Token::Newline,
-                Token::Word("esac".into()),
+                Token::Word("esac"),
                 Token::Eof,
             ],
             VecDeque::new(),
             HashMap::new(),
+            test_arena(),
         );
         assert_eq!(
-            parser.parse_case_command().expect_err("missing in").message,
+            &*parser.parse_case_command().expect_err("missing in").message,
             "expected 'in'"
         );
 
         let mut parser = Parser::new(
             vec![
-                Token::Word("case".into()),
-                Token::Word("name".into()),
-                Token::Word("in".into()),
+                Token::Word("case"),
+                Token::Word("name"),
+                Token::Word("in"),
                 Token::RParen,
-                Token::Word("esac".into()),
+                Token::Word("esac"),
                 Token::Eof,
             ],
             VecDeque::new(),
             HashMap::new(),
+            test_arena(),
         );
         assert_eq!(
-            parser
+            &*parser
                 .parse_case_command()
                 .expect_err("missing pattern")
                 .message,
@@ -2400,21 +2458,22 @@ mod tests {
 
         let mut parser = Parser::new(
             vec![
-                Token::Word("case".into()),
-                Token::Word("name".into()),
-                Token::Word("in".into()),
-                Token::Word("foo".into()),
+                Token::Word("case"),
+                Token::Word("name"),
+                Token::Word("in"),
+                Token::Word("foo"),
                 Token::RParen,
-                Token::Word("echo".into()),
-                Token::Word("hi".into()),
+                Token::Word("echo"),
+                Token::Word("hi"),
                 Token::Semi,
                 Token::Eof,
             ],
             VecDeque::new(),
             HashMap::new(),
+            test_arena(),
         );
         assert_eq!(
-            parser
+            &*parser
                 .parse_case_command()
                 .expect_err("missing terminator")
                 .message,
@@ -2430,7 +2489,7 @@ mod tests {
         let source = "line";
         let mut index = 0usize;
         assert_eq!(
-            read_here_doc_body(source, &mut index, "EOF", false, true)
+            &*read_here_doc_body(source, &mut index, "EOF", false, true)
                 .expect_err("unterminated body")
                 .message,
             "unterminated here-document"
@@ -2448,7 +2507,7 @@ mod tests {
             .expect("continuation body");
         assert_eq!(body2, "bodyEOF\nreal body\n");
 
-        let tokenized = tokenize("cat <<A <<'B'\nfirst\nA\nsecond\nB\n").expect("tokenize");
+        let tokenized = tokenize_test("cat <<A <<'B'\nfirst\nA\nsecond\nB\n").expect("tokenize");
         assert_eq!(tokenized.here_docs.len(), 2);
         assert_eq!(tokenized.here_docs[0].body, "first\n");
         assert_eq!(tokenized.here_docs[1].body, "second\n");
@@ -2456,14 +2515,15 @@ mod tests {
         let mut parser = Parser::new(
             vec![
                 Token::DLess,
-                Token::Word("EOF".into()),
+                Token::Word("EOF"),
                 Token::Eof,
             ],
             VecDeque::new(),
             HashMap::new(),
+            test_arena(),
         );
         assert_eq!(
-            parser
+            &*parser
                 .try_parse_redirection()
                 .expect_err("missing body")
                 .message,
@@ -2474,11 +2534,12 @@ mod tests {
             vec![
                 Token::IoNumber(2),
                 Token::Greater,
-                Token::Word("out".into()),
+                Token::Word("out"),
                 Token::Eof,
             ],
             VecDeque::new(),
             HashMap::new(),
+            test_arena(),
         );
         let redir = parser
             .try_parse_redirection()
@@ -2491,13 +2552,14 @@ mod tests {
             vec![Token::Eof],
             VecDeque::new(),
             HashMap::new(),
+            test_arena(),
         );
         assert!(parser.redirection_kind_at(99).is_err());
     }
 
     #[test]
     fn tokenizer_keeps_dollar_paren_as_single_word() {
-        let program = parse("echo $(cmd arg)").expect("parse dollar paren");
+        let program = parse_test("echo $(cmd arg)").expect("parse dollar paren");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
@@ -2507,34 +2569,34 @@ mod tests {
 
     #[test]
     fn tokenizer_keeps_dollar_double_paren_as_single_word() {
-        let program = parse("echo $((1 + 2))").expect("parse dollar arith");
+        let program = parse_test("echo $((1 + 2))").expect("parse dollar arith");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
                 if cmd.words.len() == 2 && cmd.words[1].raw == "$((1 + 2))"
         ));
 
-        let nested = parse("echo $((1 + (2 * 3)))").expect("parse nested arith");
+        let nested = parse_test("echo $((1 + (2 * 3)))").expect("parse nested arith");
         assert!(matches!(
             &nested.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
                 if cmd.words[1].raw == "$((1 + (2 * 3)))"
         ));
 
-        let error = parse("echo $((1 + 2").expect_err("unterminated arith");
-        assert_eq!(error.message, "unterminated arithmetic expansion");
+        let error = parse_test("echo $((1 + 2").expect_err("unterminated arith");
+        assert_eq!(&*error.message, "unterminated arithmetic expansion");
     }
 
     #[test]
     fn tokenizer_keeps_dollar_brace_as_single_word() {
-        let program = parse("echo ${VAR:-default}").expect("parse dollar brace");
+        let program = parse_test("echo ${VAR:-default}").expect("parse dollar brace");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
                 if cmd.words.len() == 2 && cmd.words[1].raw == "${VAR:-default}"
         ));
 
-        let nested = parse("echo ${VAR:-${INNER}}").expect("parse nested brace");
+        let nested = parse_test("echo ${VAR:-${INNER}}").expect("parse nested brace");
         assert!(matches!(
             &nested.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words[1].raw == "${VAR:-${INNER}}"
@@ -2543,20 +2605,20 @@ mod tests {
 
     #[test]
     fn tokenizer_keeps_backtick_as_single_word() {
-        let program = parse("echo `cmd arg`").expect("parse backtick");
+        let program = parse_test("echo `cmd arg`").expect("parse backtick");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
                 if cmd.words.len() == 2 && cmd.words[1].raw == "`cmd arg`"
         ));
 
-        let error = parse("echo `unterminated").expect_err("unterminated backtick");
-        assert_eq!(error.message, "unterminated backquote");
+        let error = parse_test("echo `unterminated").expect_err("unterminated backtick");
+        assert_eq!(&*error.message, "unterminated backquote");
     }
 
     #[test]
     fn tokenizer_backtick_inside_double_quotes() {
-        let program = parse("echo \"`cmd`\"").expect("parse dquote backtick");
+        let program = parse_test("echo \"`cmd`\"").expect("parse dquote backtick");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
@@ -2566,7 +2628,7 @@ mod tests {
 
     #[test]
     fn tokenizer_dollar_paren_inside_double_quotes() {
-        let program = parse("echo \"$(cmd arg)\"").expect("parse dquote dollar paren");
+        let program = parse_test("echo \"$(cmd arg)\"").expect("parse dquote dollar paren");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
@@ -2576,7 +2638,7 @@ mod tests {
 
     #[test]
     fn tokenizer_dollar_brace_inside_double_quotes() {
-        let program = parse("echo \"${VAR:-val}\"").expect("parse dquote dollar brace");
+        let program = parse_test("echo \"${VAR:-val}\"").expect("parse dquote dollar brace");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
@@ -2586,7 +2648,7 @@ mod tests {
 
     #[test]
     fn tokenizer_nested_constructs_in_paren_body() {
-        let program = parse("echo $(echo 'hi' \"$VAR\" \\x `inner` ${B} $((1+1)))")
+        let program = parse_test("echo $(echo 'hi' \"$VAR\" \\x `inner` ${B} $((1+1)))")
             .expect("parse nested paren");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
@@ -2597,46 +2659,46 @@ mod tests {
 
     #[test]
     fn tokenizer_nested_constructs_in_brace_body() {
-        let program = parse("echo ${VAR:-'a}b'}").expect("parse brace sq");
+        let program = parse_test("echo ${VAR:-'a}b'}").expect("parse brace sq");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words[1].raw == "${VAR:-'a}b'}"
         ));
 
-        let program = parse("echo ${VAR:-\"a}b\"}").expect("parse brace dq");
+        let program = parse_test("echo ${VAR:-\"a}b\"}").expect("parse brace dq");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words[1].raw == "${VAR:-\"a}b\"}"
         ));
 
-        let program = parse("echo ${VAR:-\\}}").expect("parse brace escaped");
+        let program = parse_test("echo ${VAR:-\\}}").expect("parse brace escaped");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words[1].raw == "${VAR:-\\}}"
         ));
 
-        let program = parse("echo ${VAR:-`cmd`}").expect("parse brace backtick");
+        let program = parse_test("echo ${VAR:-`cmd`}").expect("parse brace backtick");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words[1].raw == "${VAR:-`cmd`}"
         ));
 
-        let program = parse("echo ${VAR:-$(cmd)}").expect("parse brace cmdsubst");
+        let program = parse_test("echo ${VAR:-$(cmd)}").expect("parse brace cmdsubst");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words[1].raw == "${VAR:-$(cmd)}"
         ));
 
-        let error = parse("echo ${VAR:-unclosed").expect_err("unterminated brace body");
-        assert_eq!(error.message, "unterminated parameter expansion");
+        let error = parse_test("echo ${VAR:-unclosed").expect_err("unterminated brace body");
+        assert_eq!(&*error.message, "unterminated parameter expansion");
 
-        let error = parse("echo $(unclosed").expect_err("unterminated paren body");
-        assert_eq!(error.message, "unterminated command substitution");
+        let error = parse_test("echo $(unclosed").expect_err("unterminated paren body");
+        assert_eq!(&*error.message, "unterminated command substitution");
     }
 
     #[test]
     fn tokenizer_backtick_with_escape() {
-        let program = parse("echo `echo \\$VAR`").expect("parse bt escape");
+        let program = parse_test("echo `echo \\$VAR`").expect("parse bt escape");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words[1].raw == "`echo \\$VAR`"
@@ -2645,7 +2707,7 @@ mod tests {
 
     #[test]
     fn tokenizer_dollar_brace_from_toplevel() {
-        let program = parse("echo ${VAR}done").expect("parse brace toplevel");
+        let program = parse_test("echo ${VAR}done").expect("parse brace toplevel");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words[1].raw == "${VAR}done"
@@ -2654,7 +2716,7 @@ mod tests {
 
     #[test]
     fn tokenizer_nested_paren_depth() {
-        let program = parse("echo $(echo (a) (b))").expect("parse nested parens");
+        let program = parse_test("echo $(echo (a) (b))").expect("parse nested parens");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words[1].raw == "$(echo (a) (b))"
@@ -2663,7 +2725,7 @@ mod tests {
 
     #[test]
     fn tokenizer_backtick_body_escape() {
-        let program = parse("echo ${VAR:-`echo \\`inner\\``}").expect("parse bt body escape");
+        let program = parse_test("echo ${VAR:-`echo \\`inner\\``}").expect("parse bt body escape");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words.len() == 2
@@ -2672,7 +2734,7 @@ mod tests {
 
     #[test]
     fn tokenizer_backtick_escape_in_dquote() {
-        let program = parse("echo \"`echo \\$X`\"").expect("parse dq bt escape");
+        let program = parse_test("echo \"`echo \\$X`\"").expect("parse dq bt escape");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words[1].raw == "\"`echo \\$X`\""
@@ -2681,37 +2743,37 @@ mod tests {
 
     #[test]
     fn tokenizer_unterminated_backtick_in_brace() {
-        let error = parse("echo ${VAR:-`unterminated}").expect_err("unterminated bt in brace");
-        assert_eq!(error.message, "unterminated backquote");
+        let error = parse_test("echo ${VAR:-`unterminated}").expect_err("unterminated bt in brace");
+        assert_eq!(&*error.message, "unterminated backquote");
     }
 
     #[test]
     fn tokenizer_emits_io_number_for_adjacent_digits() {
-        let t = tokenize("2>err").expect("tokenize");
+        let t = tokenize_test("2>err").expect("tokenize");
         assert_eq!(t.tokens[0], Token::IoNumber(2));
         assert_eq!(t.tokens[1], Token::Greater);
-        assert_eq!(t.tokens[2], Token::Word("err".into()));
+        assert_eq!(t.tokens[2], Token::Word("err"));
 
-        let t = tokenize("0<in").expect("tokenize");
+        let t = tokenize_test("0<in").expect("tokenize");
         assert_eq!(t.tokens[0], Token::IoNumber(0));
         assert_eq!(t.tokens[1], Token::Less);
 
-        let t = tokenize("2 >err").expect("tokenize");
-        assert_eq!(t.tokens[0], Token::Word("2".into()));
+        let t = tokenize_test("2 >err").expect("tokenize");
+        assert_eq!(t.tokens[0], Token::Word("2"));
         assert_eq!(t.tokens[1], Token::Greater);
 
-        let t = tokenize("abc>err").expect("tokenize");
-        assert_eq!(t.tokens[0], Token::Word("abc".into()));
+        let t = tokenize_test("abc>err").expect("tokenize");
+        assert_eq!(t.tokens[0], Token::Word("abc"));
         assert_eq!(t.tokens[1], Token::Greater);
 
-        let t = tokenize("999999999999999999999>out").expect("tokenize");
-        assert_eq!(t.tokens[0], Token::Word("999999999999999999999".into()));
+        let t = tokenize_test("999999999999999999999>out").expect("tokenize");
+        assert_eq!(t.tokens[0], Token::Word("999999999999999999999"));
         assert_eq!(t.tokens[1], Token::Greater);
     }
 
     #[test]
     fn backslash_newline_continuation() {
-        let program = parse("echo hel\\\nlo").expect("parse continuation");
+        let program = parse_test("echo hel\\\nlo").expect("parse continuation");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words.len() == 2 && cmd.words[1].raw == "hello"
@@ -2720,32 +2782,32 @@ mod tests {
 
     #[test]
     fn if_empty_condition_is_parse_error() {
-        let error = parse("if then fi").expect_err("empty if condition");
+        let error = parse_test("if then fi").expect_err("empty if condition");
         assert!(error.message.contains("expected command list after 'if'"));
     }
 
     #[test]
     fn elif_empty_condition_is_parse_error() {
         let error =
-            parse("if true; then true; elif then true; fi").expect_err("empty elif condition");
+            parse_test("if true; then true; elif then true; fi").expect_err("empty elif condition");
         assert!(error.message.contains("expected command list after 'elif'"));
     }
 
     #[test]
     fn while_empty_condition_is_parse_error() {
-        let error = parse("while do true; done").expect_err("empty while condition");
+        let error = parse_test("while do true; done").expect_err("empty while condition");
         assert!(error.message.contains("expected command list after 'while'"));
     }
 
     #[test]
     fn until_empty_condition_is_parse_error() {
-        let error = parse("until do true; done").expect_err("empty until condition");
+        let error = parse_test("until do true; done").expect_err("empty until condition");
         assert!(error.message.contains("expected command list after 'until'"));
     }
 
     #[test]
     fn time_default_pipeline() {
-        let program = parse("time echo hello").expect("parse time default");
+        let program = parse_test("time echo hello").expect("parse time default");
         let pipeline = &program.items[0].and_or.first;
         assert_eq!(pipeline.timed, TimedMode::Default);
         assert!(!pipeline.negated);
@@ -2754,7 +2816,7 @@ mod tests {
 
     #[test]
     fn time_posix_pipeline() {
-        let program = parse("time -p echo hello").expect("parse time -p");
+        let program = parse_test("time -p echo hello").expect("parse time -p");
         let pipeline = &program.items[0].and_or.first;
         assert_eq!(pipeline.timed, TimedMode::Posix);
         assert!(matches!(&pipeline.commands[0], Command::Simple(cmd) if cmd.words[0].raw == "echo"));
@@ -2762,7 +2824,7 @@ mod tests {
 
     #[test]
     fn function_keyword_basic() {
-        let program = parse("function foo { echo hi; }").expect("parse function keyword");
+        let program = parse_test("function foo { echo hi; }").expect("parse function keyword");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::FunctionDef(fd) if fd.name == "foo"
@@ -2771,7 +2833,7 @@ mod tests {
 
     #[test]
     fn function_keyword_with_parens() {
-        let program = parse("function foo() { echo hi; }").expect("parse function keyword parens");
+        let program = parse_test("function foo() { echo hi; }").expect("parse function keyword parens");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::FunctionDef(fd) if fd.name == "foo"
@@ -2780,32 +2842,30 @@ mod tests {
 
     #[test]
     fn function_keyword_invalid_name() {
-        let error = parse("function 123").expect_err("bad function name");
-        assert_eq!(error.message, "expected function name");
+        let error = parse_test("function 123").expect_err("bad function name");
+        assert_eq!(&*error.message, "expected function name");
     }
 
     #[test]
     fn into_static_covers_all_command_variants() {
-        use std::borrow::Cow;
-
         let simple = Command::Simple(SimpleCommand {
             assignments: vec![Assignment {
-                name: Cow::Borrowed("X"),
+                name: "X",
                 value: Word {
-                    raw: Cow::Borrowed("1"),
+                    raw: "1",
                 },
-            }],
+            }].into_boxed_slice(),
             words: vec![Word {
-                raw: Cow::Borrowed("echo"),
-            }],
+                raw: "echo",
+            }].into_boxed_slice(),
             redirections: vec![Redirection {
                 fd: Some(2),
                 kind: RedirectionKind::Write,
                 target: Word {
-                    raw: Cow::Borrowed("err"),
+                    raw: "err",
                 },
                 here_doc: None,
-            }],
+            }].into_boxed_slice(),
         });
         let s: Command<'static> = simple.into_static();
         assert!(matches!(s, Command::Simple(ref sc) if sc.words[0].raw == "echo"));
@@ -2816,62 +2876,62 @@ mod tests {
                     first: Pipeline {
                         negated: false,
                         timed: TimedMode::Off,
-                        commands: vec![s.clone()],
+                        commands: vec![s.clone()].into_boxed_slice(),
                     },
-                    rest: vec![],
+                    rest: vec![].into_boxed_slice(),
                 },
                 asynchronous: false,
-            }],
+            }].into_boxed_slice(),
         });
         assert!(matches!(subshell.clone().into_static(), Command::Subshell(_)));
 
-        let group = Command::Group(Program { items: vec![] });
+        let group = Command::Group(Program { items: vec![].into_boxed_slice() });
         assert!(matches!(group.into_static(), Command::Group(_)));
 
         let func = Command::FunctionDef(FunctionDef {
-            name: Cow::Borrowed("f"),
+            name: "f",
             body: Box::new(s.clone()),
         });
         assert!(matches!(func.into_static(), Command::FunctionDef(fd) if fd.name == "f"));
 
         let if_cmd = Command::If(IfCommand {
-            condition: Program { items: vec![] },
-            then_branch: Program { items: vec![] },
+            condition: Program { items: vec![].into_boxed_slice() },
+            then_branch: Program { items: vec![].into_boxed_slice() },
             elif_branches: vec![ElifBranch {
-                condition: Program { items: vec![] },
-                body: Program { items: vec![] },
-            }],
-            else_branch: Some(Program { items: vec![] }),
+                condition: Program { items: vec![].into_boxed_slice() },
+                body: Program { items: vec![].into_boxed_slice() },
+            }].into_boxed_slice(),
+            else_branch: Some(Program { items: vec![].into_boxed_slice() }),
         });
         assert!(matches!(if_cmd.into_static(), Command::If(_)));
 
         let loop_cmd = Command::Loop(LoopCommand {
             kind: LoopKind::While,
-            condition: Program { items: vec![] },
-            body: Program { items: vec![] },
+            condition: Program { items: vec![].into_boxed_slice() },
+            body: Program { items: vec![].into_boxed_slice() },
         });
         assert!(matches!(loop_cmd.into_static(), Command::Loop(_)));
 
         let for_cmd = Command::For(ForCommand {
-            name: Cow::Borrowed("i"),
+            name: "i",
             items: Some(vec![Word {
-                raw: Cow::Borrowed("a"),
-            }]),
-            body: Program { items: vec![] },
+                raw: "a",
+            }].into_boxed_slice()),
+            body: Program { items: vec![].into_boxed_slice() },
         });
         let for_static = for_cmd.into_static();
         assert!(matches!(&for_static, Command::For(fc) if fc.name == "i"));
 
         let case_cmd = Command::Case(CaseCommand {
             word: Word {
-                raw: Cow::Borrowed("x"),
+                raw: "x",
             },
             arms: vec![CaseArm {
                 patterns: vec![Word {
-                    raw: Cow::Borrowed("*"),
-                }],
-                body: Program { items: vec![] },
-            }],
+                    raw: "*",
+                }].into_boxed_slice(),
+                body: Program { items: vec![].into_boxed_slice() },
+            }].into_boxed_slice(),
         });
         assert!(matches!(case_cmd.into_static(), Command::Case(_)));
 
@@ -2881,15 +2941,15 @@ mod tests {
                 fd: None,
                 kind: RedirectionKind::Write,
                 target: Word {
-                    raw: Cow::Borrowed("out"),
+                    raw: "out",
                 },
                 here_doc: Some(HereDoc {
-                    delimiter: Cow::Borrowed("EOF"),
-                    body: Cow::Borrowed("test\n"),
+                    delimiter: "EOF",
+                    body: "test\n",
                     expand: true,
                     strip_tabs: false,
                 }),
-            }],
+            }].into_boxed_slice(),
         );
         assert!(matches!(redir.into_static(), Command::Redirected(_, _)));
     }
@@ -2899,25 +2959,25 @@ mod tests {
         let mut aliases = HashMap::new();
         aliases.insert("both".to_string(), "echo a; echo b".to_string());
         let program =
-            parse_with_aliases("both", &aliases).expect("parse alias with semicolon");
+            parse_with_aliases_test("both", &aliases).expect("parse alias with semicolon");
         assert_eq!(program.items.len(), 2);
     }
 
     #[test]
     fn backslash_newline_mid_word_produces_owned_cow() {
-        let program = parse("ec\\\nho ok").expect("continuation in command");
+        let program = parse_test("ec\\\nho ok").expect("continuation in command");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words[0].raw == "echo" && cmd.words[1].raw == "ok"
         ));
 
-        let program = parse("echo a\\\nb\\\nc").expect("multiple continuations");
+        let program = parse_test("echo a\\\nb\\\nc").expect("multiple continuations");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words[1].raw == "abc"
         ));
 
-        let program = parse("2\\\n>err echo ok").expect("continuation in digit");
+        let program = parse_test("2\\\n>err echo ok").expect("continuation in digit");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words[0].raw == "echo"
@@ -2925,10 +2985,8 @@ mod tests {
     }
 
     #[test]
-    fn own_token_all_variants() {
-        use std::borrow::Cow;
+    fn intern_nonword_token_all_variants() {
         let cases: Vec<Token<'_>> = vec![
-            Token::Word(Cow::Borrowed("hello")),
             Token::IoNumber(3),
             Token::Newline,
             Token::Semi,
@@ -2951,35 +3009,31 @@ mod tests {
             Token::Eof,
         ];
         for token in cases {
-            let owned: Token<'static> = own_token(token);
-            match owned {
-                Token::Word(cow) => assert_eq!(&*cow, "hello"),
-                _ => {}
-            }
+            let _converted: Token<'static> = intern_nonword_token(token);
         }
     }
 
     #[test]
     fn skip_scan_covers_dollar_single_quote_and_default_in_subshell() {
-        let program = parse("echo $(echo $'hi' done)").expect("dollar-sq in paren");
+        let program = parse_test("echo $(echo $'hi' done)").expect("dollar-sq in paren");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words.len() == 2
         ));
 
-        let program = parse("echo $(echo $VAR done)").expect("bare dollar in paren");
+        let program = parse_test("echo $(echo $VAR done)").expect("bare dollar in paren");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words.len() == 2
         ));
 
-        let err = parse("echo $(echo 'unterminated)").expect_err("sq in paren");
+        let err = parse_test("echo $(echo 'unterminated)").expect_err("sq in paren");
         assert!(err.message.contains("unterminated"));
     }
 
     #[test]
     fn backslash_newline_before_comment_does_not_start_comment() {
-        let program = parse("a\\\n#b").expect("continuation before hash");
+        let program = parse_test("a\\\n#b").expect("continuation before hash");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words[0].raw == "a#b"
@@ -2988,13 +3042,13 @@ mod tests {
 
     #[test]
     fn backslash_newline_before_operator_resets_owned_mode() {
-        let program = parse("echo a\\\nb; echo c").expect("continuation before semi");
+        let program = parse_test("echo a\\\nb; echo c").expect("continuation before semi");
         assert_eq!(program.items.len(), 2);
     }
 
     #[test]
     fn backslash_newline_non_digit_before_redirect_is_not_io_number() {
-        let program = parse("a\\\nb>out").expect("non-digit continuation before redir");
+        let program = parse_test("a\\\nb>out").expect("non-digit continuation before redir");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words[0].raw == "ab"
