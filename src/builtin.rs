@@ -3194,7 +3194,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(2),
-                        ArgMatcher::Bytes(b"set: invalid option name: pipefail\n".to_vec()),
+                        ArgMatcher::Bytes(b"set: invalid option name: bogus\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -3204,7 +3204,7 @@ mod tests {
                 let outcome =
                     invoke(&mut shell, &["set".into(), "-z".into()]).expect("invalid set");
                 assert!(matches!(outcome, BuiltinOutcome::UtilityError(2)));
-                let outcome = invoke(&mut shell, &["set".into(), "-o".into(), "pipefail".into()])
+                let outcome = invoke(&mut shell, &["set".into(), "-o".into(), "bogus".into()])
                     .expect("invalid set -o");
                 assert!(matches!(outcome, BuiltinOutcome::UtilityError(2)));
             },
@@ -5408,6 +5408,14 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(1),
+                    ArgMatcher::Bytes(b"pipefail off\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            ),
+            t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"verbose off\n".to_vec()),
                 ],
                 TraceResult::Auto,
@@ -5502,6 +5510,14 @@ mod tests {
                 vec![
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"set +o nounset\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            ),
+            t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(1),
+                    ArgMatcher::Bytes(b"set +o pipefail\n".to_vec()),
                 ],
                 TraceResult::Auto,
             ),
