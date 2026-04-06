@@ -178,6 +178,26 @@ begin test "unset -f removes a function"
 end test "unset -f removes a function"
 ```
 
+#### Test: unset without -f targets the variable only
+
+With neither **-f** nor **-v**, the operand names a variable. Unsetting
+that variable does not remove a function that shares the same name.
+
+```
+begin test "unset without -f targets the variable only"
+  script
+    dupname=var_value
+    dupname() { echo func_body; }
+    unset dupname
+    printf '%s\n' "${dupname-unset}"
+    dupname
+  expect
+    stdout "unset\nfunc_body"
+    stderr ""
+    exit_code 0
+end test "unset without -f targets the variable only"
+```
+
 #### Test: unset of nonexistent variable is not an error
 
 Unsetting a variable that was not previously set is not an error.

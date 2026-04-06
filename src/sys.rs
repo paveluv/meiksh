@@ -169,6 +169,7 @@ pub(crate) struct SystemInterface {
     times: fn(*mut libc::tms) -> ClockTicks,
     sysconf: fn(c_int) -> c_long,
     execvp: fn(*const c_char, *const *const c_char) -> c_int,
+    execve: fn(*const c_char, *const *const c_char, *const *const c_char) -> c_int,
     // Filesystem
     open: fn(*const c_char, c_int, mode_t) -> c_int,
     write: fn(c_int, &[u8]) -> isize,
@@ -223,6 +224,7 @@ pub(crate) fn default_interface() -> SystemInterface {
         times: |buffer| unsafe { libc::times(buffer) },
         sysconf: |name| unsafe { libc::sysconf(name) },
         execvp: |file, argv| unsafe { libc::execvp(file, argv) },
+        execve: |file, argv, envp| unsafe { libc::execve(file, argv, envp) },
         open: |path, flags, mode| unsafe { libc::open(path, flags, mode as c_int) },
         write: |fd, data| unsafe { libc::write(fd, data.as_ptr().cast(), data.len()) },
         stat: |path, buf| unsafe { libc::stat(path, buf) },
@@ -861,6 +863,17 @@ pub(crate) mod test_support {
         let entry = trace_dispatch("execvp", &[ArgMatcher::Str(name), ArgMatcher::Any]);
         apply_trace_result_int(&entry)
     }
+    fn trace_execve(
+        file: *const c_char,
+        _argv: *const *const c_char,
+        _envp: *const *const c_char,
+    ) -> c_int {
+        let name = unsafe { CStr::from_ptr(file) }
+            .to_string_lossy()
+            .to_string();
+        let entry = trace_dispatch("execve", &[ArgMatcher::Str(name), ArgMatcher::Any]);
+        apply_trace_result_int(&entry)
+    }
     fn trace_open(path: *const c_char, flags: c_int, mode: mode_t) -> c_int {
         let p = unsafe { CStr::from_ptr(path) }
             .to_string_lossy()
@@ -1180,6 +1193,7 @@ pub(crate) mod test_support {
             times: trace_times,
             sysconf: trace_sysconf,
             execvp: trace_execvp,
+            execve: trace_execve,
             open: trace_open,
             write: trace_write,
             stat: trace_stat,
@@ -1262,6 +1276,13 @@ pub(crate) mod test_support {
         }
         fn panic_execvp(_: *const c_char, _: *const *const c_char) -> c_int {
             panic!("unexpected syscall 'execvp' in pure-logic test")
+        }
+        fn panic_execve(
+            _: *const c_char,
+            _: *const *const c_char,
+            _: *const *const c_char,
+        ) -> c_int {
+            panic!("unexpected syscall 'execve' in pure-logic test")
         }
         fn panic_open(_: *const c_char, _: c_int, _: mode_t) -> c_int {
             panic!("unexpected syscall 'open' in pure-logic test")
@@ -1366,6 +1387,7 @@ pub(crate) mod test_support {
             times: panic_times,
             sysconf: panic_sysconf,
             execvp: panic_execvp,
+            execve: panic_execve,
             open: panic_open,
             write: panic_write,
             stat: panic_stat,
@@ -2311,6 +2333,39 @@ pub fn exec_replace<S: AsRef<str>>(file: &str, argv: &[S]) -> SysResult<()> {
     #[cfg(coverage)]
     flush_coverage();
     let result = (sys_interface().execvp)(c_file.as_ptr(), pointers.as_ptr());
+    if result == -1 {
+        Err(last_error())
+    } else {
+        Ok(())
+    }
+}
+
+/// Replace the current process, using an explicit environment (as with `execve`).
+pub fn exec_replace_with_env(
+    file: &str,
+    argv: &[String],
+    env: &[(String, String)],
+) -> SysResult<()> {
+    let c_file = CString::new(string_to_bytes(file)).map_err(|_| SysError::NulInPath)?;
+    let mut argv_owned = Vec::with_capacity(argv.len());
+    for arg in argv {
+        argv_owned.push(CString::new(string_to_bytes(arg)).map_err(|_| SysError::NulInPath)?);
+    }
+    let mut argp: Vec<*const c_char> = argv_owned.iter().map(|a| a.as_ptr()).collect();
+    argp.push(std::ptr::null());
+
+    let mut env_owned = Vec::with_capacity(env.len());
+    for (k, v) in env {
+        let pair = format!("{k}={v}");
+        env_owned.push(CString::new(string_to_bytes(&pair)).map_err(|_| SysError::NulInPath)?);
+    }
+    let mut envp: Vec<*const c_char> = env_owned.iter().map(|e| e.as_ptr()).collect();
+    envp.push(std::ptr::null());
+
+    #[cfg(coverage)]
+    flush_coverage();
+    let result =
+        (sys_interface().execve)(c_file.as_ptr(), argp.as_ptr(), envp.as_ptr());
     if result == -1 {
         Err(last_error())
     } else {

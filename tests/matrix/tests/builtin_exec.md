@@ -181,6 +181,22 @@ begin test "exec with operands replaces the shell"
 end test "exec with operands replaces the shell"
 ```
 
+#### Test: exec prefix assignment is visible to the new program
+
+Assignments that precede `exec` are part of the simple command; the
+replaced utility runs with those variables in its environment.
+
+```
+begin test "exec prefix assignment is visible to the new program"
+  script
+    MY_EXEC_VAR=42 exec sh -c 'printf "%s\n" "$MY_EXEC_VAR"'
+  expect
+    stdout "42"
+    stderr ""
+    exit_code 0
+end test "exec prefix assignment is visible to the new program"
+```
+
 #### Test: exec with no operands manipulates file descriptors
 
 Without operands, `exec` applies redirections to the current shell.

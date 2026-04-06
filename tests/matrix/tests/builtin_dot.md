@@ -167,6 +167,42 @@ begin test "dot sources file via PATH resolution"
 end test "dot sources file via PATH resolution"
 ```
 
+#### Test: dot uses path with slash relative to current directory
+
+When the operand contains a `/`, the shell opens that path directly
+instead of searching `PATH`.
+
+```
+begin test "dot uses path with slash relative to current directory"
+  script
+    mkdir -p tmp_dot_subdir
+    printf 'echo subdir_sourced\n' > tmp_dot_subdir/nested.sh
+    . tmp_dot_subdir/nested.sh
+    rm -rf tmp_dot_subdir
+  expect
+    stdout "subdir_sourced"
+    stderr ""
+    exit_code 0
+end test "dot uses path with slash relative to current directory"
+```
+
+#### Test: dot missing file yields non-zero in subshell
+
+If the file cannot be read, the dot command fails; here it is run in a
+subshell so the parent can print the failing exit status.
+
+```
+begin test "dot missing file yields non-zero in subshell"
+  script
+    ( . ./tmp_dot_nonexistent_xyz.sh )
+    echo "outer=$?"
+  expect
+    stdout "outer=1"
+    stderr "(.|\n)*"
+    exit_code 0
+end test "dot missing file yields non-zero in subshell"
+```
+
 #### Test: dot on empty file yields zero status
 
 If the sourced file contains no commands, dot completes successfully

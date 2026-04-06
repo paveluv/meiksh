@@ -196,3 +196,20 @@ begin test "eval exit status follows executed command"
     exit_code 0
 end test "eval exit status follows executed command"
 ```
+
+#### Test: eval builds a compound command from separate arguments
+
+Arguments are joined with spaces, so multiple words can form one
+parsed command.
+
+```
+begin test "eval builds a compound command from separate arguments"
+  script
+    eval true "&&" false
+    echo "$?"
+  expect
+    stdout "1"
+    stderr ""
+    exit_code 0
+end test "eval builds a compound command from separate arguments"
+```

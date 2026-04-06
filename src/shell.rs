@@ -623,6 +623,20 @@ impl Shell {
             .collect()
     }
 
+    /// Environment for [`exec`](crate::builtin) with a utility: exported variables from the
+    /// shell plus prefix assignments for this command (even when not exported).
+    pub fn env_for_exec_utility(&self, cmd_assignments: &[(String, String)]) -> Vec<(String, String)> {
+        let mut env = self.env_for_child();
+        for (k, v) in cmd_assignments {
+            if let Some(pos) = env.iter().position(|(name, _)| name == k) {
+                env[pos] = (k.clone(), v.clone());
+            } else {
+                env.push((k.clone(), v.clone()));
+            }
+        }
+        env
+    }
+
     pub fn get_var(&self, name: &str) -> Option<&str> {
         self.env.get(name).map(String::as_str)
     }
@@ -903,7 +917,7 @@ impl Shell {
         for (name, value) in assignments {
             self.set_var(name, value.clone())?;
         }
-        match builtin::run(self, argv)? {
+        match builtin::run(self, argv, assignments)? {
             BuiltinOutcome::Status(status) => Ok(FlowSignal::Continue(status)),
             BuiltinOutcome::UtilityError(status) => Ok(FlowSignal::UtilityError(status)),
             BuiltinOutcome::Exit(status) => Ok(FlowSignal::Exit(status)),

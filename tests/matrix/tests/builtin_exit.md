@@ -204,6 +204,23 @@ begin test "exit with no n uses last command exit status"
 end test "exit with no n uses last command exit status"
 ```
 
+#### Test: exit with no n after success exits zero
+
+If the preceding command succeeded, `exit` with no operand uses its
+exit status (zero).
+
+```
+begin test "exit with no n after success exits zero"
+  script
+    true
+    exit
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "exit with no n after success exits zero"
+```
+
 #### Test: EXIT trap fires on normal exit
 
 A trap on EXIT fires when the shell terminates via `exit`.

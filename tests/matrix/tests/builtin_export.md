@@ -224,6 +224,24 @@ begin test "export makes variable available to child processes"
 end test "export makes variable available to child processes"
 ```
 
+#### Test: export name exports an existing variable
+
+`export` with only a variable name marks that name for export without
+changing its value.
+
+```
+begin test "export name exports an existing variable"
+  script
+    already_set=portable_value
+    export already_set
+    sh -c 'printf "%s\n" "$already_set"'
+  expect
+    stdout "portable_value"
+    stderr ""
+    exit_code 0
+end test "export name exports an existing variable"
+```
+
 #### Test: export -p generates eval-able output
 
 `export -p` produces output suitable for reinput to the shell.

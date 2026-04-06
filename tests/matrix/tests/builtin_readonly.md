@@ -174,6 +174,23 @@ from Section 2.15 of the POSIX.1-2024 Shell Command Language specification.
 
 ### Tests
 
+#### Test: readonly name=word sets the variable value
+
+Using `readonly name=word` both marks the variable read-only and sets
+its value in one step.
+
+```
+begin test "readonly name=word sets the variable value"
+  script
+    readonly RO_INIT=initial_value
+    printf '%s\n' "$RO_INIT"
+  expect
+    stdout "initial_value"
+    stderr ""
+    exit_code 0
+end test "readonly name=word sets the variable value"
+```
+
 #### Test: readonly prevents assignment
 
 A variable with the readonly attribute cannot be reassigned.
@@ -188,6 +205,22 @@ begin test "readonly prevents assignment"
     stderr ".+"
     exit_code !=0
 end test "readonly prevents assignment"
+```
+
+#### Test: readonly variable cannot be unset
+
+A read-only variable is not removed by `unset`; the command fails.
+
+```
+begin test "readonly variable cannot be unset"
+  script
+    readonly RO_UNSET_ME=1
+    unset RO_UNSET_ME
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
+end test "readonly variable cannot be unset"
 ```
 
 #### Test: readonly -p generates eval-able output
