@@ -894,3 +894,38 @@ begin interactive test "SIGCONT to stopped background job continues it in backgr
   wait
 end interactive test "SIGCONT to stopped background job continues it in background"
 ```
+#### Test: non-interactive shell may write suspended job message
+```
+begin test "non-interactive shell may write suspended job message"
+  script
+    set -m
+    sleep 30 &
+    kill -STOP $!
+    sleep 0.1
+    kill -9 $! 2>/dev/null; wait 2>/dev/null
+  expect
+    stdout ""
+    stderr "(.|\n)*"
+    exit_code 0
+end test "non-interactive shell may write suspended job message"
+```
+
+#### Test: background job and pgid initialization
+```
+begin interactive test "background job and pgid initialization"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 30 &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  send "ps -o pgid= -p \$! | tr -d ' ' | grep -E '^[0-9]+$' >/dev/null && echo has_pgid"
+  expect "has_pgid"
+  expect "$ "
+  send "kill %1 2>/dev/null; wait"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "background job and pgid initialization"
+```
