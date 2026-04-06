@@ -2,12 +2,13 @@ use std::borrow::Cow;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use crate::arena::StringArena;
 use crate::syntax::Word;
 use crate::sys;
 
 #[derive(Debug)]
 pub struct ExpandError {
-    pub message: String,
+    pub message: Box<str>,
 }
 
 impl fmt::Display for ExpandError {
@@ -64,24 +65,25 @@ enum Expansion {
     AtFields(Vec<String>),
 }
 
-pub fn expand_words<C: Context>(ctx: &mut C, words: &[Word]) -> Result<Vec<String>, ExpandError> {
+pub fn expand_words<'a, C: Context>(ctx: &mut C, words: &[Word], arena: &'a StringArena) -> Result<Vec<&'a str>, ExpandError> {
     let mut result = Vec::new();
     for word in words {
-        result.extend(expand_word(ctx, word)?);
+        result.extend(expand_word(ctx, word, arena)?);
     }
     Ok(result)
 }
 
-pub fn expand_word<C: Context>(ctx: &mut C, word: &Word) -> Result<Vec<String>, ExpandError> {
+pub fn expand_word<'a, C: Context>(ctx: &mut C, word: &Word, arena: &'a StringArena) -> Result<Vec<&'a str>, ExpandError> {
     let expanded = expand_raw(ctx, &word.raw)?;
 
     if expanded.has_at_expansion {
-        return expand_word_with_at_fields(&expanded, expanded.had_quoted_null_outside_at);
+        let fields = expand_word_with_at_fields(&expanded, expanded.had_quoted_null_outside_at)?;
+        return Ok(fields.into_iter().map(|s| arena.intern(s)).collect());
     }
 
     if expanded.segments.is_empty() {
         if expanded.had_quoted_content {
-            return Ok(vec![String::new()]);
+            return Ok(vec![arena.intern(String::new())]);
         }
         return Ok(Vec::new());
     }
@@ -115,22 +117,24 @@ pub fn expand_word<C: Context>(ctx: &mut C, word: &Word) -> Result<Vec<String>, 
         if field.has_unquoted_glob && ctx.pathname_expansion_enabled() {
             let matches = expand_pathname(&field.text);
             if matches.is_empty() {
-                result.push(field.text);
+                result.push(arena.intern(field.text));
             } else {
-                result.extend(matches);
+                for m in matches {
+                    result.push(arena.intern(m));
+                }
             }
         } else {
-            result.push(field.text);
+            result.push(arena.intern(field.text));
         }
     }
     Ok(result)
 }
 
-pub fn expand_redirect_word<C: Context>(ctx: &mut C, word: &Word) -> Result<String, ExpandError> {
+pub fn expand_redirect_word<'a, C: Context>(ctx: &mut C, word: &Word, arena: &'a StringArena) -> Result<&'a str, ExpandError> {
     let expanded = expand_raw(ctx, &word.raw)?;
 
     if expanded.segments.is_empty() {
-        return Ok(String::new());
+        return Ok(arena.intern(String::new()));
     }
 
     let has_expanded = expanded
@@ -151,7 +155,7 @@ pub fn expand_redirect_word<C: Context>(ctx: &mut C, word: &Word) -> Result<Stri
         }]
     };
 
-    Ok(fields.into_iter().map(|f| f.text).collect::<Vec<_>>().join(" "))
+    Ok(arena.intern(fields.into_iter().map(|f| f.text).collect::<Vec<_>>().join(" ")))
 }
 
 fn expand_word_with_at_fields(
@@ -199,30 +203,32 @@ fn expand_word_with_at_fields(
     Ok(fields)
 }
 
-pub fn expand_word_text<C: Context>(ctx: &mut C, word: &Word) -> Result<String, ExpandError> {
-    expand_word_text_assignment(ctx, word, false)
+pub fn expand_word_text<'a, C: Context>(ctx: &mut C, word: &Word, arena: &'a StringArena) -> Result<&'a str, ExpandError> {
+    expand_word_text_assignment(ctx, word, false, arena)
 }
 
-pub fn expand_word_pattern<C: Context>(ctx: &mut C, word: &Word) -> Result<String, ExpandError> {
+pub fn expand_word_pattern<'a, C: Context>(ctx: &mut C, word: &Word, arena: &'a StringArena) -> Result<&'a str, ExpandError> {
     let expanded = expand_raw(ctx, &word.raw)?;
-    Ok(render_pattern_from_segments(&expanded.segments))
+    Ok(arena.intern(render_pattern_from_segments(&expanded.segments)))
 }
 
-pub fn expand_assignment_value<C: Context>(
+pub fn expand_assignment_value<'a, C: Context>(
     ctx: &mut C,
     word: &Word,
-) -> Result<String, ExpandError> {
-    expand_word_text_assignment(ctx, word, true)
+    arena: &'a StringArena,
+) -> Result<&'a str, ExpandError> {
+    expand_word_text_assignment(ctx, word, true, arena)
 }
 
-fn expand_word_text_assignment<C: Context>(
+fn expand_word_text_assignment<'a, C: Context>(
     ctx: &mut C,
     word: &Word,
     assignment_rhs: bool,
-) -> Result<String, ExpandError> {
+    arena: &'a StringArena,
+) -> Result<&'a str, ExpandError> {
     if !assignment_rhs {
         let expanded = expand_raw(ctx, &word.raw)?;
-        return Ok(flatten_segments(&expanded.segments));
+        return Ok(arena.intern(flatten_segments(&expanded.segments)));
     }
     let raw = &word.raw;
     let mut result = String::new();
@@ -235,7 +241,7 @@ fn expand_word_text_assignment<C: Context>(
         let expanded = expand_raw(ctx, &part)?;
         result.push_str(&flatten_segments(&expanded.segments));
     }
-    Ok(result)
+    Ok(arena.intern(result))
 }
 
 fn split_on_unquoted_colons(raw: &str) -> Vec<String> {
@@ -320,7 +326,11 @@ fn split_on_unquoted_colons(raw: &str) -> Vec<String> {
     parts
 }
 
-pub fn expand_parameter_text<C: Context>(ctx: &mut C, raw: &str) -> Result<String, ExpandError> {
+pub fn expand_parameter_text<'a, C: Context>(ctx: &mut C, raw: &str, arena: &'a StringArena) -> Result<&'a str, ExpandError> {
+    Ok(arena.intern(expand_parameter_text_owned(ctx, raw)?))
+}
+
+fn expand_parameter_text_owned<C: Context>(ctx: &mut C, raw: &str) -> Result<String, ExpandError> {
     let mut result = String::new();
     let mut index = 0usize;
 
@@ -394,7 +404,7 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
                 }
                 if index >= raw.len() {
                     return Err(ExpandError {
-                        message: "unterminated single quote".to_string(),
+                        message: "unterminated single quote".into(),
                     });
                 }
                 push_segment_str(&mut segments, &raw[start..index], QuoteState::Quoted);
@@ -452,7 +462,7 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
                 }
                 if index >= raw.len() {
                     return Err(ExpandError {
-                        message: "unterminated double quote".to_string(),
+                        message: "unterminated double quote".into(),
                     });
                 }
                 if !buffer.is_empty() {
@@ -581,11 +591,11 @@ fn scan_backtick_command(
         *index += 1;
     }
     Err(ExpandError {
-        message: "unterminated backquote".to_string(),
+        message: "unterminated backquote".into(),
     })
 }
 
-pub fn expand_here_document<C: Context>(ctx: &mut C, text: &str) -> Result<String, ExpandError> {
+pub fn expand_here_document<'a, C: Context>(ctx: &mut C, text: &str, arena: &'a StringArena) -> Result<&'a str, ExpandError> {
     let mut result = String::new();
     let mut index = 0usize;
 
@@ -632,7 +642,7 @@ pub fn expand_here_document<C: Context>(ctx: &mut C, text: &str) -> Result<Strin
         }
     }
 
-    Ok(result)
+    Ok(arena.intern(result))
 }
 
 fn expand_dollar<C: Context>(
@@ -676,7 +686,7 @@ fn expand_dollar<C: Context>(
                     index += 1;
                 }
                 Err(ExpandError {
-                    message: "unterminated arithmetic expansion".to_string(),
+                    message: "unterminated arithmetic expansion".into(),
                 })
             } else {
                 let mut index = 2usize;
@@ -697,7 +707,7 @@ fn expand_dollar<C: Context>(
                     index += 1;
                 }
                 Err(ExpandError {
-                    message: "unterminated command substitution".to_string(),
+                    message: "unterminated command substitution".into(),
                 })
             }
         }
@@ -818,7 +828,7 @@ fn parse_dollar_single_quoted(source: &str) -> Result<(String, usize), ExpandErr
                 index += 1;
                 if index >= source.len() {
                     return Err(ExpandError {
-                        message: "unterminated dollar-single-quotes".to_string(),
+                        message: "unterminated dollar-single-quotes".into(),
                     });
                 }
                 let ch = source.as_bytes()[index] as char;
@@ -838,7 +848,7 @@ fn parse_dollar_single_quoted(source: &str) -> Result<(String, usize), ExpandErr
                         index += 1;
                         if index >= source.len() {
                             return Err(ExpandError {
-                                message: "unterminated dollar-single-quotes".to_string(),
+                                message: "unterminated dollar-single-quotes".into(),
                             });
                         }
                         if source.as_bytes()[index] == b'\\' && index + 1 < source.len() {
@@ -884,7 +894,7 @@ fn parse_dollar_single_quoted(source: &str) -> Result<(String, usize), ExpandErr
         }
     }
     Err(ExpandError {
-        message: "unterminated dollar-single-quotes".to_string(),
+        message: "unterminated dollar-single-quotes".into(),
     })
 }
 
@@ -973,7 +983,7 @@ fn scan_to_closing_brace(source: &str, start: usize) -> Result<usize, ExpandErro
         }
     }
     Err(ExpandError {
-        message: "unterminated parameter expansion".to_string(),
+        message: "unterminated parameter expansion".into(),
     })
 }
 
@@ -1058,7 +1068,7 @@ fn expand_braced_parameter<C: Context>(
                     word.unwrap_or(&default_msg),
                     quoted,
                 )?;
-                Err(ExpandError { message })
+                Err(ExpandError { message: message.into() })
             } else {
                 Ok(Expansion::One(value.map(|c| c.into_owned()).unwrap_or_default()))
             }
@@ -1071,7 +1081,7 @@ fn expand_braced_parameter<C: Context>(
                     word.unwrap_or(&default_msg),
                     quoted,
                 )?;
-                Err(ExpandError { message })
+                Err(ExpandError { message: message.into() })
             } else {
                 Ok(Expansion::One(value.map(|c| c.into_owned()).unwrap_or_default()))
             }
@@ -1102,7 +1112,7 @@ fn expand_braced_parameter<C: Context>(
             Ok(Expansion::One(remove_parameter_pattern(val, &pat, mode)?))
         }
         Some(_) => Err(ExpandError {
-            message: "unsupported parameter expansion".to_string(),
+            message: "unsupported parameter expansion".into(),
         }),
     }
 }
@@ -1128,14 +1138,14 @@ fn expand_braced_parameter_text<C: Context>(
         None => require_set_parameter(ctx, name, value),
         Some(":-") => {
             if !is_set || is_null {
-                expand_parameter_text(ctx, word.unwrap_or_default())
+                expand_parameter_text_owned(ctx, word.unwrap_or_default())
             } else {
                 Ok(value.map(|c| c.into_owned()).unwrap_or_default())
             }
         }
         Some("-") => {
             if !is_set {
-                expand_parameter_text(ctx, word.unwrap_or_default())
+                expand_parameter_text_owned(ctx, word.unwrap_or_default())
             } else {
                 Ok(value.map(|c| c.into_owned()).unwrap_or_default())
             }
@@ -1162,7 +1172,7 @@ fn expand_braced_parameter_text<C: Context>(
                     word,
                     "parameter null or not set",
                 )?;
-                Err(ExpandError { message })
+                Err(ExpandError { message: message.into() })
             } else {
                 Ok(value.map(|c| c.into_owned()).unwrap_or_default())
             }
@@ -1171,47 +1181,47 @@ fn expand_braced_parameter_text<C: Context>(
             if !is_set {
                 let message =
                     expand_parameter_error_text(ctx, name, word, "parameter not set")?;
-                Err(ExpandError { message })
+                Err(ExpandError { message: message.into() })
             } else {
                 Ok(value.map(|c| c.into_owned()).unwrap_or_default())
             }
         }
         Some(":+") => {
             if is_set && !is_null {
-                expand_parameter_text(ctx, word.unwrap_or_default())
+                expand_parameter_text_owned(ctx, word.unwrap_or_default())
             } else {
                 Ok(String::new())
             }
         }
         Some("+") => {
             if is_set {
-                expand_parameter_text(ctx, word.unwrap_or_default())
+                expand_parameter_text_owned(ctx, word.unwrap_or_default())
             } else {
                 Ok(String::new())
             }
         }
         Some("%") => remove_parameter_pattern(
             require_set_parameter(ctx, name, value)?,
-            &expand_parameter_text(ctx, word.unwrap_or_default())?,
+            &expand_parameter_text_owned(ctx, word.unwrap_or_default())?,
             PatternRemoval::SmallestSuffix,
         ),
         Some("%%") => remove_parameter_pattern(
             require_set_parameter(ctx, name, value)?,
-            &expand_parameter_text(ctx, word.unwrap_or_default())?,
+            &expand_parameter_text_owned(ctx, word.unwrap_or_default())?,
             PatternRemoval::LargestSuffix,
         ),
         Some("#") => remove_parameter_pattern(
             require_set_parameter(ctx, name, value)?,
-            &expand_parameter_text(ctx, word.unwrap_or_default())?,
+            &expand_parameter_text_owned(ctx, word.unwrap_or_default())?,
             PatternRemoval::SmallestPrefix,
         ),
         Some("##") => remove_parameter_pattern(
             require_set_parameter(ctx, name, value)?,
-            &expand_parameter_text(ctx, word.unwrap_or_default())?,
+            &expand_parameter_text_owned(ctx, word.unwrap_or_default())?,
             PatternRemoval::LargestPrefix,
         ),
         Some(_) => Err(ExpandError {
-            message: "unsupported parameter expansion".to_string(),
+            message: "unsupported parameter expansion".into(),
         }),
     }
 }
@@ -1224,7 +1234,7 @@ fn assign_parameter<C: Context>(
 ) -> Result<String, ExpandError> {
     if !is_name(name) {
         return Err(ExpandError {
-            message: format!("{name}: cannot assign in parameter expansion"),
+            message: format!("{name}: cannot assign in parameter expansion").into(),
         });
     }
     let value = expand_parameter_word(ctx, raw_word, quoted)?;
@@ -1239,10 +1249,10 @@ fn assign_parameter_text<C: Context>(
 ) -> Result<String, ExpandError> {
     if !is_name(name) {
         return Err(ExpandError {
-            message: format!("{name}: cannot assign in parameter expansion"),
+            message: format!("{name}: cannot assign in parameter expansion").into(),
         });
     }
-    let value = expand_parameter_text(ctx, raw_word)?;
+    let value = expand_parameter_text_owned(ctx, raw_word)?;
     ctx.set_var(name, value.clone())?;
     Ok(value)
 }
@@ -1261,7 +1271,7 @@ fn expand_parameter_error_text<C: Context>(
             &owned
         }
     };
-    expand_parameter_text(ctx, raw)
+    expand_parameter_text_owned(ctx, raw)
 }
 
 fn expand_parameter_word<C: Context>(
@@ -1315,7 +1325,7 @@ fn parse_parameter_expression(
 ) -> Result<(&str, Option<&str>, Option<&str>), ExpandError> {
     if expr.is_empty() {
         return Err(ExpandError {
-            message: "empty parameter expansion".to_string(),
+            message: "empty parameter expansion".into(),
         });
     }
     let mut index = 0usize;
@@ -1337,7 +1347,7 @@ fn parse_parameter_expression(
         &expr[..index]
     } else {
         return Err(ExpandError {
-            message: "invalid parameter expansion".to_string(),
+            message: "invalid parameter expansion".into(),
         });
     };
 
@@ -1386,7 +1396,7 @@ fn require_set_parameter<C: Context>(
 ) -> Result<String, ExpandError> {
     if value.is_none() && ctx.nounset_enabled() && name != "@" && name != "*" {
         return Err(ExpandError {
-            message: format!("{name}: parameter not set"),
+            message: format!("{name}: parameter not set").into(),
         });
     }
     Ok(value.map(|c| c.into_owned()).unwrap_or_default())
@@ -1866,7 +1876,7 @@ fn eval_arithmetic<C: Context>(ctx: &mut C, expression: &str) -> Result<i64, Exp
     parser.skip_ws();
     if !parser.is_eof() {
         return Err(ExpandError {
-            message: "unexpected trailing arithmetic tokens".to_string(),
+            message: "unexpected trailing arithmetic tokens".into(),
         });
     }
     Ok(value)
@@ -1880,7 +1890,7 @@ struct ArithmeticParser<'a, 'src, C> {
 
 fn arith_err(msg: &str) -> ExpandError {
     ExpandError {
-        message: msg.to_string(),
+        message: msg.into(),
     }
 }
 
@@ -2411,12 +2421,14 @@ mod tests {
 
     #[test]
     fn expands_home_and_params() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
             &Word {
                 raw: "~/$USER".into(),
             },
+            &arena,
         )
         .expect("expand");
         assert_eq!(fields, vec!["/tmp/home/meiksh".to_string()]);
@@ -2424,13 +2436,15 @@ mod tests {
 
     #[test]
     fn expands_arithmetic_expressions() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
                     raw: "$((1 + 2 * 3))".into()
-                }
+                },
+                &arena,
             )
             .expect("expand"),
             vec!["7".to_string()]
@@ -2439,6 +2453,7 @@ mod tests {
 
     #[test]
     fn expands_command_substitution() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_words(
@@ -2451,6 +2466,7 @@ mod tests {
                         raw: "$(printf hi)".into()
                     },
                 ],
+                &arena,
             )
             .expect("expand"),
             vec![
@@ -2465,13 +2481,15 @@ mod tests {
 
     #[test]
     fn preserves_quoted_and_escaped_characters() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
                     raw: "\"$0 $1\"".into()
-                }
+                },
+                &arena,
             )
             .expect("expand"),
             vec!["meiksh alpha".to_string()]
@@ -2481,7 +2499,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "\\$HOME".into()
-                }
+                },
+                &arena,
             )
             .expect("expand"),
             vec!["$HOME".to_string()]
@@ -2491,7 +2510,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "a\\ b".into()
-                }
+                },
+                &arena,
             )
             .expect("expand"),
             vec!["a b".to_string()]
@@ -2501,7 +2521,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "'literal text'".into()
-                }
+                },
+                &arena,
             )
             .expect("expand"),
             vec!["literal text".to_string()]
@@ -2511,7 +2532,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "\"cost:\\$USER\"".into()
-                }
+                },
+                &arena,
             )
             .expect("expand"),
             vec!["cost:$USER".to_string()]
@@ -2521,7 +2543,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$'a b'".into()
-                }
+                },
+                &arena,
             )
             .expect("expand"),
             vec!["a b".to_string()]
@@ -2531,7 +2554,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$'line\\nnext'".into()
-                }
+                },
+                &arena,
             )
             .expect("expand"),
             vec!["line\nnext".to_string()]
@@ -2541,26 +2565,29 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "\"$'a b'\"".into()
-                }
+                },
+                &arena,
             )
             .expect("expand"),
             vec!["$'a b'".to_string()]
         );
         assert_eq!(
-            expand_parameter_text(&mut ctx, "$'tab\\tstop'").expect("parameter text"),
+            expand_parameter_text(&mut ctx, "$'tab\\tstop'", &arena).expect("parameter text"),
             "tab\tstop".to_string()
         );
     }
 
     #[test]
     fn rejects_unterminated_quotes_and_expansions() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         for raw in ["'oops", "\"oops", "${USER", "$(echo", "$((1 + 2)", "$'oops"] {
             let error = expand_word(
                 &mut ctx,
                 &Word {
-                    raw: raw.to_string().into(),
+                    raw,
                 },
+                &arena,
             )
             .expect_err("error");
             assert!(!error.message.is_empty());
@@ -2610,13 +2637,15 @@ mod tests {
 
     #[test]
     fn rejects_bad_arithmetic() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         for raw in ["$((1 / 0))", "$((1 + ))", "$((1 1))"] {
             let error = expand_word(
                 &mut ctx,
                 &Word {
-                    raw: raw.to_string().into(),
+                    raw,
                 },
+                &arena,
             )
             .expect_err("error");
             assert!(!error.message.is_empty());
@@ -2625,6 +2654,7 @@ mod tests {
 
     #[test]
     fn supports_parameter_operators_and_positionals() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.positional = vec![
             "a".into(),
@@ -2644,13 +2674,14 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${10}".into()
-                }
+                },
+                &arena,
             )
             .expect("expand"),
             vec!["j".to_string()]
         );
         assert_eq!(
-            expand_word(&mut ctx, &Word { raw: "$10".into() }).expect("expand"),
+            expand_word(&mut ctx, &Word { raw: "$10".into() }, &arena).expect("expand"),
             vec!["a0".to_string()]
         );
         assert_eq!(
@@ -2658,14 +2689,15 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${#10}".into()
-                }
+                },
+                &arena,
             )
             .expect("expand"),
             vec!["1".to_string()]
         );
         ctx.env.insert("IFS".into(), ":".into());
         assert_eq!(
-            expand_word(&mut ctx, &Word { raw: "$*".into() }).expect("expand"),
+            expand_word(&mut ctx, &Word { raw: "$*".into() }, &arena).expect("expand"),
             vec![
                 "a".to_string(),
                 "b".to_string(),
@@ -2684,7 +2716,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "\"$*\"".into()
-                }
+                },
+                &arena,
             )
             .expect("expand"),
             vec!["a:b:c:d:e:f:g:h:i:j".to_string()]
@@ -2694,7 +2727,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${UNSET-word}".into()
-                }
+                },
+                &arena,
             )
             .expect("expand"),
             vec!["word".to_string()]
@@ -2704,7 +2738,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${UNSET:-word}".into()
-                }
+                },
+                &arena,
             )
             .expect("expand"),
             vec!["word".to_string()]
@@ -2714,7 +2749,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${EMPTY-word}".into()
-                }
+                },
+                &arena,
             )
             .expect("expand"),
             Vec::<String>::new()
@@ -2724,7 +2760,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${EMPTY:-word}".into()
-                }
+                },
+                &arena,
             )
             .expect("expand"),
             vec!["word".to_string()]
@@ -2734,7 +2771,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${USER:+alt}".into()
-                }
+                },
+                &arena,
             )
             .expect("expand"),
             vec!["alt".to_string()]
@@ -2744,7 +2782,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${UNSET+alt}".into()
-                }
+                },
+                &arena,
             )
             .expect("expand"),
             Vec::<String>::new()
@@ -2754,14 +2793,15 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${NEW:=value}".into()
-                }
+                },
+                &arena,
             )
             .expect("expand"),
             vec!["value".to_string()]
         );
         assert_eq!(ctx.env.get("NEW").map(String::as_str), Some("value"));
         assert_eq!(
-            expand_word(&mut ctx, &Word { raw: "${#}".into() }).expect("expand"),
+            expand_word(&mut ctx, &Word { raw: "${#}".into() }, &arena).expect("expand"),
             vec!["10".to_string()]
         );
 
@@ -2770,15 +2810,17 @@ mod tests {
             &Word {
                 raw: "${UNSET:?boom}".into(),
             },
+            &arena,
         )
         .expect_err("unset error");
-        assert_eq!(error.message, "boom");
+        assert_eq!(&*error.message, "boom");
 
         let error = expand_word(
             &mut ctx,
             &Word {
                 raw: "${UNSET:?$'unterminated}".into(),
             },
+            &arena,
         )
         .expect_err("colon-question word expansion error");
         assert!(!error.message.is_empty());
@@ -2788,6 +2830,7 @@ mod tests {
             &Word {
                 raw: "${MISSING?$'unterminated}".into(),
             },
+            &arena,
         )
         .expect_err("plain-question word expansion error");
         assert!(!error.message.is_empty());
@@ -2795,13 +2838,15 @@ mod tests {
 
     #[test]
     fn performs_field_splitting_more_like_posix() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
                     raw: "$WORDS".into()
-                }
+                },
+                &arena,
             )
             .expect("expand"),
             vec!["one".to_string(), "two".to_string(), "three".to_string()]
@@ -2811,7 +2856,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$DELIMS".into()
-                }
+                },
+                &arena,
             )
             .expect("expand"),
             vec![String::new(), String::new(), String::new()]
@@ -2821,7 +2867,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$EMPTY".into()
-                }
+                },
+                &arena,
             )
             .expect("expand"),
             Vec::<String>::new()
@@ -2831,6 +2878,7 @@ mod tests {
 
     #[test]
     fn expands_text_without_field_splitting_or_pathname_expansion() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert("WORDS".into(), "one two".into());
         assert_eq!(
@@ -2838,19 +2886,21 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$WORDS".into()
-                }
+                },
+                &arena,
             )
             .expect("expand"),
             "one two"
         );
         assert_eq!(
-            expand_word_text(&mut ctx, &Word { raw: "*".into() }).expect("expand"),
+            expand_word_text(&mut ctx, &Word { raw: "*".into() }, &arena).expect("expand"),
             "*"
         );
     }
 
     #[test]
     fn performs_pathname_expansion() {
+        let arena = StringArena::new();
         let dir_entries = || {
             vec![
                 t(
@@ -2904,7 +2954,8 @@ mod tests {
                     &mut ctx,
                     &Word {
                         raw: "/testdir/*.txt".into()
-                    }
+                    },
+                    &arena,
                 )
                 .expect("glob"),
                 vec!["/testdir/a.txt".to_string(), "/testdir/b.txt".to_string()]
@@ -2914,7 +2965,8 @@ mod tests {
                     &mut ctx,
                     &Word {
                         raw: "\\*.txt".into()
-                    }
+                    },
+                    &arena,
                 )
                 .expect("escaped glob"),
                 vec!["*.txt".to_string()]
@@ -2924,7 +2976,8 @@ mod tests {
                     &mut ctx,
                     &Word {
                         raw: "/testdir/.*.txt".into()
-                    }
+                    },
+                    &arena,
                 )
                 .expect("hidden glob"),
                 vec!["/testdir/.hidden.txt".to_string()]
@@ -2934,16 +2987,18 @@ mod tests {
 
     #[test]
     fn can_disable_pathname_expansion_via_context() {
+        let arena = StringArena::new();
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
             ctx.pathname_expansion_enabled = false;
-            let pattern = "/testdir/*.txt".to_string();
+            let pattern = "/testdir/*.txt";
             assert_eq!(
                 expand_word(
                     &mut ctx,
                     &Word {
-                        raw: pattern.clone().into()
-                    }
+                        raw: pattern
+                    },
+                    &arena,
                 )
                 .expect("noglob"),
                 vec![pattern]
@@ -2994,6 +3049,7 @@ mod tests {
 
     #[test]
     fn nounset_option_rejects_plain_unset_parameter_expansions() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.nounset_enabled = true;
 
@@ -3002,29 +3058,32 @@ mod tests {
             &Word {
                 raw: "$UNSET".into(),
             },
+            &arena,
         )
         .expect_err("nounset variable");
-        assert_eq!(error.message, "UNSET: parameter not set");
+        assert_eq!(&*error.message, "UNSET: parameter not set");
 
         let error = expand_word(
             &mut ctx,
             &Word {
                 raw: "${UNSET}".into(),
             },
+            &arena,
         )
         .expect_err("nounset braced");
-        assert_eq!(error.message, "UNSET: parameter not set");
+        assert_eq!(&*error.message, "UNSET: parameter not set");
 
         let error =
-            expand_word(&mut ctx, &Word { raw: "$9".into() }).expect_err("nounset positional");
-        assert_eq!(error.message, "9: parameter not set");
+            expand_word(&mut ctx, &Word { raw: "$9".into() }, &arena).expect_err("nounset positional");
+        assert_eq!(&*error.message, "9: parameter not set");
 
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
                     raw: "${UNSET-word}".into()
-                }
+                },
+                &arena,
             )
             .expect("default still works"),
             vec!["word".to_string()]
@@ -3034,7 +3093,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "\"$*\"".into()
-                }
+                },
+                &arena,
             )
             .expect("star exempt"),
             vec!["alpha beta".to_string()]
@@ -3149,20 +3209,21 @@ mod tests {
 
     #[test]
     fn parameter_text_expansion_avoids_command_substitution() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert("HOME".into(), "/tmp/home".into());
         ctx.env.insert("EMPTY".into(), String::new());
 
         assert_eq!(
-            expand_parameter_text(&mut ctx, "${HOME:-/fallback}/.shrc").expect("parameter text"),
+            expand_parameter_text(&mut ctx, "${HOME:-/fallback}/.shrc", &arena).expect("parameter text"),
             "/tmp/home/.shrc"
         );
         assert_eq!(
-            expand_parameter_text(&mut ctx, "${EMPTY:-$HOME}/nested").expect("nested default"),
+            expand_parameter_text(&mut ctx, "${EMPTY:-$HOME}/nested", &arena).expect("nested default"),
             "/tmp/home/nested"
         );
         assert_eq!(
-            expand_parameter_text(&mut ctx, "$(printf nope)${HOME}").expect("literal command"),
+            expand_parameter_text(&mut ctx, "$(printf nope)${HOME}", &arena).expect("literal command"),
             "$(printf nope)/tmp/home"
         );
     }
@@ -3243,7 +3304,7 @@ mod tests {
         assert!(assign_parameter_text(&mut ctx, "1", "value").is_err());
 
         let err = expand_braced_parameter_text(&mut ctx, "MISSING4?").expect_err("? no word");
-        assert_eq!(err.message, "");
+        assert_eq!(&*err.message, "");
         let text = expand_parameter_error_text(&mut ctx, "X", None, "my default").expect("no word");
         assert_eq!(text, "X: my default");
     }
@@ -3254,11 +3315,11 @@ mod tests {
         ctx.nounset_enabled = true;
 
         let error = expand_braced_parameter_text(&mut ctx, "#UNSET").expect_err("nounset length");
-        assert_eq!(error.message, "UNSET: parameter not set");
+        assert_eq!(&*error.message, "UNSET: parameter not set");
 
         let error =
             expand_braced_parameter_text(&mut ctx, "UNSET%.*").expect_err("nounset pattern");
-        assert_eq!(error.message, "UNSET: parameter not set");
+        assert_eq!(&*error.message, "UNSET: parameter not set");
     }
 
     #[test]
@@ -3276,16 +3337,16 @@ mod tests {
         );
         let colon_question = expand_braced_parameter_text(&mut ctx, "EMPTY:?boom")
             .expect_err("colon question unset");
-        assert_eq!(colon_question.message, "boom");
+        assert_eq!(&*colon_question.message, "boom");
         let question =
             expand_braced_parameter_text(&mut ctx, "MISSING?boom").expect_err("question unset");
-        assert_eq!(question.message, "boom");
+        assert_eq!(&*question.message, "boom");
         let colon_default =
             expand_braced_parameter_text(&mut ctx, "EMPTY:?").expect_err("colon default");
-        assert_eq!(colon_default.message, "");
+        assert_eq!(&*colon_default.message, "");
         let question_default =
             expand_braced_parameter_text(&mut ctx, "MISSING?").expect_err("question default");
-        assert_eq!(question_default.message, "");
+        assert_eq!(&*question_default.message, "");
     }
 
     #[test]
@@ -3366,23 +3427,23 @@ mod tests {
         );
         let error =
             expand_braced_parameter(&mut ctx, "UNSET?boom", false).expect_err("question unset");
-        assert_eq!(error.message, "boom");
+        assert_eq!(&*error.message, "boom");
         assert_eq!(
             expand_braced_parameter(&mut ctx, "USER:?boom", false).expect("colon question set"),
             Expansion::One("meiksh".into())
         );
 
         let error = assign_parameter(&mut ctx, "1", "value", false).expect_err("invalid assign");
-        assert_eq!(error.message, "1: cannot assign in parameter expansion");
+        assert_eq!(&*error.message, "1: cannot assign in parameter expansion");
 
         let parsed = parse_parameter_expression("@").expect("special name");
         assert_eq!(parsed, ("@", None, None));
 
         let error = parse_parameter_expression("").expect_err("empty expr");
-        assert_eq!(error.message, "empty parameter expansion");
+        assert_eq!(&*error.message, "empty parameter expansion");
 
         let error = parse_parameter_expression("%oops").expect_err("invalid expr");
-        assert_eq!(error.message, "invalid parameter expansion");
+        assert_eq!(&*error.message, "invalid parameter expansion");
         assert_eq!(
             parse_parameter_expression("USER%%tail").expect("largest suffix"),
             ("USER", Some("%%"), Some("tail"))
@@ -3394,7 +3455,7 @@ mod tests {
 
         let error =
             expand_braced_parameter(&mut ctx, "USER/tail", false).expect_err("unsupported expr");
-        assert_eq!(error.message, "unsupported parameter expansion");
+        assert_eq!(&*error.message, "unsupported parameter expansion");
     }
 
     #[test]
@@ -3512,6 +3573,7 @@ mod tests {
 
     #[test]
     fn supports_pattern_removal_parameter_expansions() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert("PATHNAME".into(), "src/bin/main.rs".into());
         ctx.env.insert("DOTTED".into(), "alpha.beta.gamma".into());
@@ -3521,7 +3583,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${PATHNAME#*/}".into()
-                }
+                },
+                &arena,
             )
             .expect("small prefix"),
             vec!["bin/main.rs".to_string()]
@@ -3531,7 +3594,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${PATHNAME##*/}".into()
-                }
+                },
+                &arena,
             )
             .expect("large prefix"),
             vec!["main.rs".to_string()]
@@ -3541,7 +3605,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${PATHNAME%/*}".into()
-                }
+                },
+                &arena,
             )
             .expect("small suffix"),
             vec!["src/bin".to_string()]
@@ -3551,7 +3616,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${PATHNAME%%/*}".into()
-                }
+                },
+                &arena,
             )
             .expect("large suffix"),
             vec!["src".to_string()]
@@ -3561,7 +3627,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${PATHNAME#\"src/\"}".into()
-                }
+                },
+                &arena,
             )
             .expect("quoted pattern"),
             vec!["bin/main.rs".to_string()]
@@ -3571,7 +3638,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${DOTTED#*.}".into()
-                }
+                },
+                &arena,
             )
             .expect("wildcard prefix"),
             vec!["beta.gamma".to_string()]
@@ -3581,7 +3649,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${DOTTED##*.}".into()
-                }
+                },
+                &arena,
             )
             .expect("largest wildcard prefix"),
             vec!["gamma".to_string()]
@@ -3591,7 +3660,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${DOTTED%.*}".into()
-                }
+                },
+                &arena,
             )
             .expect("wildcard suffix"),
             vec!["alpha.beta".to_string()]
@@ -3601,7 +3671,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${DOTTED%%.*}".into()
-                }
+                },
+                &arena,
             )
             .expect("largest wildcard suffix"),
             vec!["alpha".to_string()]
@@ -3611,7 +3682,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${DOTTED#\"*.\"}".into()
-                }
+                },
+                &arena,
             )
             .expect("quoted wildcard"),
             vec!["alpha.beta.gamma".to_string()]
@@ -3621,7 +3693,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${DOTTED%}".into()
-                }
+                },
+                &arena,
             )
             .expect("empty suffix pattern"),
             vec!["alpha.beta.gamma".to_string()]
@@ -3631,7 +3704,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${MISSING%%*.}".into()
-                }
+                },
+                &arena,
             )
             .expect("unset value"),
             Vec::<String>::new()
@@ -3648,11 +3722,11 @@ mod tests {
         assert_eq!(eval_arithmetic(&mut ctx, "-5").expect("negation"), -5);
 
         let error = eval_arithmetic(&mut ctx, "5 % 0").expect_err("mod zero");
-        assert_eq!(error.message, "division by zero");
+        assert_eq!(&*error.message, "division by zero");
 
         let error = eval_arithmetic(&mut ctx, "999999999999999999999999999999999999999")
             .expect_err("overflow");
-        assert_eq!(error.message, "invalid arithmetic operand");
+        assert_eq!(&*error.message, "invalid arithmetic operand");
     }
 
     #[test]
@@ -3672,6 +3746,7 @@ mod tests {
 
     #[test]
     fn unmatched_glob_returns_pattern_literally() {
+        let arena = StringArena::new();
         run_trace(
             vec![t(
                 "opendir",
@@ -3685,7 +3760,8 @@ mod tests {
                         &mut ctx,
                         &Word {
                             raw: "*.definitely-no-match".into()
-                        }
+                        },
+                        &arena,
                     )
                     .expect("unmatched glob"),
                     vec!["*.definitely-no-match".to_string()]
@@ -3701,28 +3777,30 @@ mod tests {
 
     #[test]
     fn expands_here_documents_without_field_splitting() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
-        let expanded = expand_here_document(&mut ctx, "hello $USER\n$(printf hi)\n$((1 + 2))\n")
+        let expanded = expand_here_document(&mut ctx, "hello $USER\n$(printf hi)\n$((1 + 2))\n", &arena)
             .expect("expand heredoc");
         assert_eq!(expanded, "hello meiksh\nprintf hi\n3\n");
 
         let escaped =
-            expand_here_document(&mut ctx, "\\$USER\nline\\\ncontinued\n").expect("expand heredoc");
+            expand_here_document(&mut ctx, "\\$USER\nline\\\ncontinued\n", &arena).expect("expand heredoc");
         assert_eq!(escaped, "$USER\nlinecontinued\n");
 
-        let trailing = expand_here_document(&mut ctx, "keep\\").expect("expand heredoc");
+        let trailing = expand_here_document(&mut ctx, "keep\\", &arena).expect("expand heredoc");
         assert_eq!(trailing, "keep\\");
 
-        let literal = expand_here_document(&mut ctx, "\\x").expect("expand heredoc");
+        let literal = expand_here_document(&mut ctx, "\\x", &arena).expect("expand heredoc");
         assert_eq!(literal, "\\x");
 
         let double_backslash =
-            expand_here_document(&mut ctx, "a\\\\b\n").expect("expand heredoc double backslash");
+            expand_here_document(&mut ctx, "a\\\\b\n", &arena).expect("expand heredoc double backslash");
         assert_eq!(double_backslash, "a\\b\n");
     }
 
     #[test]
     fn quoted_at_produces_separate_fields() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.positional = vec!["a".into(), "b".into(), "c".into()];
         assert_eq!(
@@ -3730,7 +3808,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "\"$@\"".into()
-                }
+                },
+                &arena,
             )
             .expect("quoted at 3"),
             vec!["a", "b", "c"]
@@ -3742,7 +3821,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "\"$@\"".into()
-                }
+                },
+                &arena,
             )
             .expect("quoted at 1"),
             vec!["one"]
@@ -3754,7 +3834,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "\"$@\"".into()
-                }
+                },
+                &arena,
             )
             .expect("quoted at 0"),
             Vec::<String>::new()
@@ -3763,6 +3844,7 @@ mod tests {
 
     #[test]
     fn quoted_at_with_prefix_and_suffix() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.positional = vec!["a".into(), "b".into()];
         assert_eq!(
@@ -3770,7 +3852,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "\"pre$@suf\"".into()
-                }
+                },
+                &arena,
             )
             .expect("prefix suffix"),
             vec!["prea", "bsuf"]
@@ -3782,7 +3865,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "\"[$@]\"".into()
-                }
+                },
+                &arena,
             )
             .expect("brackets one"),
             vec!["[only]"]
@@ -3794,7 +3878,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "\"pre$@suf\"".into()
-                }
+                },
+                &arena,
             )
             .expect("prefix empty"),
             vec!["presuf"]
@@ -3803,6 +3888,7 @@ mod tests {
 
     #[test]
     fn quoted_at_at_produces_merged_fields() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.positional = vec!["a".into(), "b".into()];
         assert_eq!(
@@ -3810,7 +3896,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "\"$@$@\"".into()
-                }
+                },
+                &arena,
             )
             .expect("at at"),
             vec!["a", "ba", "b"]
@@ -3819,22 +3906,24 @@ mod tests {
 
     #[test]
     fn unquoted_at_undergoes_field_splitting() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.positional = vec!["a b".into(), "c".into()];
         assert_eq!(
-            expand_word(&mut ctx, &Word { raw: "$@".into() }).expect("unquoted at"),
+            expand_word(&mut ctx, &Word { raw: "$@".into() }, &arena).expect("unquoted at"),
             vec!["a", "b", "c"]
         );
 
         ctx.positional = Vec::new();
         assert_eq!(
-            expand_word(&mut ctx, &Word { raw: "$@".into() }).expect("unquoted at empty"),
+            expand_word(&mut ctx, &Word { raw: "$@".into() }, &arena).expect("unquoted at empty"),
             Vec::<String>::new()
         );
     }
 
     #[test]
     fn quoted_star_joins_with_ifs() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.positional = vec!["a".into(), "b".into(), "c".into()];
         ctx.env.insert("IFS".into(), ":".into());
@@ -3843,7 +3932,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "\"$*\"".into()
-                }
+                },
+                &arena,
             )
             .expect("star colon"),
             vec!["a:b:c"]
@@ -3855,7 +3945,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "\"$*\"".into()
-                }
+                },
+                &arena,
             )
             .expect("star empty ifs"),
             vec!["abc"]
@@ -3867,7 +3958,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "\"$*\"".into()
-                }
+                },
+                &arena,
             )
             .expect("star unset ifs"),
             vec!["a b c"]
@@ -3876,13 +3968,15 @@ mod tests {
 
     #[test]
     fn backtick_command_substitution_in_expander() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
                     raw: "`echo hello`".into()
-                }
+                },
+                &arena,
             )
             .expect("backtick"),
             vec!["echo", "hello"]
@@ -3892,7 +3986,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "\"`echo hello`\"".into()
-                }
+                },
+                &arena,
             )
             .expect("quoted bt"),
             vec!["echo hello"]
@@ -3901,13 +3996,15 @@ mod tests {
 
     #[test]
     fn backtick_backslash_escapes() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word_text(
                 &mut ctx,
                 &Word {
                     raw: "`echo \\$USER`".into()
-                }
+                },
+                &arena,
             )
             .expect("escaped dollar"),
             "echo $USER"
@@ -3917,7 +4014,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "\"`echo \\$USER`\"".into()
-                }
+                },
+                &arena,
             )
             .expect("escaped dollar dq"),
             "echo $USER"
@@ -3926,6 +4024,7 @@ mod tests {
 
     #[test]
     fn brace_scanning_respects_quotes_and_nesting() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert("VAR".into(), String::new());
 
@@ -3934,7 +4033,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${VAR:-\"a}b\"}".into()
-                }
+                },
+                &arena,
             )
             .expect("quoted brace in default"),
             "a}b"
@@ -3945,7 +4045,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${VAR:-$(echo ok)}".into()
-                }
+                },
+                &arena,
             )
             .expect("command sub in brace"),
             "echo ok"
@@ -3956,7 +4057,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${VAR:-$((1+2))}".into()
-                }
+                },
+                &arena,
             )
             .expect("arith in brace"),
             "3"
@@ -3968,7 +4070,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${VAR:-${INNER}}".into()
-                }
+                },
+                &arena,
             )
             .expect("nested brace"),
             "val"
@@ -3979,7 +4082,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${VAR:-`echo hi`}".into()
-                }
+                },
+                &arena,
             )
             .expect("backtick in brace"),
             "echo hi"
@@ -3990,7 +4094,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${VAR:-'a}b'}".into()
-                }
+                },
+                &arena,
             )
             .expect("single quote in brace"),
             "a}b"
@@ -4001,7 +4106,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${VAR:-\\}}".into()
-                }
+                },
+                &arena,
             )
             .expect("escaped brace"),
             "}"
@@ -4010,32 +4116,36 @@ mod tests {
 
     #[test]
     fn here_document_expands_at_sign() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.positional = vec!["x".into(), "y".into()];
-        let result = expand_here_document(&mut ctx, "$@\n").expect("heredoc at");
+        let result = expand_here_document(&mut ctx, "$@\n", &arena).expect("heredoc at");
         assert_eq!(result, "x y\n");
     }
 
     #[test]
     fn error_parameter_expansion_operators() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         let error = expand_word(
             &mut ctx,
             &Word {
                 raw: "${UNSET:?custom error}".into(),
             },
+            &arena,
         )
         .expect_err("colon question");
-        assert_eq!(error.message, "custom error");
+        assert_eq!(&*error.message, "custom error");
 
         let error = expand_word(
             &mut ctx,
             &Word {
                 raw: "${UNSET?also error}".into(),
             },
+            &arena,
         )
         .expect_err("question");
-        assert_eq!(error.message, "also error");
+        assert_eq!(&*error.message, "also error");
     }
 
     #[test]
@@ -4052,11 +4162,12 @@ mod tests {
     #[test]
     fn scan_to_closing_brace_error_on_unterminated() {
         let err = scan_to_closing_brace("${var", 2).expect_err("unterminated");
-        assert_eq!(err.message, "unterminated parameter expansion");
+        assert_eq!(&*err.message, "unterminated parameter expansion");
     }
 
     #[test]
     fn expand_word_empty_quoted_at_with_other_quoted() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.positional = Vec::new();
         assert_eq!(
@@ -4064,7 +4175,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "\"\"\"$@\"".into()
-                }
+                },
+                &arena,
             )
             .expect("empty at dq"),
             vec!["".to_string()]
@@ -4073,13 +4185,15 @@ mod tests {
 
     #[test]
     fn backtick_inside_double_quotes_with_buffer() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
                     raw: "\"hello `echo world`\"".into()
-                }
+                },
+                &arena,
             )
             .expect("bt dq buffer"),
             vec!["hello echo world"]
@@ -4090,7 +4204,7 @@ mod tests {
     fn scan_backtick_command_unterminated() {
         let mut index = 1usize;
         let err = scan_backtick_command("`unterminated", &mut index, false).expect_err("unterminated");
-        assert_eq!(err.message, "unterminated backquote");
+        assert_eq!(&*err.message, "unterminated backquote");
     }
 
     #[test]
@@ -4102,14 +4216,16 @@ mod tests {
 
     #[test]
     fn here_document_with_at_expansion() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.positional = vec!["a".into(), "b".into()];
-        let result = expand_here_document(&mut ctx, "args: $@\n").expect("heredoc @");
+        let result = expand_here_document(&mut ctx, "args: $@\n", &arena).expect("heredoc @");
         assert_eq!(result, "args: a b\n");
     }
 
     #[test]
     fn brace_scanning_handles_complex_nesting() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert("VAR".into(), String::new());
 
@@ -4118,7 +4234,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${VAR:-$((2+3))}".into()
-                }
+                },
+                &arena,
             )
             .expect("arith in brace scan"),
             "5"
@@ -4129,7 +4246,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${VAR:-$(echo deep)}".into()
-                }
+                },
+                &arena,
             )
             .expect("cmd sub in brace scan"),
             "echo deep"
@@ -4140,7 +4258,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${VAR:-`echo bt`}".into()
-                }
+                },
+                &arena,
             )
             .expect("backtick in brace scan"),
             "echo bt"
@@ -4151,7 +4270,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${VAR:-\"inside\"}".into()
-                }
+                },
+                &arena,
             )
             .expect("dq in brace scan with escape"),
             "inside"
@@ -4160,6 +4280,7 @@ mod tests {
 
     #[test]
     fn error_parameter_expansion_with_null_or_not_set() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert("EMPTY".into(), String::new());
 
@@ -4168,15 +4289,17 @@ mod tests {
             &Word {
                 raw: "${EMPTY:?null or unset}".into(),
             },
+            &arena,
         )
         .expect_err("colon question null");
-        assert_eq!(err.message, "null or unset");
+        assert_eq!(&*err.message, "null or unset");
 
         let ok = expand_word(
             &mut ctx,
             &Word {
                 raw: "\"${EMPTY?not an error}\"".into(),
             },
+            &arena,
         )
         .expect("question set but empty");
         assert_eq!(ok, vec![String::new()]);
@@ -4186,23 +4309,26 @@ mod tests {
             &Word {
                 raw: "${NOEXIST?custom msg}".into(),
             },
+            &arena,
         )
         .expect_err("question unset");
-        assert_eq!(err.message, "custom msg");
+        assert_eq!(&*err.message, "custom msg");
     }
 
     #[test]
     fn field_splitting_empty_result_returns_empty_vec() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert("WS".into(), "   ".into());
         assert_eq!(
-            expand_word(&mut ctx, &Word { raw: "$WS".into() }).expect("whitespace only"),
+            expand_word(&mut ctx, &Word { raw: "$WS".into() }, &arena).expect("whitespace only"),
             Vec::<String>::new()
         );
     }
 
     #[test]
     fn at_break_with_glob_in_at_fields() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.pathname_expansion_enabled = false;
         ctx.positional = vec!["*.txt".into(), "b".into()];
@@ -4211,6 +4337,7 @@ mod tests {
             &Word {
                 raw: "\"$@\"".into(),
             },
+            &arena,
         )
         .expect("at with glob-like");
         assert_eq!(result, vec!["*.txt", "b"]);
@@ -4234,6 +4361,7 @@ mod tests {
 
     #[test]
     fn at_empty_combined_with_at_break() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.positional = vec!["x".into()];
         let result = expand_word(
@@ -4241,6 +4369,7 @@ mod tests {
             &Word {
                 raw: "\"$@\"".into(),
             },
+            &arena,
         )
         .expect("at one param");
         assert_eq!(result, vec!["x"]);
@@ -4251,6 +4380,7 @@ mod tests {
             &Word {
                 raw: "\"$@\"".into(),
             },
+            &arena,
         )
         .expect("at empty");
         assert_eq!(result2, Vec::<String>::new());
@@ -4258,6 +4388,7 @@ mod tests {
 
     #[test]
     fn brace_scanning_with_arith_and_cmd_sub_and_backtick() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert("V".into(), String::new());
 
@@ -4266,7 +4397,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${V:-$((1+(2*3)))}".into()
-                }
+                },
+                &arena,
             )
             .expect("nested arith in scan"),
             "7"
@@ -4277,7 +4409,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${V:-$(echo (hi))}".into()
-                }
+                },
+                &arena,
             )
             .expect("nested cmd sub in scan"),
             "echo (hi)"
@@ -4288,7 +4421,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${V:-`echo \\\\x`}".into()
-                }
+                },
+                &arena,
             )
             .expect("bt escape in scan"),
             "echo \\x"
@@ -4299,7 +4433,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${V:-\"q\\}x\"}".into()
-                }
+                },
+                &arena,
             )
             .expect("dq escape in scan"),
             "q}x"
@@ -4308,6 +4443,7 @@ mod tests {
 
     #[test]
     fn colon_question_error_with_null_value() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert("NULL".into(), String::new());
         let err = expand_word(
@@ -4315,9 +4451,10 @@ mod tests {
             &Word {
                 raw: "${NULL:?is null}".into(),
             },
+            &arena,
         )
         .expect_err(":? with null");
-        assert_eq!(err.message, "is null");
+        assert_eq!(&*err.message, "is null");
 
         ctx.nounset_enabled = true;
         let err = expand_word(
@@ -4325,31 +4462,35 @@ mod tests {
             &Word {
                 raw: "${NULL:?$NOVAR}".into(),
             },
+            &arena,
         )
         .expect_err(":? nounset propagation");
-        assert_eq!(err.message, "NOVAR: parameter not set");
+        assert_eq!(&*err.message, "NOVAR: parameter not set");
 
         let err = expand_word(
             &mut ctx,
             &Word {
                 raw: "${NOEXIST?$NOVAR}".into(),
             },
+            &arena,
         )
         .expect_err("? nounset propagation");
-        assert_eq!(err.message, "NOVAR: parameter not set");
+        assert_eq!(&*err.message, "NOVAR: parameter not set");
     }
 
     #[test]
     fn question_error_with_unset_default_message() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         let err = expand_word(
             &mut ctx,
             &Word {
                 raw: "${NOVAR?}".into(),
             },
+            &arena,
         )
         .expect_err("? with unset");
-        assert_eq!(err.message, "");
+        assert_eq!(&*err.message, "");
 
         ctx.env.insert("SET".into(), "val".into());
         assert_eq!(
@@ -4357,7 +4498,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${SET:?no error}".into()
-                }
+                },
+                &arena,
             )
             .expect(":? success"),
             "val"
@@ -4367,7 +4509,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "${SET?no error}".into()
-                }
+                },
+                &arena,
             )
             .expect("? success"),
             "val"
@@ -4376,12 +4519,14 @@ mod tests {
 
     #[test]
     fn dquote_backslash_preserves_literal_for_non_special_chars() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
             &Word {
                 raw: r#""\a\b\c""#.into(),
             },
+            &arena,
         )
         .expect("dquote bs");
         assert_eq!(fields, vec![r"\a\b\c"]);
@@ -4389,13 +4534,15 @@ mod tests {
 
     #[test]
     fn dquote_backslash_escapes_special_chars() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
                     raw: r#""\$""#.into()
-                }
+                },
+                &arena,
             )
             .expect("escape $"),
             vec!["$"]
@@ -4405,7 +4552,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: r#""\\""#.into()
-                }
+                },
+                &arena,
             )
             .expect("escape bs"),
             vec!["\\"]
@@ -4415,17 +4563,19 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: r#""\"""#.into()
-                }
+                },
+                &arena,
             )
             .expect("escape dq"),
-            vec!["\""]
+            vec!["\""],
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
                     raw: "\"\\`\"".into()
-                }
+                },
+                &arena,
             )
             .expect("escape bt"),
             vec!["`"]
@@ -4434,12 +4584,14 @@ mod tests {
 
     #[test]
     fn dquote_backslash_newline_is_line_continuation() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
             &Word {
                 raw: "\"ab\\\ncd\"".into(),
             },
+            &arena,
         )
         .expect("line continuation");
         assert_eq!(fields, vec!["abcd"]);
@@ -4447,12 +4599,14 @@ mod tests {
 
     #[test]
     fn tilde_user_expansion() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
             &Word {
                 raw: "~testuser/bin".into(),
             },
+            &arena,
         )
         .expect("tilde user");
         assert_eq!(fields, vec!["/home/testuser/bin"]);
@@ -4460,12 +4614,14 @@ mod tests {
 
     #[test]
     fn tilde_unknown_user_preserved() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
             &Word {
                 raw: "~nosuchuser/dir".into(),
             },
+            &arena,
         )
         .expect("tilde unknown");
         assert_eq!(fields, vec!["~nosuchuser/dir"]);
@@ -4473,12 +4629,14 @@ mod tests {
 
     #[test]
     fn tilde_user_without_slash() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
             &Word {
                 raw: "~testuser".into(),
             },
+            &arena,
         )
         .expect("tilde user no slash");
         assert_eq!(fields, vec!["/home/testuser"]);
@@ -4486,12 +4644,14 @@ mod tests {
 
     #[test]
     fn tilde_after_colon_in_assignment() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         let result = expand_assignment_value(
             &mut ctx,
             &Word {
                 raw: "~/bin:~testuser/lib".into(),
             },
+            &arena,
         )
         .expect("tilde colon");
         assert_eq!(result, "/tmp/home/bin:/home/testuser/lib");
@@ -4499,6 +4659,7 @@ mod tests {
 
     #[test]
     fn arith_variable_reference() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert("count".into(), "7".into());
         let fields = expand_word(
@@ -4506,6 +4667,7 @@ mod tests {
             &Word {
                 raw: "$((count + 3))".into(),
             },
+            &arena,
         )
         .expect("arith var");
         assert_eq!(fields, vec!["10"]);
@@ -4513,6 +4675,7 @@ mod tests {
 
     #[test]
     fn arith_dollar_variable_reference() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert("n".into(), "5".into());
         let fields = expand_word(
@@ -4520,6 +4683,7 @@ mod tests {
             &Word {
                 raw: "$(($n * 2))".into(),
             },
+            &arena,
         )
         .expect("arith $var");
         assert_eq!(fields, vec!["10"]);
@@ -4527,13 +4691,15 @@ mod tests {
 
     #[test]
     fn arith_comparison_operators() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
                     raw: "$((3 < 5))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["1"]
@@ -4543,7 +4709,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((5 < 3))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["0"]
@@ -4553,7 +4720,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((3 <= 3))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["1"]
@@ -4563,7 +4731,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((5 > 3))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["1"]
@@ -4573,7 +4742,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((3 >= 5))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["0"]
@@ -4583,7 +4753,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((3 == 3))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["1"]
@@ -4593,7 +4764,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((3 != 5))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["1"]
@@ -4602,13 +4774,15 @@ mod tests {
 
     #[test]
     fn arith_bitwise_operators() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
                     raw: "$((6 & 3))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["2"]
@@ -4618,7 +4792,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((6 | 3))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["7"]
@@ -4628,7 +4803,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((6 ^ 3))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["5"]
@@ -4638,7 +4814,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((~0))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["-1"]
@@ -4648,7 +4825,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((1 << 4))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["16"]
@@ -4658,7 +4836,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((16 >> 2))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["4"]
@@ -4667,13 +4846,15 @@ mod tests {
 
     #[test]
     fn arith_logical_operators() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
                     raw: "$((1 && 1))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["1"]
@@ -4683,7 +4864,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((1 && 0))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["0"]
@@ -4693,7 +4875,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((0 || 1))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["1"]
@@ -4703,7 +4886,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((0 || 0))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["0"]
@@ -4713,7 +4897,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((!0))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["1"]
@@ -4723,7 +4908,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((!5))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["0"]
@@ -4732,13 +4918,15 @@ mod tests {
 
     #[test]
     fn arith_ternary_operator() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
                     raw: "$((1 ? 10 : 20))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["10"]
@@ -4748,7 +4936,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((0 ? 10 : 20))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["20"]
@@ -4757,6 +4946,7 @@ mod tests {
 
     #[test]
     fn arith_assignment_operators() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert("x".into(), "10".into());
         assert_eq!(
@@ -4764,7 +4954,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((x = 5))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["5"]
@@ -4776,7 +4967,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((x += 3))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["8"]
@@ -4788,7 +4980,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((x -= 2))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["6"]
@@ -4799,7 +4992,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((x *= 3))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["18"]
@@ -4810,7 +5004,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((x /= 6))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["3"]
@@ -4821,7 +5016,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((x %= 2))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["1"]
@@ -4833,7 +5029,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((x <<= 2))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["16"]
@@ -4844,7 +5041,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((x >>= 1))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["8"]
@@ -4855,7 +5053,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((x &= 3))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["0"]
@@ -4867,7 +5066,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((x |= 2))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["7"]
@@ -4878,7 +5078,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((x ^= 3))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["4"]
@@ -4887,13 +5088,15 @@ mod tests {
 
     #[test]
     fn arith_hex_and_octal_constants() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
                     raw: "$((0xff))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["255"]
@@ -4903,7 +5106,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((0X1A))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["26"]
@@ -4913,7 +5117,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((010))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["8"]
@@ -4923,7 +5128,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((0))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["0"]
@@ -4932,13 +5138,15 @@ mod tests {
 
     #[test]
     fn arith_unary_plus() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
                     raw: "$((+5))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["5"]
@@ -4947,13 +5155,15 @@ mod tests {
 
     #[test]
     fn arith_unset_variable_is_zero() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
                     raw: "$((nosuch))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["0"]
@@ -4962,13 +5172,15 @@ mod tests {
 
     #[test]
     fn arith_nested_parens_and_precedence() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
                     raw: "$((2 + 3 * 4))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["14"]
@@ -4978,7 +5190,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$(((2 + 3) * 4))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["20"]
@@ -4987,6 +5200,7 @@ mod tests {
 
     #[test]
     fn arith_variable_in_hex_value() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert("h".into(), "0xff".into());
         assert_eq!(
@@ -4994,7 +5208,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((h))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["255"]
@@ -5003,6 +5218,7 @@ mod tests {
 
     #[test]
     fn arith_variable_in_octal_value() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert("o".into(), "010".into());
         assert_eq!(
@@ -5010,7 +5226,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((o))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["8"]
@@ -5043,24 +5260,28 @@ mod tests {
 
     #[test]
     fn dquote_trailing_backslash_is_literal() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
             &Word {
                 raw: r#""abc\"#.into(),
             },
+            &arena,
         );
         assert!(fields.is_err());
     }
 
     #[test]
     fn tilde_with_quoted_char_breaks_tilde_prefix() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
             &Word {
                 raw: "~'user'".into(),
             },
+            &arena,
         )
         .expect("tilde quoted");
         assert_eq!(fields, vec!["~user"]);
@@ -5068,12 +5289,14 @@ mod tests {
 
     #[test]
     fn arith_backtick_in_expression() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
             &Word {
                 raw: "$((`7` + 3))".into(),
             },
+            &arena,
         )
         .expect("arith backtick");
         assert_eq!(fields, vec!["10"]);
@@ -5081,13 +5304,15 @@ mod tests {
 
     #[test]
     fn arith_not_equal_via_parse_unary() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
                     raw: "$((3 != 3))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["0"]
@@ -5096,6 +5321,7 @@ mod tests {
 
     #[test]
     fn arith_compound_assign_div_by_zero() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert("x".into(), "5".into());
         let err = expand_word(
@@ -5103,9 +5329,10 @@ mod tests {
             &Word {
                 raw: "$((x /= 0))".into(),
             },
+            &arena,
         )
         .unwrap_err();
-        assert_eq!(err.message, "division by zero");
+        assert_eq!(&*err.message, "division by zero");
 
         ctx.env.insert("x".into(), "5".into());
         let err = expand_word(
@@ -5113,19 +5340,22 @@ mod tests {
             &Word {
                 raw: "$((x %= 0))".into(),
             },
+            &arena,
         )
         .unwrap_err();
-        assert_eq!(err.message, "division by zero");
+        assert_eq!(&*err.message, "division by zero");
     }
 
     #[test]
     fn tilde_colon_assignment_with_quotes() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         let result = expand_assignment_value(
             &mut ctx,
             &Word {
                 raw: "~/a:'literal:colon'".into(),
             },
+            &arena,
         )
         .expect("colon assign with quotes");
         assert_eq!(result, "/tmp/home/a:literal:colon");
@@ -5133,6 +5363,7 @@ mod tests {
 
     #[test]
     fn arith_equality_not_confused_with_assignment() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert("x".into(), "5".into());
         assert_eq!(
@@ -5140,7 +5371,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((x == 5))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["1"]
@@ -5150,7 +5382,8 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: "$((x == 3))".into()
-                }
+                },
+                &arena,
             )
             .unwrap(),
             vec!["0"]
@@ -5159,12 +5392,14 @@ mod tests {
 
     #[test]
     fn arith_ternary_missing_colon_error() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         let err = expand_word(
             &mut ctx,
             &Word {
                 raw: "$((1 ? 2 3))".into(),
             },
+            &arena,
         )
         .unwrap_err();
         assert!(err.message.contains("':'"));
@@ -5172,12 +5407,14 @@ mod tests {
 
     #[test]
     fn arith_invalid_hex_constant() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         let err = expand_word(
             &mut ctx,
             &Word {
                 raw: "$((0x))".into(),
             },
+            &arena,
         )
         .unwrap_err();
         assert!(err.message.contains("hex"));
@@ -5185,6 +5422,7 @@ mod tests {
 
     #[test]
     fn arith_at_fields_in_expression() {
+        let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         ctx.positional = vec!["3".into()];
         let fields = expand_word(
@@ -5192,6 +5430,7 @@ mod tests {
             &Word {
                 raw: "$(($@ + 2))".into(),
             },
+            &arena,
         )
         .expect("at fields arith");
         assert_eq!(fields, vec!["5"]);
@@ -5248,6 +5487,7 @@ mod tests {
 
     #[test]
     fn expand_word_quoted_null_adjacent_to_empty_at() {
+        let arena = StringArena::new();
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
             ctx.positional = Vec::new();
@@ -5256,7 +5496,8 @@ mod tests {
                     &mut ctx,
                     &Word {
                         raw: "''\"$@\"".into()
-                    }
+                    },
+                    &arena,
                 )
                 .unwrap(),
                 vec!["".to_string()]
@@ -5266,9 +5507,10 @@ mod tests {
 
     #[test]
     fn redirect_word_no_pathname_expansion() {
+        let arena = StringArena::new();
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
-            let result = expand_redirect_word(&mut ctx, &Word { raw: "file_*.txt".into() })
+            let result = expand_redirect_word(&mut ctx, &Word { raw: "file_*.txt".into() }, &arena)
                 .expect("redirect word");
             assert_eq!(result, "file_*.txt");
         });
@@ -5276,9 +5518,10 @@ mod tests {
 
     #[test]
     fn redirect_word_empty_expansion() {
+        let arena = StringArena::new();
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
-            let result = expand_redirect_word(&mut ctx, &Word { raw: "$UNSET_VAR".into() })
+            let result = expand_redirect_word(&mut ctx, &Word { raw: "$UNSET_VAR".into() }, &arena)
                 .expect("redirect word empty");
             assert_eq!(result, "");
         });
@@ -5286,10 +5529,11 @@ mod tests {
 
     #[test]
     fn redirect_word_with_expanded_field_splitting() {
+        let arena = StringArena::new();
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
             ctx.env.insert("V".into(), "a b".into());
-            let result = expand_redirect_word(&mut ctx, &Word { raw: "$V".into() })
+            let result = expand_redirect_word(&mut ctx, &Word { raw: "$V".into() }, &arena)
                 .expect("redirect word split");
             assert_eq!(result, "a b");
         });
@@ -5297,9 +5541,10 @@ mod tests {
 
     #[test]
     fn here_doc_backtick_substitution() {
+        let arena = StringArena::new();
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
-            let result = expand_here_document(&mut ctx, "`echo ok`\n")
+            let result = expand_here_document(&mut ctx, "`echo ok`\n", &arena)
                 .expect("here doc backtick");
             assert_eq!(result, "echo ok\n");
         });

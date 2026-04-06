@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::arena::StringArena;
 use crate::expand;
 use crate::shell::{Shell, ShellError};
 use crate::sys;
@@ -53,7 +54,8 @@ fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
         }
         accumulated.push_str(&line);
 
-        match crate::syntax::parse_with_aliases(&accumulated, &shell.aliases) {
+        let arena = StringArena::new();
+        match crate::syntax::parse_with_aliases(&accumulated, &shell.aliases, &arena) {
             Ok(_) => {}
             Err(ref e) if shell.input_is_incomplete(e) => {
                 continue;
@@ -114,8 +116,9 @@ fn read_line() -> sys::SysResult<Option<String>> {
 fn expand_prompt(shell: &mut Shell, var: &str, default: &str) -> String {
     let raw = shell.get_var(var).unwrap_or(default).to_string();
     let histnum = shell.history_number();
-    let expanded = expand::expand_parameter_text(shell, &raw).unwrap_or(raw);
-    expand_prompt_exclamation(&expanded, histnum)
+    let arena = StringArena::new();
+    let expanded = expand::expand_parameter_text(shell, &raw, &arena).unwrap_or(&raw);
+    expand_prompt_exclamation(expanded, histnum)
 }
 
 fn expand_prompt_exclamation(s: &str, histnum: usize) -> String {
@@ -143,8 +146,9 @@ pub fn load_env_file(shell: &mut Shell) -> Result<(), ShellError> {
         return Ok(());
     }
     let env_value = shell.get_var("ENV").map(|s| s.to_string());
+    let arena = StringArena::new();
     let env_file = env_value
-        .map(|value| expand::expand_parameter_text(shell, &value))
+        .map(|value| expand::expand_parameter_text(shell, &value, &arena).map(|s| s.to_string()))
         .transpose()?
         .map(PathBuf::from);
     if let Some(path) = env_file {
@@ -209,7 +213,7 @@ mod tests {
     fn test_shell() -> Shell {
         Shell {
             options: ShellOptions::default(),
-            shell_name: "meiksh".to_string(),
+            shell_name: "meiksh".into(),
             env: HashMap::new(),
             exported: BTreeSet::new(),
             readonly: BTreeSet::new(),

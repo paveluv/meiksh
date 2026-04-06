@@ -191,7 +191,7 @@ fn parse_cd_target(
                 'e' => check_pwd = true,
                 _ => {
                     return Err(ShellError {
-                        message: format!("cd: invalid option: -{ch}"),
+                        message: format!("cd: invalid option: -{ch}").into(),
                     });
                 }
             }
@@ -203,7 +203,7 @@ fn parse_cd_target(
     }
     if argv.len() > index + 1 {
         return Err(ShellError {
-            message: "cd: too many arguments".to_string(),
+            message: "cd: too many arguments".into(),
         });
     }
     let Some(target) = argv.get(index) else {
@@ -216,13 +216,13 @@ fn parse_cd_target(
     };
     if target.is_empty() {
         return Err(ShellError {
-            message: "cd: empty directory".to_string(),
+            message: "cd: empty directory".into(),
         });
     }
     if target == "-" {
         return Ok((
             shell.get_var("OLDPWD").ok_or_else(|| ShellError {
-                message: "cd: OLDPWD not set".to_string(),
+                message: "cd: OLDPWD not set".into(),
             })?.to_string(),
             true,
             physical,
@@ -293,7 +293,7 @@ fn exit(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
         .map(|value| value.parse::<i32>())
         .transpose()
         .map_err(|_| ShellError {
-            message: "exit: numeric argument required".to_string(),
+            message: "exit: numeric argument required".into(),
         })?
         .unwrap_or(shell.last_status);
     Ok(BuiltinOutcome::Exit(status))
@@ -437,7 +437,7 @@ fn shift(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellErro
         .map(|value| value.parse::<usize>())
         .transpose()
         .map_err(|_| ShellError {
-            message: "shift: numeric argument required".to_string(),
+            message: "shift: numeric argument required".into(),
         })?
         .unwrap_or(1);
     if count > shell.positional.len() {
@@ -458,11 +458,11 @@ fn eval(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
 
 fn dot(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     let path = argv.get(1).ok_or_else(|| ShellError {
-        message: ".: filename argument required".to_string(),
+        message: ".: filename argument required".into(),
     })?;
     if argv.len() > 2 {
         return Err(ShellError {
-            message: ".: too many arguments".to_string(),
+            message: ".: too many arguments".into(),
         });
     }
     let resolved = resolve_dot_path(shell, path)?;
@@ -477,11 +477,11 @@ fn resolve_dot_path(shell: &Shell, path: &str) -> Result<PathBuf, ShellError> {
             return Ok(candidate);
         }
         return Err(ShellError {
-            message: format!(".: {path}: not found"),
+            message: format!(".: {path}: not found").into(),
         });
     }
     search_path(path, shell, false, readable_regular_file).ok_or_else(|| ShellError {
-        message: format!(".: {path}: not found"),
+        message: format!(".: {path}: not found").into(),
     })
 }
 
@@ -501,12 +501,12 @@ fn exec_builtin(argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
 fn return_builtin(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     if shell.function_depth == 0 {
         return Err(ShellError {
-            message: "return: not in a function".to_string(),
+            message: "return: not in a function".into(),
         });
     }
     if argv.len() > 2 {
         return Err(ShellError {
-            message: "return: too many arguments".to_string(),
+            message: "return: too many arguments".into(),
         });
     }
     let status = argv
@@ -514,7 +514,7 @@ fn return_builtin(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, Shel
         .map(|value| value.parse::<i32>())
         .transpose()
         .map_err(|_| ShellError {
-            message: "return: numeric argument required".to_string(),
+            message: "return: numeric argument required".into(),
         })?
         .unwrap_or(shell.last_status);
     Ok(BuiltinOutcome::Return(status))
@@ -523,7 +523,7 @@ fn return_builtin(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, Shel
 fn break_builtin(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     if shell.loop_depth == 0 {
         return Err(ShellError {
-            message: "break: only meaningful in a loop".to_string(),
+            message: "break: only meaningful in a loop".into(),
         });
     }
     let levels = parse_loop_count("break", argv)?;
@@ -533,7 +533,7 @@ fn break_builtin(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, Shell
 fn continue_builtin(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     if shell.loop_depth == 0 {
         return Err(ShellError {
-            message: "continue: only meaningful in a loop".to_string(),
+            message: "continue: only meaningful in a loop".into(),
         });
     }
     let levels = parse_loop_count("continue", argv)?;
@@ -543,7 +543,7 @@ fn continue_builtin(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, Sh
 fn parse_loop_count(name: &str, argv: &[String]) -> Result<usize, ShellError> {
     if argv.len() > 2 {
         return Err(ShellError {
-            message: format!("{name}: too many arguments"),
+            message: format!("{name}: too many arguments").into(),
         });
     }
     let levels = argv
@@ -551,12 +551,12 @@ fn parse_loop_count(name: &str, argv: &[String]) -> Result<usize, ShellError> {
         .map(|value| value.parse::<usize>())
         .transpose()
         .map_err(|_| ShellError {
-            message: format!("{name}: numeric argument required"),
+            message: format!("{name}: numeric argument required").into(),
         })?
         .unwrap_or(1);
     if levels == 0 {
         return Err(ShellError {
-            message: format!("{name}: numeric argument required"),
+            message: format!("{name}: numeric argument required").into(),
         });
     }
     Ok(levels)
@@ -713,7 +713,7 @@ fn fg(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> 
     let id = resolve_job_id(shell, argv.get(1).map(String::as_str))
         .or_else(|| shell.current_job_id())
         .ok_or_else(|| ShellError {
-            message: "fg: no current job".to_string(),
+            message: "fg: no current job".into(),
         })?;
     if let Some(job) = shell.jobs.iter().find(|job| job.id == id) {
         sys_println!("{}", job.command);
@@ -738,7 +738,7 @@ fn bg(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> 
                 .map(|j| j.id)
         })
         .ok_or_else(|| ShellError {
-            message: "bg: no current job".to_string(),
+            message: "bg: no current job".into(),
         })?;
     shell.continue_job(id, false)?;
     if let Some(job) = shell.jobs.iter().find(|job| job.id == id) {
@@ -882,7 +882,7 @@ fn parse_kill_signal(spec: &str) -> Result<i32, ShellError> {
         return Ok(0);
     }
     Err(ShellError {
-        message: format!("kill: unknown signal: {spec}"),
+        message: format!("kill: unknown signal: {spec}").into(),
     })
 }
 
@@ -1303,7 +1303,7 @@ fn shell_quote(value: &str) -> String {
 fn unalias(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     if argv.len() < 2 {
         return Err(ShellError {
-            message: "unalias: name required".to_string(),
+            message: "unalias: name required".into(),
         });
     }
     if argv.len() == 2 && argv[1] == "-a" {
@@ -1312,13 +1312,13 @@ fn unalias(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellEr
     }
     if argv[1].starts_with('-') && argv[1] != "-" && argv[1] != "--" {
         return Err(ShellError {
-            message: format!("unalias: invalid option: {}", argv[1]),
+            message: format!("unalias: invalid option: {}", argv[1]).into(),
         });
     }
     let start = usize::from(argv[1] == "--") + 1;
     if start >= argv.len() {
         return Err(ShellError {
-            message: "unalias: name required".to_string(),
+            message: "unalias: name required".into(),
         });
     }
     let mut status = 0;
@@ -1424,7 +1424,7 @@ fn trap_impl(shell: &mut Shell, argv: &[String]) -> Result<i32, ShellError> {
     let action = &argv[1];
     if argv.len() == 2 {
         return Err(ShellError {
-            message: "condition argument required".to_string(),
+            message: "condition argument required".into(),
         });
     }
     let trap_action = parse_trap_action(action);
@@ -1456,7 +1456,7 @@ fn print_traps(
         for operand in operands {
             let Some(condition) = parse_trap_condition(operand) else {
                 return Err(ShellError {
-                    message: format!("invalid condition: {operand}"),
+                    message: format!("invalid condition: {operand}").into(),
                 });
             };
             parsed.push(condition);
@@ -1487,7 +1487,7 @@ fn parse_trap_action(action: &str) -> Option<TrapAction> {
     match action {
         "-" => None,
         _ if action.is_empty() => Some(TrapAction::Ignore),
-        _ => Some(TrapAction::Command(action.to_string())),
+        _ => Some(TrapAction::Command(action.to_string().into())),
     }
 }
 
@@ -1795,7 +1795,7 @@ fn parse_declaration_listing_flag(
     if argv.len() >= 2 && argv[1] == "-p" {
         if argv.len() > 2 {
             return Err(ShellError {
-                message: format!("{name}: -p does not accept operands"),
+                message: format!("{name}: -p does not accept operands").into(),
             });
         }
         return Ok((true, 2));
@@ -1806,7 +1806,7 @@ fn parse_declaration_listing_flag(
         && arg != "--"
     {
         return Err(ShellError {
-            message: format!("{name}: invalid option: {arg}"),
+            message: format!("{name}: invalid option: {arg}").into(),
         });
     }
     Ok((false, 1))
@@ -1887,7 +1887,7 @@ fn parse_unset_target(argv: &[String]) -> Result<(UnsetTarget, usize), ShellErro
                 'f' => target = UnsetTarget::Function,
                 _ => {
                     return Err(ShellError {
-                        message: format!("unset: invalid option: -{ch}"),
+                        message: format!("unset: invalid option: -{ch}").into(),
                     });
                 }
             }
@@ -2167,7 +2167,7 @@ mod tests {
     use super::*;
     use crate::shell::ShellOptions;
     use crate::syntax::Word;
-    use std::borrow::Cow;
+    use crate::arena::StringArena;
     use std::collections::{BTreeMap, BTreeSet, HashMap};
 
     use crate::sys::test_support::{
@@ -2177,7 +2177,7 @@ mod tests {
     fn test_shell() -> Shell {
         Shell {
             options: ShellOptions::default(),
-            shell_name: "meiksh".to_string(),
+            shell_name: "meiksh".into(),
             env: HashMap::new(),
             exported: BTreeSet::new(),
             readonly: BTreeSet::new(),
@@ -2202,8 +2202,9 @@ mod tests {
     }
 
     fn literal(raw: &str) -> Word<'static> {
+        let arena: &'static StringArena = Box::leak(Box::new(StringArena::new()));
         Word {
-            raw: Cow::Owned(raw.to_string()),
+            raw: arena.intern_str(raw),
         }
     }
 
@@ -2269,7 +2270,7 @@ mod tests {
 
                 let error =
                     run(&mut shell, &["shift".into(), "bad".into()]).expect_err("bad shift");
-                assert_eq!(error.message, "shift: numeric argument required");
+                assert_eq!(&*error.message, "shift: numeric argument required");
             },
         );
     }
@@ -2319,7 +2320,7 @@ mod tests {
                 assert!(shell.aliases.is_empty());
 
                 let error = run(&mut shell, &["unalias".into()]).expect_err("missing alias");
-                assert_eq!(error.message, "unalias: name required");
+                assert_eq!(&*error.message, "unalias: name required");
             },
         );
     }
@@ -2848,7 +2849,7 @@ mod tests {
             assert!(matches!(outcome, BuiltinOutcome::Exit(3)));
 
             let error = run(&mut shell, &["exit".into(), "bad".into()]).expect_err("bad exit");
-            assert_eq!(error.message, "exit: numeric argument required");
+            assert_eq!(&*error.message, "exit: numeric argument required");
         });
     }
 
@@ -2881,22 +2882,22 @@ mod tests {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
             let error = run(&mut shell, &["return".into()]).expect_err("return outside function");
-            assert_eq!(error.message, "return: not in a function");
+            assert_eq!(&*error.message, "return: not in a function");
 
             shell.function_depth = 1;
             let outcome = run(&mut shell, &["return".into(), "7".into()]).expect("return");
             assert!(matches!(outcome, BuiltinOutcome::Return(7)));
             let error = run(&mut shell, &["return".into(), "bad".into()]).expect_err("bad return");
-            assert_eq!(error.message, "return: numeric argument required");
+            assert_eq!(&*error.message, "return: numeric argument required");
             let error = run(&mut shell, &["return".into(), "1".into(), "2".into()])
                 .expect_err("return args");
-            assert_eq!(error.message, "return: too many arguments");
+            assert_eq!(&*error.message, "return: too many arguments");
 
             shell.function_depth = 0;
             let error = run(&mut shell, &["break".into()]).expect_err("break outside loop");
-            assert_eq!(error.message, "break: only meaningful in a loop");
+            assert_eq!(&*error.message, "break: only meaningful in a loop");
             let error = run(&mut shell, &["continue".into()]).expect_err("continue outside loop");
-            assert_eq!(error.message, "continue: only meaningful in a loop");
+            assert_eq!(&*error.message, "continue: only meaningful in a loop");
 
             shell.loop_depth = 2;
             let outcome = run(&mut shell, &["break".into(), "9".into()]).expect("break");
@@ -2905,13 +2906,13 @@ mod tests {
             assert!(matches!(outcome, BuiltinOutcome::Continue(2)));
             let error =
                 run(&mut shell, &["continue".into(), "0".into()]).expect_err("bad continue");
-            assert_eq!(error.message, "continue: numeric argument required");
+            assert_eq!(&*error.message, "continue: numeric argument required");
             let error =
                 run(&mut shell, &["break".into(), "1".into(), "2".into()]).expect_err("break args");
-            assert_eq!(error.message, "break: too many arguments");
+            assert_eq!(&*error.message, "break: too many arguments");
             let error =
                 run(&mut shell, &["continue".into(), "bad".into()]).expect_err("continue numeric");
-            assert_eq!(error.message, "continue: numeric argument required");
+            assert_eq!(&*error.message, "continue: numeric argument required");
         });
     }
 
@@ -3210,7 +3211,7 @@ mod tests {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
             let error = run(&mut shell, &[".".into()]).expect_err("dot missing arg");
-            assert_eq!(error.message, ".: filename argument required");
+            assert_eq!(&*error.message, ".: filename argument required");
         });
     }
 
@@ -3252,9 +3253,11 @@ mod tests {
                 shell.functions.insert(
                     "greet".into(),
                     crate::syntax::Command::Simple(crate::syntax::SimpleCommand {
-                        assignments: Vec::new(),
-                        words: vec![literal("printf"), literal("hello")],
-                        redirections: Vec::new(),
+                        assignments: Vec::new().into_boxed_slice(),
+
+                        words: vec![literal("printf"), literal("hello")].into_boxed_slice(),
+                        redirections: Vec::new().into_boxed_slice(),
+
                     }),
                 );
                 shell.exported.insert("NAME".into());
@@ -3356,12 +3359,12 @@ mod tests {
                 &["export".into(), "-p".into(), "NAME".into()],
             )
             .expect_err("export -p operands");
-            assert_eq!(export_error.message, "export: -p does not accept operands");
+            assert_eq!(&*export_error.message, "export: -p does not accept operands");
 
             let readonly_error =
                 parse_declaration_listing_flag("readonly", &["readonly".into(), "-x".into()])
                     .expect_err("readonly invalid");
-            assert_eq!(readonly_error.message, "readonly: invalid option: -x");
+            assert_eq!(&*readonly_error.message, "readonly: invalid option: -x");
         });
     }
 
@@ -3375,7 +3378,7 @@ mod tests {
             );
             let unset_error =
                 parse_unset_target(&["unset".into(), "-z".into()]).expect_err("unset invalid");
-            assert_eq!(unset_error.message, "unset: invalid option: -z");
+            assert_eq!(&*unset_error.message, "unset: invalid option: -z");
 
             assert_eq!(
                 parse_command_options(&["command".into(), "--".into(), "echo".into()]),
@@ -4409,7 +4412,7 @@ mod tests {
                 let mut shell = test_shell();
                 assert!(!logical_pwd_is_valid("./relative"));
                 assert_eq!(
-                    parse_cd_target(&shell, &["cd".into(), "one".into(), "two".into()])
+                    &*parse_cd_target(&shell, &["cd".into(), "one".into(), "two".into()])
                         .expect_err("too many")
                         .message,
                     "cd: too many arguments"
@@ -4419,14 +4422,14 @@ mod tests {
                     (".".to_string(), false, false, false)
                 );
                 assert_eq!(
-                    parse_cd_target(&shell, &["cd".into(), "-".into()])
+                    &*parse_cd_target(&shell, &["cd".into(), "-".into()])
                         .expect_err("missing oldpwd")
                         .message,
                     "cd: OLDPWD not set"
                 );
                 shell.env.insert("OLDPWD".into(), "/tmp/oldpwd".into());
                 let error = run(&mut shell, &["cd".into(), "".into()]).expect_err("empty cd");
-                assert_eq!(error.message, "cd: empty directory");
+                assert_eq!(&*error.message, "cd: empty directory");
                 assert!(parse_cd_target(&shell, &["cd".into(), "--".into(), "-".into()]).is_ok());
                 let (_, _, physical, check_pwd) =
                     parse_cd_target(&shell, &["cd".into(), "-P".into()]).expect("-P");
@@ -4527,7 +4530,7 @@ mod tests {
             let shell = test_shell();
             let err =
                 parse_cd_target(&shell, &["cd".into(), "-Z".into()]).expect_err("should reject -Z");
-            assert_eq!(err.message, "cd: invalid option: -Z");
+            assert_eq!(&*err.message, "cd: invalid option: -Z");
         });
     }
 
@@ -4983,7 +4986,7 @@ mod tests {
             let mut shell = test_shell();
             let error =
                 run(&mut shell, &["unalias".into(), "-x".into()]).expect_err("unalias invalid");
-            assert_eq!(error.message, "unalias: invalid option: -x");
+            assert_eq!(&*error.message, "unalias: invalid option: -x");
         });
     }
 
@@ -4992,7 +4995,7 @@ mod tests {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
             assert_eq!(
-                run(&mut shell, &["unalias".into(), "--".into()])
+                &*run(&mut shell, &["unalias".into(), "--".into()])
                     .expect_err("unalias -- only")
                     .message,
                 "unalias: name required"
@@ -5124,9 +5127,11 @@ mod tests {
             shell.functions.insert(
                 "ll".into(),
                 crate::syntax::Command::Simple(crate::syntax::SimpleCommand {
-                    assignments: Vec::new(),
-                    words: vec![literal("printf"), literal("ok")],
-                    redirections: Vec::new(),
+                    assignments: Vec::new().into_boxed_slice(),
+
+                    words: vec![literal("printf"), literal("ok")].into_boxed_slice(),
+                    redirections: Vec::new().into_boxed_slice(),
+
                 }),
             );
             run(&mut shell, &["unset".into(), "-f".into(), "ll".into()]).expect("unset function");
@@ -5235,7 +5240,7 @@ mod tests {
             let mut shell = test_shell();
             let error =
                 run(&mut shell, &[".".into(), "one".into(), "two".into()]).expect_err("dot args");
-            assert_eq!(error.message, ".: too many arguments");
+            assert_eq!(&*error.message, ".: too many arguments");
         });
     }
 
