@@ -1371,6 +1371,26 @@ In either case, execution of the utility in the specified environment shall be p
 
 ### Tests
 
+#### Test: non-built-in utility executes in separate environment
+
+Non-built-in utilities run in a separate utility environment; changes to
+variables inside the utility do not affect the parent shell.
+
+```
+begin test "non-built-in utility executes in separate environment"
+  script
+    X=0
+    echo 'X=1' > tmp_external.sh
+    chmod +x tmp_external.sh
+    ./tmp_external.sh
+    echo $X
+  expect
+    stdout "0"
+    stderr ""
+    exit_code 0
+end test "non-built-in utility executes in separate environment"
+```
+
 #### Test: subshell does not affect parent variable
 
 Non-built-in utilities run in a separate utility environment; changes to
@@ -1483,6 +1503,45 @@ begin test "ENOEXEC fallback with slash passes arguments to script"
     stderr ""
     exit_code 0
 end test "ENOEXEC fallback with slash passes arguments to script"
+```
+
+#### Test: non-built-in utility invocation passes command name as arg0
+
+When executing a utility found via `PATH` search, `arg0` is set to the
+command name.
+
+```
+begin test "non-built-in utility invocation passes command name as arg0"
+  script
+    mkdir -p tmp_arg0_bin
+    printf '#!/bin/sh\necho "$0"\n' > tmp_arg0_bin/print_arg0
+    chmod +x tmp_arg0_bin/print_arg0
+    PATH="$PWD/tmp_arg0_bin:$PATH"
+    print_arg0 | grep print_arg0 >/dev/null && echo "arg0_matches"
+  expect
+    stdout "arg0_matches"
+    stderr ""
+    exit_code 0
+end test "non-built-in utility invocation passes command name as arg0"
+```
+
+#### Test: utility invocation with slash passes command name as arg0
+
+When executing a utility whose name contains a slash, `arg0` is set to the
+command name.
+
+```
+begin test "utility invocation with slash passes command name as arg0"
+  script
+    mkdir -p tmp_arg0_bin
+    printf '#!/bin/sh\necho "$0"\n' > tmp_arg0_bin/print_arg0_slash
+    chmod +x tmp_arg0_bin/print_arg0_slash
+    ./tmp_arg0_bin/print_arg0_slash | grep print_arg0_slash >/dev/null && echo "arg0_matches"
+  expect
+    stdout "arg0_matches"
+    stderr ""
+    exit_code 0
+end test "utility invocation with slash passes command name as arg0"
 ```
 
 #### Test: file without magic header but with exec bit runs as shell script
