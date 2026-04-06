@@ -725,6 +725,23 @@ begin interactive test "interactive shell does not exit on expansion error"
 end interactive test "interactive shell does not exit on expansion error"
 ```
 
+#### Test: expansion error may be treated as syntax error
+
+An expansion error occurs when shell expansions are carried out, but an
+implementation may treat these as syntax errors if detected during tokenization.
+Regardless, it causes a non-interactive shell to exit.
+
+```
+begin test "expansion error may be treated as syntax error"
+  script
+    $SHELL -c 'echo ${x!y}; echo survived' 2>/dev/null
+  expect
+    stdout ""
+    stderr ""
+    exit_code !=0
+end test "expansion error may be treated as syntax error"
+```
+
 #### Test: command not found writes diagnostic to stderr
 
 The shell shall write a diagnostic message when a command is not found
