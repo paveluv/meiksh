@@ -3542,4 +3542,17 @@ mod tests {
             },
         );
     }
+
+    #[test]
+    fn return_in_dot_sourced_file_exits_source_with_status() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.source_depth = 1;
+            let status = shell
+                .execute_string(":; return 5; :")
+                .expect("return from source");
+            assert_eq!(status, 5);
+            assert!(shell.pending_control.is_none());
+        });
+    }
 }

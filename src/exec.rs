@@ -792,28 +792,34 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
             Err(error) => Err(error),
         }
     } else if let Some(function) = shell.functions.get(&owned_argv[0]).cloned() {
-        with_shell_redirections(&expanded.redirections, shell.options.noclobber, || {
-            let saved_vars = save_vars(shell, &owned_assignments);
-            for (name, value) in &owned_assignments {
-                shell.set_var(name, value.clone())?;
+        let guard = match apply_shell_redirections(&expanded.redirections, shell.options.noclobber) {
+            Ok(g) => g,
+            Err(error) => {
+                sys_eprintln!("meiksh: {}", error.display_message());
+                return Ok(1);
             }
-            let saved = std::mem::replace(&mut shell.positional, owned_argv[1..].to_vec());
-            shell.function_depth += 1;
-            let status = execute_command(shell, &function);
-            shell.function_depth = shell.function_depth.saturating_sub(1);
-            shell.positional = saved;
-            restore_vars(shell, saved_vars);
-            match status {
-                Ok(status) => match shell.pending_control {
-                    Some(PendingControl::Return(return_status)) => {
-                        shell.pending_control = None;
-                        Ok(return_status)
-                    }
-                    _ => Ok(status),
-                },
-                Err(error) => Err(error),
-            }
-        })
+        };
+        let saved_vars = save_vars(shell, &owned_assignments);
+        for (name, value) in &owned_assignments {
+            shell.set_var(name, value.clone())?;
+        }
+        let saved = std::mem::replace(&mut shell.positional, owned_argv[1..].to_vec());
+        shell.function_depth += 1;
+        let status = execute_command(shell, &function);
+        shell.function_depth = shell.function_depth.saturating_sub(1);
+        shell.positional = saved;
+        restore_vars(shell, saved_vars);
+        drop(guard);
+        match status {
+            Ok(status) => match shell.pending_control {
+                Some(PendingControl::Return(return_status)) => {
+                    shell.pending_control = None;
+                    Ok(return_status)
+                }
+                _ => Ok(status),
+            },
+            Err(error) => Err(error),
+        }
     } else {
         let command_name = owned_argv[0].clone();
         let prepared = build_process_from_expanded(shell, expanded, owned_argv, owned_assignments)
@@ -1072,16 +1078,10 @@ fn spawn_prepared(
     if !prepared.path_verified && !prepared.exec_path.is_empty() && prepared.exec_path.contains('/')
     {
         if sys::access_path(&prepared.exec_path, sys::F_OK).is_err() {
-            return Err(ShellError::with_status(
-                127,
-                format!("{}: not found", prepared.exec_path),
-            ));
+            return Err(ShellError::with_status(127, "not found"));
         }
         if sys::access_path(&prepared.exec_path, sys::X_OK).is_err() {
-            return Err(ShellError::with_status(
-                126,
-                format!("{}: Permission denied", prepared.exec_path),
-            ));
+            return Err(ShellError::with_status(126, "Permission denied"));
         }
     }
 
@@ -1121,8 +1121,14 @@ fn spawn_prepared(
                     .unwrap_or(126);
                 sys::exit_process(status as sys::RawFd);
             }
-            Err(err) if err.is_enoent() => sys::exit_process(127),
-            Err(_) => sys::exit_process(126),
+            Err(err) if err.is_enoent() => {
+                sys_eprintln!("{}: not found", prepared.argv[0]);
+                sys::exit_process(127);
+            }
+            Err(err) => {
+                sys_eprintln!("{}: {}", prepared.argv[0], err);
+                sys::exit_process(126);
+            }
             Ok(()) => sys::exit_process(0),
         }
     }
@@ -4635,6 +4641,14 @@ mod tests {
                         vec![ArgMatcher::Str("/bin/noperm".into()), ArgMatcher::Any],
                         TraceResult::Err(sys::EACCES),
                     ),
+                    t(
+                        "write",
+                        vec![
+                            ArgMatcher::Fd(sys::STDERR_FILENO),
+                            ArgMatcher::Bytes(b"noperm: Permission denied\n".to_vec()),
+                        ],
+                        TraceResult::Auto,
+                    ),
                 ],
             )],
             || {
@@ -4670,6 +4684,14 @@ mod tests {
                         "execvp",
                         vec![ArgMatcher::Str("/bin/missing".into()), ArgMatcher::Any],
                         TraceResult::Err(sys::ENOENT),
+                    ),
+                    t(
+                        "write",
+                        vec![
+                            ArgMatcher::Fd(sys::STDERR_FILENO),
+                            ArgMatcher::Bytes(b"missing: not found\n".to_vec()),
+                        ],
+                        TraceResult::Auto,
                     ),
                 ],
             )],
@@ -5575,5 +5597,135 @@ mod tests {
             let status = execute_pipeline(&mut shell, &pipeline, false).expect("execute");
             assert_eq!(status, 0);
         });
+    }
+
+    #[test]
+    fn special_builtin_utility_error_exits_noninteractive() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Bytes(b"set: invalid option: Z\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                let err = shell.execute_string("set -Z").expect_err("sbi error");
+                assert_ne!(err.exit_status(), 0);
+            },
+        );
+    }
+
+    #[test]
+    fn special_builtin_utility_error_continues_interactive() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Bytes(b"set: invalid option: Z\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.interactive = true;
+                let status = shell.execute_string("set -Z").expect("sbi interactive");
+                assert_ne!(status, 0);
+            },
+        );
+    }
+
+    #[test]
+    fn compound_command_redirection_error_does_not_exit() {
+        run_trace(
+            vec![
+                t(
+                    "fcntl",
+                    vec![ArgMatcher::Fd(0), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Int(100),
+                ),
+                t(
+                    "open",
+                    vec![
+                        ArgMatcher::Str("/nonexistent_redir_test".into()),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Err(sys::ENOENT),
+                ),
+                t(
+                    "dup2",
+                    vec![ArgMatcher::Int(100), ArgMatcher::Fd(0)],
+                    TraceResult::Int(0),
+                ),
+                t("close", vec![ArgMatcher::Int(100)], TraceResult::Int(0)),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(
+                            b"meiksh: No such file or directory\n".to_vec(),
+                        ),
+                    ],
+                    TraceResult::Auto,
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let status = shell
+                    .execute_string("{ :; } < /nonexistent_redir_test")
+                    .expect("redir");
+                assert_ne!(status, 0);
+            },
+        );
+    }
+
+    #[test]
+    fn function_redirection_error_does_not_exit() {
+        run_trace(
+            vec![
+                t(
+                    "fcntl",
+                    vec![ArgMatcher::Fd(0), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Int(100),
+                ),
+                t(
+                    "open",
+                    vec![
+                        ArgMatcher::Str("/nonexistent_func_redir".into()),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Err(sys::ENOENT),
+                ),
+                t(
+                    "dup2",
+                    vec![ArgMatcher::Int(100), ArgMatcher::Fd(0)],
+                    TraceResult::Int(0),
+                ),
+                t("close", vec![ArgMatcher::Int(100)], TraceResult::Int(0)),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(
+                            b"meiksh: No such file or directory\n".to_vec(),
+                        ),
+                    ],
+                    TraceResult::Auto,
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.execute_string("f() { :; }").expect("define fn");
+                let status = shell
+                    .execute_string("f < /nonexistent_func_redir")
+                    .expect("redir fn");
+                assert_ne!(status, 0);
+            },
+        );
     }
 }

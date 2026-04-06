@@ -371,7 +371,7 @@ fn set(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
                     if let Some(name) = argv.get(index + 1) {
                         if let Err(error) = shell.options.set_named_option(name, !reinput) {
                             write_stderr(&format!("set: {}\n", error.display_message()));
-                            return BuiltinOutcome::Status(error.exit_status());
+                            return BuiltinOutcome::UtilityError(error.exit_status());
                         }
                         index += 2;
                     } else {
@@ -3174,10 +3174,10 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 let outcome = run(&mut shell, &["set".into(), "-z".into()]).expect("invalid set");
-                assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+                assert!(matches!(outcome, BuiltinOutcome::UtilityError(2)));
                 let outcome = run(&mut shell, &["set".into(), "-o".into(), "pipefail".into()])
                     .expect("invalid set -o");
-                assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+                assert!(matches!(outcome, BuiltinOutcome::UtilityError(2)));
             },
         );
     }
@@ -3189,9 +3189,9 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Any,
+                    ArgMatcher::Bytes(b".: filename argument required\n".to_vec()),
                 ],
-                TraceResult::Int(0),
+                TraceResult::Auto,
             )],
             || {
                 let mut shell = test_shell();
@@ -5212,8 +5212,13 @@ mod tests {
                 ),
                 t(
                     "write",
-                    vec![ArgMatcher::Fd(sys::STDERR_FILENO), ArgMatcher::Any],
-                    TraceResult::Int(0),
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(
+                            b".: /definitely/missing-meiksh-dot-file: not found\n".to_vec(),
+                        ),
+                    ],
+                    TraceResult::Auto,
                 ),
             ],
             || {
@@ -5233,8 +5238,11 @@ mod tests {
         run_trace(
             vec![t(
                 "write",
-                vec![ArgMatcher::Fd(sys::STDERR_FILENO), ArgMatcher::Any],
-                TraceResult::Int(0),
+                vec![
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Bytes(b".: too many arguments\n".to_vec()),
+                ],
+                TraceResult::Auto,
             )],
             || {
                 let mut shell = test_shell();
