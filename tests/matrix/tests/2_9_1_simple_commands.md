@@ -91,6 +91,23 @@ begin test "empty first word skipped to find command"
 end test "empty first word skipped to find command"
 ```
 
+#### Test: multiple empty words are skipped to find command name
+
+If no fields remain after expanding a word, the next word (if any) shall be
+expanded, and so on, until a command name is found.
+
+```
+begin test "multiple empty words are skipped to find command name"
+  script
+    empty=""
+    $empty $empty $empty echo "found"
+  expect
+    stdout "found"
+    stderr ""
+    exit_code 0
+end test "multiple empty words are skipped to find command name"
+```
+
 #### Test: variable expands into command name and argument
 
 The first field from word expansion becomes the command name; subsequent
@@ -314,6 +331,25 @@ begin test "declaration utility assignment does not pathname expand"
     stderr ""
     exit_code 0
 end test "declaration utility assignment does not pathname expand"
+```
+
+#### Test: declaration utility assignment expansion applies regardless of argument order
+
+When the command name is a declaration utility, any remaining words that would
+be recognized as a variable assignment in isolation shall be expanded as a
+variable assignment, even if preceded by non-assignment arguments.
+
+```
+begin test "declaration utility assignment expansion applies regardless of argument order"
+  script
+    command export VAR1=~ not_an_assignment VAR2=~ 2>/dev/null
+    case "$VAR1" in /*) echo "var1_expanded";; *) echo "var1_literal";; esac
+    case "$VAR2" in /*) echo "var2_expanded";; *) echo "var2_literal";; esac
+  expect
+    stdout "var1_expanded\nvar2_expanded"
+    stderr ""
+    exit_code 0
+end test "declaration utility assignment expansion applies regardless of argument order"
 ```
 
 #### Test: tilde expansion in plain variable assignment
@@ -1185,6 +1221,23 @@ begin test "function name is invoked before PATH search"
 end test "function name is invoked before PATH search"
 ```
 
+#### Test: user-defined function overrides standard utility
+
+If a command name matches the name of a function known to this shell, the
+function shall be invoked (e.g. overriding a standard utility in `PATH`).
+
+```
+begin test "user-defined function overrides standard utility"
+  script
+    printf() { echo "user_printf"; }
+    printf "hello"
+  expect
+    stdout "user_printf"
+    stderr ""
+    exit_code 0
+end test "user-defined function overrides standard utility"
+```
+
 #### Test: function is invoked before matching PATH utility
 
 If a command name matches a known shell function, that function shall be
@@ -1468,6 +1521,28 @@ begin test "non-executable file returns 126"
     stderr ".+"
     exit_code 0
 end test "non-executable file returns 126"
+```
+
+#### Test: heuristic check may reject binary file as script
+
+The shell may apply a heuristic check to determine if the file to be executed
+could be a script and may bypass this command execution if it determines that
+the file cannot be a script. In this case, it shall write an error message, and
+the command shall fail with an exit status of 126.
+
+```
+begin test "heuristic check may reject binary file as script"
+  script
+    mkdir -p tmp_path_test
+    printf '\0\n' > tmp_path_test/heuristic_bin
+    chmod +x tmp_path_test/heuristic_bin
+    ./tmp_path_test/heuristic_bin 2>/dev/null
+    echo "$?"
+  expect
+    stdout "126"
+    stderr ""
+    exit_code 0
+end test "heuristic check may reject binary file as script"
 ```
 
 #### Test: non-existent file with slash fails with exit code 127
