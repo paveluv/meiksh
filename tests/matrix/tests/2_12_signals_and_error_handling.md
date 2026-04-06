@@ -21,57 +21,59 @@ If multiple signals are pending for the shell for which there are associated tra
 
 #### Test: async list inherits ignored SIGINT when job control disabled
 
-When job control is disabled, asynchronous commands inherit SIGINT as
-ignored. This test verifies that `set` (which controls `-m`) is available
-as a special built-in.
+When job control is disabled, an asynchronous AND-OR list shall inherit
+SIG_IGN for SIGINT. A child process sends itself SIGINT; because the
+signal is ignored, it survives and prints confirmation.
 
 ```
 begin test "async list inherits ignored SIGINT when job control disabled"
   script
-    trap "" INT
-    result=$($SHELL -c 'trap -p INT' &)
+    set +m
+    sh -c 'kill -INT $$; echo survived' &
     wait
-    echo "ok"
   expect
-    stdout "ok"
+    stdout "survived"
     stderr ""
     exit_code 0
 end test "async list inherits ignored SIGINT when job control disabled"
 ```
 
-#### Test: commands inherit parent signal actions
+#### Test: commands inherit ignored signal from parent
 
-Commands executed by the shell inherit the same signal actions as those
-inherited by the shell from its parent, unless modified by `trap`.
+Commands executed by the shell shall inherit the same signal actions as
+those inherited by the shell from its parent. A signal set to SIG_IGN
+via `trap '' USR1` is inherited by a child command, which survives
+sending itself that signal.
 
 ```
-begin test "commands inherit parent signal actions"
+begin test "commands inherit ignored signal from parent"
   script
-    trap 'echo CAUGHT' USR1
-    $SHELL -c 'kill -USR1 $$' 2>/dev/null
-    echo "parent_ok"
+    trap '' USR1
+    sh -c 'kill -USR1 $$; echo survived'
   expect
-    stdout "parent_ok"
+    stdout "survived"
     stderr ""
     exit_code 0
-end test "commands inherit parent signal actions"
+end test "commands inherit ignored signal from parent"
 ```
 
 #### Test: trap deferred during foreground command
 
-When a trapped signal arrives while the shell is waiting for a foreground
-command to complete, the trap action is deferred until after that command
-finishes.
+When a trapped signal arrives during a foreground command, the trap shall
+not execute until after the foreground command completes. The trap fires
+after `sleep` finishes but before the next command runs, so TRAP_FIRED
+appears before AFTER_SLEEP.
 
 ```
 begin test "trap deferred during foreground command"
   script
     trap 'echo TRAP_FIRED' USR1
-    (sleep 0.1; kill -USR1 $$) & sleep 300ms
-    echo FOREGROUND_DONE
+    (sleep 0.1; kill -USR1 $$) &
+    sleep 0.3
+    echo AFTER_SLEEP
   expect
-    stdout "(.|\n)*FOREGROUND_DONE(.|\n)*"
-    stderr "(.|\n)*"
+    stdout "TRAP_FIRED\nAFTER_SLEEP"
+    stderr ""
     exit_code 0
 end test "trap deferred during foreground command"
 ```
@@ -97,4 +99,90 @@ begin test "wait interrupted by trapped signal"
     stderr ""
     exit_code 0
 end test "wait interrupted by trapped signal"
+```
+
+#### Test: async list inherits ignored SIGQUIT when job control disabled
+
+When job control is disabled, an asynchronous AND-OR list shall inherit
+SIG_IGN for SIGQUIT in addition to SIGINT. A child process sends itself
+SIGQUIT; because the signal is ignored, it survives.
+
+```
+begin test "async list inherits ignored SIGQUIT when job control disabled"
+  script
+    set +m
+    sh -c 'kill -QUIT $$; echo survived' &
+    wait
+  expect
+    stdout "survived"
+    stderr ""
+    exit_code 0
+end test "async list inherits ignored SIGQUIT when job control disabled"
+```
+
+#### Test: caught trap does not propagate to child command
+
+A caught trap (as opposed to an ignored one) does not propagate through
+exec to child processes; the signal is reset to its default action. The
+child is terminated by the signal, confirming the caught action was not
+inherited.
+
+```
+begin test "caught trap does not propagate to child command"
+  script
+    trap 'echo CAUGHT' USR1
+    bash -c 'kill -USR1 $$' 2>/dev/null
+    [ $? -gt 128 ] && echo child_terminated
+  expect
+    stdout "child_terminated"
+    stderr ""
+    exit_code 0
+end test "caught trap does not propagate to child command"
+```
+
+#### Test: async list with job control does not inherit ignored SIGINT
+
+When job control is enabled, the SIG_IGN override for SIGINT does not
+apply to asynchronous lists. The background process retains the default
+SIGINT action and is terminated when sent the signal.
+
+```
+begin interactive test "async list with job control does not inherit ignored SIGINT"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 30 &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  send "kill -INT %1"
+  expect "$ "
+  send "wait %1 2>/dev/null; [ $? -gt 128 ] && echo killed_by_sigint"
+  expect "killed_by_sigint"
+  expect "$ "
+  send "exit"
+  wait
+end interactive test "async list with job control does not inherit ignored SIGINT"
+```
+
+#### Test: multiple pending trapped signals all fire
+
+When multiple signals with associated trap actions are pending (their
+order of execution is unspecified), each trap shall still be taken. Both
+USR1 and USR2 arrive during a foreground command and both traps fire
+after it completes.
+
+```
+begin test "multiple pending trapped signals all fire"
+  script
+    trap 'echo GOT_USR1' USR1
+    trap 'echo GOT_USR2' USR2
+    (sleep 0.1; kill -USR1 $$; kill -USR2 $$) &
+    sleep 0.3
+    echo DONE
+  expect
+    stdout "(GOT_USR1\nGOT_USR2|GOT_USR2\nGOT_USR1)\nDONE"
+    stderr ""
+    exit_code 0
+end test "multiple pending trapped signals all fire"
 ```
