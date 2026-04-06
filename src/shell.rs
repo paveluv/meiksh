@@ -34,6 +34,7 @@ pub struct ShellOptions {
     pub noglob: bool,
     pub notify: bool,
     pub nounset: bool,
+    pub pipefail: bool,
     pub verbose: bool,
     pub xtrace: bool,
     pub script_path: Option<PathBuf>,
@@ -76,6 +77,10 @@ impl ShellOptions {
     }
 
     pub fn set_named_option(&mut self, name: &str, enabled: bool) -> Result<(), ShellError> {
+        if name == "pipefail" {
+            self.pipefail = enabled;
+            return Ok(());
+        }
         let Some((_, letter)) = REPORTABLE_OPTION_NAMES
             .iter()
             .find(|(option_name, _)| *option_name == name)
@@ -88,7 +93,7 @@ impl ShellOptions {
         self.set_short_option(*letter, enabled)
     }
 
-    pub fn reportable_options(&self) -> [(&'static str, bool); 11] {
+    pub fn reportable_options(&self) -> [(&'static str, bool); 12] {
         [
             ("allexport", self.allexport),
             ("errexit", self.errexit),
@@ -99,6 +104,7 @@ impl ShellOptions {
             ("noexec", self.syntax_check_only),
             ("notify", self.notify),
             ("nounset", self.nounset),
+            ("pipefail", self.pipefail),
             ("verbose", self.verbose),
             ("xtrace", self.xtrace),
         ]
@@ -1656,9 +1662,18 @@ mod tests {
             assert_eq!(error.display_message(), "-o requires an argument");
             assert_eq!(error.exit_status(), 2);
 
-            let error = parse_options(&["meiksh".into(), "-o".into(), "pipefail".into()])
+            let options = parse_options(&[
+                "meiksh".into(),
+                "-o".into(),
+                "pipefail".into(),
+                "s.sh".into(),
+            ])
+            .expect("parse -o pipefail");
+            assert!(options.pipefail);
+
+            let error = parse_options(&["meiksh".into(), "-o".into(), "bogus".into()])
                 .expect_err("bad -o name");
-            assert_eq!(error.display_message(), "invalid option name: pipefail");
+            assert_eq!(error.display_message(), "invalid option name: bogus");
             assert_eq!(error.exit_status(), 2);
         });
     }

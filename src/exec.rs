@@ -184,13 +184,14 @@ fn execute_pipeline_inner(
         }
     }
 
+    let pipefail = shell.options.pipefail;
     let spawned = spawn_pipeline(shell, pipeline, None)?;
     if asynchronous {
         return Ok(0);
     }
 
     let desc = render_pipeline(pipeline);
-    let status = wait_for_children(shell, spawned, Some(&desc))?;
+    let status = wait_for_pipeline(shell, spawned, Some(&desc), pipefail)?;
 
     if pipeline.negated {
         Ok(if status == 0 { 1 } else { 0 })
@@ -349,16 +350,46 @@ fn spawn_pipeline(
     Ok(SpawnedProcesses { children, pgid })
 }
 
+fn wait_for_pipeline(
+    shell: &mut Shell,
+    spawned: SpawnedProcesses,
+    command_desc: Option<&str>,
+    pipefail: bool,
+) -> Result<i32, ShellError> {
+    let (last_status, rightmost_nonzero) = wait_for_children_inner(shell, spawned, command_desc)?;
+    if pipefail {
+        Ok(rightmost_nonzero)
+    } else {
+        Ok(last_status)
+    }
+}
+
+#[cfg(test)]
 fn wait_for_children(
+    shell: &mut Shell,
+    spawned: SpawnedProcesses,
+    command_desc: Option<&str>,
+) -> Result<i32, ShellError> {
+    let (last_status, _) = wait_for_children_inner(shell, spawned, command_desc)?;
+    Ok(last_status)
+}
+
+fn wait_for_children_inner(
     shell: &mut Shell,
     mut spawned: SpawnedProcesses,
     command_desc: Option<&str>,
-) -> Result<i32, ShellError> {
+) -> Result<(i32, i32), ShellError> {
     let saved_foreground = handoff_foreground(spawned.pgid);
-    let mut status = 0;
+    let mut last_status = 0;
+    let mut rightmost_nonzero = 0;
     for i in 0..spawned.children.len() {
         match shell.wait_for_child_pid(spawned.children[i].pid, false)? {
-            ChildWaitResult::Exited(code) => status = code,
+            ChildWaitResult::Exited(code) => {
+                last_status = code;
+                if code != 0 {
+                    rightmost_nonzero = code;
+                }
+            }
             ChildWaitResult::Stopped(sig) => {
                 restore_foreground(saved_foreground);
                 let desc: Box<str> = command_desc.unwrap_or("").into();
@@ -375,12 +406,12 @@ fn wait_for_children(
                     );
                     let _ = sys::write_all_fd(sys::STDERR_FILENO, msg.as_bytes());
                 }
-                return Ok(128 + sig);
+                return Ok((128 + sig, 128 + sig));
             }
         }
     }
     restore_foreground(saved_foreground);
-    Ok(status)
+    Ok((last_status, rightmost_nonzero))
 }
 
 fn wait_for_external_child(
