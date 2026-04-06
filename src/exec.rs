@@ -862,12 +862,20 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
             drop(guard);
             return Err(e);
         }
+        let has_redirections = !expanded.redirections.is_empty();
         let saved = std::mem::replace(&mut shell.positional, owned_argv[1..].to_vec());
         shell.function_depth += 1;
         let status = execute_command(shell, &function);
         shell.function_depth = shell.function_depth.saturating_sub(1);
         shell.positional = saved;
         restore_vars(shell, saved_vars);
+        if has_redirections
+            && status
+                .as_ref()
+                .is_err_and(|e| !e.display_message().is_empty())
+        {
+            sys_eprintln!("meiksh: {}", status.as_ref().unwrap_err().display_message());
+        }
         drop(guard);
         match status {
             Ok(status) => match shell.pending_control {
@@ -877,6 +885,7 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
                 }
                 _ => Ok(status),
             },
+            Err(error) if has_redirections => Err(ShellError::with_status(error.exit_status(), "")),
             Err(error) => Err(error),
         }
     } else if builtin::is_builtin(&owned_argv[0]) {
@@ -6091,6 +6100,61 @@ mod tests {
                     .execute_string("{ :; } < /nonexistent_redir_test")
                     .expect("redir");
                 assert_ne!(status, 0);
+            },
+        );
+    }
+
+    #[test]
+    fn function_error_respects_stderr_redirect() {
+        run_trace(
+            vec![
+                t(
+                    "fcntl",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Int(100),
+                ),
+                t(
+                    "open",
+                    vec![
+                        ArgMatcher::Str("/dev/null".into()),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Fd(10),
+                ),
+                t(
+                    "dup2",
+                    vec![ArgMatcher::Fd(10), ArgMatcher::Fd(sys::STDERR_FILENO)],
+                    TraceResult::Int(sys::STDERR_FILENO as i64),
+                ),
+                t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"meiksh: expected command list after 'if'\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "dup2",
+                    vec![ArgMatcher::Int(100), ArgMatcher::Fd(sys::STDERR_FILENO)],
+                    TraceResult::Int(sys::STDERR_FILENO as i64),
+                ),
+                t("close", vec![ArgMatcher::Int(100)], TraceResult::Int(0)),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.execute_string("f() { eval 'if'; }").expect("define");
+                let error = shell
+                    .execute_string("f 2>/dev/null")
+                    .expect_err("syntax error");
+                assert!(error.display_message().is_empty());
+                assert_eq!(error.exit_status(), 2);
             },
         );
     }
