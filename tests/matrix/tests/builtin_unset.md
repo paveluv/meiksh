@@ -193,3 +193,38 @@ begin test "unset of nonexistent variable is not an error"
     exit_code 0
 end test "unset of nonexistent variable is not an error"
 ```
+
+#### Test: unset -v explicitly targets a variable
+
+The `-v` option names a variable operand; unsetting it removes the
+variable from the shell and from the environment.
+
+```
+begin test "unset -v explicitly targets a variable"
+  script
+    export V_UNSET_V=1
+    unset -v V_UNSET_V
+    echo "${V_UNSET_V-unset}"
+  expect
+    stdout "unset"
+    stderr ""
+    exit_code 0
+end test "unset -v explicitly targets a variable"
+```
+
+#### Test: unset fails on readonly variables
+
+Read-only variables cannot be unset; the utility fails with non-zero
+exit status.
+
+```
+begin test "unset fails on readonly variables"
+  script
+    readonly RO_UNSET=1
+    unset RO_UNSET
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
+end test "unset fails on readonly variables"
+```

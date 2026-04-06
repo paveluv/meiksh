@@ -462,9 +462,16 @@ fn execute_redirected(
 ) -> Result<i32, ShellError> {
     let arena = StringArena::new();
     let expanded = expand_redirections(shell, redirections, &arena)?;
-    with_shell_redirections(&expanded, shell.options.noclobber, || {
-        execute_command(shell, command)
-    })
+    let guard = match apply_shell_redirections(&expanded, shell.options.noclobber) {
+        Ok(guard) => guard,
+        Err(error) => {
+            sys_eprintln!("meiksh: {}", error.display_message());
+            return Ok(1);
+        }
+    };
+    let result = execute_command(shell, command);
+    drop(guard);
+    result
 }
 
 fn execute_if(shell: &mut Shell, if_command: &IfCommand) -> Result<i32, ShellError> {
@@ -659,16 +666,22 @@ fn restore_vars(shell: &mut Shell, saved: Vec<SavedVar>) {
     }
 }
 
+enum BuiltinResult {
+    Status(i32),
+    UtilityError(i32),
+}
+
 fn run_builtin_flow(
     shell: &mut Shell,
     argv: &[String],
     assignments: &[(String, String)],
-) -> Result<i32, ShellError> {
+) -> Result<BuiltinResult, ShellError> {
     match shell.run_builtin(argv, assignments)? {
-        FlowSignal::Continue(status) => Ok(status),
+        FlowSignal::Continue(status) => Ok(BuiltinResult::Status(status)),
+        FlowSignal::UtilityError(status) => Ok(BuiltinResult::UtilityError(status)),
         FlowSignal::Exit(status) => {
             shell.running = false;
-            Ok(status)
+            Ok(BuiltinResult::Status(status))
         }
     }
 }
@@ -764,7 +777,14 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
             result
         };
         match result {
-            Ok(status) => Ok(status),
+            Ok(BuiltinResult::UtilityError(status))
+                if is_special_builtin && !shell.interactive =>
+            {
+                Err(ShellError::with_status(status, ""))
+            }
+            Ok(BuiltinResult::Status(status) | BuiltinResult::UtilityError(status)) => {
+                Ok(status)
+            }
             Err(error) if !is_special_builtin => {
                 sys_eprintln!("{}", error.display_message());
                 Ok(error.exit_status())
@@ -799,13 +819,14 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
         let prepared = build_process_from_expanded(shell, expanded, owned_argv, owned_assignments)
             .expect("argv is non-empty");
         if !prepared.path_verified && !prepared.exec_path.contains('/') {
+            let _guard = apply_shell_redirections(&prepared.redirections, prepared.noclobber).ok();
             sys_eprintln!("{}: not found", command_name);
             return Ok(127);
         }
         let handle = match spawn_prepared(shell, &prepared, ProcessGroupPlan::NewGroup) {
             Ok(h) => h,
             Err(error) => {
-                sys_eprintln!("{}", error.display_message());
+                sys_eprintln!("{}: {}", command_name, error.display_message());
                 return Ok(error.exit_status());
             }
         };
@@ -1051,10 +1072,16 @@ fn spawn_prepared(
     if !prepared.path_verified && !prepared.exec_path.is_empty() && prepared.exec_path.contains('/')
     {
         if sys::access_path(&prepared.exec_path, sys::F_OK).is_err() {
-            return Err(sys::SysError::Errno(sys::ENOENT).into());
+            return Err(ShellError::with_status(
+                127,
+                format!("{}: not found", prepared.exec_path),
+            ));
         }
         if sys::access_path(&prepared.exec_path, sys::X_OK).is_err() {
-            return Err(sys::SysError::Errno(sys::EACCES).into());
+            return Err(ShellError::with_status(
+                126,
+                format!("{}: Permission denied", prepared.exec_path),
+            ));
         }
     }
 
@@ -1792,6 +1819,7 @@ mod tests {
             ignored_on_entry: BTreeSet::new(),
             loop_depth: 0,
             function_depth: 0,
+            source_depth: 0,
             pending_control: None,
             interactive: false,
             errexit_suppressed: false,

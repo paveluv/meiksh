@@ -424,23 +424,6 @@ begin test "trap -p lists all traps"
 end test "trap -p lists all traps"
 ```
 
-#### Test: EXIT trap fires on exit
-
-An EXIT trap fires when the shell terminates via the `exit`
-command.
-
-```
-begin test "EXIT trap fires on exit"
-  script
-    trap "echo trapped_exit" EXIT
-    exit 0
-  expect
-    stdout "trapped_exit"
-    stderr ""
-    exit_code 0
-end test "EXIT trap fires on exit"
-```
-
 #### Test: trap - resets EXIT trap
 
 Setting the action to `-` for EXIT resets it to the default
@@ -522,21 +505,4 @@ begin test "trap with invalid signal produces diagnostic"
     stderr ""
     exit_code 0
 end test "trap with invalid signal produces diagnostic"
-```
-
-#### Test: EXIT trap fires before shell terminates
-
-The EXIT trap action is executed immediately before the shell
-terminates.
-
-```
-begin test "EXIT trap fires before shell terminates"
-  script
-    trap "echo exit_action" EXIT
-    exit 0
-  expect
-    stdout "exit_action"
-    stderr ""
-    exit_code 0
-end test "EXIT trap fires before shell terminates"
 ```

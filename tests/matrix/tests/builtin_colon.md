@@ -164,7 +164,8 @@ end test "colon with arguments still returns 0"
 
 #### Test: colon with variable assignment persists
 
-Variable assignment before `:` persists in the current environment.
+Prefix assignments on a simple command still apply when the command is
+the null utility, so the variable remains set afterward.
 
 ```
 begin test "colon with variable assignment persists"
@@ -176,4 +177,42 @@ begin test "colon with variable assignment persists"
     stderr ""
     exit_code 0
 end test "colon with variable assignment persists"
+```
+
+#### Test: colon does not treat -- as end of options
+
+The null utility does not recognize `--` as an end-of-options delimiter;
+operands that look like options are still ordinary arguments.
+
+```
+begin test "colon does not treat -- as end of options"
+  script
+    : -- -f
+    echo "ok"
+  expect
+    stdout "ok"
+    stderr ""
+    exit_code 0
+end test "colon does not treat -- as end of options"
+```
+
+#### Test: colon with assignment and redirection
+
+As with other special built-ins, prefix assignment and redirections on
+`:` run in the usual way: the file is created or truncated and the
+assignment persists.
+
+```
+begin test "colon with assignment and redirection"
+  script
+    rm -f tmp_colon_z.txt
+    x=y : > tmp_colon_z.txt
+    echo "x=$x"
+    test -f tmp_colon_z.txt && echo "file_ok"
+    rm -f tmp_colon_z.txt
+  expect
+    stdout "x=y\nfile_ok"
+    stderr ""
+    exit_code 0
+end test "colon with assignment and redirection"
 ```

@@ -10,6 +10,7 @@ fn write_stderr(msg: &str) {
 #[derive(Debug)]
 pub enum BuiltinOutcome {
     Status(i32),
+    UtilityError(i32),
     Exit(i32),
     Return(i32),
     Break(usize),
@@ -394,7 +395,7 @@ fn set(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
                     for ch in arg[1..].chars() {
                         if let Err(error) = shell.options.set_short_option(ch, enabled) {
                             write_stderr(&format!("set: {}\n", error.display_message()));
-                            return BuiltinOutcome::Status(error.exit_status());
+                            return BuiltinOutcome::UtilityError(error.exit_status());
                         }
                     }
                     index += 1;
@@ -433,15 +434,21 @@ fn eval(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
 }
 
 fn dot(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
-    let path = argv.get(1).ok_or_else(|| ShellError {
-        message: ".: filename argument required".into(),
+    let path = argv.get(1).ok_or_else(|| {
+        write_stderr(".: filename argument required\n");
+        ShellError::with_status(2, "")
     })?;
     if argv.len() > 2 {
-        return Err(ShellError {
-            message: ".: too many arguments".into(),
-        });
+        write_stderr(".: too many arguments\n");
+        return Err(ShellError::with_status(2, ""));
     }
-    let resolved = resolve_dot_path(shell, path)?;
+    let resolved = match resolve_dot_path(shell, path) {
+        Ok(p) => p,
+        Err(_) => {
+            write_stderr(&format!(".: {path}: not found\n"));
+            return Err(ShellError::with_status(1, ""));
+        }
+    };
     let status = shell.source_path(&resolved)?;
     Ok(BuiltinOutcome::Status(status))
 }
@@ -452,13 +459,10 @@ fn resolve_dot_path(shell: &Shell, path: &str) -> Result<PathBuf, ShellError> {
         if readable_regular_file(&candidate) {
             return Ok(candidate);
         }
-        return Err(ShellError {
-            message: format!(".: {path}: not found").into(),
-        });
+        return Err(ShellError::with_status(1, format!(".: {path}: not found")));
     }
-    search_path(path, shell, false, readable_regular_file).ok_or_else(|| ShellError {
-        message: format!(".: {path}: not found").into(),
-    })
+    search_path(path, shell, false, readable_regular_file)
+        .ok_or_else(|| ShellError::with_status(1, format!(".: {path}: not found")))
 }
 
 fn exec_builtin(argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
@@ -475,7 +479,7 @@ fn exec_builtin(argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
 }
 
 fn return_builtin(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
-    if shell.function_depth == 0 {
+    if shell.function_depth == 0 && shell.source_depth == 0 {
         return Err(ShellError {
             message: "return: not in a function".into(),
         });
@@ -2165,6 +2169,7 @@ mod tests {
             ignored_on_entry: BTreeSet::new(),
             loop_depth: 0,
             function_depth: 0,
+            source_depth: 0,
             pending_control: None,
             interactive: false,
             errexit_suppressed: false,
@@ -3179,11 +3184,21 @@ mod tests {
 
     #[test]
     fn dot_requires_filename_argument() {
-        assert_no_syscalls(|| {
-            let mut shell = test_shell();
-            let error = run(&mut shell, &[".".into()]).expect_err("dot missing arg");
-            assert_eq!(&*error.message, ".: filename argument required");
-        });
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Any,
+                ],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                let error = run(&mut shell, &[".".into()]).expect_err("dot missing arg");
+                assert_eq!(error.exit_status(), 2);
+            },
+        );
     }
 
     #[test]
@@ -5186,14 +5201,21 @@ mod tests {
     #[test]
     fn dot_errors_on_missing_file() {
         run_trace(
-            vec![t(
-                "stat",
-                vec![
-                    ArgMatcher::Str("/definitely/missing-meiksh-dot-file".into()),
-                    ArgMatcher::Any,
-                ],
-                TraceResult::Err(sys::ENOENT),
-            )],
+            vec![
+                t(
+                    "stat",
+                    vec![
+                        ArgMatcher::Str("/definitely/missing-meiksh-dot-file".into()),
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Err(sys::ENOENT),
+                ),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(sys::STDERR_FILENO), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+            ],
             || {
                 let mut shell = test_shell();
                 let error = run(
@@ -5201,19 +5223,26 @@ mod tests {
                     &[".".into(), "/definitely/missing-meiksh-dot-file".into()],
                 )
                 .expect_err("missing dot file");
-                assert!(!error.message.is_empty());
+                assert_eq!(error.exit_status(), 1);
             },
         );
     }
 
     #[test]
     fn dot_rejects_too_many_arguments() {
-        assert_no_syscalls(|| {
-            let mut shell = test_shell();
-            let error =
-                run(&mut shell, &[".".into(), "one".into(), "two".into()]).expect_err("dot args");
-            assert_eq!(&*error.message, ".: too many arguments");
-        });
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(sys::STDERR_FILENO), ArgMatcher::Any],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                let error = run(&mut shell, &[".".into(), "one".into(), "two".into()])
+                    .expect_err("dot args");
+                assert_eq!(error.exit_status(), 2);
+            },
+        );
     }
 
     #[test]
