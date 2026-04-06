@@ -625,7 +625,10 @@ impl Shell {
 
     /// Environment for [`exec`](crate::builtin) with a utility: exported variables from the
     /// shell plus prefix assignments for this command (even when not exported).
-    pub fn env_for_exec_utility(&self, cmd_assignments: &[(String, String)]) -> Vec<(String, String)> {
+    pub fn env_for_exec_utility(
+        &self,
+        cmd_assignments: &[(String, String)],
+    ) -> Vec<(String, String)> {
         let mut env = self.env_for_child();
         for (k, v) in cmd_assignments {
             if let Some(pos) = env.iter().position(|(name, _)| name == k) {
@@ -3567,6 +3570,27 @@ mod tests {
                 .expect("return from source");
             assert_eq!(status, 5);
             assert!(shell.pending_control.is_none());
+        });
+    }
+
+    #[test]
+    fn env_for_exec_utility_overlays_and_appends() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.env.insert("A".into(), "1".into());
+            shell.exported.insert("A".into());
+            let env =
+                shell.env_for_exec_utility(&[("A".into(), "2".into()), ("B".into(), "3".into())]);
+            assert!(env.iter().any(|(k, v)| k == "A" && v == "2"));
+            assert!(env.iter().any(|(k, v)| k == "B" && v == "3"));
+        });
+    }
+
+    #[test]
+    fn from_args_constructs_shell_from_argv() {
+        run_trace(vec![t("getpid", vec![], TraceResult::Pid(999))], || {
+            let shell = Shell::from_args(&["meiksh", "-c", "echo hello"]).expect("from_args");
+            assert_eq!(&*shell.shell_name, "meiksh");
         });
     }
 }

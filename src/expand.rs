@@ -3233,10 +3233,10 @@ mod tests {
 
     fn expect_one(result: Result<(Expansion, usize), ExpandError>) -> (String, usize) {
         let (expansion, consumed) = result.expect("expansion");
-        match expansion {
-            Expansion::One(s) => (s, consumed),
-            Expansion::AtFields(_) => panic!("expected One, got AtFields"),
-        }
+        let Expansion::One(s) = expansion else {
+            panic!("expected One, got AtFields")
+        };
+        (s, consumed)
     }
 
     #[test]
@@ -3257,12 +3257,10 @@ mod tests {
 
         let (at_expansion, at_consumed) = expand_dollar(&mut ctx, "$@", true).expect("quoted at");
         assert_eq!(at_consumed, 2);
-        match at_expansion {
-            Expansion::AtFields(fields) => {
-                assert_eq!(fields, vec!["alpha".to_string(), "beta".to_string()]);
-            }
-            _ => panic!("expected AtFields for quoted $@"),
-        }
+        let Expansion::AtFields(fields) = at_expansion else {
+            panic!("expected AtFields for quoted $@")
+        };
+        assert_eq!(fields, vec!["alpha".to_string(), "beta".to_string()]);
 
         let arithmetic_input = "$((1 + (2 * 3)))";
         assert_eq!(
@@ -3818,6 +3816,9 @@ mod tests {
         assert_eq!(ctx.special_param('?'), None);
         assert_eq!(ctx.positional_param(0).as_deref(), Some("meiksh"));
         assert_eq!(ctx.positional_param(1), None);
+        assert!(ctx.positional_params().is_empty());
+        assert!(ctx.home_dir_for_user("nobody").is_none());
+        assert!(!ctx.nounset_enabled());
         ctx.set_var("NAME", "value".to_string()).expect("set var");
         assert_eq!(ctx.env_var("NAME").as_deref(), Some("value"));
         assert_eq!(ctx.shell_name(), "meiksh");
@@ -5667,5 +5668,18 @@ mod tests {
         assert_eq!(char_len("café", 3), 2);
         assert_eq!(char_at("日本", 0), '日');
         assert_eq!(char_len("日本", 0), 3);
+    }
+
+    #[test]
+    fn word_is_assignment_rejects_empty_and_non_identifier_prefix() {
+        assert!(!word_is_assignment(""));
+        assert!(!word_is_assignment("a-b=c"));
+    }
+
+    #[test]
+    fn fake_context_special_param_star_and_at() {
+        let ctx = FakeContext::new();
+        assert_eq!(ctx.special_param('*').as_deref(), Some("alpha beta"));
+        assert_eq!(ctx.special_param('@').as_deref(), Some("alpha beta"));
     }
 }
