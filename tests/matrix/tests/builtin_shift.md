@@ -177,6 +177,40 @@ begin test "shift 0 leaves positional parameters unchanged"
 end test "shift 0 leaves positional parameters unchanged"
 ```
 
+#### Test: shift with no positional parameters fails
+
+With `$#` equal to zero, any positive shift count is out of range and
+the utility fails.
+
+```
+begin test "shift with no positional parameters fails"
+  script
+    set --
+    shift
+    echo "st=$? sharp=$#"
+  expect
+    stdout "st=1 sharp=0"
+    stderr ".+"
+    exit_code 0
+end test "shift with no positional parameters fails"
+```
+
+#### Test: shift with non-numeric operand fails
+
+The shift count must be an unsigned decimal integer.
+
+```
+begin test "shift with non-numeric operand fails"
+  script
+    ( set -- a; shift bad )
+    echo "outer=$?"
+  expect
+    stdout "outer=1"
+    stderr "(.|\n)*"
+    exit_code 0
+end test "shift with non-numeric operand fails"
+```
+
 #### Test: shift greater than $# fails and leaves parameters intact
 
 When `n` exceeds `$#`, the shell returns a non-zero status, writes a

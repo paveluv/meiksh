@@ -239,3 +239,20 @@ begin test "break with invalid n returns non-zero in a loop"
     exit_code 0
 end test "break with invalid n returns non-zero in a loop"
 ```
+
+#### Test: break with non-numeric operand fails in a loop
+
+The loop count must be an unsigned decimal integer; otherwise `break`
+fails and the subshell exits non-zero.
+
+```
+begin test "break with non-numeric operand fails in a loop"
+  script
+    ( for i in 1; do break bogus; done )
+    echo "outer=$?"
+  expect
+    stdout "outer=[1-9][0-9]*"
+    stderr "(.|\n)*"
+    exit_code 0
+end test "break with non-numeric operand fails in a loop"
+```

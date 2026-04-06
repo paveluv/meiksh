@@ -85,6 +85,46 @@ pub fn expand_words<'a, C: Context>(
     Ok(result)
 }
 
+pub fn expand_word_as_declaration_assignment<'a, C: Context>(
+    ctx: &mut C,
+    word: &Word,
+    arena: &'a StringArena,
+) -> Result<&'a str, ExpandError> {
+    let value_word = Word {
+        raw: word_assignment_value(word.raw).unwrap_or(word.raw),
+    };
+    let name = &word.raw[..word.raw.len() - value_word.raw.len()];
+    let expanded_value = expand_word_text_assignment(ctx, &value_word, true, arena)?;
+    Ok(arena.intern(format!("{name}{expanded_value}")))
+}
+
+pub fn word_is_assignment(raw: &str) -> bool {
+    word_assignment_value(raw).is_some()
+}
+
+fn word_assignment_value(raw: &str) -> Option<&str> {
+    let bytes = raw.as_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+    let first = bytes[0];
+    if !(first == b'_' || first.is_ascii_alphabetic()) {
+        return None;
+    }
+    let mut i = 1;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'=' {
+            return Some(&raw[i + 1..]);
+        }
+        if !(b == b'_' || b.is_ascii_alphanumeric()) {
+            return None;
+        }
+        i += 1;
+    }
+    None
+}
+
 pub fn expand_word<'a, C: Context>(
     ctx: &mut C,
     word: &Word,

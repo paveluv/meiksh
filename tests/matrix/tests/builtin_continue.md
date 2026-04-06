@@ -186,3 +186,19 @@ begin test "continue with invalid n returns non-zero in a loop"
     exit_code 0
 end test "continue with invalid n returns non-zero in a loop"
 ```
+
+#### Test: continue with non-numeric operand fails in a loop
+
+The loop count must be an unsigned decimal integer.
+
+```
+begin test "continue with non-numeric operand fails in a loop"
+  script
+    ( for i in 1; do continue bogus; done )
+    echo "outer=$?"
+  expect
+    stdout "outer=[1-9][0-9]*"
+    stderr "(.|\n)*"
+    exit_code 0
+end test "continue with non-numeric operand fails in a loop"
+```
