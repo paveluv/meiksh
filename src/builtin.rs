@@ -2302,7 +2302,8 @@ mod tests {
                 invoke(&mut shell, &["alias".into(), "la=ls -a".into()]).expect("alias");
                 assert_eq!(shell.aliases.get("ll").map(String::as_str), Some("ls -l"));
 
-                let outcome = invoke(&mut shell, &["alias".into(), "ll".into()]).expect("alias query");
+                let outcome =
+                    invoke(&mut shell, &["alias".into(), "ll".into()]).expect("alias query");
                 assert!(matches!(outcome, BuiltinOutcome::Status(0)));
 
                 let outcome =
@@ -2881,13 +2882,15 @@ mod tests {
     fn control_flow_builtins_validate_context_and_arguments() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            let error = invoke(&mut shell, &["return".into()]).expect_err("return outside function");
+            let error =
+                invoke(&mut shell, &["return".into()]).expect_err("return outside function");
             assert_eq!(&*error.message, "return: not in a function");
 
             shell.function_depth = 1;
             let outcome = invoke(&mut shell, &["return".into(), "7".into()]).expect("return");
             assert!(matches!(outcome, BuiltinOutcome::Return(7)));
-            let error = invoke(&mut shell, &["return".into(), "bad".into()]).expect_err("bad return");
+            let error =
+                invoke(&mut shell, &["return".into(), "bad".into()]).expect_err("bad return");
             assert_eq!(&*error.message, "return: numeric argument required");
             let error = invoke(&mut shell, &["return".into(), "1".into(), "2".into()])
                 .expect_err("return args");
@@ -2896,7 +2899,8 @@ mod tests {
             shell.function_depth = 0;
             let error = invoke(&mut shell, &["break".into()]).expect_err("break outside loop");
             assert_eq!(&*error.message, "break: only meaningful in a loop");
-            let error = invoke(&mut shell, &["continue".into()]).expect_err("continue outside loop");
+            let error =
+                invoke(&mut shell, &["continue".into()]).expect_err("continue outside loop");
             assert_eq!(&*error.message, "continue: only meaningful in a loop");
 
             shell.loop_depth = 2;
@@ -2907,11 +2911,11 @@ mod tests {
             let error =
                 invoke(&mut shell, &["continue".into(), "0".into()]).expect_err("bad continue");
             assert_eq!(&*error.message, "continue: numeric argument required");
-            let error =
-                invoke(&mut shell, &["break".into(), "1".into(), "2".into()]).expect_err("break args");
+            let error = invoke(&mut shell, &["break".into(), "1".into(), "2".into()])
+                .expect_err("break args");
             assert_eq!(&*error.message, "break: too many arguments");
-            let error =
-                invoke(&mut shell, &["continue".into(), "bad".into()]).expect_err("continue numeric");
+            let error = invoke(&mut shell, &["continue".into(), "bad".into()])
+                .expect_err("continue numeric");
             assert_eq!(&*error.message, "continue: numeric argument required");
         });
     }
@@ -3197,7 +3201,8 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let outcome = invoke(&mut shell, &["set".into(), "-z".into()]).expect("invalid set");
+                let outcome =
+                    invoke(&mut shell, &["set".into(), "-z".into()]).expect("invalid set");
                 assert!(matches!(outcome, BuiltinOutcome::UtilityError(2)));
                 let outcome = invoke(&mut shell, &["set".into(), "-o".into(), "pipefail".into()])
                     .expect("invalid set -o");
@@ -4377,7 +4382,8 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 shell.env.insert("PWD".into(), "/".into());
-                let outcome = invoke(&mut shell, &["cd".into(), "tmp".into()]).expect("cd from root");
+                let outcome =
+                    invoke(&mut shell, &["cd".into(), "tmp".into()]).expect("cd from root");
                 assert!(matches!(outcome, BuiltinOutcome::Status(0)));
                 assert_eq!(shell.get_var("PWD"), Some("/tmp"));
                 assert_eq!(shell.get_var("OLDPWD"), Some("/"));
@@ -5145,7 +5151,8 @@ mod tests {
                     redirections: Vec::new().into_boxed_slice(),
                 }),
             );
-            invoke(&mut shell, &["unset".into(), "-f".into(), "ll".into()]).expect("unset function");
+            invoke(&mut shell, &["unset".into(), "-f".into(), "ll".into()])
+                .expect("unset function");
             assert!(!shell.functions.contains_key("ll"));
         });
     }
@@ -5154,8 +5161,8 @@ mod tests {
     fn exec_errors_on_nul_in_program() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            let error =
-                invoke(&mut shell, &["exec".into(), "bad\0program".into()]).expect_err("exec error");
+            let error = invoke(&mut shell, &["exec".into(), "bad\0program".into()])
+                .expect_err("exec error");
             assert!(
                 error.message.contains("invalid") || error.message.contains("NUL"),
                 "unexpected message: {:?}",
@@ -5185,8 +5192,8 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let outcome =
-                    invoke(&mut shell, &["exec".into(), "echo".into(), "hello".into()]).expect("exec");
+                let outcome = invoke(&mut shell, &["exec".into(), "echo".into(), "hello".into()])
+                    .expect("exec");
                 assert!(matches!(outcome, BuiltinOutcome::Status(0)));
             },
         );
@@ -5973,7 +5980,8 @@ mod tests {
             )],
             || {
                 let mut shell = test_shell();
-                let outcome = invoke(&mut shell, &["kill".into(), "12345".into()]).expect("kill pid");
+                let outcome =
+                    invoke(&mut shell, &["kill".into(), "12345".into()]).expect("kill pid");
                 assert!(matches!(outcome, BuiltinOutcome::Status(0)));
             },
         );
@@ -6209,7 +6217,8 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 shell.jobs.push(make_job(1, 7010, "dead"));
-                let outcome = invoke(&mut shell, &["kill".into(), "%1".into()]).expect("kill %1 dead");
+                let outcome =
+                    invoke(&mut shell, &["kill".into(), "%1".into()]).expect("kill %1 dead");
                 assert!(matches!(outcome, BuiltinOutcome::Status(1)));
             },
         );
@@ -6457,7 +6466,8 @@ mod tests {
             job.children.clear();
             job.last_pid = Some(0);
             shell.jobs.push(job);
-            let outcome = invoke(&mut shell, &["kill".into(), "%1".into()]).expect("kill %1 zero-pid");
+            let outcome =
+                invoke(&mut shell, &["kill".into(), "%1".into()]).expect("kill %1 zero-pid");
             assert!(matches!(outcome, BuiltinOutcome::Status(0)));
         });
     }
@@ -6502,8 +6512,8 @@ mod tests {
             )],
             || {
                 let mut shell = test_shell();
-                let outcome =
-                    invoke(&mut shell, &["kill".into(), "--".into(), "-1".into()]).expect("kill -1");
+                let outcome = invoke(&mut shell, &["kill".into(), "--".into(), "-1".into()])
+                    .expect("kill -1");
                 assert!(matches!(outcome, BuiltinOutcome::Status(0)));
             },
         );
@@ -6664,6 +6674,63 @@ mod tests {
                 let outcome =
                     execute_command_utility(&mut shell, &["ls".into()], true).expect("command -p");
                 assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn expand_assignment_tilde_covers_unset_home_and_user_lookup() {
+        run_trace(
+            vec![t(
+                "getpwnam",
+                vec![ArgMatcher::Str("bob".into())],
+                TraceResult::Str("/home/bob".into()),
+            )],
+            || {
+                let shell = test_shell();
+                assert_eq!(super::expand_assignment_tilde(&shell, "~/docs"), "~/docs");
+                assert_eq!(
+                    super::expand_assignment_tilde(&shell, "~bob/docs"),
+                    "/home/bob/docs"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn exec_not_found_program_returns_error() {
+        run_trace(
+            vec![
+                t(
+                    "access",
+                    vec![
+                        ArgMatcher::Str("/usr/bin/nonexistent".into()),
+                        ArgMatcher::Int(0),
+                    ],
+                    TraceResult::Err(sys::ENOENT),
+                ),
+                t(
+                    "access",
+                    vec![
+                        ArgMatcher::Str("/bin/nonexistent".into()),
+                        ArgMatcher::Int(0),
+                    ],
+                    TraceResult::Err(sys::ENOENT),
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"nonexistent: not found\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let error = invoke(&mut shell, &["exec".into(), "nonexistent".into()])
+                    .expect_err("exec not found");
+                assert_eq!(error.exit_status(), 127);
             },
         );
     }

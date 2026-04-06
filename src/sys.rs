@@ -2364,8 +2364,7 @@ pub fn exec_replace_with_env(
 
     #[cfg(coverage)]
     flush_coverage();
-    let result =
-        (sys_interface().execve)(c_file.as_ptr(), argp.as_ptr(), envp.as_ptr());
+    let result = (sys_interface().execve)(c_file.as_ptr(), argp.as_ptr(), envp.as_ptr());
     if result == -1 {
         Err(last_error())
     } else {
@@ -3935,5 +3934,347 @@ mod tests {
         let s = "\u{1F600}";
         let expected = s.as_bytes().to_vec();
         assert_eq!(string_to_bytes(s), expected);
+    }
+
+    #[test]
+    fn no_interface_table_stubs_all_panic() {
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+        let tbl = test_support::no_interface_table();
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.getpid)())).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.getppid)())).is_err());
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| (tbl.waitpid)(
+                0,
+                std::ptr::null_mut(),
+                0
+            )))
+            .is_err()
+        );
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.kill)(0, 0))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.signal)(0, 0))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.isatty)(0))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.tcgetpgrp)(0))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.tcsetpgrp)(0, 0))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.setpgid)(0, 0))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.pipe)(&mut [0; 2]))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.dup2)(0, 0))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.close)(0))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.fcntl)(0, 0, 0))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.read)(0, &mut [0u8; 1]))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.umask)(0))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.times)(std::ptr::null_mut()))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.sysconf)(0))).is_err());
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| (tbl.execvp)(
+                std::ptr::null(),
+                std::ptr::null()
+            )))
+            .is_err()
+        );
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| (tbl.execve)(
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null()
+            )))
+            .is_err()
+        );
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.open)(std::ptr::null(), 0, 0))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.write)(0, &[]))).is_err());
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| (tbl.stat)(
+                std::ptr::null(),
+                std::ptr::null_mut()
+            )))
+            .is_err()
+        );
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.fstat)(0, std::ptr::null_mut()))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.access)(std::ptr::null(), 0))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.chdir)(std::ptr::null()))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.getcwd)(std::ptr::null_mut(), 0))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.opendir)(std::ptr::null()))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.readdir)(std::ptr::null_mut()))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.closedir)(std::ptr::null_mut()))).is_err());
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| (tbl.realpath)(
+                std::ptr::null(),
+                std::ptr::null_mut()
+            )))
+            .is_err()
+        );
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.fork)())).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.exit_process)(0))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.setenv)("k", "v"))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.unsetenv)("k"))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.getenv)("k"))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.get_environ)())).is_err());
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| (tbl.tcgetattr)(
+                0,
+                std::ptr::null_mut()
+            )))
+            .is_err()
+        );
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| (tbl.tcsetattr)(0, 0, std::ptr::null()))).is_err()
+        );
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.getpwnam)("nobody"))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.monotonic_clock_ns)())).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.setup_locale)())).is_err());
+    }
+
+    #[test]
+    fn trace_getpid_and_getppid_dispatch() {
+        test_support::run_trace(
+            vec![
+                test_support::t("getpid", vec![], test_support::TraceResult::Pid(42)),
+                test_support::t("getppid", vec![], test_support::TraceResult::Pid(43)),
+            ],
+            || {
+                assert_eq!(current_pid(), 42);
+                assert_eq!(parent_pid(), 43);
+            },
+        );
+    }
+
+    #[test]
+    fn trace_stat_fifo_and_fstat_dir_arms() {
+        test_support::run_trace(
+            vec![
+                test_support::t(
+                    "stat",
+                    vec![test_support::ArgMatcher::Any, test_support::ArgMatcher::Any],
+                    test_support::TraceResult::StatFifo,
+                ),
+                test_support::t(
+                    "stat",
+                    vec![test_support::ArgMatcher::Any, test_support::ArgMatcher::Any],
+                    test_support::TraceResult::Int(0),
+                ),
+            ],
+            || {
+                let s = stat_path("/fifo").expect("stat fifo");
+                assert!((s.mode & libc::S_IFMT) == libc::S_IFIFO);
+                let _ = stat_path("/plain");
+            },
+        );
+    }
+
+    #[test]
+    fn trace_setup_locale_is_noop() {
+        test_support::run_trace(vec![], || {
+            setup_locale();
+        });
+    }
+
+    #[test]
+    fn trace_getcwd_erange_and_pipe_err() {
+        test_support::run_trace(
+            vec![
+                test_support::t(
+                    "getcwd",
+                    vec![],
+                    test_support::TraceResult::Err(libc::ERANGE),
+                ),
+                test_support::t("pipe", vec![], test_support::TraceResult::Err(libc::EMFILE)),
+            ],
+            || {
+                assert!(get_cwd().is_err());
+                assert!(create_pipe().is_err());
+            },
+        );
+    }
+
+    #[test]
+    fn trace_opendir_int_and_readdir_fallback() {
+        test_support::run_trace(
+            vec![test_support::t(
+                "opendir",
+                vec![test_support::ArgMatcher::Any],
+                test_support::TraceResult::Int(0),
+            )],
+            || {
+                assert!(read_dir_entries("/tmp").is_err());
+            },
+        );
+    }
+
+    #[test]
+    fn trace_realpath_resolved_and_err() {
+        test_support::run_trace(
+            vec![
+                test_support::t(
+                    "realpath",
+                    vec![test_support::ArgMatcher::Any, test_support::ArgMatcher::Any],
+                    test_support::TraceResult::RealpathStr("/resolved".into()),
+                ),
+                test_support::t(
+                    "realpath",
+                    vec![test_support::ArgMatcher::Any, test_support::ArgMatcher::Any],
+                    test_support::TraceResult::Err(ENOENT),
+                ),
+            ],
+            || {
+                assert_eq!(canonicalize("/foo").expect("resolve"), "/resolved");
+                assert!(canonicalize("/bad").is_err());
+            },
+        );
+    }
+
+    #[test]
+    fn trace_sysconf_dispatch() {
+        test_support::run_trace(
+            vec![test_support::t(
+                "sysconf",
+                vec![test_support::ArgMatcher::Any],
+                test_support::TraceResult::Int(100),
+            )],
+            || {
+                assert_eq!(clock_ticks_per_second().expect("sysconf"), 100);
+            },
+        );
+    }
+
+    #[test]
+    fn trace_umask_times_sysconf_and_monotonic_dispatch() {
+        test_support::run_trace(
+            vec![
+                test_support::t(
+                    "umask",
+                    vec![test_support::ArgMatcher::Any],
+                    test_support::TraceResult::Int(0o22),
+                ),
+                test_support::t(
+                    "times",
+                    vec![test_support::ArgMatcher::Any],
+                    test_support::TraceResult::Int(500),
+                ),
+                test_support::t(
+                    "sysconf",
+                    vec![test_support::ArgMatcher::Any],
+                    test_support::TraceResult::Int(100),
+                ),
+                test_support::t(
+                    "monotonic_clock_ns",
+                    vec![],
+                    test_support::TraceResult::Int(123456),
+                ),
+            ],
+            || {
+                assert_eq!(set_umask(0o77), 0o22);
+                let times = process_times().expect("times");
+                assert_eq!(times.user_ticks, 0);
+                assert_eq!(clock_ticks_per_second().expect("sysconf"), 100);
+                assert_eq!(monotonic_clock_ns(), 123456);
+            },
+        );
+    }
+
+    #[test]
+    fn trace_getpwnam_null_str() {
+        test_support::run_trace(
+            vec![test_support::t(
+                "getpwnam",
+                vec![test_support::ArgMatcher::Str("nobody".into())],
+                test_support::TraceResult::NullStr,
+            )],
+            || {
+                assert!(home_dir_for_user("nobody").is_none());
+            },
+        );
+    }
+
+    #[test]
+    fn trace_waitpid_fallthrough() {
+        test_support::run_trace(
+            vec![test_support::t(
+                "waitpid",
+                vec![
+                    test_support::ArgMatcher::Int(-1),
+                    test_support::ArgMatcher::Any,
+                    test_support::ArgMatcher::Any,
+                ],
+                test_support::TraceResult::Int(0),
+            )],
+            || {
+                let r = wait_pid(-1, true);
+                assert!(r.is_ok());
+            },
+        );
+    }
+
+    #[test]
+    fn trace_signal_default_fallthrough() {
+        test_support::run_trace(
+            vec![test_support::t(
+                "signal",
+                vec![
+                    test_support::ArgMatcher::Int(SIGINT as i64),
+                    test_support::ArgMatcher::Any,
+                ],
+                test_support::TraceResult::Int(0),
+            )],
+            || {
+                let _ = default_signal_action(SIGINT);
+            },
+        );
+    }
+
+    #[test]
+    fn trace_times_err_path() {
+        test_support::run_trace(
+            vec![test_support::t(
+                "times",
+                vec![test_support::ArgMatcher::Any],
+                test_support::TraceResult::Err(libc::EINVAL),
+            )],
+            || {
+                assert!(process_times().is_err());
+            },
+        );
+    }
+
+    #[test]
+    fn into_arg_matcher_impls() {
+        use test_support::{ArgMatcher, IntoArgMatcher, arg_from};
+        let _a: ArgMatcher = 42i32.into_arg();
+        let _b: ArgMatcher = 100i64.into_arg();
+        let _c: ArgMatcher = "hello".into_arg();
+        let _d: ArgMatcher = (b"data" as &[u8]).into_arg();
+        let v = vec![1u8, 2, 3];
+        let _e: ArgMatcher = (&v).into_arg();
+        let _f = arg_from(42i32);
+    }
+
+    #[test]
+    fn take_child_traces_returns_empty_by_default() {
+        test_support::assert_no_syscalls(|| {
+            let traces = test_support::take_child_traces();
+            assert!(traces.is_empty());
+        });
+    }
+
+    #[test]
+    fn exec_replace_with_env_error_path() {
+        test_support::run_trace(
+            vec![test_support::t(
+                "execve",
+                vec![test_support::ArgMatcher::Any, test_support::ArgMatcher::Any],
+                test_support::TraceResult::Err(ENOENT),
+            )],
+            || {
+                let result = exec_replace_with_env("/nonexistent", &["test".into()], &[]);
+                assert!(result.is_err());
+            },
+        );
+    }
+
+    #[test]
+    fn exec_replace_with_env_real_execve_error() {
+        test_support::with_test_interface(default_interface(), || {
+            let result =
+                exec_replace_with_env("/nonexistent_path_no_exist", &["no_exist".into()], &[]);
+            assert!(result.is_err());
+        });
     }
 }

@@ -41,6 +41,7 @@ impl JsonValue {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_null(&self) -> bool {
         matches!(self, JsonValue::Null)
     }

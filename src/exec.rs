@@ -760,7 +760,8 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
         } else {
             0
         };
-        let guard = match apply_shell_redirections(&expanded.redirections, shell.options.noclobber) {
+        let guard = match apply_shell_redirections(&expanded.redirections, shell.options.noclobber)
+        {
             Ok(g) => g,
             Err(error) => {
                 sys_eprintln!("meiksh: {}", error.display_message());
@@ -783,33 +784,27 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
         for redir in &expanded.redirections {
             apply_shell_redirection(redir, shell.options.noclobber)?;
         }
-        let result = run_builtin_flow(shell, &owned_argv, &owned_assignments);
-        return match result {
-            Ok(BuiltinResult::UtilityError(status)) if !shell.interactive => {
-                Err(ShellError::with_status(status, ""))
-            }
-            Ok(BuiltinResult::Status(status) | BuiltinResult::UtilityError(status)) => {
-                Ok(status)
-            }
+        return match run_builtin_flow(shell, &owned_argv, &owned_assignments) {
+            Ok(BuiltinResult::Status(status) | BuiltinResult::UtilityError(status)) => Ok(status),
             Err(error) => Err(error),
         };
     } else if is_special_builtin {
-        let result = with_shell_redirections(&expanded.redirections, shell.options.noclobber, || {
-            run_builtin_flow(shell, &owned_argv, &owned_assignments)
-        });
+        let result =
+            with_shell_redirections(&expanded.redirections, shell.options.noclobber, || {
+                run_builtin_flow(shell, &owned_argv, &owned_assignments)
+            });
         return match result {
             Ok(BuiltinResult::UtilityError(status)) if !shell.interactive => {
                 Err(ShellError::with_status(status, ""))
             }
-            Ok(BuiltinResult::Status(status) | BuiltinResult::UtilityError(status)) => {
-                Ok(status)
-            }
+            Ok(BuiltinResult::Status(status) | BuiltinResult::UtilityError(status)) => Ok(status),
             Err(error) => Err(error),
         };
     }
 
     if let Some(function) = shell.functions.get(&owned_argv[0]).cloned() {
-        let guard = match apply_shell_redirections(&expanded.redirections, shell.options.noclobber) {
+        let guard = match apply_shell_redirections(&expanded.redirections, shell.options.noclobber)
+        {
             Ok(g) => g,
             Err(error) => {
                 sys_eprintln!("meiksh: {}", error.display_message());
@@ -844,10 +839,11 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
         let assign_result = apply_prefix_assignments(shell, &owned_assignments);
         let result = match assign_result {
             Ok(()) => {
-                let r =
-                    with_shell_redirections(&expanded.redirections, shell.options.noclobber, || {
-                        run_builtin_flow(shell, &owned_argv, &[])
-                    });
+                let r = with_shell_redirections(
+                    &expanded.redirections,
+                    shell.options.noclobber,
+                    || run_builtin_flow(shell, &owned_argv, &[]),
+                );
                 restore_vars(shell, saved_vars);
                 r
             }
@@ -857,16 +853,14 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
             }
         };
         match result {
-            Ok(BuiltinResult::Status(status) | BuiltinResult::UtilityError(status)) => {
-                Ok(status)
-            }
+            Ok(BuiltinResult::Status(status) | BuiltinResult::UtilityError(status)) => Ok(status),
             Err(error) => {
                 sys_eprintln!("{}", error.display_message());
                 Ok(error.exit_status())
             }
         }
     } else {
-        for (name, value) in &owned_assignments {
+        for (name, _value) in &owned_assignments {
             if shell.readonly.contains(name.as_str()) {
                 return Err(ShellError {
                     message: format!("{name}: readonly variable").into(),
@@ -1073,10 +1067,11 @@ fn expand_words_declaration<'a>(
     for word in words {
         if !found_cmd {
             result.extend(expand::expand_word(shell, word, arena)?);
-            if let Some(last) = result.last() {
-                if !last.is_empty() && *last != "command" {
-                    found_cmd = true;
-                }
+            if result
+                .last()
+                .is_some_and(|s| !s.is_empty() && *s != "command")
+            {
+                found_cmd = true;
             }
         } else if expand::word_is_assignment(word.raw) {
             result.push(expand::expand_word_as_declaration_assignment(
@@ -2052,8 +2047,20 @@ mod tests {
                                     vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
                                     TraceResult::Int(0),
                                 ),
-                                t("open", vec![ArgMatcher::Str("/usr/bin/printf".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(20)),
-                                t("read", vec![ArgMatcher::Fd(20), ArgMatcher::Any], TraceResult::Bytes(b"#!/bin/sh\n".to_vec())),
+                                t(
+                                    "open",
+                                    vec![
+                                        ArgMatcher::Str("/usr/bin/printf".into()),
+                                        ArgMatcher::Any,
+                                        ArgMatcher::Any,
+                                    ],
+                                    TraceResult::Fd(20),
+                                ),
+                                t(
+                                    "read",
+                                    vec![ArgMatcher::Fd(20), ArgMatcher::Any],
+                                    TraceResult::Bytes(b"#!/bin/sh\n".to_vec()),
+                                ),
                                 t("close", vec![ArgMatcher::Fd(20)], TraceResult::Int(0)),
                                 t(
                                     "execvp",
@@ -2115,8 +2122,20 @@ mod tests {
                                     vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
                                     TraceResult::Int(0),
                                 ),
-                                t("open", vec![ArgMatcher::Str("/usr/bin/wc".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(20)),
-                                t("read", vec![ArgMatcher::Fd(20), ArgMatcher::Any], TraceResult::Bytes(b"#!/bin/sh\n".to_vec())),
+                                t(
+                                    "open",
+                                    vec![
+                                        ArgMatcher::Str("/usr/bin/wc".into()),
+                                        ArgMatcher::Any,
+                                        ArgMatcher::Any,
+                                    ],
+                                    TraceResult::Fd(20),
+                                ),
+                                t(
+                                    "read",
+                                    vec![ArgMatcher::Fd(20), ArgMatcher::Any],
+                                    TraceResult::Bytes(b"#!/bin/sh\n".to_vec()),
+                                ),
                                 t("close", vec![ArgMatcher::Fd(20)], TraceResult::Int(0)),
                                 t(
                                     "execvp",
@@ -2254,8 +2273,20 @@ mod tests {
                 t_fork(
                     TraceResult::Pid(1000),
                     vec![
-                        t("open", vec![ArgMatcher::Str("/tmp/script.sh".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(20)),
-                        t("read", vec![ArgMatcher::Fd(20), ArgMatcher::Any], TraceResult::Bytes(b"echo hello\n".to_vec())),
+                        t(
+                            "open",
+                            vec![
+                                ArgMatcher::Str("/tmp/script.sh".into()),
+                                ArgMatcher::Any,
+                                ArgMatcher::Any,
+                            ],
+                            TraceResult::Fd(20),
+                        ),
+                        t(
+                            "read",
+                            vec![ArgMatcher::Fd(20), ArgMatcher::Any],
+                            TraceResult::Bytes(b"echo hello\n".to_vec()),
+                        ),
                         t("close", vec![ArgMatcher::Fd(20)], TraceResult::Int(0)),
                         t(
                             "execvp",
@@ -4046,8 +4077,20 @@ mod tests {
                             vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
                             TraceResult::Int(0),
                         ),
-                        t("open", vec![ArgMatcher::Str("/tmp/script.sh".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(20)),
-                        t("read", vec![ArgMatcher::Fd(20), ArgMatcher::Any], TraceResult::Bytes(b"#!/bin/sh\n".to_vec())),
+                        t(
+                            "open",
+                            vec![
+                                ArgMatcher::Str("/tmp/script.sh".into()),
+                                ArgMatcher::Any,
+                                ArgMatcher::Any,
+                            ],
+                            TraceResult::Fd(20),
+                        ),
+                        t(
+                            "read",
+                            vec![ArgMatcher::Fd(20), ArgMatcher::Any],
+                            TraceResult::Bytes(b"#!/bin/sh\n".to_vec()),
+                        ),
                         t("close", vec![ArgMatcher::Fd(20)], TraceResult::Int(0)),
                         t(
                             "execvp",
@@ -4105,8 +4148,20 @@ mod tests {
                     TraceResult::Pid(1000),
                     vec![
                         t("close", vec![ArgMatcher::Fd(1)], TraceResult::Int(0)),
-                        t("open", vec![ArgMatcher::Str("/bin/echo".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(20)),
-                        t("read", vec![ArgMatcher::Fd(20), ArgMatcher::Any], TraceResult::Bytes(b"#!/bin/sh\n".to_vec())),
+                        t(
+                            "open",
+                            vec![
+                                ArgMatcher::Str("/bin/echo".into()),
+                                ArgMatcher::Any,
+                                ArgMatcher::Any,
+                            ],
+                            TraceResult::Fd(20),
+                        ),
+                        t(
+                            "read",
+                            vec![ArgMatcher::Fd(20), ArgMatcher::Any],
+                            TraceResult::Bytes(b"#!/bin/sh\n".to_vec()),
+                        ),
                         t("close", vec![ArgMatcher::Fd(20)], TraceResult::Int(0)),
                         t(
                             "execvp",
@@ -4166,8 +4221,20 @@ mod tests {
                             vec![ArgMatcher::Int(0), ArgMatcher::Int(42)],
                             TraceResult::Int(0),
                         ),
-                        t("open", vec![ArgMatcher::Str("/bin/echo".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(20)),
-                        t("read", vec![ArgMatcher::Fd(20), ArgMatcher::Any], TraceResult::Bytes(b"#!/bin/sh\n".to_vec())),
+                        t(
+                            "open",
+                            vec![
+                                ArgMatcher::Str("/bin/echo".into()),
+                                ArgMatcher::Any,
+                                ArgMatcher::Any,
+                            ],
+                            TraceResult::Fd(20),
+                        ),
+                        t(
+                            "read",
+                            vec![ArgMatcher::Fd(20), ArgMatcher::Any],
+                            TraceResult::Bytes(b"#!/bin/sh\n".to_vec()),
+                        ),
                         t("close", vec![ArgMatcher::Fd(20)], TraceResult::Int(0)),
                         t(
                             "execvp",
@@ -4500,8 +4567,20 @@ mod tests {
                 t_fork(
                     TraceResult::Pid(1000),
                     vec![
-                        t("open", vec![ArgMatcher::Str("/bin/true".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(20)),
-                        t("read", vec![ArgMatcher::Fd(20), ArgMatcher::Any], TraceResult::Bytes(b"#!/bin/sh\n".to_vec())),
+                        t(
+                            "open",
+                            vec![
+                                ArgMatcher::Str("/bin/true".into()),
+                                ArgMatcher::Any,
+                                ArgMatcher::Any,
+                            ],
+                            TraceResult::Fd(20),
+                        ),
+                        t(
+                            "read",
+                            vec![ArgMatcher::Fd(20), ArgMatcher::Any],
+                            TraceResult::Bytes(b"#!/bin/sh\n".to_vec()),
+                        ),
                         t("close", vec![ArgMatcher::Fd(20)], TraceResult::Int(0)),
                         t(
                             "execvp",
@@ -4559,8 +4638,20 @@ mod tests {
                             vec![ArgMatcher::Fd(60), ArgMatcher::Fd(0)],
                             TraceResult::Int(0),
                         ),
-                        t("open", vec![ArgMatcher::Str("/bin/cat".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(20)),
-                        t("read", vec![ArgMatcher::Fd(20), ArgMatcher::Any], TraceResult::Bytes(b"#!/bin/sh\n".to_vec())),
+                        t(
+                            "open",
+                            vec![
+                                ArgMatcher::Str("/bin/cat".into()),
+                                ArgMatcher::Any,
+                                ArgMatcher::Any,
+                            ],
+                            TraceResult::Fd(20),
+                        ),
+                        t(
+                            "read",
+                            vec![ArgMatcher::Fd(20), ArgMatcher::Any],
+                            TraceResult::Bytes(b"#!/bin/sh\n".to_vec()),
+                        ),
                         t("close", vec![ArgMatcher::Fd(20)], TraceResult::Int(0)),
                         t(
                             "execvp",
@@ -4607,8 +4698,20 @@ mod tests {
                         ],
                         TraceResult::Int(0),
                     ),
-                    t("open", vec![ArgMatcher::Str("/bin/true".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(20)),
-                    t("read", vec![ArgMatcher::Fd(20), ArgMatcher::Any], TraceResult::Bytes(b"#!/bin/sh\n".to_vec())),
+                    t(
+                        "open",
+                        vec![
+                            ArgMatcher::Str("/bin/true".into()),
+                            ArgMatcher::Any,
+                            ArgMatcher::Any,
+                        ],
+                        TraceResult::Fd(20),
+                    ),
+                    t(
+                        "read",
+                        vec![ArgMatcher::Fd(20), ArgMatcher::Any],
+                        TraceResult::Bytes(b"#!/bin/sh\n".to_vec()),
+                    ),
                     t("close", vec![ArgMatcher::Fd(20)], TraceResult::Int(0)),
                     t(
                         "execvp",
@@ -4801,8 +4904,20 @@ mod tests {
                         vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
                         TraceResult::Int(0),
                     ),
-                    t("open", vec![ArgMatcher::Str("/bin/noperm".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(20)),
-                    t("read", vec![ArgMatcher::Fd(20), ArgMatcher::Any], TraceResult::Bytes(b"#!/bin/sh\n".to_vec())),
+                    t(
+                        "open",
+                        vec![
+                            ArgMatcher::Str("/bin/noperm".into()),
+                            ArgMatcher::Any,
+                            ArgMatcher::Any,
+                        ],
+                        TraceResult::Fd(20),
+                    ),
+                    t(
+                        "read",
+                        vec![ArgMatcher::Fd(20), ArgMatcher::Any],
+                        TraceResult::Bytes(b"#!/bin/sh\n".to_vec()),
+                    ),
                     t("close", vec![ArgMatcher::Fd(20)], TraceResult::Int(0)),
                     t(
                         "execvp",
@@ -4848,8 +4963,20 @@ mod tests {
                         vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
                         TraceResult::Int(0),
                     ),
-                    t("open", vec![ArgMatcher::Str("/bin/missing".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(20)),
-                    t("read", vec![ArgMatcher::Fd(20), ArgMatcher::Any], TraceResult::Bytes(b"#!/bin/sh\n".to_vec())),
+                    t(
+                        "open",
+                        vec![
+                            ArgMatcher::Str("/bin/missing".into()),
+                            ArgMatcher::Any,
+                            ArgMatcher::Any,
+                        ],
+                        TraceResult::Fd(20),
+                    ),
+                    t(
+                        "read",
+                        vec![ArgMatcher::Fd(20), ArgMatcher::Any],
+                        TraceResult::Bytes(b"#!/bin/sh\n".to_vec()),
+                    ),
                     t("close", vec![ArgMatcher::Fd(20)], TraceResult::Int(0)),
                     t(
                         "execvp",
@@ -5375,8 +5502,20 @@ mod tests {
                                     vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
                                     TraceResult::Int(0),
                                 ),
-                                t("open", vec![ArgMatcher::Str("/usr/bin/sleep".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(20)),
-                                t("read", vec![ArgMatcher::Fd(20), ArgMatcher::Any], TraceResult::Bytes(b"#!/bin/sh\n".to_vec())),
+                                t(
+                                    "open",
+                                    vec![
+                                        ArgMatcher::Str("/usr/bin/sleep".into()),
+                                        ArgMatcher::Any,
+                                        ArgMatcher::Any,
+                                    ],
+                                    TraceResult::Fd(20),
+                                ),
+                                t(
+                                    "read",
+                                    vec![ArgMatcher::Fd(20), ArgMatcher::Any],
+                                    TraceResult::Bytes(b"#!/bin/sh\n".to_vec()),
+                                ),
                                 t("close", vec![ArgMatcher::Fd(20)], TraceResult::Int(0)),
                                 t(
                                     "execvp",
@@ -5445,8 +5584,20 @@ mod tests {
                                     vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
                                     TraceResult::Int(0),
                                 ),
-                                t("open", vec![ArgMatcher::Str("/usr/bin/sleep".into()), ArgMatcher::Any, ArgMatcher::Any], TraceResult::Fd(20)),
-                                t("read", vec![ArgMatcher::Fd(20), ArgMatcher::Any], TraceResult::Bytes(b"#!/bin/sh\n".to_vec())),
+                                t(
+                                    "open",
+                                    vec![
+                                        ArgMatcher::Str("/usr/bin/sleep".into()),
+                                        ArgMatcher::Any,
+                                        ArgMatcher::Any,
+                                    ],
+                                    TraceResult::Fd(20),
+                                ),
+                                t(
+                                    "read",
+                                    vec![ArgMatcher::Fd(20), ArgMatcher::Any],
+                                    TraceResult::Bytes(b"#!/bin/sh\n".to_vec()),
+                                ),
                                 t("close", vec![ArgMatcher::Fd(20)], TraceResult::Int(0)),
                                 t(
                                     "execvp",
@@ -5843,9 +5994,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(
-                            b"meiksh: No such file or directory\n".to_vec(),
-                        ),
+                        ArgMatcher::Bytes(b"meiksh: No such file or directory\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -5888,9 +6037,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(
-                            b"meiksh: No such file or directory\n".to_vec(),
-                        ),
+                        ArgMatcher::Bytes(b"meiksh: No such file or directory\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -5902,6 +6049,255 @@ mod tests {
                     .execute_string("f < /nonexistent_func_redir")
                     .expect("redir fn");
                 assert_ne!(status, 0);
+            },
+        );
+    }
+
+    #[test]
+    fn subshell_error_displays_message_in_child() {
+        let program = parse_test("(readonly X; X=val)").expect("parse");
+        run_trace(
+            vec![
+                t_fork(
+                    TraceResult::Pid(5000),
+                    vec![t(
+                        "write",
+                        vec![
+                            ArgMatcher::Fd(sys::STDERR_FILENO),
+                            ArgMatcher::Bytes(b"meiksh: X: readonly variable\n".to_vec()),
+                        ],
+                        TraceResult::Auto,
+                    )],
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(5000), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    TraceResult::Status(1),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let status = execute_program(&mut shell, &program).expect("subshell");
+                assert_ne!(status, 0);
+            },
+        );
+    }
+
+    #[test]
+    fn empty_argv_redirect_error_returns_one() {
+        run_trace(
+            vec![
+                t(
+                    "fcntl",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Int(1030), ArgMatcher::Any],
+                    TraceResult::Fd(92),
+                ),
+                t(
+                    "open",
+                    vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Err(sys::ENOENT),
+                ),
+                t(
+                    "dup2",
+                    vec![ArgMatcher::Fd(92), ArgMatcher::Fd(1)],
+                    TraceResult::Int(1),
+                ),
+                t("close", vec![ArgMatcher::Fd(92)], TraceResult::Int(0)),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"meiksh: No such file or directory\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let status = shell.execute_string("> /bad").expect("redir error");
+                assert_eq!(status, 1);
+            },
+        );
+    }
+
+    #[test]
+    fn non_special_builtin_prefix_readonly_restores_and_reports() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Bytes(b"RO: readonly variable\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert("RO".into(), "original".into());
+                shell.readonly.insert("RO".into());
+                let status = shell.execute_string("RO=val true").expect("builtin prefix");
+                assert_ne!(status, 0);
+                assert_eq!(shell.get_var("RO"), Some("original"));
+            },
+        );
+    }
+
+    #[test]
+    fn readonly_prefix_on_external_command_is_error() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.readonly.insert("RO".into());
+            let err = shell
+                .execute_string("OK=1 RO=val ls")
+                .expect_err("readonly external");
+            assert!(err.message.contains("readonly"));
+        });
+    }
+
+    #[test]
+    fn declaration_builtin_expands_assignments_and_words() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let status = shell
+                .execute_string("command export FOO=bar BAZ")
+                .expect("export");
+            assert_eq!(status, 0);
+            assert_eq!(shell.get_var("FOO"), Some("bar"));
+        });
+    }
+
+    #[test]
+    fn declaration_assignment_expansion_error_propagates() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.options.nounset = true;
+            let err = shell
+                .execute_string("export X=$UNSET_NOUNSET_VAR")
+                .expect_err("nounset");
+            assert!(err.message.contains("UNSET_NOUNSET_VAR"));
+        });
+    }
+
+    #[test]
+    fn file_needs_binary_rejection_handles_errors_and_empty() {
+        run_trace(
+            vec![t(
+                "open",
+                vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::Err(sys::EACCES),
+            )],
+            || {
+                assert!(!file_needs_binary_rejection("/some/file"));
+            },
+        );
+        run_trace(
+            vec![
+                t(
+                    "open",
+                    vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Fd(50),
+                ),
+                t(
+                    "read",
+                    vec![ArgMatcher::Fd(50), ArgMatcher::Any],
+                    TraceResult::Err(libc::EIO),
+                ),
+                t("close", vec![ArgMatcher::Fd(50)], TraceResult::Int(0)),
+            ],
+            || {
+                assert!(!file_needs_binary_rejection("/some/file"));
+            },
+        );
+        run_trace(
+            vec![
+                t(
+                    "open",
+                    vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Fd(50),
+                ),
+                t(
+                    "read",
+                    vec![ArgMatcher::Fd(50), ArgMatcher::Any],
+                    TraceResult::Int(0),
+                ),
+                t("close", vec![ArgMatcher::Fd(50)], TraceResult::Int(0)),
+            ],
+            || {
+                assert!(!file_needs_binary_rejection("/some/file"));
+            },
+        );
+    }
+
+    #[test]
+    fn spawn_prepared_rejects_binary_file_in_child() {
+        run_trace(
+            vec![t_fork(
+                TraceResult::Pid(1000),
+                vec![
+                    t(
+                        "open",
+                        vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
+                        TraceResult::Fd(20),
+                    ),
+                    t(
+                        "read",
+                        vec![ArgMatcher::Fd(20), ArgMatcher::Any],
+                        TraceResult::Bytes(b"\x00binary".to_vec()),
+                    ),
+                    t("close", vec![ArgMatcher::Fd(20)], TraceResult::Int(0)),
+                    t(
+                        "write",
+                        vec![
+                            ArgMatcher::Fd(sys::STDERR_FILENO),
+                            ArgMatcher::Bytes(b"test: cannot execute binary file\n".to_vec()),
+                        ],
+                        TraceResult::Auto,
+                    ),
+                ],
+            )],
+            || {
+                let mut shell = test_shell();
+                let prepared = PreparedProcess {
+                    exec_path: "/bin/test".into(),
+                    argv: vec!["test".into()].into_boxed_slice(),
+                    redirections: vec![],
+                    child_env: vec![].into_boxed_slice(),
+                    path_verified: true,
+                    noclobber: false,
+                };
+                let _handle =
+                    spawn_prepared(&mut shell, &prepared, ProcessGroupPlan::None).expect("spawn");
+            },
+        );
+    }
+
+    #[test]
+    fn exec_no_cmd_error_path() {
+        run_trace(
+            vec![
+                t(
+                    "access",
+                    vec![ArgMatcher::Str("/usr/bin/--".into()), ArgMatcher::Int(0)],
+                    TraceResult::Err(sys::ENOENT),
+                ),
+                t(
+                    "access",
+                    vec![ArgMatcher::Str("/bin/--".into()), ArgMatcher::Int(0)],
+                    TraceResult::Err(sys::ENOENT),
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"--: not found\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let err = shell.execute_string("exec -- --").expect_err("exec -- --");
+                assert_eq!(err.exit_status(), 127);
             },
         );
     }

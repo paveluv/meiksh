@@ -1385,7 +1385,9 @@ impl<'src> Parser<'src> {
             });
         }
         self.expect_kw(Token::Then, "then")?;
-        fn at_elif_else_fi(t: &Token) -> bool { matches!(t, Token::Elif | Token::Else | Token::Fi) }
+        fn at_elif_else_fi(t: &Token) -> bool {
+            matches!(t, Token::Elif | Token::Else | Token::Fi)
+        }
         let then_branch = self.parse_program_until(false, at_elif_else_fi, false)?;
         let mut elif_branches = Vec::new();
 
