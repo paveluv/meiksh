@@ -11,6 +11,10 @@ suite should be exercised by at least one test. The target is 100% coverage of
 normative requirements — catching all POSIX non-compliances, including subtle
 ones.
 
+**Important constraints:**
+- Only the target `.md` testsuite file is allowed to be changed. `meiksh` source code (`src/`, `tests/`, etc.) must be kept intact and unmodified during this procedure.
+- "May" or "undefined" (unspecified, implementation-defined) normative statements shouldn't be tested.
+
 ## Context and references
 
 The test suite file itself is the primary source of context. Each
@@ -95,20 +99,17 @@ Read each `## Section` block in the suite. For every normative statement
 test exercises it. Make a list of gaps.
 
 Ignore:
-- Statements about unspecified or implementation-defined behavior.
+- Statements about "may", unspecified, or implementation-defined behavior. These shouldn't be tested.
 - Statements that are untestable (e.g. "the order is unspecified").
 - Informational notes (text after "**Note:**").
 
 ### Step 1b: Verify existing tests match the standard
 
-Review every existing test in the suite and confirm that its assertions reflect
-the behavior required by the POSIX standard — not merely the behavior of
-`bash --posix` or any other specific implementation. Migrated tests are
-especially prone to encoding implementation quirks rather than normative
-requirements.
-
-For each test, ask:
-- Does the expected exit code match what the standard says?
+Review every existing test in the suite and scrutinize that it doesn't contradict POSIX:
+- Every test should exercise at least one "shall" normative statement quoted in the md file sections.
+- The tests shouldn't be tailored to any existing shell behaviors (such as bash or dash).
+- The tests shouldn't be overasserting (asserting something that POSIX doesn't explicitly specify).
+- Does the expected exit code match exactly what the standard says?
 - Does the test description accurately paraphrase the standard's requirement?
 - Does the test have a proper description? Every test must have a brief,
   plain-English explanation between the `#### Test:` heading and the code
@@ -121,7 +122,7 @@ For each test, ask:
 - If the test was written to pass on `bash --posix`, does `bash` actually
   comply with the standard here? (Check `tests/matrix/bash_compliance.md`.)
 
-When a test encodes non-standard behavior, fix it to assert what the standard
+When a test encodes non-standard behavior or overasserts, fix it to assert only what the standard
 requires. If `bash --posix` deviates, the test will fail against bash — that
 is correct and expected; document the deviation in the test description and
 in `bash_compliance.md`.
