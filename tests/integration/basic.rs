@@ -720,7 +720,10 @@ fn interactive_shell_expands_env_and_continues_after_error() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("1"), "ENV file should set TEST_ENV_LOADED=1, got: {stdout}");
+    assert!(
+        stdout.contains("1"),
+        "ENV file should set TEST_ENV_LOADED=1, got: {stdout}"
+    );
 }
 
 #[test]
@@ -2004,10 +2007,7 @@ fn umask_accepts_symbolic_x_uppercase_perm() {
 fn exec_with_redirection_only_applies_to_shell() {
     let tmp = TempDir::new("exec-redir");
     let outfile = tmp.join("out.txt");
-    let script = format!(
-        "exec > '{}'; echo redirected",
-        outfile.display()
-    );
+    let script = format!("exec > '{}'; echo redirected", outfile.display());
     let output = Command::new(meiksh())
         .args(["-c", &script])
         .output()
@@ -2098,17 +2098,17 @@ fn export_with_known_tilde_user_expansion() {
         .expect("run meiksh");
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.trim().ends_with("/bin"), "expected ~root/bin to expand, got: {stdout}");
+    assert!(
+        stdout.trim().ends_with("/bin"),
+        "expected ~root/bin to expand, got: {stdout}"
+    );
     assert!(!stdout.contains('~'), "tilde should have been expanded");
 }
 
 #[test]
 fn export_with_unknown_tilde_user_preserved() {
     let output = Command::new(meiksh())
-        .args([
-            "-c",
-            "export V=~no_such_user_xyzzy_999/bin; echo $V",
-        ])
+        .args(["-c", "export V=~no_such_user_xyzzy_999/bin; echo $V"])
         .output()
         .expect("run meiksh");
     assert!(output.status.success());
@@ -2141,10 +2141,7 @@ fn capture_output_preserves_non_utf8_bytes() {
         .output()
         .expect("run meiksh");
     assert!(output.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        "41ff428043"
-    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "41ff428043");
 }
 
 #[test]
@@ -2174,7 +2171,10 @@ fn pwd_corrected_when_env_contains_dotdot() {
 #[test]
 fn character_class_pattern_matching_uses_locale() {
     let output = Command::new(meiksh())
-        .args(["-c", "case a in ([[:alpha:]]) echo yes;; (*) echo no;; esac"])
+        .args([
+            "-c",
+            "case a in ([[:alpha:]]) echo yes;; (*) echo no;; esac",
+        ])
         .output()
         .expect("run meiksh");
     assert!(output.status.success());
@@ -2197,10 +2197,7 @@ fn parameter_default_with_at_fields() {
     );
 
     let output2 = Command::new(meiksh())
-        .args([
-            "-c",
-            r#"set --; echo "${unset:-"$@"}""#,
-        ])
+        .args(["-c", r#"set --; echo "${unset:-"$@"}""#])
         .output()
         .expect("run meiksh");
     assert!(output2.status.success());
@@ -2210,20 +2207,14 @@ fn parameter_default_with_at_fields() {
 #[test]
 fn quoted_null_adjacent_to_empty_at_produces_one_field() {
     let output = Command::new(meiksh())
-        .args([
-            "-c",
-            r#"set --; for x in ''"$@"; do echo "[$x]"; done"#,
-        ])
+        .args(["-c", r#"set --; for x in ''"$@"; do echo "[$x]"; done"#])
         .output()
         .expect("run meiksh");
     assert!(output.status.success());
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "[]");
 
     let output2 = Command::new(meiksh())
-        .args([
-            "-c",
-            r#"set --; for x in 'pfx'"$@"; do echo "[$x]"; done"#,
-        ])
+        .args(["-c", r#"set --; for x in 'pfx'"$@"; do echo "[$x]"; done"#])
         .output()
         .expect("run meiksh");
     assert!(output2.status.success());
@@ -2285,10 +2276,7 @@ printf '%s:%s\n' "$r" "$OPTIND"
         .output()
         .expect("run");
     assert!(out.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&out.stdout).trim(),
-        "ab\nxy:3"
-    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ab\nxy:3");
 }
 
 #[test]
@@ -2317,7 +2305,10 @@ printf 'name=%s optarg=%s optind=%s\n' "$name" "$OPTARG" "$OPTIND"
 #[test]
 fn getopts_unsets_optarg_for_options_without_argument() {
     let out = Command::new(meiksh())
-        .args(["-c", r#"OPTIND=1; OPTARG=stale; set -- -a; getopts a name; printf '%s\n' "${OPTARG-unset}""#])
+        .args([
+            "-c",
+            r#"OPTIND=1; OPTARG=stale; set -- -a; getopts a name; printf '%s\n' "${OPTARG-unset}""#,
+        ])
         .output()
         .expect("run");
     assert!(out.status.success());
@@ -2426,10 +2417,7 @@ fn getopts_grouped_with_trailing_argument() {
         .output()
         .expect("run");
     assert!(out.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&out.stdout).trim(),
-        "abf:file.txt"
-    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "abf:file.txt");
 }
 
 #[test]
@@ -2564,10 +2552,7 @@ fn fd_close_via_exec_and_child_error() {
         .expect("run");
     assert_ne!(out.status.code(), Some(0));
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("Bad file descriptor"),
-        "stderr: {stderr}"
-    );
+    assert!(stderr.contains("Bad file descriptor"), "stderr: {stderr}");
 }
 
 #[test]
@@ -2588,13 +2573,16 @@ fn blank_between_fd_and_redirect_operator() {
 #[test]
 fn getopts_reset_optind_allows_reparsing() {
     let out = Command::new(meiksh())
-        .args(["-c", r#"
+        .args([
+            "-c",
+            r#"
 OPTIND=1; set -- -a -b; r=
 while getopts ab name; do r="${r}${name}"; done
 OPTIND=1; set -- -x -y
 while getopts xy name; do r="${r}${name}"; done
 printf '%s\n' "$r"
-"#])
+"#,
+        ])
         .output()
         .expect("run");
     assert!(out.status.success());

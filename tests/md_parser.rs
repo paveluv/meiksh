@@ -39,7 +39,8 @@ pub fn parse_md_suite(text: &str, filename: &str) -> Result<TestSuite, String> {
                             if inner.contains("```") {
                                 return Err(format!(
                                     "line {}: code block in test {:?} contains triple backticks inside the block",
-                                    i + 1, test_name
+                                    i + 1,
+                                    test_name
                                 ));
                             }
                             block_lines.push((i, inner));
@@ -48,7 +49,8 @@ pub fn parse_md_suite(text: &str, filename: &str) -> Result<TestSuite, String> {
                     } else {
                         return Err(format!(
                             "line {}: test section {:?} contains more than one code block",
-                            i + 1, test_name
+                            i + 1,
+                            test_name
                         ));
                     }
                     continue;
@@ -128,7 +130,8 @@ fn validate_block_test_name(
             if found_begin {
                 return Err(format!(
                     "line {}: test section {:?} contains more than one begin test",
-                    line_idx + 1, heading_name
+                    line_idx + 1,
+                    heading_name
                 ));
             }
             found_begin = true;
@@ -156,7 +159,9 @@ fn validate_block_test_name(
 fn extract_test_name_from_quoted(s: &str, line_num: usize) -> Result<String, String> {
     let s = s.trim();
     if !s.starts_with('"') {
-        return Err(format!("line {line_num}: expected quoted test name, got: {s}"));
+        return Err(format!(
+            "line {line_num}: expected quoted test name, got: {s}"
+        ));
     }
     let mut end = 1;
     let bytes = s.as_bytes();
@@ -171,7 +176,9 @@ fn extract_test_name_from_quoted(s: &str, line_num: usize) -> Result<String, Str
         end += 1;
     }
     if end >= bytes.len() || bytes[end] != b'"' {
-        return Err(format!("line {line_num}: unterminated quoted test name: {s}"));
+        return Err(format!(
+            "line {line_num}: unterminated quoted test name: {s}"
+        ));
     }
     let inner = &s[1..end];
     let mut out = String::new();

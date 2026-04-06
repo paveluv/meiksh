@@ -4,14 +4,9 @@
 /// allocation), pushes it into the arena, and returns a `&str` whose lifetime
 /// is tied to the arena.  Since entries are only ever appended and never
 /// removed, all returned references remain valid for the arena's lifetime.
+#[derive(Default)]
 pub struct StringArena {
     entries: Vec<Box<str>>,
-}
-
-impl Default for StringArena {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl StringArena {
