@@ -232,6 +232,24 @@ begin test "unset -v explicitly targets a variable"
 end test "unset -v explicitly targets a variable"
 ```
 
+#### Test: unset removes variable from the environment
+
+When an exported variable is unset, it is also removed from the
+environment so child processes do not see it.
+
+```
+begin test "unset removes variable from the environment"
+  script
+    export UNSET_ENV_TEST=visible
+    unset UNSET_ENV_TEST
+    sh -c 'printf "%s\n" "${UNSET_ENV_TEST-gone}"'
+  expect
+    stdout "gone"
+    stderr ""
+    exit_code 0
+end test "unset removes variable from the environment"
+```
+
 #### Test: unset fails on readonly variables
 
 Read-only variables cannot be unset; the utility fails with non-zero
@@ -247,4 +265,26 @@ begin test "unset fails on readonly variables"
     stderr ".+"
     exit_code !=0
 end test "unset fails on readonly variables"
+```
+
+#### Test: unset of readonly variable exits non-interactive shell
+
+Since `unset` is a special built-in, a failure (such as attempting to unset
+a readonly variable) is a special built-in utility error. Per
+[2.8.1 Consequences of Shell Errors](#281-consequences-of-shell-errors), a
+non-interactive shell shall exit on a special built-in utility error.
+Known `bash --posix` non-compliance #11: bash writes a diagnostic but
+continues execution instead of exiting.
+
+```
+begin test "unset of readonly variable exits non-interactive shell"
+  script
+    readonly RO_VAR=1
+    unset RO_VAR
+    echo survived
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
+end test "unset of readonly variable exits non-interactive shell"
 ```

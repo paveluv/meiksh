@@ -1521,3 +1521,23 @@ begin test "printf %n$ format reuse"
     exit_code 0
 end test "printf %n$ format reuse"
 ```
+
+#### Test: printf conversion error not masked by %b \c
+
+When a numeric conversion error occurs (e.g., a non-numeric string for `%d`),
+the utility shall not exit with a zero exit status, even if a subsequent `%b`
+argument contains `\c` which causes output to stop. The conversion error must
+still be reflected in the exit status.
+Known `bash --posix` non-compliance #12: the `\c` escape causes an immediate
+return that bypasses the conversion error check, resulting in exit status 0.
+
+```
+begin test "printf conversion error not masked by %b \\c"
+  script
+    printf "%d%b" abc "\c" 2>/dev/null
+  expect
+    stdout "0"
+    stderr ""
+    exit_code !=0
+end test "printf conversion error not masked by %b \\c"
+```
