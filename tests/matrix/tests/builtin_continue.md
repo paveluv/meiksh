@@ -169,6 +169,27 @@ begin test "continue 2 returns to outer loop"
 end test "continue 2 returns to outer loop"
 ```
 
+#### Test: continue n greater than enclosing loops uses outermost
+
+When `n` exceeds the number of enclosing loops, the outermost loop
+is continued.
+
+```
+begin test "continue n greater than enclosing loops uses outermost"
+  script
+    for i in a b; do
+      echo "$i"
+      continue 5
+      echo "skipped"
+    done
+    echo "done"
+  expect
+    stdout "a\nb\ndone"
+    stderr ""
+    exit_code 0
+end test "continue n greater than enclosing loops uses outermost"
+```
+
 #### Test: continue with invalid n returns non-zero in a loop
 
 If `n` is not an unsigned decimal integer greater than or equal to 1,
@@ -201,4 +222,25 @@ begin test "continue with non-numeric operand fails in a loop"
     stderr "(.|\n)*"
     exit_code 0
 end test "continue with non-numeric operand fails in a loop"
+```
+
+#### Test: continue 0 exits non-interactive shell
+
+Since `continue` is a special built-in, an error from it shall cause a
+non-interactive shell to exit per
+[2.8.1 Consequences of Shell Errors](#281-consequences-of-shell-errors).
+The operand must be an unsigned decimal integer >= 1; zero is invalid.
+Known `bash --posix` non-compliance #13: bash writes a diagnostic but
+continues execution instead of exiting.
+
+```
+begin test "continue 0 exits non-interactive shell"
+  script
+    for i in 1; do continue 0; done
+    echo survived
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
+end test "continue 0 exits non-interactive shell"
 ```

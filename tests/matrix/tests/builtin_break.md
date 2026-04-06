@@ -256,3 +256,24 @@ begin test "break with non-numeric operand fails in a loop"
     exit_code 0
 end test "break with non-numeric operand fails in a loop"
 ```
+
+#### Test: break 0 exits non-interactive shell
+
+Since `break` is a special built-in, an error from it shall cause a
+non-interactive shell to exit per
+[2.8.1 Consequences of Shell Errors](#281-consequences-of-shell-errors).
+The operand must be an unsigned decimal integer >= 1; zero is invalid.
+Known `bash --posix` non-compliance #13: bash writes a diagnostic but
+continues execution instead of exiting.
+
+```
+begin test "break 0 exits non-interactive shell"
+  script
+    for i in 1; do break 0; done
+    echo survived
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
+end test "break 0 exits non-interactive shell"
+```

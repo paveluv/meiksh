@@ -356,3 +356,168 @@ Observed:
 - exit status `0`
 
 ---
+
+## 11) `unset` of readonly variable does not exit non-interactive shell
+
+**POSIX passage (exact quotes)**  
+From `docs/posix/md/utilities/V3_chap02.md`, 2.8.1 Consequences of Shell Errors:
+
+> | **Error** | **Non-Interactive Shell** | **Interactive Shell** | **Shell Diagnostic Message Required** |
+> | --- | --- | --- | --- |
+> | Special built-in utility error | shall exit | shall not exit | no |
+
+> "The shell shall exit only if the special built-in utility is executed directly. If it is executed via the *command* utility, the shell shall not exit."
+
+From `docs/posix/md/utilities/V3_chap02.md`, 2.15 Special Built-In Utilities (which lists `unset` as a special built-in).
+
+From the `unset` specification:
+
+> "Read-only variables cannot be unset."
+
+> "EXIT STATUS: 0 — All *name* operands were successfully unset. >0 — At least one *name* could not be unset."
+
+**Why this is non-compliant**  
+When `unset` is invoked directly and fails because the operand names a readonly variable, it returns >0. Since `unset` is a special built-in, this is a special built-in utility error, and the non-interactive shell shall exit. Bash in `--posix` mode writes a diagnostic but continues execution. Other special built-in errors (e.g., `export -Z`, `set -Z`, `readonly -Z`) correctly cause bash to exit.
+
+**Reproduction (portable shell commands)**
+
+```sh
+/usr/bin/bash --posix -c 'readonly X=1; unset X; echo "survived"' 2>&1
+```
+
+Expected:
+- shell exits after `unset X` fails
+- no `survived` output
+- non-zero exit status
+
+Observed:
+- `bash: line 1: unset: X: cannot unset: readonly variable`
+- `survived`
+- exit status `0` (shell continued)
+
+Cross-reference with a compliant shell:
+
+```sh
+dash -c 'readonly X=1; unset X; echo "survived"' 2>&1
+```
+
+Observed (dash):
+- `dash: 1: unset: X: is read only`
+- no `survived` output
+- exit status `2`
+
+---
+
+## 12) `printf` conversion error exit status masked by `%b` `\c`
+
+**POSIX passage (exact quote)**  
+From `docs/posix/md/utilities/printf.md`:
+
+> "If an *argument* operand cannot be completely converted into an internal value appropriate to the corresponding conversion specification, a diagnostic message shall be written to standard error and the utility shall not exit with a zero exit status, but shall continue processing any remaining operands and shall write the value accumulated at the time the error was detected to standard output."
+
+**Why this is non-compliant**  
+When a numeric conversion error occurs (e.g., `abc` for `%d`) and a subsequent `%b` argument contains `\c` (which causes `printf` to stop processing), bash returns exit status 0 instead of non-zero. The `\c` escape triggers an immediate return in the `printf` builtin that bypasses the check of the `conversion_error` flag. Without `\c`, the same conversion error correctly returns exit status 1.
+
+**Reproduction (portable shell commands)**
+
+```sh
+/usr/bin/bash --posix -c 'printf "%d%b" abc "\c" 2>/dev/null; echo "exit=$?"'
+```
+
+Expected:
+- exit status non-zero (conversion error on `abc`)
+
+Observed:
+- `0exit=0`
+- exit status `0` (conversion error masked)
+
+Contrast without `\c`:
+
+```sh
+/usr/bin/bash --posix -c 'printf "%d" abc 2>/dev/null; echo "exit=$?"'
+```
+
+Observed:
+- `0exit=1`
+- exit status `1` (conversion error correctly reported)
+
+Cross-reference with a compliant shell:
+
+```sh
+dash -c 'printf "%d%b" abc "\c" 2>/dev/null; echo "exit=$?"'
+```
+
+Observed (dash):
+- `0exit=1`
+- exit status `1` (correct)
+
+---
+
+## 13) `break 0` and `continue 0` do not exit non-interactive shell
+
+**POSIX passage (exact quotes)**  
+From `docs/posix/md/utilities/V3_chap02.md`, break EXIT STATUS:
+
+> "- 0: Successful completion.
+> - \>0: The *n* value was not an unsigned decimal integer greater than or equal to 1."
+
+From `docs/posix/md/utilities/V3_chap02.md`, continue EXIT STATUS:
+
+> "- 0: Successful completion.
+> - \>0: The *n* value was not an unsigned decimal integer greater than or equal to 1."
+
+From `docs/posix/md/utilities/V3_chap02.md`, 2.8.1 Consequences of Shell Errors:
+
+> | **Error** | **Non-Interactive Shell** |
+> | --- | --- |
+> | Special built-in utility error | shall exit |
+
+From `docs/posix/md/utilities/V3_chap02.md`, 2.15 Special Built-In Utilities (which lists both `break` and `continue` as special built-ins).
+
+**Why this is non-compliant**  
+`break` and `continue` require the operand *n* to be an unsigned decimal integer greater than or equal to 1. When *n* is 0 (or negative), both utilities write a diagnostic and return a non-zero exit status, which is a special built-in utility error. Per 2.8.1, a non-interactive shell shall exit when a special built-in encounters an error. Bash in `--posix` mode writes the diagnostic but continues execution. Notably, bash correctly exits for non-numeric operands (e.g., `break abc`) but not for the numeric-but-invalid case of zero.
+
+**Reproduction (portable shell commands)**
+
+```sh
+/usr/bin/bash --posix -c 'for i in 1; do break 0; done; echo "survived"' 2>&1
+```
+
+Expected:
+- shell exits after `break 0` error
+- no `survived` output
+- non-zero exit status
+
+Observed:
+- `bash: line 1: break: 0: loop count out of range`
+- `survived`
+- exit status `0` (shell continued)
+
+Same for `continue`:
+
+```sh
+/usr/bin/bash --posix -c 'for i in 1; do continue 0; done; echo "survived"' 2>&1
+```
+
+Expected:
+- shell exits after `continue 0` error
+- no `survived` output
+- non-zero exit status
+
+Observed:
+- `bash: line 1: continue: 0: loop count out of range`
+- `survived`
+- exit status `0` (shell continued)
+
+Cross-reference with a compliant shell:
+
+```sh
+dash -c 'for i in 1; do break 0; done; echo "survived"' 2>&1
+```
+
+Observed (dash):
+- `dash: 1: break: Illegal number: 0`
+- no `survived` output
+- exit status `2`
+
+---
