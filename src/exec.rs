@@ -659,11 +659,25 @@ fn execute_for(shell: &mut Shell, for_command: &ForCommand) -> Result<i32, Shell
 fn execute_case(shell: &mut Shell, case_command: &CaseCommand) -> Result<i32, ShellError> {
     let arena = StringArena::new();
     let word = expand::expand_word_text(shell, &case_command.word, &arena)?;
-    for arm in &case_command.arms {
-        for pattern in &arm.patterns {
-            let pattern = expand::expand_word_pattern(shell, pattern, &arena)?;
-            if case_pattern_matches(word, pattern) {
-                return execute_nested_program(shell, &arm.body);
+    let arms = &case_command.arms;
+    let mut matched = false;
+    for (i, arm) in arms.iter().enumerate() {
+        if !matched {
+            for pattern in &arm.patterns {
+                let pattern = expand::expand_word_pattern(shell, pattern, &arena)?;
+                if case_pattern_matches(word, pattern) {
+                    matched = true;
+                    break;
+                }
+            }
+        }
+        if matched {
+            let status = execute_nested_program(shell, &arm.body)?;
+            if !arm.fallthrough {
+                return Ok(status);
+            }
+            if i + 1 >= arms.len() {
+                return Ok(status);
             }
         }
     }
@@ -1835,7 +1849,11 @@ fn render_case_into(case_command: &CaseCommand, buf: &mut String) {
         }
         buf.push_str(")\n");
         render_program_into(&arm.body, buf);
-        buf.push_str("\n;;");
+        if arm.fallthrough {
+            buf.push_str("\n;&");
+        } else {
+            buf.push_str("\n;;");
+        }
     }
     buf.push_str("\nesac");
 }
@@ -3015,6 +3033,22 @@ mod tests {
             let status = execute_program(&mut shell, &program).expect("execute");
             assert_eq!(status, 0);
             assert_eq!(shell.get_var("VALUE"), None);
+
+            let mut shell = test_shell();
+            let program =
+                parse_test("case a in a) A=1 ;& b) B=2 ;; c) C=3 ;; esac").expect("parse");
+            let status = execute_program(&mut shell, &program).expect("execute");
+            assert_eq!(status, 0);
+            assert_eq!(shell.get_var("A"), Some("1"));
+            assert_eq!(shell.get_var("B"), Some("2"));
+            assert_eq!(shell.get_var("C"), None);
+
+            let mut shell = test_shell();
+            let program =
+                parse_test("case x in x) V=one ;& y) V=two ;& z) V=three ;& esac").expect("parse");
+            let status = execute_program(&mut shell, &program).expect("execute");
+            assert_eq!(status, 0);
+            assert_eq!(shell.get_var("V"), Some("three"));
         });
     }
 
@@ -3136,6 +3170,7 @@ mod tests {
                     arms: vec![crate::syntax::CaseArm {
                         patterns: vec![Word { raw: "item".into() }].into_boxed_slice(),
                         body: Program::default(),
+                        fallthrough: false,
                     }]
                     .into_boxed_slice(),
                 }),
@@ -3409,10 +3444,30 @@ mod tests {
                     patterns: vec![Word { raw: "a*".into() }, Word { raw: "b".into() }]
                         .into_boxed_slice(),
                     body: Program::default(),
+                    fallthrough: false,
                 }]
                 .into_boxed_slice(),
             };
             assert!(render_case(&case_command).contains("a* | b)"));
+            let ft_case = CaseCommand {
+                word: Word { raw: "x".into() },
+                arms: vec![
+                    crate::syntax::CaseArm {
+                        patterns: vec![Word { raw: "a".into() }].into_boxed_slice(),
+                        body: Program::default(),
+                        fallthrough: true,
+                    },
+                    crate::syntax::CaseArm {
+                        patterns: vec![Word { raw: "b".into() }].into_boxed_slice(),
+                        body: Program::default(),
+                        fallthrough: false,
+                    },
+                ]
+                .into_boxed_slice(),
+            };
+            let rendered = render_case(&ft_case);
+            assert!(rendered.contains(";&"));
+            assert!(rendered.contains(";;"));
             assert!(
                 render_pipeline(&Pipeline {
                     negated: false,
