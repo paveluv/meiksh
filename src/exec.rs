@@ -45,7 +45,10 @@ fn check_errexit(shell: &mut Shell, status: i32) {
 fn execute_list_item(shell: &mut Shell, item: &ListItem) -> Result<i32, ShellError> {
     if item.asynchronous {
         let stdin_override = if !shell.options.monitor {
-            Some(sys::open_file("/dev/null", sys::O_RDONLY, 0)?)
+            Some(
+                sys::open_file("/dev/null", sys::O_RDONLY, 0)
+                    .map_err(|e| shell.diagnostic(1, &e))?,
+            )
         } else {
             None
         };
@@ -110,7 +113,7 @@ fn spawn_and_or(
     if node.rest.is_empty() && !ignore_int_quit {
         return spawn_pipeline(shell, &node.first, stdin_override);
     }
-    let pid = sys::fork_process()?;
+    let pid = sys::fork_process().map_err(|e| shell.diagnostic(1, &e))?;
     if pid == 0 {
         if let Some(fd) = stdin_override {
             let _ = sys::duplicate_fd(fd, sys::STDIN_FILENO);
@@ -267,13 +270,13 @@ fn fork_and_execute_command(
     process_group: ProcessGroupPlan,
 ) -> Result<sys::ChildHandle, ShellError> {
     let stdout_pipe = if pipe_stdout {
-        let (r, w) = sys::create_pipe()?;
+        let (r, w) = sys::create_pipe().map_err(|e| shell.diagnostic(1, &e))?;
         Some((r, w))
     } else {
         Option::None
     };
 
-    let pid = sys::fork_process()?;
+    let pid = sys::fork_process().map_err(|e| shell.diagnostic(1, &e))?;
     if pid == 0 {
         if let Some(fd) = stdin_fd {
             let _ = sys::duplicate_fd(fd, sys::STDIN_FILENO);
@@ -453,7 +456,7 @@ fn execute_command(shell: &mut Shell, command: &Command) -> Result<i32, ShellErr
     match command {
         Command::Simple(simple) => execute_simple(shell, simple),
         Command::Subshell(program) => {
-            let pid = sys::fork_process()?;
+            let pid = sys::fork_process().map_err(|e| shell.diagnostic(1, &e))?;
             if pid == 0 {
                 let mut child_shell = shell.clone();
                 let _ = child_shell.reset_traps_for_subshell();
@@ -468,7 +471,7 @@ fn execute_command(shell: &mut Shell, command: &Command) -> Result<i32, ShellErr
                     Ok(Some(ws)) => break ws,
                     Ok(None) => continue,
                     Err(e) if e.is_eintr() => continue,
-                    Err(e) => return Err(e.into()),
+                    Err(e) => return Err(shell.diagnostic(1, &e)),
                 }
             };
             Ok(sys::decode_wait_status(ws.status))
@@ -500,7 +503,7 @@ fn execute_redirected(
     let expanded = expand_redirections(shell, redirections, &arena)?;
     let guard = match apply_shell_redirections(&expanded, shell.options.noclobber) {
         Ok(guard) => guard,
-        Err(error) => return Ok(error.exit_status()),
+        Err(error) => return Ok(shell.diagnostic(1, &error).exit_status()),
     };
     let result = execute_command(shell, command);
     drop(guard);
@@ -604,7 +607,7 @@ fn execute_for(shell: &mut Shell, for_command: &ForCommand) -> Result<i32, Shell
     let values: Vec<String> = if let Some(items) = &for_command.items {
         let mut values = Vec::new();
         for item in items {
-            for s in expand::expand_word(shell, item, &arena)? {
+            for s in expand::expand_word(shell, item, &arena).map_err(|e| shell.expand_to_err(e))? {
                 values.push(s.to_string());
             }
         }
@@ -619,7 +622,7 @@ fn execute_for(shell: &mut Shell, for_command: &ForCommand) -> Result<i32, Shell
         for value in values {
             shell
                 .set_var(&for_command.name, value)
-                .map_err(|e| ShellError::diagnostic(1, &e))?;
+                .map_err(|e| shell.diagnostic(1, &e))?;
             last_status = execute_nested_program(shell, &for_command.body)?;
             if !shell.running {
                 break;
@@ -653,13 +656,15 @@ fn execute_for(shell: &mut Shell, for_command: &ForCommand) -> Result<i32, Shell
 
 fn execute_case(shell: &mut Shell, case_command: &CaseCommand) -> Result<i32, ShellError> {
     let arena = StringArena::new();
-    let word = expand::expand_word_text(shell, &case_command.word, &arena)?;
+    let word = expand::expand_word_text(shell, &case_command.word, &arena)
+        .map_err(|e| shell.expand_to_err(e))?;
     let arms = &case_command.arms;
     let mut matched = false;
     for (i, arm) in arms.iter().enumerate() {
         if !matched {
             for pattern in &arm.patterns {
-                let pattern = expand::expand_word_pattern(shell, pattern, &arena)?;
+                let pattern = expand::expand_word_pattern(shell, pattern, &arena)
+                    .map_err(|e| shell.expand_to_err(e))?;
                 if case_pattern_matches(word, pattern) {
                     matched = true;
                     break;
@@ -703,7 +708,7 @@ fn apply_prefix_assignments(
     for (name, value) in assignments {
         shell
             .set_var(name, value.clone())
-            .map_err(|e| ShellError::diagnostic(1, &e))?;
+            .map_err(|e| shell.diagnostic(1, &e))?;
     }
     Ok(())
 }
@@ -805,12 +810,12 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
         let guard = match apply_shell_redirections(&expanded.redirections, shell.options.noclobber)
         {
             Ok(g) => g,
-            Err(error) => return Ok(error.exit_status()),
+            Err(error) => return Ok(shell.diagnostic(1, &error).exit_status()),
         };
         for (name, value) in &owned_assignments {
             shell
                 .set_var(name, value.clone())
-                .map_err(|e| ShellError::diagnostic(1, &e))?;
+                .map_err(|e| shell.diagnostic(1, &e))?;
         }
         drop(guard);
         return Ok(cmd_sub_status);
@@ -823,20 +828,21 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
 
     if is_exec_no_cmd {
         for redir in &expanded.redirections {
-            apply_shell_redirection(redir, shell.options.noclobber)?;
+            apply_shell_redirection(redir, shell.options.noclobber)
+                .map_err(|e| shell.diagnostic(1, &e))?;
         }
         return match run_builtin_flow(shell, &owned_argv, &owned_assignments) {
             Ok(BuiltinResult::Status(status) | BuiltinResult::UtilityError(status)) => Ok(status),
             Err(error) => Err(error),
         };
     } else if is_special_builtin {
-        let result =
-            with_shell_redirections(&expanded.redirections, shell.options.noclobber, || {
-                run_builtin_flow(shell, &owned_argv, &owned_assignments)
-            });
+        let _guard = apply_shell_redirections(&expanded.redirections, shell.options.noclobber)
+            .map_err(|e| shell.diagnostic(1, &e))?;
+        let result = run_builtin_flow(shell, &owned_argv, &owned_assignments);
+        drop(_guard);
         return match result {
             Ok(BuiltinResult::UtilityError(status)) if !shell.interactive => {
-                Err(ShellError::silent(status))
+                Err(ShellError::Status(status))
             }
             Ok(BuiltinResult::Status(status) | BuiltinResult::UtilityError(status)) => Ok(status),
             Err(error) => Err(error),
@@ -847,7 +853,7 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
         let guard = match apply_shell_redirections(&expanded.redirections, shell.options.noclobber)
         {
             Ok(g) => g,
-            Err(error) => return Ok(error.exit_status()),
+            Err(error) => return Ok(shell.diagnostic(1, &error).exit_status()),
         };
         let saved_vars = save_vars(shell, &owned_assignments);
         if let Err(e) = apply_prefix_assignments(shell, &owned_assignments) {
@@ -877,11 +883,16 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
         let assign_result = apply_prefix_assignments(shell, &owned_assignments);
         let result = match assign_result {
             Ok(()) => {
-                let r = with_shell_redirections(
-                    &expanded.redirections,
-                    shell.options.noclobber,
-                    || run_builtin_flow(shell, &owned_argv, &[]),
-                );
+                let r =
+                    match apply_shell_redirections(&expanded.redirections, shell.options.noclobber)
+                    {
+                        Ok(guard) => {
+                            let r = run_builtin_flow(shell, &owned_argv, &[]);
+                            drop(guard);
+                            r
+                        }
+                        Err(e) => Err(shell.diagnostic(1, &e)),
+                    };
                 restore_vars(shell, saved_vars);
                 r
             }
@@ -897,10 +908,7 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
     } else {
         for (name, _value) in &owned_assignments {
             if shell.readonly.contains(name.as_str()) {
-                return Err(ShellError::diagnostic(
-                    1,
-                    format_args!("{name}: readonly variable"),
-                ));
+                return Err(shell.diagnostic(1, format_args!("{name}: readonly variable")));
             }
         }
         let command_name = owned_argv[0].clone();
@@ -1046,7 +1054,8 @@ fn expand_simple<'a>(
 ) -> Result<ExpandedSimpleCommand<'a>, ShellError> {
     let mut assignments = Vec::new();
     for assignment in &simple.assignments {
-        let value = expand::expand_assignment_value(shell, &assignment.value, arena)?;
+        let value = expand::expand_assignment_value(shell, &assignment.value, arena)
+            .map_err(|e| shell.expand_to_err(e))?;
         assignments.push((arena.intern_str(assignment.name), value));
     }
 
@@ -1054,7 +1063,7 @@ fn expand_simple<'a>(
     let argv = if declaration_ctx {
         expand_words_declaration(shell, &simple.words, arena)?
     } else {
-        expand::expand_words(shell, &simple.words, arena)?
+        expand::expand_words(shell, &simple.words, arena).map_err(|e| shell.expand_to_err(e))?
     };
     let mut redirections = Vec::new();
     for redirection in &simple.redirections {
@@ -1065,15 +1074,27 @@ fn expand_simple<'a>(
             let here_doc = redirection
                 .here_doc
                 .as_ref()
-                .ok_or_else(|| ShellError::diagnostic(2, "missing here-document body"))?;
+                .ok_or_else(|| shell.diagnostic(2, "missing here-document body"))?;
             let body = if here_doc.expand {
-                expand::expand_here_document(shell, &here_doc.body, arena)?
+                expand::expand_here_document(shell, &here_doc.body, arena)
+                    .map_err(|e| shell.expand_to_err(e))?
             } else {
                 arena.intern_str(&here_doc.body)
             };
             (arena.intern_str(&here_doc.delimiter), Some(body))
         } else {
-            let target = expand::expand_redirect_word(shell, &redirection.target, arena)?;
+            let target = expand::expand_redirect_word(shell, &redirection.target, arena)
+                .map_err(|e| shell.expand_to_err(e))?;
+            if matches!(
+                redirection.kind,
+                RedirectionKind::DupInput | RedirectionKind::DupOutput
+            ) && target != "-"
+                && target.parse::<i32>().is_err()
+            {
+                return Err(
+                    shell.diagnostic(1, "redirection target must be a file descriptor or '-'")
+                );
+            }
             (target, None)
         };
         redirections.push(ExpandedRedirection {
@@ -1100,7 +1121,9 @@ fn expand_words_declaration<'a>(
     let mut found_cmd = false;
     for word in words {
         if !found_cmd {
-            result.extend(expand::expand_word(shell, word, arena)?);
+            result.extend(
+                expand::expand_word(shell, word, arena).map_err(|e| shell.expand_to_err(e))?,
+            );
             if result
                 .last()
                 .is_some_and(|s| !s.is_empty() && *s != "command")
@@ -1108,11 +1131,14 @@ fn expand_words_declaration<'a>(
                 found_cmd = true;
             }
         } else if expand::word_is_assignment(word.raw) {
-            result.push(expand::expand_word_as_declaration_assignment(
-                shell, word, arena,
-            )?);
+            result.push(
+                expand::expand_word_as_declaration_assignment(shell, word, arena)
+                    .map_err(|e| shell.expand_to_err(e))?,
+            );
         } else {
-            result.extend(expand::expand_word(shell, word, arena)?);
+            result.extend(
+                expand::expand_word(shell, word, arena).map_err(|e| shell.expand_to_err(e))?,
+            );
         }
     }
     Ok(result)
@@ -1132,15 +1158,27 @@ fn expand_redirections<'a>(
             let here_doc = redirection
                 .here_doc
                 .as_ref()
-                .ok_or_else(|| ShellError::diagnostic(2, "missing here-document body"))?;
+                .ok_or_else(|| shell.diagnostic(2, "missing here-document body"))?;
             let body = if here_doc.expand {
-                expand::expand_here_document(shell, &here_doc.body, arena)?
+                expand::expand_here_document(shell, &here_doc.body, arena)
+                    .map_err(|e| shell.expand_to_err(e))?
             } else {
                 arena.intern_str(&here_doc.body)
             };
             (arena.intern_str(&here_doc.delimiter), Some(body))
         } else {
-            let target = expand::expand_redirect_word(shell, &redirection.target, arena)?;
+            let target = expand::expand_redirect_word(shell, &redirection.target, arena)
+                .map_err(|e| shell.expand_to_err(e))?;
+            if matches!(
+                redirection.kind,
+                RedirectionKind::DupInput | RedirectionKind::DupOutput
+            ) && target != "-"
+                && target.parse::<i32>().is_err()
+            {
+                return Err(
+                    shell.diagnostic(1, "redirection target must be a file descriptor or '-'")
+                );
+            }
             (target, None)
         };
         expanded.push(ExpandedRedirection {
@@ -1162,7 +1200,7 @@ fn build_process_from_expanded(
     let program = expanded
         .argv
         .first()
-        .ok_or_else(|| ShellError::diagnostic(1, "empty command"))?;
+        .ok_or_else(|| shell.diagnostic(1, "empty command"))?;
     let prefix_path = expanded
         .assignments
         .iter()
@@ -1241,19 +1279,20 @@ fn spawn_prepared(
     {
         if sys::access_path(&prepared.exec_path, sys::F_OK).is_err() {
             sys_eprintln!("{}: not found", prepared.argv[0]);
-            return Err(ShellError::silent(127));
+            return Err(ShellError::Status(127));
         }
         if sys::access_path(&prepared.exec_path, sys::X_OK).is_err() {
             sys_eprintln!("{}: Permission denied", prepared.argv[0]);
-            return Err(ShellError::silent(126));
+            return Err(ShellError::Status(126));
         }
     }
 
-    let prepared_redirections = prepare_redirections(&prepared.redirections, prepared.noclobber)?;
+    let prepared_redirections = prepare_redirections(&prepared.redirections, prepared.noclobber)
+        .map_err(|e| shell.diagnostic(1, &e))?;
 
     let pid = sys::fork_process().map_err(|e| {
         sys_eprintln!("{}: {}", prepared.argv[0], e);
-        ShellError::silent(1)
+        ShellError::Status(1)
     })?;
     if pid == 0 {
         match process_group {
@@ -1325,7 +1364,7 @@ fn spawn_prepared(
 fn prepare_redirections<R: RedirectionRef>(
     redirections: &[R],
     noclobber: bool,
-) -> Result<PreparedRedirections, ShellError> {
+) -> Result<PreparedRedirections, sys::SysError> {
     let mut prepared = PreparedRedirections::default();
     for redirection in redirections {
         match redirection.kind() {
@@ -1387,12 +1426,10 @@ fn prepare_redirections<R: RedirectionRef>(
                         target_fd: redirection.fd(),
                     });
                 } else {
-                    let source_fd = redirection.target().parse::<i32>().map_err(|_| {
-                        ShellError::diagnostic(
-                            1,
-                            "redirection target must be a file descriptor or '-'",
-                        )
-                    })?;
+                    let source_fd = redirection
+                        .target()
+                        .parse::<i32>()
+                        .expect("validated at expansion");
                     prepared.actions.push(ChildFdAction::DupFd {
                         source_fd,
                         target_fd: redirection.fd(),
@@ -1506,19 +1543,10 @@ impl Drop for ShellRedirectionGuard {
     }
 }
 
-fn with_shell_redirections<T, R: RedirectionRef>(
-    redirections: &[R],
-    noclobber: bool,
-    action: impl FnOnce() -> Result<T, ShellError>,
-) -> Result<T, ShellError> {
-    let _guard = apply_shell_redirections(redirections, noclobber)?;
-    action()
-}
-
 fn apply_shell_redirections<R: RedirectionRef>(
     redirections: &[R],
     noclobber: bool,
-) -> Result<ShellRedirectionGuard, ShellError> {
+) -> Result<ShellRedirectionGuard, sys::SysError> {
     let mut guard = ShellRedirectionGuard { saved: Vec::new() };
     let mut saved = HashMap::new();
 
@@ -1527,7 +1555,7 @@ fn apply_shell_redirections<R: RedirectionRef>(
             let original = match sys::duplicate_fd_to_new(redirection.fd()) {
                 Ok(fd) => Some(fd),
                 Err(error) if error.is_ebadf() => None,
-                Err(error) => return Err(error.into()),
+                Err(error) => return Err(error),
             };
             entry.insert(original);
             guard.saved.push((redirection.fd(), original));
@@ -1541,7 +1569,7 @@ fn apply_shell_redirections<R: RedirectionRef>(
 fn apply_shell_redirection<R: RedirectionRef>(
     redirection: &R,
     noclobber: bool,
-) -> Result<(), ShellError> {
+) -> sys::SysResult<()> {
     match redirection.kind() {
         RedirectionKind::Read => {
             let fd = sys::open_file(redirection.target(), sys::O_RDONLY | sys::O_CLOEXEC, 0)?;
@@ -1579,9 +1607,10 @@ fn apply_shell_redirection<R: RedirectionRef>(
             if redirection.target() == "-" {
                 close_shell_fd(redirection.fd())?;
             } else {
-                let source_fd = redirection.target().parse::<i32>().map_err(|_| {
-                    ShellError::diagnostic(1, "redirection target must be a file descriptor or '-'")
-                })?;
+                let source_fd = redirection
+                    .target()
+                    .parse::<i32>()
+                    .expect("validated at expansion");
                 sys::duplicate_fd(source_fd, redirection.fd())?;
             }
         }
@@ -1589,7 +1618,7 @@ fn apply_shell_redirection<R: RedirectionRef>(
     Ok(())
 }
 
-fn replace_shell_fd(fd: i32, target_fd: i32) -> Result<(), ShellError> {
+fn replace_shell_fd(fd: i32, target_fd: i32) -> sys::SysResult<()> {
     if fd == target_fd {
         return Ok(());
     }
@@ -1598,10 +1627,10 @@ fn replace_shell_fd(fd: i32, target_fd: i32) -> Result<(), ShellError> {
     Ok(())
 }
 
-fn close_shell_fd(target_fd: i32) -> Result<(), ShellError> {
+fn close_shell_fd(target_fd: i32) -> sys::SysResult<()> {
     if let Err(error) = sys::close_fd(target_fd) {
         if !error.is_ebadf() {
-            return Err(error.into());
+            return Err(error);
         }
     }
     Ok(())
@@ -2589,14 +2618,21 @@ mod tests {
                 .expect_err("expected missing here-document body");
                 assert_eq!(error.exit_status(), 2);
 
-                let error = prepare_redirections(
-                    &[ExpandedRedirection {
-                        fd: 1,
-                        kind: RedirectionKind::DupOutput,
-                        target: "bad",
-                        here_doc_body: None,
-                    }],
-                    false,
+                let mut shell = test_shell();
+                let error = expand_simple(
+                    &mut shell,
+                    &SimpleCommand {
+                        words: vec![Word { raw: "echo".into() }].into_boxed_slice(),
+                        redirections: vec![Redirection {
+                            fd: Some(1),
+                            kind: RedirectionKind::DupOutput,
+                            target: Word { raw: "bad".into() },
+                            here_doc: None,
+                        }]
+                        .into_boxed_slice(),
+                        ..SimpleCommand::default()
+                    },
+                    &arena,
                 )
                 .expect_err("bad dup target");
                 assert_eq!(error.exit_status(), 1);
@@ -2695,14 +2731,6 @@ mod tests {
                     vec![ArgMatcher::Fd(11), ArgMatcher::Bytes(b"body\n".to_vec())],
                     TraceResult::Err(sys::EIO),
                 ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"meiksh: Input/output error\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
             ],
             || {
                 let err = prepare_redirections(
@@ -2715,7 +2743,7 @@ mod tests {
                     false,
                 )
                 .expect_err("heredoc write should fail");
-                assert_ne!(err.exit_status(), 0);
+                assert!(!err.to_string().is_empty());
             },
         );
     }
@@ -3973,14 +4001,6 @@ mod tests {
                     vec![ArgMatcher::Fd(105), ArgMatcher::Bytes(b"body\n".to_vec())],
                     TraceResult::Err(sys::EIO),
                 ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"meiksh: Input/output error\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
             ],
             || {
                 let err = apply_shell_redirection(
@@ -3993,7 +4013,7 @@ mod tests {
                     false,
                 )
                 .expect_err("heredoc write should fail");
-                assert_ne!(err.exit_status(), 0);
+                assert!(!err.to_string().is_empty());
             },
         );
     }
@@ -4041,18 +4061,6 @@ mod tests {
     fn current_shell_noclobber_and_guard_cleanup() {
         run_trace(
             vec![
-                // DupOutput "bad" → error, writes diagnostic to stderr
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(
-                            b"meiksh: redirection target must be a file descriptor or '-'\n"
-                                .to_vec(),
-                        ),
-                    ],
-                    TraceResult::Auto,
-                ),
                 // Write with noclobber → open returns EEXIST
                 t(
                     "open",
@@ -4062,14 +4070,6 @@ mod tests {
                         ArgMatcher::Any,
                     ],
                     TraceResult::Err(sys::EEXIST),
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"meiksh: File exists\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
                 ),
                 // Guard drop with saved=(99, None) → close(99)
                 t("close", vec![ArgMatcher::Fd(99)], TraceResult::Int(0)),
@@ -4103,29 +4103,9 @@ mod tests {
                     ],
                     TraceResult::Err(sys::EINVAL),
                 ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"meiksh: Invalid argument\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
             ],
             || {
-                let error = apply_shell_redirection(
-                    &ExpandedRedirection {
-                        fd: 42,
-                        kind: RedirectionKind::DupOutput,
-                        target: "bad",
-                        here_doc_body: None,
-                    },
-                    false,
-                )
-                .expect_err("bad dup output");
-                assert_ne!(error.exit_status(), 0);
-
-                let error = apply_shell_redirection(
+                apply_shell_redirection(
                     &ExpandedRedirection {
                         fd: 42,
                         kind: RedirectionKind::Write,
@@ -4135,7 +4115,6 @@ mod tests {
                     true,
                 )
                 .expect_err("noclobber");
-                assert_ne!(error.exit_status(), 0);
 
                 drop(ShellRedirectionGuard {
                     saved: vec![(99, None)],
@@ -4153,7 +4132,7 @@ mod tests {
                 .expect("invalid fd is treated as absent");
                 drop(guard);
 
-                let error = apply_shell_redirections(
+                apply_shell_redirections(
                     &[ExpandedRedirection {
                         fd: 42,
                         kind: RedirectionKind::DupOutput,
@@ -4163,7 +4142,6 @@ mod tests {
                     false,
                 )
                 .expect_err("dup failure");
-                assert_ne!(error.exit_status(), 0);
             },
         );
     }
@@ -4201,14 +4179,6 @@ mod tests {
                     vec![ArgMatcher::Fd(57)],
                     TraceResult::Err(sys::EINVAL),
                 ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"meiksh: Invalid argument\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
             ],
             || {
                 let error = apply_child_fd_actions(&[ChildFdAction::CloseFd { target_fd: 56 }])
@@ -4216,7 +4186,7 @@ mod tests {
                 assert!(!error.to_string().is_empty());
 
                 let error = close_shell_fd(57).expect_err("close failure");
-                assert_ne!(error.exit_status(), 0);
+                assert!(!error.to_string().is_empty());
             },
         );
     }
@@ -4680,7 +4650,8 @@ mod tests {
                     target: "/tmp/out",
                     here_doc_body: None,
                 }];
-                with_shell_redirections(&redirections, false, || Ok(0)).expect("append");
+                let _guard = apply_shell_redirections(&redirections, false).expect("append");
+                drop(_guard);
 
                 let redirections = vec![ExpandedRedirection {
                     fd: 0,
@@ -4688,7 +4659,8 @@ mod tests {
                     target: "/tmp/rw",
                     here_doc_body: None,
                 }];
-                with_shell_redirections(&redirections, false, || Ok(0)).expect("readwrite");
+                let _guard = apply_shell_redirections(&redirections, false).expect("readwrite");
+                drop(_guard);
             },
         );
     }
@@ -6186,6 +6158,12 @@ mod tests {
                     TraceResult::Err(sys::ENOENT),
                 ),
                 t(
+                    "dup2",
+                    vec![ArgMatcher::Int(100), ArgMatcher::Fd(0)],
+                    TraceResult::Int(0),
+                ),
+                t("close", vec![ArgMatcher::Int(100)], TraceResult::Int(0)),
+                t(
                     "write",
                     vec![
                         ArgMatcher::Fd(sys::STDERR_FILENO),
@@ -6193,12 +6171,6 @@ mod tests {
                     ],
                     TraceResult::Auto,
                 ),
-                t(
-                    "dup2",
-                    vec![ArgMatcher::Int(100), ArgMatcher::Fd(0)],
-                    TraceResult::Int(0),
-                ),
-                t("close", vec![ArgMatcher::Int(100)], TraceResult::Int(0)),
             ],
             || {
                 let mut shell = test_shell();
@@ -6340,6 +6312,12 @@ mod tests {
                     TraceResult::Err(sys::ENOENT),
                 ),
                 t(
+                    "dup2",
+                    vec![ArgMatcher::Int(100), ArgMatcher::Fd(0)],
+                    TraceResult::Int(0),
+                ),
+                t("close", vec![ArgMatcher::Int(100)], TraceResult::Int(0)),
+                t(
                     "write",
                     vec![
                         ArgMatcher::Fd(sys::STDERR_FILENO),
@@ -6347,12 +6325,6 @@ mod tests {
                     ],
                     TraceResult::Auto,
                 ),
-                t(
-                    "dup2",
-                    vec![ArgMatcher::Int(100), ArgMatcher::Fd(0)],
-                    TraceResult::Int(0),
-                ),
-                t("close", vec![ArgMatcher::Int(100)], TraceResult::Int(0)),
             ],
             || {
                 let mut shell = test_shell();
@@ -6410,6 +6382,12 @@ mod tests {
                     TraceResult::Err(sys::ENOENT),
                 ),
                 t(
+                    "dup2",
+                    vec![ArgMatcher::Fd(92), ArgMatcher::Fd(1)],
+                    TraceResult::Int(1),
+                ),
+                t("close", vec![ArgMatcher::Fd(92)], TraceResult::Int(0)),
+                t(
                     "write",
                     vec![
                         ArgMatcher::Fd(sys::STDERR_FILENO),
@@ -6417,12 +6395,6 @@ mod tests {
                     ],
                     TraceResult::Auto,
                 ),
-                t(
-                    "dup2",
-                    vec![ArgMatcher::Fd(92), ArgMatcher::Fd(1)],
-                    TraceResult::Int(1),
-                ),
-                t("close", vec![ArgMatcher::Fd(92)], TraceResult::Int(0)),
             ],
             || {
                 let mut shell = test_shell();

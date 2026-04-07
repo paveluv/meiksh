@@ -7,8 +7,8 @@ fn write_stderr(msg: &str) {
     let _ = sys::write_all_fd(sys::STDERR_FILENO, msg.as_bytes());
 }
 
-fn diag_status(status: i32, msg: impl std::fmt::Display) -> BuiltinOutcome {
-    ShellError::diagnostic(status, msg);
+fn diag_status(shell: &Shell, status: i32, msg: impl std::fmt::Display) -> BuiltinOutcome {
+    shell.diagnostic(status, msg);
     BuiltinOutcome::Status(status)
 }
 
@@ -57,9 +57,9 @@ pub fn run(
         "return" => return_builtin(shell, argv)?,
         "break" => break_builtin(shell, argv)?,
         "continue" => continue_builtin(shell, argv)?,
-        "times" => times(),
+        "times" => times(shell),
         "trap" => trap(shell, argv),
-        "umask" => umask(argv)?,
+        "umask" => umask(shell, argv)?,
         "command" => command(shell, argv)?,
         _ => BuiltinOutcome::Status(127),
     };
@@ -90,7 +90,7 @@ fn cd(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> 
     };
 
     let old_pwd = current_logical_pwd(shell)?;
-    sys::change_dir(&curpath)?;
+    sys::change_dir(&curpath).map_err(|e| shell.diagnostic(1, &e))?;
 
     let new_pwd = if physical {
         match sys::get_cwd() {
@@ -98,7 +98,7 @@ fn cd(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> 
             Err(_) if check_pwd => {
                 shell
                     .set_var("OLDPWD", old_pwd)
-                    .map_err(|e| ShellError::diagnostic(1, format_args!("cd: {e}")))?;
+                    .map_err(|e| shell.diagnostic(1, format_args!("cd: {e}")))?;
                 return Ok(BuiltinOutcome::Status(1));
             }
             Err(_) => curpath.clone(),
@@ -109,10 +109,10 @@ fn cd(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> 
 
     shell
         .set_var("OLDPWD", old_pwd)
-        .map_err(|e| ShellError::diagnostic(1, format_args!("cd: {e}")))?;
+        .map_err(|e| shell.diagnostic(1, format_args!("cd: {e}")))?;
     shell
         .set_var("PWD", new_pwd.clone())
-        .map_err(|e| ShellError::diagnostic(1, format_args!("cd: {e}")))?;
+        .map_err(|e| shell.diagnostic(1, format_args!("cd: {e}")))?;
     if print_new_pwd {
         sys_println!("{new_pwd}");
     }
@@ -181,10 +181,7 @@ fn parse_cd_target(
                 'P' => physical = true,
                 'e' => check_pwd = true,
                 _ => {
-                    return Err(ShellError::diagnostic(
-                        1,
-                        format_args!("cd: invalid option: -{ch}"),
-                    ));
+                    return Err(shell.diagnostic(1, format_args!("cd: invalid option: -{ch}")));
                 }
             }
         }
@@ -194,7 +191,7 @@ fn parse_cd_target(
         check_pwd = false;
     }
     if argv.len() > index + 1 {
-        return Err(ShellError::diagnostic(1, "cd: too many arguments"));
+        return Err(shell.diagnostic(1, "cd: too many arguments"));
     }
     let Some(target) = argv.get(index) else {
         return Ok((
@@ -205,13 +202,13 @@ fn parse_cd_target(
         ));
     };
     if target.is_empty() {
-        return Err(ShellError::diagnostic(1, "cd: empty directory"));
+        return Err(shell.diagnostic(1, "cd: empty directory"));
     }
     if target == "-" {
         return Ok((
             shell
                 .get_var("OLDPWD")
-                .ok_or_else(|| ShellError::diagnostic(1, "cd: OLDPWD not set"))?
+                .ok_or_else(|| shell.diagnostic(1, "cd: OLDPWD not set"))?
                 .to_string(),
             true,
             physical,
@@ -262,10 +259,14 @@ fn pwd(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
             "-L" => logical = true,
             "-P" => logical = false,
             _ if arg.starts_with('-') => {
-                return Ok(diag_status(1, format_args!("pwd: invalid option: {arg}")));
+                return Ok(diag_status(
+                    shell,
+                    1,
+                    format_args!("pwd: invalid option: {arg}"),
+                ));
             }
             _ => {
-                return Ok(diag_status(1, "pwd: too many arguments"));
+                return Ok(diag_status(shell, 1, "pwd: too many arguments"));
             }
         }
     }
@@ -279,7 +280,7 @@ fn exit(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
         .get(1)
         .map(|value| value.parse::<i32>())
         .transpose()
-        .map_err(|_| ShellError::diagnostic(2, "exit: numeric argument required"))?
+        .map_err(|_| shell.diagnostic(2, "exit: numeric argument required"))?
         .unwrap_or(shell.last_status);
     Ok(BuiltinOutcome::Exit(status))
 }
@@ -304,7 +305,7 @@ fn expand_assignment_tilde(shell: &Shell, value: &str) -> String {
 }
 
 fn export(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
-    let (print, index) = parse_declaration_listing_flag("export", argv)?;
+    let (print, index) = parse_declaration_listing_flag(shell, "export", argv)?;
     if print || index == argv.len() {
         for line in exported_lines(shell) {
             sys_println!("{line}");
@@ -323,7 +324,7 @@ fn export(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellErr
 }
 
 fn readonly(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
-    let (print, index) = parse_declaration_listing_flag("readonly", argv)?;
+    let (print, index) = parse_declaration_listing_flag(shell, "readonly", argv)?;
     if print || index == argv.len() {
         for line in readonly_lines(shell) {
             sys_println!("{line}");
@@ -335,7 +336,7 @@ fn readonly(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellE
             let value = expand_assignment_tilde(shell, value);
             shell
                 .set_var(name, value)
-                .map_err(|e| ShellError::diagnostic(1, format_args!("readonly: {e}")))?;
+                .map_err(|e| shell.diagnostic(1, format_args!("readonly: {e}")))?;
             shell.mark_readonly(name);
         } else {
             shell.mark_readonly(item);
@@ -345,13 +346,13 @@ fn readonly(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellE
 }
 
 fn unset(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
-    let (target, index) = parse_unset_target(argv)?;
+    let (target, index) = parse_unset_target(shell, argv)?;
     let mut status = 0;
     for item in &argv[index..] {
         match target {
             UnsetTarget::Variable => {
                 if let Err(error) = shell.unset_var(item) {
-                    ShellError::diagnostic(1, format_args!("unset: {error}"));
+                    shell.diagnostic(1, format_args!("unset: {error}"));
                     status = 1;
                 }
             }
@@ -379,7 +380,7 @@ fn set(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
                     if let Some(name) = argv.get(index + 1) {
                         if let Err(e) = shell.options.set_named_option(name, !reinput) {
                             return BuiltinOutcome::UtilityError(
-                                ShellError::diagnostic(2, format_args!("set: {e}")).exit_status(),
+                                shell.diagnostic(2, format_args!("set: {e}")).exit_status(),
                             );
                         }
                         index += 2;
@@ -404,7 +405,7 @@ fn set(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
                     for ch in arg[1..].chars() {
                         if let Err(e) = shell.options.set_short_option(ch, enabled) {
                             return BuiltinOutcome::UtilityError(
-                                ShellError::diagnostic(2, format_args!("set: {e}")).exit_status(),
+                                shell.diagnostic(2, format_args!("set: {e}")).exit_status(),
                             );
                         }
                     }
@@ -425,10 +426,11 @@ fn shift(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellErro
         .get(1)
         .map(|value| value.parse::<usize>())
         .transpose()
-        .map_err(|_| ShellError::diagnostic(1, "shift: numeric argument required"))?
+        .map_err(|_| shell.diagnostic(1, "shift: numeric argument required"))?
         .unwrap_or(1);
     if count > shell.positional.len() {
         return Ok(diag_status(
+            shell,
             1,
             format_args!("shift: {count}: shift count out of range"),
         ));
@@ -446,17 +448,14 @@ fn eval(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
 fn dot(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     let path = argv
         .get(1)
-        .ok_or_else(|| ShellError::diagnostic(2, ".: filename argument required"))?;
+        .ok_or_else(|| shell.diagnostic(2, ".: filename argument required"))?;
     if argv.len() > 2 {
-        return Err(ShellError::diagnostic(2, ".: too many arguments"));
+        return Err(shell.diagnostic(2, ".: too many arguments"));
     }
     let resolved = match resolve_dot_path(shell, path) {
         Ok(p) => p,
         Err(_) => {
-            return Err(ShellError::diagnostic(
-                1,
-                format_args!(".: {path}: not found"),
-            ));
+            return Err(shell.diagnostic(1, format_args!(".: {path}: not found")));
         }
     };
     let status = shell.source_path(&resolved)?;
@@ -469,13 +468,10 @@ fn resolve_dot_path(shell: &Shell, path: &str) -> Result<PathBuf, ShellError> {
         if readable_regular_file(&candidate) {
             return Ok(candidate);
         }
-        return Err(ShellError::diagnostic(
-            1,
-            format_args!(".: {path}: not found"),
-        ));
+        return Err(shell.diagnostic(1, format_args!(".: {path}: not found")));
     }
     search_path(path, shell, false, readable_regular_file)
-        .ok_or_else(|| ShellError::diagnostic(1, format_args!(".: {path}: not found")))
+        .ok_or_else(|| shell.diagnostic(1, format_args!(".: {path}: not found")))
 }
 
 fn exec_builtin(
@@ -492,77 +488,62 @@ fn exec_builtin(
         return Ok(BuiltinOutcome::Status(0));
     }
     if args.iter().any(|s| s.contains('\0')) {
-        return Err(ShellError::diagnostic(1, "exec: invalid argument"));
+        return Err(shell.diagnostic(1, "exec: invalid argument"));
     }
     let Some(program_path) = which_in_path(&args[0], shell, true) else {
-        return Err(ShellError::diagnostic(
-            127,
-            format_args!("exec: {}: not found", args[0]),
-        ));
+        return Err(shell.diagnostic(127, format_args!("exec: {}: not found", args[0])));
     };
     let program = program_path.display().to_string();
     let argv_owned: Vec<String> = args.iter().cloned().collect();
     let env = shell.env_for_exec_utility(cmd_assignments);
-    sys::exec_replace_with_env(&program, &argv_owned, &env).map_err(ShellError::from)?;
+    sys::exec_replace_with_env(&program, &argv_owned, &env).map_err(|e| shell.diagnostic(1, &e))?;
     Ok(BuiltinOutcome::Status(0))
 }
 
 fn return_builtin(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     if shell.function_depth == 0 && shell.source_depth == 0 {
-        return Err(ShellError::diagnostic(1, "return: not in a function"));
+        return Err(shell.diagnostic(1, "return: not in a function"));
     }
     if argv.len() > 2 {
-        return Err(ShellError::diagnostic(1, "return: too many arguments"));
+        return Err(shell.diagnostic(1, "return: too many arguments"));
     }
     let status = argv
         .get(1)
         .map(|value| value.parse::<i32>())
         .transpose()
-        .map_err(|_| ShellError::diagnostic(1, "return: numeric argument required"))?
+        .map_err(|_| shell.diagnostic(1, "return: numeric argument required"))?
         .unwrap_or(shell.last_status);
     Ok(BuiltinOutcome::Return(status))
 }
 
 fn break_builtin(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     if shell.loop_depth == 0 {
-        return Err(ShellError::diagnostic(
-            1,
-            "break: only meaningful in a loop",
-        ));
+        return Err(shell.diagnostic(1, "break: only meaningful in a loop"));
     }
-    let levels = parse_loop_count("break", argv)?;
+    let levels = parse_loop_count(shell, "break", argv)?;
     Ok(BuiltinOutcome::Break(levels.min(shell.loop_depth)))
 }
 
 fn continue_builtin(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     if shell.loop_depth == 0 {
-        return Err(ShellError::diagnostic(
-            1,
-            "continue: only meaningful in a loop",
-        ));
+        return Err(shell.diagnostic(1, "continue: only meaningful in a loop"));
     }
-    let levels = parse_loop_count("continue", argv)?;
+    let levels = parse_loop_count(shell, "continue", argv)?;
     Ok(BuiltinOutcome::Continue(levels.min(shell.loop_depth)))
 }
 
-fn parse_loop_count(name: &str, argv: &[String]) -> Result<usize, ShellError> {
+fn parse_loop_count(shell: &Shell, name: &str, argv: &[String]) -> Result<usize, ShellError> {
     if argv.len() > 2 {
-        return Err(ShellError::diagnostic(
-            1,
-            format_args!("{name}: too many arguments"),
-        ));
+        return Err(shell.diagnostic(1, format_args!("{name}: too many arguments")));
     }
     let levels = argv
         .get(1)
         .map(|value| value.parse::<usize>())
         .transpose()
-        .map_err(|_| ShellError::diagnostic(1, format_args!("{name}: numeric argument required")))?
+        .map_err(|_| shell.diagnostic(1, format_args!("{name}: numeric argument required")))?
         .unwrap_or(1);
     if levels == 0 {
-        return Err(ShellError::diagnostic(
-            1,
-            format_args!("{name}: numeric argument required"),
-        ));
+        return Err(shell.diagnostic(1, format_args!("{name}: numeric argument required")));
     }
     Ok(levels)
 }
@@ -570,11 +551,11 @@ fn parse_loop_count(name: &str, argv: &[String]) -> Result<usize, ShellError> {
 fn jobs(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
     let (mode, index) = match parse_jobs_options(argv) {
         Ok(value) => value,
-        Err(message) => return diag_status(1, message),
+        Err(message) => return diag_status(shell, 1, message),
     };
     let selected = match parse_jobs_operands(&argv[index..], shell) {
         Ok(value) => value,
-        Err(message) => return diag_status(1, message),
+        Err(message) => return diag_status(shell, 1, message),
     };
     let finished = shell.reap_jobs();
     let current_id = shell.current_job_id();
@@ -706,11 +687,11 @@ fn job_display_pid(job: &crate::shell::Job) -> Option<sys::Pid> {
 
 fn fg(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     if !shell.options.monitor {
-        return Ok(diag_status(1, "fg: no job control"));
+        return Ok(diag_status(shell, 1, "fg: no job control"));
     }
     let id = resolve_job_id(shell, argv.get(1).map(String::as_str))
         .or_else(|| shell.current_job_id())
-        .ok_or_else(|| ShellError::diagnostic(1, "fg: no current job"))?;
+        .ok_or_else(|| shell.diagnostic(1, "fg: no current job"))?;
     if let Some(job) = shell.jobs.iter().find(|job| job.id == id) {
         sys_println!("{}", job.command);
     }
@@ -721,7 +702,7 @@ fn fg(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> 
 
 fn bg(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     if !shell.options.monitor {
-        return Ok(diag_status(1, "bg: no job control"));
+        return Ok(diag_status(shell, 1, "bg: no job control"));
     }
     let id = resolve_job_id(shell, argv.get(1).map(String::as_str))
         .or_else(|| {
@@ -732,7 +713,7 @@ fn bg(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> 
                 .find(|j| matches!(j.state, crate::shell::JobState::Stopped(_)))
                 .map(|j| j.id)
         })
-        .ok_or_else(|| ShellError::diagnostic(1, "bg: no current job"))?;
+        .ok_or_else(|| shell.diagnostic(1, "bg: no current job"))?;
     shell.continue_job(id, false)?;
     if let Some(job) = shell.jobs.iter().find(|job| job.id == id) {
         sys_println!("[{id}] {}", job.command);
@@ -750,7 +731,7 @@ fn wait(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
             Ok(WaitOperand::Job(id)) => shell.wait_for_job_operand(id)?,
             Ok(WaitOperand::Pid(pid)) => shell.wait_for_pid_operand(pid)?,
             Err(message) => {
-                ShellError::diagnostic(1, message);
+                shell.diagnostic(1, message);
                 1
             }
         };
@@ -761,6 +742,7 @@ fn wait(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
 fn kill(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     if argv.len() < 2 {
         return Ok(diag_status(
+            shell,
             2,
             "kill: usage: kill [-s sigspec | -signum] pid... | -l [exit_status]",
         ));
@@ -783,10 +765,15 @@ fn kill(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
                 if name != "UNKNOWN" {
                     sys_println!("{}", &name[3..]);
                 } else {
-                    return Ok(diag_status(1, format_args!("kill: unknown signal: {arg}")));
+                    return Ok(diag_status(
+                        shell,
+                        1,
+                        format_args!("kill: unknown signal: {arg}"),
+                    ));
                 }
             } else {
                 return Ok(diag_status(
+                    shell,
                     1,
                     format_args!("kill: invalid exit status: {arg}"),
                 ));
@@ -798,18 +785,18 @@ fn kill(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
     let mut signal = sys::SIGTERM;
     if args[0] == "-s" {
         if args.len() < 3 {
-            return Ok(diag_status(2, "kill: -s requires a signal name"));
+            return Ok(diag_status(shell, 2, "kill: -s requires a signal name"));
         }
-        signal = parse_kill_signal(&args[1])?;
+        signal = parse_kill_signal(shell, &args[1])?;
         args = &args[2..];
     } else if args[0].starts_with('-') && args[0] != "--" {
         let spec = &args[0][1..];
-        signal = parse_kill_signal(spec)?;
+        signal = parse_kill_signal(shell, spec)?;
         args = &args[1..];
     }
 
     if args.is_empty() || (args.len() == 1 && args[0] == "--") {
-        return Ok(diag_status(2, "kill: no process id specified"));
+        return Ok(diag_status(shell, 2, "kill: no process id specified"));
     }
     if args[0] == "--" {
         args = &args[1..];
@@ -826,12 +813,12 @@ fn kill(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
                     .unwrap_or_else(|| job.children.first().map(|c| c.pid).unwrap_or(0));
                 if pid != 0 {
                     if sys::send_signal(-pid, signal).is_err() {
-                        ShellError::diagnostic(1, format_args!("kill: ({pid}): No such process"));
+                        shell.diagnostic(1, format_args!("kill: ({pid}): No such process"));
                         status = 1;
                     }
                 }
             } else {
-                ShellError::diagnostic(1, format_args!("kill: {operand}: no such job"));
+                shell.diagnostic(1, format_args!("kill: {operand}: no such job"));
                 status = 1;
             }
         } else if let Ok(pid) = operand.parse::<sys::Pid>() {
@@ -847,18 +834,18 @@ fn kill(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
                 pid
             };
             if sys::send_signal(effective_target, signal).is_err() {
-                ShellError::diagnostic(1, format_args!("kill: ({pid}): No such process"));
+                shell.diagnostic(1, format_args!("kill: ({pid}): No such process"));
                 status = 1;
             }
         } else {
-            ShellError::diagnostic(1, format_args!("kill: invalid pid: {operand}"));
+            shell.diagnostic(1, format_args!("kill: invalid pid: {operand}"));
             status = 1;
         }
     }
     Ok(BuiltinOutcome::Status(status))
 }
 
-fn parse_kill_signal(spec: &str) -> Result<i32, ShellError> {
+fn parse_kill_signal(shell: &Shell, spec: &str) -> Result<i32, ShellError> {
     if let Ok(num) = spec.parse::<i32>() {
         return Ok(num);
     }
@@ -872,10 +859,7 @@ fn parse_kill_signal(spec: &str) -> Result<i32, ShellError> {
     if name == "0" {
         return Ok(0);
     }
-    Err(ShellError::diagnostic(
-        1,
-        format_args!("kill: unknown signal: {spec}"),
-    ))
+    Err(shell.diagnostic(1, format_args!("kill: unknown signal: {spec}")))
 }
 
 #[derive(Clone, Copy)]
@@ -885,7 +869,7 @@ struct ReadOptions {
 }
 
 fn read(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
-    sys::ensure_blocking_read_fd(sys::STDIN_FILENO)?;
+    sys::ensure_blocking_read_fd(sys::STDIN_FILENO).map_err(|e| shell.diagnostic(1, &e))?;
     read_with_input(shell, argv, sys::STDIN_FILENO)
 }
 
@@ -895,7 +879,7 @@ fn read_with_input(
     input_fd: i32,
 ) -> Result<BuiltinOutcome, ShellError> {
     let Some((options, vars)) = parse_read_options(argv) else {
-        return Ok(diag_status(2, "read: invalid usage"));
+        return Ok(diag_status(shell, 2, "read: invalid usage"));
     };
     let vars = if vars.is_empty() {
         vec!["REPLY".to_string()]
@@ -906,14 +890,14 @@ fn read_with_input(
     let (pieces, hit_delimiter) = match read_logical_line(shell, options, input_fd) {
         Ok(result) => result,
         Err(error) => {
-            return Ok(diag_status(2, format_args!("read: {error}")));
+            return Ok(diag_status(shell, 2, format_args!("read: {error}")));
         }
     };
     let values =
         split_read_assignments(&pieces, &vars, shell.get_var("IFS").map(|s| s.to_string()));
     for (name, value) in vars.iter().zip(values) {
         if let Err(error) = shell.set_var(name, value) {
-            return Ok(diag_status(2, format_args!("read: {error}")));
+            return Ok(diag_status(shell, 2, format_args!("read: {error}")));
         }
     }
     Ok(BuiltinOutcome::Status(if hit_delimiter { 0 } else { 1 }))
@@ -1117,12 +1101,13 @@ fn trim_read_ifs_whitespace(chars: &[(char, bool)], ifs_ws: &[char]) -> String {
 fn getopts_set(shell: &mut Shell, name: &str, value: String) -> Result<(), BuiltinOutcome> {
     shell
         .set_var(name, value)
-        .map_err(|e| diag_status(2, format_args!("getopts: {e}")))
+        .map_err(|e| diag_status(shell, 2, format_args!("getopts: {e}")))
 }
 
 fn getopts(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     if argv.len() < 3 {
         return Ok(diag_status(
+            shell,
             2,
             "getopts: usage: getopts optstring name [arg ...]",
         ));
@@ -1280,7 +1265,7 @@ fn alias(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellErro
         } else if let Some(value) = shell.aliases.get(item) {
             sys_println!("{}", format_alias_definition(item, value));
         } else {
-            ShellError::diagnostic(1, format_args!("alias: {item}: not found"));
+            shell.diagnostic(1, format_args!("alias: {item}: not found"));
             status = 1;
         }
     }
@@ -1301,21 +1286,18 @@ fn shell_quote(value: &str) -> String {
 
 fn unalias(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     if argv.len() < 2 {
-        return Err(ShellError::diagnostic(1, "unalias: name required"));
+        return Err(shell.diagnostic(1, "unalias: name required"));
     }
     if argv.len() == 2 && argv[1] == "-a" {
         shell.aliases.clear();
         return Ok(BuiltinOutcome::Status(0));
     }
     if argv[1].starts_with('-') && argv[1] != "-" && argv[1] != "--" {
-        return Err(ShellError::diagnostic(
-            1,
-            format_args!("unalias: invalid option: {}", argv[1]),
-        ));
+        return Err(shell.diagnostic(1, format_args!("unalias: invalid option: {}", argv[1])));
     }
     let start = usize::from(argv[1] == "--") + 1;
     if start >= argv.len() {
-        return Err(ShellError::diagnostic(1, "unalias: name required"));
+        return Err(shell.diagnostic(1, "unalias: name required"));
     }
     let mut status = 0;
     for item in &argv[start..] {
@@ -1326,7 +1308,7 @@ fn unalias(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellEr
     Ok(BuiltinOutcome::Status(status))
 }
 
-fn times() -> BuiltinOutcome {
+fn times(shell: &Shell) -> BuiltinOutcome {
     match (sys::process_times(), sys::clock_ticks_per_second()) {
         (Ok(times), Ok(ticks_per_second)) => {
             sys_println!(
@@ -1341,7 +1323,7 @@ fn times() -> BuiltinOutcome {
             );
             BuiltinOutcome::Status(0)
         }
-        (Err(error), _) | (_, Err(error)) => diag_status(1, format_args!("times: {error}")),
+        (Err(error), _) | (_, Err(error)) => diag_status(shell, 1, format_args!("times: {error}")),
     }
 }
 
@@ -1405,7 +1387,7 @@ fn trap_impl(shell: &mut Shell, argv: &[String]) -> Result<i32, ShellError> {
             if let Some(condition) = parse_trap_condition(condition) {
                 shell.set_trap(condition, None)?;
             } else {
-                ShellError::diagnostic(1, format_args!("trap: invalid condition: {condition}"));
+                shell.diagnostic(1, format_args!("trap: invalid condition: {condition}"));
                 return Ok(1);
             }
         }
@@ -1413,16 +1395,13 @@ fn trap_impl(shell: &mut Shell, argv: &[String]) -> Result<i32, ShellError> {
     }
     let action = &argv[1];
     if argv.len() == 2 {
-        return Err(ShellError::diagnostic(
-            1,
-            "trap: condition argument required",
-        ));
+        return Err(shell.diagnostic(1, "trap: condition argument required"));
     }
     let trap_action = parse_trap_action(action);
     let mut status = 0;
     for condition in &argv[2..] {
         let Some(condition) = parse_trap_condition(condition) else {
-            ShellError::diagnostic(1, format_args!("trap: invalid condition: {condition}"));
+            shell.diagnostic(1, format_args!("trap: invalid condition: {condition}"));
             status = 1;
             continue;
         };
@@ -1446,10 +1425,7 @@ fn print_traps(
         let mut parsed = Vec::new();
         for operand in operands {
             let Some(condition) = parse_trap_condition(operand) else {
-                return Err(ShellError::diagnostic(
-                    1,
-                    format_args!("trap: invalid condition: {operand}"),
-                ));
+                return Err(shell.diagnostic(1, format_args!("trap: invalid condition: {operand}")));
             };
             parsed.push(condition);
         }
@@ -1563,7 +1539,7 @@ fn format_times_value(ticks: u64, ticks_per_second: u64) -> String {
     format!("{minutes}m{seconds:.2}s")
 }
 
-fn umask(argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
+fn umask(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     let mut symbolic_output = false;
     let mut index = 1usize;
     while let Some(arg) = argv.get(index) {
@@ -1577,7 +1553,11 @@ fn umask(argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
                 break;
             }
             _ if arg.starts_with('-') && arg != "-" => {
-                return Ok(diag_status(1, format_args!("umask: invalid option: {arg}")));
+                return Ok(diag_status(
+                    shell,
+                    1,
+                    format_args!("umask: invalid option: {arg}"),
+                ));
             }
             _ => break,
         }
@@ -1593,11 +1573,12 @@ fn umask(argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
         return Ok(BuiltinOutcome::Status(0));
     }
     if index + 1 != argv.len() {
-        return Ok(diag_status(1, "umask: too many arguments"));
+        return Ok(diag_status(shell, 1, "umask: too many arguments"));
     }
 
     let Some(mask) = parse_umask_mask(&argv[index], current) else {
         return Ok(diag_status(
+            shell,
             1,
             format_args!("umask: invalid mask: {}", argv[index]),
         ));
@@ -1748,13 +1729,14 @@ fn command(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellEr
     let (use_default_path, mode, index) = parse_command_options(argv);
     let Some(name) = argv.get(index) else {
         return Ok(diag_status(
+            shell,
             command_usage_status(mode),
             "command: utility name required",
         ));
     };
 
     if mode != CommandMode::Execute && index + 1 != argv.len() {
-        return Ok(diag_status(1, "command: too many arguments"));
+        return Ok(diag_status(shell, 1, "command: too many arguments"));
     }
 
     match mode {
@@ -1782,15 +1764,13 @@ fn which(name: &str, shell: &Shell) -> Option<PathBuf> {
 }
 
 fn parse_declaration_listing_flag(
+    shell: &Shell,
     name: &str,
     argv: &[String],
 ) -> Result<(bool, usize), ShellError> {
     if argv.len() >= 2 && argv[1] == "-p" {
         if argv.len() > 2 {
-            return Err(ShellError::diagnostic(
-                1,
-                format_args!("{name}: -p does not accept operands"),
-            ));
+            return Err(shell.diagnostic(1, format_args!("{name}: -p does not accept operands")));
         }
         return Ok((true, 2));
     }
@@ -1799,10 +1779,7 @@ fn parse_declaration_listing_flag(
         && arg != "-"
         && arg != "--"
     {
-        return Err(ShellError::diagnostic(
-            1,
-            format_args!("{name}: invalid option: {arg}"),
-        ));
+        return Err(shell.diagnostic(1, format_args!("{name}: invalid option: {arg}")));
     }
     Ok((false, 1))
 }
@@ -1834,11 +1811,11 @@ fn pwd_output(shell: &Shell, logical: bool) -> Result<String, ShellError> {
     if logical {
         return current_logical_pwd(shell);
     }
-    Ok(sys::get_cwd()?)
+    sys::get_cwd().map_err(|e| shell.diagnostic(1, &e))
 }
 
 fn current_logical_pwd(shell: &Shell) -> Result<String, ShellError> {
-    let cwd = sys::get_cwd()?;
+    let cwd = sys::get_cwd().map_err(|e| shell.diagnostic(1, &e))?;
     if let Some(pwd) = shell.get_var("PWD")
         && logical_pwd_is_valid(pwd)
         && paths_match_logically(pwd, &cwd)
@@ -1865,7 +1842,7 @@ enum UnsetTarget {
     Function,
 }
 
-fn parse_unset_target(argv: &[String]) -> Result<(UnsetTarget, usize), ShellError> {
+fn parse_unset_target(shell: &Shell, argv: &[String]) -> Result<(UnsetTarget, usize), ShellError> {
     let mut target = UnsetTarget::Variable;
     let mut index = 1usize;
     while let Some(arg) = argv.get(index) {
@@ -1881,10 +1858,7 @@ fn parse_unset_target(argv: &[String]) -> Result<(UnsetTarget, usize), ShellErro
                 'v' => target = UnsetTarget::Variable,
                 'f' => target = UnsetTarget::Function,
                 _ => {
-                    return Err(ShellError::diagnostic(
-                        1,
-                        format_args!("unset: invalid option: -{ch}"),
-                    ));
+                    return Err(shell.diagnostic(1, format_args!("unset: invalid option: -{ch}")));
                 }
             }
         }
@@ -2011,12 +1985,17 @@ fn execute_command_utility(
     }
 
     let Some(path) = which_in_path(name, shell, use_default_path) else {
-        return Ok(diag_status(127, format_args!("command: {name}: not found")));
+        return Ok(diag_status(
+            shell,
+            127,
+            format_args!("command: {name}: not found"),
+        ));
     };
 
     let path_str = path.display().to_string();
     if sys::access_path(&path_str, sys::X_OK).is_err() {
         return Ok(diag_status(
+            shell,
             126,
             format_args!("command: {name}: Permission denied"),
         ));
@@ -2043,13 +2022,21 @@ fn execute_command_utility(
         None,
     ) {
         Ok(handle) => {
-            let ws = sys::wait_pid(handle.pid, false)?.expect("child status");
+            let ws = sys::wait_pid(handle.pid, false)
+                .map_err(|e| shell.diagnostic(1, &e))?
+                .expect("child status");
             Ok(BuiltinOutcome::Status(sys::decode_wait_status(ws.status)))
         }
-        Err(error) if error.is_enoent() => {
-            Ok(diag_status(127, format_args!("command: {name}: not found")))
-        }
-        Err(error) => Ok(diag_status(126, format_args!("command: {name}: {error}"))),
+        Err(error) if error.is_enoent() => Ok(diag_status(
+            shell,
+            127,
+            format_args!("command: {name}: not found"),
+        )),
+        Err(error) => Ok(diag_status(
+            shell,
+            126,
+            format_args!("command: {name}: {error}"),
+        )),
     }
 }
 
@@ -2752,7 +2739,8 @@ mod tests {
                 ),
             ],
             || {
-                assert!(matches!(times(), BuiltinOutcome::Status(1)));
+                let shell = test_shell();
+                assert!(matches!(times(&shell), BuiltinOutcome::Status(1)));
             },
         );
     }
@@ -3465,14 +3453,20 @@ mod tests {
                 ),
             ],
             || {
+                let shell = test_shell();
                 parse_declaration_listing_flag(
+                    &shell,
                     "export",
                     &["export".into(), "-p".into(), "NAME".into()],
                 )
                 .expect_err("export -p operands");
 
-                parse_declaration_listing_flag("readonly", &["readonly".into(), "-x".into()])
-                    .expect_err("readonly invalid");
+                parse_declaration_listing_flag(
+                    &shell,
+                    "readonly",
+                    &["readonly".into(), "-x".into()],
+                )
+                .expect_err("readonly invalid");
             },
         );
     }
@@ -3489,12 +3483,14 @@ mod tests {
                 TraceResult::Auto,
             )],
             || {
+                let shell = test_shell();
                 assert_eq!(
-                    parse_unset_target(&["unset".into(), "--".into(), "NAME".into()])
+                    parse_unset_target(&shell, &["unset".into(), "--".into(), "NAME".into()])
                         .expect("unset --"),
                     (UnsetTarget::Variable, 2)
                 );
-                parse_unset_target(&["unset".into(), "-z".into()]).expect_err("unset invalid");
+                parse_unset_target(&shell, &["unset".into(), "-z".into()])
+                    .expect_err("unset invalid");
 
                 assert_eq!(
                     parse_command_options(&["command".into(), "--".into(), "echo".into()]),
@@ -6484,11 +6480,12 @@ mod tests {
     #[test]
     fn parse_kill_signal_recognizes_sigprefix() {
         assert_no_syscalls(|| {
-            let sig = parse_kill_signal("SIGTERM").expect("SIGTERM");
+            let shell = test_shell();
+            let sig = parse_kill_signal(&shell, "SIGTERM").expect("SIGTERM");
             assert_eq!(sig, sys::SIGTERM);
-            let sig = parse_kill_signal("TERM").expect("TERM");
+            let sig = parse_kill_signal(&shell, "TERM").expect("TERM");
             assert_eq!(sig, sys::SIGTERM);
-            let sig = parse_kill_signal("9").expect("9");
+            let sig = parse_kill_signal(&shell, "9").expect("9");
             assert_eq!(sig, 9);
         });
     }
@@ -6505,7 +6502,8 @@ mod tests {
                 TraceResult::Auto,
             )],
             || {
-                assert!(parse_kill_signal("BOGUS").is_err());
+                let shell = test_shell();
+                assert!(parse_kill_signal(&shell, "BOGUS").is_err());
             },
         );
     }
@@ -6723,7 +6721,8 @@ mod tests {
     #[test]
     fn parse_kill_signal_zero_via_sig_prefix() {
         assert_no_syscalls(|| {
-            let sig = parse_kill_signal("SIG0").expect("SIG0");
+            let shell = test_shell();
+            let sig = parse_kill_signal(&shell, "SIG0").expect("SIG0");
             assert_eq!(sig, 0);
         });
     }

@@ -6,7 +6,7 @@ use crate::shell::{Shell, ShellError};
 use crate::sys;
 
 pub fn run(shell: &mut Shell) -> Result<i32, ShellError> {
-    sys::ensure_blocking_read_fd(sys::STDIN_FILENO)?;
+    sys::ensure_blocking_read_fd(sys::STDIN_FILENO).map_err(|e| shell.diagnostic(1, &e))?;
     run_loop(shell)
 }
 
@@ -34,9 +34,9 @@ fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
         } else {
             expand_prompt(shell, "PS2", "> ")
         };
-        write_prompt(&prompt_str)?;
+        write_prompt(&prompt_str).map_err(|e| shell.diagnostic(1, &e))?;
 
-        let line = match read_line()? {
+        let line = match read_line().map_err(|e| shell.diagnostic(1, &e))? {
             Some(line) => line,
             None => {
                 if !accumulated.is_empty() {
@@ -78,12 +78,12 @@ fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
     Ok(shell.last_status)
 }
 
-fn write_prompt(prompt_str: &str) -> Result<(), ShellError> {
+fn write_prompt(prompt_str: &str) -> sys::SysResult<()> {
     loop {
         match sys::write_all_fd(sys::STDERR_FILENO, prompt_str.as_bytes()) {
             Ok(()) => return Ok(()),
             Err(e) if e.is_eintr() => continue,
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(e),
         }
     }
 }
@@ -145,7 +145,8 @@ pub fn load_env_file(shell: &mut Shell) -> Result<(), ShellError> {
     let arena = StringArena::new();
     let env_file = env_value
         .map(|value| expand::expand_parameter_text(shell, &value, &arena).map(|s| s.to_string()))
-        .transpose()?
+        .transpose()
+        .map_err(|e| shell.expand_to_err(e))?
         .map(PathBuf::from);
     if let Some(path) = env_file {
         if path.is_absolute() && sys::file_exists(&path.display().to_string()) {
@@ -161,13 +162,14 @@ fn append_history(shell: &Shell, line: &str) -> Result<(), ShellError> {
         &history.display().to_string(),
         sys::O_WRONLY | sys::O_CREAT | sys::O_APPEND,
         0o644,
-    )?;
+    )
+    .map_err(|e| shell.diagnostic(1, &e))?;
     let mut entry = line.to_string();
     if !entry.ends_with('\n') {
         entry.push('\n');
     }
-    sys::write_all_fd(fd, entry.as_bytes())?;
-    sys::close_fd(fd)?;
+    sys::write_all_fd(fd, entry.as_bytes()).map_err(|e| shell.diagnostic(1, &e))?;
+    sys::close_fd(fd).map_err(|e| shell.diagnostic(1, &e))?;
     Ok(())
 }
 
