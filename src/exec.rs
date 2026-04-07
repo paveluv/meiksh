@@ -408,6 +408,7 @@ fn wait_for_children_inner(
                 }
                 return Ok((128 + sig, 128 + sig));
             }
+            ChildWaitResult::Interrupted(_) => unreachable!("non-interruptible wait"),
         }
     }
     restore_foreground(saved_foreground);
@@ -444,6 +445,7 @@ fn wait_for_external_child(
             }
             Ok(128 + sig)
         }
+        ChildWaitResult::Interrupted(_) => unreachable!("non-interruptible wait"),
     }
 }
 
@@ -457,13 +459,7 @@ fn execute_command(shell: &mut Shell, command: &Command) -> Result<i32, ShellErr
                 let _ = child_shell.reset_traps_for_subshell();
                 let status = match execute_nested_program(&mut child_shell, program) {
                     Ok(s) => s,
-                    Err(error) => {
-                        let msg = error.display_message();
-                        if !msg.is_empty() {
-                            sys_eprintln!("meiksh: {}", msg);
-                        }
-                        error.exit_status()
-                    }
+                    Err(error) => error.exit_status(),
                 };
                 sys::exit_process(status as sys::RawFd);
             }
@@ -504,10 +500,7 @@ fn execute_redirected(
     let expanded = expand_redirections(shell, redirections, &arena)?;
     let guard = match apply_shell_redirections(&expanded, shell.options.noclobber) {
         Ok(guard) => guard,
-        Err(error) => {
-            sys_eprintln!("meiksh: {}", error.display_message());
-            return Ok(1);
-        }
+        Err(error) => return Ok(error.exit_status()),
     };
     let result = execute_command(shell, command);
     drop(guard);
@@ -624,7 +617,9 @@ fn execute_for(shell: &mut Shell, for_command: &ForCommand) -> Result<i32, Shell
     let result = (|| {
         let mut last_status = 0;
         for value in values {
-            shell.set_var(&for_command.name, value)?;
+            shell
+                .set_var(&for_command.name, value)
+                .map_err(|e| ShellError::diagnostic(1, &e))?;
             last_status = execute_nested_program(shell, &for_command.body)?;
             if !shell.running {
                 break;
@@ -706,7 +701,9 @@ fn apply_prefix_assignments(
     assignments: &[(String, String)],
 ) -> Result<(), ShellError> {
     for (name, value) in assignments {
-        shell.set_var(name, value.clone())?;
+        shell
+            .set_var(name, value.clone())
+            .map_err(|e| ShellError::diagnostic(1, &e))?;
     }
     Ok(())
 }
@@ -808,13 +805,12 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
         let guard = match apply_shell_redirections(&expanded.redirections, shell.options.noclobber)
         {
             Ok(g) => g,
-            Err(error) => {
-                sys_eprintln!("meiksh: {}", error.display_message());
-                return Ok(1);
-            }
+            Err(error) => return Ok(error.exit_status()),
         };
         for (name, value) in &owned_assignments {
-            shell.set_var(name, value.clone())?;
+            shell
+                .set_var(name, value.clone())
+                .map_err(|e| ShellError::diagnostic(1, &e))?;
         }
         drop(guard);
         return Ok(cmd_sub_status);
@@ -840,7 +836,7 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
             });
         return match result {
             Ok(BuiltinResult::UtilityError(status)) if !shell.interactive => {
-                Err(ShellError::with_status(status, ""))
+                Err(ShellError::silent(status))
             }
             Ok(BuiltinResult::Status(status) | BuiltinResult::UtilityError(status)) => Ok(status),
             Err(error) => Err(error),
@@ -851,10 +847,7 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
         let guard = match apply_shell_redirections(&expanded.redirections, shell.options.noclobber)
         {
             Ok(g) => g,
-            Err(error) => {
-                sys_eprintln!("meiksh: {}", error.display_message());
-                return Ok(1);
-            }
+            Err(error) => return Ok(error.exit_status()),
         };
         let saved_vars = save_vars(shell, &owned_assignments);
         if let Err(e) = apply_prefix_assignments(shell, &owned_assignments) {
@@ -862,20 +855,12 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
             drop(guard);
             return Err(e);
         }
-        let has_redirections = !expanded.redirections.is_empty();
         let saved = std::mem::replace(&mut shell.positional, owned_argv[1..].to_vec());
         shell.function_depth += 1;
         let status = execute_command(shell, &function);
         shell.function_depth = shell.function_depth.saturating_sub(1);
         shell.positional = saved;
         restore_vars(shell, saved_vars);
-        if has_redirections
-            && status
-                .as_ref()
-                .is_err_and(|e| !e.display_message().is_empty())
-        {
-            sys_eprintln!("meiksh: {}", status.as_ref().unwrap_err().display_message());
-        }
         drop(guard);
         match status {
             Ok(status) => match shell.pending_control {
@@ -885,7 +870,6 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
                 }
                 _ => Ok(status),
             },
-            Err(error) if has_redirections => Err(ShellError::with_status(error.exit_status(), "")),
             Err(error) => Err(error),
         }
     } else if builtin::is_builtin(&owned_argv[0]) {
@@ -908,17 +892,15 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
         };
         match result {
             Ok(BuiltinResult::Status(status) | BuiltinResult::UtilityError(status)) => Ok(status),
-            Err(error) => {
-                sys_eprintln!("{}", error.display_message());
-                Ok(error.exit_status())
-            }
+            Err(error) => Ok(error.exit_status()),
         }
     } else {
         for (name, _value) in &owned_assignments {
             if shell.readonly.contains(name.as_str()) {
-                return Err(ShellError {
-                    message: format!("{name}: readonly variable").into(),
-                });
+                return Err(ShellError::diagnostic(
+                    1,
+                    format_args!("{name}: readonly variable"),
+                ));
             }
         }
         let command_name = owned_argv[0].clone();
@@ -931,10 +913,7 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
         }
         let handle = match spawn_prepared(shell, &prepared, ProcessGroupPlan::NewGroup) {
             Ok(h) => h,
-            Err(error) => {
-                sys_eprintln!("{}: {}", command_name, error.display_message());
-                return Ok(error.exit_status());
-            }
+            Err(error) => return Ok(error.exit_status()),
         };
         let pgid = handle.pid;
         let _ = sys::set_process_group(pgid, pgid);
@@ -1083,9 +1062,10 @@ fn expand_simple<'a>(
             .fd
             .unwrap_or_else(|| default_fd_for_redirection(redirection.kind));
         let (target, here_doc_body) = if redirection.kind == RedirectionKind::HereDoc {
-            let here_doc = redirection.here_doc.as_ref().ok_or_else(|| ShellError {
-                message: "missing here-document body".into(),
-            })?;
+            let here_doc = redirection
+                .here_doc
+                .as_ref()
+                .ok_or_else(|| ShellError::diagnostic(2, "missing here-document body"))?;
             let body = if here_doc.expand {
                 expand::expand_here_document(shell, &here_doc.body, arena)?
             } else {
@@ -1149,9 +1129,10 @@ fn expand_redirections<'a>(
             .fd
             .unwrap_or_else(|| default_fd_for_redirection(redirection.kind));
         let (target, here_doc_body) = if redirection.kind == RedirectionKind::HereDoc {
-            let here_doc = redirection.here_doc.as_ref().ok_or_else(|| ShellError {
-                message: "missing here-document body".into(),
-            })?;
+            let here_doc = redirection
+                .here_doc
+                .as_ref()
+                .ok_or_else(|| ShellError::diagnostic(2, "missing here-document body"))?;
             let body = if here_doc.expand {
                 expand::expand_here_document(shell, &here_doc.body, arena)?
             } else {
@@ -1178,9 +1159,10 @@ fn build_process_from_expanded(
     owned_argv: Vec<String>,
     owned_assignments: Vec<(String, String)>,
 ) -> Result<PreparedProcess, ShellError> {
-    let program = expanded.argv.first().ok_or_else(|| ShellError {
-        message: "empty command".into(),
-    })?;
+    let program = expanded
+        .argv
+        .first()
+        .ok_or_else(|| ShellError::diagnostic(1, "empty command"))?;
     let prefix_path = expanded
         .assignments
         .iter()
@@ -1258,16 +1240,21 @@ fn spawn_prepared(
     if !prepared.path_verified && !prepared.exec_path.is_empty() && prepared.exec_path.contains('/')
     {
         if sys::access_path(&prepared.exec_path, sys::F_OK).is_err() {
-            return Err(ShellError::with_status(127, "not found"));
+            sys_eprintln!("{}: not found", prepared.argv[0]);
+            return Err(ShellError::silent(127));
         }
         if sys::access_path(&prepared.exec_path, sys::X_OK).is_err() {
-            return Err(ShellError::with_status(126, "Permission denied"));
+            sys_eprintln!("{}: Permission denied", prepared.argv[0]);
+            return Err(ShellError::silent(126));
         }
     }
 
     let prepared_redirections = prepare_redirections(&prepared.redirections, prepared.noclobber)?;
 
-    let pid = sys::fork_process()?;
+    let pid = sys::fork_process().map_err(|e| {
+        sys_eprintln!("{}: {}", prepared.argv[0], e);
+        ShellError::silent(1)
+    })?;
     if pid == 0 {
         match process_group {
             ProcessGroupPlan::NewGroup => {
@@ -1400,14 +1387,12 @@ fn prepare_redirections<R: RedirectionRef>(
                         target_fd: redirection.fd(),
                     });
                 } else {
-                    let source_fd =
-                        redirection
-                            .target()
-                            .parse::<i32>()
-                            .map_err(|_| ShellError {
-                                message: "redirection target must be a file descriptor or '-'"
-                                    .into(),
-                            })?;
+                    let source_fd = redirection.target().parse::<i32>().map_err(|_| {
+                        ShellError::diagnostic(
+                            1,
+                            "redirection target must be a file descriptor or '-'",
+                        )
+                    })?;
                     prepared.actions.push(ChildFdAction::DupFd {
                         source_fd,
                         target_fd: redirection.fd(),
@@ -1594,12 +1579,9 @@ fn apply_shell_redirection<R: RedirectionRef>(
             if redirection.target() == "-" {
                 close_shell_fd(redirection.fd())?;
             } else {
-                let source_fd = redirection
-                    .target()
-                    .parse::<i32>()
-                    .map_err(|_| ShellError {
-                        message: "redirection target must be a file descriptor or '-'".into(),
-                    })?;
+                let source_fd = redirection.target().parse::<i32>().map_err(|_| {
+                    ShellError::diagnostic(1, "redirection target must be a file descriptor or '-'")
+                })?;
                 sys::duplicate_fd(source_fd, redirection.fd())?;
             }
         }
@@ -2279,49 +2261,59 @@ mod tests {
 
     #[test]
     fn build_process_from_expanded_covers_empty_and_assignment_env() {
-        assert_no_syscalls(|| {
-            let arena = StringArena::new();
-            let shell = test_shell();
-            let error = build_process_from_expanded(
-                &shell,
-                ExpandedSimpleCommand {
-                    assignments: Vec::new(),
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Bytes(b"meiksh: empty command\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let arena = StringArena::new();
+                let shell = test_shell();
+                let error = build_process_from_expanded(
+                    &shell,
+                    ExpandedSimpleCommand {
+                        assignments: Vec::new(),
 
-                    argv: Vec::new(),
+                        argv: Vec::new(),
 
+                        redirections: Vec::new(),
+                    },
+                    Vec::new(),
+                    Vec::new(),
+                )
+                .expect_err("empty command");
+                assert_eq!(error.exit_status(), 1);
+
+                let mut shell = test_shell();
+                shell.env.insert("PATH".into(), String::new());
+                let expanded = ExpandedSimpleCommand {
+                    assignments: vec![(arena.intern_str("ASSIGN_VAR"), arena.intern_str("works"))],
+                    argv: vec![arena.intern_str("echo"), arena.intern_str("hello")],
                     redirections: Vec::new(),
-                },
-                Vec::new(),
-                Vec::new(),
-            )
-            .expect_err("empty command");
-            assert_eq!(&*error.message, "empty command");
-
-            let mut shell = test_shell();
-            shell.env.insert("PATH".into(), String::new());
-            let expanded = ExpandedSimpleCommand {
-                assignments: vec![(arena.intern_str("ASSIGN_VAR"), arena.intern_str("works"))],
-                argv: vec![arena.intern_str("echo"), arena.intern_str("hello")],
-                redirections: Vec::new(),
-            };
-            let owned_argv: Vec<String> = expanded.argv.iter().map(|s| s.to_string()).collect();
-            let owned_assignments: Vec<(String, String)> = expanded
-                .assignments
-                .iter()
-                .map(|&(n, v)| (n.to_string(), v.to_string()))
-                .collect();
-            let prepared =
-                build_process_from_expanded(&shell, expanded, owned_argv, owned_assignments)
-                    .expect("process");
-            assert_eq!(
-                &*prepared.child_env,
-                &[(Box::from("ASSIGN_VAR"), Box::from("works"))] as &[(Box<str>, Box<str>)]
-            );
-            assert_eq!(
-                &*prepared.argv,
-                &[Box::from("echo"), Box::from("hello")] as &[Box<str>]
-            );
-        });
+                };
+                let owned_argv: Vec<String> = expanded.argv.iter().map(|s| s.to_string()).collect();
+                let owned_assignments: Vec<(String, String)> = expanded
+                    .assignments
+                    .iter()
+                    .map(|&(n, v)| (n.to_string(), v.to_string()))
+                    .collect();
+                let prepared =
+                    build_process_from_expanded(&shell, expanded, owned_argv, owned_assignments)
+                        .expect("process");
+                assert_eq!(
+                    &*prepared.child_env,
+                    &[(Box::from("ASSIGN_VAR"), Box::from("works"))] as &[(Box<str>, Box<str>)]
+                );
+                assert_eq!(
+                    &*prepared.argv,
+                    &[Box::from("echo"), Box::from("hello")] as &[Box<str>]
+                );
+            },
+        );
     }
 
     #[test]
@@ -2402,14 +2394,24 @@ mod tests {
     #[test]
     fn spawn_prepared_errors_for_missing_executable() {
         run_trace(
-            vec![t(
-                "access",
-                vec![
-                    ArgMatcher::Str("/nonexistent/missing".into()),
-                    ArgMatcher::Int(0),
-                ],
-                TraceResult::Err(sys::ENOENT),
-            )],
+            vec![
+                t(
+                    "access",
+                    vec![
+                        ArgMatcher::Str("/nonexistent/missing".into()),
+                        ArgMatcher::Int(0),
+                    ],
+                    TraceResult::Err(sys::ENOENT),
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"missing: not found\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+            ],
             || {
                 let missing = PreparedProcess {
                     exec_path: "/nonexistent/missing".into(),
@@ -2536,95 +2538,123 @@ mod tests {
 
     #[test]
     fn heredoc_expansion_error_paths() {
-        assert_no_syscalls(|| {
-            let arena = StringArena::new();
-            let mut shell = test_shell();
-            let error = expand_simple(
-                &mut shell,
-                &SimpleCommand {
-                    words: vec![Word { raw: "cat".into() }].into_boxed_slice(),
-                    redirections: vec![Redirection {
+        run_trace(
+            vec![
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"meiksh: missing here-document body\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(
+                            b"meiksh: redirection target must be a file descriptor or '-'\n"
+                                .to_vec(),
+                        ),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"meiksh: missing here-document body\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+            ],
+            || {
+                let arena = StringArena::new();
+                let mut shell = test_shell();
+                let error = expand_simple(
+                    &mut shell,
+                    &SimpleCommand {
+                        words: vec![Word { raw: "cat".into() }].into_boxed_slice(),
+                        redirections: vec![Redirection {
+                            fd: None,
+                            kind: RedirectionKind::HereDoc,
+                            target: Word { raw: "EOF".into() },
+                            here_doc: None,
+                        }]
+                        .into_boxed_slice(),
+                        ..SimpleCommand::default()
+                    },
+                    &arena,
+                )
+                .expect_err("expected missing here-document body");
+                assert_eq!(error.exit_status(), 2);
+
+                let error = prepare_redirections(
+                    &[ExpandedRedirection {
+                        fd: 1,
+                        kind: RedirectionKind::DupOutput,
+                        target: "bad",
+                        here_doc_body: None,
+                    }],
+                    false,
+                )
+                .expect_err("bad dup target");
+                assert_eq!(error.exit_status(), 1);
+
+                let mut shell = test_shell();
+                let expanded = expand_redirections(
+                    &mut shell,
+                    &[Redirection {
+                        fd: None,
+                        kind: RedirectionKind::HereDoc,
+                        target: Word { raw: "EOF".into() },
+                        here_doc: Some(HereDoc {
+                            delimiter: "EOF".into(),
+                            body: "hello $USER".into(),
+                            expand: true,
+                            strip_tabs: false,
+                        }),
+                    }],
+                    &arena,
+                )
+                .expect("expand heredoc redirection");
+                assert_eq!(expanded[0].target, "EOF");
+                assert_eq!(expanded[0].here_doc_body, Some("hello "));
+
+                let mut shell = test_shell();
+                let literal = expand_redirections(
+                    &mut shell,
+                    &[Redirection {
+                        fd: None,
+                        kind: RedirectionKind::HereDoc,
+                        target: Word { raw: "EOF".into() },
+                        here_doc: Some(HereDoc {
+                            delimiter: "EOF".into(),
+                            body: "hello $USER".into(),
+                            expand: false,
+                            strip_tabs: false,
+                        }),
+                    }],
+                    &arena,
+                )
+                .expect("literal heredoc redirection");
+                assert_eq!(literal[0].here_doc_body, Some("hello $USER"));
+
+                let mut shell = test_shell();
+                let error = expand_redirections(
+                    &mut shell,
+                    &[Redirection {
                         fd: None,
                         kind: RedirectionKind::HereDoc,
                         target: Word { raw: "EOF".into() },
                         here_doc: None,
-                    }]
-                    .into_boxed_slice(),
-                    ..SimpleCommand::default()
-                },
-                &arena,
-            )
-            .expect_err("expected missing here-document body");
-            assert_eq!(&*error.message, "missing here-document body");
-
-            let error = prepare_redirections(
-                &[ExpandedRedirection {
-                    fd: 1,
-                    kind: RedirectionKind::DupOutput,
-                    target: "bad",
-                    here_doc_body: None,
-                }],
-                false,
-            )
-            .expect_err("bad dup target");
-            assert_eq!(
-                &*error.message,
-                "redirection target must be a file descriptor or '-'"
-            );
-
-            let mut shell = test_shell();
-            let expanded = expand_redirections(
-                &mut shell,
-                &[Redirection {
-                    fd: None,
-                    kind: RedirectionKind::HereDoc,
-                    target: Word { raw: "EOF".into() },
-                    here_doc: Some(HereDoc {
-                        delimiter: "EOF".into(),
-                        body: "hello $USER".into(),
-                        expand: true,
-                        strip_tabs: false,
-                    }),
-                }],
-                &arena,
-            )
-            .expect("expand heredoc redirection");
-            assert_eq!(expanded[0].target, "EOF");
-            assert_eq!(expanded[0].here_doc_body, Some("hello "));
-
-            let mut shell = test_shell();
-            let literal = expand_redirections(
-                &mut shell,
-                &[Redirection {
-                    fd: None,
-                    kind: RedirectionKind::HereDoc,
-                    target: Word { raw: "EOF".into() },
-                    here_doc: Some(HereDoc {
-                        delimiter: "EOF".into(),
-                        body: "hello $USER".into(),
-                        expand: false,
-                        strip_tabs: false,
-                    }),
-                }],
-                &arena,
-            )
-            .expect("literal heredoc redirection");
-            assert_eq!(literal[0].here_doc_body, Some("hello $USER"));
-
-            let mut shell = test_shell();
-            let error = expand_redirections(
-                &mut shell,
-                &[Redirection {
-                    fd: None,
-                    kind: RedirectionKind::HereDoc,
-                    target: Word { raw: "EOF".into() },
-                    here_doc: None,
-                }],
-                &arena,
-            )
-            .expect_err("missing expanded heredoc body");
-            assert_eq!(&*error.message, "missing here-document body");
-        });
+                    }],
+                    &arena,
+                )
+                .expect_err("missing expanded heredoc body");
+                assert_eq!(error.exit_status(), 2);
+            },
+        );
     }
 
     #[test]
@@ -2665,6 +2695,14 @@ mod tests {
                     vec![ArgMatcher::Fd(11), ArgMatcher::Bytes(b"body\n".to_vec())],
                     TraceResult::Err(sys::EIO),
                 ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"meiksh: Input/output error\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
             ],
             || {
                 let err = prepare_redirections(
@@ -2677,7 +2715,7 @@ mod tests {
                     false,
                 )
                 .expect_err("heredoc write should fail");
-                assert!(!err.message.is_empty());
+                assert_ne!(err.exit_status(), 0);
             },
         );
     }
@@ -3602,130 +3640,144 @@ mod tests {
 
     #[test]
     fn control_flow_propagates_across_functions_and_loops() {
-        assert_no_syscalls(|| {
-            let mut shell = test_shell();
-            let program = parse_test("f() { return 6; VALUE=bad; }; f").expect("parse");
-            let status = execute_program(&mut shell, &program).expect("exec");
-            assert_eq!(status, 6);
-            assert_eq!(shell.get_var("VALUE"), None);
-            assert_eq!(shell.pending_control, None);
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Bytes(b"meiksh: break: only meaningful in a loop\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                let program = parse_test("f() { return 6; VALUE=bad; }; f").expect("parse");
+                let status = execute_program(&mut shell, &program).expect("exec");
+                assert_eq!(status, 6);
+                assert_eq!(shell.get_var("VALUE"), None);
+                assert_eq!(shell.pending_control, None);
 
-            let mut shell = test_shell();
-            let program = parse_test(
+                let mut shell = test_shell();
+                let program = parse_test(
                 "for outer in x y; do for inner in a b; do continue 2; VALUE=bad; done; printf no; done",
             )
             .expect("parse");
-            let status = execute_program(&mut shell, &program).expect("exec");
-            assert_eq!(status, 0);
-            assert_eq!(shell.get_var("VALUE"), None);
-            assert_eq!(shell.get_var("outer"), Some("y"));
+                let status = execute_program(&mut shell, &program).expect("exec");
+                assert_eq!(status, 0);
+                assert_eq!(shell.get_var("VALUE"), None);
+                assert_eq!(shell.get_var("outer"), Some("y"));
 
-            let mut shell = test_shell();
-            let program = parse_test(
-                "for outer in x y; do for inner in a b; do break 2; done; VALUE=bad; done",
-            )
-            .expect("parse");
-            let status = execute_program(&mut shell, &program).expect("exec");
-            assert_eq!(status, 0);
-            assert_eq!(shell.get_var("VALUE"), None);
-            assert_eq!(shell.get_var("outer"), Some("x"));
+                let mut shell = test_shell();
+                let program = parse_test(
+                    "for outer in x y; do for inner in a b; do break 2; done; VALUE=bad; done",
+                )
+                .expect("parse");
+                let status = execute_program(&mut shell, &program).expect("exec");
+                assert_eq!(status, 0);
+                assert_eq!(shell.get_var("VALUE"), None);
+                assert_eq!(shell.get_var("outer"), Some("x"));
 
-            let mut shell = test_shell();
-            let program = parse_test("f() { while true; do return 4; done; }; f").expect("parse");
-            let status = execute_program(&mut shell, &program).expect("exec");
-            assert_eq!(status, 4);
-            assert_eq!(shell.pending_control, None);
+                let mut shell = test_shell();
+                let program =
+                    parse_test("f() { while true; do return 4; done; }; f").expect("parse");
+                let status = execute_program(&mut shell, &program).expect("exec");
+                assert_eq!(status, 4);
+                assert_eq!(shell.pending_control, None);
 
-            let mut shell = test_shell();
-            let program = parse_test("g() { break; }; g").expect("parse");
-            let error = execute_program(&mut shell, &program).expect_err("function error");
-            assert_eq!(&*error.message, "break: only meaningful in a loop");
+                let mut shell = test_shell();
+                let program = parse_test("g() { break; }; g").expect("parse");
+                let error = execute_program(&mut shell, &program).expect_err("function error");
+                assert_eq!(error.exit_status(), 1);
 
-            let mut shell = test_shell();
-            let program =
-                parse_test("for outer in x; do while break 2; do printf no; done; AFTER=bad; done")
-                    .expect("parse");
-            let status = execute_program(&mut shell, &program).expect("exec");
-            assert_eq!(status, 0);
-            assert_eq!(shell.get_var("AFTER"), None);
+                let mut shell = test_shell();
+                let program = parse_test(
+                    "for outer in x; do while break 2; do printf no; done; AFTER=bad; done",
+                )
+                .expect("parse");
+                let status = execute_program(&mut shell, &program).expect("exec");
+                assert_eq!(status, 0);
+                assert_eq!(shell.get_var("AFTER"), None);
 
-            let mut shell = test_shell();
-            let program = parse_test(
-                "for outer in x; do while continue 2; do printf no; done; AFTER=bad; done",
-            )
-            .expect("parse");
-            let status = execute_program(&mut shell, &program).expect("exec");
-            assert_eq!(status, 0);
-            assert_eq!(shell.get_var("AFTER"), None);
+                let mut shell = test_shell();
+                let program = parse_test(
+                    "for outer in x; do while continue 2; do printf no; done; AFTER=bad; done",
+                )
+                .expect("parse");
+                let status = execute_program(&mut shell, &program).expect("exec");
+                assert_eq!(status, 0);
+                assert_eq!(shell.get_var("AFTER"), None);
 
-            let mut shell = test_shell();
-            let program =
-                parse_test("f() { while return 3; do printf no; done; }; f").expect("parse");
-            let status = execute_program(&mut shell, &program).expect("exec");
-            assert_eq!(status, 3);
+                let mut shell = test_shell();
+                let program =
+                    parse_test("f() { while return 3; do printf no; done; }; f").expect("parse");
+                let status = execute_program(&mut shell, &program).expect("exec");
+                assert_eq!(status, 3);
 
-            let mut shell = test_shell();
-            let program = parse_test(
+                let mut shell = test_shell();
+                let program = parse_test(
                 "COUNT=1; while case $COUNT in 0) break ;; *) COUNT=0; continue ;; esac; do printf no; done",
             )
             .expect("parse");
-            let status = execute_program(&mut shell, &program).expect("exec");
-            assert_eq!(status, 0);
-            assert_eq!(shell.get_var("COUNT"), Some("0"));
+                let status = execute_program(&mut shell, &program).expect("exec");
+                assert_eq!(status, 0);
+                assert_eq!(shell.get_var("COUNT"), Some("0"));
 
-            let mut shell = test_shell();
-            let program = parse_test(
+                let mut shell = test_shell();
+                let program = parse_test(
                 "COUNT=1; while true; do case $COUNT in 0) break ;; *) COUNT=0; continue ;; esac; printf no; done",
             )
             .expect("parse");
-            let status = execute_program(&mut shell, &program).expect("exec");
-            assert_eq!(status, 0);
-            assert_eq!(shell.get_var("COUNT"), Some("0"));
+                let status = execute_program(&mut shell, &program).expect("exec");
+                assert_eq!(status, 0);
+                assert_eq!(shell.get_var("COUNT"), Some("0"));
 
-            let mut shell = test_shell();
-            let program =
-                parse_test("f() { for item in a; do return 5; done; }; f").expect("parse");
-            let status = execute_program(&mut shell, &program).expect("exec");
-            assert_eq!(status, 5);
+                let mut shell = test_shell();
+                let program =
+                    parse_test("f() { for item in a; do return 5; done; }; f").expect("parse");
+                let status = execute_program(&mut shell, &program).expect("exec");
+                assert_eq!(status, 5);
 
-            let mut shell = test_shell();
-            let program =
-                parse_test("for outer in x; do for inner in y; do break 2; done; DONE=no; done")
-                    .expect("parse");
-            let status = execute_program(&mut shell, &program).expect("exec");
-            assert_eq!(status, 0);
-            assert_eq!(shell.get_var("DONE"), None);
+                let mut shell = test_shell();
+                let program = parse_test(
+                    "for outer in x; do for inner in y; do break 2; done; DONE=no; done",
+                )
+                .expect("parse");
+                let status = execute_program(&mut shell, &program).expect("exec");
+                assert_eq!(status, 0);
+                assert_eq!(shell.get_var("DONE"), None);
 
-            let mut shell = test_shell();
-            let program =
-                parse_test("for outer in x; do for inner in y; do continue 2; done; DONE=no; done")
-                    .expect("parse");
-            let status = execute_program(&mut shell, &program).expect("exec");
-            assert_eq!(status, 0);
-            assert_eq!(shell.get_var("DONE"), None);
+                let mut shell = test_shell();
+                let program = parse_test(
+                    "for outer in x; do for inner in y; do continue 2; done; DONE=no; done",
+                )
+                .expect("parse");
+                let status = execute_program(&mut shell, &program).expect("exec");
+                assert_eq!(status, 0);
+                assert_eq!(shell.get_var("DONE"), None);
 
-            let mut shell = test_shell();
-            shell.loop_depth = 1;
-            let loop_command = LoopCommand {
-                kind: LoopKind::While,
-                condition: parse_test("true").expect("parse"),
-                body: parse_test("break 2").expect("parse"),
-            };
-            let status = execute_loop(&mut shell, &loop_command).expect("exec");
-            assert_eq!(status, 0);
-            assert_eq!(shell.pending_control, Some(PendingControl::Break(1)));
+                let mut shell = test_shell();
+                shell.loop_depth = 1;
+                let loop_command = LoopCommand {
+                    kind: LoopKind::While,
+                    condition: parse_test("true").expect("parse"),
+                    body: parse_test("break 2").expect("parse"),
+                };
+                let status = execute_loop(&mut shell, &loop_command).expect("exec");
+                assert_eq!(status, 0);
+                assert_eq!(shell.pending_control, Some(PendingControl::Break(1)));
 
-            let mut shell = test_shell();
-            shell.loop_depth = 1;
-            let loop_command = LoopCommand {
-                kind: LoopKind::While,
-                condition: parse_test("true").expect("parse"),
-                body: parse_test("continue 2").expect("parse"),
-            };
-            let status = execute_loop(&mut shell, &loop_command).expect("exec");
-            assert_eq!(status, 0);
-            assert_eq!(shell.pending_control, Some(PendingControl::Continue(1)));
-        });
+                let mut shell = test_shell();
+                shell.loop_depth = 1;
+                let loop_command = LoopCommand {
+                    kind: LoopKind::While,
+                    condition: parse_test("true").expect("parse"),
+                    body: parse_test("continue 2").expect("parse"),
+                };
+                let status = execute_loop(&mut shell, &loop_command).expect("exec");
+                assert_eq!(status, 0);
+                assert_eq!(shell.pending_control, Some(PendingControl::Continue(1)));
+            },
+        );
     }
 
     #[test]
@@ -3921,6 +3973,14 @@ mod tests {
                     vec![ArgMatcher::Fd(105), ArgMatcher::Bytes(b"body\n".to_vec())],
                     TraceResult::Err(sys::EIO),
                 ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"meiksh: Input/output error\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
             ],
             || {
                 let err = apply_shell_redirection(
@@ -3933,7 +3993,7 @@ mod tests {
                     false,
                 )
                 .expect_err("heredoc write should fail");
-                assert!(!err.message.is_empty());
+                assert_ne!(err.exit_status(), 0);
             },
         );
     }
@@ -3981,7 +4041,18 @@ mod tests {
     fn current_shell_noclobber_and_guard_cleanup() {
         run_trace(
             vec![
-                // DupOutput "bad" → error, no OS calls
+                // DupOutput "bad" → error, writes diagnostic to stderr
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(
+                            b"meiksh: redirection target must be a file descriptor or '-'\n"
+                                .to_vec(),
+                        ),
+                    ],
+                    TraceResult::Auto,
+                ),
                 // Write with noclobber → open returns EEXIST
                 t(
                     "open",
@@ -3991,6 +4062,14 @@ mod tests {
                         ArgMatcher::Any,
                     ],
                     TraceResult::Err(sys::EEXIST),
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"meiksh: File exists\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
                 ),
                 // Guard drop with saved=(99, None) → close(99)
                 t("close", vec![ArgMatcher::Fd(99)], TraceResult::Int(0)),
@@ -4024,6 +4103,14 @@ mod tests {
                     ],
                     TraceResult::Err(sys::EINVAL),
                 ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"meiksh: Invalid argument\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
             ],
             || {
                 let error = apply_shell_redirection(
@@ -4036,10 +4123,7 @@ mod tests {
                     false,
                 )
                 .expect_err("bad dup output");
-                assert_eq!(
-                    &*error.message,
-                    "redirection target must be a file descriptor or '-'"
-                );
+                assert_ne!(error.exit_status(), 0);
 
                 let error = apply_shell_redirection(
                     &ExpandedRedirection {
@@ -4051,7 +4135,7 @@ mod tests {
                     true,
                 )
                 .expect_err("noclobber");
-                assert!(!error.message.is_empty());
+                assert_ne!(error.exit_status(), 0);
 
                 drop(ShellRedirectionGuard {
                     saved: vec![(99, None)],
@@ -4079,7 +4163,7 @@ mod tests {
                     false,
                 )
                 .expect_err("dup failure");
-                assert!(!error.message.is_empty());
+                assert_ne!(error.exit_status(), 0);
             },
         );
     }
@@ -4117,6 +4201,14 @@ mod tests {
                     vec![ArgMatcher::Fd(57)],
                     TraceResult::Err(sys::EINVAL),
                 ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"meiksh: Invalid argument\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
             ],
             || {
                 let error = apply_child_fd_actions(&[ChildFdAction::CloseFd { target_fd: 56 }])
@@ -4124,7 +4216,7 @@ mod tests {
                 assert!(!error.to_string().is_empty());
 
                 let error = close_shell_fd(57).expect_err("close failure");
-                assert!(!error.message.is_empty());
+                assert_ne!(error.exit_status(), 0);
             },
         );
     }
@@ -4967,6 +5059,14 @@ mod tests {
                     vec![ArgMatcher::Str("/tmp/noexec.sh".into()), ArgMatcher::Int(1)],
                     TraceResult::Err(sys::EACCES),
                 ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"noexec.sh: Permission denied\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
             ],
             || {
                 let shell = test_shell();
@@ -4981,9 +5081,7 @@ mod tests {
                     path_verified: false,
                 };
                 let err = spawn_prepared(&shell, &prepared, ProcessGroupPlan::None).unwrap_err();
-                assert!(
-                    err.message.contains("Permission denied") || err.message.contains("errno 13")
-                );
+                assert_eq!(err.exit_status(), 126);
             },
         );
     }
@@ -5924,6 +6022,14 @@ mod tests {
                     vec![ArgMatcher::Int(7000), ArgMatcher::Any, ArgMatcher::Int(0)],
                     TraceResult::Err(libc::EPERM),
                 ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"meiksh: Operation not permitted\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
             ],
             || {
                 let mut shell = test_shell();
@@ -6029,7 +6135,7 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(b"set: invalid option: Z\n".to_vec()),
+                    ArgMatcher::Bytes(b"meiksh: set: invalid option: Z\n".to_vec()),
                 ],
                 TraceResult::Auto,
             )],
@@ -6048,7 +6154,7 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(b"set: invalid option: Z\n".to_vec()),
+                    ArgMatcher::Bytes(b"meiksh: set: invalid option: Z\n".to_vec()),
                 ],
                 TraceResult::Auto,
             )],
@@ -6080,12 +6186,6 @@ mod tests {
                     TraceResult::Err(sys::ENOENT),
                 ),
                 t(
-                    "dup2",
-                    vec![ArgMatcher::Int(100), ArgMatcher::Fd(0)],
-                    TraceResult::Int(0),
-                ),
-                t("close", vec![ArgMatcher::Int(100)], TraceResult::Int(0)),
-                t(
                     "write",
                     vec![
                         ArgMatcher::Fd(sys::STDERR_FILENO),
@@ -6093,6 +6193,12 @@ mod tests {
                     ],
                     TraceResult::Auto,
                 ),
+                t(
+                    "dup2",
+                    vec![ArgMatcher::Int(100), ArgMatcher::Fd(0)],
+                    TraceResult::Int(0),
+                ),
+                t("close", vec![ArgMatcher::Int(100)], TraceResult::Int(0)),
             ],
             || {
                 let mut shell = test_shell();
@@ -6100,6 +6206,61 @@ mod tests {
                     .execute_string("{ :; } < /nonexistent_redir_test")
                     .expect("redir");
                 assert_ne!(status, 0);
+            },
+        );
+    }
+
+    #[test]
+    fn compound_command_error_respects_stderr_redirect() {
+        run_trace(
+            vec![
+                t(
+                    "fcntl",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Int(100),
+                ),
+                t(
+                    "open",
+                    vec![
+                        ArgMatcher::Str("/dev/null".into()),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Fd(10),
+                ),
+                t(
+                    "dup2",
+                    vec![ArgMatcher::Fd(10), ArgMatcher::Fd(sys::STDERR_FILENO)],
+                    TraceResult::Int(sys::STDERR_FILENO as i64),
+                ),
+                t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(
+                            b"meiksh: line 1: expected command list after 'if'\n".to_vec(),
+                        ),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "dup2",
+                    vec![ArgMatcher::Int(100), ArgMatcher::Fd(sys::STDERR_FILENO)],
+                    TraceResult::Int(sys::STDERR_FILENO as i64),
+                ),
+                t("close", vec![ArgMatcher::Int(100)], TraceResult::Int(0)),
+            ],
+            || {
+                let mut shell = test_shell();
+                let error = shell
+                    .execute_string("{ eval 'if'; } 2>/dev/null")
+                    .expect_err("syntax error");
+                assert_eq!(error.exit_status(), 2);
             },
         );
     }
@@ -6136,7 +6297,9 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"meiksh: expected command list after 'if'\n".to_vec()),
+                        ArgMatcher::Bytes(
+                            b"meiksh: line 1: expected command list after 'if'\n".to_vec(),
+                        ),
                     ],
                     TraceResult::Auto,
                 ),
@@ -6153,7 +6316,6 @@ mod tests {
                 let error = shell
                     .execute_string("f 2>/dev/null")
                     .expect_err("syntax error");
-                assert!(error.display_message().is_empty());
                 assert_eq!(error.exit_status(), 2);
             },
         );
@@ -6178,12 +6340,6 @@ mod tests {
                     TraceResult::Err(sys::ENOENT),
                 ),
                 t(
-                    "dup2",
-                    vec![ArgMatcher::Int(100), ArgMatcher::Fd(0)],
-                    TraceResult::Int(0),
-                ),
-                t("close", vec![ArgMatcher::Int(100)], TraceResult::Int(0)),
-                t(
                     "write",
                     vec![
                         ArgMatcher::Fd(sys::STDERR_FILENO),
@@ -6191,6 +6347,12 @@ mod tests {
                     ],
                     TraceResult::Auto,
                 ),
+                t(
+                    "dup2",
+                    vec![ArgMatcher::Int(100), ArgMatcher::Fd(0)],
+                    TraceResult::Int(0),
+                ),
+                t("close", vec![ArgMatcher::Int(100)], TraceResult::Int(0)),
             ],
             || {
                 let mut shell = test_shell();
@@ -6248,12 +6410,6 @@ mod tests {
                     TraceResult::Err(sys::ENOENT),
                 ),
                 t(
-                    "dup2",
-                    vec![ArgMatcher::Fd(92), ArgMatcher::Fd(1)],
-                    TraceResult::Int(1),
-                ),
-                t("close", vec![ArgMatcher::Fd(92)], TraceResult::Int(0)),
-                t(
                     "write",
                     vec![
                         ArgMatcher::Fd(sys::STDERR_FILENO),
@@ -6261,6 +6417,12 @@ mod tests {
                     ],
                     TraceResult::Auto,
                 ),
+                t(
+                    "dup2",
+                    vec![ArgMatcher::Fd(92), ArgMatcher::Fd(1)],
+                    TraceResult::Int(1),
+                ),
+                t("close", vec![ArgMatcher::Fd(92)], TraceResult::Int(0)),
             ],
             || {
                 let mut shell = test_shell();
@@ -6277,7 +6439,7 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(b"RO: readonly variable\n".to_vec()),
+                    ArgMatcher::Bytes(b"meiksh: RO: readonly variable\n".to_vec()),
                 ],
                 TraceResult::Auto,
             )],
@@ -6294,14 +6456,24 @@ mod tests {
 
     #[test]
     fn readonly_prefix_on_external_command_is_error() {
-        assert_no_syscalls(|| {
-            let mut shell = test_shell();
-            shell.readonly.insert("RO".into());
-            let err = shell
-                .execute_string("OK=1 RO=val ls")
-                .expect_err("readonly external");
-            assert!(err.message.contains("readonly"));
-        });
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Bytes(b"meiksh: RO: readonly variable\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.readonly.insert("RO".into());
+                let err = shell
+                    .execute_string("OK=1 RO=val ls")
+                    .expect_err("readonly external");
+                assert_ne!(err.exit_status(), 0);
+            },
+        );
     }
 
     #[test]
@@ -6318,14 +6490,24 @@ mod tests {
 
     #[test]
     fn declaration_assignment_expansion_error_propagates() {
-        assert_no_syscalls(|| {
-            let mut shell = test_shell();
-            shell.options.nounset = true;
-            let err = shell
-                .execute_string("export X=$UNSET_NOUNSET_VAR")
-                .expect_err("nounset");
-            assert!(err.message.contains("UNSET_NOUNSET_VAR"));
-        });
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Bytes(b"meiksh: UNSET_NOUNSET_VAR: parameter not set\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.options.nounset = true;
+                let err = shell
+                    .execute_string("export X=$UNSET_NOUNSET_VAR")
+                    .expect_err("nounset");
+                assert_ne!(err.exit_status(), 0);
+            },
+        );
     }
 
     #[test]
@@ -6439,7 +6621,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"--: not found\n".to_vec()),
+                        ArgMatcher::Bytes(b"meiksh: exec: --: not found\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),

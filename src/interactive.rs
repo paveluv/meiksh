@@ -66,8 +66,6 @@ fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
         match shell.execute_string(&source) {
             Ok(status) => shell.last_status = status,
             Err(error) => {
-                let msg = format!("meiksh: {}\n", error.display_message());
-                let _ = sys::write_all_fd(sys::STDERR_FILENO, msg.as_bytes());
                 shell.last_status = error.exit_status();
                 continue;
             }
@@ -430,12 +428,20 @@ mod tests {
                     TraceResult::Int(0),
                 ),
                 t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"meiksh: unterminated single quote\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
             ],
             || {
                 let mut shell = test_shell();
                 shell.env.insert("ENV".into(), "/tmp/bad.sh".into());
                 let error = load_env_file(&mut shell).expect_err("invalid env file");
-                assert!(!error.message.is_empty());
+                assert_ne!(error.exit_status(), 0);
             },
         );
     }
@@ -687,15 +693,25 @@ mod tests {
     #[test]
     fn append_history_reports_open_error() {
         run_trace(
-            vec![t(
-                "open",
-                vec![
-                    ArgMatcher::Str("/tmp/history-dir".into()),
-                    ArgMatcher::Any,
-                    ArgMatcher::Any,
-                ],
-                TraceResult::Err(sys::EISDIR),
-            )],
+            vec![
+                t(
+                    "open",
+                    vec![
+                        ArgMatcher::Str("/tmp/history-dir".into()),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Err(sys::EISDIR),
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"meiksh: Is a directory\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+            ],
             || {
                 let mut shell = test_shell();
                 shell
@@ -703,7 +719,7 @@ mod tests {
                     .insert("HISTFILE".into(), "/tmp/history-dir".into());
                 let error = append_history(&shell, "echo hi\n")
                     .expect_err("directory should not open as file");
-                assert!(!error.message.is_empty());
+                assert_ne!(error.exit_status(), 0);
             },
         );
     }
@@ -1042,14 +1058,24 @@ mod tests {
     #[test]
     fn run_loop_propagates_prompt_write_error() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(b"$ ".to_vec()),
-                ],
-                TraceResult::Err(sys::EIO),
-            )],
+            vec![
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"$ ".to_vec()),
+                    ],
+                    TraceResult::Err(sys::EIO),
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"meiksh: Input/output error\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+            ],
             || {
                 let mut shell = test_shell();
                 let result = run_loop(&mut shell);

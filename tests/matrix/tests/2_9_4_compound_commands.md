@@ -94,6 +94,115 @@ begin test "subshell with redirection on terminator"
 end test "subshell with redirection on terminator"
 ```
 
+#### Test: stderr redirect on brace group captures fd 2
+
+Each redirection on a compound command shall apply to all commands within.
+A stderr redirect on a brace group causes explicit writes to fd 2 inside
+the group to go to the redirected target.
+
+```
+begin test "stderr redirect on brace group captures fd 2"
+  script
+    { echo out; echo err >&2; } 2>tmp_cc_stderr.txt
+    printf "captured:"
+    cat tmp_cc_stderr.txt
+  expect
+    stdout "out\ncaptured:err"
+    stderr ""
+    exit_code 0
+end test "stderr redirect on brace group captures fd 2"
+```
+
+#### Test: stdin redirect on brace group feeds fd 0
+
+Each redirection on a compound command shall apply to all commands within.
+A stdin redirect on a brace group causes reads from fd 0 inside the group
+to come from the redirected source.
+
+```
+begin test "stdin redirect on brace group feeds fd 0"
+  script
+    printf 'hello\n' > tmp_cc_stdin.txt
+    { read line; echo "$line"; } < tmp_cc_stdin.txt
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
+end test "stdin redirect on brace group feeds fd 0"
+```
+
+#### Test: command not found diagnostic captured by brace group stderr redirect
+
+A "not found" diagnostic from a command inside a brace group shall go to
+the compound command's redirected fd 2, not the original stderr.
+
+```
+begin test "command not found diagnostic captured by brace group stderr redirect"
+  script
+    { nonexistent_cmd_xyz_cc; } 2>tmp_cc_notfound.txt
+    cat tmp_cc_notfound.txt
+  expect
+    stdout ".+"
+    stderr ""
+    exit_code 0
+end test "command not found diagnostic captured by brace group stderr redirect"
+```
+
+#### Test: readonly assignment diagnostic captured by brace group stderr redirect
+
+A readonly variable assignment error inside a brace group shall write its
+diagnostic to the compound command's redirected fd 2. Per 2.8.1 the shell
+exits, so we verify by checking nothing leaked to the original stderr.
+
+```
+begin test "readonly assignment diagnostic captured by brace group stderr redirect"
+  script
+    readonly RO_CC=fixed
+    { RO_CC=changed; } 2>tmp_cc_ro.txt
+    echo "should not reach"
+  expect
+    stdout ""
+    stderr ""
+    exit_code !=0
+end test "readonly assignment diagnostic captured by brace group stderr redirect"
+```
+
+#### Test: eval syntax error diagnostic captured by brace group stderr redirect
+
+A syntax error from `eval` inside a brace group shall write its diagnostic
+to the compound command's redirected fd 2. Per 2.9.5 the syntax error
+causes the non-interactive shell to exit, so we verify by checking nothing
+leaked to the original stderr.
+
+```
+begin test "eval syntax error diagnostic captured by brace group stderr redirect"
+  script
+    { eval 'if'; } 2>tmp_cc_eval.txt
+    echo "should not reach"
+  expect
+    stdout ""
+    stderr ""
+    exit_code !=0
+end test "eval syntax error diagnostic captured by brace group stderr redirect"
+```
+
+#### Test: body redirection error diagnostic captured by brace group stderr redirect
+
+When a redirect inside the brace group body fails, the error message shall
+go through the compound command's redirected fd 2, not the original stderr.
+
+```
+begin test "body redirection error diagnostic captured by brace group stderr redirect"
+  script
+    { echo hello > /no/such/dir/file; } 2>tmp_cc_badredir.txt
+    cat tmp_cc_badredir.txt
+  expect
+    stdout ".+"
+    stderr ""
+    exit_code 0
+end test "body redirection error diagnostic captured by brace group stderr redirect"
+```
+
 ## 2.9.4.1 Grouping Commands
 
 The format for grouping commands is as follows:

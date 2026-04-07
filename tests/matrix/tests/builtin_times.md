@@ -130,15 +130,31 @@ from Section 2.15 of the POSIX.1-2024 Shell Command Language specification.
 
 Successful `times` writes two lines to standard output: shell user and
 system time on the first line, then the same pair for child processes,
-each using the POSIX locale `minutes`m`seconds`s fields.
+each in the POSIX locale format `%dm%fs %dm%fs`.
 
 ```
 begin test "times produces output with time format"
   script
     times 2>/dev/null
   expect
-    stdout ".*m.*s.*\n.*m.*s.*"
+    stdout "[0-9]+m[0-9]+\.[0-9]+s [0-9]+m[0-9]+\.[0-9]+s\n[0-9]+m[0-9]+\.[0-9]+s [0-9]+m[0-9]+\.[0-9]+s"
     stderr ""
     exit_code 0
 end test "times produces output with time format"
+```
+
+#### Test: times returns zero exit status
+
+The `times` utility returns exit status 0 on successful completion.
+
+```
+begin test "times returns zero exit status"
+  script
+    times >/dev/null 2>/dev/null
+    echo "rc=$?"
+  expect
+    stdout "rc=0"
+    stderr ""
+    exit_code 0
+end test "times returns zero exit status"
 ```

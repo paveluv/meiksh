@@ -223,17 +223,40 @@ begin test "readonly variable cannot be unset"
 end test "readonly variable cannot be unset"
 ```
 
+#### Test: readonly name marks existing variable readonly
+
+`readonly name` without `=word` gives the readonly attribute to an
+existing variable without changing its value.
+
+```
+begin test "readonly name marks existing variable readonly"
+  script
+    MARKRO=original
+    readonly MARKRO
+    printf '%s\n' "$MARKRO"
+    ( MARKRO=changed ) 2>/dev/null
+    printf '%s\n' "$MARKRO"
+  expect
+    stdout "original\noriginal"
+    stderr ""
+    exit_code 0
+end test "readonly name marks existing variable readonly"
+```
+
 #### Test: readonly -p generates eval-able output
 
-`readonly -p` produces output suitable for reinput to the shell.
+`readonly -p` produces output suitable for reinput to a fresh shell to
+achieve the same readonly attribute-setting results.
 
 ```
 begin test "readonly -p generates eval-able output"
   script
-    readonly RO_VAR="protected"
-    output=$(readonly -p | grep "RO_VAR=")
-    echo "$output; echo \"$RO_VAR\"" > tmp_ro.sh
-    $SHELL tmp_ro.sh
+    readonly RO_EVAL_VAR="protected"
+    output=$(readonly -p | grep "RO_EVAL_VAR=")
+    printf '%s\n' "$output" > tmp_ro_reinput.sh
+    printf 'printf "%%s\\n" "$RO_EVAL_VAR"\n' >> tmp_ro_reinput.sh
+    sh tmp_ro_reinput.sh
+    rm -f tmp_ro_reinput.sh
   expect
     stdout "protected"
     stderr ""
@@ -241,20 +264,40 @@ begin test "readonly -p generates eval-able output"
 end test "readonly -p generates eval-able output"
 ```
 
-#### Test: readonly -p shows readonly variable
+#### Test: readonly as declaration utility expands tilde
 
-`readonly -p` lists all readonly variables in a format suitable for
-reinput. A variable declared readonly must appear in the output.
+`readonly` is a declaration utility, so `name=word` arguments
+undergo assignment context expansion. The tilde shall expand to
+`HOME`.
 
 ```
-begin test "readonly -p shows readonly variable"
+begin test "readonly as declaration utility expands tilde"
   script
-    ROVAR=roval
-    readonly ROVAR
-    readonly -p | grep ROVAR
+    readonly RO_DECL=~
+    printf '%s\n' "$RO_DECL"
+    test "$RO_DECL" = "$HOME" && printf 'match\n'
   expect
-    stdout ".*readonly.*ROVAR.*roval.*"
+    stdout ".+\nmatch"
     stderr ""
     exit_code 0
-end test "readonly -p shows readonly variable"
+end test "readonly as declaration utility expands tilde"
+```
+
+#### Test: readonly -p format for set and unset variables
+
+`readonly -p` shall output `readonly name=value` for set variables
+and `readonly name` for unset ones.
+
+```
+begin test "readonly -p format for set and unset variables"
+  script
+    readonly ROP_SET=hello
+    readonly ROP_UNSET_XYZ
+    readonly -p | grep 'ROP_SET'
+    readonly -p | grep 'ROP_UNSET_XYZ'
+  expect
+    stdout "readonly ROP_SET=.*hello.*\nreadonly ROP_UNSET_XYZ"
+    stderr ""
+    exit_code 0
+end test "readonly -p format for set and unset variables"
 ```

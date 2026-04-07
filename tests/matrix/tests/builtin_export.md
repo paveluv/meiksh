@@ -261,58 +261,43 @@ begin test "export -p generates eval-able output"
 end test "export -p generates eval-able output"
 ```
 
-#### Test: export as declaration utility
+#### Test: export as declaration utility expands tilde
 
-`export` is a declaration utility: `name=word` arguments undergo
-assignment context expansion.
+`export` is a declaration utility, so `name=word` arguments undergo
+assignment context expansion. The tilde in `name=~` shall expand to
+the value of `HOME`.
 
 ```
-begin test "export as declaration utility"
+begin test "export as declaration utility expands tilde"
   script
-    export decl_var="~"
-    echo "$decl_var"
+    export decl_var=~
+    printf '%s\n' "$decl_var"
+    test "$decl_var" = "$HOME" && printf 'match\n'
   expect
-    stdout ".*"
+    stdout ".+\nmatch"
     stderr ""
     exit_code 0
-end test "export as declaration utility"
+end test "export as declaration utility expands tilde"
 ```
 
-#### Test: export -p shows exported variable
+#### Test: export -p format for set and unset variables
 
-`export -p` lists all exported variables in a format suitable for
-reinput. A variable that has been exported must appear in the
-output.
+`export -p` shall output `export name=value` for set variables and
+`export name` for unset ones. Both forms must appear correctly.
 
 ```
-begin test "export -p shows exported variable"
+begin test "export -p format for set and unset variables"
   script
-    MYEXPORTVAR=hello
-    export MYEXPORTVAR
-    export -p | grep MYEXPORTVAR
+    EXPV_SET=hello
+    export EXPV_SET
+    export EXPV_UNSET_XYZ
+    export -p | grep 'EXPV_SET'
+    export -p | grep 'EXPV_UNSET_XYZ'
   expect
-    stdout ".*export.*MYEXPORTVAR.*hello.*"
+    stdout "export EXPV_SET=.*hello.*\nexport EXPV_UNSET_XYZ"
     stderr ""
     exit_code 0
-end test "export -p shows exported variable"
-```
-
-#### Test: export -p handles spaces in values
-
-The `export -p` output must correctly quote values that contain
-spaces so they can be used as shell input.
-
-```
-begin test "export -p handles spaces in values"
-  script
-    TESTV="has spaces"
-    export TESTV
-    export -p | grep TESTV
-  expect
-    stdout ".*export.*TESTV.*"
-    stderr ""
-    exit_code 0
-end test "export -p handles spaces in values"
+end test "export -p format for set and unset variables"
 ```
 
 #### Test: export cannot change a readonly variable

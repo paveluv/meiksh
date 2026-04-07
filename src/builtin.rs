@@ -7,6 +7,11 @@ fn write_stderr(msg: &str) {
     let _ = sys::write_all_fd(sys::STDERR_FILENO, msg.as_bytes());
 }
 
+fn diag_status(status: i32, msg: impl std::fmt::Display) -> BuiltinOutcome {
+    ShellError::diagnostic(status, msg);
+    BuiltinOutcome::Status(status)
+}
+
 #[derive(Debug)]
 pub enum BuiltinOutcome {
     Status(i32),
@@ -91,7 +96,9 @@ fn cd(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> 
         match sys::get_cwd() {
             Ok(cwd) => cwd,
             Err(_) if check_pwd => {
-                shell.set_var("OLDPWD", old_pwd)?;
+                shell
+                    .set_var("OLDPWD", old_pwd)
+                    .map_err(|e| ShellError::diagnostic(1, format_args!("cd: {e}")))?;
                 return Ok(BuiltinOutcome::Status(1));
             }
             Err(_) => curpath.clone(),
@@ -100,8 +107,12 @@ fn cd(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> 
         curpath.clone()
     };
 
-    shell.set_var("OLDPWD", old_pwd)?;
-    shell.set_var("PWD", new_pwd.clone())?;
+    shell
+        .set_var("OLDPWD", old_pwd)
+        .map_err(|e| ShellError::diagnostic(1, format_args!("cd: {e}")))?;
+    shell
+        .set_var("PWD", new_pwd.clone())
+        .map_err(|e| ShellError::diagnostic(1, format_args!("cd: {e}")))?;
     if print_new_pwd {
         sys_println!("{new_pwd}");
     }
@@ -170,9 +181,10 @@ fn parse_cd_target(
                 'P' => physical = true,
                 'e' => check_pwd = true,
                 _ => {
-                    return Err(ShellError {
-                        message: format!("cd: invalid option: -{ch}").into(),
-                    });
+                    return Err(ShellError::diagnostic(
+                        1,
+                        format_args!("cd: invalid option: -{ch}"),
+                    ));
                 }
             }
         }
@@ -182,9 +194,7 @@ fn parse_cd_target(
         check_pwd = false;
     }
     if argv.len() > index + 1 {
-        return Err(ShellError {
-            message: "cd: too many arguments".into(),
-        });
+        return Err(ShellError::diagnostic(1, "cd: too many arguments"));
     }
     let Some(target) = argv.get(index) else {
         return Ok((
@@ -195,17 +205,13 @@ fn parse_cd_target(
         ));
     };
     if target.is_empty() {
-        return Err(ShellError {
-            message: "cd: empty directory".into(),
-        });
+        return Err(ShellError::diagnostic(1, "cd: empty directory"));
     }
     if target == "-" {
         return Ok((
             shell
                 .get_var("OLDPWD")
-                .ok_or_else(|| ShellError {
-                    message: "cd: OLDPWD not set".into(),
-                })?
+                .ok_or_else(|| ShellError::diagnostic(1, "cd: OLDPWD not set"))?
                 .to_string(),
             true,
             physical,
@@ -256,12 +262,10 @@ fn pwd(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
             "-L" => logical = true,
             "-P" => logical = false,
             _ if arg.starts_with('-') => {
-                write_stderr(&format!("pwd: invalid option: {arg}\n"));
-                return Ok(BuiltinOutcome::Status(1));
+                return Ok(diag_status(1, format_args!("pwd: invalid option: {arg}")));
             }
             _ => {
-                write_stderr("pwd: too many arguments\n");
-                return Ok(BuiltinOutcome::Status(1));
+                return Ok(diag_status(1, "pwd: too many arguments"));
             }
         }
     }
@@ -275,9 +279,7 @@ fn exit(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
         .get(1)
         .map(|value| value.parse::<i32>())
         .transpose()
-        .map_err(|_| ShellError {
-            message: "exit: numeric argument required".into(),
-        })?
+        .map_err(|_| ShellError::diagnostic(2, "exit: numeric argument required"))?
         .unwrap_or(shell.last_status);
     Ok(BuiltinOutcome::Exit(status))
 }
@@ -331,7 +333,9 @@ fn readonly(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellE
     for item in &argv[index..] {
         if let Some((name, value)) = item.split_once('=') {
             let value = expand_assignment_tilde(shell, value);
-            shell.set_var(name, value)?;
+            shell
+                .set_var(name, value)
+                .map_err(|e| ShellError::diagnostic(1, format_args!("readonly: {e}")))?;
             shell.mark_readonly(name);
         } else {
             shell.mark_readonly(item);
@@ -347,7 +351,7 @@ fn unset(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellErro
         match target {
             UnsetTarget::Variable => {
                 if let Err(error) = shell.unset_var(item) {
-                    write_stderr(&format!("unset: {}\n", error.message));
+                    ShellError::diagnostic(1, format_args!("unset: {error}"));
                     status = 1;
                 }
             }
@@ -373,9 +377,10 @@ fn set(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
                 "-o" | "+o" => {
                     let reinput = arg == "+o";
                     if let Some(name) = argv.get(index + 1) {
-                        if let Err(error) = shell.options.set_named_option(name, !reinput) {
-                            write_stderr(&format!("set: {}\n", error.display_message()));
-                            return BuiltinOutcome::UtilityError(error.exit_status());
+                        if let Err(e) = shell.options.set_named_option(name, !reinput) {
+                            return BuiltinOutcome::UtilityError(
+                                ShellError::diagnostic(2, format_args!("set: {e}")).exit_status(),
+                            );
                         }
                         index += 2;
                     } else {
@@ -397,9 +402,10 @@ fn set(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
                 _ if (arg.starts_with('-') || arg.starts_with('+')) && arg != "-" && arg != "+" => {
                     let enabled = arg.starts_with('-');
                     for ch in arg[1..].chars() {
-                        if let Err(error) = shell.options.set_short_option(ch, enabled) {
-                            write_stderr(&format!("set: {}\n", error.display_message()));
-                            return BuiltinOutcome::UtilityError(error.exit_status());
+                        if let Err(e) = shell.options.set_short_option(ch, enabled) {
+                            return BuiltinOutcome::UtilityError(
+                                ShellError::diagnostic(2, format_args!("set: {e}")).exit_status(),
+                            );
                         }
                     }
                     index += 1;
@@ -419,13 +425,13 @@ fn shift(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellErro
         .get(1)
         .map(|value| value.parse::<usize>())
         .transpose()
-        .map_err(|_| ShellError {
-            message: "shift: numeric argument required".into(),
-        })?
+        .map_err(|_| ShellError::diagnostic(1, "shift: numeric argument required"))?
         .unwrap_or(1);
     if count > shell.positional.len() {
-        write_stderr(&format!("shift: {count}: shift count out of range\n"));
-        return Ok(BuiltinOutcome::Status(1));
+        return Ok(diag_status(
+            1,
+            format_args!("shift: {count}: shift count out of range"),
+        ));
     }
     shell.positional.drain(0..count);
     Ok(BuiltinOutcome::Status(0))
@@ -438,19 +444,19 @@ fn eval(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
 }
 
 fn dot(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
-    let path = argv.get(1).ok_or_else(|| {
-        write_stderr(".: filename argument required\n");
-        ShellError::with_status(2, "")
-    })?;
+    let path = argv
+        .get(1)
+        .ok_or_else(|| ShellError::diagnostic(2, ".: filename argument required"))?;
     if argv.len() > 2 {
-        write_stderr(".: too many arguments\n");
-        return Err(ShellError::with_status(2, ""));
+        return Err(ShellError::diagnostic(2, ".: too many arguments"));
     }
     let resolved = match resolve_dot_path(shell, path) {
         Ok(p) => p,
         Err(_) => {
-            write_stderr(&format!(".: {path}: not found\n"));
-            return Err(ShellError::with_status(1, ""));
+            return Err(ShellError::diagnostic(
+                1,
+                format_args!(".: {path}: not found"),
+            ));
         }
     };
     let status = shell.source_path(&resolved)?;
@@ -463,10 +469,13 @@ fn resolve_dot_path(shell: &Shell, path: &str) -> Result<PathBuf, ShellError> {
         if readable_regular_file(&candidate) {
             return Ok(candidate);
         }
-        return Err(ShellError::with_status(1, format!(".: {path}: not found")));
+        return Err(ShellError::diagnostic(
+            1,
+            format_args!(".: {path}: not found"),
+        ));
     }
     search_path(path, shell, false, readable_regular_file)
-        .ok_or_else(|| ShellError::with_status(1, format!(".: {path}: not found")))
+        .ok_or_else(|| ShellError::diagnostic(1, format_args!(".: {path}: not found")))
 }
 
 fn exec_builtin(
@@ -483,13 +492,13 @@ fn exec_builtin(
         return Ok(BuiltinOutcome::Status(0));
     }
     if args.iter().any(|s| s.contains('\0')) {
-        return Err(ShellError {
-            message: "exec: invalid argument".into(),
-        });
+        return Err(ShellError::diagnostic(1, "exec: invalid argument"));
     }
     let Some(program_path) = which_in_path(&args[0], shell, true) else {
-        write_stderr(&format!("{}: not found\n", args[0]));
-        return Err(ShellError::with_status(127, ""));
+        return Err(ShellError::diagnostic(
+            127,
+            format_args!("exec: {}: not found", args[0]),
+        ));
     };
     let program = program_path.display().to_string();
     let argv_owned: Vec<String> = args.iter().cloned().collect();
@@ -500,31 +509,26 @@ fn exec_builtin(
 
 fn return_builtin(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     if shell.function_depth == 0 && shell.source_depth == 0 {
-        return Err(ShellError {
-            message: "return: not in a function".into(),
-        });
+        return Err(ShellError::diagnostic(1, "return: not in a function"));
     }
     if argv.len() > 2 {
-        return Err(ShellError {
-            message: "return: too many arguments".into(),
-        });
+        return Err(ShellError::diagnostic(1, "return: too many arguments"));
     }
     let status = argv
         .get(1)
         .map(|value| value.parse::<i32>())
         .transpose()
-        .map_err(|_| ShellError {
-            message: "return: numeric argument required".into(),
-        })?
+        .map_err(|_| ShellError::diagnostic(1, "return: numeric argument required"))?
         .unwrap_or(shell.last_status);
     Ok(BuiltinOutcome::Return(status))
 }
 
 fn break_builtin(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     if shell.loop_depth == 0 {
-        return Err(ShellError {
-            message: "break: only meaningful in a loop".into(),
-        });
+        return Err(ShellError::diagnostic(
+            1,
+            "break: only meaningful in a loop",
+        ));
     }
     let levels = parse_loop_count("break", argv)?;
     Ok(BuiltinOutcome::Break(levels.min(shell.loop_depth)))
@@ -532,9 +536,10 @@ fn break_builtin(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, Shell
 
 fn continue_builtin(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     if shell.loop_depth == 0 {
-        return Err(ShellError {
-            message: "continue: only meaningful in a loop".into(),
-        });
+        return Err(ShellError::diagnostic(
+            1,
+            "continue: only meaningful in a loop",
+        ));
     }
     let levels = parse_loop_count("continue", argv)?;
     Ok(BuiltinOutcome::Continue(levels.min(shell.loop_depth)))
@@ -542,22 +547,22 @@ fn continue_builtin(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, Sh
 
 fn parse_loop_count(name: &str, argv: &[String]) -> Result<usize, ShellError> {
     if argv.len() > 2 {
-        return Err(ShellError {
-            message: format!("{name}: too many arguments").into(),
-        });
+        return Err(ShellError::diagnostic(
+            1,
+            format_args!("{name}: too many arguments"),
+        ));
     }
     let levels = argv
         .get(1)
         .map(|value| value.parse::<usize>())
         .transpose()
-        .map_err(|_| ShellError {
-            message: format!("{name}: numeric argument required").into(),
-        })?
+        .map_err(|_| ShellError::diagnostic(1, format_args!("{name}: numeric argument required")))?
         .unwrap_or(1);
     if levels == 0 {
-        return Err(ShellError {
-            message: format!("{name}: numeric argument required").into(),
-        });
+        return Err(ShellError::diagnostic(
+            1,
+            format_args!("{name}: numeric argument required"),
+        ));
     }
     Ok(levels)
 }
@@ -565,17 +570,11 @@ fn parse_loop_count(name: &str, argv: &[String]) -> Result<usize, ShellError> {
 fn jobs(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
     let (mode, index) = match parse_jobs_options(argv) {
         Ok(value) => value,
-        Err(message) => {
-            write_stderr(&format!("{message}\n"));
-            return BuiltinOutcome::Status(1);
-        }
+        Err(message) => return diag_status(1, message),
     };
     let selected = match parse_jobs_operands(&argv[index..], shell) {
         Ok(value) => value,
-        Err(message) => {
-            write_stderr(&format!("{message}\n"));
-            return BuiltinOutcome::Status(1);
-        }
+        Err(message) => return diag_status(1, message),
     };
     let finished = shell.reap_jobs();
     let current_id = shell.current_job_id();
@@ -707,14 +706,11 @@ fn job_display_pid(job: &crate::shell::Job) -> Option<sys::Pid> {
 
 fn fg(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     if !shell.options.monitor {
-        write_stderr("fg: no job control\n");
-        return Ok(BuiltinOutcome::Status(1));
+        return Ok(diag_status(1, "fg: no job control"));
     }
     let id = resolve_job_id(shell, argv.get(1).map(String::as_str))
         .or_else(|| shell.current_job_id())
-        .ok_or_else(|| ShellError {
-            message: "fg: no current job".into(),
-        })?;
+        .ok_or_else(|| ShellError::diagnostic(1, "fg: no current job"))?;
     if let Some(job) = shell.jobs.iter().find(|job| job.id == id) {
         sys_println!("{}", job.command);
     }
@@ -725,8 +721,7 @@ fn fg(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> 
 
 fn bg(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     if !shell.options.monitor {
-        write_stderr("bg: no job control\n");
-        return Ok(BuiltinOutcome::Status(1));
+        return Ok(diag_status(1, "bg: no job control"));
     }
     let id = resolve_job_id(shell, argv.get(1).map(String::as_str))
         .or_else(|| {
@@ -737,9 +732,7 @@ fn bg(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> 
                 .find(|j| matches!(j.state, crate::shell::JobState::Stopped(_)))
                 .map(|j| j.id)
         })
-        .ok_or_else(|| ShellError {
-            message: "bg: no current job".into(),
-        })?;
+        .ok_or_else(|| ShellError::diagnostic(1, "bg: no current job"))?;
     shell.continue_job(id, false)?;
     if let Some(job) = shell.jobs.iter().find(|job| job.id == id) {
         sys_println!("[{id}] {}", job.command);
@@ -757,7 +750,7 @@ fn wait(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
             Ok(WaitOperand::Job(id)) => shell.wait_for_job_operand(id)?,
             Ok(WaitOperand::Pid(pid)) => shell.wait_for_pid_operand(pid)?,
             Err(message) => {
-                write_stderr(&format!("{message}\n"));
+                ShellError::diagnostic(1, message);
                 1
             }
         };
@@ -767,8 +760,10 @@ fn wait(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
 
 fn kill(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     if argv.len() < 2 {
-        write_stderr("kill: usage: kill [-s sigspec | -signum] pid... | -l [exit_status]\n");
-        return Ok(BuiltinOutcome::Status(2));
+        return Ok(diag_status(
+            2,
+            "kill: usage: kill [-s sigspec | -signum] pid... | -l [exit_status]",
+        ));
     }
 
     let mut args = &argv[1..];
@@ -788,12 +783,13 @@ fn kill(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
                 if name != "UNKNOWN" {
                     sys_println!("{}", &name[3..]);
                 } else {
-                    write_stderr(&format!("kill: unknown signal: {arg}\n"));
-                    return Ok(BuiltinOutcome::Status(1));
+                    return Ok(diag_status(1, format_args!("kill: unknown signal: {arg}")));
                 }
             } else {
-                write_stderr(&format!("kill: invalid exit status: {arg}\n"));
-                return Ok(BuiltinOutcome::Status(1));
+                return Ok(diag_status(
+                    1,
+                    format_args!("kill: invalid exit status: {arg}"),
+                ));
             }
         }
         return Ok(BuiltinOutcome::Status(0));
@@ -802,8 +798,7 @@ fn kill(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
     let mut signal = sys::SIGTERM;
     if args[0] == "-s" {
         if args.len() < 3 {
-            write_stderr("kill: -s requires a signal name\n");
-            return Ok(BuiltinOutcome::Status(2));
+            return Ok(diag_status(2, "kill: -s requires a signal name"));
         }
         signal = parse_kill_signal(&args[1])?;
         args = &args[2..];
@@ -814,8 +809,7 @@ fn kill(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
     }
 
     if args.is_empty() || (args.len() == 1 && args[0] == "--") {
-        write_stderr("kill: no process id specified\n");
-        return Ok(BuiltinOutcome::Status(2));
+        return Ok(diag_status(2, "kill: no process id specified"));
     }
     if args[0] == "--" {
         args = &args[1..];
@@ -832,12 +826,12 @@ fn kill(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
                     .unwrap_or_else(|| job.children.first().map(|c| c.pid).unwrap_or(0));
                 if pid != 0 {
                     if sys::send_signal(-pid, signal).is_err() {
-                        write_stderr(&format!("kill: ({pid}): No such process\n"));
+                        ShellError::diagnostic(1, format_args!("kill: ({pid}): No such process"));
                         status = 1;
                     }
                 }
             } else {
-                write_stderr(&format!("kill: {operand}: no such job\n"));
+                ShellError::diagnostic(1, format_args!("kill: {operand}: no such job"));
                 status = 1;
             }
         } else if let Ok(pid) = operand.parse::<sys::Pid>() {
@@ -853,11 +847,11 @@ fn kill(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
                 pid
             };
             if sys::send_signal(effective_target, signal).is_err() {
-                write_stderr(&format!("kill: ({pid}): No such process\n"));
+                ShellError::diagnostic(1, format_args!("kill: ({pid}): No such process"));
                 status = 1;
             }
         } else {
-            write_stderr(&format!("kill: invalid pid: {operand}\n"));
+            ShellError::diagnostic(1, format_args!("kill: invalid pid: {operand}"));
             status = 1;
         }
     }
@@ -878,9 +872,10 @@ fn parse_kill_signal(spec: &str) -> Result<i32, ShellError> {
     if name == "0" {
         return Ok(0);
     }
-    Err(ShellError {
-        message: format!("kill: unknown signal: {spec}").into(),
-    })
+    Err(ShellError::diagnostic(
+        1,
+        format_args!("kill: unknown signal: {spec}"),
+    ))
 }
 
 #[derive(Clone, Copy)]
@@ -900,8 +895,7 @@ fn read_with_input(
     input_fd: i32,
 ) -> Result<BuiltinOutcome, ShellError> {
     let Some((options, vars)) = parse_read_options(argv) else {
-        write_stderr("read: invalid usage\n");
-        return Ok(BuiltinOutcome::Status(2));
+        return Ok(diag_status(2, "read: invalid usage"));
     };
     let vars = if vars.is_empty() {
         vec!["REPLY".to_string()]
@@ -912,16 +906,14 @@ fn read_with_input(
     let (pieces, hit_delimiter) = match read_logical_line(shell, options, input_fd) {
         Ok(result) => result,
         Err(error) => {
-            write_stderr(&format!("read: {error}\n"));
-            return Ok(BuiltinOutcome::Status(2));
+            return Ok(diag_status(2, format_args!("read: {error}")));
         }
     };
     let values =
         split_read_assignments(&pieces, &vars, shell.get_var("IFS").map(|s| s.to_string()));
     for (name, value) in vars.iter().zip(values) {
         if let Err(error) = shell.set_var(name, value) {
-            write_stderr(&format!("read: {}\n", error.message));
-            return Ok(BuiltinOutcome::Status(2));
+            return Ok(diag_status(2, format_args!("read: {error}")));
         }
     }
     Ok(BuiltinOutcome::Status(if hit_delimiter { 0 } else { 1 }))
@@ -1123,16 +1115,17 @@ fn trim_read_ifs_whitespace(chars: &[(char, bool)], ifs_ws: &[char]) -> String {
 }
 
 fn getopts_set(shell: &mut Shell, name: &str, value: String) -> Result<(), BuiltinOutcome> {
-    shell.set_var(name, value).map_err(|e| {
-        write_stderr(&format!("getopts: {}\n", e.message));
-        BuiltinOutcome::Status(2)
-    })
+    shell
+        .set_var(name, value)
+        .map_err(|e| diag_status(2, format_args!("getopts: {e}")))
 }
 
 fn getopts(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     if argv.len() < 3 {
-        write_stderr("getopts: usage: getopts optstring name [arg ...]\n");
-        return Ok(BuiltinOutcome::Status(2));
+        return Ok(diag_status(
+            2,
+            "getopts: usage: getopts optstring name [arg ...]",
+        ));
     }
     let optstring = &argv[1];
     let name = &argv[2];
@@ -1287,7 +1280,7 @@ fn alias(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellErro
         } else if let Some(value) = shell.aliases.get(item) {
             sys_println!("{}", format_alias_definition(item, value));
         } else {
-            write_stderr(&format!("alias: {item}: not found\n"));
+            ShellError::diagnostic(1, format_args!("alias: {item}: not found"));
             status = 1;
         }
     }
@@ -1308,24 +1301,21 @@ fn shell_quote(value: &str) -> String {
 
 fn unalias(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     if argv.len() < 2 {
-        return Err(ShellError {
-            message: "unalias: name required".into(),
-        });
+        return Err(ShellError::diagnostic(1, "unalias: name required"));
     }
     if argv.len() == 2 && argv[1] == "-a" {
         shell.aliases.clear();
         return Ok(BuiltinOutcome::Status(0));
     }
     if argv[1].starts_with('-') && argv[1] != "-" && argv[1] != "--" {
-        return Err(ShellError {
-            message: format!("unalias: invalid option: {}", argv[1]).into(),
-        });
+        return Err(ShellError::diagnostic(
+            1,
+            format_args!("unalias: invalid option: {}", argv[1]),
+        ));
     }
     let start = usize::from(argv[1] == "--") + 1;
     if start >= argv.len() {
-        return Err(ShellError {
-            message: "unalias: name required".into(),
-        });
+        return Err(ShellError::diagnostic(1, "unalias: name required"));
     }
     let mut status = 0;
     for item in &argv[start..] {
@@ -1351,20 +1341,14 @@ fn times() -> BuiltinOutcome {
             );
             BuiltinOutcome::Status(0)
         }
-        (Err(error), _) | (_, Err(error)) => {
-            write_stderr(&format!("times: {error}\n"));
-            BuiltinOutcome::Status(1)
-        }
+        (Err(error), _) | (_, Err(error)) => diag_status(1, format_args!("times: {error}")),
     }
 }
 
 fn trap(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
     match trap_impl(shell, argv) {
         Ok(status) => BuiltinOutcome::Status(status),
-        Err(error) => {
-            write_stderr(&format!("trap: {}\n", error.message));
-            BuiltinOutcome::Status(1)
-        }
+        Err(error) => BuiltinOutcome::Status(error.exit_status()),
     }
 }
 
@@ -1421,7 +1405,7 @@ fn trap_impl(shell: &mut Shell, argv: &[String]) -> Result<i32, ShellError> {
             if let Some(condition) = parse_trap_condition(condition) {
                 shell.set_trap(condition, None)?;
             } else {
-                write_stderr(&format!("trap: invalid condition: {condition}\n"));
+                ShellError::diagnostic(1, format_args!("trap: invalid condition: {condition}"));
                 return Ok(1);
             }
         }
@@ -1429,15 +1413,16 @@ fn trap_impl(shell: &mut Shell, argv: &[String]) -> Result<i32, ShellError> {
     }
     let action = &argv[1];
     if argv.len() == 2 {
-        return Err(ShellError {
-            message: "condition argument required".into(),
-        });
+        return Err(ShellError::diagnostic(
+            1,
+            "trap: condition argument required",
+        ));
     }
     let trap_action = parse_trap_action(action);
     let mut status = 0;
     for condition in &argv[2..] {
         let Some(condition) = parse_trap_condition(condition) else {
-            write_stderr(&format!("trap: invalid condition: {condition}\n"));
+            ShellError::diagnostic(1, format_args!("trap: invalid condition: {condition}"));
             status = 1;
             continue;
         };
@@ -1461,9 +1446,10 @@ fn print_traps(
         let mut parsed = Vec::new();
         for operand in operands {
             let Some(condition) = parse_trap_condition(operand) else {
-                return Err(ShellError {
-                    message: format!("invalid condition: {operand}").into(),
-                });
+                return Err(ShellError::diagnostic(
+                    1,
+                    format_args!("trap: invalid condition: {operand}"),
+                ));
             };
             parsed.push(condition);
         }
@@ -1591,8 +1577,7 @@ fn umask(argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
                 break;
             }
             _ if arg.starts_with('-') && arg != "-" => {
-                write_stderr(&format!("umask: invalid option: {arg}\n"));
-                return Ok(BuiltinOutcome::Status(1));
+                return Ok(diag_status(1, format_args!("umask: invalid option: {arg}")));
             }
             _ => break,
         }
@@ -1608,13 +1593,14 @@ fn umask(argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
         return Ok(BuiltinOutcome::Status(0));
     }
     if index + 1 != argv.len() {
-        write_stderr("umask: too many arguments\n");
-        return Ok(BuiltinOutcome::Status(1));
+        return Ok(diag_status(1, "umask: too many arguments"));
     }
 
     let Some(mask) = parse_umask_mask(&argv[index], current) else {
-        write_stderr(&format!("umask: invalid mask: {}\n", argv[index]));
-        return Ok(BuiltinOutcome::Status(1));
+        return Ok(diag_status(
+            1,
+            format_args!("umask: invalid mask: {}", argv[index]),
+        ));
     };
     sys::set_umask(mask as sys::FileModeMask);
     Ok(BuiltinOutcome::Status(0))
@@ -1761,13 +1747,14 @@ fn symbolic_permissions_for_class(mask: u16, class_mask: u16, shift: u16) -> Str
 fn command(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     let (use_default_path, mode, index) = parse_command_options(argv);
     let Some(name) = argv.get(index) else {
-        write_stderr("command: utility name required\n");
-        return Ok(BuiltinOutcome::Status(command_usage_status(mode)));
+        return Ok(diag_status(
+            command_usage_status(mode),
+            "command: utility name required",
+        ));
     };
 
     if mode != CommandMode::Execute && index + 1 != argv.len() {
-        write_stderr("command: too many arguments\n");
-        return Ok(BuiltinOutcome::Status(1));
+        return Ok(diag_status(1, "command: too many arguments"));
     }
 
     match mode {
@@ -1800,9 +1787,10 @@ fn parse_declaration_listing_flag(
 ) -> Result<(bool, usize), ShellError> {
     if argv.len() >= 2 && argv[1] == "-p" {
         if argv.len() > 2 {
-            return Err(ShellError {
-                message: format!("{name}: -p does not accept operands").into(),
-            });
+            return Err(ShellError::diagnostic(
+                1,
+                format_args!("{name}: -p does not accept operands"),
+            ));
         }
         return Ok((true, 2));
     }
@@ -1811,9 +1799,10 @@ fn parse_declaration_listing_flag(
         && arg != "-"
         && arg != "--"
     {
-        return Err(ShellError {
-            message: format!("{name}: invalid option: {arg}").into(),
-        });
+        return Err(ShellError::diagnostic(
+            1,
+            format_args!("{name}: invalid option: {arg}"),
+        ));
     }
     Ok((false, 1))
 }
@@ -1892,9 +1881,10 @@ fn parse_unset_target(argv: &[String]) -> Result<(UnsetTarget, usize), ShellErro
                 'v' => target = UnsetTarget::Variable,
                 'f' => target = UnsetTarget::Function,
                 _ => {
-                    return Err(ShellError {
-                        message: format!("unset: invalid option: -{ch}").into(),
-                    });
+                    return Err(ShellError::diagnostic(
+                        1,
+                        format_args!("unset: invalid option: -{ch}"),
+                    ));
                 }
             }
         }
@@ -2016,22 +2006,20 @@ fn execute_command_utility(
     if is_builtin(name) {
         return match run(shell, argv, &[]) {
             Ok(outcome) => Ok(outcome),
-            Err(error) => {
-                write_stderr(&format!("{}\n", error.display_message()));
-                Ok(BuiltinOutcome::Status(error.exit_status()))
-            }
+            Err(error) => Ok(BuiltinOutcome::Status(error.exit_status())),
         };
     }
 
     let Some(path) = which_in_path(name, shell, use_default_path) else {
-        write_stderr(&format!("command: {name}: not found\n"));
-        return Ok(BuiltinOutcome::Status(127));
+        return Ok(diag_status(127, format_args!("command: {name}: not found")));
     };
 
     let path_str = path.display().to_string();
     if sys::access_path(&path_str, sys::X_OK).is_err() {
-        write_stderr(&format!("command: {name}: Permission denied\n"));
-        return Ok(BuiltinOutcome::Status(126));
+        return Ok(diag_status(
+            126,
+            format_args!("command: {name}: Permission denied"),
+        ));
     }
 
     let mut child_env = shell.env_for_child();
@@ -2059,13 +2047,9 @@ fn execute_command_utility(
             Ok(BuiltinOutcome::Status(sys::decode_wait_status(ws.status)))
         }
         Err(error) if error.is_enoent() => {
-            write_stderr(&format!("command: {name}: not found\n"));
-            Ok(BuiltinOutcome::Status(127))
+            Ok(diag_status(127, format_args!("command: {name}: not found")))
         }
-        Err(error) => {
-            write_stderr(&format!("command: {name}: {error}\n"));
-            Ok(BuiltinOutcome::Status(126))
-        }
+        Err(error) => Ok(diag_status(126, format_args!("command: {name}: {error}"))),
     }
 }
 
@@ -2253,14 +2237,24 @@ mod tests {
     #[test]
     fn shift_rejects_invalid_arguments() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(2),
-                    ArgMatcher::Bytes(b"shift: 5: shift count out of range\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            vec![
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(2),
+                        ArgMatcher::Bytes(b"meiksh: shift: 5: shift count out of range\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(2),
+                        ArgMatcher::Bytes(b"meiksh: shift: numeric argument required\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+            ],
             || {
                 let mut shell = test_shell();
 
@@ -2270,7 +2264,7 @@ mod tests {
 
                 let error =
                     invoke(&mut shell, &["shift".into(), "bad".into()]).expect_err("bad shift");
-                assert_eq!(&*error.message, "shift: numeric argument required");
+                assert_eq!(error.exit_status(), 1);
             },
         );
     }
@@ -2291,7 +2285,15 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(2),
-                        ArgMatcher::Bytes(b"alias: missing: not found\n".to_vec()),
+                        ArgMatcher::Bytes(b"meiksh: alias: missing: not found\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(2),
+                        ArgMatcher::Bytes(b"meiksh: unalias: name required\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -2321,7 +2323,7 @@ mod tests {
                 assert!(shell.aliases.is_empty());
 
                 let error = invoke(&mut shell, &["unalias".into()]).expect_err("missing alias");
-                assert_eq!(&*error.message, "unalias: name required");
+                assert_eq!(error.exit_status(), 1);
             },
         );
     }
@@ -2479,8 +2481,8 @@ mod tests {
             )
         }
 
-        let read_err_msg = format!("read: {}\n", sys::SysError::Errno(sys::EBADF));
-        let readonly_err_msg = "read: LOCKED: readonly variable\n";
+        let read_err_msg = format!("meiksh: read: {}\n", sys::SysError::Errno(sys::EBADF));
+        let readonly_err_msg = "meiksh: read: LOCKED: readonly variable\n";
 
         let mut trace: Vec<crate::sys::test_support::TraceEntry> = Vec::new();
 
@@ -2511,7 +2513,7 @@ mod tests {
             ],
             TraceResult::Fd(101),
         ));
-        trace.push(wlen("read: invalid usage\n"));
+        trace.push(wlen("meiksh: read: invalid usage\n"));
         trace.push(t("close", vec![ArgMatcher::Fd(101)], TraceResult::Int(0)));
 
         // Block 3: read_with_input(["read","NAME"], -1) → read error → write_stderr
@@ -2735,7 +2737,7 @@ mod tests {
 
     #[test]
     fn times_builtin_error_path() {
-        let times_err_msg = format!("times: {}\n", sys::SysError::Errno(0));
+        let times_err_msg = format!("meiksh: times: {}\n", sys::SysError::Errno(0));
         run_trace(
             vec![
                 t("times", vec![ArgMatcher::Any], TraceResult::Err(0)),
@@ -2764,7 +2766,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(2),
-                        ArgMatcher::Bytes(b"umask: invalid option: -Z\n".to_vec()),
+                        ArgMatcher::Bytes(b"meiksh: umask: invalid option: -Z\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -2783,7 +2785,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(2),
-                        ArgMatcher::Bytes(b"umask: too many arguments\n".to_vec()),
+                        ArgMatcher::Bytes(b"meiksh: umask: too many arguments\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -2798,7 +2800,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(2),
-                        ArgMatcher::Bytes(b"umask: invalid mask: u+Q\n".to_vec()),
+                        ArgMatcher::Bytes(b"meiksh: umask: invalid mask: u+Q\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -2844,14 +2846,25 @@ mod tests {
 
     #[test]
     fn exit_builtin_returns_status() {
-        assert_no_syscalls(|| {
-            let mut shell = test_shell();
-            let outcome = invoke(&mut shell, &["exit".into()]).expect("exit");
-            assert!(matches!(outcome, BuiltinOutcome::Exit(3)));
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"meiksh: exit: numeric argument required\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(&mut shell, &["exit".into()]).expect("exit");
+                assert!(matches!(outcome, BuiltinOutcome::Exit(3)));
 
-            let error = invoke(&mut shell, &["exit".into(), "bad".into()]).expect_err("bad exit");
-            assert_eq!(&*error.message, "exit: numeric argument required");
-        });
+                let error =
+                    invoke(&mut shell, &["exit".into(), "bad".into()]).expect_err("bad exit");
+                assert_eq!(error.exit_status(), 2);
+            },
+        );
     }
 
     #[test]
@@ -2861,7 +2874,7 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(2),
-                    ArgMatcher::Bytes(b"command: utility name required\n".to_vec()),
+                    ArgMatcher::Bytes(b"meiksh: command: utility name required\n".to_vec()),
                 ],
                 TraceResult::Auto,
             )],
@@ -2880,44 +2893,107 @@ mod tests {
 
     #[test]
     fn control_flow_builtins_validate_context_and_arguments() {
-        assert_no_syscalls(|| {
-            let mut shell = test_shell();
-            let error =
+        run_trace(
+            vec![
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(2),
+                        ArgMatcher::Bytes(b"meiksh: return: not in a function\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(2),
+                        ArgMatcher::Bytes(b"meiksh: return: numeric argument required\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(2),
+                        ArgMatcher::Bytes(b"meiksh: return: too many arguments\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(2),
+                        ArgMatcher::Bytes(b"meiksh: break: only meaningful in a loop\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(2),
+                        ArgMatcher::Bytes(
+                            b"meiksh: continue: only meaningful in a loop\n".to_vec(),
+                        ),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(2),
+                        ArgMatcher::Bytes(
+                            b"meiksh: continue: numeric argument required\n".to_vec(),
+                        ),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(2),
+                        ArgMatcher::Bytes(b"meiksh: break: too many arguments\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(2),
+                        ArgMatcher::Bytes(
+                            b"meiksh: continue: numeric argument required\n".to_vec(),
+                        ),
+                    ],
+                    TraceResult::Auto,
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
                 invoke(&mut shell, &["return".into()]).expect_err("return outside function");
-            assert_eq!(&*error.message, "return: not in a function");
 
-            shell.function_depth = 1;
-            let outcome = invoke(&mut shell, &["return".into(), "7".into()]).expect("return");
-            assert!(matches!(outcome, BuiltinOutcome::Return(7)));
-            let error =
+                shell.function_depth = 1;
+                let outcome = invoke(&mut shell, &["return".into(), "7".into()]).expect("return");
+                assert!(matches!(outcome, BuiltinOutcome::Return(7)));
                 invoke(&mut shell, &["return".into(), "bad".into()]).expect_err("bad return");
-            assert_eq!(&*error.message, "return: numeric argument required");
-            let error = invoke(&mut shell, &["return".into(), "1".into(), "2".into()])
-                .expect_err("return args");
-            assert_eq!(&*error.message, "return: too many arguments");
+                invoke(&mut shell, &["return".into(), "1".into(), "2".into()])
+                    .expect_err("return args");
 
-            shell.function_depth = 0;
-            let error = invoke(&mut shell, &["break".into()]).expect_err("break outside loop");
-            assert_eq!(&*error.message, "break: only meaningful in a loop");
-            let error =
+                shell.function_depth = 0;
+                invoke(&mut shell, &["break".into()]).expect_err("break outside loop");
                 invoke(&mut shell, &["continue".into()]).expect_err("continue outside loop");
-            assert_eq!(&*error.message, "continue: only meaningful in a loop");
 
-            shell.loop_depth = 2;
-            let outcome = invoke(&mut shell, &["break".into(), "9".into()]).expect("break");
-            assert!(matches!(outcome, BuiltinOutcome::Break(2)));
-            let outcome = invoke(&mut shell, &["continue".into(), "2".into()]).expect("continue");
-            assert!(matches!(outcome, BuiltinOutcome::Continue(2)));
-            let error =
+                shell.loop_depth = 2;
+                let outcome = invoke(&mut shell, &["break".into(), "9".into()]).expect("break");
+                assert!(matches!(outcome, BuiltinOutcome::Break(2)));
+                let outcome =
+                    invoke(&mut shell, &["continue".into(), "2".into()]).expect("continue");
+                assert!(matches!(outcome, BuiltinOutcome::Continue(2)));
                 invoke(&mut shell, &["continue".into(), "0".into()]).expect_err("bad continue");
-            assert_eq!(&*error.message, "continue: numeric argument required");
-            let error = invoke(&mut shell, &["break".into(), "1".into(), "2".into()])
-                .expect_err("break args");
-            assert_eq!(&*error.message, "break: too many arguments");
-            let error = invoke(&mut shell, &["continue".into(), "bad".into()])
-                .expect_err("continue numeric");
-            assert_eq!(&*error.message, "continue: numeric argument required");
-        });
+                invoke(&mut shell, &["break".into(), "1".into(), "2".into()])
+                    .expect_err("break args");
+                invoke(&mut shell, &["continue".into(), "bad".into()])
+                    .expect_err("continue numeric");
+            },
+        );
     }
 
     #[test]
@@ -2927,7 +3003,7 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(2),
-                    ArgMatcher::Bytes(b"wait: invalid job id: %bad\n".to_vec()),
+                    ArgMatcher::Bytes(b"meiksh: wait: invalid job id: %bad\n".to_vec()),
                 ],
                 TraceResult::Auto,
             )],
@@ -2947,7 +3023,7 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(b"fg: no job control\n".to_vec()),
+                    ArgMatcher::Bytes(b"meiksh: fg: no job control\n".to_vec()),
                 ],
                 TraceResult::Auto,
             )],
@@ -2968,7 +3044,7 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(b"bg: no job control\n".to_vec()),
+                    ArgMatcher::Bytes(b"meiksh: bg: no job control\n".to_vec()),
                 ],
                 TraceResult::Auto,
             )],
@@ -3186,7 +3262,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(2),
-                        ArgMatcher::Bytes(b"set: invalid option: z\n".to_vec()),
+                        ArgMatcher::Bytes(b"meiksh: set: invalid option: z\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -3194,7 +3270,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(2),
-                        ArgMatcher::Bytes(b"set: invalid option name: bogus\n".to_vec()),
+                        ArgMatcher::Bytes(b"meiksh: set: invalid option name: bogus\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -3218,7 +3294,7 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(b".: filename argument required\n".to_vec()),
+                    ArgMatcher::Bytes(b"meiksh: .: filename argument required\n".to_vec()),
                 ],
                 TraceResult::Auto,
             )],
@@ -3315,7 +3391,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(2),
-                        ArgMatcher::Bytes(b"pwd: invalid option: -Z\n".to_vec()),
+                        ArgMatcher::Bytes(b"meiksh: pwd: invalid option: -Z\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -3323,7 +3399,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(2),
-                        ArgMatcher::Bytes(b"pwd: too many arguments\n".to_vec()),
+                        ArgMatcher::Bytes(b"meiksh: pwd: too many arguments\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -3349,7 +3425,7 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(2),
-                    ArgMatcher::Bytes(b"unset: RO: readonly variable\n".to_vec()),
+                    ArgMatcher::Bytes(b"meiksh: unset: RO: readonly variable\n".to_vec()),
                 ],
                 TraceResult::Auto,
             )],
@@ -3367,46 +3443,70 @@ mod tests {
 
     #[test]
     fn declaration_listing_flag_errors() {
-        assert_no_syscalls(|| {
-            let export_error = parse_declaration_listing_flag(
-                "export",
-                &["export".into(), "-p".into(), "NAME".into()],
-            )
-            .expect_err("export -p operands");
-            assert_eq!(
-                &*export_error.message,
-                "export: -p does not accept operands"
-            );
+        run_trace(
+            vec![
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(2),
+                        ArgMatcher::Bytes(
+                            b"meiksh: export: -p does not accept operands\n".to_vec(),
+                        ),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(2),
+                        ArgMatcher::Bytes(b"meiksh: readonly: invalid option: -x\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+            ],
+            || {
+                parse_declaration_listing_flag(
+                    "export",
+                    &["export".into(), "-p".into(), "NAME".into()],
+                )
+                .expect_err("export -p operands");
 
-            let readonly_error =
                 parse_declaration_listing_flag("readonly", &["readonly".into(), "-x".into()])
                     .expect_err("readonly invalid");
-            assert_eq!(&*readonly_error.message, "readonly: invalid option: -x");
-        });
+            },
+        );
     }
 
     #[test]
     fn parse_helpers_for_unset_and_command() {
-        assert_no_syscalls(|| {
-            assert_eq!(
-                parse_unset_target(&["unset".into(), "--".into(), "NAME".into()])
-                    .expect("unset --"),
-                (UnsetTarget::Variable, 2)
-            );
-            let unset_error =
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"meiksh: unset: invalid option: -z\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                assert_eq!(
+                    parse_unset_target(&["unset".into(), "--".into(), "NAME".into()])
+                        .expect("unset --"),
+                    (UnsetTarget::Variable, 2)
+                );
                 parse_unset_target(&["unset".into(), "-z".into()]).expect_err("unset invalid");
-            assert_eq!(&*unset_error.message, "unset: invalid option: -z");
 
-            assert_eq!(
-                parse_command_options(&["command".into(), "--".into(), "echo".into()]),
-                (false, CommandMode::Execute, 2)
-            );
-            assert_eq!(
-                parse_command_options(&["command".into(), "-p".into(), "sh".into()]),
-                (true, CommandMode::Execute, 2)
-            );
-            assert_eq!(command_usage_status(CommandMode::QueryShort), 1);
-        });
+                assert_eq!(
+                    parse_command_options(&["command".into(), "--".into(), "echo".into()]),
+                    (false, CommandMode::Execute, 2)
+                );
+                assert_eq!(
+                    parse_command_options(&["command".into(), "-p".into(), "sh".into()]),
+                    (true, CommandMode::Execute, 2)
+                );
+                assert_eq!(command_usage_status(CommandMode::QueryShort), 1);
+            },
+        );
     }
 
     #[test]
@@ -3418,7 +3518,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(2),
-                        ArgMatcher::Bytes(b"command: too many arguments\n".to_vec()),
+                        ArgMatcher::Bytes(b"meiksh: command: too many arguments\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -3427,7 +3527,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(2),
-                        ArgMatcher::Bytes(b"command: utility name required\n".to_vec()),
+                        ArgMatcher::Bytes(b"meiksh: command: utility name required\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -3529,7 +3629,9 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(2),
-                        ArgMatcher::Bytes(b"command: meiksh-not-real: not found\n".to_vec()),
+                        ArgMatcher::Bytes(
+                            b"meiksh: command: meiksh-not-real: not found\n".to_vec(),
+                        ),
                     ],
                     TraceResult::Auto,
                 ),
@@ -3537,7 +3639,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(2),
-                        ArgMatcher::Bytes(b"return: not in a function\n".to_vec()),
+                        ArgMatcher::Bytes(b"meiksh: return: not in a function\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -3556,7 +3658,7 @@ mod tests {
                     vec![
                         ArgMatcher::Fd(2),
                         ArgMatcher::Bytes(
-                            b"command: /tmp/plain-file: Permission denied\n".to_vec(),
+                            b"meiksh: command: /tmp/plain-file: Permission denied\n".to_vec(),
                         ),
                     ],
                     TraceResult::Auto,
@@ -4108,12 +4210,21 @@ mod tests {
                 ],
                 TraceResult::Auto,
             ),
+            // print_traps BAD → diagnostic
+            t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"meiksh: trap: invalid condition: BAD\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            ),
             // trap "printf hi" BAD → write_stderr
             t(
                 "write",
                 vec![
                     ArgMatcher::Fd(2),
-                    ArgMatcher::Bytes(b"trap: invalid condition: BAD\n".to_vec()),
+                    ArgMatcher::Bytes(b"meiksh: trap: invalid condition: BAD\n".to_vec()),
                 ],
                 TraceResult::Auto,
             ),
@@ -4122,16 +4233,25 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(2),
-                    ArgMatcher::Bytes(b"trap: invalid condition: 999\n".to_vec()),
+                    ArgMatcher::Bytes(b"meiksh: trap: invalid condition: 999\n".to_vec()),
                 ],
                 TraceResult::Auto,
             ),
-            // trap("printf hi") → trap_impl err → write_stderr
+            // trap_impl("printf hi") → diagnostic
             t(
                 "write",
                 vec![
                     ArgMatcher::Fd(2),
-                    ArgMatcher::Bytes(b"trap: condition argument required\n".to_vec()),
+                    ArgMatcher::Bytes(b"meiksh: trap: condition argument required\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            ),
+            // trap("printf hi") → diagnostic
+            t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"meiksh: trap: condition argument required\n".to_vec()),
                 ],
                 TraceResult::Auto,
             ),
@@ -4395,6 +4515,30 @@ mod tests {
     fn cd_helper_argument_paths_are_split_out() {
         run_trace(
             vec![
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(2),
+                        ArgMatcher::Bytes(b"meiksh: cd: too many arguments\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(2),
+                        ArgMatcher::Bytes(b"meiksh: cd: OLDPWD not set\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(2),
+                        ArgMatcher::Bytes(b"meiksh: cd: empty directory\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
                 // resolve_cd_target("target") CDPATH="/cdpath" → stat /cdpath/target → dir
                 t(
                     "stat",
@@ -4429,25 +4573,16 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 assert!(!logical_pwd_is_valid("./relative"));
-                assert_eq!(
-                    &*parse_cd_target(&shell, &["cd".into(), "one".into(), "two".into()])
-                        .expect_err("too many")
-                        .message,
-                    "cd: too many arguments"
-                );
+                parse_cd_target(&shell, &["cd".into(), "one".into(), "two".into()])
+                    .expect_err("too many");
                 assert_eq!(
                     parse_cd_target(&shell, &["cd".into()]).expect("default target"),
                     (".".to_string(), false, false, false)
                 );
-                assert_eq!(
-                    &*parse_cd_target(&shell, &["cd".into(), "-".into()])
-                        .expect_err("missing oldpwd")
-                        .message,
-                    "cd: OLDPWD not set"
-                );
+                parse_cd_target(&shell, &["cd".into(), "-".into()]).expect_err("missing oldpwd");
                 shell.env.insert("OLDPWD".into(), "/tmp/oldpwd".into());
                 let error = invoke(&mut shell, &["cd".into(), "".into()]).expect_err("empty cd");
-                assert_eq!(&*error.message, "cd: empty directory");
+                assert_ne!(error.exit_status(), 0);
                 assert!(parse_cd_target(&shell, &["cd".into(), "--".into(), "-".into()]).is_ok());
                 let (_, _, physical, check_pwd) =
                     parse_cd_target(&shell, &["cd".into(), "-P".into()]).expect("-P");
@@ -4544,12 +4679,20 @@ mod tests {
 
     #[test]
     fn parse_cd_target_rejects_invalid_option() {
-        assert_no_syscalls(|| {
-            let shell = test_shell();
-            let err =
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"meiksh: cd: invalid option: -Z\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let shell = test_shell();
                 parse_cd_target(&shell, &["cd".into(), "-Z".into()]).expect_err("should reject -Z");
-            assert_eq!(&*err.message, "cd: invalid option: -Z");
-        });
+            },
+        );
     }
 
     #[test]
@@ -4844,6 +4987,14 @@ mod tests {
                     ],
                     TraceResult::Err(sys::ENOENT),
                 ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(2),
+                        ArgMatcher::Bytes(b"meiksh: .: missing-dot.sh: not found\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
             ],
             || {
                 let mut shell = test_shell();
@@ -4923,7 +5074,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(2),
-                        ArgMatcher::Bytes(b"jobs: invalid option: -z\n".to_vec()),
+                        ArgMatcher::Bytes(b"meiksh: jobs: invalid option: -z\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -4931,7 +5082,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(2),
-                        ArgMatcher::Bytes(b"jobs: invalid job id: bad\n".to_vec()),
+                        ArgMatcher::Bytes(b"meiksh: jobs: invalid job id: bad\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -5000,25 +5151,38 @@ mod tests {
 
     #[test]
     fn unalias_invalid_option_is_split_out() {
-        assert_no_syscalls(|| {
-            let mut shell = test_shell();
-            let error =
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"meiksh: unalias: invalid option: -x\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
                 invoke(&mut shell, &["unalias".into(), "-x".into()]).expect_err("unalias invalid");
-            assert_eq!(&*error.message, "unalias: invalid option: -x");
-        });
+            },
+        );
     }
 
     #[test]
     fn unalias_requires_name_after_double_dash() {
-        assert_no_syscalls(|| {
-            let mut shell = test_shell();
-            assert_eq!(
-                &*invoke(&mut shell, &["unalias".into(), "--".into()])
-                    .expect_err("unalias -- only")
-                    .message,
-                "unalias: name required"
-            );
-        });
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"meiksh: unalias: name required\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                invoke(&mut shell, &["unalias".into(), "--".into()]).expect_err("unalias -- only");
+            },
+        );
     }
 
     #[test]
@@ -5159,16 +5323,22 @@ mod tests {
 
     #[test]
     fn exec_errors_on_nul_in_program() {
-        assert_no_syscalls(|| {
-            let mut shell = test_shell();
-            let error = invoke(&mut shell, &["exec".into(), "bad\0program".into()])
-                .expect_err("exec error");
-            assert!(
-                error.message.contains("invalid") || error.message.contains("NUL"),
-                "unexpected message: {:?}",
-                error.message
-            );
-        });
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"meiksh: exec: invalid argument\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                let error = invoke(&mut shell, &["exec".into(), "bad\0program".into()])
+                    .expect_err("exec error");
+                assert_ne!(error.exit_status(), 0);
+            },
+        );
     }
 
     #[test]
@@ -5230,15 +5400,25 @@ mod tests {
 
     #[test]
     fn eval_reports_syntax_error() {
-        assert_no_syscalls(|| {
-            let mut shell = test_shell();
-            let error = invoke(
-                &mut shell,
-                &["eval".into(), "echo".into(), "'unterminated".into()],
-            )
-            .expect_err("bad eval");
-            assert!(!error.message.is_empty());
-        });
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"meiksh: unterminated single quote\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                let error = invoke(
+                    &mut shell,
+                    &["eval".into(), "echo".into(), "'unterminated".into()],
+                )
+                .expect_err("bad eval");
+                assert_ne!(error.exit_status(), 0);
+            },
+        );
     }
 
     #[test]
@@ -5258,7 +5438,17 @@ mod tests {
                     vec![
                         ArgMatcher::Fd(sys::STDERR_FILENO),
                         ArgMatcher::Bytes(
-                            b".: /definitely/missing-meiksh-dot-file: not found\n".to_vec(),
+                            b"meiksh: .: /definitely/missing-meiksh-dot-file: not found\n".to_vec(),
+                        ),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(
+                            b"meiksh: .: /definitely/missing-meiksh-dot-file: not found\n".to_vec(),
                         ),
                     ],
                     TraceResult::Auto,
@@ -5283,7 +5473,7 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(b".: too many arguments\n".to_vec()),
+                    ArgMatcher::Bytes(b"meiksh: .: too many arguments\n".to_vec()),
                 ],
                 TraceResult::Auto,
             )],
@@ -5865,12 +6055,22 @@ mod tests {
 
     #[test]
     fn fg_no_current_job_returns_error() {
-        assert_no_syscalls(|| {
-            let mut shell = test_shell();
-            shell.options.monitor = true;
-            let result = invoke(&mut shell, &["fg".into()]);
-            assert!(result.is_err());
-        });
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"meiksh: fg: no current job\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.options.monitor = true;
+                let result = invoke(&mut shell, &["fg".into()]);
+                assert!(result.is_err());
+            },
+        );
     }
 
     #[test]
@@ -5905,12 +6105,22 @@ mod tests {
 
     #[test]
     fn bg_no_stopped_job_returns_error() {
-        assert_no_syscalls(|| {
-            let mut shell = test_shell();
-            shell.options.monitor = true;
-            let result = invoke(&mut shell, &["bg".into()]);
-            assert!(result.is_err());
-        });
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"meiksh: bg: no current job\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.options.monitor = true;
+                let result = invoke(&mut shell, &["bg".into()]);
+                assert!(result.is_err());
+            },
+        );
     }
 
     #[test]
@@ -5953,7 +6163,7 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(b"kill: unknown signal: 999\n".to_vec()),
+                    ArgMatcher::Bytes(b"meiksh: kill: unknown signal: 999\n".to_vec()),
                 ],
                 TraceResult::Auto,
             )],
@@ -5973,7 +6183,7 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(b"kill: invalid exit status: abc\n".to_vec()),
+                    ArgMatcher::Bytes(b"meiksh: kill: invalid exit status: abc\n".to_vec()),
                 ],
                 TraceResult::Auto,
             )],
@@ -6064,7 +6274,7 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(b"kill: %99: no such job\n".to_vec()),
+                    ArgMatcher::Bytes(b"meiksh: kill: %99: no such job\n".to_vec()),
                 ],
                 TraceResult::Auto,
             )],
@@ -6083,7 +6293,7 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(b"kill: invalid pid: notapid\n".to_vec()),
+                    ArgMatcher::Bytes(b"meiksh: kill: invalid pid: notapid\n".to_vec()),
                 ],
                 TraceResult::Auto,
             )],
@@ -6104,7 +6314,7 @@ mod tests {
                 vec![
                     ArgMatcher::Fd(sys::STDERR_FILENO),
                     ArgMatcher::Bytes(
-                        b"kill: usage: kill [-s sigspec | -signum] pid... | -l [exit_status]\n"
+                        b"meiksh: kill: usage: kill [-s sigspec | -signum] pid... | -l [exit_status]\n"
                             .to_vec(),
                     ),
                 ],
@@ -6125,7 +6335,7 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(b"kill: no process id specified\n".to_vec()),
+                    ArgMatcher::Bytes(b"meiksh: kill: no process id specified\n".to_vec()),
                 ],
                 TraceResult::Auto,
             )],
@@ -6162,7 +6372,7 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(b"kill: -s requires a signal name\n".to_vec()),
+                    ArgMatcher::Bytes(b"meiksh: kill: -s requires a signal name\n".to_vec()),
                 ],
                 TraceResult::Auto,
             )],
@@ -6177,12 +6387,24 @@ mod tests {
 
     #[test]
     fn kill_unknown_signal_name_returns_error() {
-        let mut shell = test_shell();
-        let result = invoke(
-            &mut shell,
-            &["kill".into(), "-s".into(), "BOGUS".into(), "1".into()],
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"meiksh: kill: unknown signal: BOGUS\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                let result = invoke(
+                    &mut shell,
+                    &["kill".into(), "-s".into(), "BOGUS".into(), "1".into()],
+                );
+                assert!(result.is_err());
+            },
         );
-        assert!(result.is_err());
     }
 
     #[test]
@@ -6198,7 +6420,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"kill: (99999): No such process\n".to_vec()),
+                        ArgMatcher::Bytes(b"meiksh: kill: (99999): No such process\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -6225,7 +6447,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"kill: (7010): No such process\n".to_vec()),
+                        ArgMatcher::Bytes(b"meiksh: kill: (7010): No such process\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -6247,7 +6469,7 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(b"kill: no process id specified\n".to_vec()),
+                    ArgMatcher::Bytes(b"meiksh: kill: no process id specified\n".to_vec()),
                 ],
                 TraceResult::Auto,
             )],
@@ -6273,9 +6495,19 @@ mod tests {
 
     #[test]
     fn parse_kill_signal_bogus_returns_error() {
-        assert_no_syscalls(|| {
-            assert!(parse_kill_signal("BOGUS").is_err());
-        });
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"meiksh: kill: unknown signal: BOGUS\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                assert!(parse_kill_signal("BOGUS").is_err());
+            },
+        );
     }
 
     #[test]
@@ -6609,7 +6841,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(2),
-                        ArgMatcher::Bytes(b"command: cmd: not found\n".to_vec()),
+                        ArgMatcher::Bytes(b"meiksh: command: cmd: not found\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -6629,7 +6861,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(2),
-                        ArgMatcher::Bytes(b"command: cmd: Input/output error\n".to_vec()),
+                        ArgMatcher::Bytes(b"meiksh: command: cmd: Input/output error\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -6737,7 +6969,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"nonexistent: not found\n".to_vec()),
+                        ArgMatcher::Bytes(b"meiksh: exec: nonexistent: not found\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),

@@ -171,3 +171,41 @@ begin test "return from dot-sourced file stops the dot command"
     exit_code 0
 end test "return from dot-sourced file stops the dot command"
 ```
+
+#### Test: return without n in dot script uses current exit status
+
+When `return` is used without `n` in a dot script, the exit status of
+the dot command is the current value of `$?`.
+
+```
+begin test "return without n in dot script uses current exit status"
+  script
+    printf 'false\nreturn\necho no\n' > tmp_dot_ret_noval.sh
+    . ./tmp_dot_ret_noval.sh
+    echo "status=$?"
+    rm -f tmp_dot_ret_noval.sh
+  expect
+    stdout "status=1"
+    stderr ""
+    exit_code 0
+end test "return without n in dot script uses current exit status"
+```
+
+#### Test: return stops execution inside dot script
+
+After `return`, no further commands from the dot script are
+executed. Only commands before `return` produce output.
+
+```
+begin test "return stops execution inside dot script"
+  script
+    printf 'echo before\nreturn 0\necho after\n' > tmp_dot_ret_stop.sh
+    . ./tmp_dot_ret_stop.sh
+    echo "parent"
+    rm -f tmp_dot_ret_stop.sh
+  expect
+    stdout "before\nparent"
+    stderr ""
+    exit_code 0
+end test "return stops execution inside dot script"
+```

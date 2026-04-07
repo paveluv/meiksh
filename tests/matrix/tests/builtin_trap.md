@@ -493,16 +493,37 @@ end test "shell survives invalid signal name"
 
 #### Test: trap with invalid signal produces diagnostic
 
-When an invalid signal name is given, a diagnostic message is
+When an invalid signal name is given, a warning message shall be
 written to standard error.
 
 ```
 begin test "trap with invalid signal produces diagnostic"
   script
-    trap "" NOSUCHSIGNAL 2>&1 || true
+    trap "" NOSUCHSIGNAL
+    echo "survived"
   expect
-    stdout "(.|\n)*"
-    stderr ""
+    stdout "survived"
+    stderr ".+"
     exit_code 0
 end test "trap with invalid signal produces diagnostic"
+```
+
+#### Test: trap -p with specific condition shows only that trap
+
+When `trap -p` is given one or more condition operands, it shall
+write only the commands associated with those conditions.
+
+```
+begin test "trap -p with specific condition shows only that trap"
+  script
+    trap "echo a" INT
+    trap "echo b" TERM
+    output=$(trap -p INT)
+    echo "$output" | grep -c 'TERM' || true
+    echo "$output" | grep -q 'INT' && echo "found_int"
+  expect
+    stdout "0\nfound_int"
+    stderr ""
+    exit_code 0
+end test "trap -p with specific condition shows only that trap"
 ```

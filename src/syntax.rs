@@ -325,6 +325,7 @@ pub enum RedirectionKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParseError {
     pub message: Box<str>,
+    pub line: Option<usize>,
 }
 
 impl fmt::Display for ParseError {
@@ -471,6 +472,7 @@ fn skip_scan(source: &str, index: &mut usize) -> Result<(), ParseError> {
             }
             Err(ParseError {
                 message: "unterminated single quote".into(),
+                line: None,
             })
         }
         '"' => {
@@ -515,6 +517,7 @@ fn skip_dollar_single_quote(source: &str, index: &mut usize) -> Result<(), Parse
     }
     Err(ParseError {
         message: "unterminated dollar-single-quotes".into(),
+        line: None,
     })
 }
 
@@ -539,6 +542,7 @@ fn skip_dollar_construct(source: &str, index: &mut usize) -> Result<(), ParseErr
             }
             return Err(ParseError {
                 message: "unterminated arithmetic expansion".into(),
+                line: None,
             });
         }
         *index += 2;
@@ -574,6 +578,7 @@ fn skip_paren_body(source: &str, index: &mut usize) -> Result<(), ParseError> {
     }
     Err(ParseError {
         message: "unterminated command substitution".into(),
+        line: None,
     })
 }
 
@@ -595,6 +600,7 @@ fn skip_brace_body(source: &str, index: &mut usize) -> Result<(), ParseError> {
     }
     Err(ParseError {
         message: "unterminated parameter expansion".into(),
+        line: None,
     })
 }
 
@@ -614,6 +620,7 @@ fn skip_backtick_body(source: &str, index: &mut usize) -> Result<(), ParseError>
     }
     Err(ParseError {
         message: "unterminated backquote".into(),
+        line: None,
     })
 }
 
@@ -656,6 +663,7 @@ fn skip_dquote_body(source: &str, index: &mut usize) -> Result<(), ParseError> {
     }
     Err(ParseError {
         message: "unterminated double quote".into(),
+        line: None,
     })
 }
 
@@ -824,6 +832,7 @@ fn tokenize<'src>(
                     if index >= source.len() {
                         return Err(ParseError {
                             message: "unterminated single quote".into(),
+                            line: None,
                         });
                     }
                     let c = next_char(source, index).unwrap();
@@ -1022,6 +1031,7 @@ fn tokenize<'src>(
     if !pending_here_docs.is_empty() {
         return Err(ParseError {
             message: "unterminated here-document".into(),
+            line: None,
         });
     }
     tokens.push(Token::Eof);
@@ -1198,6 +1208,7 @@ fn read_here_doc_body(
         } else {
             return Err(ParseError {
                 message: "unterminated here-document".into(),
+                line: None,
             });
         }
     }
@@ -1228,6 +1239,21 @@ impl<'src> Parser<'src> {
             alias_expand_next_word_at: None,
             alias_expansions_remaining: 1024,
             index: 0,
+        }
+    }
+
+    fn current_line(&self) -> usize {
+        self.tokens[..self.index]
+            .iter()
+            .filter(|t| matches!(t, Token::Newline))
+            .count()
+            + 1
+    }
+
+    fn error(&self, message: impl Into<Box<str>>) -> ParseError {
+        ParseError {
+            message: message.into(),
+            line: Some(self.current_line()),
         }
     }
 
@@ -1318,9 +1344,7 @@ impl<'src> Parser<'src> {
     fn parse_command(&mut self) -> Result<Command<'src>, ParseError> {
         self.expand_alias_at_command_start()?;
         if matches!(self.peek(), Token::Bang) {
-            return Err(ParseError {
-                message: "expected command".into(),
-            });
+            return Err(self.error("expected command"));
         }
         let command = if let Some(function_name) = self.try_peek_function_name() {
             self.index += 3;
@@ -1386,9 +1410,7 @@ impl<'src> Parser<'src> {
         self.expect_kw(Token::If, "if")?;
         let condition = self.parse_program_until(false, |t| matches!(t, Token::Then), false)?;
         if condition.items.is_empty() {
-            return Err(ParseError {
-                message: "expected command list after 'if'".into(),
-            });
+            return Err(self.error("expected command list after 'if'"));
         }
         self.expect_kw(Token::Then, "then")?;
         fn at_elif_else_fi(t: &Token) -> bool {
@@ -1401,9 +1423,7 @@ impl<'src> Parser<'src> {
             self.expect_kw(Token::Elif, "elif")?;
             let condition = self.parse_program_until(false, |t| matches!(t, Token::Then), false)?;
             if condition.items.is_empty() {
-                return Err(ParseError {
-                    message: "expected command list after 'elif'".into(),
-                });
+                return Err(self.error("expected command list after 'elif'"));
             }
             self.expect_kw(Token::Then, "then")?;
             let body = self.parse_program_until(false, at_elif_else_fi, false)?;
@@ -1434,9 +1454,7 @@ impl<'src> Parser<'src> {
         self.expect_kw(kw_token, keyword)?;
         let condition = self.parse_program_until(false, |t| matches!(t, Token::Do), false)?;
         if condition.items.is_empty() {
-            return Err(ParseError {
-                message: format!("expected command list after '{keyword}'").into(),
-            });
+            return Err(self.error(format!("expected command list after '{keyword}'")));
         }
         self.expect_kw(Token::Do, "do")?;
         let body = self.parse_program_until(false, |t| matches!(t, Token::Done), false)?;
@@ -1456,9 +1474,7 @@ impl<'src> Parser<'src> {
                 text
             }
             _ => {
-                return Err(ParseError {
-                    message: "expected for loop variable name".into(),
-                });
+                return Err(self.error("expected for loop variable name"));
             }
         };
 
@@ -1472,9 +1488,7 @@ impl<'src> Parser<'src> {
                         items.push(Word { raw: text });
                     }
                     None => {
-                        return Err(ParseError {
-                            message: "expected for loop word list".into(),
-                        });
+                        return Err(self.error("expected for loop word list"));
                     }
                 }
             }
@@ -1495,18 +1509,14 @@ impl<'src> Parser<'src> {
         let word = match self.consume_any_word() {
             Some(text) => Word { raw: text },
             None => {
-                return Err(ParseError {
-                    message: "expected case word".into(),
-                });
+                return Err(self.error("expected case word"));
             }
         };
         self.skip_linebreaks();
         if matches!(self.peek(), Token::In) {
             self.index += 1;
         } else {
-            return Err(ParseError {
-                message: "expected 'in'".into(),
-            });
+            return Err(self.error("expected 'in'"));
         }
         self.skip_linebreaks();
 
@@ -1523,9 +1533,7 @@ impl<'src> Parser<'src> {
                         patterns.push(Word { raw: text });
                     }
                     None => {
-                        return Err(ParseError {
-                            message: "expected case pattern".into(),
-                        });
+                        return Err(self.error("expected case pattern"));
                     }
                 }
 
@@ -1550,9 +1558,7 @@ impl<'src> Parser<'src> {
                 self.index += 1;
                 self.skip_separators();
             } else if !matches!(self.peek(), Token::Esac) {
-                return Err(ParseError {
-                    message: "expected ';;', ';&', or 'esac'".into(),
-                });
+                return Err(self.error("expected ';;', ';&', or 'esac'"));
             }
         }
 
@@ -1571,9 +1577,7 @@ impl<'src> Parser<'src> {
                 name
             }
             _ => {
-                return Err(ParseError {
-                    message: "expected function name".into(),
-                });
+                return Err(self.error("expected function name"));
             }
         };
         if matches!(self.peek(), Token::LParen) {
@@ -1624,15 +1628,11 @@ impl<'src> Parser<'src> {
         }
 
         if words.is_empty() && assignments.is_empty() && redirections.is_empty() {
-            return Err(ParseError {
-                message: "expected command".into(),
-            });
+            return Err(self.error("expected command"));
         }
 
         if !words.is_empty() && matches!(self.peek(), Token::LParen) {
-            return Err(ParseError {
-                message: "syntax error near unexpected token `('".into(),
-            });
+            return Err(self.error("syntax error near unexpected token `('"));
         }
 
         Ok(SimpleCommand {
@@ -1660,16 +1660,16 @@ impl<'src> Parser<'src> {
         let target = match self.consume_any_word() {
             Some(text) => Word { raw: text },
             None => {
-                return Err(ParseError {
-                    message: "expected redirection target".into(),
-                });
+                return Err(self.error("expected redirection target"));
             }
         };
 
         let here_doc = if kind == RedirectionKind::HereDoc {
-            Some(self.here_docs.pop_front().ok_or_else(|| ParseError {
-                message: "missing here-document body".into(),
-            })?)
+            Some(
+                self.here_docs
+                    .pop_front()
+                    .ok_or_else(|| self.error("missing here-document body"))?,
+            )
         } else {
             None
         };
@@ -1694,9 +1694,7 @@ impl<'src> Parser<'src> {
             Some(Token::LessGreat) => RedirectionKind::ReadWrite,
             Some(_) => return Ok(None),
             None => {
-                return Err(ParseError {
-                    message: "unexpected end of tokens".into(),
-                });
+                return Err(self.error("unexpected end of tokens"));
             }
         };
         Ok(Some(kind))
@@ -1746,9 +1744,7 @@ impl<'src> Parser<'src> {
             self.index += 1;
             Ok(())
         } else {
-            Err(ParseError {
-                message: message.into(),
-            })
+            Err(self.error(message))
         }
     }
 
@@ -1801,9 +1797,7 @@ impl<'src> Parser<'src> {
             return Ok(false);
         };
         if self.alias_expansions_remaining == 0 {
-            return Err(ParseError {
-                message: "alias expansion too deep".into(),
-            });
+            return Err(self.error("alias expansion too deep"));
         };
         self.alias_expansions_remaining -= 1;
         let temp_arena = StringArena::new();
@@ -1849,9 +1843,7 @@ impl<'src> Parser<'src> {
             self.skip_separators();
             Ok(())
         } else {
-            Err(ParseError {
-                message: format!("expected '{name}'").into(),
-            })
+            Err(self.error(format!("expected '{name}'")))
         }
     }
 
@@ -2284,7 +2276,8 @@ mod tests {
             format!(
                 "{}",
                 ParseError {
-                    message: "x".into()
+                    message: "x".into(),
+                    line: None,
                 }
             ),
             "x"
