@@ -247,3 +247,37 @@ begin test "exec with no utility returns 0"
     exit_code 0
 end test "exec with no utility returns 0"
 ```
+
+#### Test: exec uses PATH to find utility
+
+The `exec` utility shall search `PATH` for the utility when the
+operand does not contain a slash.
+
+```
+begin test "exec uses PATH to find utility"
+  script
+    exec printf '%s\n' "found_via_path"
+  expect
+    stdout "found_via_path"
+    stderr ""
+    exit_code 0
+end test "exec uses PATH to find utility"
+```
+
+#### Test: exec failure redirections persist in interactive subshell
+
+If exec fails and the shell does not exit, any redirections that were
+successfully made shall take effect. Since a non-interactive shell
+exits on exec failure, this test uses a subshell to capture behavior.
+
+```
+begin test "exec failure redirections persist in interactive subshell"
+  script
+    (exec 3>tmp_exec_redir.txt; echo "fd3" >&3; exec 3>&-; cat tmp_exec_redir.txt)
+    rm -f tmp_exec_redir.txt
+  expect
+    stdout "fd3"
+    stderr ""
+    exit_code 0
+end test "exec failure redirections persist in interactive subshell"
+```

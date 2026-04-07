@@ -253,3 +253,37 @@ begin test "exit with value 200"
     exit_code 0
 end test "exit with value 200"
 ```
+
+#### Test: exit in EXIT trap causes immediate exit
+
+When `exit` is invoked inside an EXIT trap action itself, the shell
+shall exit immediately without re-executing the trap.
+
+```
+begin test "exit in EXIT trap causes immediate exit"
+  script
+    trap 'echo trap_fired; exit 7' EXIT
+    exit 0
+  expect
+    stdout "trap_fired"
+    stderr ""
+    exit_code 7
+end test "exit in EXIT trap causes immediate exit"
+```
+
+#### Test: EXIT trap fires in subshell on exit
+
+The EXIT condition occurs when a subshell exits. The trap action
+fires before the subshell terminates.
+
+```
+begin test "EXIT trap fires in subshell on exit"
+  script
+    (trap 'echo sub_exit' EXIT; echo sub_main)
+    echo parent
+  expect
+    stdout "sub_main\nsub_exit\nparent"
+    stderr ""
+    exit_code 0
+end test "EXIT trap fires in subshell on exit"
+```

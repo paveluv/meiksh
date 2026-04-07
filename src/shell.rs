@@ -13,11 +13,7 @@ use crate::sys;
 pub fn run_from_env() -> i32 {
     match Shell::from_env().and_then(|mut shell| shell.run()) {
         Ok(code) => code,
-        Err(err) => {
-            let msg = format!("meiksh: {}\n", err.display_message());
-            let _ = sys::write_all_fd(sys::STDERR_FILENO, msg.as_bytes());
-            err.exit_status()
-        }
+        Err(err) => err.exit_status(),
     }
 }
 
@@ -57,7 +53,7 @@ const REPORTABLE_OPTION_NAMES: [(&str, char); 11] = [
 ];
 
 impl ShellOptions {
-    pub fn set_short_option(&mut self, ch: char, enabled: bool) -> Result<(), ShellError> {
+    pub fn set_short_option(&mut self, ch: char, enabled: bool) -> Result<(), OptionError> {
         match ch {
             'a' => self.allexport = enabled,
             'b' => self.notify = enabled,
@@ -71,12 +67,12 @@ impl ShellOptions {
             'u' => self.nounset = enabled,
             'v' => self.verbose = enabled,
             'x' => self.xtrace = enabled,
-            _ => return Err(ShellError::with_status(2, format!("invalid option: {ch}"))),
+            _ => return Err(OptionError::InvalidShort(ch)),
         }
         Ok(())
     }
 
-    pub fn set_named_option(&mut self, name: &str, enabled: bool) -> Result<(), ShellError> {
+    pub fn set_named_option(&mut self, name: &str, enabled: bool) -> Result<(), OptionError> {
         if name == "pipefail" {
             self.pipefail = enabled;
             return Ok(());
@@ -85,10 +81,7 @@ impl ShellOptions {
             .iter()
             .find(|(option_name, _)| *option_name == name)
         else {
-            return Err(ShellError::with_status(
-                2,
-                format!("invalid option name: {name}"),
-            ));
+            return Err(OptionError::InvalidName(name.into()));
         };
         self.set_short_option(*letter, enabled)
     }
@@ -113,46 +106,27 @@ impl ShellOptions {
 
 #[derive(Debug)]
 pub struct ShellError {
-    pub message: Box<str>,
+    status: i32,
 }
 
-const STATUS_PREFIX: &str = "__MEIKSH_STATUS__:";
-
 impl ShellError {
-    fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into().into_boxed_str(),
-        }
+    pub fn diagnostic(status: i32, msg: impl std::fmt::Display) -> Self {
+        sys_eprintln!("meiksh: {}", msg);
+        Self { status }
     }
 
-    pub fn with_status(status: i32, message: impl Into<String>) -> Self {
-        Self {
-            message: format!("{STATUS_PREFIX}{status}:{}", message.into()).into_boxed_str(),
-        }
-    }
-
-    fn split_status_metadata(&self) -> Option<(i32, &str)> {
-        let encoded = self.message.strip_prefix(STATUS_PREFIX)?;
-        let (status, message) = encoded.split_once(':')?;
-        status.parse::<i32>().ok().map(|status| (status, message))
-    }
-
-    pub fn display_message(&self) -> &str {
-        self.split_status_metadata()
-            .map(|(_, message)| message)
-            .unwrap_or(&self.message)
+    pub fn silent(status: i32) -> Self {
+        Self { status }
     }
 
     pub fn exit_status(&self) -> i32 {
-        self.split_status_metadata()
-            .map(|(status, _)| status)
-            .unwrap_or(1)
+        self.status
     }
 }
 
 impl std::fmt::Display for ShellError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.display_message())
+        write!(f, "exit status {}", self.status)
     }
 }
 
@@ -160,19 +134,55 @@ impl std::error::Error for ShellError {}
 
 impl From<sys::SysError> for ShellError {
     fn from(value: sys::SysError) -> Self {
-        Self::new(value.to_string())
+        Self::diagnostic(1, &value)
     }
 }
 
 impl From<syntax::ParseError> for ShellError {
     fn from(value: syntax::ParseError) -> Self {
-        Self::with_status(2, value.to_string())
+        if let Some(line) = value.line {
+            Self::diagnostic(2, format_args!("line {}: {}", line, value.message))
+        } else {
+            Self::diagnostic(2, &value)
+        }
     }
 }
 
 impl From<ExpandError> for ShellError {
     fn from(value: ExpandError) -> Self {
-        Self::new(value.to_string())
+        if value.message.is_empty() {
+            Self::silent(1)
+        } else {
+            Self::diagnostic(1, &value)
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum VarError {
+    Readonly(Box<str>),
+}
+
+impl std::fmt::Display for VarError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VarError::Readonly(name) => write!(f, "{name}: readonly variable"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum OptionError {
+    InvalidShort(char),
+    InvalidName(Box<str>),
+}
+
+impl std::fmt::Display for OptionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OptionError::InvalidShort(ch) => write!(f, "invalid option: {ch}"),
+            OptionError::InvalidName(name) => write!(f, "invalid option name: {name}"),
+        }
     }
 }
 
@@ -251,6 +261,7 @@ pub enum FlowSignal {
 pub enum ChildWaitResult {
     Exited(i32),
     Stopped(i32),
+    Interrupted(i32),
 }
 
 fn try_wait_child(pid: sys::Pid) -> sys::SysResult<Option<ChildWaitResult>> {
@@ -416,14 +427,7 @@ impl Shell {
         };
         match result {
             Ok(status) => self.run_exit_trap(status),
-            Err(error) => {
-                let status = error.exit_status();
-                let msg = error.display_message();
-                if !msg.is_empty() {
-                    sys_eprintln!("meiksh: {}", msg);
-                }
-                self.run_exit_trap(status)
-            }
+            Err(error) => self.run_exit_trap(error.exit_status()),
         }
     }
 
@@ -658,11 +662,9 @@ impl Shell {
         1
     }
 
-    pub fn set_var(&mut self, name: &str, value: String) -> Result<(), ShellError> {
+    pub fn set_var(&mut self, name: &str, value: String) -> Result<(), VarError> {
         if self.readonly.contains(name) {
-            return Err(ShellError {
-                message: format!("{name}: readonly variable").into(),
-            });
+            return Err(VarError::Readonly(name.into()));
         }
         if let Some(existing) = self.env.get_mut(name) {
             *existing = value;
@@ -677,7 +679,8 @@ impl Shell {
 
     pub fn export_var(&mut self, name: &str, value: Option<String>) -> Result<(), ShellError> {
         if let Some(value) = value {
-            self.set_var(name, value)?;
+            self.set_var(name, value)
+                .map_err(|e| ShellError::diagnostic(1, &e))?;
         }
         if !self.exported.contains(name) {
             self.exported.insert(name.to_string());
@@ -689,11 +692,9 @@ impl Shell {
         self.readonly.insert(name.to_string());
     }
 
-    pub fn unset_var(&mut self, name: &str) -> Result<(), ShellError> {
+    pub fn unset_var(&mut self, name: &str) -> Result<(), VarError> {
         if self.readonly.contains(name) {
-            return Err(ShellError {
-                message: format!("{name}: readonly variable").into(),
-            });
+            return Err(VarError::Readonly(name.into()));
         }
         self.env.remove(name);
         self.exported.remove(name);
@@ -752,6 +753,9 @@ impl Shell {
                         stop_signal = sig;
                         running.push(child);
                     }
+                    Ok(Some(ChildWaitResult::Interrupted(_))) => {
+                        unreachable!("non-blocking wait")
+                    }
                     Ok(None) => running.push(child),
                     Err(_) => {
                         self.known_pid_statuses.insert(child.pid, 1);
@@ -789,9 +793,7 @@ impl Shell {
             .jobs
             .iter()
             .position(|job| job.id == id)
-            .ok_or_else(|| ShellError {
-                message: format!("job {id}: not found").into(),
-            })?;
+            .ok_or_else(|| ShellError::diagnostic(1, format_args!("job {id}: not found")))?;
         let pgid = self.jobs[index].pgid;
         if let Some(ref termios) = self.jobs[index].saved_termios {
             let _ = sys::set_terminal_attrs(sys::STDIN_FILENO, termios);
@@ -837,6 +839,7 @@ impl Shell {
                     self.last_status = 128 + sig;
                     return Ok(128 + sig);
                 }
+                ChildWaitResult::Interrupted(_) => unreachable!("non-interruptible wait"),
             }
         }
         self.restore_foreground(saved_foreground);
@@ -853,9 +856,7 @@ impl Shell {
             .jobs
             .iter_mut()
             .find(|job| job.id == id)
-            .ok_or_else(|| ShellError {
-                message: format!("job {id}: not found").into(),
-            })?;
+            .ok_or_else(|| ShellError::diagnostic(1, format_args!("job {id}: not found")))?;
         let was_stopped = matches!(job.state, JobState::Stopped(_));
         job.state = JobState::Running;
         if was_stopped {
@@ -883,14 +884,14 @@ impl Shell {
 
     fn load_script_source(&self, script: &Path) -> Result<(PathBuf, String), ShellError> {
         let resolved = resolve_script_path(self, script).ok_or_else(|| {
-            ShellError::with_status(127, format!("{}: not found", script.display()))
+            ShellError::diagnostic(127, format_args!("{}: not found", script.display()))
         })?;
         let bytes = sys::read_file_bytes(&resolved.display().to_string())
             .map_err(|error| classify_script_read_error(&resolved, error))?;
         if script_prefix_cannot_be_shell_input(&bytes) {
-            return Err(ShellError::with_status(
+            return Err(ShellError::diagnostic(
                 126,
-                format!("{}: cannot execute", resolved.display()),
+                format_args!("{}: cannot execute", resolved.display()),
             ));
         }
         let contents = String::from_utf8_lossy(&bytes).into_owned();
@@ -924,7 +925,8 @@ impl Shell {
         assignments: &[(String, String)],
     ) -> Result<FlowSignal, ShellError> {
         for (name, value) in assignments {
-            self.set_var(name, value.clone())?;
+            self.set_var(name, value.clone())
+                .map_err(|e| ShellError::diagnostic(1, &e))?;
         }
         match builtin::run(self, argv, assignments)? {
             BuiltinOutcome::Status(status) => Ok(FlowSignal::Continue(status)),
@@ -1023,15 +1025,7 @@ impl Shell {
                 Ok(status)
             }
             Ok(ChildWaitResult::Stopped(sig)) => Ok(128 + sig),
-            Err(error) if error.message.starts_with("wait interrupted:") => {
-                let status = error
-                    .message
-                    .split(':')
-                    .nth(1)
-                    .and_then(|value| value.parse::<i32>().ok())
-                    .unwrap_or(130);
-                Ok(status)
-            }
+            Ok(ChildWaitResult::Interrupted(status)) => Ok(status),
             Err(error) => Err(error),
         }
     }
@@ -1111,11 +1105,15 @@ impl Shell {
                     self.restore_foreground(saved_foreground);
                     return Ok(128 + _sig);
                 }
+                Ok(ChildWaitResult::Interrupted(int_status)) => {
+                    self.restore_foreground(saved_foreground);
+                    self.last_status = int_status;
+                    self.run_pending_traps()?;
+                    self.last_status = int_status;
+                    return Ok(int_status);
+                }
                 Err(error) => {
                     self.restore_foreground(saved_foreground);
-                    if let Some(interrupted_status) = self.consume_wait_interrupt(&error)? {
-                        return Ok(interrupted_status);
-                    }
                     return Err(error);
                 }
             }
@@ -1125,22 +1123,6 @@ impl Shell {
         self.restore_foreground(saved_foreground);
         self.last_status = final_status;
         Ok(final_status)
-    }
-
-    fn consume_wait_interrupt(&mut self, error: &ShellError) -> Result<Option<i32>, ShellError> {
-        if !error.message.starts_with("wait interrupted:") {
-            return Ok(None);
-        }
-        let status = error
-            .message
-            .split(':')
-            .nth(1)
-            .and_then(|value| value.parse::<i32>().ok())
-            .unwrap_or(130);
-        self.last_status = status;
-        self.run_pending_traps()?;
-        self.last_status = status;
-        Ok(Some(status))
     }
 
     pub fn wait_for_child_pid(
@@ -1165,9 +1147,7 @@ impl Shell {
                         && sys::has_pending_signal().is_some() =>
                 {
                     let signal = sys::has_pending_signal().unwrap_or(sys::SIGINT);
-                    return Err(ShellError {
-                        message: format!("wait interrupted:{}", 128 + signal).into(),
-                    });
+                    return Ok(ChildWaitResult::Interrupted(128 + signal));
                 }
                 Err(error) if sys::interrupted(&error) => continue,
                 Err(error) => return Err(error.into()),
@@ -1309,8 +1289,8 @@ impl expand::Context for Shell {
     }
 
     fn set_var(&mut self, name: &str, value: String) -> Result<(), ExpandError> {
-        self.set_var(name, value).map_err(|err| ExpandError {
-            message: err.message,
+        self.set_var(name, value).map_err(|e| ExpandError {
+            message: e.to_string().into(),
         })
     }
 
@@ -1327,9 +1307,8 @@ impl expand::Context for Shell {
     }
 
     fn command_substitute(&mut self, command: &str) -> Result<String, ExpandError> {
-        self.capture_output(command).map_err(|err| ExpandError {
-            message: err.message,
-        })
+        self.capture_output(command)
+            .map_err(|_| ExpandError { message: "".into() })
     }
 
     fn home_dir_for_user(&self, name: &str) -> Option<Cow<'_, str>> {
@@ -1343,9 +1322,9 @@ fn parse_options(args: &[String]) -> Result<ShellOptions, ShellError> {
 
     while let Some(arg) = args.get(index) {
         if arg == "-c" {
-            let command = args.get(index + 1).ok_or_else(|| ShellError {
-                message: ShellError::with_status(2, "-c requires an argument").message,
-            })?;
+            let command = args
+                .get(index + 1)
+                .ok_or_else(|| ShellError::diagnostic(2, "-c requires an argument"))?;
             options.command_string = Some(command.clone().into());
             options.shell_name_override = args.get(index + 2).map(|s| s.clone().into());
             options.positional = args.iter().skip(index + 3).cloned().collect();
@@ -1353,10 +1332,12 @@ fn parse_options(args: &[String]) -> Result<ShellOptions, ShellError> {
         }
         if arg == "-o" || arg == "+o" {
             let enabled = arg == "-o";
-            let name = args
-                .get(index + 1)
-                .ok_or_else(|| ShellError::with_status(2, format!("{arg} requires an argument")))?;
-            options.set_named_option(name, enabled)?;
+            let name = args.get(index + 1).ok_or_else(|| {
+                ShellError::diagnostic(2, format_args!("{arg} requires an argument"))
+            })?;
+            options
+                .set_named_option(name, enabled)
+                .map_err(|e| ShellError::diagnostic(2, &e))?;
             index += 2;
             continue;
         }
@@ -1385,13 +1366,15 @@ fn parse_options(args: &[String]) -> Result<ShellOptions, ShellError> {
                 match ch {
                     'c' if enabled => saw_c = true,
                     's' if enabled => read_stdin = true,
-                    _ => options.set_short_option(ch, enabled)?,
+                    _ => options
+                        .set_short_option(ch, enabled)
+                        .map_err(|e| ShellError::diagnostic(2, &e))?,
                 }
             }
             if saw_c {
-                let command = args.get(index + 1).ok_or_else(|| ShellError {
-                    message: ShellError::with_status(2, "-c requires an argument").message,
-                })?;
+                let command = args
+                    .get(index + 1)
+                    .ok_or_else(|| ShellError::diagnostic(2, "-c requires an argument"))?;
                 options.command_string = Some(command.clone().into());
                 options.shell_name_override = args.get(index + 2).map(|s| s.clone().into());
                 options.positional = args.iter().skip(index + 3).cloned().collect();
@@ -1536,9 +1519,9 @@ fn stdin_parse_error_requires_more_input(error: &syntax::ParseError) -> bool {
 
 fn classify_script_read_error(path: &Path, error: sys::SysError) -> ShellError {
     if error.is_enoent() {
-        ShellError::with_status(127, format!("{}: not found", path.display()))
+        ShellError::diagnostic(127, format_args!("{}: not found", path.display()))
     } else {
-        ShellError::with_status(128, format!("{}: {}", path.display(), error))
+        ShellError::diagnostic(128, format_args!("{}: {}", path.display(), error))
     }
 }
 
@@ -1564,6 +1547,17 @@ mod tests {
             pid,
             stdout_fd: None,
         }
+    }
+
+    fn t_stderr(msg: &str) -> test_support::TraceEntry {
+        t(
+            "write",
+            vec![
+                ArgMatcher::Fd(sys::STDERR_FILENO),
+                ArgMatcher::Bytes(format!("{msg}\n").into_bytes()),
+            ],
+            TraceResult::Auto,
+        )
     }
 
     fn test_shell() -> Shell {
@@ -1596,86 +1590,92 @@ mod tests {
 
     #[test]
     fn parse_options_handles_command_script_and_errors() {
-        assert_no_syscalls(|| {
-            let options = parse_options(&[
-                "meiksh".into(),
-                "-c".into(),
-                "echo ok".into(),
-                "name".into(),
-                "arg".into(),
-            ])
-            .expect("parse");
-            assert_eq!(options.command_string.as_deref(), Some("echo ok"));
-            assert_eq!(options.shell_name_override.as_deref(), Some("name"));
-            assert_eq!(options.positional, vec!["arg".to_string()]);
+        run_trace(
+            vec![
+                t_stderr("meiksh: -c requires an argument"),
+                t_stderr("meiksh: -o requires an argument"),
+                t_stderr("meiksh: invalid option name: bogus"),
+            ],
+            || {
+                let options = parse_options(&[
+                    "meiksh".into(),
+                    "-c".into(),
+                    "echo ok".into(),
+                    "name".into(),
+                    "arg".into(),
+                ])
+                .expect("parse");
+                assert_eq!(options.command_string.as_deref(), Some("echo ok"));
+                assert_eq!(options.shell_name_override.as_deref(), Some("name"));
+                assert_eq!(options.positional, vec!["arg".to_string()]);
 
-            let options = parse_options(&[
-                "meiksh".into(),
-                "-n".into(),
-                "-i".into(),
-                "-f".into(),
-                "script.sh".into(),
-                "a".into(),
-            ])
-            .expect("parse");
-            assert!(options.syntax_check_only);
-            assert!(options.force_interactive);
-            assert!(options.noglob);
-            assert_eq!(options.script_path, Some(PathBuf::from("script.sh")));
-            assert_eq!(options.positional, vec!["a".to_string()]);
+                let options = parse_options(&[
+                    "meiksh".into(),
+                    "-n".into(),
+                    "-i".into(),
+                    "-f".into(),
+                    "script.sh".into(),
+                    "a".into(),
+                ])
+                .expect("parse");
+                assert!(options.syntax_check_only);
+                assert!(options.force_interactive);
+                assert!(options.noglob);
+                assert_eq!(options.script_path, Some(PathBuf::from("script.sh")));
+                assert_eq!(options.positional, vec!["a".to_string()]);
 
-            let options =
-                parse_options(&["meiksh".into(), "-s".into(), "arg1".into(), "arg2".into()])
-                    .expect("parse -s");
-            assert_eq!(options.script_path, None);
-            assert_eq!(
-                options.positional,
-                vec!["arg1".to_string(), "arg2".to_string()]
-            );
+                let options =
+                    parse_options(&["meiksh".into(), "-s".into(), "arg1".into(), "arg2".into()])
+                        .expect("parse -s");
+                assert_eq!(options.script_path, None);
+                assert_eq!(
+                    options.positional,
+                    vec!["arg1".to_string(), "arg2".to_string()]
+                );
 
-            let options =
-                parse_options(&["meiksh".into(), "-is".into(), "arg".into()]).expect("parse -is");
-            assert!(options.force_interactive);
-            assert_eq!(options.positional, vec!["arg".to_string()]);
+                let options = parse_options(&["meiksh".into(), "-is".into(), "arg".into()])
+                    .expect("parse -is");
+                assert!(options.force_interactive);
+                assert_eq!(options.positional, vec!["arg".to_string()]);
 
-            let options = parse_options(&[
-                "meiksh".into(),
-                "-a".into(),
-                "-u".into(),
-                "-o".into(),
-                "noglob".into(),
-                "-v".into(),
-                "script.sh".into(),
-            ])
-            .expect("parse -a -u -o noglob -v");
-            assert!(options.allexport);
-            assert!(options.nounset);
-            assert!(options.noglob);
-            assert!(options.verbose);
-            assert_eq!(options.script_path, Some(PathBuf::from("script.sh")));
+                let options = parse_options(&[
+                    "meiksh".into(),
+                    "-a".into(),
+                    "-u".into(),
+                    "-o".into(),
+                    "noglob".into(),
+                    "-v".into(),
+                    "script.sh".into(),
+                ])
+                .expect("parse -a -u -o noglob -v");
+                assert!(options.allexport);
+                assert!(options.nounset);
+                assert!(options.noglob);
+                assert!(options.verbose);
+                assert_eq!(options.script_path, Some(PathBuf::from("script.sh")));
 
-            let error = parse_options(&["meiksh".into(), "-c".into()]).expect_err("missing arg");
-            assert_eq!(error.display_message(), "-c requires an argument");
-            assert_eq!(error.exit_status(), 2);
+                let error =
+                    parse_options(&["meiksh".into(), "-c".into()]).expect_err("missing arg");
+                assert_eq!(error.exit_status(), 2);
 
-            let error = parse_options(&["meiksh".into(), "-o".into()]).expect_err("missing -o arg");
-            assert_eq!(error.display_message(), "-o requires an argument");
-            assert_eq!(error.exit_status(), 2);
+                let error =
+                    parse_options(&["meiksh".into(), "-o".into()]).expect_err("missing -o arg");
+                assert_eq!(error.exit_status(), 2);
 
-            let options = parse_options(&[
-                "meiksh".into(),
-                "-o".into(),
-                "pipefail".into(),
-                "s.sh".into(),
-            ])
-            .expect("parse -o pipefail");
-            assert!(options.pipefail);
+                let options = parse_options(&[
+                    "meiksh".into(),
+                    "-o".into(),
+                    "pipefail".into(),
+                    "s.sh".into(),
+                ])
+                .expect("parse -o pipefail");
+                assert!(options.pipefail);
 
-            let error = parse_options(&["meiksh".into(), "-o".into(), "bogus".into()])
-                .expect_err("bad -o name");
-            assert_eq!(error.display_message(), "invalid option name: bogus");
-            assert_eq!(error.exit_status(), 2);
-        });
+                let error = parse_options(&["meiksh".into(), "-o".into(), "bogus".into()])
+                    .expect_err("bad -o name");
+                assert_eq!(error.exit_status(), 2);
+            },
+        );
     }
 
     #[test]
@@ -1709,9 +1709,9 @@ mod tests {
             shell.set_var("NAME", "value".into()).expect("set");
             shell.mark_readonly("NAME");
             let set_error = shell.set_var("NAME", "new".into()).expect_err("readonly");
-            assert_eq!(&*set_error.message, "NAME: readonly variable");
+            assert_eq!(set_error.to_string(), "NAME: readonly variable");
             let unset_error = shell.unset_var("NAME").expect_err("readonly");
-            assert_eq!(&*unset_error.message, "NAME: readonly variable");
+            assert_eq!(unset_error.to_string(), "NAME: readonly variable");
         });
     }
 
@@ -1971,54 +1971,74 @@ mod tests {
 
     #[test]
     fn continue_job_errors_when_job_missing() {
-        assert_no_syscalls(|| {
-            let mut shell = test_shell();
-            let error = shell.continue_job(99, false).expect_err("missing job");
-            assert_eq!(&*error.message, "job 99: not found");
+        run_trace(
+            vec![
+                t_stderr("meiksh: job 99: not found"),
+                t_stderr("meiksh: job 99: not found"),
+            ],
+            || {
+                let mut shell = test_shell();
+                let error = shell.continue_job(99, false).expect_err("missing job");
+                assert_eq!(error.exit_status(), 1);
 
-            let error = shell.wait_for_job(99).expect_err("missing job");
-            assert_eq!(&*error.message, "job 99: not found");
-        });
+                let error = shell.wait_for_job(99).expect_err("missing job");
+                assert_eq!(error.exit_status(), 1);
+            },
+        );
     }
 
     #[test]
     fn source_path_errors_when_file_missing() {
         run_trace(
-            vec![t(
-                "open",
-                vec![
-                    ArgMatcher::Str("/definitely/missing-meiksh-script".into()),
-                    ArgMatcher::Any,
-                    ArgMatcher::Any,
-                ],
-                TraceResult::Err(sys::ENOENT),
-            )],
+            vec![
+                t(
+                    "open",
+                    vec![
+                        ArgMatcher::Str("/definitely/missing-meiksh-script".into()),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Err(sys::ENOENT),
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"meiksh: No such file or directory\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+            ],
             || {
                 let mut shell = test_shell();
                 let error = shell
                     .source_path(Path::new("/definitely/missing-meiksh-script"))
                     .expect_err("missing source");
-                assert!(!error.message.is_empty());
+                assert_ne!(error.exit_status(), 0);
             },
         );
     }
 
     #[test]
     fn shell_error_converts_from_parse_and_expand_errors() {
-        assert_no_syscalls(|| {
-            let arena = StringArena::new();
-            let parse_err = syntax::parse("echo 'unterminated", &arena).expect_err("parse");
-            let shell_err: ShellError = parse_err.into();
-            assert!(!shell_err.message.is_empty());
+        run_trace(
+            vec![
+                t_stderr("meiksh: unterminated single quote"),
+                t_stderr("meiksh: expand"),
+            ],
+            || {
+                let arena = StringArena::new();
+                let parse_err = syntax::parse("echo 'unterminated", &arena).expect_err("parse");
+                let shell_err: ShellError = parse_err.into();
+                assert_eq!(shell_err.exit_status(), 2);
 
-            let expand_err: ShellError = ExpandError {
-                message: "expand".into(),
-            }
-            .into();
-            assert_eq!(&*expand_err.message, "expand");
-            assert_eq!(shell_err.exit_status(), 2);
-            assert_eq!(format!("{}", shell_err), shell_err.display_message());
-        });
+                let expand_err: ShellError = ExpandError {
+                    message: "expand".into(),
+                }
+                .into();
+                assert_eq!(expand_err.exit_status(), 1);
+            },
+        );
     }
 
     #[test]
@@ -2114,7 +2134,7 @@ mod tests {
 
     #[test]
     fn parse_options_covers_dashdash_and_unknown_flags() {
-        assert_no_syscalls(|| {
+        run_trace(vec![t_stderr("meiksh: invalid option: z")], || {
             let options =
                 parse_options(&["meiksh".into(), "--".into(), "arg1".into(), "arg2".into()])
                     .expect("parse");
@@ -2125,7 +2145,6 @@ mod tests {
 
             let error = parse_options(&["meiksh".into(), "-z".into(), "script.sh".into()])
                 .expect_err("invalid option");
-            assert_eq!(error.display_message(), "invalid option: z");
             assert_eq!(error.exit_status(), 2);
 
             let options = parse_options(&[
@@ -2204,12 +2223,13 @@ mod tests {
     }
 
     #[test]
-    fn shell_error_status_metadata_helpers_work() {
-        assert_no_syscalls(|| {
-            let error = ShellError::with_status(127, "missing script");
+    fn shell_error_status_helpers_work() {
+        run_trace(vec![t_stderr("meiksh: missing script")], || {
+            let error = ShellError::diagnostic(127, "missing script");
             assert_eq!(error.exit_status(), 127);
-            assert_eq!(error.display_message(), "missing script");
-            assert_eq!(format!("{error}"), "missing script");
+
+            let silent = ShellError::silent(42);
+            assert_eq!(silent.exit_status(), 42);
         });
     }
 
@@ -2288,14 +2308,22 @@ mod tests {
 
     #[test]
     fn classify_script_read_error_maps_to_sh_exit_statuses() {
-        assert_no_syscalls(|| {
-            let classified =
-                classify_script_read_error(Path::new("missing"), sys::SysError::Errno(sys::ENOENT));
-            assert_eq!(classified.exit_status(), 127);
-            let classified =
-                classify_script_read_error(Path::new("bad"), sys::SysError::Errno(sys::EIO));
-            assert_eq!(classified.exit_status(), 128);
-        });
+        run_trace(
+            vec![
+                t_stderr("meiksh: missing: not found"),
+                t_stderr("meiksh: bad: Input/output error"),
+            ],
+            || {
+                let classified = classify_script_read_error(
+                    Path::new("missing"),
+                    sys::SysError::Errno(sys::ENOENT),
+                );
+                assert_eq!(classified.exit_status(), 127);
+                let classified =
+                    classify_script_read_error(Path::new("bad"), sys::SysError::Errno(sys::EIO));
+                assert_eq!(classified.exit_status(), 128);
+            },
+        );
     }
 
     #[test]
@@ -2325,11 +2353,19 @@ mod tests {
             vec![
                 t("pipe", vec![], TraceResult::Fds(200, 201)),
                 t("fork", vec![], TraceResult::Err(sys::EINVAL)),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"meiksh: Invalid argument\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
             ],
             || {
                 let mut shell = test_shell();
                 let error = shell.capture_output("true").expect_err("fork error");
-                assert!(!error.message.is_empty());
+                assert_ne!(error.exit_status(), 0);
             },
         );
     }
@@ -2766,29 +2802,6 @@ mod tests {
     }
 
     #[test]
-    fn consume_wait_interrupt_parses_interrupt_message() {
-        assert_no_syscalls(|| {
-            let mut shell = test_shell();
-            let message = ShellError {
-                message: "wait interrupted:140".into(),
-            };
-            assert_eq!(
-                shell.consume_wait_interrupt(&message).expect("consume"),
-                Some(140)
-            );
-            let message = ShellError {
-                message: "different".into(),
-            };
-            assert_eq!(
-                shell
-                    .consume_wait_interrupt(&message)
-                    .expect("non interrupt"),
-                None
-            );
-        });
-    }
-
-    #[test]
     fn wait_operations_fail_on_echild() {
         run_trace(
             vec![
@@ -2801,6 +2814,7 @@ mod tests {
                     ],
                     TraceResult::Err(sys::ECHILD),
                 ),
+                t_stderr("meiksh: No child processes"),
                 t(
                     "waitpid",
                     vec![
@@ -2810,6 +2824,7 @@ mod tests {
                     ],
                     TraceResult::Err(sys::ECHILD),
                 ),
+                t_stderr("meiksh: No child processes"),
             ],
             || {
                 let mut shell = test_shell();
@@ -2847,6 +2862,7 @@ mod tests {
                     ],
                     TraceResult::Err(sys::ECHILD),
                 ),
+                t_stderr("meiksh: No child processes"),
             ],
             || {
                 let mut shell = test_shell();
@@ -2942,7 +2958,7 @@ mod tests {
 
     #[test]
     fn parse_options_combined_c_with_other_flags() {
-        assert_no_syscalls(|| {
+        run_trace(vec![t_stderr("meiksh: -c requires an argument")], || {
             let options = parse_options(&[
                 "meiksh".into(),
                 "-ac".into(),
@@ -2962,7 +2978,7 @@ mod tests {
 
             let error =
                 parse_options(&["meiksh".into(), "-ec".into()]).expect_err("missing -c arg");
-            assert_eq!(error.display_message(), "-c requires an argument");
+            assert_eq!(error.exit_status(), 2);
         });
     }
 
@@ -3166,6 +3182,7 @@ mod tests {
             vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
             TraceResult::Err(libc::EIO),
         ));
+        trace.push(t_stderr("meiksh: Input/output error"));
         run_trace(trace, || {
             let mut shell = test_shell();
             assert!(shell.run_standard_input().is_err());
@@ -3194,7 +3211,7 @@ mod tests {
 
     #[test]
     fn maybe_run_stdin_source_parse_error() {
-        assert_no_syscalls(|| {
+        run_trace(vec![t_stderr("meiksh: line 1: expected command")], || {
             let mut shell = test_shell();
             let mut source = "if true\n".to_string();
             let result = shell.maybe_run_stdin_source(&mut source, false);
@@ -3249,11 +3266,17 @@ mod tests {
 
     #[test]
     fn command_substitute_maps_error() {
-        run_trace(vec![t("pipe", vec![], TraceResult::Err(sys::EIO))], || {
-            let mut shell = test_shell();
-            let result = crate::expand::Context::command_substitute(&mut shell, "true");
-            assert!(result.is_err());
-        });
+        run_trace(
+            vec![
+                t("pipe", vec![], TraceResult::Err(sys::EIO)),
+                t_stderr("meiksh: Input/output error"),
+            ],
+            || {
+                let mut shell = test_shell();
+                let result = crate::expand::Context::command_substitute(&mut shell, "true");
+                assert!(result.is_err());
+            },
+        );
     }
 
     #[test]
@@ -3400,6 +3423,7 @@ mod tests {
                     ],
                     TraceResult::Err(sys::ENOENT),
                 ),
+                t_stderr("meiksh: nonexistent-script: not found"),
             ],
             || {
                 let mut shell = test_shell();
@@ -3407,7 +3431,7 @@ mod tests {
                 let err = shell.load_script_source(Path::new("nonexistent-script"));
                 assert!(err.is_err());
                 let e = err.unwrap_err();
-                assert!(e.message.contains("not found"));
+                assert_eq!(e.exit_status(), 127);
             },
         );
     }
@@ -3441,13 +3465,14 @@ mod tests {
                     TraceResult::Int(0),
                 ),
                 t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
+                t_stderr("meiksh: binary-script: cannot execute"),
             ],
             || {
                 let shell = test_shell();
                 let err = shell.load_script_source(Path::new("binary-script"));
                 assert!(err.is_err());
                 let e = err.unwrap_err();
-                assert!(e.message.contains("cannot execute"));
+                assert_eq!(e.exit_status(), 126);
             },
         );
     }

@@ -142,6 +142,7 @@ begin test "dot sources file in current directory"
     echo 'export SOURCED_VAR=hello' > tmp_source.sh
     . ./tmp_source.sh
     echo "$SOURCED_VAR"
+    rm -f tmp_source.sh
   expect
     stdout "hello"
     stderr ""
@@ -160,11 +161,31 @@ begin test "dot sources file via PATH resolution"
     echo 'export SOURCED_VAR=path_resolved' > tmp_bin/tmp_source.sh
     PATH="$PWD/tmp_bin:$PATH" . tmp_source.sh
     echo "$SOURCED_VAR"
+    rm -rf tmp_bin
   expect
     stdout "path_resolved"
     stderr ""
     exit_code 0
 end test "dot sources file via PATH resolution"
+```
+
+#### Test: dot does not require the file to be executable
+
+The file searched for by the dot utility need not be executable; only
+readability is required.
+
+```
+begin test "dot does not require the file to be executable"
+  script
+    printf 'echo sourced_ok\n' > tmp_dot_noexec.sh
+    chmod a-x tmp_dot_noexec.sh
+    . ./tmp_dot_noexec.sh
+    rm -f tmp_dot_noexec.sh
+  expect
+    stdout "sourced_ok"
+    stderr ""
+    exit_code 0
+end test "dot does not require the file to be executable"
 ```
 
 #### Test: dot uses path with slash relative to current directory
