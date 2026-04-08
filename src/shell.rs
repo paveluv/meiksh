@@ -2,7 +2,6 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
-use crate::arena::StringArena;
 use crate::builtin::{self, BuiltinOutcome};
 use crate::exec;
 use crate::expand::{self, ExpandError};
@@ -454,8 +453,7 @@ impl Shell {
 
     fn run_source_buffer(&mut self, source: &str) -> Result<i32, ShellError> {
         if self.options.syntax_check_only {
-            let arena = StringArena::new();
-            let _ = syntax::parse_with_aliases(source, &self.aliases, &arena)
+            let _ = syntax::parse_with_aliases(source, &self.aliases)
                 .map_err(|e| self.parse_to_err(e))?;
             return Ok(0);
         }
@@ -528,9 +526,8 @@ impl Shell {
 
     fn execute_source_incrementally(&mut self, source: &str) -> Result<i32, ShellError> {
         let saved_lineno = self.lineno;
-        let arena = StringArena::new();
         let mut session =
-            syntax::ParseSession::new(source, &arena).map_err(|e| self.parse_to_err(e))?;
+            syntax::ParseSession::new(source).map_err(|e| self.parse_to_err(e))?;
         let mut status = 0;
         self.run_pending_traps()?;
         loop {
@@ -567,8 +564,7 @@ impl Shell {
         if source.is_empty() {
             return Ok(None);
         }
-        let arena = StringArena::new();
-        match syntax::parse_with_aliases(source, &self.aliases, &arena) {
+        match syntax::parse_with_aliases(source, &self.aliases) {
             Ok(_) => {
                 let buffered = std::mem::take(source);
                 self.run_source_buffer(&buffered).map(Some)
@@ -2043,8 +2039,7 @@ mod tests {
             ],
             || {
                 let shell = test_shell();
-                let arena = StringArena::new();
-                let parse_err = syntax::parse("echo 'unterminated", &arena).expect_err("parse");
+                let parse_err = syntax::parse("echo 'unterminated").expect_err("parse");
                 let shell_err = shell.parse_to_err(parse_err);
                 assert_eq!(shell_err.exit_status(), 2);
 
@@ -2259,15 +2254,12 @@ mod tests {
                 "echo \"unterminated",
                 "printf ok |\n",
             ] {
-                let arena = StringArena::new();
-                let error = syntax::parse(source, &arena).expect_err("incomplete parse");
+                let error = syntax::parse(source).expect_err("incomplete parse");
                 assert!(stdin_parse_error_requires_more_input(&error), "{source}");
             }
 
-            let arena = StringArena::new();
             let program = syntax::parse(
                 "999999999999999999999999999999999999999999999999999999999999<in",
-                &arena,
             )
             .expect("overflowing number is a word, not an io_number");
             assert_eq!(program.items.len(), 1);

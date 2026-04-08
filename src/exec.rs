@@ -1086,11 +1086,16 @@ fn expand_simple<'a>(
                 .here_doc
                 .as_ref()
                 .ok_or_else(|| shell.diagnostic(2, "missing here-document body"))?;
+            let raw_body = if here_doc.strip_tabs {
+                arena.intern(strip_heredoc_tabs(&here_doc.body))
+            } else {
+                &here_doc.body
+            };
             let body = if here_doc.expand {
-                expand::expand_here_document(shell, &here_doc.body, here_doc.body_line, arena)
+                expand::expand_here_document(shell, raw_body, here_doc.body_line, arena)
                     .map_err(|e| shell.expand_to_err(e))?
             } else {
-                arena.intern_str(&here_doc.body)
+                arena.intern_str(raw_body)
             };
             (arena.intern_str(&here_doc.delimiter), Some(body))
         } else {
@@ -1171,11 +1176,16 @@ fn expand_redirections<'a>(
                 .here_doc
                 .as_ref()
                 .ok_or_else(|| shell.diagnostic(2, "missing here-document body"))?;
+            let raw_body = if here_doc.strip_tabs {
+                arena.intern(strip_heredoc_tabs(&here_doc.body))
+            } else {
+                &here_doc.body
+            };
             let body = if here_doc.expand {
-                expand::expand_here_document(shell, &here_doc.body, here_doc.body_line, arena)
+                expand::expand_here_document(shell, raw_body, here_doc.body_line, arena)
                     .map_err(|e| shell.expand_to_err(e))?
             } else {
-                arena.intern_str(&here_doc.body)
+                arena.intern_str(raw_body)
             };
             (arena.intern_str(&here_doc.delimiter), Some(body))
         } else {
@@ -1649,6 +1659,14 @@ fn close_shell_fd(target_fd: i32) -> sys::SysResult<()> {
     Ok(())
 }
 
+fn strip_heredoc_tabs(body: &str) -> String {
+    body.lines()
+        .map(|line| line.trim_start_matches('\t'))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + if body.ends_with('\n') { "\n" } else { "" }
+}
+
 fn default_fd_for_redirection(kind: RedirectionKind) -> i32 {
     match kind {
         RedirectionKind::Read
@@ -2010,12 +2028,8 @@ mod tests {
     };
     use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-    fn test_arena() -> &'static crate::arena::StringArena {
-        Box::leak(Box::new(crate::arena::StringArena::new()))
-    }
-
     fn parse_test(source: &str) -> Result<crate::syntax::Program<'_>, crate::syntax::ParseError> {
-        crate::syntax::parse(source, test_arena())
+        crate::syntax::parse(source)
     }
 
     fn test_shell() -> Shell {

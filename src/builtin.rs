@@ -2131,7 +2131,6 @@ fn is_reserved_word_name(word: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::arena::StringArena;
     use crate::shell::ShellOptions;
     use crate::syntax::Word;
     use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -2174,9 +2173,10 @@ mod tests {
     }
 
     fn literal(raw: &str) -> Word<'static> {
-        let arena: &'static StringArena = Box::leak(Box::new(StringArena::new()));
         Word {
-            raw: arena.intern_str(raw), line: 0 }
+            raw: Box::leak(raw.to_string().into_boxed_str()) as &'static str,
+            line: 0,
+        }
     }
 
     #[test]
