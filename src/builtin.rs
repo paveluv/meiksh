@@ -2165,6 +2165,7 @@ mod tests {
             interactive: false,
             errexit_suppressed: false,
             pid: 0,
+            lineno: 0,
         }
     }
 
@@ -2175,8 +2176,7 @@ mod tests {
     fn literal(raw: &str) -> Word<'static> {
         let arena: &'static StringArena = Box::leak(Box::new(StringArena::new()));
         Word {
-            raw: arena.intern_str(raw),
-        }
+            raw: arena.intern_str(raw), line: 0 }
     }
 
     #[test]
@@ -5401,7 +5401,7 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(2),
-                    ArgMatcher::Bytes(b"meiksh: unterminated single quote\n".to_vec()),
+                    ArgMatcher::Bytes(b"meiksh: line 1: unterminated single quote\n".to_vec()),
                 ],
                 TraceResult::Auto,
             )],
