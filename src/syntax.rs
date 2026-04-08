@@ -8,11 +8,19 @@ pub struct Program<'src> {
     pub items: Box<[ListItem<'src>]>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct ListItem<'src> {
     pub and_or: AndOr<'src>,
     pub asynchronous: bool,
+    pub line: usize,
 }
+
+impl PartialEq for ListItem<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.and_or == other.and_or && self.asynchronous == other.asynchronous
+    }
+}
+impl Eq for ListItem<'_> {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AndOr<'src> {
@@ -66,10 +74,18 @@ pub struct Assignment<'src> {
     pub value: Word<'src>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct Word<'src> {
     pub raw: &'src str,
+    pub line: usize,
 }
+
+impl PartialEq for Word<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.raw == other.raw
+    }
+}
+impl Eq for Word<'_> {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Redirection<'src> {
@@ -126,13 +142,24 @@ pub struct CaseArm<'src> {
     pub fallthrough: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct HereDoc<'src> {
     pub delimiter: &'src str,
     pub body: &'src str,
     pub expand: bool,
     pub strip_tabs: bool,
+    pub body_line: usize,
 }
+
+impl PartialEq for HereDoc<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.delimiter == other.delimiter
+            && self.body == other.body
+            && self.expand == other.expand
+            && self.strip_tabs == other.strip_tabs
+    }
+}
+impl Eq for HereDoc<'_> {}
 
 impl<'src> Command<'src> {
     pub fn into_static(self) -> Command<'static> {
@@ -151,6 +178,7 @@ impl<'src> Command<'src> {
                         name: arena.intern_str(a.name),
                         value: Word {
                             raw: arena.intern_str(a.value.raw),
+                            line: a.value.line,
                         },
                     })
                     .collect::<Vec<_>>()
@@ -161,6 +189,7 @@ impl<'src> Command<'src> {
                     .into_iter()
                     .map(|w| Word {
                         raw: arena.intern_str(w.raw),
+                        line: w.line,
                     })
                     .collect::<Vec<_>>()
                     .into_boxed_slice(),
@@ -206,6 +235,7 @@ impl<'src> Command<'src> {
                         .into_iter()
                         .map(|w| Word {
                             raw: arena.intern_str(w.raw),
+                            line: w.line,
                         })
                         .collect::<Vec<_>>()
                         .into_boxed_slice()
@@ -215,6 +245,7 @@ impl<'src> Command<'src> {
             Command::Case(c) => Command::Case(CaseCommand {
                 word: Word {
                     raw: arena.intern_str(c.word.raw),
+                    line: c.word.line,
                 },
                 arms: c
                     .arms
@@ -227,6 +258,7 @@ impl<'src> Command<'src> {
                             .into_iter()
                             .map(|w| Word {
                                 raw: arena.intern_str(w.raw),
+                                line: w.line,
                             })
                             .collect::<Vec<_>>()
                             .into_boxed_slice(),
@@ -268,6 +300,7 @@ fn program_convert(p: Program<'_>, arena: &'static StringArena) -> Program<'stat
                         .into_boxed_slice(),
                 },
                 asynchronous: item.asynchronous,
+                line: item.line,
             })
             .collect::<Vec<_>>()
             .into_boxed_slice(),
@@ -294,12 +327,14 @@ fn redir_convert(r: Redirection<'_>, arena: &'static StringArena) -> Redirection
         kind: r.kind,
         target: Word {
             raw: arena.intern_str(r.target.raw),
+            line: r.target.line,
         },
         here_doc: r.here_doc.map(|hd| HereDoc {
             delimiter: arena.intern_str(hd.delimiter),
             body: arena.intern_str(hd.body),
             expand: hd.expand,
             strip_tabs: hd.strip_tabs,
+            body_line: hd.body_line,
         }),
     }
 }
@@ -335,6 +370,14 @@ impl fmt::Display for ParseError {
 }
 
 impl std::error::Error for ParseError {}
+
+fn line_at(source: &str, index: usize) -> usize {
+    source[..index.min(source.len())]
+        .bytes()
+        .filter(|&b| b == b'\n')
+        .count()
+        + 1
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Token<'src> {
@@ -428,21 +471,19 @@ impl<'src> ParseSession<'src> {
         if self.parser.is_eof() {
             return Ok(None);
         }
+        let line = self.parser.current_line();
         let and_or = self.parser.parse_and_or()?;
         let asynchronous = self.parser.consume_amp();
         self.parser.skip_separators();
         Ok(Some(ListItem {
             and_or,
             asynchronous,
+            line,
         }))
     }
 
     pub fn current_line(&self) -> usize {
-        self.parser.tokens[..self.parser.index]
-            .iter()
-            .filter(|t| matches!(t, Token::Newline))
-            .count()
-            + 1
+        self.parser.current_line()
     }
 }
 
@@ -472,7 +513,7 @@ fn skip_scan(source: &str, index: &mut usize) -> Result<(), ParseError> {
             }
             Err(ParseError {
                 message: "unterminated single quote".into(),
-                line: None,
+                line: Some(line_at(source, *index)),
             })
         }
         '"' => {
@@ -517,7 +558,7 @@ fn skip_dollar_single_quote(source: &str, index: &mut usize) -> Result<(), Parse
     }
     Err(ParseError {
         message: "unterminated dollar-single-quotes".into(),
-        line: None,
+        line: Some(line_at(source, *index)),
     })
 }
 
@@ -542,7 +583,7 @@ fn skip_dollar_construct(source: &str, index: &mut usize) -> Result<(), ParseErr
             }
             return Err(ParseError {
                 message: "unterminated arithmetic expansion".into(),
-                line: None,
+                line: Some(line_at(source, *index)),
             });
         }
         *index += 2;
@@ -578,7 +619,7 @@ fn skip_paren_body(source: &str, index: &mut usize) -> Result<(), ParseError> {
     }
     Err(ParseError {
         message: "unterminated command substitution".into(),
-        line: None,
+        line: Some(line_at(source, *index)),
     })
 }
 
@@ -600,7 +641,7 @@ fn skip_brace_body(source: &str, index: &mut usize) -> Result<(), ParseError> {
     }
     Err(ParseError {
         message: "unterminated parameter expansion".into(),
-        line: None,
+        line: Some(line_at(source, *index)),
     })
 }
 
@@ -620,7 +661,7 @@ fn skip_backtick_body(source: &str, index: &mut usize) -> Result<(), ParseError>
     }
     Err(ParseError {
         message: "unterminated backquote".into(),
-        line: None,
+        line: Some(line_at(source, *index)),
     })
 }
 
@@ -663,7 +704,7 @@ fn skip_dquote_body(source: &str, index: &mut usize) -> Result<(), ParseError> {
     }
     Err(ParseError {
         message: "unterminated double quote".into(),
-        line: None,
+        line: Some(line_at(source, *index)),
     })
 }
 
@@ -808,6 +849,7 @@ fn tokenize<'src>(
                 tokens.push(Token::Newline);
                 index += 1;
                 while let Some((delimiter, expand, strip_tabs)) = pending_here_docs.pop_front() {
+                    let body_line = source[..index].bytes().filter(|&b| b == b'\n').count() + 1;
                     let body =
                         read_here_doc_body(source, &mut index, &delimiter, strip_tabs, expand)?;
                     here_docs.push_back(HereDoc {
@@ -815,6 +857,7 @@ fn tokenize<'src>(
                         body: arena.intern(body),
                         expand,
                         strip_tabs,
+                        body_line,
                     });
                 }
                 word.reset_slice(index);
@@ -832,7 +875,7 @@ fn tokenize<'src>(
                     if index >= source.len() {
                         return Err(ParseError {
                             message: "unterminated single quote".into(),
-                            line: None,
+                            line: Some(line_at(source, index)),
                         });
                     }
                     let c = next_char(source, index).unwrap();
@@ -1031,7 +1074,7 @@ fn tokenize<'src>(
     if !pending_here_docs.is_empty() {
         return Err(ParseError {
             message: "unterminated here-document".into(),
-            line: None,
+            line: Some(line_at(source, index)),
         });
     }
     tokens.push(Token::Eof);
@@ -1208,7 +1251,7 @@ fn read_here_doc_body(
         } else {
             return Err(ParseError {
                 message: "unterminated here-document".into(),
-                line: None,
+                line: Some(line_at(source, *index)),
             });
         }
     }
@@ -1222,6 +1265,7 @@ struct Parser<'src> {
     alias_expand_next_word_at: Option<usize>,
     alias_expansions_remaining: usize,
     index: usize,
+    line: usize,
 }
 
 impl<'src> Parser<'src> {
@@ -1239,15 +1283,19 @@ impl<'src> Parser<'src> {
             alias_expand_next_word_at: None,
             alias_expansions_remaining: 1024,
             index: 0,
+            line: 1,
         }
     }
 
     fn current_line(&self) -> usize {
-        self.tokens[..self.index]
-            .iter()
-            .filter(|t| matches!(t, Token::Newline))
-            .count()
-            + 1
+        self.line
+    }
+
+    fn advance(&mut self) {
+        if matches!(self.tokens.get(self.index), Some(Token::Newline)) {
+            self.line += 1;
+        }
+        self.index += 1;
     }
 
     fn error(&self, message: impl Into<Box<str>>) -> ParseError {
@@ -1279,11 +1327,13 @@ impl<'src> Parser<'src> {
             {
                 break;
             }
+            let line = self.current_line();
             let and_or = self.parse_and_or()?;
             let asynchronous = self.consume_amp();
             items.push(ListItem {
                 and_or,
                 asynchronous,
+                line,
             });
             self.skip_separators();
         }
@@ -1302,7 +1352,7 @@ impl<'src> Parser<'src> {
                 Token::OrIf => LogicalOp::Or,
                 _ => break,
             };
-            self.index += 1;
+            self.advance();
             self.skip_linebreaks();
             let rhs = self.parse_pipeline()?;
             rest.push((op, rhs));
@@ -1330,7 +1380,7 @@ impl<'src> Parser<'src> {
         self.expand_alias_at_command_start()?;
         let mut commands = vec![self.parse_command()?];
         while matches!(self.peek(), Token::Pipe) {
-            self.index += 1;
+            self.advance();
             self.skip_linebreaks();
             commands.push(self.parse_command()?);
         }
@@ -1347,7 +1397,9 @@ impl<'src> Parser<'src> {
             return Err(self.error("expected command"));
         }
         let command = if let Some(function_name) = self.try_peek_function_name() {
-            self.index += 3;
+            self.advance();
+            self.advance();
+            self.advance();
             let body = self.parse_command()?;
             Command::FunctionDef(FunctionDef {
                 name: function_name,
@@ -1368,13 +1420,13 @@ impl<'src> Parser<'src> {
         } else {
             match self.peek() {
                 Token::LParen => {
-                    self.index += 1;
+                    self.advance();
                     let body = self.parse_program_until(true, |_| false, false)?;
                     self.expect(Token::RParen, "expected ')' to close subshell")?;
                     Command::Subshell(body)
                 }
                 Token::LBrace => {
-                    self.index += 1;
+                    self.advance();
                     let body = self.parse_program_until(true, |_| false, false)?;
                     self.expect_kw(Token::RBrace, "}")?;
                     Command::Group(body)
@@ -1470,7 +1522,7 @@ impl<'src> Parser<'src> {
         self.expect_kw(Token::For, "for")?;
         let name = match token_text(self.peek()) {
             Some(text) if is_name(text) => {
-                self.index += 1;
+                self.advance();
                 text
             }
             _ => {
@@ -1480,12 +1532,12 @@ impl<'src> Parser<'src> {
 
         self.skip_linebreaks();
         let items = if matches!(self.peek(), Token::In) {
-            self.index += 1;
+            self.advance();
             let mut items = Vec::new();
             while !self.is_eof() && !matches!(self.peek(), Token::Semi | Token::Newline) {
                 match self.consume_any_word() {
                     Some(text) => {
-                        items.push(Word { raw: text });
+                        items.push(Word { raw: text, line: self.current_line() });
                     }
                     None => {
                         return Err(self.error("expected for loop word list"));
@@ -1507,14 +1559,14 @@ impl<'src> Parser<'src> {
     fn parse_case_command(&mut self) -> Result<Command<'src>, ParseError> {
         self.expect_kw(Token::Case, "case")?;
         let word = match self.consume_any_word() {
-            Some(text) => Word { raw: text },
+            Some(text) => Word { raw: text, line: self.current_line() },
             None => {
                 return Err(self.error("expected case word"));
             }
         };
         self.skip_linebreaks();
         if matches!(self.peek(), Token::In) {
-            self.index += 1;
+            self.advance();
         } else {
             return Err(self.error("expected 'in'"));
         }
@@ -1523,14 +1575,14 @@ impl<'src> Parser<'src> {
         let mut arms = Vec::new();
         while !matches!(self.peek(), Token::Esac) && !self.is_eof() {
             if matches!(self.peek(), Token::LParen) {
-                self.index += 1;
+                self.advance();
             }
 
             let mut patterns = Vec::new();
             loop {
                 match self.consume_any_word() {
                     Some(text) => {
-                        patterns.push(Word { raw: text });
+                        patterns.push(Word { raw: text, line: self.current_line() });
                     }
                     None => {
                         return Err(self.error("expected case pattern"));
@@ -1538,7 +1590,7 @@ impl<'src> Parser<'src> {
                 }
 
                 if matches!(self.peek(), Token::Pipe) {
-                    self.index += 1;
+                    self.advance();
                     continue;
                 }
                 break;
@@ -1555,7 +1607,7 @@ impl<'src> Parser<'src> {
             });
 
             if matches!(self.peek(), Token::DSemi | Token::SemiAmp) {
-                self.index += 1;
+                self.advance();
                 self.skip_separators();
             } else if !matches!(self.peek(), Token::Esac) {
                 return Err(self.error("expected ';;', ';&', or 'esac'"));
@@ -1573,7 +1625,7 @@ impl<'src> Parser<'src> {
         self.expect_kw(Token::Function, "function")?;
         let name = match token_text(self.peek()) {
             Some(name) if is_name(name) => {
-                self.index += 1;
+                self.advance();
                 name
             }
             _ => {
@@ -1581,7 +1633,7 @@ impl<'src> Parser<'src> {
             }
         };
         if matches!(self.peek(), Token::LParen) {
-            self.index += 1;
+            self.advance();
             self.expect(Token::RParen, "expected ')' after '('")?;
         }
         let body = self.parse_command()?;
@@ -1606,10 +1658,11 @@ impl<'src> Parser<'src> {
             if words.is_empty() {
                 if let Some(text) = self.peek_word_text() {
                     if let Some((name, value)) = split_assignment(text) {
-                        self.index += 1;
+                        let line = self.current_line();
+                        self.advance();
                         assignments.push(Assignment {
                             name,
-                            value: Word { raw: value },
+                            value: Word { raw: value, line },
                         });
                         continue;
                     }
@@ -1619,12 +1672,13 @@ impl<'src> Parser<'src> {
                 }
             }
 
+            let line = self.current_line();
             let text = match self.consume_any_word() {
                 Some(text) => text,
                 None => break,
             };
 
-            words.push(Word { raw: text });
+            words.push(Word { raw: text, line });
         }
 
         if words.is_empty() && assignments.is_empty() && redirections.is_empty() {
@@ -1646,7 +1700,7 @@ impl<'src> Parser<'src> {
         let (fd, kind) = match self.peek().clone() {
             Token::IoNumber(fd) => {
                 let kind = self.redirection_kind_at(self.index + 1)?;
-                self.index += 1;
+                self.advance();
                 (Some(fd), kind)
             }
             _ => (None, self.redirection_kind_at(self.index)?),
@@ -1655,10 +1709,11 @@ impl<'src> Parser<'src> {
             return Ok(None);
         }
         let kind = kind.expect("checked above");
-        self.index += 1;
+        self.advance();
 
+        let line = self.current_line();
         let target = match self.consume_any_word() {
-            Some(text) => Word { raw: text },
+            Some(text) => Word { raw: text, line },
             None => {
                 return Err(self.error("expected redirection target"));
             }
@@ -1702,19 +1757,19 @@ impl<'src> Parser<'src> {
 
     fn skip_separators(&mut self) {
         while matches!(self.peek(), Token::Newline | Token::Semi) {
-            self.index += 1;
+            self.advance();
         }
     }
 
     fn skip_linebreaks(&mut self) {
         while matches!(self.peek(), Token::Newline) {
-            self.index += 1;
+            self.advance();
         }
     }
 
     fn consume_amp(&mut self) -> bool {
         if matches!(self.peek(), Token::Amp) {
-            self.index += 1;
+            self.advance();
             true
         } else {
             false
@@ -1723,7 +1778,7 @@ impl<'src> Parser<'src> {
 
     fn consume_word(&mut self, word: &str) -> bool {
         if matches!(self.peek(), Token::Word(t) if *t == word) {
-            self.index += 1;
+            self.advance();
             true
         } else {
             false
@@ -1732,7 +1787,7 @@ impl<'src> Parser<'src> {
 
     fn consume_bang(&mut self) -> bool {
         if matches!(self.peek(), Token::Bang) {
-            self.index += 1;
+            self.advance();
             true
         } else {
             false
@@ -1741,7 +1796,7 @@ impl<'src> Parser<'src> {
 
     fn expect(&mut self, expected: Token<'src>, message: &str) -> Result<(), ParseError> {
         if std::mem::discriminant(self.peek()) == std::mem::discriminant(&expected) {
-            self.index += 1;
+            self.advance();
             Ok(())
         } else {
             Err(self.error(message))
@@ -1761,7 +1816,7 @@ impl<'src> Parser<'src> {
 
     fn consume_any_word(&mut self) -> Option<&'src str> {
         let text = token_text(&self.tokens[self.index])?;
-        self.index += 1;
+        self.advance();
         Some(text)
     }
 
@@ -1839,7 +1894,7 @@ impl<'src> Parser<'src> {
 
     fn expect_kw(&mut self, variant: Token<'static>, name: &str) -> Result<(), ParseError> {
         if std::mem::discriminant(self.peek()) == std::mem::discriminant(&variant) {
-            self.index += 1;
+            self.advance();
             self.skip_separators();
             Ok(())
         } else {
@@ -2976,14 +3031,14 @@ mod tests {
         let simple = Command::Simple(SimpleCommand {
             assignments: vec![Assignment {
                 name: "X",
-                value: Word { raw: "1" },
+                value: Word { raw: "1", line: 0 },
             }]
             .into_boxed_slice(),
-            words: vec![Word { raw: "echo" }].into_boxed_slice(),
+            words: vec![Word { raw: "echo", line: 0 }].into_boxed_slice(),
             redirections: vec![Redirection {
                 fd: Some(2),
                 kind: RedirectionKind::Write,
-                target: Word { raw: "err" },
+                target: Word { raw: "err", line: 0 },
                 here_doc: None,
             }]
             .into_boxed_slice(),
@@ -3001,8 +3056,7 @@ mod tests {
                     },
                     rest: vec![].into_boxed_slice(),
                 },
-                asynchronous: false,
-            }]
+                asynchronous: false, line: 0 }]
             .into_boxed_slice(),
         });
         assert!(matches!(
@@ -3056,7 +3110,7 @@ mod tests {
 
         let for_cmd = Command::For(ForCommand {
             name: "i",
-            items: Some(vec![Word { raw: "a" }].into_boxed_slice()),
+            items: Some(vec![Word { raw: "a", line: 0 }].into_boxed_slice()),
             body: Program {
                 items: vec![].into_boxed_slice(),
             },
@@ -3065,9 +3119,9 @@ mod tests {
         assert!(matches!(&for_static, Command::For(fc) if fc.name == "i"));
 
         let case_cmd = Command::Case(CaseCommand {
-            word: Word { raw: "x" },
+            word: Word { raw: "x", line: 0 },
             arms: vec![CaseArm {
-                patterns: vec![Word { raw: "*" }].into_boxed_slice(),
+                patterns: vec![Word { raw: "*", line: 0 }].into_boxed_slice(),
                 body: Program {
                     items: vec![].into_boxed_slice(),
                 },
@@ -3082,13 +3136,12 @@ mod tests {
             vec![Redirection {
                 fd: None,
                 kind: RedirectionKind::Write,
-                target: Word { raw: "out" },
+                target: Word { raw: "out", line: 0 },
                 here_doc: Some(HereDoc {
                     delimiter: "EOF",
                     body: "test\n",
                     expand: true,
-                    strip_tabs: false,
-                }),
+                    strip_tabs: false, body_line: 0 }),
             }]
             .into_boxed_slice(),
         );

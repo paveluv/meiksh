@@ -233,6 +233,7 @@ mod tests {
             interactive: false,
             errexit_suppressed: false,
             pid: 0,
+            lineno: 0,
         }
     }
 
@@ -434,7 +435,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"meiksh: unterminated single quote\n".to_vec()),
+                        ArgMatcher::Bytes(b"meiksh: line 2: unterminated single quote\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -1209,7 +1210,7 @@ mod tests {
         ));
         trace.push(t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)));
 
-        let err_msg = b"meiksh: unterminated command substitution\n";
+        let err_msg = b"meiksh: line 2: unterminated command substitution\n";
         trace.push(t(
             "write",
             vec![

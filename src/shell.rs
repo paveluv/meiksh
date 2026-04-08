@@ -179,6 +179,7 @@ pub struct Shell {
     pub(crate) interactive: bool,
     pub(crate) errexit_suppressed: bool,
     pub(crate) pid: sys::Pid,
+    pub(crate) lineno: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -255,9 +256,17 @@ pub enum PendingControl {
 }
 
 impl Shell {
-    pub fn diagnostic(&self, status: i32, msg: impl std::fmt::Display) -> ShellError {
-        sys_eprintln!("meiksh: {}", msg);
+    fn diagnostic_at(&self, line: usize, status: i32, msg: impl std::fmt::Display) -> ShellError {
+        if line > 0 && !self.interactive {
+            sys_eprintln!("meiksh: line {}: {}", line, msg);
+        } else {
+            sys_eprintln!("meiksh: {}", msg);
+        }
         ShellError::Status(status)
+    }
+
+    pub fn diagnostic(&self, status: i32, msg: impl std::fmt::Display) -> ShellError {
+        self.diagnostic_at(self.lineno, status, msg)
     }
 
     pub fn expand_to_err(&self, e: crate::expand::ExpandError) -> ShellError {
@@ -268,11 +277,7 @@ impl Shell {
     }
 
     pub fn parse_to_err(&self, e: syntax::ParseError) -> ShellError {
-        if let Some(line) = e.line {
-            self.diagnostic(2, format_args!("line {}: {}", line, e.message))
-        } else {
-            self.diagnostic(2, &e)
-        }
+        self.diagnostic_at(e.line.unwrap_or(0), 2, &e.message)
     }
 
     pub fn from_env() -> Result<Self, ShellError> {
@@ -328,6 +333,7 @@ impl Shell {
             interactive,
             errexit_suppressed: false,
             pid: sys::current_pid(),
+            lineno: 0,
         })
     }
 
@@ -386,6 +392,7 @@ impl Shell {
             pending_control: None,
             errexit_suppressed: false,
             pid: sys::current_pid(),
+            lineno: 0,
         })
     }
 
@@ -520,13 +527,13 @@ impl Shell {
     }
 
     fn execute_source_incrementally(&mut self, source: &str) -> Result<i32, ShellError> {
+        let saved_lineno = self.lineno;
         let arena = StringArena::new();
         let mut session =
             syntax::ParseSession::new(source, &arena).map_err(|e| self.parse_to_err(e))?;
         let mut status = 0;
         self.run_pending_traps()?;
         loop {
-            let lineno = session.current_line();
             let item = match session
                 .next_item(&self.aliases)
                 .map_err(|e| self.parse_to_err(e))?
@@ -534,13 +541,6 @@ impl Shell {
                 Some(item) => item,
                 None => break,
             };
-            if let Some(v) = self.env.get_mut("LINENO") {
-                v.clear();
-                use std::fmt::Write;
-                let _ = write!(v, "{lineno}");
-            } else {
-                self.env.insert("LINENO".into(), lineno.to_string());
-            }
             status = self.execute_program(&Program {
                 items: vec![item].into_boxed_slice(),
             })?;
@@ -549,6 +549,7 @@ impl Shell {
                 break;
             }
         }
+        self.lineno = saved_lineno;
         if let Some(PendingControl::Return(rs)) = self.pending_control.take() {
             if self.source_depth > 0 && self.function_depth == 0 {
                 return Ok(rs);
@@ -1075,10 +1076,12 @@ impl Shell {
         action: &str,
         preserved_status: i32,
     ) -> Result<i32, ShellError> {
+        let saved_lineno = self.lineno;
         let was_running = self.running;
         self.running = true;
         self.last_status = preserved_status;
         let status = self.execute_string(action)?;
+        self.lineno = saved_lineno;
         if self.running {
             self.running = was_running;
             self.last_status = preserved_status;
@@ -1314,6 +1317,10 @@ impl expand::Context for Shell {
     fn home_dir_for_user(&self, name: &str) -> Option<Cow<'_, str>> {
         sys::home_dir_for_user(name).map(Cow::Owned)
     }
+
+    fn set_lineno(&mut self, line: usize) { self.lineno = line; }
+    fn inc_lineno(&mut self) { self.lineno += 1; }
+    fn lineno(&self) -> usize { self.lineno }
 }
 
 fn parse_options(args: &[String]) -> Result<ShellOptions, ShellError> {
@@ -1592,6 +1599,7 @@ mod tests {
             interactive: false,
             errexit_suppressed: false,
             pid: 0,
+            lineno: 0,
         }
     }
 
@@ -2030,7 +2038,7 @@ mod tests {
     fn shell_error_converts_from_parse_and_expand_errors() {
         run_trace(
             vec![
-                t_stderr("meiksh: unterminated single quote"),
+                t_stderr("meiksh: line 1: unterminated single quote"),
                 t_stderr("meiksh: expand"),
             ],
             || {
