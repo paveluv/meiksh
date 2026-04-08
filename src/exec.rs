@@ -484,7 +484,7 @@ fn execute_command(shell: &mut Shell, command: &Command) -> Result<i32, ShellErr
         Command::FunctionDef(function) => {
             shell.functions.insert(
                 function.name.to_string(),
-                (*function.body).clone().into_static(),
+                (*function.body).clone(),
             );
             Ok(0)
         }
@@ -1047,7 +1047,7 @@ fn is_declaration_utility(name: &str) -> bool {
 fn find_declaration_context(words: &[crate::syntax::Word]) -> bool {
     let mut i = 0;
     while i < words.len() {
-        let raw = words[i].raw;
+        let raw = &*words[i].raw;
         if raw == "command" {
             i += 1;
             while i < words.len() && words[i].raw.starts_with('-') {
@@ -1069,7 +1069,7 @@ fn expand_simple<'a>(
     for assignment in &simple.assignments {
         let value = expand::expand_assignment_value(shell, &assignment.value, arena)
             .map_err(|e| shell.expand_to_err(e))?;
-        assignments.push((arena.intern_str(assignment.name), value));
+        assignments.push((arena.intern_str(&assignment.name), value));
     }
 
     let declaration_ctx = find_declaration_context(&simple.words);
@@ -1149,7 +1149,7 @@ fn expand_words_declaration<'a>(
             {
                 found_cmd = true;
             }
-        } else if expand::word_is_assignment(word.raw) {
+        } else if expand::word_is_assignment(&word.raw) {
             result.push(
                 expand::expand_word_as_declaration_assignment(shell, word, arena)
                     .map_err(|e| shell.expand_to_err(e))?,
@@ -2030,7 +2030,7 @@ mod tests {
     };
     use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-    fn parse_test(source: &str) -> Result<crate::syntax::Program<'_>, crate::syntax::ParseError> {
+    fn parse_test(source: &str) -> Result<crate::syntax::Program, crate::syntax::ParseError> {
         crate::syntax::parse(source)
     }
 
