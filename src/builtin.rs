@@ -2172,9 +2172,9 @@ mod tests {
         super::run(shell, argv, &[])
     }
 
-    fn literal(raw: &str) -> Word<'static> {
+    fn literal(raw: &str) -> Word {
         Word {
-            raw: Box::leak(raw.to_string().into_boxed_str()) as &'static str,
+            raw: raw.into(),
             line: 0,
         }
     }

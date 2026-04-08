@@ -32,13 +32,13 @@
 //! guard (`if self.pushed_back.is_some() { return Ok(()); }`) makes every
 //! call after the first an O(1) no-op.
 //!
-//! # Lifetime `'src`
+//! # Owned AST
 //!
-//! All AST nodes borrow directly from the source string **or** from
-//! strings leaked via [`Parser::intern`] (used for backslash-newline
-//! stripping and alias values).  There is no arena; interned strings are
-//! individually heap-allocated and leaked to `'static`, then transmuted
-//! to `'src` — safe because the AST never outlives the source.
+//! All AST string fields use `Box<str>` — fully owned, no lifetime
+//! parameters.  The parser copies source slices into `Box<str>` when
+//! constructing AST nodes.  This eliminates `Box::leak`, borrow
+//! conflicts with `&mut Shell`, and lifetime annotations on every
+//! consumer of the AST.
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
@@ -59,8 +59,8 @@ use std::fmt;
 //
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Program<'src> {
-    pub items: Box<[ListItem<'src>]>,
+pub struct Program {
+    pub items: Box<[ListItem]>,
 }
 
 /// One entry in a command list.  `asynchronous` is true when the item
@@ -68,23 +68,23 @@ pub struct Program<'src> {
 /// `line` records the source line for diagnostic messages.
 /// Equality ignores `line` (same rationale as `Word`).
 #[derive(Clone, Debug)]
-pub struct ListItem<'src> {
-    pub and_or: AndOr<'src>,
+pub struct ListItem {
+    pub and_or: AndOr,
     pub asynchronous: bool,
     pub line: usize,
 }
 
-impl PartialEq for ListItem<'_> {
+impl PartialEq for ListItem {
     fn eq(&self, other: &Self) -> bool {
         self.and_or == other.and_or && self.asynchronous == other.asynchronous
     }
 }
-impl Eq for ListItem<'_> {}
+impl Eq for ListItem {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AndOr<'src> {
-    pub first: Pipeline<'src>,
-    pub rest: Box<[(LogicalOp, Pipeline<'src>)]>,
+pub struct AndOr {
+    pub first: Pipeline,
+    pub rest: Box<[(LogicalOp, Pipeline)]>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,111 +101,111 @@ pub enum TimedMode {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Pipeline<'src> {
+pub struct Pipeline {
     pub negated: bool,
     pub timed: TimedMode,
-    pub commands: Box<[Command<'src>]>,
+    pub commands: Box<[Command]>,
 }
 
 /// A single shell command.  `Redirected` wraps a compound command with
 /// trailing redirections (simple commands carry redirections inline).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Command<'src> {
-    Simple(SimpleCommand<'src>),
-    Subshell(Program<'src>),
-    Group(Program<'src>),
-    FunctionDef(FunctionDef<'src>),
-    If(IfCommand<'src>),
-    Loop(LoopCommand<'src>),
-    For(ForCommand<'src>),
-    Case(CaseCommand<'src>),
-    Redirected(Box<Command<'src>>, Box<[Redirection<'src>]>),
+pub enum Command {
+    Simple(SimpleCommand),
+    Subshell(Program),
+    Group(Program),
+    FunctionDef(FunctionDef),
+    If(IfCommand),
+    Loop(LoopCommand),
+    For(ForCommand),
+    Case(CaseCommand),
+    Redirected(Box<Command>, Box<[Redirection]>),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct SimpleCommand<'src> {
-    pub assignments: Box<[Assignment<'src>]>,
-    pub words: Box<[Word<'src>]>,
-    pub redirections: Box<[Redirection<'src>]>,
+pub struct SimpleCommand {
+    pub assignments: Box<[Assignment]>,
+    pub words: Box<[Word]>,
+    pub redirections: Box<[Redirection]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Assignment<'src> {
-    pub name: &'src str,
-    pub value: Word<'src>,
+pub struct Assignment {
+    pub name: Box<str>,
+    pub value: Word,
 }
 
 /// A shell word — the raw source text before expansion.
 /// `line` records where the word appeared for diagnostics.
 /// Equality ignores `line` so tests can compare ASTs without position noise.
 #[derive(Clone, Debug)]
-pub struct Word<'src> {
-    pub raw: &'src str,
+pub struct Word {
+    pub raw: Box<str>,
     pub line: usize,
 }
 
-impl PartialEq for Word<'_> {
+impl PartialEq for Word {
     fn eq(&self, other: &Self) -> bool {
         self.raw == other.raw
     }
 }
-impl Eq for Word<'_> {}
+impl Eq for Word {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Redirection<'src> {
+pub struct Redirection {
     pub fd: Option<i32>,
     pub kind: RedirectionKind,
-    pub target: Word<'src>,
-    pub here_doc: Option<HereDoc<'src>>,
+    pub target: Word,
+    pub here_doc: Option<HereDoc>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FunctionDef<'src> {
-    pub name: &'src str,
-    pub body: Box<Command<'src>>,
+pub struct FunctionDef {
+    pub name: Box<str>,
+    pub body: Box<Command>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct IfCommand<'src> {
-    pub condition: Program<'src>,
-    pub then_branch: Program<'src>,
-    pub elif_branches: Box<[ElifBranch<'src>]>,
-    pub else_branch: Option<Program<'src>>,
+pub struct IfCommand {
+    pub condition: Program,
+    pub then_branch: Program,
+    pub elif_branches: Box<[ElifBranch]>,
+    pub else_branch: Option<Program>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ElifBranch<'src> {
-    pub condition: Program<'src>,
-    pub body: Program<'src>,
+pub struct ElifBranch {
+    pub condition: Program,
+    pub body: Program,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LoopCommand<'src> {
+pub struct LoopCommand {
     pub kind: LoopKind,
-    pub condition: Program<'src>,
-    pub body: Program<'src>,
+    pub condition: Program,
+    pub body: Program,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ForCommand<'src> {
-    pub name: &'src str,
-    pub items: Option<Box<[Word<'src>]>>,
-    pub body: Program<'src>,
+pub struct ForCommand {
+    pub name: Box<str>,
+    pub items: Option<Box<[Word]>>,
+    pub body: Program,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CaseCommand<'src> {
-    pub word: Word<'src>,
-    pub arms: Box<[CaseArm<'src>]>,
+pub struct CaseCommand {
+    pub word: Word,
+    pub arms: Box<[CaseArm]>,
 }
 
 /// One arm of a `case` statement.  `fallthrough` is true when the arm
 /// is terminated by `;&` instead of `;;`, meaning execution continues
 /// into the next arm's body.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CaseArm<'src> {
-    pub patterns: Box<[Word<'src>]>,
-    pub body: Program<'src>,
+pub struct CaseArm {
+    pub patterns: Box<[Word]>,
+    pub body: Program,
     pub fallthrough: bool,
 }
 
@@ -220,15 +220,15 @@ pub struct CaseArm<'src> {
 /// Tab stripping and `\\\n` continuation are left in the raw body here;
 /// normalization happens at expansion time in `exec.rs`.
 #[derive(Clone, Debug)]
-pub struct HereDoc<'src> {
-    pub delimiter: &'src str,
-    pub body: &'src str,
+pub struct HereDoc {
+    pub delimiter: Box<str>,
+    pub body: Box<str>,
     pub expand: bool,
     pub strip_tabs: bool,
     pub body_line: usize,
 }
 
-impl PartialEq for HereDoc<'_> {
+impl PartialEq for HereDoc {
     fn eq(&self, other: &Self) -> bool {
         self.delimiter == other.delimiter
             && self.body == other.body
@@ -236,199 +236,8 @@ impl PartialEq for HereDoc<'_> {
             && self.strip_tabs == other.strip_tabs
     }
 }
-impl Eq for HereDoc<'_> {}
+impl Eq for HereDoc {}
 
-// ============================================================
-// into_static
-// ============================================================
-//
-// Shell function bodies are stored in `Shell::functions` and must
-// outlive any single parse.  `into_static` converts a `Command<'src>`
-// to `Command<'static>` by leaking every borrowed slice via `leak_str`.
-// This is intentionally leaky — function bodies are typically few and
-// small, and the alternative (an arena with complex lifetimes) is not
-// worth the ergonomic cost.
-
-fn leak_str(s: &str) -> &'static str {
-    Box::leak(s.to_string().into_boxed_str())
-}
-
-impl<'src> Command<'src> {
-    pub fn into_static(self) -> Command<'static> {
-        self.convert_static()
-    }
-
-    fn convert_static(self) -> Command<'static> {
-        match self {
-            Command::Simple(cmd) => Command::Simple(SimpleCommand {
-                assignments: cmd
-                    .assignments
-                    .into_vec()
-                    .into_iter()
-                    .map(|a| Assignment {
-                        name: leak_str(a.name),
-                        value: Word {
-                            raw: leak_str(a.value.raw),
-                            line: a.value.line,
-                        },
-                    })
-                    .collect::<Vec<_>>()
-                    .into_boxed_slice(),
-                words: cmd
-                    .words
-                    .into_vec()
-                    .into_iter()
-                    .map(|w| Word {
-                        raw: leak_str(w.raw),
-                        line: w.line,
-                    })
-                    .collect::<Vec<_>>()
-                    .into_boxed_slice(),
-                redirections: cmd
-                    .redirections
-                    .into_vec()
-                    .into_iter()
-                    .map(redir_convert)
-                    .collect::<Vec<_>>()
-                    .into_boxed_slice(),
-            }),
-            Command::Subshell(p) => Command::Subshell(program_convert(p)),
-            Command::Group(p) => Command::Group(program_convert(p)),
-            Command::FunctionDef(f) => Command::FunctionDef(FunctionDef {
-                name: leak_str(f.name),
-                body: Box::new(f.body.convert_static()),
-            }),
-            Command::If(c) => Command::If(IfCommand {
-                condition: program_convert(c.condition),
-                then_branch: program_convert(c.then_branch),
-                elif_branches: c
-                    .elif_branches
-                    .into_vec()
-                    .into_iter()
-                    .map(|b| ElifBranch {
-                        condition: program_convert(b.condition),
-                        body: program_convert(b.body),
-                    })
-                    .collect::<Vec<_>>()
-                    .into_boxed_slice(),
-                else_branch: c.else_branch.map(program_convert),
-            }),
-            Command::Loop(c) => Command::Loop(LoopCommand {
-                kind: c.kind,
-                condition: program_convert(c.condition),
-                body: program_convert(c.body),
-            }),
-            Command::For(c) => Command::For(ForCommand {
-                name: leak_str(c.name),
-                items: c.items.map(|items| {
-                    items
-                        .into_vec()
-                        .into_iter()
-                        .map(|w| Word {
-                            raw: leak_str(w.raw),
-                            line: w.line,
-                        })
-                        .collect::<Vec<_>>()
-                        .into_boxed_slice()
-                }),
-                body: program_convert(c.body),
-            }),
-            Command::Case(c) => Command::Case(CaseCommand {
-                word: Word {
-                    raw: leak_str(c.word.raw),
-                    line: c.word.line,
-                },
-                arms: c
-                    .arms
-                    .into_vec()
-                    .into_iter()
-                    .map(|arm| CaseArm {
-                        patterns: arm
-                            .patterns
-                            .into_vec()
-                            .into_iter()
-                            .map(|w| Word {
-                                raw: leak_str(w.raw),
-                                line: w.line,
-                            })
-                            .collect::<Vec<_>>()
-                            .into_boxed_slice(),
-                        body: program_convert(arm.body),
-                        fallthrough: arm.fallthrough,
-                    })
-                    .collect::<Vec<_>>()
-                    .into_boxed_slice(),
-            }),
-            Command::Redirected(cmd, redirs) => Command::Redirected(
-                Box::new(cmd.convert_static()),
-                redirs
-                    .into_vec()
-                    .into_iter()
-                    .map(redir_convert)
-                    .collect::<Vec<_>>()
-                    .into_boxed_slice(),
-            ),
-        }
-    }
-}
-
-fn program_convert(p: Program<'_>) -> Program<'static> {
-    Program {
-        items: p
-            .items
-            .into_vec()
-            .into_iter()
-            .map(|item| ListItem {
-                and_or: AndOr {
-                    first: pipeline_convert(item.and_or.first),
-                    rest: item
-                        .and_or
-                        .rest
-                        .into_vec()
-                        .into_iter()
-                        .map(|(op, pl)| (op, pipeline_convert(pl)))
-                        .collect::<Vec<_>>()
-                        .into_boxed_slice(),
-                },
-                asynchronous: item.asynchronous,
-                line: item.line,
-            })
-            .collect::<Vec<_>>()
-            .into_boxed_slice(),
-    }
-}
-
-fn pipeline_convert(p: Pipeline<'_>) -> Pipeline<'static> {
-    Pipeline {
-        negated: p.negated,
-        timed: p.timed,
-        commands: p
-            .commands
-            .into_vec()
-            .into_iter()
-            .map(|c| c.convert_static())
-            .collect::<Vec<_>>()
-            .into_boxed_slice(),
-    }
-}
-
-fn redir_convert(r: Redirection<'_>) -> Redirection<'static> {
-    Redirection {
-        fd: r.fd,
-        kind: r.kind,
-        target: Word {
-            raw: leak_str(r.target.raw),
-            line: r.target.line,
-        },
-        here_doc: r.here_doc.map(|hd| HereDoc {
-            delimiter: leak_str(hd.delimiter),
-            body: leak_str(hd.body),
-            expand: hd.expand,
-            strip_tabs: hd.strip_tabs,
-            body_line: hd.body_line,
-        }),
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoopKind {
@@ -594,8 +403,10 @@ struct PendingHereDoc {
 /// When an alias is expanded, its value is pushed as a new layer.
 /// The parser reads from the topmost layer until exhausted, then
 /// falls back to the layer beneath (or the main source).
-struct AliasLayer<'src> {
-    text: &'src str,
+/// Owns its text (cloned from the alias HashMap) so the parser's
+/// lifetime is not tied to `&Shell.aliases`.
+struct AliasLayer {
+    text: String,
     pos: usize,
     /// POSIX: if an alias value ends with a blank, the next word at
     /// command position is also subject to alias expansion.
@@ -604,13 +415,15 @@ struct AliasLayer<'src> {
 
 /// Result of scanning one word from the source.
 /// Carries keyword/alias classification so callers never re-scan.
-enum ScanResult<'src> {
+/// All strings are owned (`Box<str>`) so the result is independent
+/// of any borrow on the parser or alias layers.
+enum ScanResult {
     /// A plain word (no keyword or alias match).
-    Word(&'src str),
+    Word(Box<str>),
     /// A reserved word recognized by the keyword trie.
-    Keyword(Keyword, &'src str),
+    Keyword(Keyword),
     /// A word that matched an alias in the shell's alias HashMap.
-    Alias { value: &'src str, raw: &'src str },
+    Alias { value: String, raw: Box<str> },
     /// Nothing was scanned (EOF or delimiter at current position).
     None,
 }
@@ -687,13 +500,13 @@ pub struct Parser<'src> {
     source: &'src str,
     pos: usize,
     line: usize,
-    alias_stack: Vec<AliasLayer<'src>>,
+    alias_stack: Vec<AliasLayer>,
     alias_depth: usize,
     expanding_aliases: Vec<String>,
     alias_trailing_blank_pending: bool,
     pending_heredocs: Vec<PendingHereDoc>,
-    read_heredocs: VecDeque<HereDoc<'src>>,
-    pushed_back: Option<ScanResult<'src>>,
+    read_heredocs: VecDeque<HereDoc>,
+    pushed_back: Option<ScanResult>,
 }
 
 impl<'src> Parser<'src> {
@@ -714,14 +527,6 @@ impl<'src> Parser<'src> {
 
     pub fn current_line(&self) -> usize {
         self.line
-    }
-
-    /// Leak a string to get a `&'static str` and transmute the lifetime to
-    /// `'src`.  Used for words that differ from the source slice (e.g. after
-    /// stripping `\\\n` continuations) and for interning alias expansion text.
-    /// Safe because the AST is dropped before or with the parser.
-    fn intern(&mut self, s: String) -> &'src str {
-        Box::leak(s.into_boxed_str())
     }
 
     fn error(&self, message: impl Into<Box<str>>) -> ParseError {
@@ -804,7 +609,7 @@ impl<'src> Parser<'src> {
         self.alias_stack.is_empty() && self.pos >= self.source.len()
     }
 
-    fn push_back(&mut self, result: ScanResult<'src>) {
+    fn push_back(&mut self, result: ScanResult) {
         debug_assert!(self.pushed_back.is_none(), "double pushback");
         self.pushed_back = Some(result);
     }
@@ -1133,11 +938,13 @@ impl<'src> Parser<'src> {
         keyword_ok: bool,
         alias_ok: bool,
         aliases: &HashMap<String, String>,
-    ) -> Result<ScanResult<'src>, ParseError> {
+    ) -> Result<ScanResult, ParseError> {
         // --- Pushback fast-path ---
         if let Some(prev) = self.pushed_back.take() {
             return Ok(match prev {
-                ScanResult::Keyword(_, raw) if !keyword_ok => ScanResult::Word(raw),
+                ScanResult::Keyword(kw) if !keyword_ok => {
+                    ScanResult::Word(keyword_name(kw).into())
+                }
                 ScanResult::Alias { raw, .. } if !alias_ok => ScanResult::Word(raw),
                 other => other,
             });
@@ -1148,19 +955,15 @@ impl<'src> Parser<'src> {
             return Ok(ScanResult::None);
         }
 
-        // Snapshot the source slice and start position so we can extract
-        // the raw `&str` at the end.  A word is always fully contained
-        // within one source buffer (main source or alias text).
-        let source_text = if self.in_alias() {
-            self.alias_stack.last().unwrap().text
-        } else {
-            self.source
-        };
-        let start = if self.in_alias() {
+        // Record whether the scan starts in an alias layer or the main source.
+        // A word is always fully contained within one source buffer.
+        let started_in_alias = self.in_alias();
+        let start = if started_in_alias {
             self.alias_stack.last().unwrap().pos
         } else {
             self.pos
         };
+        let alias_depth_at_start = self.alias_stack.len();
 
         let mut kw: u8 = if keyword_ok { KW_ROOT } else { KW_NONE };
         let mut has_continuation = false;
@@ -1171,27 +974,36 @@ impl<'src> Parser<'src> {
         let mut had_quote = false;
 
         // --- Main scan loop — each byte is read exactly once ---
+        //
+        // IMPORTANT: We do NOT call pop_exhausted_layers() inside this loop.
+        // Doing so would free an alias layer's String before we can slice
+        // the scanned word from it.  Instead we check for buffer exhaustion
+        // explicitly and break.  Layers are popped naturally by subsequent
+        // operations (peek_byte, skip_blanks, etc.) after we've extracted
+        // the raw slice.
         loop {
-            self.pop_exhausted_layers();
-            let cur_in_alias = self.in_alias();
-            let cur_text = if cur_in_alias {
-                self.alias_stack.last().unwrap().text
-            } else {
-                self.source
-            };
-            let cur_pos = if cur_in_alias {
-                self.alias_stack.last().unwrap().pos
-            } else {
-                self.pos
-            };
-
-            // If the underlying buffer changed (layer exhausted) or the
-            // position jumped backwards, this word ends here.
-            if !std::ptr::eq(cur_text, source_text) || cur_pos < start {
+            // Check current buffer position — break if exhausted or switched.
+            if started_in_alias {
+                if self.alias_stack.len() != alias_depth_at_start {
+                    break;
+                }
+                let layer = self.alias_stack.last().unwrap();
+                if layer.pos >= layer.text.len() {
+                    break;
+                }
+            } else if self.in_alias() || self.pos < start {
                 break;
             }
 
-            match cur_text.as_bytes().get(cur_pos) {
+            let cur_in_alias = started_in_alias && !self.alias_stack.is_empty();
+            let (cur_bytes, cur_pos) = if cur_in_alias {
+                let layer = self.alias_stack.last().unwrap();
+                (layer.text.as_bytes(), layer.pos)
+            } else {
+                (self.source.as_bytes(), self.pos)
+            };
+
+            match cur_bytes.get(cur_pos) {
                 None => break,
                 Some(&b) if is_word_break(b) => break,
                 Some(b'#') if !word_started => break,
@@ -1220,13 +1032,13 @@ impl<'src> Parser<'src> {
                     kw = KW_NONE;
                     self.skip_double_quote()?;
                 }
-                Some(&b'$') if matches!(cur_text.as_bytes().get(cur_pos + 1), Some(b'\'')) => {
+                Some(&b'$') if matches!(cur_bytes.get(cur_pos + 1), Some(b'\'')) => {
                     word_started = true;
                     had_quote = true;
                     kw = KW_NONE;
                     self.skip_dollar_single_quote()?;
                 }
-                Some(&b'$') if matches!(cur_text.as_bytes().get(cur_pos + 1), Some(b'(' | b'{'))
+                Some(&b'$') if matches!(cur_bytes.get(cur_pos + 1), Some(b'(' | b'{'))
                     =>
                 {
                     word_started = true;
@@ -1257,60 +1069,51 @@ impl<'src> Parser<'src> {
                 // Plain character — step the keyword trie.
                 Some(_) => {
                     word_started = true;
-                    kw = kw_step(kw, cur_text.as_bytes()[cur_pos]);
+                    kw = kw_step(kw, cur_bytes[cur_pos]);
                     self.advance_byte();
                 }
             }
         }
 
-        // Compute the end position in the same source buffer we started in.
-        // If the current layer differs (alias exhausted), use the buffer's
-        // full length.
-        let end = {
-            let cur_in_alias = self.in_alias();
-            let cur_text = if cur_in_alias {
-                self.alias_stack.last().unwrap().text
+        // Compute end and extract the raw slice.  The alias layer (if any)
+        // has NOT been popped yet, so its String buffer is still valid.
+        let (end, raw_slice) = if started_in_alias {
+            if self.alias_stack.len() == alias_depth_at_start {
+                let layer = self.alias_stack.last().unwrap();
+                (layer.pos, &layer.text[start..layer.pos])
             } else {
-                self.source
-            };
-            if std::ptr::eq(cur_text, source_text) {
-                if cur_in_alias {
-                    self.alias_stack.last().unwrap().pos
-                } else {
-                    self.pos
-                }
-            } else {
-                source_text.len()
+                // Layer was popped by a quote-scanning routine (shouldn't
+                // happen for well-formed input, but handle gracefully).
+                return Ok(ScanResult::None);
             }
+        } else {
+            (self.pos, &self.source[start..self.pos])
         };
 
         if start == end {
             return Ok(ScanResult::None);
         }
 
-        let raw = &source_text[start..end];
+        let raw_slice = raw_slice;
 
-        // If the word contained `\\\n`, strip the continuations and intern
-        // the result since it no longer matches the source exactly.
-        let raw = if has_continuation {
-            let stripped = raw.replace("\\\n", "");
-            self.intern(stripped)
+        // If the word contained `\\\n`, strip the continuations.
+        let raw: Box<str> = if has_continuation {
+            raw_slice.replace("\\\n", "").into()
         } else {
-            raw
+            raw_slice.into()
         };
 
         // Classify: alias before keyword (POSIX 2.3.1).
         // Quoting disables both (a quoted `if` is a plain word, not a keyword).
         if !had_quote {
             if alias_ok {
-                if let Some(value) = aliases.get(raw) {
-                    let value = self.intern(value.clone());
-                    return Ok(ScanResult::Alias { value, raw });
+                if let Some(value) = aliases.get(&*raw) {
+                    return Ok(ScanResult::Alias { value: value.clone(), raw });
                 }
             }
             if keyword_ok {
                 if let Some(matched_kw) = kw_terminal(kw) {
-                    return Ok(ScanResult::Keyword(matched_kw, raw));
+                    return Ok(ScanResult::Keyword(matched_kw));
                 }
             }
         }
@@ -1322,7 +1125,7 @@ impl<'src> Parser<'src> {
     /// Uses keyword_ok=true so that keywords pushed back retain their classification.
     fn consume_word_if(&mut self, expected: &str, aliases: &HashMap<String, String>) -> Result<bool, ParseError> {
         match self.scan_word(true, false, aliases)? {
-            ScanResult::Word(w) if w == expected => Ok(true),
+            ScanResult::Word(w) if &*w == expected => Ok(true),
             ScanResult::None => Ok(false),
             other => {
                 self.push_back(other);
@@ -1337,7 +1140,7 @@ impl<'src> Parser<'src> {
         aliases: &HashMap<String, String>,
     ) -> Result<(), ParseError> {
         match self.scan_word(true, false, aliases)? {
-            ScanResult::Keyword(kw, _) if kw == expected => {
+            ScanResult::Keyword(kw) if kw == expected => {
                 self.skip_separators()?;
                 Ok(())
             }
@@ -1351,14 +1154,16 @@ impl<'src> Parser<'src> {
         aliases: &HashMap<String, String>,
     ) -> Result<(), ParseError> {
         match self.scan_word(false, false, aliases)? {
-            ScanResult::Word(w) if w == expected => Ok(()),
+            ScanResult::Word(w) if &*w == expected => Ok(()),
             _ => Err(self.error(format!("expected '{expected}'"))),
         }
     }
 
-    fn consume_any_word(&mut self, aliases: &HashMap<String, String>) -> Result<Option<&'src str>, ParseError> {
+    fn consume_any_word(&mut self, aliases: &HashMap<String, String>) -> Result<Option<Box<str>>, ParseError> {
         match self.scan_word(false, false, aliases)? {
-            ScanResult::Word(w) | ScanResult::Keyword(_, w) | ScanResult::Alias { raw: w, .. } => Ok(Some(w)),
+            ScanResult::Word(w) => Ok(Some(w)),
+            ScanResult::Keyword(kw) => Ok(Some(keyword_name(kw).into())),
+            ScanResult::Alias { raw, .. } => Ok(Some(raw)),
             ScanResult::None => Ok(None),
         }
     }
@@ -1371,7 +1176,7 @@ impl<'src> Parser<'src> {
         aliases: &HashMap<String, String>,
     ) -> Result<bool, ParseError> {
         match self.scan_word(true, false, aliases)? {
-            ScanResult::Keyword(kw, _) if kw == expected => Ok(true),
+            ScanResult::Keyword(kw) if kw == expected => Ok(true),
             ScanResult::None => Ok(false),
             other => {
                 self.push_back(other);
@@ -1387,8 +1192,8 @@ impl<'src> Parser<'src> {
         aliases: &HashMap<String, String>,
     ) -> Result<Option<Keyword>, ParseError> {
         match self.scan_word(true, false, aliases)? {
-            ScanResult::Keyword(kw, raw) => {
-                self.push_back(ScanResult::Keyword(kw, raw));
+            ScanResult::Keyword(kw) => {
+                self.push_back(ScanResult::Keyword(kw));
                 Ok(Some(kw))
             }
             ScanResult::None => Ok(None),
@@ -1413,10 +1218,9 @@ impl<'src> Parser<'src> {
         while !self.pending_heredocs.is_empty() {
             let spec = self.pending_heredocs.remove(0);
             let body_line = self.line;
-            let body = self.read_here_doc_body(&spec.delimiter, spec.strip_tabs)?;
-            let delim = self.intern(spec.delimiter);
+            let body: Box<str> = self.read_here_doc_body(&spec.delimiter, spec.strip_tabs)?.into();
             self.read_heredocs.push_back(HereDoc {
-                delimiter: delim,
+                delimiter: spec.delimiter.into(),
                 body,
                 expand: spec.expand,
                 strip_tabs: spec.strip_tabs,
@@ -1437,7 +1241,7 @@ impl<'src> Parser<'src> {
         &mut self,
         delimiter: &str,
         strip_tabs: bool,
-    ) -> Result<&'src str, ParseError> {
+    ) -> Result<&str, ParseError> {
         let body_start = self.pos;
         let mut continued_line = String::new();
         let mut continuation_start: Option<usize> = None;
@@ -1500,8 +1304,8 @@ impl<'src> Parser<'src> {
     // alias.  Recursive alias expansion is prevented by tracking which
     // names are currently being expanded in `expanding_aliases`.
     //
-    // When an alias is found, its value is interned and pushed as a new
-    // AliasLayer.  The parser will then read characters from that layer
+    // When an alias is found, its value is cloned and pushed as a new
+    // AliasLayer (owning the String).  The parser reads from that layer
     // until it's exhausted.  If the alias value ends with a blank,
     // `trailing_blank` is set so the next command-position word also
     // gets alias expansion (POSIX 2.3.1).
@@ -1524,15 +1328,14 @@ impl<'src> Parser<'src> {
         loop {
             match self.scan_word(true, true, aliases)? {
                 ScanResult::Alias { value, raw }
-                    if is_alias_word(raw)
-                        && !self.expanding_aliases.iter().any(|n| n == raw)
+                    if is_alias_word(&raw)
+                        && !self.expanding_aliases.iter().any(|n| n == &*raw)
                         && self.alias_depth < 1024 =>
                 {
-                    let trailing_blank = alias_has_trailing_blank(value);
-                    let interned = self.intern(value.to_string());
-                    self.expanding_aliases.push(raw.to_string());
+                    let trailing_blank = alias_has_trailing_blank(&value);
+                    self.expanding_aliases.push(raw.into());
                     self.alias_stack.push(AliasLayer {
-                        text: interned,
+                        text: value,
                         pos: 0,
                         trailing_blank,
                     });
@@ -1582,7 +1385,7 @@ impl<'src> Parser<'src> {
         stop_on_closer: bool,
         stop_on_dsemi: bool,
         aliases: &HashMap<String, String>,
-    ) -> Result<Program<'src>, ParseError> {
+    ) -> Result<Program, ParseError> {
         let mut items = Vec::new();
         self.skip_separators()?;
 
@@ -1595,12 +1398,12 @@ impl<'src> Parser<'src> {
             match self.scan_word(true, false, aliases)? {
                 // Stop keyword: push back so the caller can consume with
                 // expect_keyword (which provides its own error message).
-                ScanResult::Keyword(kw, raw) if stop_kw(kw) => {
-                    self.push_back(ScanResult::Keyword(kw, raw));
+                ScanResult::Keyword(kw) if stop_kw(kw) => {
+                    self.push_back(ScanResult::Keyword(kw));
                     break;
                 }
                 // } closer: push back so the caller can consume with expect_word
-                ScanResult::Word(raw) if stop_on_closer && raw == "}" => {
+                ScanResult::Word(raw) if stop_on_closer && &*raw == "}" => {
                     self.push_back(ScanResult::Word(raw));
                     break;
                 }
@@ -1655,7 +1458,7 @@ impl<'src> Parser<'src> {
     fn parse_and_or(
         &mut self,
         aliases: &HashMap<String, String>,
-    ) -> Result<AndOr<'src>, ParseError> {
+    ) -> Result<AndOr, ParseError> {
         let first = self.parse_pipeline(aliases)?;
         let mut rest = Vec::new();
         loop {
@@ -1688,7 +1491,7 @@ impl<'src> Parser<'src> {
     fn parse_pipeline(
         &mut self,
         aliases: &HashMap<String, String>,
-    ) -> Result<Pipeline<'src>, ParseError> {
+    ) -> Result<Pipeline, ParseError> {
         self.expand_alias_at_command_position(aliases)?;
 
         let timed = if self.consume_word_if("time", aliases)? {
@@ -1732,7 +1535,7 @@ impl<'src> Parser<'src> {
     fn parse_command(
         &mut self,
         aliases: &HashMap<String, String>,
-    ) -> Result<Command<'src>, ParseError> {
+    ) -> Result<Command, ParseError> {
         self.expand_alias_at_command_position(aliases)?;
         let command = self.parse_command_inner(aliases)?;
         self.parse_command_redirections(command, aliases)
@@ -1753,7 +1556,7 @@ impl<'src> Parser<'src> {
     fn parse_command_inner(
         &mut self,
         aliases: &HashMap<String, String>,
-    ) -> Result<Command<'src>, ParseError> {
+    ) -> Result<Command, ParseError> {
         let line = self.line;
         match self.scan_word(true, false, aliases)? {
             ScanResult::None => {
@@ -1768,7 +1571,6 @@ impl<'src> Parser<'src> {
                     self.advance_byte();
                     return Ok(Command::Subshell(body));
                 }
-                // Leading redirection without command word (e.g., ">file")
                 if matches!(self.peek_byte(), Some(b'<' | b'>')) {
                     return self
                         .parse_simple_command_with_first_redir(aliases)
@@ -1776,56 +1578,65 @@ impl<'src> Parser<'src> {
                 }
                 Err(self.error("expected command"))
             }
-            ScanResult::Keyword(Keyword::If, _) => self.parse_if_command(aliases),
-            ScanResult::Keyword(Keyword::While, _) => {
+            ScanResult::Keyword(Keyword::If) => self.parse_if_command(aliases),
+            ScanResult::Keyword(Keyword::While) => {
                 self.parse_loop_command(LoopKind::While, aliases)
             }
-            ScanResult::Keyword(Keyword::Until, _) => {
+            ScanResult::Keyword(Keyword::Until) => {
                 self.parse_loop_command(LoopKind::Until, aliases)
             }
-            ScanResult::Keyword(Keyword::For, _) => self.parse_for_command(aliases),
-            ScanResult::Keyword(Keyword::Case, _) => self.parse_case_command(aliases),
-            ScanResult::Keyword(Keyword::Function, _) => {
+            ScanResult::Keyword(Keyword::For) => self.parse_for_command(aliases),
+            ScanResult::Keyword(Keyword::Case) => self.parse_case_command(aliases),
+            ScanResult::Keyword(Keyword::Function) => {
                 self.parse_function_keyword(aliases)
             }
-            ScanResult::Word(raw) | ScanResult::Keyword(_, raw) => {
-                // Standalone ! at command level (not pipeline level) is an error
-                if raw == "!" {
-                    return Err(self.error("expected command"));
-                }
-                // { brace group: scan_word returns Word("{") when { is
-                // followed by a delimiter
-                if raw == "{" {
-                    self.skip_separators()?;
-                    let body =
-                        self.parse_program_until(|_| false, true, false, aliases)?;
-                    self.skip_blanks_and_comments();
-                    self.expect_word("}", aliases)?;
-                    return Ok(Command::Group(body));
-                }
-                // Check for name() function definition
-                if is_name(raw) {
-                    self.skip_blanks();
-                    if self.peek_byte() == Some(b'(') {
-                        self.advance_byte();
-                        self.skip_blanks();
-                        if self.peek_byte() == Some(b')') {
-                            self.advance_byte();
-                            self.skip_linebreaks().ok();
-                            let body = self.parse_command(aliases)?;
-                            return Ok(Command::FunctionDef(FunctionDef {
-                                name: raw,
-                                body: Box::new(body),
-                            }));
-                        }
-                        return Err(self.error("syntax error near unexpected token `('"));
-                    }
-                }
-                self.parse_simple_command_with_first_word(raw, line, aliases)
-                    .map(Command::Simple)
+            ScanResult::Keyword(kw) => {
+                let raw: Box<str> = keyword_name(kw).into();
+                self.dispatch_word_or_keyword(raw, line, aliases)
+            }
+            ScanResult::Word(raw) => {
+                self.dispatch_word_or_keyword(raw, line, aliases)
             }
             ScanResult::Alias { .. } => unreachable!("alias_ok=false"),
         }
+    }
+
+    fn dispatch_word_or_keyword(
+        &mut self,
+        raw: Box<str>,
+        line: usize,
+        aliases: &HashMap<String, String>,
+    ) -> Result<Command, ParseError> {
+        if &*raw == "!" {
+            return Err(self.error("expected command"));
+        }
+        if &*raw == "{" {
+            self.skip_separators()?;
+            let body =
+                self.parse_program_until(|_| false, true, false, aliases)?;
+            self.skip_blanks_and_comments();
+            self.expect_word("}", aliases)?;
+            return Ok(Command::Group(body));
+        }
+        if is_name(&raw) {
+            self.skip_blanks();
+            if self.peek_byte() == Some(b'(') {
+                self.advance_byte();
+                self.skip_blanks();
+                if self.peek_byte() == Some(b')') {
+                    self.advance_byte();
+                    self.skip_linebreaks().ok();
+                    let body = self.parse_command(aliases)?;
+                    return Ok(Command::FunctionDef(FunctionDef {
+                        name: raw,
+                        body: Box::new(body),
+                    }));
+                }
+                return Err(self.error("syntax error near unexpected token `('"));
+            }
+        }
+        self.parse_simple_command_with_first_word(raw, line, aliases)
+            .map(Command::Simple)
     }
 
     /// Parse a simple command when the first word has already been scanned
@@ -1840,12 +1651,12 @@ impl<'src> Parser<'src> {
     /// recognized before the first command word (POSIX 2.9.1).
     fn parse_simple_command_with_first_word(
         &mut self,
-        first_raw: &'src str,
+        first_raw: Box<str>,
         first_line: usize,
         aliases: &HashMap<String, String>,
-    ) -> Result<SimpleCommand<'src>, ParseError> {
+    ) -> Result<SimpleCommand, ParseError> {
         let mut assignments = Vec::new();
-        let mut words: Vec<Word<'src>> = Vec::new();
+        let mut words: Vec<Word> = Vec::new();
         let mut redirections = Vec::new();
 
         if first_raw.bytes().all(|b| b.is_ascii_digit())
@@ -1856,11 +1667,11 @@ impl<'src> Parser<'src> {
                 redir.fd = redir.fd.or(fd);
                 redirections.push(redir);
             }
-        } else if let Some((name, value_raw)) = split_assignment(first_raw) {
+        } else if let Some((name, value_raw)) = split_assignment(&first_raw) {
             assignments.push(Assignment {
-                name,
+                name: name.into(),
                 value: Word {
-                    raw: value_raw,
+                    raw: value_raw.into(),
                     line: first_line,
                 },
             });
@@ -1892,11 +1703,11 @@ impl<'src> Parser<'src> {
                 let line = self.line;
                 match self.scan_word(false, false, aliases)? {
                     ScanResult::Word(raw) if !raw.is_empty() => {
-                        if let Some((name, value_raw)) = split_assignment(raw) {
+                        if let Some((name, value_raw)) = split_assignment(&raw) {
                             assignments.push(Assignment {
-                                name,
+                                name: name.into(),
                                 value: Word {
-                                    raw: value_raw,
+                                    raw: value_raw.into(),
                                     line,
                                 },
                             });
@@ -1941,9 +1752,9 @@ impl<'src> Parser<'src> {
     fn parse_simple_command_with_first_redir(
         &mut self,
         aliases: &HashMap<String, String>,
-    ) -> Result<SimpleCommand<'src>, ParseError> {
+    ) -> Result<SimpleCommand, ParseError> {
         let mut assignments = Vec::new();
-        let mut words: Vec<Word<'src>> = Vec::new();
+        let mut words: Vec<Word> = Vec::new();
         let mut redirections = Vec::new();
 
         if let Some(redir) = self.try_parse_redirection(aliases)? {
@@ -1963,11 +1774,11 @@ impl<'src> Parser<'src> {
                 let line = self.line;
                 match self.scan_word(false, false, aliases)? {
                     ScanResult::Word(raw) if !raw.is_empty() => {
-                        if let Some((name, value_raw)) = split_assignment(raw) {
+                        if let Some((name, value_raw)) = split_assignment(&raw) {
                             assignments.push(Assignment {
-                                name,
+                                name: name.into(),
                                 value: Word {
-                                    raw: value_raw,
+                                    raw: value_raw.into(),
                                     line,
                                 },
                             });
@@ -2011,7 +1822,7 @@ impl<'src> Parser<'src> {
     fn try_parse_redirection(
         &mut self,
         aliases: &HashMap<String, String>,
-    ) -> Result<Option<Redirection<'src>>, ParseError> {
+    ) -> Result<Option<Redirection>, ParseError> {
         // IO number: scan a bounded run of digits before `<` or `>`.
         // This is O(few digits), not full word rescanning.
         let mut fd: Option<i32> = None;
@@ -2094,7 +1905,7 @@ impl<'src> Parser<'src> {
         };
 
         let here_doc = if kind == RedirectionKind::HereDoc {
-            let (unquoted_delim, expand) = parse_here_doc_delimiter(target.raw);
+            let (unquoted_delim, expand) = parse_here_doc_delimiter(&target.raw);
             self.pending_heredocs.push(PendingHereDoc {
                 delimiter: unquoted_delim,
                 strip_tabs,
@@ -2118,9 +1929,9 @@ impl<'src> Parser<'src> {
     /// redirections inline, so this is a no-op for them.
     fn parse_command_redirections(
         &mut self,
-        command: Command<'src>,
+        command: Command,
         aliases: &HashMap<String, String>,
-    ) -> Result<Command<'src>, ParseError> {
+    ) -> Result<Command, ParseError> {
         if matches!(command, Command::Simple(_)) {
             return Ok(command);
         }
@@ -2143,7 +1954,7 @@ impl<'src> Parser<'src> {
     fn parse_if_command(
         &mut self,
         aliases: &HashMap<String, String>,
-    ) -> Result<Command<'src>, ParseError> {
+    ) -> Result<Command, ParseError> {
         let condition = self.parse_program_until(
             |kw| matches!(kw, Keyword::Then),
             false,
@@ -2207,7 +2018,7 @@ impl<'src> Parser<'src> {
         &mut self,
         kind: LoopKind,
         aliases: &HashMap<String, String>,
-    ) -> Result<Command<'src>, ParseError> {
+    ) -> Result<Command, ParseError> {
         let keyword = match kind {
             LoopKind::While => "while",
             LoopKind::Until => "until",
@@ -2239,13 +2050,13 @@ impl<'src> Parser<'src> {
     fn parse_for_command(
         &mut self,
         aliases: &HashMap<String, String>,
-    ) -> Result<Command<'src>, ParseError> {
+    ) -> Result<Command, ParseError> {
         self.skip_blanks_and_comments();
         let name = match self.scan_word(false, false, aliases)? {
             ScanResult::Word(w) => w,
             _ => return Err(self.error("expected for loop variable name")),
         };
-        if !is_name(name) {
+        if !is_name(&name) {
             return Err(self.error("expected for loop variable name"));
         }
 
@@ -2288,7 +2099,7 @@ impl<'src> Parser<'src> {
     fn parse_case_command(
         &mut self,
         aliases: &HashMap<String, String>,
-    ) -> Result<Command<'src>, ParseError> {
+    ) -> Result<Command, ParseError> {
         self.skip_blanks_and_comments();
         let line = self.line;
         let word_raw = self
@@ -2388,13 +2199,13 @@ impl<'src> Parser<'src> {
     fn parse_function_keyword(
         &mut self,
         aliases: &HashMap<String, String>,
-    ) -> Result<Command<'src>, ParseError> {
+    ) -> Result<Command, ParseError> {
         self.skip_blanks_and_comments();
         let name = match self.scan_word(false, false, aliases)? {
             ScanResult::Word(w) => w,
             _ => return Err(self.error("expected function name")),
         };
-        if !is_name(name) {
+        if !is_name(&name) {
             return Err(self.error("expected function name"));
         }
         self.skip_blanks();
@@ -2425,7 +2236,7 @@ impl<'src> Parser<'src> {
     pub fn next_complete_command(
         &mut self,
         aliases: &HashMap<String, String>,
-    ) -> Result<Option<Program<'src>>, ParseError> {
+    ) -> Result<Option<Program>, ParseError> {
         self.skip_separators()?;
         if self.at_eof() {
             return Ok(None);
@@ -2481,20 +2292,20 @@ impl<'src> Parser<'src> {
 // bodies from the front of the queue, attaching each one to the matching
 // `Redirection` node whose `here_doc` field is still `None`.
 
-fn fill_heredoc_bodies<'src>(and_or: &mut AndOr<'src>, bodies: &mut VecDeque<HereDoc<'src>>) {
+fn fill_heredoc_bodies(and_or: &mut AndOr, bodies: &mut VecDeque<HereDoc>) {
     fill_pipeline_hd(&mut and_or.first, bodies);
     for (_, pl) in and_or.rest.iter_mut() {
         fill_pipeline_hd(pl, bodies);
     }
 }
 
-fn fill_pipeline_hd<'src>(pipeline: &mut Pipeline<'src>, bodies: &mut VecDeque<HereDoc<'src>>) {
+fn fill_pipeline_hd(pipeline: &mut Pipeline, bodies: &mut VecDeque<HereDoc>) {
     for cmd in pipeline.commands.iter_mut() {
         fill_command_hd(cmd, bodies);
     }
 }
 
-fn fill_command_hd<'src>(cmd: &mut Command<'src>, bodies: &mut VecDeque<HereDoc<'src>>) {
+fn fill_command_hd(cmd: &mut Command, bodies: &mut VecDeque<HereDoc>) {
     match cmd {
         Command::Simple(sc) => fill_redirs_hd(&mut sc.redirections, bodies),
         Command::Redirected(inner, redirs) => {
@@ -2529,15 +2340,15 @@ fn fill_command_hd<'src>(cmd: &mut Command<'src>, bodies: &mut VecDeque<HereDoc<
     }
 }
 
-fn fill_program_hd<'src>(program: &mut Program<'src>, bodies: &mut VecDeque<HereDoc<'src>>) {
+fn fill_program_hd(program: &mut Program, bodies: &mut VecDeque<HereDoc>) {
     for item in program.items.iter_mut() {
         fill_heredoc_bodies(&mut item.and_or, bodies);
     }
 }
 
-fn fill_redirs_hd<'src>(
-    redirs: &mut Box<[Redirection<'src>]>,
-    bodies: &mut VecDeque<HereDoc<'src>>,
+fn fill_redirs_hd(
+    redirs: &mut Box<[Redirection]>,
+    bodies: &mut VecDeque<HereDoc>,
 ) {
     for r in redirs.iter_mut() {
         if r.kind == RedirectionKind::HereDoc && r.here_doc.is_none() {
@@ -2551,15 +2362,15 @@ fn fill_redirs_hd<'src>(
 // ============================================================
 
 /// Parse the entire source as a single program (batch mode).
-pub fn parse(source: &str) -> Result<Program<'_>, ParseError> {
+pub fn parse(source: &str) -> Result<Program, ParseError> {
     parse_with_aliases(source, &HashMap::new())
 }
 
 /// Parse with alias expansion using the shell's alias HashMap directly.
-pub fn parse_with_aliases<'src>(
-    source: &'src str,
+pub fn parse_with_aliases(
+    source: &str,
     aliases: &HashMap<String, String>,
-) -> Result<Program<'src>, ParseError> {
+) -> Result<Program, ParseError> {
     let mut parser = Parser::new(source);
     parser.parse_program_until(|_| false, false, false, aliases)
 }
@@ -2581,7 +2392,7 @@ impl<'src> ParseSession<'src> {
     pub fn next_command(
         &mut self,
         aliases: &HashMap<String, String>,
-    ) -> Result<Option<Program<'src>>, ParseError> {
+    ) -> Result<Option<Program>, ParseError> {
         self.parser.next_complete_command(aliases)
     }
 
@@ -2679,14 +2490,14 @@ pub fn is_name(name: &str) -> bool {
 mod tests {
     use super::*;
 
-    fn parse_test(source: &str) -> Result<Program<'_>, ParseError> {
+    fn parse_test(source: &str) -> Result<Program, ParseError> {
         parse(source)
     }
 
-    fn parse_with_aliases_test<'src>(
-        source: &'src str,
+    fn parse_with_aliases_test(
+        source: &str,
         aliases: &HashMap<String, String>,
-    ) -> Result<Program<'src>, ParseError> {
+    ) -> Result<Program, ParseError> {
         parse_with_aliases(source, aliases)
     }
 
@@ -2702,7 +2513,7 @@ mod tests {
         let program = parse_test("FOO=bar echo \"$FOO\"").expect("parse");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if cmd.assignments.len() == 1 && cmd.words[0].raw == "echo"
+            Command::Simple(cmd) if cmd.assignments.len() == 1 && &*cmd.words[0].raw == "echo"
         ));
     }
 
@@ -2726,7 +2537,7 @@ mod tests {
         let program = parse_test("echo 'ok'").expect("parse");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if cmd.words.len() == 2 && cmd.words[1].raw == "'ok'"
+            Command::Simple(cmd) if cmd.words.len() == 2 && &*cmd.words[1].raw == "'ok'"
         ));
     }
 
@@ -2747,8 +2558,8 @@ mod tests {
             Command::Simple(cmd)
                 if cmd.redirections.len() == 1
                     && cmd.redirections[0].kind == RedirectionKind::HereDoc
-                    && cmd.redirections[0].target.raw == "EOF"
-                    && cmd.redirections[0].here_doc.as_ref().map(|doc| doc.body) == Some("hello $USER\n")
+                    && &*cmd.redirections[0].target.raw == "EOF"
+                    && cmd.redirections[0].here_doc.as_ref().map(|doc| &*doc.body) == Some("hello $USER\n")
                     && cmd.redirections[0].here_doc.as_ref().map(|doc| doc.expand) == Some(true)
         ));
 
@@ -2756,7 +2567,7 @@ mod tests {
         assert!(matches!(
             &quoted.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
-                if cmd.redirections[0].here_doc.as_ref().map(|doc| doc.delimiter) == Some("EOF")
+                if cmd.redirections[0].here_doc.as_ref().map(|doc| &*doc.delimiter) == Some("EOF")
                     && cmd.redirections[0].here_doc.as_ref().map(|doc| doc.expand) == Some(false)
         ));
 
@@ -2764,7 +2575,7 @@ mod tests {
         assert!(matches!(
             &tab_stripped.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
-                if cmd.redirections[0].here_doc.as_ref().map(|doc| doc.body) == Some("\tone\n")
+                if cmd.redirections[0].here_doc.as_ref().map(|doc| &*doc.body) == Some("\tone\n")
                     && cmd.redirections[0].here_doc.as_ref().map(|doc| doc.strip_tabs) == Some(true)
         ));
     }
@@ -2800,20 +2611,20 @@ mod tests {
                 if matches!(inner.as_ref(), Command::Group(_))
                     && redirections.len() == 1
                     && redirections[0].kind == RedirectionKind::Write
-                    && redirections[0].target.raw == "out"
+                    && &*redirections[0].target.raw == "out"
         ));
 
         let not_a_group = parse_test("{echo hi; }").expect("parse brace word");
         assert!(matches!(
             &not_a_group.items[0].and_or.first.commands[0],
-            Command::Simple(simple) if simple.words[0].raw == "{echo"
+            Command::Simple(simple) if &*simple.words[0].raw == "{echo"
         ));
 
         let closer_literal = parse_test("echo }").expect("parse literal closer");
         assert!(matches!(
             &closer_literal.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|word| word.raw).collect::<Vec<_>>() == vec!["echo", "}"]
+                if simple.words.iter().map(|word| &*word.raw).collect::<Vec<_>>() == vec!["echo", "}"]
         ));
     }
 
@@ -2822,7 +2633,7 @@ mod tests {
         let program = parse_test("greet() { echo hi; }").expect("parse");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::FunctionDef(function) if function.name == "greet"
+            Command::FunctionDef(function) if &*function.name == "greet"
         ));
         assert!(parse_test("if() { echo hi; }").is_err());
     }
@@ -2908,13 +2719,13 @@ mod tests {
         assert!(matches!(
             &explicit.items[0].and_or.first.commands[0],
             Command::For(for_command)
-                if for_command.name == "item" && for_command.items.as_ref().map(|s| s.len()) == Some(3)
+                if &*for_command.name == "item" && for_command.items.as_ref().map(|s| s.len()) == Some(3)
         ));
 
         let positional = parse_test("for item; do echo $item; done").expect("parse");
         assert!(matches!(
             &positional.items[0].and_or.first.commands[0],
-            Command::For(for_command) if for_command.name == "item" && for_command.items.is_none()
+            Command::For(for_command) if &*for_command.name == "item" && for_command.items.is_none()
         ));
 
         let linebreak_before_in =
@@ -2922,8 +2733,8 @@ mod tests {
         assert!(matches!(
             &linebreak_before_in.items[0].and_or.first.commands[0],
             Command::For(for_command)
-                if for_command.name == "item"
-                    && for_command.items.as_ref().map(|items| items.iter().map(|word| word.raw).collect::<Vec<_>>())
+                if &*for_command.name == "item"
+                    && for_command.items.as_ref().map(|items| items.iter().map(|word| &*word.raw).collect::<Vec<_>>())
                         == Some(vec!["a", "b"])
         ));
 
@@ -2932,7 +2743,7 @@ mod tests {
         assert!(matches!(
             &reserved_words_as_items.items[0].and_or.first.commands[0],
             Command::For(for_command)
-                if for_command.items.as_ref().map(|items| items.iter().map(|word| word.raw).collect::<Vec<_>>())
+                if for_command.items.as_ref().map(|items| items.iter().map(|word| &*word.raw).collect::<Vec<_>>())
                     == Some(vec!["do", "done"])
         ));
     }
@@ -2944,7 +2755,7 @@ mod tests {
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Case(case_command)
-                if case_command.word.raw == "$name"
+                if &*case_command.word.raw == "$name"
                     && case_command.arms.len() == 2
                     && case_command.arms[0].patterns.len() == 2
         ));
@@ -2979,10 +2790,8 @@ mod tests {
             panic!("expected Case");
         }
 
-        let ft_static = fallthrough.items[0].and_or.first.commands[0]
-            .clone()
-            .into_static();
-        assert!(matches!(ft_static, Command::Case(ref cc) if cc.arms[0].fallthrough));
+        let ft_clone = fallthrough.items[0].and_or.first.commands[0].clone();
+        assert!(matches!(ft_clone, Command::Case(ref cc) if cc.arms[0].fallthrough));
     }
 
     #[test]
@@ -3036,7 +2845,7 @@ mod tests {
         assert!(matches!(
             &second.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|word| word.raw).collect::<Vec<_>>() == vec!["printf", "ok"]
+                if simple.words.iter().map(|word| &*word.raw).collect::<Vec<_>>() == vec!["printf", "ok"]
         ));
 
         assert!(session.next_command(&HashMap::new()).expect("eof").is_none());
@@ -3050,7 +2859,7 @@ mod tests {
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|word| word.raw).collect::<Vec<_>>() == vec!["printf", "hi"]
+                if simple.words.iter().map(|word| &*word.raw).collect::<Vec<_>>() == vec!["printf", "hi"]
         ));
 
         let mut aliases = HashMap::new();
@@ -3069,14 +2878,14 @@ mod tests {
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|word| word.raw).collect::<Vec<_>>() == vec!["echo", "!"]
+                if simple.words.iter().map(|word| &*word.raw).collect::<Vec<_>>() == vec!["echo", "!"]
         ));
 
         let program = parse_test("!true").expect("parse bang word");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|word| word.raw).collect::<Vec<_>>() == vec!["!true"]
+                if simple.words.iter().map(|word| &*word.raw).collect::<Vec<_>>() == vec!["!true"]
         ));
 
         let program = parse_test("! true").expect("parse negation");
@@ -3092,7 +2901,7 @@ mod tests {
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|word| word.raw).collect::<Vec<_>>() == vec!["printf", "%s", "ok"]
+                if simple.words.iter().map(|word| &*word.raw).collect::<Vec<_>>() == vec!["printf", "%s", "ok"]
         ));
     }
 
@@ -3104,7 +2913,7 @@ mod tests {
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|word| word.raw).collect::<Vec<_>>() == vec!["loop", "ok"]
+                if simple.words.iter().map(|word| &*word.raw).collect::<Vec<_>>() == vec!["loop", "ok"]
         ));
         assert!(alias_has_trailing_blank("value "));
         assert!(!alias_has_trailing_blank("value"));
@@ -3119,7 +2928,7 @@ mod tests {
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|w| w.raw).collect::<Vec<_>>() == vec!["echo", "aliased"]
+                if simple.words.iter().map(|w| &*w.raw).collect::<Vec<_>>() == vec!["echo", "aliased"]
                     && simple.assignments.len() == 1
         ));
 
@@ -3128,7 +2937,7 @@ mod tests {
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|w| w.raw).collect::<Vec<_>>() == vec!["echo", "aliased"]
+                if simple.words.iter().map(|w| &*w.raw).collect::<Vec<_>>() == vec!["echo", "aliased"]
                     && simple.redirections.len() == 1
         ));
     }
@@ -3151,7 +2960,7 @@ mod tests {
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
-                if cmd.words.len() == 2 && cmd.words[1].raw == "$(cmd arg)"
+                if cmd.words.len() == 2 && &*cmd.words[1].raw == "$(cmd arg)"
         ));
     }
 
@@ -3161,14 +2970,14 @@ mod tests {
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
-                if cmd.words.len() == 2 && cmd.words[1].raw == "$((1 + 2))"
+                if cmd.words.len() == 2 && &*cmd.words[1].raw == "$((1 + 2))"
         ));
 
         let nested = parse_test("echo $((1 + (2 * 3)))").expect("parse nested arith");
         assert!(matches!(
             &nested.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
-                if cmd.words[1].raw == "$((1 + (2 * 3)))"
+                if &*cmd.words[1].raw == "$((1 + (2 * 3)))"
         ));
 
         let error = parse_test("echo $((1 + 2").expect_err("unterminated arith");
@@ -3181,13 +2990,13 @@ mod tests {
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
-                if cmd.words.len() == 2 && cmd.words[1].raw == "${VAR:-default}"
+                if cmd.words.len() == 2 && &*cmd.words[1].raw == "${VAR:-default}"
         ));
 
         let nested = parse_test("echo ${VAR:-${INNER}}").expect("parse nested brace");
         assert!(matches!(
             &nested.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if cmd.words[1].raw == "${VAR:-${INNER}}"
+            Command::Simple(cmd) if &*cmd.words[1].raw == "${VAR:-${INNER}}"
         ));
     }
 
@@ -3197,7 +3006,7 @@ mod tests {
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
-                if cmd.words.len() == 2 && cmd.words[1].raw == "`cmd arg`"
+                if cmd.words.len() == 2 && &*cmd.words[1].raw == "`cmd arg`"
         ));
 
         let error = parse_test("echo `unterminated").expect_err("unterminated backtick");
@@ -3209,19 +3018,19 @@ mod tests {
         let program = parse_test("echo ${VAR:-'a}b'}").expect("parse brace sq");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if cmd.words[1].raw == "${VAR:-'a}b'}"
+            Command::Simple(cmd) if &*cmd.words[1].raw == "${VAR:-'a}b'}"
         ));
 
         let program = parse_test("echo ${VAR:-\"a}b\"}").expect("parse brace dq");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if cmd.words[1].raw == "${VAR:-\"a}b\"}"
+            Command::Simple(cmd) if &*cmd.words[1].raw == "${VAR:-\"a}b\"}"
         ));
 
         let program = parse_test("echo ${VAR:-\\}}").expect("parse brace escaped");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if cmd.words[1].raw == "${VAR:-\\}}"
+            Command::Simple(cmd) if &*cmd.words[1].raw == "${VAR:-\\}}"
         ));
 
         let error = parse_test("echo ${VAR:-unclosed").expect_err("unterminated brace body");
@@ -3256,7 +3065,7 @@ mod tests {
         let program = parse_test("echo hel\\\nlo").expect("parse continuation");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if cmd.words.len() == 2 && cmd.words[1].raw == "hello"
+            Command::Simple(cmd) if cmd.words.len() == 2 && &*cmd.words[1].raw == "hello"
         ));
     }
 
@@ -3296,7 +3105,7 @@ mod tests {
         assert_eq!(pipeline.timed, TimedMode::Default);
         assert!(!pipeline.negated);
         assert!(
-            matches!(&pipeline.commands[0], Command::Simple(cmd) if cmd.words[0].raw == "echo")
+            matches!(&pipeline.commands[0], Command::Simple(cmd) if &*cmd.words[0].raw == "echo")
         );
     }
 
@@ -3306,7 +3115,7 @@ mod tests {
         let pipeline = &program.items[0].and_or.first;
         assert_eq!(pipeline.timed, TimedMode::Posix);
         assert!(
-            matches!(&pipeline.commands[0], Command::Simple(cmd) if cmd.words[0].raw == "echo")
+            matches!(&pipeline.commands[0], Command::Simple(cmd) if &*cmd.words[0].raw == "echo")
         );
     }
 
@@ -3315,7 +3124,7 @@ mod tests {
         let program = parse_test("function foo { echo hi; }").expect("parse function keyword");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::FunctionDef(fd) if fd.name == "foo"
+            Command::FunctionDef(fd) if &*fd.name == "foo"
         ));
     }
 
@@ -3325,7 +3134,7 @@ mod tests {
             parse_test("function foo() { echo hi; }").expect("parse function keyword parens");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::FunctionDef(fd) if fd.name == "foo"
+            Command::FunctionDef(fd) if &*fd.name == "foo"
         ));
     }
 
@@ -3336,24 +3145,24 @@ mod tests {
     }
 
     #[test]
-    fn into_static_covers_all_command_variants() {
+    fn clone_covers_all_command_variants() {
         let simple = Command::Simple(SimpleCommand {
             assignments: vec![Assignment {
-                name: "X",
-                value: Word { raw: "1", line: 0 },
+                name: "X".into(),
+                value: Word { raw: "1".into(), line: 0 },
             }]
             .into_boxed_slice(),
-            words: vec![Word { raw: "echo", line: 0 }].into_boxed_slice(),
+            words: vec![Word { raw: "echo".into(), line: 0 }].into_boxed_slice(),
             redirections: vec![Redirection {
                 fd: Some(2),
                 kind: RedirectionKind::Write,
-                target: Word { raw: "err", line: 0 },
+                target: Word { raw: "err".into(), line: 0 },
                 here_doc: None,
             }]
             .into_boxed_slice(),
         });
-        let s: Command<'static> = simple.into_static();
-        assert!(matches!(s, Command::Simple(ref sc) if sc.words[0].raw == "echo"));
+        let s = simple.clone();
+        assert!(matches!(&s, Command::Simple(sc) if &*sc.words[0].raw == "echo"));
 
         let subshell = Command::Subshell(Program {
             items: vec![ListItem {
@@ -3370,16 +3179,16 @@ mod tests {
             }]
             .into_boxed_slice(),
         });
-        assert!(matches!(subshell.clone().into_static(), Command::Subshell(_)));
+        assert!(matches!(subshell.clone(), Command::Subshell(_)));
 
         let group = Command::Group(Program { items: vec![].into_boxed_slice() });
-        assert!(matches!(group.into_static(), Command::Group(_)));
+        assert!(matches!(group.clone(), Command::Group(_)));
 
         let func = Command::FunctionDef(FunctionDef {
-            name: "f",
+            name: "f".into(),
             body: Box::new(s.clone()),
         });
-        assert!(matches!(func.into_static(), Command::FunctionDef(fd) if fd.name == "f"));
+        assert!(matches!(&func, Command::FunctionDef(fd) if &*fd.name == "f"));
 
         let if_cmd = Command::If(IfCommand {
             condition: Program { items: vec![].into_boxed_slice() },
@@ -3391,42 +3200,42 @@ mod tests {
             .into_boxed_slice(),
             else_branch: Some(Program { items: vec![].into_boxed_slice() }),
         });
-        assert!(matches!(if_cmd.into_static(), Command::If(_)));
+        assert!(matches!(if_cmd, Command::If(_)));
 
         let loop_cmd = Command::Loop(LoopCommand {
             kind: LoopKind::While,
             condition: Program { items: vec![].into_boxed_slice() },
             body: Program { items: vec![].into_boxed_slice() },
         });
-        assert!(matches!(loop_cmd.into_static(), Command::Loop(_)));
+        assert!(matches!(loop_cmd, Command::Loop(_)));
 
         let for_cmd = Command::For(ForCommand {
-            name: "i",
-            items: Some(vec![Word { raw: "a", line: 0 }].into_boxed_slice()),
+            name: "i".into(),
+            items: Some(vec![Word { raw: "a".into(), line: 0 }].into_boxed_slice()),
             body: Program { items: vec![].into_boxed_slice() },
         });
-        assert!(matches!(&for_cmd.into_static(), Command::For(fc) if fc.name == "i"));
+        assert!(matches!(&for_cmd, Command::For(fc) if &*fc.name == "i"));
 
         let case_cmd = Command::Case(CaseCommand {
-            word: Word { raw: "x", line: 0 },
+            word: Word { raw: "x".into(), line: 0 },
             arms: vec![CaseArm {
-                patterns: vec![Word { raw: "*", line: 0 }].into_boxed_slice(),
+                patterns: vec![Word { raw: "*".into(), line: 0 }].into_boxed_slice(),
                 body: Program { items: vec![].into_boxed_slice() },
                 fallthrough: false,
             }]
             .into_boxed_slice(),
         });
-        assert!(matches!(case_cmd.into_static(), Command::Case(_)));
+        assert!(matches!(case_cmd, Command::Case(_)));
 
         let redir = Command::Redirected(
             Box::new(s.clone()),
             vec![Redirection {
                 fd: None,
                 kind: RedirectionKind::Write,
-                target: Word { raw: "out", line: 0 },
+                target: Word { raw: "out".into(), line: 0 },
                 here_doc: Some(HereDoc {
-                    delimiter: "EOF",
-                    body: "test\n",
+                    delimiter: "EOF".into(),
+                    body: "test\n".into(),
                     expand: true,
                     strip_tabs: false,
                     body_line: 0,
@@ -3434,7 +3243,7 @@ mod tests {
             }]
             .into_boxed_slice(),
         );
-        assert!(matches!(redir.into_static(), Command::Redirected(_, _)));
+        assert!(matches!(redir, Command::Redirected(_, _)));
     }
 
     #[test]
@@ -3526,13 +3335,13 @@ mod tests {
         let program = parse_test("ec\\\nho ok").expect("continuation in command");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if cmd.words[0].raw == "echo" && cmd.words[1].raw == "ok"
+            Command::Simple(cmd) if &*cmd.words[0].raw == "echo" && &*cmd.words[1].raw == "ok"
         ));
 
         let program = parse_test("echo a\\\nb\\\nc").expect("multiple continuations");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if cmd.words[1].raw == "abc"
+            Command::Simple(cmd) if &*cmd.words[1].raw == "abc"
         ));
     }
 
@@ -3541,7 +3350,7 @@ mod tests {
         let program = parse_test("a\\\n#b").expect("continuation before hash");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if cmd.words[0].raw == "a#b"
+            Command::Simple(cmd) if &*cmd.words[0].raw == "a#b"
         ));
     }
 

@@ -94,11 +94,12 @@ pub fn expand_word_as_declaration_assignment<'a, C: Context>(
     arena: &'a StringArena,
 ) -> Result<&'a str, ExpandError> {
     ctx.set_lineno(word.line);
+    let value_raw = word_assignment_value(&word.raw).unwrap_or(&word.raw);
+    let name = &word.raw[..word.raw.len() - value_raw.len()];
     let value_word = Word {
-        raw: word_assignment_value(word.raw).unwrap_or(word.raw),
+        raw: value_raw.into(),
         line: word.line,
     };
-    let name = &word.raw[..word.raw.len() - value_word.raw.len()];
     let expanded_value = expand_word_text_assignment(ctx, &value_word, true, arena)?;
     Ok(arena.intern(format!("{name}{expanded_value}")))
 }
@@ -2723,7 +2724,7 @@ mod tests {
         let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         for raw in ["'oops", "\"oops", "${USER", "$(echo", "$((1 + 2)", "$'oops"] {
-            let error = expand_word(&mut ctx, &Word { raw, line: 0 }, &arena).expect_err("error");
+            let error = expand_word(&mut ctx, &Word { raw: raw.into(), line: 0 }, &arena).expect_err("error");
             assert!(!error.message.is_empty());
         }
     }
@@ -2767,7 +2768,7 @@ mod tests {
         let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         for raw in ["$((1 / 0))", "$((1 + ))", "$((1 1))"] {
-            let error = expand_word(&mut ctx, &Word { raw, line: 0 }, &arena).expect_err("error");
+            let error = expand_word(&mut ctx, &Word { raw: raw.into(), line: 0 }, &arena).expect_err("error");
             assert!(!error.message.is_empty());
         }
     }
@@ -3093,7 +3094,7 @@ mod tests {
             ctx.pathname_expansion_enabled = false;
             let pattern = "/testdir/*.txt";
             assert_eq!(
-                expand_word(&mut ctx, &Word { raw: pattern, line: 0 }, &arena,).expect("noglob"),
+                expand_word(&mut ctx, &Word { raw: pattern.into(), line: 0 }, &arena,).expect("noglob"),
                 vec![pattern]
             );
         });
