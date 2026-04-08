@@ -52,8 +52,7 @@ fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
         }
         accumulated.push_str(&line);
 
-        let arena = StringArena::new();
-        match crate::syntax::parse_with_aliases(&accumulated, &shell.aliases, &arena) {
+        match crate::syntax::parse_with_aliases(&accumulated, &shell.aliases) {
             Ok(_) => {}
             Err(ref e) if shell.input_is_incomplete(e) => {
                 continue;

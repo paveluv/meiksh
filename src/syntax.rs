@@ -5,11 +5,11 @@
 //! This is a scannerless recursive-descent parser: there is no separate
 //! tokenizer.  The central routine [`Parser::scan_word`] reads characters
 //! directly from the source (or from an alias-expansion overlay) and
-//! simultaneously drives two tries — one for keywords, one for aliases —
-//! so that the scanned word is classified in the same pass that reads it.
-//! The result, [`ScanResult`], tells callers whether the word is a plain
-//! word, a reserved keyword, or an alias match, without ever re-reading
-//! the bytes.
+//! drives the keyword trie per-character so that the scanned word is
+//! classified in the same pass that reads it.  Alias lookup is done via
+//! a post-scan `HashMap::get` on the collected word.  The result,
+//! [`ScanResult`], tells callers whether the word is a plain word, a
+//! reserved keyword, or an alias match, without ever re-reading the bytes.
 //!
 //! # Key invariant — single pass
 //!
@@ -24,7 +24,7 @@
 //! # Alias expansion
 //!
 //! Aliases are expanded by [`Parser::expand_alias_at_command_position`],
-//! which scans the first word at command position with both tries active.
+//! which scans the first word at command position with keyword + alias lookup.
 //! If the word matches an alias, a new [`AliasLayer`] is pushed onto the
 //! input stack and the scan loops.  If not, the word (already classified)
 //! is pushed back.  Downstream parsers — `parse_pipeline`, `parse_command`,
@@ -472,115 +472,6 @@ fn line_at(source: &str, index: usize) -> usize {
 }
 
 // ============================================================
-// AliasTrie — dynamic trie for O(1)/char alias lookup
-// ============================================================
-//
-// Built from the shell's alias HashMap before each parse.  Each byte
-// of an alias name transitions to a new state; terminal states map to
-// an index into `values`.  State 0 is the dead state (no match),
-// state 1 is the root.
-//
-// The trie is only rebuilt when the alias table changes (tracked by
-// `generation`).  During `scan_word`, the trie is stepped in parallel
-// with the keyword trie so that alias classification comes for free.
-
-#[derive(Clone, Debug)]
-pub struct AliasTrie {
-    /// `transitions[state][byte]` → next state (0 = dead).
-    transitions: Vec<[u16; 128]>,
-    /// If `terminal[state]` is Some(i), the word ending here is alias #i.
-    terminal: Vec<Option<usize>>,
-    /// The alias expansion strings, indexed by terminal values.
-    values: Vec<String>,
-    pub generation: u64,
-}
-
-impl Default for AliasTrie {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl AliasTrie {
-    pub const NONE: u16 = 0;
-
-    pub fn new() -> Self {
-        Self {
-            transitions: vec![[0u16; 128]],
-            terminal: vec![None],
-            values: Vec::new(),
-            generation: 0,
-        }
-    }
-
-    pub fn build(aliases: &HashMap<String, String>) -> Self {
-        let mut trie = Self {
-            transitions: vec![[0u16; 128], [0u16; 128]],
-            terminal: vec![None, None],
-            values: Vec::new(),
-            generation: 0,
-        };
-        for (name, value) in aliases {
-            if name.is_empty() {
-                continue;
-            }
-            let mut state = 1u16;
-            let mut valid = true;
-            for &b in name.as_bytes() {
-                let idx = b as usize;
-                if idx >= 128 {
-                    valid = false;
-                    break;
-                }
-                let next = trie.transitions[state as usize][idx];
-                if next != 0 {
-                    state = next;
-                } else {
-                    let new_state = trie.transitions.len() as u16;
-                    trie.transitions.push([0u16; 128]);
-                    trie.terminal.push(None);
-                    trie.transitions[state as usize][idx] = new_state;
-                    state = new_state;
-                }
-            }
-            if valid {
-                let val_idx = trie.values.len();
-                trie.values.push(value.clone());
-                trie.terminal[state as usize] = Some(val_idx);
-            }
-        }
-        trie
-    }
-
-    pub fn root(&self) -> u16 {
-        if self.transitions.len() > 1 {
-            1
-        } else {
-            0
-        }
-    }
-
-    #[inline]
-    pub fn step(&self, state: u16, ch: u8) -> u16 {
-        if state == 0 || (ch as usize) >= 128 {
-            return 0;
-        }
-        self.transitions[state as usize][ch as usize]
-    }
-
-    pub fn terminal(&self, state: u16) -> Option<usize> {
-        if state == 0 {
-            return None;
-        }
-        self.terminal.get(state as usize).copied().flatten()
-    }
-
-    pub fn value(&self, index: usize) -> &str {
-        &self.values[index]
-    }
-}
-
-// ============================================================
 // Keyword trie — compile-time constant for reserved words
 // ============================================================
 //
@@ -591,7 +482,7 @@ impl AliasTrie {
 // The trie covers the 14 POSIX reserved words: case, do, done, elif,
 // else, esac, fi, for, function, if, in, then, until, while.
 // It is stepped inside `scan_word` one byte at a time, in parallel with
-// the alias trie, adding zero overhead to word scanning.
+// the keyword detection, adding zero overhead to word scanning.
 
 const KW_NONE: u8 = 0;
 const KW_ROOT: u8 = 1;
@@ -712,14 +603,14 @@ struct AliasLayer<'src> {
 }
 
 /// Result of scanning one word from the source.
-/// Carries keyword/alias trie results so callers never re-scan.
+/// Carries keyword/alias classification so callers never re-scan.
 enum ScanResult<'src> {
     /// A plain word (no keyword or alias match).
     Word(&'src str),
     /// A reserved word recognized by the keyword trie.
     Keyword(Keyword, &'src str),
-    /// A word that matched an alias in the alias trie.
-    Alias { index: usize, raw: &'src str },
+    /// A word that matched an alias in the shell's alias HashMap.
+    Alias { value: &'src str, raw: &'src str },
     /// Nothing was scanned (EOF or delimiter at current position).
     None,
 }
@@ -769,7 +660,7 @@ fn alias_has_trailing_blank(s: &str) -> bool {
 }
 
 /// An alias word must not contain quoting characters — those would have
-/// been consumed by the quote-scanning arms before the trie could match.
+/// been consumed by the quote-scanning arms before lookup could match.
 fn is_alias_word(word: &str) -> bool {
     !word.is_empty() && !word.chars().any(|ch| matches!(ch, '\'' | '"' | '\\'))
 }
@@ -1213,16 +1104,16 @@ impl<'src> Parser<'src> {
     // ---- Word scanning ----
 
     /// Scan one word from the input, classifying it as a plain word, keyword,
-    /// or alias match via two tries stepped in parallel with the character
-    /// consumption loop.
+    /// or alias match.  The keyword trie is stepped per-character during the
+    /// scan; alias lookup is a single HashMap `get` after the word is collected.
     ///
     /// # Arguments
     ///
     /// * `keyword_ok` — whether the caller's grammar position allows reserved
     ///   words.  If false, even a keyword-matching word is returned as `Word`.
     /// * `alias_ok` — whether alias expansion is allowed here.  If false,
-    ///   alias trie matches are ignored.
-    /// * `alias_trie` — the current alias trie (may be empty).
+    ///   alias matches are ignored.
+    /// * `aliases` — the shell's alias table.
     ///
     /// # Pushback
     ///
@@ -1241,7 +1132,7 @@ impl<'src> Parser<'src> {
         &mut self,
         keyword_ok: bool,
         alias_ok: bool,
-        alias_trie: &AliasTrie,
+        aliases: &HashMap<String, String>,
     ) -> Result<ScanResult<'src>, ParseError> {
         // --- Pushback fast-path ---
         if let Some(prev) = self.pushed_back.take() {
@@ -1271,9 +1162,7 @@ impl<'src> Parser<'src> {
             self.pos
         };
 
-        // Trie cursors — initialized to root if enabled, dead state if not.
         let mut kw: u8 = if keyword_ok { KW_ROOT } else { KW_NONE };
-        let mut al: u16 = if alias_ok { alias_trie.root() } else { AliasTrie::NONE };
         let mut has_continuation = false;
         // `word_started` tracks whether we've consumed any actual word
         // characters.  A `#` only starts a comment if `word_started` is
@@ -1305,43 +1194,36 @@ impl<'src> Parser<'src> {
             match cur_text.as_bytes().get(cur_pos) {
                 None => break,
                 Some(&b) if is_word_break(b) => break,
-                // `#` at the start of a token is a comment, not a word char
                 Some(b'#') if !word_started => break,
-                // Backslash-newline (line continuation) — splice the two
-                // lines together.  Kills both trie cursors since the word
-                // now spans a physical line break and can't be a keyword
-                // or alias.
+                // Backslash-newline (line continuation) — kills the keyword
+                // cursor since the word now spans a physical line break.
                 Some(&b'\\')
                     if !cur_in_alias
                         && self.source.as_bytes().get(self.pos + 1) == Some(&b'\n') =>
                 {
                     has_continuation = true;
                     kw = KW_NONE;
-                    al = AliasTrie::NONE;
                     self.pos += 2;
                     self.line += 1;
                 }
-                // Quoting — kills trie cursors since quoted words can't
-                // match keywords or aliases.
+                // Quoting — kills the keyword cursor since quoted words
+                // can't match keywords or aliases.
                 Some(&b'\'') => {
                     word_started = true;
                     had_quote = true;
                     kw = KW_NONE;
-                    al = AliasTrie::NONE;
                     self.skip_single_quote()?;
                 }
                 Some(&b'"') => {
                     word_started = true;
                     had_quote = true;
                     kw = KW_NONE;
-                    al = AliasTrie::NONE;
                     self.skip_double_quote()?;
                 }
                 Some(&b'$') if matches!(cur_text.as_bytes().get(cur_pos + 1), Some(b'\'')) => {
                     word_started = true;
                     had_quote = true;
                     kw = KW_NONE;
-                    al = AliasTrie::NONE;
                     self.skip_dollar_single_quote()?;
                 }
                 Some(&b'$') if matches!(cur_text.as_bytes().get(cur_pos + 1), Some(b'(' | b'{'))
@@ -1349,14 +1231,12 @@ impl<'src> Parser<'src> {
                 {
                     word_started = true;
                     kw = KW_NONE;
-                    al = AliasTrie::NONE;
                     self.skip_dollar_construct()?;
                 }
                 Some(&b'`') => {
                     word_started = true;
                     had_quote = true;
                     kw = KW_NONE;
-                    al = AliasTrie::NONE;
                     self.advance_byte();
                     self.skip_backtick_inner()?;
                 }
@@ -1364,7 +1244,6 @@ impl<'src> Parser<'src> {
                     word_started = true;
                     had_quote = true;
                     kw = KW_NONE;
-                    al = AliasTrie::NONE;
                     self.advance_byte();
                     if self.peek_byte().is_some() {
                         self.advance_byte();
@@ -1373,14 +1252,12 @@ impl<'src> Parser<'src> {
                 Some(&b'$') => {
                     word_started = true;
                     kw = KW_NONE;
-                    al = AliasTrie::NONE;
                     self.advance_byte();
                 }
-                // Plain character — step both tries.
+                // Plain character — step the keyword trie.
                 Some(_) => {
                     word_started = true;
                     kw = kw_step(kw, cur_text.as_bytes()[cur_pos]);
-                    al = alias_trie.step(al, cur_text.as_bytes()[cur_pos]);
                     self.advance_byte();
                 }
             }
@@ -1426,8 +1303,9 @@ impl<'src> Parser<'src> {
         // Quoting disables both (a quoted `if` is a plain word, not a keyword).
         if !had_quote {
             if alias_ok {
-                if let Some(idx) = alias_trie.terminal(al) {
-                    return Ok(ScanResult::Alias { index: idx, raw });
+                if let Some(value) = aliases.get(raw) {
+                    let value = self.intern(value.clone());
+                    return Ok(ScanResult::Alias { value, raw });
                 }
             }
             if keyword_ok {
@@ -1442,8 +1320,8 @@ impl<'src> Parser<'src> {
 
     /// Try to consume a specific plain word (like "}" or "time"). Returns true if consumed.
     /// Uses keyword_ok=true so that keywords pushed back retain their classification.
-    fn consume_word_if(&mut self, expected: &str, alias_trie: &AliasTrie) -> Result<bool, ParseError> {
-        match self.scan_word(true, false, alias_trie)? {
+    fn consume_word_if(&mut self, expected: &str, aliases: &HashMap<String, String>) -> Result<bool, ParseError> {
+        match self.scan_word(true, false, aliases)? {
             ScanResult::Word(w) if w == expected => Ok(true),
             ScanResult::None => Ok(false),
             other => {
@@ -1456,9 +1334,9 @@ impl<'src> Parser<'src> {
     fn expect_keyword(
         &mut self,
         expected: Keyword,
-        alias_trie: &AliasTrie,
+        aliases: &HashMap<String, String>,
     ) -> Result<(), ParseError> {
-        match self.scan_word(true, false, alias_trie)? {
+        match self.scan_word(true, false, aliases)? {
             ScanResult::Keyword(kw, _) if kw == expected => {
                 self.skip_separators()?;
                 Ok(())
@@ -1470,16 +1348,16 @@ impl<'src> Parser<'src> {
     fn expect_word(
         &mut self,
         expected: &str,
-        alias_trie: &AliasTrie,
+        aliases: &HashMap<String, String>,
     ) -> Result<(), ParseError> {
-        match self.scan_word(false, false, alias_trie)? {
+        match self.scan_word(false, false, aliases)? {
             ScanResult::Word(w) if w == expected => Ok(()),
             _ => Err(self.error(format!("expected '{expected}'"))),
         }
     }
 
-    fn consume_any_word(&mut self, alias_trie: &AliasTrie) -> Result<Option<&'src str>, ParseError> {
-        match self.scan_word(false, false, alias_trie)? {
+    fn consume_any_word(&mut self, aliases: &HashMap<String, String>) -> Result<Option<&'src str>, ParseError> {
+        match self.scan_word(false, false, aliases)? {
             ScanResult::Word(w) | ScanResult::Keyword(_, w) | ScanResult::Alias { raw: w, .. } => Ok(Some(w)),
             ScanResult::None => Ok(None),
         }
@@ -1490,9 +1368,9 @@ impl<'src> Parser<'src> {
     fn check_keyword(
         &mut self,
         expected: Keyword,
-        alias_trie: &AliasTrie,
+        aliases: &HashMap<String, String>,
     ) -> Result<bool, ParseError> {
-        match self.scan_word(true, false, alias_trie)? {
+        match self.scan_word(true, false, aliases)? {
             ScanResult::Keyword(kw, _) if kw == expected => Ok(true),
             ScanResult::None => Ok(false),
             other => {
@@ -1506,9 +1384,9 @@ impl<'src> Parser<'src> {
     /// if present, pushing back the result either way.
     fn peek_next_keyword(
         &mut self,
-        alias_trie: &AliasTrie,
+        aliases: &HashMap<String, String>,
     ) -> Result<Option<Keyword>, ParseError> {
-        match self.scan_word(true, false, alias_trie)? {
+        match self.scan_word(true, false, aliases)? {
             ScanResult::Keyword(kw, raw) => {
                 self.push_back(ScanResult::Keyword(kw, raw));
                 Ok(Some(kw))
@@ -1628,8 +1506,8 @@ impl<'src> Parser<'src> {
     // `trailing_blank` is set so the next command-position word also
     // gets alias expansion (POSIX 2.3.1).
 
-    /// Expand aliases at command position.  Scans one word with both keyword
-    /// and alias tries active; if it matches an alias and expansion is allowed,
+    /// Expand aliases at command position.  Scans one word with keyword and
+    /// alias lookup active; if it matches an alias and expansion is allowed,
     /// pushes the expansion layer and loops (for chained aliases).  When the
     /// first non-alias result is reached, it is **pushed back** so the
     /// downstream consumer retrieves it without re-scanning.
@@ -1638,21 +1516,20 @@ impl<'src> Parser<'src> {
     /// the caller has already identified the first word.
     fn expand_alias_at_command_position(
         &mut self,
-        alias_trie: &AliasTrie,
+        aliases: &HashMap<String, String>,
     ) -> Result<(), ParseError> {
         if self.pushed_back.is_some() {
             return Ok(());
         }
         loop {
-            match self.scan_word(true, true, alias_trie)? {
-                ScanResult::Alias { index, raw }
+            match self.scan_word(true, true, aliases)? {
+                ScanResult::Alias { value, raw }
                     if is_alias_word(raw)
                         && !self.expanding_aliases.iter().any(|n| n == raw)
                         && self.alias_depth < 1024 =>
                 {
-                    let alias_value = alias_trie.value(index);
-                    let trailing_blank = alias_has_trailing_blank(alias_value);
-                    let interned = self.intern(alias_value.to_string());
+                    let trailing_blank = alias_has_trailing_blank(value);
+                    let interned = self.intern(value.to_string());
                     self.expanding_aliases.push(raw.to_string());
                     self.alias_stack.push(AliasLayer {
                         text: interned,
@@ -1689,7 +1566,7 @@ impl<'src> Parser<'src> {
     //   parse_simple_command — assignments, words, redirections
     //   parse_if/for/case/while/until — compound commands
     //
-    // All parsing methods accept an `alias_trie` reference and call
+    // All parsing methods accept an `aliases` reference and call
     // `expand_alias_at_command_position` at the top of each command
     // position.  The pushback guard makes redundant calls O(1) no-ops.
 
@@ -1704,18 +1581,18 @@ impl<'src> Parser<'src> {
         stop_kw: fn(Keyword) -> bool,
         stop_on_closer: bool,
         stop_on_dsemi: bool,
-        alias_trie: &AliasTrie,
+        aliases: &HashMap<String, String>,
     ) -> Result<Program<'src>, ParseError> {
         let mut items = Vec::new();
         self.skip_separators()?;
 
         loop {
-            self.expand_alias_at_command_position(alias_trie)?;
+            self.expand_alias_at_command_position(aliases)?;
 
             // Single scan: stop-keyword check + first-word classification.
             // After expand_alias (which restores position), this scans the
             // first non-alias word with keyword trie active.
-            match self.scan_word(true, false, alias_trie)? {
+            match self.scan_word(true, false, aliases)? {
                 // Stop keyword: push back so the caller can consume with
                 // expect_keyword (which provides its own error message).
                 ScanResult::Keyword(kw, raw) if stop_kw(kw) => {
@@ -1751,7 +1628,7 @@ impl<'src> Parser<'src> {
             }
 
             let line = self.line;
-            let mut and_or = self.parse_and_or(alias_trie)?;
+            let mut and_or = self.parse_and_or(aliases)?;
             let asynchronous = self.consume_amp();
             self.skip_separators()?;
 
@@ -1777,9 +1654,9 @@ impl<'src> Parser<'src> {
 
     fn parse_and_or(
         &mut self,
-        alias_trie: &AliasTrie,
+        aliases: &HashMap<String, String>,
     ) -> Result<AndOr<'src>, ParseError> {
-        let first = self.parse_pipeline(alias_trie)?;
+        let first = self.parse_pipeline(aliases)?;
         let mut rest = Vec::new();
         loop {
             self.skip_blanks_and_comments();
@@ -1799,7 +1676,7 @@ impl<'src> Parser<'src> {
                 break;
             };
             self.skip_linebreaks()?;
-            let rhs = self.parse_pipeline(alias_trie)?;
+            let rhs = self.parse_pipeline(aliases)?;
             rest.push((op, rhs));
         }
         Ok(AndOr {
@@ -1810,14 +1687,14 @@ impl<'src> Parser<'src> {
 
     fn parse_pipeline(
         &mut self,
-        alias_trie: &AliasTrie,
+        aliases: &HashMap<String, String>,
     ) -> Result<Pipeline<'src>, ParseError> {
-        self.expand_alias_at_command_position(alias_trie)?;
+        self.expand_alias_at_command_position(aliases)?;
 
-        let timed = if self.consume_word_if("time", alias_trie)? {
-            self.expand_alias_at_command_position(alias_trie)?;
-            if self.consume_word_if("-p", alias_trie)? {
-                self.expand_alias_at_command_position(alias_trie)?;
+        let timed = if self.consume_word_if("time", aliases)? {
+            self.expand_alias_at_command_position(aliases)?;
+            if self.consume_word_if("-p", aliases)? {
+                self.expand_alias_at_command_position(aliases)?;
                 TimedMode::Posix
             } else {
                 TimedMode::Default
@@ -1826,20 +1703,20 @@ impl<'src> Parser<'src> {
             TimedMode::Off
         };
 
-        let negated = if self.consume_word_if("!", alias_trie)? {
-            self.expand_alias_at_command_position(alias_trie)?;
+        let negated = if self.consume_word_if("!", aliases)? {
+            self.expand_alias_at_command_position(aliases)?;
             true
         } else {
             false
         };
 
-        let mut commands = vec![self.parse_command(alias_trie)?];
+        let mut commands = vec![self.parse_command(aliases)?];
         loop {
             self.skip_blanks_and_comments();
             if self.peek_byte() == Some(b'|') && self.peek_byte_at_offset(1) != Some(b'|') {
                 self.advance_byte();
                 self.skip_linebreaks()?;
-                commands.push(self.parse_command(alias_trie)?);
+                commands.push(self.parse_command(aliases)?);
             } else {
                 break;
             }
@@ -1854,11 +1731,11 @@ impl<'src> Parser<'src> {
 
     fn parse_command(
         &mut self,
-        alias_trie: &AliasTrie,
+        aliases: &HashMap<String, String>,
     ) -> Result<Command<'src>, ParseError> {
-        self.expand_alias_at_command_position(alias_trie)?;
-        let command = self.parse_command_inner(alias_trie)?;
-        self.parse_command_redirections(command, alias_trie)
+        self.expand_alias_at_command_position(aliases)?;
+        let command = self.parse_command_inner(aliases)?;
+        self.parse_command_redirections(command, aliases)
     }
 
     /// Dispatch to the correct command parser based on a single scan.
@@ -1875,15 +1752,15 @@ impl<'src> Parser<'src> {
     ///   None + `<`/`>`                             → redirection-only command
     fn parse_command_inner(
         &mut self,
-        alias_trie: &AliasTrie,
+        aliases: &HashMap<String, String>,
     ) -> Result<Command<'src>, ParseError> {
         let line = self.line;
-        match self.scan_word(true, false, alias_trie)? {
+        match self.scan_word(true, false, aliases)? {
             ScanResult::None => {
                 if self.peek_byte() == Some(b'(') {
                     self.advance_byte();
                     let body =
-                        self.parse_program_until(|_| false, true, false, alias_trie)?;
+                        self.parse_program_until(|_| false, true, false, aliases)?;
                     self.skip_blanks_and_comments();
                     if self.peek_byte() != Some(b')') {
                         return Err(self.error("expected ')' to close subshell"));
@@ -1894,22 +1771,22 @@ impl<'src> Parser<'src> {
                 // Leading redirection without command word (e.g., ">file")
                 if matches!(self.peek_byte(), Some(b'<' | b'>')) {
                     return self
-                        .parse_simple_command_with_first_redir(alias_trie)
+                        .parse_simple_command_with_first_redir(aliases)
                         .map(Command::Simple);
                 }
                 Err(self.error("expected command"))
             }
-            ScanResult::Keyword(Keyword::If, _) => self.parse_if_command(alias_trie),
+            ScanResult::Keyword(Keyword::If, _) => self.parse_if_command(aliases),
             ScanResult::Keyword(Keyword::While, _) => {
-                self.parse_loop_command(LoopKind::While, alias_trie)
+                self.parse_loop_command(LoopKind::While, aliases)
             }
             ScanResult::Keyword(Keyword::Until, _) => {
-                self.parse_loop_command(LoopKind::Until, alias_trie)
+                self.parse_loop_command(LoopKind::Until, aliases)
             }
-            ScanResult::Keyword(Keyword::For, _) => self.parse_for_command(alias_trie),
-            ScanResult::Keyword(Keyword::Case, _) => self.parse_case_command(alias_trie),
+            ScanResult::Keyword(Keyword::For, _) => self.parse_for_command(aliases),
+            ScanResult::Keyword(Keyword::Case, _) => self.parse_case_command(aliases),
             ScanResult::Keyword(Keyword::Function, _) => {
-                self.parse_function_keyword(alias_trie)
+                self.parse_function_keyword(aliases)
             }
             ScanResult::Word(raw) | ScanResult::Keyword(_, raw) => {
                 // Standalone ! at command level (not pipeline level) is an error
@@ -1921,9 +1798,9 @@ impl<'src> Parser<'src> {
                 if raw == "{" {
                     self.skip_separators()?;
                     let body =
-                        self.parse_program_until(|_| false, true, false, alias_trie)?;
+                        self.parse_program_until(|_| false, true, false, aliases)?;
                     self.skip_blanks_and_comments();
-                    self.expect_word("}", alias_trie)?;
+                    self.expect_word("}", aliases)?;
                     return Ok(Command::Group(body));
                 }
                 // Check for name() function definition
@@ -1935,7 +1812,7 @@ impl<'src> Parser<'src> {
                         if self.peek_byte() == Some(b')') {
                             self.advance_byte();
                             self.skip_linebreaks().ok();
-                            let body = self.parse_command(alias_trie)?;
+                            let body = self.parse_command(aliases)?;
                             return Ok(Command::FunctionDef(FunctionDef {
                                 name: raw,
                                 body: Box::new(body),
@@ -1944,7 +1821,7 @@ impl<'src> Parser<'src> {
                         return Err(self.error("syntax error near unexpected token `('"));
                     }
                 }
-                self.parse_simple_command_with_first_word(raw, line, alias_trie)
+                self.parse_simple_command_with_first_word(raw, line, aliases)
                     .map(Command::Simple)
             }
             ScanResult::Alias { .. } => unreachable!("alias_ok=false"),
@@ -1965,7 +1842,7 @@ impl<'src> Parser<'src> {
         &mut self,
         first_raw: &'src str,
         first_line: usize,
-        alias_trie: &AliasTrie,
+        aliases: &HashMap<String, String>,
     ) -> Result<SimpleCommand<'src>, ParseError> {
         let mut assignments = Vec::new();
         let mut words: Vec<Word<'src>> = Vec::new();
@@ -1975,7 +1852,7 @@ impl<'src> Parser<'src> {
             && matches!(self.peek_byte(), Some(b'<' | b'>'))
         {
             let fd = first_raw.parse::<i32>().ok();
-            if let Some(mut redir) = self.try_parse_redirection(alias_trie)? {
+            if let Some(mut redir) = self.try_parse_redirection(aliases)? {
                 redir.fd = redir.fd.or(fd);
                 redirections.push(redir);
             }
@@ -1999,10 +1876,10 @@ impl<'src> Parser<'src> {
 
             if self.alias_trailing_blank_pending {
                 self.alias_trailing_blank_pending = false;
-                self.expand_alias_at_command_position(alias_trie)?;
+                self.expand_alias_at_command_position(aliases)?;
             }
 
-            if let Some(redir) = self.try_parse_redirection(alias_trie)? {
+            if let Some(redir) = self.try_parse_redirection(aliases)? {
                 redirections.push(redir);
                 continue;
             }
@@ -2010,10 +1887,10 @@ impl<'src> Parser<'src> {
             // Try assignment (only before any command words)
             if words.is_empty() {
                 if !assignments.is_empty() || !redirections.is_empty() {
-                    self.expand_alias_at_command_position(alias_trie)?;
+                    self.expand_alias_at_command_position(aliases)?;
                 }
                 let line = self.line;
-                match self.scan_word(false, false, alias_trie)? {
+                match self.scan_word(false, false, aliases)? {
                     ScanResult::Word(raw) if !raw.is_empty() => {
                         if let Some((name, value_raw)) = split_assignment(raw) {
                             assignments.push(Assignment {
@@ -2036,7 +1913,7 @@ impl<'src> Parser<'src> {
             }
 
             let line = self.line;
-            match self.scan_word(false, false, alias_trie)? {
+            match self.scan_word(false, false, aliases)? {
                 ScanResult::Word(raw) if !raw.is_empty() => {
                     words.push(Word { raw, line });
                     continue;
@@ -2063,28 +1940,28 @@ impl<'src> Parser<'src> {
     /// Parse a simple command when the first token is a redirection (no leading word).
     fn parse_simple_command_with_first_redir(
         &mut self,
-        alias_trie: &AliasTrie,
+        aliases: &HashMap<String, String>,
     ) -> Result<SimpleCommand<'src>, ParseError> {
         let mut assignments = Vec::new();
         let mut words: Vec<Word<'src>> = Vec::new();
         let mut redirections = Vec::new();
 
-        if let Some(redir) = self.try_parse_redirection(alias_trie)? {
+        if let Some(redir) = self.try_parse_redirection(aliases)? {
             redirections.push(redir);
         }
 
         loop {
             self.skip_blanks_and_comments();
-            if let Some(redir) = self.try_parse_redirection(alias_trie)? {
+            if let Some(redir) = self.try_parse_redirection(aliases)? {
                 redirections.push(redir);
                 continue;
             }
             if words.is_empty() {
                 if !assignments.is_empty() || !redirections.is_empty() {
-                    self.expand_alias_at_command_position(alias_trie)?;
+                    self.expand_alias_at_command_position(aliases)?;
                 }
                 let line = self.line;
-                match self.scan_word(false, false, alias_trie)? {
+                match self.scan_word(false, false, aliases)? {
                     ScanResult::Word(raw) if !raw.is_empty() => {
                         if let Some((name, value_raw)) = split_assignment(raw) {
                             assignments.push(Assignment {
@@ -2106,7 +1983,7 @@ impl<'src> Parser<'src> {
                 }
             }
             let line = self.line;
-            match self.scan_word(false, false, alias_trie)? {
+            match self.scan_word(false, false, aliases)? {
                 ScanResult::Word(raw) if !raw.is_empty() => {
                     words.push(Word { raw, line });
                     continue;
@@ -2133,7 +2010,7 @@ impl<'src> Parser<'src> {
     /// deferred to `read_pending_heredocs` at the next newline.
     fn try_parse_redirection(
         &mut self,
-        alias_trie: &AliasTrie,
+        aliases: &HashMap<String, String>,
     ) -> Result<Option<Redirection<'src>>, ParseError> {
         // IO number: scan a bounded run of digits before `<` or `>`.
         // This is O(few digits), not full word rescanning.
@@ -2206,7 +2083,7 @@ impl<'src> Parser<'src> {
 
         self.skip_blanks();
         let line = self.line;
-        let target_raw = match self.scan_word(false, false, alias_trie)? {
+        let target_raw = match self.scan_word(false, false, aliases)? {
             ScanResult::Word(w) => w,
             _ => return Err(self.error("expected redirection target")),
         };
@@ -2242,13 +2119,13 @@ impl<'src> Parser<'src> {
     fn parse_command_redirections(
         &mut self,
         command: Command<'src>,
-        alias_trie: &AliasTrie,
+        aliases: &HashMap<String, String>,
     ) -> Result<Command<'src>, ParseError> {
         if matches!(command, Command::Simple(_)) {
             return Ok(command);
         }
         let mut redirections = Vec::new();
-        while let Some(redir) = self.try_parse_redirection(alias_trie)? {
+        while let Some(redir) = self.try_parse_redirection(aliases)? {
             redirections.push(redir);
         }
         if redirections.is_empty() {
@@ -2265,59 +2142,59 @@ impl<'src> Parser<'src> {
 
     fn parse_if_command(
         &mut self,
-        alias_trie: &AliasTrie,
+        aliases: &HashMap<String, String>,
     ) -> Result<Command<'src>, ParseError> {
         let condition = self.parse_program_until(
             |kw| matches!(kw, Keyword::Then),
             false,
             false,
-            alias_trie,
+            aliases,
         )?;
         if condition.items.is_empty() {
             return Err(self.error("expected command list after 'if'"));
         }
-        self.expect_keyword(Keyword::Then, alias_trie)?;
+        self.expect_keyword(Keyword::Then, aliases)?;
 
         fn at_elif_else_fi(kw: Keyword) -> bool {
             matches!(kw, Keyword::Elif | Keyword::Else | Keyword::Fi)
         }
         let then_branch =
-            self.parse_program_until(at_elif_else_fi, false, false, alias_trie)?;
+            self.parse_program_until(at_elif_else_fi, false, false, aliases)?;
         let mut elif_branches = Vec::new();
 
-        while self.check_keyword(Keyword::Elif, alias_trie)? {
+        while self.check_keyword(Keyword::Elif, aliases)? {
             self.skip_separators()?;
             let cond = self.parse_program_until(
                 |kw| matches!(kw, Keyword::Then),
                 false,
                 false,
-                alias_trie,
+                aliases,
             )?;
             if cond.items.is_empty() {
                 return Err(self.error("expected command list after 'elif'"));
             }
-            self.expect_keyword(Keyword::Then, alias_trie)?;
+            self.expect_keyword(Keyword::Then, aliases)?;
             let body =
-                self.parse_program_until(at_elif_else_fi, false, false, alias_trie)?;
+                self.parse_program_until(at_elif_else_fi, false, false, aliases)?;
             elif_branches.push(ElifBranch {
                 condition: cond,
                 body,
             });
         }
 
-        let else_branch = if self.check_keyword(Keyword::Else, alias_trie)? {
+        let else_branch = if self.check_keyword(Keyword::Else, aliases)? {
             self.skip_separators()?;
             Some(self.parse_program_until(
                 |kw| matches!(kw, Keyword::Fi),
                 false,
                 false,
-                alias_trie,
+                aliases,
             )?)
         } else {
             None
         };
 
-        self.expect_keyword(Keyword::Fi, alias_trie)?;
+        self.expect_keyword(Keyword::Fi, aliases)?;
         Ok(Command::If(IfCommand {
             condition,
             then_branch,
@@ -2329,7 +2206,7 @@ impl<'src> Parser<'src> {
     fn parse_loop_command(
         &mut self,
         kind: LoopKind,
-        alias_trie: &AliasTrie,
+        aliases: &HashMap<String, String>,
     ) -> Result<Command<'src>, ParseError> {
         let keyword = match kind {
             LoopKind::While => "while",
@@ -2339,19 +2216,19 @@ impl<'src> Parser<'src> {
             |kw| matches!(kw, Keyword::Do),
             false,
             false,
-            alias_trie,
+            aliases,
         )?;
         if condition.items.is_empty() {
             return Err(self.error(format!("expected command list after '{keyword}'")));
         }
-        self.expect_keyword(Keyword::Do, alias_trie)?;
+        self.expect_keyword(Keyword::Do, aliases)?;
         let body = self.parse_program_until(
             |kw| matches!(kw, Keyword::Done),
             false,
             false,
-            alias_trie,
+            aliases,
         )?;
-        self.expect_keyword(Keyword::Done, alias_trie)?;
+        self.expect_keyword(Keyword::Done, aliases)?;
         Ok(Command::Loop(LoopCommand {
             kind,
             condition,
@@ -2361,10 +2238,10 @@ impl<'src> Parser<'src> {
 
     fn parse_for_command(
         &mut self,
-        alias_trie: &AliasTrie,
+        aliases: &HashMap<String, String>,
     ) -> Result<Command<'src>, ParseError> {
         self.skip_blanks_and_comments();
-        let name = match self.scan_word(false, false, alias_trie)? {
+        let name = match self.scan_word(false, false, aliases)? {
             ScanResult::Word(w) => w,
             _ => return Err(self.error("expected for loop variable name")),
         };
@@ -2373,7 +2250,7 @@ impl<'src> Parser<'src> {
         }
 
         self.skip_linebreaks()?;
-        let items = if self.check_keyword(Keyword::In, alias_trie)? {
+        let items = if self.check_keyword(Keyword::In, aliases)? {
             let mut items = Vec::new();
             loop {
                 self.skip_blanks_and_comments();
@@ -2383,7 +2260,7 @@ impl<'src> Parser<'src> {
                     break;
                 }
                 let line = self.line;
-                match self.scan_word(false, false, alias_trie)? {
+                match self.scan_word(false, false, aliases)? {
                     ScanResult::Word(w) => items.push(Word { raw: w, line }),
                     other => {
                         self.push_back(other);
@@ -2397,25 +2274,25 @@ impl<'src> Parser<'src> {
         };
 
         self.skip_separators()?;
-        self.expect_keyword(Keyword::Do, alias_trie)?;
+        self.expect_keyword(Keyword::Do, aliases)?;
         let body = self.parse_program_until(
             |kw| matches!(kw, Keyword::Done),
             false,
             false,
-            alias_trie,
+            aliases,
         )?;
-        self.expect_keyword(Keyword::Done, alias_trie)?;
+        self.expect_keyword(Keyword::Done, aliases)?;
         Ok(Command::For(ForCommand { name, items, body }))
     }
 
     fn parse_case_command(
         &mut self,
-        alias_trie: &AliasTrie,
+        aliases: &HashMap<String, String>,
     ) -> Result<Command<'src>, ParseError> {
         self.skip_blanks_and_comments();
         let line = self.line;
         let word_raw = self
-            .consume_any_word(alias_trie)?
+            .consume_any_word(aliases)?
             .ok_or_else(|| self.error("expected case word"))?;
         let word = Word {
             raw: word_raw,
@@ -2423,14 +2300,14 @@ impl<'src> Parser<'src> {
         };
 
         self.skip_linebreaks()?;
-        if !self.check_keyword(Keyword::In, alias_trie)? {
+        if !self.check_keyword(Keyword::In, aliases)? {
             return Err(self.error("expected 'in'"));
         }
         self.skip_linebreaks()?;
 
         let mut arms = Vec::new();
         loop {
-            if self.peek_next_keyword(alias_trie)? == Some(Keyword::Esac) || self.at_eof() {
+            if self.peek_next_keyword(aliases)? == Some(Keyword::Esac) || self.at_eof() {
                 break;
             }
             self.skip_blanks_and_comments();
@@ -2443,7 +2320,7 @@ impl<'src> Parser<'src> {
                 self.skip_blanks_and_comments();
                 let pat_line = self.line;
                 let pat = self
-                    .consume_any_word(alias_trie)?
+                    .consume_any_word(aliases)?
                     .ok_or_else(|| self.error("expected case pattern"))?;
                 patterns.push(Word {
                     raw: pat,
@@ -2471,7 +2348,7 @@ impl<'src> Parser<'src> {
                 |kw| matches!(kw, Keyword::Esac),
                 false,
                 true,
-                alias_trie,
+                aliases,
             )?;
 
             let fallthrough = self.peek_byte() == Some(b';')
@@ -2493,15 +2370,15 @@ impl<'src> Parser<'src> {
                     self.advance_byte();
                     self.advance_byte();
                     self.skip_separators()?;
-                } else if self.peek_next_keyword(alias_trie)? != Some(Keyword::Esac) {
+                } else if self.peek_next_keyword(aliases)? != Some(Keyword::Esac) {
                     return Err(self.error("expected ';;', ';&', or 'esac'"));
                 }
-            } else if self.peek_next_keyword(alias_trie)? != Some(Keyword::Esac) {
+            } else if self.peek_next_keyword(aliases)? != Some(Keyword::Esac) {
                 break;
             }
         }
 
-        self.expect_keyword(Keyword::Esac, alias_trie)?;
+        self.expect_keyword(Keyword::Esac, aliases)?;
         Ok(Command::Case(CaseCommand {
             word,
             arms: arms.into_boxed_slice(),
@@ -2510,10 +2387,10 @@ impl<'src> Parser<'src> {
 
     fn parse_function_keyword(
         &mut self,
-        alias_trie: &AliasTrie,
+        aliases: &HashMap<String, String>,
     ) -> Result<Command<'src>, ParseError> {
         self.skip_blanks_and_comments();
-        let name = match self.scan_word(false, false, alias_trie)? {
+        let name = match self.scan_word(false, false, aliases)? {
             ScanResult::Word(w) => w,
             _ => return Err(self.error("expected function name")),
         };
@@ -2529,7 +2406,7 @@ impl<'src> Parser<'src> {
             }
         }
         self.skip_linebreaks().ok();
-        let body = self.parse_command(alias_trie)?;
+        let body = self.parse_command(aliases)?;
         Ok(Command::FunctionDef(FunctionDef {
             name,
             body: Box::new(body),
@@ -2553,15 +2430,15 @@ impl<'src> Parser<'src> {
     /// `None` at EOF.
     pub fn next_list_item(
         &mut self,
-        alias_trie: &AliasTrie,
+        aliases: &HashMap<String, String>,
     ) -> Result<Option<ListItem<'src>>, ParseError> {
         self.skip_separators()?;
-        self.expand_alias_at_command_position(alias_trie)?;
+        self.expand_alias_at_command_position(aliases)?;
         if self.at_eof() {
             return Ok(None);
         }
         let line = self.line;
-        let mut and_or = self.parse_and_or(alias_trie)?;
+        let mut and_or = self.parse_and_or(aliases)?;
         let asynchronous = self.consume_amp();
         self.skip_separators()?;
         if !self.read_heredocs.is_empty() {
@@ -2578,7 +2455,7 @@ impl<'src> Parser<'src> {
     /// newline), or `None` at EOF.
     pub fn next_complete_command(
         &mut self,
-        alias_trie: &AliasTrie,
+        aliases: &HashMap<String, String>,
     ) -> Result<Option<Program<'src>>, ParseError> {
         self.skip_separators()?;
         if self.at_eof() {
@@ -2586,12 +2463,12 @@ impl<'src> Parser<'src> {
         }
         let mut items = Vec::new();
         loop {
-            self.expand_alias_at_command_position(alias_trie)?;
+            self.expand_alias_at_command_position(aliases)?;
             if self.at_eof() {
                 break;
             }
             let line = self.line;
-            let mut and_or = self.parse_and_or(alias_trie)?;
+            let mut and_or = self.parse_and_or(aliases)?;
             let asynchronous = self.consume_amp();
 
             self.skip_blanks_and_comments();
@@ -2709,15 +2586,13 @@ pub fn parse(source: &str) -> Result<Program<'_>, ParseError> {
     parse_with_aliases(source, &HashMap::new())
 }
 
-/// Parse with alias expansion.  Builds an `AliasTrie` from the map and
-/// runs a single `parse_program_until` over the entire source.
+/// Parse with alias expansion using the shell's alias HashMap directly.
 pub fn parse_with_aliases<'src>(
     source: &'src str,
     aliases: &HashMap<String, String>,
 ) -> Result<Program<'src>, ParseError> {
-    let alias_trie = AliasTrie::build(aliases);
     let mut parser = Parser::new(source);
-    parser.parse_program_until(|_| false, false, false, &alias_trie)
+    parser.parse_program_until(|_| false, false, false, aliases)
 }
 
 /// Incremental parsing session — wraps a `Parser` for callers that
@@ -2738,8 +2613,7 @@ impl<'src> ParseSession<'src> {
         &mut self,
         aliases: &HashMap<String, String>,
     ) -> Result<Option<ListItem<'src>>, ParseError> {
-        let alias_trie = AliasTrie::build(aliases);
-        self.parser.next_list_item(&alias_trie)
+        self.parser.next_list_item(aliases)
     }
 
     pub fn current_line(&self) -> usize {
@@ -3740,23 +3614,13 @@ mod tests {
     }
 
     #[test]
-    fn alias_trie_basic() {
+    fn aliases_basic() {
         let mut aliases = HashMap::new();
         aliases.insert("ls".to_string(), "ls --color".to_string());
         aliases.insert("ll".to_string(), "ls -la".to_string());
-        let trie = AliasTrie::build(&aliases);
 
-        let mut state = trie.root();
-        for &b in b"ls" {
-            state = trie.step(state, b);
-        }
-        assert!(trie.terminal(state).is_some());
-        assert_eq!(trie.value(trie.terminal(state).unwrap()), "ls --color");
-
-        let mut state = trie.root();
-        for &b in b"xyz" {
-            state = trie.step(state, b);
-        }
-        assert_eq!(state, AliasTrie::NONE);
+        assert_eq!(aliases.get("ls").map(|s| s.as_str()), Some("ls --color"));
+        assert_eq!(aliases.get("ll").map(|s| s.as_str()), Some("ls -la"));
+        assert_eq!(aliases.get("xyz"), None);
     }
 }
