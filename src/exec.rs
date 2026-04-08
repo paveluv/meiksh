@@ -28,6 +28,8 @@ pub fn execute_program(shell: &mut Shell, program: &Program) -> Result<i32, Shel
     let mut status = 0;
     for item in &program.items {
         status = execute_list_item(shell, item)?;
+        shell.last_status = status;
+        shell.run_pending_traps()?;
         if !shell.running || shell.has_pending_control() {
             break;
         }

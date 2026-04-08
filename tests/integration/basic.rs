@@ -926,14 +926,14 @@ fn negated_pipeline_flips_status() {
 #[test]
 fn aliases_defined_earlier_in_same_source_affect_later_commands() {
     let simple = Command::new(meiksh())
-        .args(["-c", "alias say='printf ok'; say"])
+        .args(["-c", "alias say='printf ok'\nsay"])
         .output()
         .expect("run meiksh");
     assert!(simple.status.success());
     assert_eq!(String::from_utf8_lossy(&simple.stdout), "ok");
 
     let reserved = Command::new(meiksh())
-        .args(["-c", "alias cond='if'; cond true; then printf yes; fi"])
+        .args(["-c", "alias cond='if'\ncond true; then printf yes; fi"])
         .output()
         .expect("run meiksh");
     assert!(reserved.status.success());
@@ -945,28 +945,28 @@ fn aliases_defined_earlier_in_same_source_affect_later_commands() {
     // resolved at parse time, not execution time).  However, aliases
     // defined before a compound command ARE visible within it.
     let group = Command::new(meiksh())
-        .args(["-c", "alias say='printf group'; { say; }"])
+        .args(["-c", "alias say='printf group'\n{ say; }"])
         .output()
         .expect("run meiksh");
     assert!(group.status.success());
     assert_eq!(String::from_utf8_lossy(&group.stdout), "group");
 
     let function = Command::new(meiksh())
-        .args(["-c", "alias say='printf fn'; f() { say; }; f"])
+        .args(["-c", "alias say='printf fn'\nf() { say; }; f"])
         .output()
         .expect("run meiksh");
     assert!(function.status.success());
     assert_eq!(String::from_utf8_lossy(&function.stdout), "fn");
 
     let conditional = Command::new(meiksh())
-        .args(["-c", "alias say='printf branch'; if true; then say; fi"])
+        .args(["-c", "alias say='printf branch'\nif true; then say; fi"])
         .output()
         .expect("run meiksh");
     assert!(conditional.status.success());
     assert_eq!(String::from_utf8_lossy(&conditional.stdout), "branch");
 
     let heredoc_nested = Command::new(meiksh())
-        .args(["-c", "alias say='cat'; f() { say <<EOF\nhello\nEOF\n}; f"])
+        .args(["-c", "alias say='cat'\nf() { say <<EOF\nhello\nEOF\n}; f"])
         .output()
         .expect("run meiksh");
     assert!(heredoc_nested.status.success());

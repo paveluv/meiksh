@@ -2413,43 +2413,12 @@ impl<'src> Parser<'src> {
         }))
     }
 
-    // ---- Public API (on Parser) ----
+    // ---- Public incremental API ----
     //
-    // Two granularities are exposed:
-    //
-    //   `next_list_item`        — yields one pipeline at a time (asynchronous
-    //                             flag included).  This is the finer granularity
-    //                             used when `complete_command_parsing` is off.
-    //
-    //   `next_complete_command` — yields an entire newline-terminated command
-    //                             list at once.  This is what POSIX strictly
-    //                             requires (one complete command per execution
-    //                             cycle) and what most other shells do.
-
-    /// Return the next pipeline (possibly asynchronous) from the input, or
-    /// `None` at EOF.
-    pub fn next_list_item(
-        &mut self,
-        aliases: &HashMap<String, String>,
-    ) -> Result<Option<ListItem<'src>>, ParseError> {
-        self.skip_separators()?;
-        self.expand_alias_at_command_position(aliases)?;
-        if self.at_eof() {
-            return Ok(None);
-        }
-        let line = self.line;
-        let mut and_or = self.parse_and_or(aliases)?;
-        let asynchronous = self.consume_amp();
-        self.skip_separators()?;
-        if !self.read_heredocs.is_empty() {
-            fill_heredoc_bodies(&mut and_or, &mut self.read_heredocs);
-        }
-        Ok(Some(ListItem {
-            and_or,
-            asynchronous,
-            line,
-        }))
-    }
+    // `next_complete_command` yields one complete command at a time
+    // (everything up to the next unquoted newline).  This is what POSIX
+    // requires: heredoc bodies follow the newline that terminates the
+    // complete command, so they can only be read at this granularity.
 
     /// Return the next complete command (everything up to the next unquoted
     /// newline), or `None` at EOF.
@@ -2609,11 +2578,11 @@ impl<'src> ParseSession<'src> {
         })
     }
 
-    pub fn next_item(
+    pub fn next_command(
         &mut self,
         aliases: &HashMap<String, String>,
-    ) -> Result<Option<ListItem<'src>>, ParseError> {
-        self.parser.next_list_item(aliases)
+    ) -> Result<Option<Program<'src>>, ParseError> {
+        self.parser.next_complete_command(aliases)
     }
 
     pub fn current_line(&self) -> usize {
@@ -3046,29 +3015,31 @@ mod tests {
     }
 
     #[test]
-    fn parse_session_uses_updated_aliases_between_items() {
+    fn parse_session_uses_updated_aliases_between_commands() {
         let mut session =
-            ParseSession::new("alias setok='printf ok'; setok").expect("session");
+            ParseSession::new("alias setok='printf ok'\nsetok\n").expect("session");
         let first = session
-            .next_item(&HashMap::new())
-            .expect("first item")
-            .expect("some item");
-        assert!(matches!(first.and_or.first.commands[0], Command::Simple(_)));
+            .next_command(&HashMap::new())
+            .expect("first cmd")
+            .expect("some cmd");
+        assert_eq!(first.items.len(), 1);
+        assert!(matches!(first.items[0].and_or.first.commands[0], Command::Simple(_)));
 
         let second = session
-            .next_item(&HashMap::from([(
+            .next_command(&HashMap::from([(
                 String::from("setok"),
                 String::from("printf ok"),
             )]))
-            .expect("second item")
-            .expect("some item");
+            .expect("second cmd")
+            .expect("some cmd");
+        assert_eq!(second.items.len(), 1);
         assert!(matches!(
-            &second.and_or.first.commands[0],
+            &second.items[0].and_or.first.commands[0],
             Command::Simple(simple)
                 if simple.words.iter().map(|word| word.raw).collect::<Vec<_>>() == vec!["printf", "ok"]
         ));
 
-        assert!(session.next_item(&HashMap::new()).expect("eof").is_none());
+        assert!(session.next_command(&HashMap::new()).expect("eof").is_none());
     }
 
     #[test]

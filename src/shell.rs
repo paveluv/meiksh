@@ -531,16 +531,14 @@ impl Shell {
         let mut status = 0;
         self.run_pending_traps()?;
         loop {
-            let item = match session
-                .next_item(&self.aliases)
+            let program = match session
+                .next_command(&self.aliases)
                 .map_err(|e| self.parse_to_err(e))?
             {
-                Some(item) => item,
+                Some(p) => p,
                 None => break,
             };
-            status = self.execute_program(&Program {
-                items: vec![item].into_boxed_slice(),
-            })?;
+            status = self.execute_program(&program)?;
             self.run_pending_traps()?;
             if !self.running || self.has_pending_control() {
                 break;
@@ -2462,7 +2460,7 @@ mod tests {
             assert_eq!(shell.get_var("VALUE"), Some("ok"));
 
             let status = shell
-                .execute_string("alias same='export SAME=1'; same")
+                .execute_string("alias same='export SAME=1'\nsame")
                 .expect("run same-source alias");
             assert_eq!(status, 0);
             assert_eq!(shell.get_var("SAME"), Some("1"));
@@ -2475,7 +2473,7 @@ mod tests {
             assert_eq!(shell.get_var("BRANCH"), Some("hit"));
 
             let status = shell
-                .execute_string("alias cond2='if'; cond2 true; then export TOP=ok; fi")
+                .execute_string("alias cond2='if'\ncond2 true; then export TOP=ok; fi")
                 .expect("run same-source reserved alias");
             assert_eq!(status, 0);
             assert_eq!(shell.get_var("TOP"), Some("ok"));
