@@ -403,10 +403,9 @@ struct PendingHereDoc {
 /// When an alias is expanded, its value is pushed as a new layer.
 /// The parser reads from the topmost layer until exhausted, then
 /// falls back to the layer beneath (or the main source).
-/// Owns its text (cloned from the alias HashMap) so the parser's
-/// lifetime is not tied to `&Shell.aliases`.
-struct AliasLayer {
-    text: String,
+/// Borrows its text from the alias HashMap so no cloning is needed.
+struct AliasLayer<'a> {
+    text: &'a str,
     pos: usize,
     /// POSIX: if an alias value ends with a blank, the next word at
     /// command position is also subject to alias expansion.
@@ -415,15 +414,15 @@ struct AliasLayer {
 
 /// Result of scanning one word from the source.
 /// Carries keyword/alias classification so callers never re-scan.
-/// All strings are owned (`Box<str>`) so the result is independent
-/// of any borrow on the parser or alias layers.
-enum ScanResult {
+/// The `Alias` variant borrows the value from the alias HashMap.
+enum ScanResult<'a> {
     /// A plain word (no keyword or alias match).
     Word(Box<str>),
     /// A reserved word recognized by the keyword trie.
     Keyword(Keyword),
     /// A word that matched an alias in the shell's alias HashMap.
-    Alias { value: String, raw: Box<str> },
+    /// `value` borrows directly from the HashMap — no clone.
+    Alias { value: &'a str, raw: Box<str> },
     /// Nothing was scanned (EOF or delimiter at current position).
     None,
 }
@@ -496,25 +495,36 @@ fn is_alias_word(word: &str) -> bool {
 //  read_heredocs         – bodies read at newline, waiting to be attached to AST nodes
 //  pushed_back           – one-slot pushback to avoid re-scanning (see module doc)
 
-pub struct Parser<'src> {
+pub struct Parser<'src, 'a> {
     source: &'src str,
     pos: usize,
     line: usize,
-    alias_stack: Vec<AliasLayer>,
+    aliases: &'a HashMap<String, String>,
+    alias_stack: Vec<AliasLayer<'a>>,
     alias_depth: usize,
     expanding_aliases: Vec<String>,
     alias_trailing_blank_pending: bool,
     pending_heredocs: Vec<PendingHereDoc>,
     read_heredocs: VecDeque<HereDoc>,
-    pushed_back: Option<ScanResult>,
+    pushed_back: Option<ScanResult<'a>>,
 }
 
-impl<'src> Parser<'src> {
-    pub fn new(source: &'src str) -> Self {
+impl<'src, 'a> Parser<'src, 'a> {
+    fn new(source: &'src str, aliases: &'a HashMap<String, String>) -> Self {
+        Self::new_at(source, 0, 1, aliases)
+    }
+
+    fn new_at(
+        source: &'src str,
+        pos: usize,
+        line: usize,
+        aliases: &'a HashMap<String, String>,
+    ) -> Self {
         Self {
             source,
-            pos: 0,
-            line: 1,
+            pos,
+            line,
+            aliases,
             alias_stack: Vec::new(),
             alias_depth: 0,
             expanding_aliases: Vec::new(),
@@ -609,7 +619,7 @@ impl<'src> Parser<'src> {
         self.alias_stack.is_empty() && self.pos >= self.source.len()
     }
 
-    fn push_back(&mut self, result: ScanResult) {
+    fn push_back(&mut self, result: ScanResult<'a>) {
         debug_assert!(self.pushed_back.is_none(), "double pushback");
         self.pushed_back = Some(result);
     }
@@ -918,7 +928,6 @@ impl<'src> Parser<'src> {
     ///   words.  If false, even a keyword-matching word is returned as `Word`.
     /// * `alias_ok` — whether alias expansion is allowed here.  If false,
     ///   alias matches are ignored.
-    /// * `aliases` — the shell's alias table.
     ///
     /// # Pushback
     ///
@@ -937,8 +946,7 @@ impl<'src> Parser<'src> {
         &mut self,
         keyword_ok: bool,
         alias_ok: bool,
-        aliases: &HashMap<String, String>,
-    ) -> Result<ScanResult, ParseError> {
+    ) -> Result<ScanResult<'a>, ParseError> {
         // --- Pushback fast-path ---
         if let Some(prev) = self.pushed_back.take() {
             return Ok(match prev {
@@ -975,12 +983,10 @@ impl<'src> Parser<'src> {
 
         // --- Main scan loop — each byte is read exactly once ---
         //
-        // IMPORTANT: We do NOT call pop_exhausted_layers() inside this loop.
-        // Doing so would free an alias layer's String before we can slice
-        // the scanned word from it.  Instead we check for buffer exhaustion
-        // explicitly and break.  Layers are popped naturally by subsequent
-        // operations (peek_byte, skip_blanks, etc.) after we've extracted
-        // the raw slice.
+        // We do NOT call pop_exhausted_layers() inside this loop; instead
+        // we check for buffer exhaustion explicitly and break.  Layers are
+        // popped naturally by subsequent operations (peek_byte, skip_blanks,
+        // etc.) after we've extracted the raw slice.
         loop {
             // Check current buffer position — break if exhausted or switched.
             if started_in_alias {
@@ -1076,7 +1082,7 @@ impl<'src> Parser<'src> {
         }
 
         // Compute end and extract the raw slice.  The alias layer (if any)
-        // has NOT been popped yet, so its String buffer is still valid.
+        // has NOT been popped yet, so its buffer is still valid.
         let (end, raw_slice) = if started_in_alias {
             if self.alias_stack.len() == alias_depth_at_start {
                 let layer = self.alias_stack.last().unwrap();
@@ -1107,8 +1113,8 @@ impl<'src> Parser<'src> {
         // Quoting disables both (a quoted `if` is a plain word, not a keyword).
         if !had_quote {
             if alias_ok {
-                if let Some(value) = aliases.get(&*raw) {
-                    return Ok(ScanResult::Alias { value: value.clone(), raw });
+                if let Some(value) = self.aliases.get(&*raw) {
+                    return Ok(ScanResult::Alias { value, raw });
                 }
             }
             if keyword_ok {
@@ -1123,8 +1129,8 @@ impl<'src> Parser<'src> {
 
     /// Try to consume a specific plain word (like "}" or "time"). Returns true if consumed.
     /// Uses keyword_ok=true so that keywords pushed back retain their classification.
-    fn consume_word_if(&mut self, expected: &str, aliases: &HashMap<String, String>) -> Result<bool, ParseError> {
-        match self.scan_word(true, false, aliases)? {
+    fn consume_word_if(&mut self, expected: &str) -> Result<bool, ParseError> {
+        match self.scan_word(true, false)? {
             ScanResult::Word(w) if &*w == expected => Ok(true),
             ScanResult::None => Ok(false),
             other => {
@@ -1137,9 +1143,8 @@ impl<'src> Parser<'src> {
     fn expect_keyword(
         &mut self,
         expected: Keyword,
-        aliases: &HashMap<String, String>,
     ) -> Result<(), ParseError> {
-        match self.scan_word(true, false, aliases)? {
+        match self.scan_word(true, false)? {
             ScanResult::Keyword(kw) if kw == expected => {
                 self.skip_separators()?;
                 Ok(())
@@ -1151,16 +1156,15 @@ impl<'src> Parser<'src> {
     fn expect_word(
         &mut self,
         expected: &str,
-        aliases: &HashMap<String, String>,
     ) -> Result<(), ParseError> {
-        match self.scan_word(false, false, aliases)? {
+        match self.scan_word(false, false)? {
             ScanResult::Word(w) if &*w == expected => Ok(()),
             _ => Err(self.error(format!("expected '{expected}'"))),
         }
     }
 
-    fn consume_any_word(&mut self, aliases: &HashMap<String, String>) -> Result<Option<Box<str>>, ParseError> {
-        match self.scan_word(false, false, aliases)? {
+    fn consume_any_word(&mut self) -> Result<Option<Box<str>>, ParseError> {
+        match self.scan_word(false, false)? {
             ScanResult::Word(w) => Ok(Some(w)),
             ScanResult::Keyword(kw) => Ok(Some(keyword_name(kw).into())),
             ScanResult::Alias { raw, .. } => Ok(Some(raw)),
@@ -1173,9 +1177,8 @@ impl<'src> Parser<'src> {
     fn check_keyword(
         &mut self,
         expected: Keyword,
-        aliases: &HashMap<String, String>,
     ) -> Result<bool, ParseError> {
-        match self.scan_word(true, false, aliases)? {
+        match self.scan_word(true, false)? {
             ScanResult::Keyword(kw) if kw == expected => Ok(true),
             ScanResult::None => Ok(false),
             other => {
@@ -1189,9 +1192,8 @@ impl<'src> Parser<'src> {
     /// if present, pushing back the result either way.
     fn peek_next_keyword(
         &mut self,
-        aliases: &HashMap<String, String>,
     ) -> Result<Option<Keyword>, ParseError> {
-        match self.scan_word(true, false, aliases)? {
+        match self.scan_word(true, false)? {
             ScanResult::Keyword(kw) => {
                 self.push_back(ScanResult::Keyword(kw));
                 Ok(Some(kw))
@@ -1304,11 +1306,11 @@ impl<'src> Parser<'src> {
     // alias.  Recursive alias expansion is prevented by tracking which
     // names are currently being expanded in `expanding_aliases`.
     //
-    // When an alias is found, its value is cloned and pushed as a new
-    // AliasLayer (owning the String).  The parser reads from that layer
-    // until it's exhausted.  If the alias value ends with a blank,
-    // `trailing_blank` is set so the next command-position word also
-    // gets alias expansion (POSIX 2.3.1).
+    // When an alias is found, its value (`&'a str` borrowed from the
+    // HashMap) is pushed as a new AliasLayer.  The parser reads from
+    // that layer until it's exhausted.  If the alias value ends with a
+    // blank, `trailing_blank` is set so the next command-position word
+    // also gets alias expansion (POSIX 2.3.1).
 
     /// Expand aliases at command position.  Scans one word with keyword and
     /// alias lookup active; if it matches an alias and expansion is allowed,
@@ -1318,21 +1320,18 @@ impl<'src> Parser<'src> {
     ///
     /// If `pushed_back` already contains a result, this is an O(1) no-op —
     /// the caller has already identified the first word.
-    fn expand_alias_at_command_position(
-        &mut self,
-        aliases: &HashMap<String, String>,
-    ) -> Result<(), ParseError> {
+    fn expand_alias_at_command_position(&mut self) -> Result<(), ParseError> {
         if self.pushed_back.is_some() {
             return Ok(());
         }
         loop {
-            match self.scan_word(true, true, aliases)? {
+            match self.scan_word(true, true)? {
                 ScanResult::Alias { value, raw }
                     if is_alias_word(&raw)
                         && !self.expanding_aliases.iter().any(|n| n == &*raw)
                         && self.alias_depth < 1024 =>
                 {
-                    let trailing_blank = alias_has_trailing_blank(&value);
+                    let trailing_blank = alias_has_trailing_blank(value);
                     self.expanding_aliases.push(raw.into());
                     self.alias_stack.push(AliasLayer {
                         text: value,
@@ -1369,7 +1368,7 @@ impl<'src> Parser<'src> {
     //   parse_simple_command — assignments, words, redirections
     //   parse_if/for/case/while/until — compound commands
     //
-    // All parsing methods accept an `aliases` reference and call
+    // All parsing methods use `self.aliases` (stored on the Parser) and call
     // `expand_alias_at_command_position` at the top of each command
     // position.  The pushback guard makes redundant calls O(1) no-ops.
 
@@ -1384,18 +1383,17 @@ impl<'src> Parser<'src> {
         stop_kw: fn(Keyword) -> bool,
         stop_on_closer: bool,
         stop_on_dsemi: bool,
-        aliases: &HashMap<String, String>,
     ) -> Result<Program, ParseError> {
         let mut items = Vec::new();
         self.skip_separators()?;
 
         loop {
-            self.expand_alias_at_command_position(aliases)?;
+            self.expand_alias_at_command_position()?;
 
             // Single scan: stop-keyword check + first-word classification.
             // After expand_alias (which restores position), this scans the
             // first non-alias word with keyword trie active.
-            match self.scan_word(true, false, aliases)? {
+            match self.scan_word(true, false)? {
                 // Stop keyword: push back so the caller can consume with
                 // expect_keyword (which provides its own error message).
                 ScanResult::Keyword(kw) if stop_kw(kw) => {
@@ -1431,7 +1429,7 @@ impl<'src> Parser<'src> {
             }
 
             let line = self.line;
-            let mut and_or = self.parse_and_or(aliases)?;
+            let mut and_or = self.parse_and_or()?;
             let asynchronous = self.consume_amp();
             self.skip_separators()?;
 
@@ -1455,11 +1453,8 @@ impl<'src> Parser<'src> {
         })
     }
 
-    fn parse_and_or(
-        &mut self,
-        aliases: &HashMap<String, String>,
-    ) -> Result<AndOr, ParseError> {
-        let first = self.parse_pipeline(aliases)?;
+    fn parse_and_or(&mut self) -> Result<AndOr, ParseError> {
+        let first = self.parse_pipeline()?;
         let mut rest = Vec::new();
         loop {
             self.skip_blanks_and_comments();
@@ -1479,7 +1474,7 @@ impl<'src> Parser<'src> {
                 break;
             };
             self.skip_linebreaks()?;
-            let rhs = self.parse_pipeline(aliases)?;
+            let rhs = self.parse_pipeline()?;
             rest.push((op, rhs));
         }
         Ok(AndOr {
@@ -1488,16 +1483,13 @@ impl<'src> Parser<'src> {
         })
     }
 
-    fn parse_pipeline(
-        &mut self,
-        aliases: &HashMap<String, String>,
-    ) -> Result<Pipeline, ParseError> {
-        self.expand_alias_at_command_position(aliases)?;
+    fn parse_pipeline(&mut self) -> Result<Pipeline, ParseError> {
+        self.expand_alias_at_command_position()?;
 
-        let timed = if self.consume_word_if("time", aliases)? {
-            self.expand_alias_at_command_position(aliases)?;
-            if self.consume_word_if("-p", aliases)? {
-                self.expand_alias_at_command_position(aliases)?;
+        let timed = if self.consume_word_if("time")? {
+            self.expand_alias_at_command_position()?;
+            if self.consume_word_if("-p")? {
+                self.expand_alias_at_command_position()?;
                 TimedMode::Posix
             } else {
                 TimedMode::Default
@@ -1506,20 +1498,20 @@ impl<'src> Parser<'src> {
             TimedMode::Off
         };
 
-        let negated = if self.consume_word_if("!", aliases)? {
-            self.expand_alias_at_command_position(aliases)?;
+        let negated = if self.consume_word_if("!")? {
+            self.expand_alias_at_command_position()?;
             true
         } else {
             false
         };
 
-        let mut commands = vec![self.parse_command(aliases)?];
+        let mut commands = vec![self.parse_command()?];
         loop {
             self.skip_blanks_and_comments();
             if self.peek_byte() == Some(b'|') && self.peek_byte_at_offset(1) != Some(b'|') {
                 self.advance_byte();
                 self.skip_linebreaks()?;
-                commands.push(self.parse_command(aliases)?);
+                commands.push(self.parse_command()?);
             } else {
                 break;
             }
@@ -1532,13 +1524,10 @@ impl<'src> Parser<'src> {
         })
     }
 
-    fn parse_command(
-        &mut self,
-        aliases: &HashMap<String, String>,
-    ) -> Result<Command, ParseError> {
-        self.expand_alias_at_command_position(aliases)?;
-        let command = self.parse_command_inner(aliases)?;
-        self.parse_command_redirections(command, aliases)
+    fn parse_command(&mut self) -> Result<Command, ParseError> {
+        self.expand_alias_at_command_position()?;
+        let command = self.parse_command_inner()?;
+        self.parse_command_redirections(command)
     }
 
     /// Dispatch to the correct command parser based on a single scan.
@@ -1553,17 +1542,14 @@ impl<'src> Parser<'src> {
     ///   Word(...)                                  → simple command
     ///   None + `(`                                 → subshell
     ///   None + `<`/`>`                             → redirection-only command
-    fn parse_command_inner(
-        &mut self,
-        aliases: &HashMap<String, String>,
-    ) -> Result<Command, ParseError> {
+    fn parse_command_inner(&mut self) -> Result<Command, ParseError> {
         let line = self.line;
-        match self.scan_word(true, false, aliases)? {
+        match self.scan_word(true, false)? {
             ScanResult::None => {
                 if self.peek_byte() == Some(b'(') {
                     self.advance_byte();
                     let body =
-                        self.parse_program_until(|_| false, true, false, aliases)?;
+                        self.parse_program_until(|_| false, true, false)?;
                     self.skip_blanks_and_comments();
                     if self.peek_byte() != Some(b')') {
                         return Err(self.error("expected ')' to close subshell"));
@@ -1573,29 +1559,29 @@ impl<'src> Parser<'src> {
                 }
                 if matches!(self.peek_byte(), Some(b'<' | b'>')) {
                     return self
-                        .parse_simple_command_with_first_redir(aliases)
+                        .parse_simple_command_with_first_redir()
                         .map(Command::Simple);
                 }
                 Err(self.error("expected command"))
             }
-            ScanResult::Keyword(Keyword::If) => self.parse_if_command(aliases),
+            ScanResult::Keyword(Keyword::If) => self.parse_if_command(),
             ScanResult::Keyword(Keyword::While) => {
-                self.parse_loop_command(LoopKind::While, aliases)
+                self.parse_loop_command(LoopKind::While)
             }
             ScanResult::Keyword(Keyword::Until) => {
-                self.parse_loop_command(LoopKind::Until, aliases)
+                self.parse_loop_command(LoopKind::Until)
             }
-            ScanResult::Keyword(Keyword::For) => self.parse_for_command(aliases),
-            ScanResult::Keyword(Keyword::Case) => self.parse_case_command(aliases),
+            ScanResult::Keyword(Keyword::For) => self.parse_for_command(),
+            ScanResult::Keyword(Keyword::Case) => self.parse_case_command(),
             ScanResult::Keyword(Keyword::Function) => {
-                self.parse_function_keyword(aliases)
+                self.parse_function_keyword()
             }
             ScanResult::Keyword(kw) => {
                 let raw: Box<str> = keyword_name(kw).into();
-                self.dispatch_word_or_keyword(raw, line, aliases)
+                self.dispatch_word_or_keyword(raw, line)
             }
             ScanResult::Word(raw) => {
-                self.dispatch_word_or_keyword(raw, line, aliases)
+                self.dispatch_word_or_keyword(raw, line)
             }
             ScanResult::Alias { .. } => unreachable!("alias_ok=false"),
         }
@@ -1605,7 +1591,6 @@ impl<'src> Parser<'src> {
         &mut self,
         raw: Box<str>,
         line: usize,
-        aliases: &HashMap<String, String>,
     ) -> Result<Command, ParseError> {
         if &*raw == "!" {
             return Err(self.error("expected command"));
@@ -1613,9 +1598,9 @@ impl<'src> Parser<'src> {
         if &*raw == "{" {
             self.skip_separators()?;
             let body =
-                self.parse_program_until(|_| false, true, false, aliases)?;
+                self.parse_program_until(|_| false, true, false)?;
             self.skip_blanks_and_comments();
-            self.expect_word("}", aliases)?;
+            self.expect_word("}")?;
             return Ok(Command::Group(body));
         }
         if is_name(&raw) {
@@ -1626,7 +1611,7 @@ impl<'src> Parser<'src> {
                 if self.peek_byte() == Some(b')') {
                     self.advance_byte();
                     self.skip_linebreaks().ok();
-                    let body = self.parse_command(aliases)?;
+                    let body = self.parse_command()?;
                     return Ok(Command::FunctionDef(FunctionDef {
                         name: raw,
                         body: Box::new(body),
@@ -1635,7 +1620,7 @@ impl<'src> Parser<'src> {
                 return Err(self.error("syntax error near unexpected token `('"));
             }
         }
-        self.parse_simple_command_with_first_word(raw, line, aliases)
+        self.parse_simple_command_with_first_word(raw, line)
             .map(Command::Simple)
     }
 
@@ -1653,7 +1638,6 @@ impl<'src> Parser<'src> {
         &mut self,
         first_raw: Box<str>,
         first_line: usize,
-        aliases: &HashMap<String, String>,
     ) -> Result<SimpleCommand, ParseError> {
         let mut assignments = Vec::new();
         let mut words: Vec<Word> = Vec::new();
@@ -1663,7 +1647,7 @@ impl<'src> Parser<'src> {
             && matches!(self.peek_byte(), Some(b'<' | b'>'))
         {
             let fd = first_raw.parse::<i32>().ok();
-            if let Some(mut redir) = self.try_parse_redirection(aliases)? {
+            if let Some(mut redir) = self.try_parse_redirection()? {
                 redir.fd = redir.fd.or(fd);
                 redirections.push(redir);
             }
@@ -1687,21 +1671,20 @@ impl<'src> Parser<'src> {
 
             if self.alias_trailing_blank_pending {
                 self.alias_trailing_blank_pending = false;
-                self.expand_alias_at_command_position(aliases)?;
+                self.expand_alias_at_command_position()?;
             }
 
-            if let Some(redir) = self.try_parse_redirection(aliases)? {
+            if let Some(redir) = self.try_parse_redirection()? {
                 redirections.push(redir);
                 continue;
             }
 
-            // Try assignment (only before any command words)
             if words.is_empty() {
                 if !assignments.is_empty() || !redirections.is_empty() {
-                    self.expand_alias_at_command_position(aliases)?;
+                    self.expand_alias_at_command_position()?;
                 }
                 let line = self.line;
-                match self.scan_word(false, false, aliases)? {
+                match self.scan_word(false, false)? {
                     ScanResult::Word(raw) if !raw.is_empty() => {
                         if let Some((name, value_raw)) = split_assignment(&raw) {
                             assignments.push(Assignment {
@@ -1724,7 +1707,7 @@ impl<'src> Parser<'src> {
             }
 
             let line = self.line;
-            match self.scan_word(false, false, aliases)? {
+            match self.scan_word(false, false)? {
                 ScanResult::Word(raw) if !raw.is_empty() => {
                     words.push(Word { raw, line });
                     continue;
@@ -1749,30 +1732,27 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse a simple command when the first token is a redirection (no leading word).
-    fn parse_simple_command_with_first_redir(
-        &mut self,
-        aliases: &HashMap<String, String>,
-    ) -> Result<SimpleCommand, ParseError> {
+    fn parse_simple_command_with_first_redir(&mut self) -> Result<SimpleCommand, ParseError> {
         let mut assignments = Vec::new();
         let mut words: Vec<Word> = Vec::new();
         let mut redirections = Vec::new();
 
-        if let Some(redir) = self.try_parse_redirection(aliases)? {
+        if let Some(redir) = self.try_parse_redirection()? {
             redirections.push(redir);
         }
 
         loop {
             self.skip_blanks_and_comments();
-            if let Some(redir) = self.try_parse_redirection(aliases)? {
+            if let Some(redir) = self.try_parse_redirection()? {
                 redirections.push(redir);
                 continue;
             }
             if words.is_empty() {
                 if !assignments.is_empty() || !redirections.is_empty() {
-                    self.expand_alias_at_command_position(aliases)?;
+                    self.expand_alias_at_command_position()?;
                 }
                 let line = self.line;
-                match self.scan_word(false, false, aliases)? {
+                match self.scan_word(false, false)? {
                     ScanResult::Word(raw) if !raw.is_empty() => {
                         if let Some((name, value_raw)) = split_assignment(&raw) {
                             assignments.push(Assignment {
@@ -1794,7 +1774,7 @@ impl<'src> Parser<'src> {
                 }
             }
             let line = self.line;
-            match self.scan_word(false, false, aliases)? {
+            match self.scan_word(false, false)? {
                 ScanResult::Word(raw) if !raw.is_empty() => {
                     words.push(Word { raw, line });
                     continue;
@@ -1819,10 +1799,7 @@ impl<'src> Parser<'src> {
     ///
     /// For heredocs (`<<`), the delimiter word is parsed but the body is
     /// deferred to `read_pending_heredocs` at the next newline.
-    fn try_parse_redirection(
-        &mut self,
-        aliases: &HashMap<String, String>,
-    ) -> Result<Option<Redirection>, ParseError> {
+    fn try_parse_redirection(&mut self) -> Result<Option<Redirection>, ParseError> {
         // IO number: scan a bounded run of digits before `<` or `>`.
         // This is O(few digits), not full word rescanning.
         let mut fd: Option<i32> = None;
@@ -1894,7 +1871,7 @@ impl<'src> Parser<'src> {
 
         self.skip_blanks();
         let line = self.line;
-        let target_raw = match self.scan_word(false, false, aliases)? {
+        let target_raw = match self.scan_word(false, false)? {
             ScanResult::Word(w) => w,
             _ => return Err(self.error("expected redirection target")),
         };
@@ -1930,13 +1907,12 @@ impl<'src> Parser<'src> {
     fn parse_command_redirections(
         &mut self,
         command: Command,
-        aliases: &HashMap<String, String>,
     ) -> Result<Command, ParseError> {
         if matches!(command, Command::Simple(_)) {
             return Ok(command);
         }
         let mut redirections = Vec::new();
-        while let Some(redir) = self.try_parse_redirection(aliases)? {
+        while let Some(redir) = self.try_parse_redirection()? {
             redirections.push(redir);
         }
         if redirections.is_empty() {
@@ -1951,61 +1927,55 @@ impl<'src> Parser<'src> {
 
     // ---- Compound commands ----
 
-    fn parse_if_command(
-        &mut self,
-        aliases: &HashMap<String, String>,
-    ) -> Result<Command, ParseError> {
+    fn parse_if_command(&mut self) -> Result<Command, ParseError> {
         let condition = self.parse_program_until(
             |kw| matches!(kw, Keyword::Then),
             false,
             false,
-            aliases,
         )?;
         if condition.items.is_empty() {
             return Err(self.error("expected command list after 'if'"));
         }
-        self.expect_keyword(Keyword::Then, aliases)?;
+        self.expect_keyword(Keyword::Then)?;
 
         fn at_elif_else_fi(kw: Keyword) -> bool {
             matches!(kw, Keyword::Elif | Keyword::Else | Keyword::Fi)
         }
         let then_branch =
-            self.parse_program_until(at_elif_else_fi, false, false, aliases)?;
+            self.parse_program_until(at_elif_else_fi, false, false)?;
         let mut elif_branches = Vec::new();
 
-        while self.check_keyword(Keyword::Elif, aliases)? {
+        while self.check_keyword(Keyword::Elif)? {
             self.skip_separators()?;
             let cond = self.parse_program_until(
                 |kw| matches!(kw, Keyword::Then),
                 false,
                 false,
-                aliases,
             )?;
             if cond.items.is_empty() {
                 return Err(self.error("expected command list after 'elif'"));
             }
-            self.expect_keyword(Keyword::Then, aliases)?;
+            self.expect_keyword(Keyword::Then)?;
             let body =
-                self.parse_program_until(at_elif_else_fi, false, false, aliases)?;
+                self.parse_program_until(at_elif_else_fi, false, false)?;
             elif_branches.push(ElifBranch {
                 condition: cond,
                 body,
             });
         }
 
-        let else_branch = if self.check_keyword(Keyword::Else, aliases)? {
+        let else_branch = if self.check_keyword(Keyword::Else)? {
             self.skip_separators()?;
             Some(self.parse_program_until(
                 |kw| matches!(kw, Keyword::Fi),
                 false,
                 false,
-                aliases,
             )?)
         } else {
             None
         };
 
-        self.expect_keyword(Keyword::Fi, aliases)?;
+        self.expect_keyword(Keyword::Fi)?;
         Ok(Command::If(IfCommand {
             condition,
             then_branch,
@@ -2017,7 +1987,6 @@ impl<'src> Parser<'src> {
     fn parse_loop_command(
         &mut self,
         kind: LoopKind,
-        aliases: &HashMap<String, String>,
     ) -> Result<Command, ParseError> {
         let keyword = match kind {
             LoopKind::While => "while",
@@ -2027,19 +1996,17 @@ impl<'src> Parser<'src> {
             |kw| matches!(kw, Keyword::Do),
             false,
             false,
-            aliases,
         )?;
         if condition.items.is_empty() {
             return Err(self.error(format!("expected command list after '{keyword}'")));
         }
-        self.expect_keyword(Keyword::Do, aliases)?;
+        self.expect_keyword(Keyword::Do)?;
         let body = self.parse_program_until(
             |kw| matches!(kw, Keyword::Done),
             false,
             false,
-            aliases,
         )?;
-        self.expect_keyword(Keyword::Done, aliases)?;
+        self.expect_keyword(Keyword::Done)?;
         Ok(Command::Loop(LoopCommand {
             kind,
             condition,
@@ -2047,12 +2014,9 @@ impl<'src> Parser<'src> {
         }))
     }
 
-    fn parse_for_command(
-        &mut self,
-        aliases: &HashMap<String, String>,
-    ) -> Result<Command, ParseError> {
+    fn parse_for_command(&mut self) -> Result<Command, ParseError> {
         self.skip_blanks_and_comments();
-        let name = match self.scan_word(false, false, aliases)? {
+        let name = match self.scan_word(false, false)? {
             ScanResult::Word(w) => w,
             _ => return Err(self.error("expected for loop variable name")),
         };
@@ -2061,7 +2025,7 @@ impl<'src> Parser<'src> {
         }
 
         self.skip_linebreaks()?;
-        let items = if self.check_keyword(Keyword::In, aliases)? {
+        let items = if self.check_keyword(Keyword::In)? {
             let mut items = Vec::new();
             loop {
                 self.skip_blanks_and_comments();
@@ -2071,7 +2035,7 @@ impl<'src> Parser<'src> {
                     break;
                 }
                 let line = self.line;
-                match self.scan_word(false, false, aliases)? {
+                match self.scan_word(false, false)? {
                     ScanResult::Word(w) => items.push(Word { raw: w, line }),
                     other => {
                         self.push_back(other);
@@ -2085,25 +2049,21 @@ impl<'src> Parser<'src> {
         };
 
         self.skip_separators()?;
-        self.expect_keyword(Keyword::Do, aliases)?;
+        self.expect_keyword(Keyword::Do)?;
         let body = self.parse_program_until(
             |kw| matches!(kw, Keyword::Done),
             false,
             false,
-            aliases,
         )?;
-        self.expect_keyword(Keyword::Done, aliases)?;
+        self.expect_keyword(Keyword::Done)?;
         Ok(Command::For(ForCommand { name, items, body }))
     }
 
-    fn parse_case_command(
-        &mut self,
-        aliases: &HashMap<String, String>,
-    ) -> Result<Command, ParseError> {
+    fn parse_case_command(&mut self) -> Result<Command, ParseError> {
         self.skip_blanks_and_comments();
         let line = self.line;
         let word_raw = self
-            .consume_any_word(aliases)?
+            .consume_any_word()?
             .ok_or_else(|| self.error("expected case word"))?;
         let word = Word {
             raw: word_raw,
@@ -2111,14 +2071,14 @@ impl<'src> Parser<'src> {
         };
 
         self.skip_linebreaks()?;
-        if !self.check_keyword(Keyword::In, aliases)? {
+        if !self.check_keyword(Keyword::In)? {
             return Err(self.error("expected 'in'"));
         }
         self.skip_linebreaks()?;
 
         let mut arms = Vec::new();
         loop {
-            if self.peek_next_keyword(aliases)? == Some(Keyword::Esac) || self.at_eof() {
+            if self.peek_next_keyword()? == Some(Keyword::Esac) || self.at_eof() {
                 break;
             }
             self.skip_blanks_and_comments();
@@ -2131,7 +2091,7 @@ impl<'src> Parser<'src> {
                 self.skip_blanks_and_comments();
                 let pat_line = self.line;
                 let pat = self
-                    .consume_any_word(aliases)?
+                    .consume_any_word()?
                     .ok_or_else(|| self.error("expected case pattern"))?;
                 patterns.push(Word {
                     raw: pat,
@@ -2159,7 +2119,6 @@ impl<'src> Parser<'src> {
                 |kw| matches!(kw, Keyword::Esac),
                 false,
                 true,
-                aliases,
             )?;
 
             let fallthrough = self.peek_byte() == Some(b';')
@@ -2181,27 +2140,24 @@ impl<'src> Parser<'src> {
                     self.advance_byte();
                     self.advance_byte();
                     self.skip_separators()?;
-                } else if self.peek_next_keyword(aliases)? != Some(Keyword::Esac) {
+                } else if self.peek_next_keyword()? != Some(Keyword::Esac) {
                     return Err(self.error("expected ';;', ';&', or 'esac'"));
                 }
-            } else if self.peek_next_keyword(aliases)? != Some(Keyword::Esac) {
+            } else if self.peek_next_keyword()? != Some(Keyword::Esac) {
                 break;
             }
         }
 
-        self.expect_keyword(Keyword::Esac, aliases)?;
+        self.expect_keyword(Keyword::Esac)?;
         Ok(Command::Case(CaseCommand {
             word,
             arms: arms.into_boxed_slice(),
         }))
     }
 
-    fn parse_function_keyword(
-        &mut self,
-        aliases: &HashMap<String, String>,
-    ) -> Result<Command, ParseError> {
+    fn parse_function_keyword(&mut self) -> Result<Command, ParseError> {
         self.skip_blanks_and_comments();
-        let name = match self.scan_word(false, false, aliases)? {
+        let name = match self.scan_word(false, false)? {
             ScanResult::Word(w) => w,
             _ => return Err(self.error("expected function name")),
         };
@@ -2217,7 +2173,7 @@ impl<'src> Parser<'src> {
             }
         }
         self.skip_linebreaks().ok();
-        let body = self.parse_command(aliases)?;
+        let body = self.parse_command()?;
         Ok(Command::FunctionDef(FunctionDef {
             name,
             body: Box::new(body),
@@ -2233,22 +2189,19 @@ impl<'src> Parser<'src> {
 
     /// Return the next complete command (everything up to the next unquoted
     /// newline), or `None` at EOF.
-    pub fn next_complete_command(
-        &mut self,
-        aliases: &HashMap<String, String>,
-    ) -> Result<Option<Program>, ParseError> {
+    fn next_complete_command(&mut self) -> Result<Option<Program>, ParseError> {
         self.skip_separators()?;
         if self.at_eof() {
             return Ok(None);
         }
         let mut items = Vec::new();
         loop {
-            self.expand_alias_at_command_position(aliases)?;
+            self.expand_alias_at_command_position()?;
             if self.at_eof() {
                 break;
             }
             let line = self.line;
-            let mut and_or = self.parse_and_or(aliases)?;
+            let mut and_or = self.parse_and_or()?;
             let asynchronous = self.consume_amp();
 
             self.skip_blanks_and_comments();
@@ -2371,21 +2324,26 @@ pub fn parse_with_aliases(
     source: &str,
     aliases: &HashMap<String, String>,
 ) -> Result<Program, ParseError> {
-    let mut parser = Parser::new(source);
-    parser.parse_program_until(|_| false, false, false, aliases)
+    let mut parser = Parser::new(source, aliases);
+    parser.parse_program_until(|_| false, false, false)
 }
 
-/// Incremental parsing session — wraps a `Parser` for callers that
-/// want to pull one list-item or one complete-command at a time
-/// (used by `Shell::execute_source`).
+/// Incremental parsing session — holds only the state that persists
+/// between `next_command` calls (source position).  A fresh `Parser`
+/// is created for each call, borrowing the alias HashMap for that
+/// call's duration only.
 pub struct ParseSession<'src> {
-    parser: Parser<'src>,
+    source: &'src str,
+    pos: usize,
+    line: usize,
 }
 
 impl<'src> ParseSession<'src> {
     pub fn new(source: &'src str) -> Result<Self, ParseError> {
         Ok(Self {
-            parser: Parser::new(source),
+            source,
+            pos: 0,
+            line: 1,
         })
     }
 
@@ -2393,11 +2351,15 @@ impl<'src> ParseSession<'src> {
         &mut self,
         aliases: &HashMap<String, String>,
     ) -> Result<Option<Program>, ParseError> {
-        self.parser.next_complete_command(aliases)
+        let mut parser = Parser::new_at(self.source, self.pos, self.line, aliases);
+        let result = parser.next_complete_command();
+        self.pos = parser.pos;
+        self.line = parser.line;
+        result
     }
 
     pub fn current_line(&self) -> usize {
-        self.parser.current_line()
+        self.line
     }
 }
 
