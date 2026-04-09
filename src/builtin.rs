@@ -1261,8 +1261,8 @@ fn alias(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellErro
     let mut status = 0;
     for item in &argv[1..] {
         if let Some((name, value)) = item.split_once('=') {
-            shell.aliases.insert(name.to_string(), value.to_string());
-        } else if let Some(value) = shell.aliases.get(item) {
+            shell.aliases.insert(name.into(), value.into());
+        } else if let Some(value) = shell.aliases.get(item.as_str()) {
             sys_println!("{}", format_alias_definition(item, value));
         } else {
             shell.diagnostic(1, format_args!("alias: {item}: not found"));
@@ -1301,7 +1301,7 @@ fn unalias(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellEr
     }
     let mut status = 0;
     for item in &argv[start..] {
-        if shell.aliases.remove(item).is_none() {
+        if shell.aliases.remove(item.as_str()).is_none() {
             status = 1;
         }
     }
@@ -1954,7 +1954,7 @@ fn describe_command(
     use_default_path: bool,
 ) -> Option<CommandDescription> {
     if let Some(value) = shell.aliases.get(name) {
-        return Some(CommandDescription::Alias(value.clone()));
+        return Some(CommandDescription::Alias(value.to_string()));
     }
     if shell.functions.contains_key(name) {
         return Some(CommandDescription::Function);
@@ -2289,7 +2289,7 @@ mod tests {
                 let mut shell = test_shell();
                 invoke(&mut shell, &["alias".into(), "ll=ls -l".into()]).expect("alias");
                 invoke(&mut shell, &["alias".into(), "la=ls -a".into()]).expect("alias");
-                assert_eq!(shell.aliases.get("ll").map(String::as_str), Some("ls -l"));
+                assert_eq!(shell.aliases.get("ll").map(|s| &**s), Some("ls -l"));
 
                 let outcome =
                     invoke(&mut shell, &["alias".into(), "ll".into()]).expect("alias query");

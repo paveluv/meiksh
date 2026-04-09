@@ -159,7 +159,7 @@ pub struct Shell {
     pub env: HashMap<String, String>,
     pub exported: BTreeSet<String>,
     pub readonly: BTreeSet<String>,
-    pub aliases: HashMap<String, String>,
+    pub aliases: HashMap<Box<str>, Box<str>>,
     pub functions: HashMap<String, crate::syntax::Command>,
     pub positional: Vec<String>,
     pub last_status: i32,
