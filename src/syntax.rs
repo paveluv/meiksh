@@ -638,12 +638,12 @@ impl<'src, 'a> Parser<'src, 'a> {
             self.pop_exhausted_layers();
             match self.peek_byte() {
                 Some(b' ' | b'\t') => self.advance_byte(),
-                Some(b'\\') if !self.in_alias() => {
-                    if self.source.as_bytes().get(self.pos + 1) == Some(&b'\n') {
+                Some(b'\\') if self.peek_byte_at_offset(1) == Some(b'\n') => {
+                    if let Some(layer) = self.alias_stack.last_mut() {
+                        layer.pos += 2;
+                    } else {
                         self.pos += 2;
                         self.line += 1;
-                    } else {
-                        break;
                     }
                 }
                 _ => break,
@@ -835,11 +835,13 @@ impl<'src, 'a> Parser<'src, 'a> {
 
     fn skip_paren_body(&mut self) -> Result<(), ParseError> {
         let mut depth = 1usize;
+        let mut at_boundary = true;
         loop {
             match self.peek_byte() {
                 None => return Err(self.error("unterminated command substitution")),
                 Some(b'(') => {
                     depth += 1;
+                    at_boundary = true;
                     self.advance_byte();
                 }
                 Some(b')') => {
@@ -848,11 +850,25 @@ impl<'src, 'a> Parser<'src, 'a> {
                     if depth == 0 {
                         return Ok(());
                     }
+                    at_boundary = true;
+                }
+                Some(b'#') if at_boundary => {
+                    while !matches!(self.peek_byte(), None | Some(b'\n')) {
+                        self.advance_byte();
+                    }
                 }
                 Some(b'\'' | b'"' | b'\\' | b'$' | b'`') => {
+                    at_boundary = false;
                     self.skip_quoted_element()?;
                 }
-                Some(_) => self.advance_byte(),
+                Some(b' ' | b'\t' | b'\n' | b';' | b'&' | b'|' | b'<' | b'>') => {
+                    at_boundary = true;
+                    self.advance_byte();
+                }
+                Some(_) => {
+                    at_boundary = false;
+                    self.advance_byte();
+                }
             }
         }
     }
@@ -1020,13 +1036,18 @@ impl<'src, 'a> Parser<'src, 'a> {
                 // Backslash-newline (line continuation) — kills the keyword
                 // cursor since the word now spans a physical line break.
                 Some(&b'\\')
-                    if !cur_in_alias
-                        && self.source.as_bytes().get(self.pos + 1) == Some(&b'\n') =>
+                    if cur_bytes.get(cur_pos + 1) == Some(&b'\n') =>
                 {
-                    continuations.push(self.pos - start);
+                    continuations.push(cur_pos - start);
                     kw = KW_NONE;
-                    self.pos += 2;
-                    self.line += 1;
+                    if cur_in_alias {
+                        if let Some(layer) = self.alias_stack.last_mut() {
+                            layer.pos += 2;
+                        }
+                    } else {
+                        self.pos += 2;
+                        self.line += 1;
+                    }
                 }
                 // Quoting — kills the keyword cursor since quoted words
                 // can't match keywords or aliases.
@@ -1812,23 +1833,41 @@ impl<'src, 'a> Parser<'src, 'a> {
     /// deferred to `read_pending_heredocs` at the next newline.
     fn try_parse_redirection(&mut self) -> Result<Option<Redirection>, ParseError> {
         // IO number: scan a bounded run of digits before `<` or `>`.
-        // This is O(few digits), not full word rescanning.
+        // Works through the virtual stream so it handles alias layers too.
         let mut fd: Option<i32> = None;
-        let digit_start = self.pos;
-        if !self.in_alias() {
-            while self.pos < self.source.len()
-                && self.source.as_bytes()[self.pos].is_ascii_digit()
-            {
-                self.pos += 1;
-            }
-            if self.pos > digit_start && matches!(self.peek_byte(), Some(b'<' | b'>')) {
-                let num_text = &self.source[digit_start..self.pos];
-                fd = num_text.parse::<i32>().ok();
-                if fd.is_none() {
-                    self.pos = digit_start;
-                }
+        let saved_source_pos = self.pos;
+        let saved_stack_len = self.alias_stack.len();
+        let saved_alias_pos = self.alias_stack.last().map(|l| l.pos);
+
+        let mut digits = String::new();
+        while let Some(b) = self.peek_byte() {
+            if b.is_ascii_digit() {
+                digits.push(b as char);
+                self.advance_byte();
             } else {
-                self.pos = digit_start;
+                break;
+            }
+        }
+
+        let need_backtrack = if !digits.is_empty() {
+            if matches!(self.peek_byte(), Some(b'<' | b'>')) {
+                fd = digits.parse::<i32>().ok();
+                fd.is_none()
+            } else {
+                true
+            }
+        } else {
+            false
+        };
+
+        if need_backtrack {
+            self.pos = saved_source_pos;
+            if self.alias_stack.len() == saved_stack_len {
+                if let Some(ap) = saved_alias_pos {
+                    if let Some(layer) = self.alias_stack.last_mut() {
+                        layer.pos = ap;
+                    }
+                }
             }
         }
 
@@ -1875,7 +1914,14 @@ impl<'src, 'a> Parser<'src, 'a> {
                 }
             }
             _ => {
-                self.pos = digit_start;
+                self.pos = saved_source_pos;
+                if self.alias_stack.len() == saved_stack_len {
+                    if let Some(ap) = saved_alias_pos {
+                        if let Some(layer) = self.alias_stack.last_mut() {
+                            layer.pos = ap;
+                        }
+                    }
+                }
                 return Ok(None);
             }
         };
@@ -2469,9 +2515,15 @@ fn parse_here_doc_delimiter(raw: &str) -> (String, bool) {
                             break;
                         }
                         b'\\' if index + 1 < bytes.len() => {
-                            index += 1;
-                            delimiter.push(bytes[index] as char);
-                            index += 1;
+                            let next = bytes[index + 1];
+                            if matches!(next, b'$' | b'`' | b'"' | b'\\' | b'\n') {
+                                index += 1;
+                                delimiter.push(bytes[index] as char);
+                                index += 1;
+                            } else {
+                                delimiter.push(b'\\' as char);
+                                index += 1;
+                            }
                         }
                         ch => {
                             delimiter.push(ch as char);
@@ -3589,5 +3641,86 @@ mod tests {
         ));
 
         assert!(session.next_command(&aliases).expect("eof").is_none());
+    }
+
+    // ---- Bug regression tests ----
+
+    #[test]
+    fn heredoc_delimiter_backslash_preserves_non_special_in_dquotes() {
+        // POSIX 2.6.7: inside double quotes, backslash only escapes
+        // $, `, ", \, and newline.  For other characters the backslash
+        // is preserved literally.
+        assert_eq!(
+            parse_here_doc_delimiter("\"E\\OF\""),
+            ("E\\OF".into(), false)
+        );
+        assert_eq!(
+            parse_here_doc_delimiter("\"a\\nb\""),
+            ("a\\nb".into(), false)
+        );
+        // Backslash before a POSIX-special char IS stripped:
+        assert_eq!(
+            parse_here_doc_delimiter("\"a\\$b\""),
+            ("a$b".into(), false)
+        );
+        assert_eq!(
+            parse_here_doc_delimiter("\"a\\\\b\""),
+            ("a\\b".into(), false)
+        );
+        assert_eq!(
+            parse_here_doc_delimiter("\"a\\\"b\""),
+            ("a\"b".into(), false)
+        );
+        assert_eq!(
+            parse_here_doc_delimiter("\"a\\`b\""),
+            ("a`b".into(), false)
+        );
+    }
+
+    #[test]
+    fn io_number_recognised_inside_alias() {
+        let mut aliases: HashMap<Box<str>, Box<str>> = HashMap::new();
+        aliases.insert("redir".into(), "echo hello 2>/dev/null".into());
+        let program =
+            parse_with_aliases_test("redir", &aliases).expect("alias with IO number");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if {
+                let has_echo = cmd.words.iter().any(|w| &*w.raw == "echo");
+                let has_redir_fd2 = cmd.redirections.iter().any(|r|
+                    r.fd == Some(2) && r.kind == RedirectionKind::Write
+                );
+                // "2" must NOT appear as a word — it should be the IO number
+                let no_word_2 = !cmd.words.iter().any(|w| &*w.raw == "2");
+                has_echo && has_redir_fd2 && no_word_2
+            }
+        ));
+    }
+
+    #[test]
+    fn comment_with_close_paren_inside_command_substitution() {
+        // A ')' inside a #-comment must not close the $(...) substitution.
+        let program = parse_test("echo $(echo hello # )\necho world\n)")
+            .expect("comment with ) in $(...)");
+        // The entire $(...) is one word, so the outer "echo" has 2 words.
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.words.len() == 2
+        ));
+    }
+
+    #[test]
+    fn backslash_newline_continuation_in_alias() {
+        // Alias value contains a literal backslash-newline, which per
+        // POSIX 2.3.1 should be treated as line continuation (removed),
+        // joining "hell" and "o" into "hello".
+        let mut aliases: HashMap<Box<str>, Box<str>> = HashMap::new();
+        aliases.insert("foo".into(), "echo hell\\\no".into());
+        let program =
+            parse_with_aliases_test("foo", &aliases).expect("alias with continuation");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.words.iter().map(|w| &*w.raw).collect::<Vec<_>>() == ["echo", "hello"]
+        ));
     }
 }
