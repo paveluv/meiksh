@@ -1166,8 +1166,9 @@ impl<'src, 'a> Parser<'src, 'a> {
     fn consume_any_word(&mut self) -> Result<Option<Box<str>>, ParseError> {
         match self.scan_word(false, false)? {
             ScanResult::Word(w) => Ok(Some(w)),
-            ScanResult::Keyword(kw) => Ok(Some(keyword_name(kw).into())),
-            ScanResult::Alias { raw, .. } => Ok(Some(raw)),
+            ScanResult::Keyword(_) | ScanResult::Alias { .. } => {
+                unreachable!("scan_word(false, false) cannot produce Keyword or Alias")
+            }
             ScanResult::None => Ok(None),
         }
     }
