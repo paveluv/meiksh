@@ -974,7 +974,7 @@ impl<'src, 'a> Parser<'src, 'a> {
         let alias_depth_at_start = self.alias_stack.len();
 
         let mut kw: u8 = if keyword_ok { KW_ROOT } else { KW_NONE };
-        let mut has_continuation = false;
+        let mut continuations: Vec<usize> = Vec::new();
         // `word_started` tracks whether we've consumed any actual word
         // characters.  A `#` only starts a comment if `word_started` is
         // false (i.e. at the beginning of a potential word).
@@ -1019,7 +1019,7 @@ impl<'src, 'a> Parser<'src, 'a> {
                     if !cur_in_alias
                         && self.source.as_bytes().get(self.pos + 1) == Some(&b'\n') =>
                 {
-                    has_continuation = true;
+                    continuations.push(self.pos - start);
                     kw = KW_NONE;
                     self.pos += 2;
                     self.line += 1;
@@ -1102,11 +1102,17 @@ impl<'src, 'a> Parser<'src, 'a> {
 
         let raw_slice = raw_slice;
 
-        // If the word contained `\\\n`, strip the continuations.
-        let raw: Box<str> = if has_continuation {
-            raw_slice.replace("\\\n", "").into()
-        } else {
+        let raw: Box<str> = if continuations.is_empty() {
             raw_slice.into()
+        } else {
+            let mut buf = String::with_capacity(raw_slice.len() - continuations.len() * 2);
+            let mut prev = 0;
+            for &off in &continuations {
+                buf.push_str(&raw_slice[prev..off]);
+                prev = off + 2;
+            }
+            buf.push_str(&raw_slice[prev..]);
+            buf.into()
         };
 
         // Classify: alias before keyword (POSIX 2.3.1).
@@ -3321,6 +3327,61 @@ mod tests {
     fn backslash_newline_before_operator_resets() {
         let program = parse_test("echo a\\\nb; echo c").expect("continuation before semi");
         assert_eq!(program.items.len(), 2);
+    }
+
+    #[test]
+    fn backslash_newline_inside_double_quotes_preserved() {
+        let program = parse_test("echo \"ab\\\ncd\"").expect("dquote continuation");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if &*cmd.words[1].raw == "\"ab\\\ncd\""
+        ));
+    }
+
+    #[test]
+    fn backslash_newline_inside_single_quotes_preserved() {
+        let program = parse_test("echo 'ab\\\ncd'").expect("squote continuation");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if &*cmd.words[1].raw == "'ab\\\ncd'"
+        ));
+    }
+
+    #[test]
+    fn backslash_newline_inside_backticks_preserved() {
+        let program = parse_test("echo `ab\\\ncd`").expect("backtick continuation");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if &*cmd.words[1].raw == "`ab\\\ncd`"
+        ));
+    }
+
+    #[test]
+    fn backslash_newline_inside_dollar_single_quote_preserved() {
+        let program = parse_test("echo $'ab\\\ncd'").expect("dollar-squote continuation");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if &*cmd.words[1].raw == "$'ab\\\ncd'"
+        ));
+    }
+
+    #[test]
+    fn backslash_newline_inside_command_substitution_preserved() {
+        let program = parse_test("echo $(ab\\\ncd)").expect("cmdsub continuation");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if &*cmd.words[1].raw == "$(ab\\\ncd)"
+        ));
+    }
+
+    #[test]
+    fn backslash_newline_mixed_unquoted_and_dquoted() {
+        let program =
+            parse_test("echo hel\\\nlo\"wor\\\nld\"").expect("mixed continuation");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if &*cmd.words[1].raw == "hello\"wor\\\nld\""
+        ));
     }
 
     #[test]
