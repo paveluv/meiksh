@@ -499,7 +499,7 @@ pub struct Parser<'src, 'a> {
     source: &'src str,
     pos: usize,
     line: usize,
-    aliases: &'a HashMap<String, String>,
+    aliases: &'a HashMap<Box<str>, Box<str>>,
     alias_stack: Vec<AliasLayer<'a>>,
     alias_depth: usize,
     expanding_aliases: Vec<String>,
@@ -510,7 +510,7 @@ pub struct Parser<'src, 'a> {
 }
 
 impl<'src, 'a> Parser<'src, 'a> {
-    fn new(source: &'src str, aliases: &'a HashMap<String, String>) -> Self {
+    fn new(source: &'src str, aliases: &'a HashMap<Box<str>, Box<str>>) -> Self {
         Self::new_at(source, 0, 1, aliases)
     }
 
@@ -518,7 +518,7 @@ impl<'src, 'a> Parser<'src, 'a> {
         source: &'src str,
         pos: usize,
         line: usize,
-        aliases: &'a HashMap<String, String>,
+        aliases: &'a HashMap<Box<str>, Box<str>>,
     ) -> Self {
         Self {
             source,
@@ -2323,7 +2323,7 @@ pub fn parse(source: &str) -> Result<Program, ParseError> {
 /// Parse with alias expansion using the shell's alias HashMap directly.
 pub fn parse_with_aliases(
     source: &str,
-    aliases: &HashMap<String, String>,
+    aliases: &HashMap<Box<str>, Box<str>>,
 ) -> Result<Program, ParseError> {
     let mut parser = Parser::new(source, aliases);
     parser.parse_program_until(|_| false, false, false)
@@ -2350,7 +2350,7 @@ impl<'src> ParseSession<'src> {
 
     pub fn next_command(
         &mut self,
-        aliases: &HashMap<String, String>,
+        aliases: &HashMap<Box<str>, Box<str>>,
     ) -> Result<Option<Program>, ParseError> {
         let mut parser = Parser::new_at(self.source, self.pos, self.line, aliases);
         let result = parser.next_complete_command();
@@ -2459,7 +2459,7 @@ mod tests {
 
     fn parse_with_aliases_test(
         source: &str,
-        aliases: &HashMap<String, String>,
+        aliases: &HashMap<Box<str>, Box<str>>,
     ) -> Result<Program, ParseError> {
         parse_with_aliases(source, aliases)
     }
@@ -2799,8 +2799,8 @@ mod tests {
 
         let second = session
             .next_command(&HashMap::from([(
-                String::from("setok"),
-                String::from("printf ok"),
+                Box::from("setok"),
+                Box::from("printf ok"),
             )]))
             .expect("second cmd")
             .expect("some cmd");
@@ -2817,7 +2817,7 @@ mod tests {
     #[test]
     fn alias_expansion_in_simple_commands() {
         let mut aliases = HashMap::new();
-        aliases.insert("say".to_string(), "printf hi".to_string());
+        aliases.insert("say".into(), "printf hi".into());
         let program = parse_with_aliases_test("say", &aliases).expect("parse alias");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
@@ -2826,7 +2826,7 @@ mod tests {
         ));
 
         let mut aliases = HashMap::new();
-        aliases.insert("cond".to_string(), "if".to_string());
+        aliases.insert("cond".into(), "if".into());
         let program = parse_with_aliases_test("cond true; then echo ok; fi", &aliases)
             .expect("parse reserved alias");
         assert!(matches!(
@@ -2858,8 +2858,8 @@ mod tests {
     #[test]
     fn trailing_blank_aliases_expand_next_simple_command_word() {
         let mut aliases = HashMap::new();
-        aliases.insert("say".to_string(), "printf %s ".to_string());
-        aliases.insert("word".to_string(), "ok".to_string());
+        aliases.insert("say".into(), "printf %s ".into());
+        aliases.insert("word".into(), "ok".into());
         let program = parse_with_aliases_test("say word", &aliases).expect("parse chained alias");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
@@ -2871,7 +2871,7 @@ mod tests {
     #[test]
     fn self_referential_aliases_do_not_loop_indefinitely() {
         let mut aliases = HashMap::new();
-        aliases.insert("loop".to_string(), "loop ".to_string());
+        aliases.insert("loop".into(), "loop ".into());
         let program = parse_with_aliases_test("loop ok", &aliases).expect("self alias");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
@@ -2885,7 +2885,7 @@ mod tests {
     #[test]
     fn alias_expansion_after_assignment_and_redirection() {
         let mut aliases = HashMap::new();
-        aliases.insert("foo".to_string(), "echo aliased".to_string());
+        aliases.insert("foo".into(), "echo aliased".into());
         let program =
             parse_with_aliases_test("VAR=value foo", &aliases).expect("alias after assignment");
         assert!(matches!(
@@ -2908,7 +2908,7 @@ mod tests {
     #[test]
     fn lparen_after_simple_command_is_syntax_error() {
         let mut aliases = HashMap::new();
-        aliases.insert("foo".to_string(), "echo aliased".to_string());
+        aliases.insert("foo".into(), "echo aliased".into());
         let err = parse_with_aliases_test("foo () { true; }", &aliases).unwrap_err();
         assert!(
             err.message.contains("("),
@@ -3212,7 +3212,7 @@ mod tests {
     #[test]
     fn alias_expansion_produces_non_word_tokens() {
         let mut aliases = HashMap::new();
-        aliases.insert("both".to_string(), "echo a; echo b".to_string());
+        aliases.insert("both".into(), "echo a; echo b".into());
         let program =
             parse_with_aliases_test("both", &aliases).expect("parse alias with semicolon");
         assert_eq!(program.items.len(), 2);
@@ -3222,8 +3222,8 @@ mod tests {
     fn alias_expansion_interns_reserved_word_tokens() {
         let mut aliases = HashMap::new();
         aliases.insert(
-            "myif".to_string(),
-            "if true; then echo ok; elif false; then echo no; else echo fb; fi".to_string(),
+            "myif".into(),
+            "if true; then echo ok; elif false; then echo no; else echo fb; fi".into(),
         );
         let program =
             parse_with_aliases_test("myif", &aliases).expect("alias if/then/elif/else/fi");
@@ -3234,8 +3234,8 @@ mod tests {
 
         let mut aliases = HashMap::new();
         aliases.insert(
-            "mywhile".to_string(),
-            "while false; do echo loop; done".to_string(),
+            "mywhile".into(),
+            "while false; do echo loop; done".into(),
         );
         let program = parse_with_aliases_test("mywhile", &aliases).expect("alias while/do/done");
         assert!(matches!(
@@ -3245,8 +3245,8 @@ mod tests {
 
         let mut aliases = HashMap::new();
         aliases.insert(
-            "myuntil".to_string(),
-            "until true; do echo u; done".to_string(),
+            "myuntil".into(),
+            "until true; do echo u; done".into(),
         );
         let program = parse_with_aliases_test("myuntil", &aliases).expect("alias until");
         assert!(matches!(
@@ -3256,8 +3256,8 @@ mod tests {
 
         let mut aliases = HashMap::new();
         aliases.insert(
-            "myfor".to_string(),
-            "for x in a b; do echo $x; done".to_string(),
+            "myfor".into(),
+            "for x in a b; do echo $x; done".into(),
         );
         let program = parse_with_aliases_test("myfor", &aliases).expect("alias for/in");
         assert!(matches!(
@@ -3267,8 +3267,8 @@ mod tests {
 
         let mut aliases = HashMap::new();
         aliases.insert(
-            "mycase".to_string(),
-            "case x in a) echo a;; esac".to_string(),
+            "mycase".into(),
+            "case x in a) echo a;; esac".into(),
         );
         let program = parse_with_aliases_test("mycase", &aliases).expect("alias case/esac");
         assert!(matches!(
@@ -3278,8 +3278,8 @@ mod tests {
 
         let mut aliases = HashMap::new();
         aliases.insert(
-            "myfn".to_string(),
-            "function myfunc { echo hi; }".to_string(),
+            "myfn".into(),
+            "function myfunc { echo hi; }".into(),
         );
         let program = parse_with_aliases_test("myfn", &aliases).expect("alias function/{/}");
         assert!(matches!(
@@ -3288,7 +3288,7 @@ mod tests {
         ));
 
         let mut aliases = HashMap::new();
-        aliases.insert("myneg".to_string(), "! true".to_string());
+        aliases.insert("myneg".into(), "! true".into());
         let program = parse_with_aliases_test("myneg", &aliases).expect("alias bang");
         assert!(program.items[0].and_or.first.negated);
     }
@@ -3358,12 +3358,12 @@ mod tests {
 
     #[test]
     fn aliases_basic() {
-        let mut aliases = HashMap::new();
-        aliases.insert("ls".to_string(), "ls --color".to_string());
-        aliases.insert("ll".to_string(), "ls -la".to_string());
+        let mut aliases: HashMap<Box<str>, Box<str>> = HashMap::new();
+        aliases.insert("ls".into(), "ls --color".into());
+        aliases.insert("ll".into(), "ls -la".into());
 
-        assert_eq!(aliases.get("ls").map(|s| s.as_str()), Some("ls --color"));
-        assert_eq!(aliases.get("ll").map(|s| s.as_str()), Some("ls -la"));
+        assert_eq!(aliases.get("ls").map(|s| &**s), Some("ls --color"));
+        assert_eq!(aliases.get("ll").map(|s| &**s), Some("ls -la"));
         assert_eq!(aliases.get("xyz"), None);
     }
 }
