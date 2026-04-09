@@ -395,7 +395,7 @@ fn kw_terminal(state: u8) -> Option<Keyword> {
 /// been read yet.  Bodies are read at the next newline (POSIX requires
 /// heredoc bodies to follow the complete command on the next line).
 struct PendingHereDoc {
-    delimiter: String,
+    delimiter: Box<str>,
     strip_tabs: bool,
     expand: bool,
 }
@@ -447,35 +447,92 @@ fn keyword_name(kw: Keyword) -> &'static str {
     }
 }
 
-/// Characters that terminate a word AND prevent one from starting.
-/// Includes `#` because an unquoted `#` at the beginning of a token
-/// starts a comment.
+// ---- Byte classification table ----
+//
+// A single `[u8; 256]` lookup table where each bit encodes an
+// independent character class.  One load from this table serves every
+// per-byte classification the parser needs — `is_delim`, `is_word_break`,
+// blank testing, quoting detection, and POSIX name validation — all from
+// a single cache-line-friendly array.
+
+const BC_WORD_BREAK: u8 = 0x01; // terminates a word mid-scan
+const BC_DELIM: u8      = 0x02; // terminates AND prevents starting a word (word_break + #)
+const BC_BLANK: u8      = 0x04; // horizontal whitespace: space, tab
+const BC_QUOTE: u8      = 0x08; // quoting chars: ' " \ $ `
+const BC_NAME_START: u8 = 0x10; // valid first char of a POSIX name: [A-Za-z_]
+const BC_NAME_CONT: u8  = 0x20; // valid name continuation: [A-Za-z0-9_]
+
+const BYTE_CLASS: [u8; 256] = {
+    let mut t = [0u8; 256];
+
+    // word-break + delim + blank
+    t[b' '  as usize] = BC_WORD_BREAK | BC_DELIM | BC_BLANK;
+    t[b'\t' as usize] = BC_WORD_BREAK | BC_DELIM | BC_BLANK;
+
+    // word-break + delim (not blank)
+    t[b'\n' as usize] = BC_WORD_BREAK | BC_DELIM;
+    t[b';'  as usize] = BC_WORD_BREAK | BC_DELIM;
+    t[b'&'  as usize] = BC_WORD_BREAK | BC_DELIM;
+    t[b'|'  as usize] = BC_WORD_BREAK | BC_DELIM;
+    t[b'('  as usize] = BC_WORD_BREAK | BC_DELIM;
+    t[b')'  as usize] = BC_WORD_BREAK | BC_DELIM;
+    t[b'<'  as usize] = BC_WORD_BREAK | BC_DELIM;
+    t[b'>'  as usize] = BC_WORD_BREAK | BC_DELIM;
+
+    // delim only (not word-break): # starts a comment at token boundaries
+    t[b'#'  as usize] = BC_DELIM;
+
+    // quoting characters
+    t[b'\'' as usize] |= BC_QUOTE;
+    t[b'"'  as usize] |= BC_QUOTE;
+    t[b'\\' as usize] |= BC_QUOTE;
+    t[b'$'  as usize] |= BC_QUOTE;
+    t[b'`'  as usize] |= BC_QUOTE;
+
+    // POSIX name chars: [A-Za-z_] get NAME_START | NAME_CONT, [0-9] get NAME_CONT
+    t[b'_' as usize] |= BC_NAME_START | BC_NAME_CONT;
+    let mut c: u8 = b'A';
+    while c <= b'Z' {
+        t[c as usize] |= BC_NAME_START | BC_NAME_CONT;
+        c += 1;
+    }
+    c = b'a';
+    while c <= b'z' {
+        t[c as usize] |= BC_NAME_START | BC_NAME_CONT;
+        c += 1;
+    }
+    c = b'0';
+    while c <= b'9' {
+        t[c as usize] |= BC_NAME_CONT;
+        c += 1;
+    }
+
+    t
+};
+
+#[inline(always)]
 fn is_delim(b: u8) -> bool {
-    matches!(
-        b,
-        b' ' | b'\t' | b'\n' | b';' | b'&' | b'|' | b'(' | b')' | b'<' | b'>' | b'#'
-    )
+    BYTE_CLASS[b as usize] & BC_DELIM != 0
 }
 
-/// Characters that terminate a word mid-scan.  Same as `is_delim` but
-/// without `#`: a `#` inside a word (e.g. after `\\\n` continuation) is
-/// a literal character, not a comment.  `#` only starts a comment at
-/// token boundaries, which `scan_word` handles via the `word_started` flag.
+#[inline(always)]
 fn is_word_break(b: u8) -> bool {
-    matches!(
-        b,
-        b' ' | b'\t' | b'\n' | b';' | b'&' | b'|' | b'(' | b')' | b'<' | b'>'
-    )
+    BYTE_CLASS[b as usize] & BC_WORD_BREAK != 0
+}
+
+#[inline(always)]
+fn is_quote(b: u8) -> bool {
+    BYTE_CLASS[b as usize] & BC_QUOTE != 0
 }
 
 fn alias_has_trailing_blank(s: &str) -> bool {
-    matches!(s.as_bytes().last(), Some(b' ' | b'\t'))
+    s.as_bytes()
+        .last()
+        .map_or(false, |&b| BYTE_CLASS[b as usize] & BC_BLANK != 0)
 }
 
-/// An alias word must not contain quoting characters — those would have
-/// been consumed by the quote-scanning arms before lookup could match.
 fn is_alias_word(word: &str) -> bool {
-    !word.is_empty() && !word.chars().any(|ch| matches!(ch, '\'' | '"' | '\\'))
+    !word.is_empty() && !word.bytes().any(|b| is_quote(b))
 }
 
 // ============================================================
@@ -563,7 +620,18 @@ impl<'src, 'a> Parser<'src, 'a> {
     /// Remove fully-consumed alias layers.  When popping a layer that had
     /// a trailing blank, record it so `parse_simple_command` can trigger
     /// alias expansion on the next word.
+    #[inline(always)]
     fn pop_exhausted_layers(&mut self) {
+        if let Some(layer) = self.alias_stack.last() {
+            if layer.pos < layer.text.len() {
+                return;
+            }
+            self.pop_exhausted_layers_slow();
+        }
+    }
+
+    #[cold]
+    fn pop_exhausted_layers_slow(&mut self) {
         while let Some(layer) = self.alias_stack.last() {
             if layer.pos < layer.text.len() {
                 break;
@@ -635,7 +703,6 @@ impl<'src, 'a> Parser<'src, 'a> {
 
     fn skip_blanks(&mut self) {
         loop {
-            self.pop_exhausted_layers();
             match self.peek_byte() {
                 Some(b' ' | b'\t') => self.advance_byte(),
                 Some(b'\\') if self.peek_byte_at_offset(1) == Some(b'\n') => {
@@ -796,7 +863,7 @@ impl<'src, 'a> Parser<'src, 'a> {
                                 self.advance_byte();
                             }
                         }
-                        Some(b'\'' | b'"' | b'\\' | b'$' | b'`') => {
+                        Some(b) if is_quote(b) => {
                             self.skip_quoted_element()?;
                         }
                         Some(_) => self.advance_byte(),
@@ -865,11 +932,11 @@ impl<'src, 'a> Parser<'src, 'a> {
                     self.advance_byte();
                     self.advance_byte();
                 }
-                Some(b'\'' | b'"' | b'\\' | b'$' | b'`') => {
+                Some(b) if is_quote(b) => {
                     at_boundary = false;
                     self.skip_quoted_element()?;
                 }
-                Some(b' ' | b'\t' | b'\n' | b';' | b'&' | b'|' | b'<' | b'>') => {
+                Some(b) if is_word_break(b) => {
                     at_boundary = true;
                     self.advance_byte();
                 }
@@ -889,7 +956,7 @@ impl<'src, 'a> Parser<'src, 'a> {
                     self.advance_byte();
                     return Ok(());
                 }
-                Some(b'\'' | b'"' | b'\\' | b'$' | b'`') => {
+                Some(b) if is_quote(b) => {
                     self.skip_quoted_element()?;
                 }
                 Some(_) => self.advance_byte(),
@@ -1002,7 +1069,9 @@ impl<'src, 'a> Parser<'src, 'a> {
         let alias_depth_at_start = self.alias_stack.len();
 
         let mut kw: u8 = if keyword_ok { KW_ROOT } else { KW_NONE };
-        let mut continuations: Vec<usize> = Vec::new();
+        let mut cont_buf = [0usize; 8];
+        let mut cont_len: usize = 0;
+        let mut cont_overflow: Vec<usize> = Vec::new();
         // `word_started` tracks whether we've consumed any actual word
         // characters.  A `#` only starts a comment if `word_started` is
         // false (i.e. at the beginning of a potential word).
@@ -1046,7 +1115,15 @@ impl<'src, 'a> Parser<'src, 'a> {
                 Some(&b'\\')
                     if cur_bytes.get(cur_pos + 1) == Some(&b'\n') =>
                 {
-                    continuations.push(cur_pos - start);
+                    if cont_len < cont_buf.len() {
+                        cont_buf[cont_len] = cur_pos - start;
+                    } else {
+                        if cont_len == cont_buf.len() {
+                            cont_overflow.extend_from_slice(&cont_buf);
+                        }
+                        cont_overflow.push(cur_pos - start);
+                    }
+                    cont_len += 1;
                     kw = KW_NONE;
                     if cur_in_alias {
                         if let Some(layer) = self.alias_stack.last_mut() {
@@ -1133,14 +1210,17 @@ impl<'src, 'a> Parser<'src, 'a> {
             return Ok(ScanResult::None);
         }
 
-        let raw_slice = raw_slice;
-
-        let raw: Box<str> = if continuations.is_empty() {
+        let raw: Box<str> = if cont_len == 0 {
             raw_slice.into()
         } else {
-            let mut buf = String::with_capacity(raw_slice.len() - continuations.len() * 2);
+            let conts: &[usize] = if cont_overflow.is_empty() {
+                &cont_buf[..cont_len]
+            } else {
+                &cont_overflow
+            };
+            let mut buf = String::with_capacity(raw_slice.len() - conts.len() * 2);
             let mut prev = 0;
-            for &off in &continuations {
+            for &off in conts {
                 buf.push_str(&raw_slice[prev..off]);
                 prev = off + 2;
             }
@@ -1257,12 +1337,11 @@ impl<'src, 'a> Parser<'src, 'a> {
     // attach each body to its `Redirection` node.
 
     fn read_pending_heredocs(&mut self) -> Result<(), ParseError> {
-        while !self.pending_heredocs.is_empty() {
-            let spec = self.pending_heredocs.remove(0);
+        for spec in std::mem::take(&mut self.pending_heredocs) {
             let body_line = self.line;
             let body: Box<str> = self.read_here_doc_body(&spec.delimiter, spec.strip_tabs, spec.expand)?.into();
             self.read_heredocs.push_back(HereDoc {
-                delimiter: spec.delimiter.into(),
+                delimiter: spec.delimiter,
                 body,
                 expand: spec.expand,
                 strip_tabs: spec.strip_tabs,
@@ -1707,6 +1786,52 @@ impl<'src, 'a> Parser<'src, 'a> {
             });
         }
 
+        self.simple_command_scan_loop(&mut assignments, &mut words, &mut redirections)?;
+
+        if words.is_empty() && assignments.is_empty() && redirections.is_empty() {
+            return Err(self.error("expected command"));
+        }
+
+        if !words.is_empty() && self.peek_byte() == Some(b'(') {
+            return Err(self.error("syntax error near unexpected token `('"));
+        }
+
+        Ok(SimpleCommand {
+            assignments: assignments.into_boxed_slice(),
+            words: words.into_boxed_slice(),
+            redirections: redirections.into_boxed_slice(),
+        })
+    }
+
+    /// Parse a simple command when the first token is a redirection (no leading word).
+    fn parse_simple_command_with_first_redir(&mut self) -> Result<SimpleCommand, ParseError> {
+        let mut assignments = Vec::new();
+        let mut words: Vec<Word> = Vec::new();
+        let mut redirections = Vec::new();
+
+        if let Some(redir) = self.try_parse_redirection()? {
+            redirections.push(redir);
+        }
+
+        self.simple_command_scan_loop(&mut assignments, &mut words, &mut redirections)?;
+
+        if words.is_empty() && assignments.is_empty() && redirections.is_empty() {
+            return Err(self.error("expected command"));
+        }
+
+        Ok(SimpleCommand {
+            assignments: assignments.into_boxed_slice(),
+            words: words.into_boxed_slice(),
+            redirections: redirections.into_boxed_slice(),
+        })
+    }
+
+    fn simple_command_scan_loop(
+        &mut self,
+        assignments: &mut Vec<Assignment>,
+        words: &mut Vec<Word>,
+        redirections: &mut Vec<Redirection>,
+    ) -> Result<(), ParseError> {
         loop {
             self.skip_blanks_and_comments();
 
@@ -1756,83 +1881,7 @@ impl<'src, 'a> Parser<'src, 'a> {
                 _ => break,
             }
         }
-
-        if words.is_empty() && assignments.is_empty() && redirections.is_empty() {
-            return Err(self.error("expected command"));
-        }
-
-        if !words.is_empty() && self.peek_byte() == Some(b'(') {
-            return Err(self.error("syntax error near unexpected token `('"));
-        }
-
-        Ok(SimpleCommand {
-            assignments: assignments.into_boxed_slice(),
-            words: words.into_boxed_slice(),
-            redirections: redirections.into_boxed_slice(),
-        })
-    }
-
-    /// Parse a simple command when the first token is a redirection (no leading word).
-    fn parse_simple_command_with_first_redir(&mut self) -> Result<SimpleCommand, ParseError> {
-        let mut assignments = Vec::new();
-        let mut words: Vec<Word> = Vec::new();
-        let mut redirections = Vec::new();
-
-        if let Some(redir) = self.try_parse_redirection()? {
-            redirections.push(redir);
-        }
-
-        loop {
-            self.skip_blanks_and_comments();
-            if let Some(redir) = self.try_parse_redirection()? {
-                redirections.push(redir);
-                continue;
-            }
-            if words.is_empty() {
-                if !assignments.is_empty() || !redirections.is_empty() {
-                    self.expand_alias_at_command_position()?;
-                }
-                let line = self.line;
-                match self.scan_word(false, false)? {
-                    ScanResult::Word(raw) if !raw.is_empty() => {
-                        if let Some((name, value_raw)) = split_assignment(&raw) {
-                            assignments.push(Assignment {
-                                name: name.into(),
-                                value: Word {
-                                    raw: value_raw.into(),
-                                    line,
-                                },
-                            });
-                            continue;
-                        }
-                        words.push(Word { raw, line });
-                        continue;
-                    }
-                    ScanResult::None => {}
-                    other => {
-                        self.push_back(other);
-                    }
-                }
-            }
-            let line = self.line;
-            match self.scan_word(false, false)? {
-                ScanResult::Word(raw) if !raw.is_empty() => {
-                    words.push(Word { raw, line });
-                    continue;
-                }
-                _ => break,
-            }
-        }
-
-        if words.is_empty() && assignments.is_empty() && redirections.is_empty() {
-            return Err(self.error("expected command"));
-        }
-
-        Ok(SimpleCommand {
-            assignments: assignments.into_boxed_slice(),
-            words: words.into_boxed_slice(),
-            redirections: redirections.into_boxed_slice(),
-        })
+        Ok(())
     }
 
     /// Try to parse a redirection at the current position.  Returns `None`
@@ -2272,12 +2321,11 @@ impl<'src, 'a> Parser<'src, 'a> {
 
             self.skip_blanks_and_comments();
             let at_newline = self.peek_byte() == Some(b'\n');
-            if self.peek_byte() == Some(b';') {
-                self.advance_byte();
-            }
             if at_newline {
                 self.advance_byte();
                 self.read_pending_heredocs()?;
+            } else if self.peek_byte() == Some(b';') {
+                self.advance_byte();
             }
 
             if !self.read_heredocs.is_empty() {
@@ -2494,7 +2542,7 @@ fn split_assignment(input: &str) -> Option<(&str, &str)> {
 /// body should undergo parameter/command expansion.
 /// Any quoting character (`'`, `"`, `\`) in the delimiter suppresses
 /// expansion of the body (POSIX 2.7.4).
-fn parse_here_doc_delimiter(raw: &str) -> (String, bool) {
+fn parse_here_doc_delimiter(raw: &str) -> (Box<str>, bool) {
     let mut delimiter = String::new();
     let mut index = 0usize;
     let mut expand = true;
@@ -2577,20 +2625,18 @@ fn parse_here_doc_delimiter(raw: &str) -> (String, bool) {
         }
     }
 
-    (delimiter, expand)
+    (delimiter.into_boxed_str(), expand)
 }
 
 /// Check whether `name` is a valid POSIX shell identifier:
 /// starts with `[A-Za-z_]`, followed by `[A-Za-z0-9_]*`.
 pub fn is_name(name: &str) -> bool {
-    let mut chars = name.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    if !(first == '_' || first.is_ascii_alphabetic()) {
-        return false;
-    }
-    !chars.any(|ch| !(ch == '_' || ch.is_ascii_alphanumeric()))
+    let bytes = name.as_bytes();
+    !bytes.is_empty()
+        && BYTE_CLASS[bytes[0] as usize] & BC_NAME_START != 0
+        && bytes[1..].iter().fold(0xFFu8, |acc, &b| acc & BYTE_CLASS[b as usize])
+            & BC_NAME_CONT
+            != 0
 }
 
 // ============================================================
