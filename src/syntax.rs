@@ -784,13 +784,17 @@ impl<'src, 'a> Parser<'src, 'a> {
                             self.advance_byte();
                         }
                         Some(b')') => {
-                            if depth == 1 && self.peek_byte_at_offset(1) == Some(b')') {
+                            if depth == 1 {
+                                if self.peek_byte_at_offset(1) == Some(b')') {
+                                    self.advance_byte();
+                                    self.advance_byte();
+                                    return Ok(());
+                                }
                                 self.advance_byte();
+                            } else {
+                                depth -= 1;
                                 self.advance_byte();
-                                return Ok(());
                             }
-                            depth = depth.saturating_sub(1);
-                            self.advance_byte();
                         }
                         Some(b'\'' | b'"' | b'\\' | b'$' | b'`') => {
                             self.skip_quoted_element()?;
@@ -856,6 +860,10 @@ impl<'src, 'a> Parser<'src, 'a> {
                     while !matches!(self.peek_byte(), None | Some(b'\n')) {
                         self.advance_byte();
                     }
+                }
+                Some(b'\\') if self.peek_byte_at_offset(1) == Some(b'\n') => {
+                    self.advance_byte();
+                    self.advance_byte();
                 }
                 Some(b'\'' | b'"' | b'\\' | b'$' | b'`') => {
                     at_boundary = false;
@@ -1252,7 +1260,7 @@ impl<'src, 'a> Parser<'src, 'a> {
         while !self.pending_heredocs.is_empty() {
             let spec = self.pending_heredocs.remove(0);
             let body_line = self.line;
-            let body: Box<str> = self.read_here_doc_body(&spec.delimiter, spec.strip_tabs)?.into();
+            let body: Box<str> = self.read_here_doc_body(&spec.delimiter, spec.strip_tabs, spec.expand)?.into();
             self.read_heredocs.push_back(HereDoc {
                 delimiter: spec.delimiter.into(),
                 body,
@@ -1267,14 +1275,15 @@ impl<'src, 'a> Parser<'src, 'a> {
     /// Read the body of a heredoc from the main source.
     ///
     /// Lines are consumed until one matches `delimiter` (after optional tab
-    /// stripping).  Backslash-newline (`\\\n`) within a line is treated as
-    /// a continuation: the physical lines are joined and the combined result
-    /// is compared against the delimiter.  The raw body slice (including
-    /// continuations and tabs) is returned for deferred normalization.
+    /// stripping).  For unquoted delimiters (`expand == true`), POSIX 2.7.4
+    /// requires `\<newline>` continuation to be applied during the search
+    /// for the trailing delimiter.  For quoted delimiters (`expand == false`),
+    /// no continuation is applied.
     fn read_here_doc_body(
         &mut self,
         delimiter: &str,
         strip_tabs: bool,
+        expand: bool,
     ) -> Result<&str, ParseError> {
         let body_start = self.pos;
         let mut continued_line = String::new();
@@ -1291,7 +1300,7 @@ impl<'src, 'a> Parser<'src, 'a> {
                 self.line += 1;
             }
 
-            if line_text.ends_with('\\') && has_newline {
+            if expand && line_text.ends_with('\\') && has_newline {
                 if continuation_start.is_none() {
                     continuation_start = Some(line_start);
                 }
@@ -3721,6 +3730,60 @@ mod tests {
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words.iter().map(|w| &*w.raw).collect::<Vec<_>>() == ["echo", "hello"]
+        ));
+    }
+
+    #[test]
+    fn heredoc_quoted_delimiter_no_continuation() {
+        // POSIX 2.7.4: \<newline> continuation during delimiter search
+        // is only specified for UNQUOTED delimiters.  For quoted delimiters,
+        // the body lines are not expanded and continuation must not apply.
+        //
+        // Input:
+        //   cat <<'EOF'
+        //   EO\            <- line ending with backslash
+        //   F              <- next line
+        //   real body
+        //   EOF            <- actual delimiter
+        //
+        // The body must include "EO\\\nF\nreal body\n" — not terminate early.
+        let program = parse_test("cat <<'EOF'\nEO\\\nF\nreal body\nEOF\n")
+            .expect("quoted heredoc with backslash line");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            _ => panic!("expected simple command"),
+        };
+        let doc = cmd.redirections[0].here_doc.as_ref().expect("heredoc body");
+        assert_eq!(&*doc.body, "EO\\\nF\nreal body\n");
+        assert!(!doc.expand);
+    }
+
+    #[test]
+    fn backslash_newline_before_comment_in_command_substitution() {
+        // POSIX 2.2.1: \<newline> is removed before tokenization.
+        // POSIX 2.2.3: tokenizing rules apply recursively inside $().
+        // So after \<newline> removal, # at a token boundary starts a
+        // comment, and ) inside the comment must not close $().
+        let program =
+            parse_test("echo $(echo foo \\\n# comment with )\necho bar)\n")
+                .expect("continuation before comment in $(...)");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.words.len() == 2
+        ));
+    }
+
+    #[test]
+    fn arithmetic_unmatched_close_paren() {
+        // POSIX 2.6.4 / 2.3 rule 5: the parser must find )) to close
+        // $(()), even if the expression contains unmatched ).
+        // An unmatched ) at the top level is an arithmetic-level error,
+        // not a syntax-level one.
+        let program = parse_test("echo $(( 1 ) + 2 ))")
+            .expect("arithmetic with unmatched )");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.words.len() == 2
         ));
     }
 }
