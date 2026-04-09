@@ -40,6 +40,7 @@
 //! conflicts with `&mut Shell`, and lifetime annotations on every
 //! consumer of the AST.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 
@@ -405,7 +406,7 @@ struct PendingHereDoc {
 /// falls back to the layer beneath (or the main source).
 /// Borrows its text from the alias HashMap so no cloning is needed.
 struct AliasLayer<'a> {
-    text: &'a str,
+    text: Cow<'a, str>,
     pos: usize,
     /// POSIX: if an alias value ends with a blank, the next word at
     /// command position is also subject to alias expansion.
@@ -790,6 +791,9 @@ impl<'src, 'a> Parser<'src, 'a> {
                             }
                             depth = depth.saturating_sub(1);
                             self.advance_byte();
+                        }
+                        Some(b'\'' | b'"' | b'\\' | b'$' | b'`') => {
+                            self.skip_quoted_element()?;
                         }
                         Some(_) => self.advance_byte(),
                     }
@@ -1341,7 +1345,7 @@ impl<'src, 'a> Parser<'src, 'a> {
                     let trailing_blank = alias_has_trailing_blank(value);
                     self.expanding_aliases.push(raw.into());
                     self.alias_stack.push(AliasLayer {
-                        text: value,
+                        text: Cow::Borrowed(value),
                         pos: 0,
                         trailing_blank,
                     });
@@ -2335,14 +2339,28 @@ pub fn parse_with_aliases(
     parser.parse_program_until(|_| false, false, false)
 }
 
-/// Incremental parsing session — holds only the state that persists
-/// between `next_command` calls (source position).  A fresh `Parser`
+/// Alias expansion state saved between `next_command` calls.  Layers
+/// use `'static` because the `Cow` inside is always `Owned` — the
+/// `Parser` (and its borrowed alias references) is dropped between
+/// calls.  Cloning only happens for the rare case of multi-line
+/// aliases whose newline terminated a complete command.
+struct SavedAliasState {
+    layers: Vec<AliasLayer<'static>>,
+    depth: usize,
+    expanding: Vec<String>,
+    trailing_blank_pending: bool,
+}
+
+/// Incremental parsing session — holds the state that persists
+/// between `next_command` calls (source position plus any residual
+/// alias-expansion layers from multi-line aliases).  A fresh `Parser`
 /// is created for each call, borrowing the alias HashMap for that
 /// call's duration only.
 pub struct ParseSession<'src> {
     source: &'src str,
     pos: usize,
     line: usize,
+    saved_alias: Option<SavedAliasState>,
 }
 
 impl<'src> ParseSession<'src> {
@@ -2351,6 +2369,7 @@ impl<'src> ParseSession<'src> {
             source,
             pos: 0,
             line: 1,
+            saved_alias: None,
         })
     }
 
@@ -2359,9 +2378,41 @@ impl<'src> ParseSession<'src> {
         aliases: &HashMap<Box<str>, Box<str>>,
     ) -> Result<Option<Program>, ParseError> {
         let mut parser = Parser::new_at(self.source, self.pos, self.line, aliases);
+
+        if let Some(saved) = self.saved_alias.take() {
+            for layer in saved.layers {
+                parser.alias_stack.push(layer);
+            }
+            parser.alias_depth = saved.depth;
+            parser.expanding_aliases = saved.expanding;
+            parser.alias_trailing_blank_pending = saved.trailing_blank_pending;
+        }
+
         let result = parser.next_complete_command();
+
         self.pos = parser.pos;
         self.line = parser.line;
+
+        if parser.alias_stack.is_empty() {
+            self.saved_alias = None;
+        } else {
+            let layers = parser
+                .alias_stack
+                .into_iter()
+                .map(|layer| AliasLayer {
+                    text: Cow::Owned(layer.text.into_owned()),
+                    pos: layer.pos,
+                    trailing_blank: layer.trailing_blank,
+                })
+                .collect();
+            self.saved_alias = Some(SavedAliasState {
+                layers,
+                depth: parser.alias_depth,
+                expanding: parser.expanding_aliases,
+                trailing_blank_pending: parser.alias_trailing_blank_pending,
+            });
+        }
+
         result
     }
 
@@ -2412,12 +2463,42 @@ fn parse_here_doc_delimiter(raw: &str) -> (String, bool) {
                 expand = false;
                 index += 1;
                 while index < bytes.len() {
-                    if bytes[index] == b'"' {
-                        index += 1;
-                        break;
+                    match bytes[index] {
+                        b'"' => {
+                            index += 1;
+                            break;
+                        }
+                        b'\\' if index + 1 < bytes.len() => {
+                            index += 1;
+                            delimiter.push(bytes[index] as char);
+                            index += 1;
+                        }
+                        ch => {
+                            delimiter.push(ch as char);
+                            index += 1;
+                        }
                     }
-                    delimiter.push(bytes[index] as char);
-                    index += 1;
+                }
+            }
+            b'$' if index + 1 < bytes.len() && bytes[index + 1] == b'\'' => {
+                expand = false;
+                index += 2;
+                while index < bytes.len() {
+                    match bytes[index] {
+                        b'\'' => {
+                            index += 1;
+                            break;
+                        }
+                        b'\\' if index + 1 < bytes.len() => {
+                            index += 1;
+                            delimiter.push(bytes[index] as char);
+                            index += 1;
+                        }
+                        ch => {
+                            delimiter.push(ch as char);
+                            index += 1;
+                        }
+                    }
                 }
             }
             b'\\' => {
@@ -3391,6 +3472,52 @@ mod tests {
     }
 
     #[test]
+    fn heredoc_delimiter_backslash_inside_double_quotes() {
+        assert_eq!(
+            parse_here_doc_delimiter("\"ab\\\"cd\""),
+            ("ab\"cd".into(), false)
+        );
+        assert_eq!(
+            parse_here_doc_delimiter("\"a\\\\b\""),
+            ("a\\b".into(), false)
+        );
+        assert_eq!(
+            parse_here_doc_delimiter("\"a\\$b\""),
+            ("a$b".into(), false)
+        );
+    }
+
+    #[test]
+    fn heredoc_delimiter_dollar_single_quote() {
+        assert_eq!(
+            parse_here_doc_delimiter("$'EOF'"),
+            ("EOF".into(), false)
+        );
+        assert_eq!(
+            parse_here_doc_delimiter("$'ab\\'cd'"),
+            ("ab'cd".into(), false)
+        );
+    }
+
+    #[test]
+    fn arithmetic_expansion_with_quoting() {
+        let program =
+            parse_test("echo $(( 1 + 2 ))").expect("basic arithmetic");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.words.len() == 2
+        ));
+
+        let program =
+            parse_test("echo $(( \")\" ))").expect("arithmetic with quoted paren");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.words.len() == 2
+        ));
+    }
+
+
+    #[test]
     fn skip_scan_covers_dollar_single_quote_and_default_in_subshell() {
         let program = parse_test("echo $(echo $'hi' done)").expect("dollar-sq in paren");
         assert!(matches!(
@@ -3426,5 +3553,41 @@ mod tests {
         assert_eq!(aliases.get("ls").map(|s| &**s), Some("ls --color"));
         assert_eq!(aliases.get("ll").map(|s| &**s), Some("ls -la"));
         assert_eq!(aliases.get("xyz"), None);
+    }
+
+    #[test]
+    fn multi_line_alias_produces_separate_commands() {
+        let mut aliases: HashMap<Box<str>, Box<str>> = HashMap::new();
+        aliases.insert("both".into(), "echo a\necho b".into());
+        let mut session = ParseSession::new("both\necho c").unwrap();
+
+        // The alias "both" expands to "echo a\necho b".  The newline in the
+        // alias terminates the first complete command, just as if it had been
+        // read from the input (POSIX 2.3.1).
+        let first = session.next_command(&aliases).expect("first").expect("some");
+        assert_eq!(first.items.len(), 1);
+        assert!(matches!(
+            &first.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.words.iter().map(|w| &*w.raw).collect::<Vec<_>>() == ["echo", "a"]
+        ));
+
+        // The remaining alias text ("echo b") is preserved across calls and
+        // parsed as the second complete command.
+        let second = session.next_command(&aliases).expect("second").expect("some");
+        assert_eq!(second.items.len(), 1);
+        assert!(matches!(
+            &second.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.words.iter().map(|w| &*w.raw).collect::<Vec<_>>() == ["echo", "b"]
+        ));
+
+        // "echo c" follows on the next source line.
+        let third = session.next_command(&aliases).expect("third").expect("some");
+        assert_eq!(third.items.len(), 1);
+        assert!(matches!(
+            &third.items[0].and_or.first.commands[0],
+            Command::Simple(cmd) if cmd.words.iter().map(|w| &*w.raw).collect::<Vec<_>>() == ["echo", "c"]
+        ));
+
+        assert!(session.next_command(&aliases).expect("eof").is_none());
     }
 }
