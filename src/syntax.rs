@@ -536,6 +536,22 @@ fn is_alias_word(word: &str) -> bool {
 }
 
 // ============================================================
+// Separator tokens
+// ============================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Sep {
+    Pipe,     // |
+    OrIf,     // ||
+    Async,    // &
+    AndIf,    // &&
+    Semi,     // ;
+    DSemi,    // ;;
+    SemiAmp,  // ;&
+    Newline,  // \n
+}
+
+// ============================================================
 // Parser
 // ============================================================
 //
@@ -566,6 +582,7 @@ pub struct Parser<'src, 'a> {
     pending_heredocs: Vec<PendingHereDoc>,
     read_heredocs: VecDeque<HereDoc>,
     pushed_back: Option<ScanResult<'a>>,
+    pushed_back_sep: Option<Sep>,
 }
 
 impl<'src, 'a> Parser<'src, 'a> {
@@ -593,6 +610,7 @@ impl<'src, 'a> Parser<'src, 'a> {
             pending_heredocs: Vec::new(),
             read_heredocs: VecDeque::new(),
             pushed_back: None,
+            pushed_back_sep: None,
         }
     }
 
@@ -624,14 +642,10 @@ impl<'src, 'a> Parser<'src, 'a> {
     // below (or to `self.source`).
     //
     // `cached_byte` always holds the next available byte (or None at EOF).
-    // `peek_byte` is a single field read; `advance_bytes::<N>` updates
+    // `peek_byte` is a single field read; `advance_byte` updates
     // the position and refreshes the cache.  Exhausted layers are popped
     // lazily by `sync_cache()`, called at transition points (skip_blanks,
     // alias push, heredoc read, state restore).
-
-    fn in_alias(&self) -> bool {
-        !self.alias_stack.is_empty()
-    }
 
     /// Remove fully-consumed alias layers.  When popping a layer that had
     /// a trailing blank, record it so `parse_simple_command` can trigger
@@ -667,59 +681,30 @@ impl<'src, 'a> Parser<'src, 'a> {
         self.cached_byte
     }
 
-    /// Look ahead `offset` bytes from the current position in the current
-    /// layer.  Does **not** span across layer boundaries.
-    fn peek_byte_at_offset(&self, offset: usize) -> Option<u8> {
-        if let Some(layer) = self.alias_stack.last() {
-            if layer.pos < layer.text.len() {
-                return layer.text.as_bytes().get(layer.pos + offset).copied();
-            }
-        }
-        self.source.as_bytes().get(self.pos + offset).copied()
-    }
-
-    /// Peek through the alias stack (skipping exhausted top) to find
-    /// the next available byte, without popping any layers.
-    fn peek_through_layers(&self) -> Option<u8> {
-        for layer in self.alias_stack.iter().rev().skip(1) {
-            if let Some(&b) = layer.text.as_bytes().get(layer.pos) {
-                return Some(b);
-            }
-        }
-        self.source.as_bytes().get(self.pos).copied()
-    }
-
-    /// Advance past `N` bytes, counting newlines and updating the cache.
-    /// `N` is a compile-time constant so the newline loop unrolls fully.
+    /// Consume one byte, tracking newlines and updating the cache.
     #[inline(always)]
-    fn advance_bytes<const N: usize>(&mut self) {
+    fn advance_byte(&mut self) {
         if let Some(layer) = self.alias_stack.last_mut() {
             if layer.pos < layer.text.len() {
-                layer.pos += N;
-                if let Some(&b) = layer.text.as_bytes().get(layer.pos) {
-                    self.cached_byte = Some(b);
-                    return;
+                if layer.text.as_bytes()[layer.pos] == b'\n' {
+                    self.line += 1;
                 }
-                self.cached_byte = self.peek_through_layers();
+                layer.pos += 1;
+                self.cached_byte = layer.text.as_bytes().get(layer.pos).copied();
+                if self.cached_byte.is_none() {
+                    self.sync_cache();
+                }
                 return;
             }
         }
         let bytes = self.source.as_bytes();
-        let mut i = 0;
-        while i < N && self.pos + i < bytes.len() {
-            if bytes[self.pos + i] == b'\n' {
+        if self.pos < bytes.len() {
+            if bytes[self.pos] == b'\n' {
                 self.line += 1;
             }
-            i += 1;
+            self.pos += 1;
         }
-        self.pos += N;
         self.cached_byte = bytes.get(self.pos).copied();
-    }
-
-    /// Consume one byte, tracking newlines for line counting.
-    #[inline(always)]
-    fn advance_byte(&mut self) {
-        self.advance_bytes::<1>();
     }
 
     /// True only when every layer and the main source are exhausted **and**
@@ -731,6 +716,56 @@ impl<'src, 'a> Parser<'src, 'a> {
     fn push_back(&mut self, result: ScanResult<'a>) {
         debug_assert!(self.pushed_back.is_none(), "double pushback");
         self.pushed_back = Some(result);
+    }
+
+    fn scan_separator(&mut self) -> Option<Sep> {
+        if let Some(sep) = self.pushed_back_sep.take() {
+            return Some(sep);
+        }
+        match self.peek_byte() {
+            Some(b'|') => {
+                self.advance_byte();
+                if self.peek_byte() == Some(b'|') {
+                    self.advance_byte();
+                    Some(Sep::OrIf)
+                } else {
+                    Some(Sep::Pipe)
+                }
+            }
+            Some(b'&') => {
+                self.advance_byte();
+                if self.peek_byte() == Some(b'&') {
+                    self.advance_byte();
+                    Some(Sep::AndIf)
+                } else {
+                    Some(Sep::Async)
+                }
+            }
+            Some(b';') => {
+                self.advance_byte();
+                match self.peek_byte() {
+                    Some(b';') => {
+                        self.advance_byte();
+                        Some(Sep::DSemi)
+                    }
+                    Some(b'&') => {
+                        self.advance_byte();
+                        Some(Sep::SemiAmp)
+                    }
+                    _ => Some(Sep::Semi),
+                }
+            }
+            Some(b'\n') => {
+                self.advance_byte();
+                Some(Sep::Newline)
+            }
+            _ => None,
+        }
+    }
+
+    fn push_back_sep(&mut self, sep: Sep) {
+        debug_assert!(self.pushed_back_sep.is_none(), "double sep pushback");
+        self.pushed_back_sep = Some(sep);
     }
 
     // ---- Whitespace / separator handling ----
@@ -746,9 +781,6 @@ impl<'src, 'a> Parser<'src, 'a> {
         loop {
             match self.peek_byte() {
                 Some(b' ' | b'\t') => self.advance_byte(),
-                Some(b'\\') if self.peek_byte_at_offset(1) == Some(b'\n') => {
-                    self.advance_bytes::<2>();
-                }
                 _ => break,
             }
         }
@@ -771,15 +803,39 @@ impl<'src, 'a> Parser<'src, 'a> {
     fn skip_separators(&mut self) -> Result<(), ParseError> {
         loop {
             self.skip_blanks_and_comments();
+            match self.pushed_back_sep {
+                Some(Sep::Newline) => {
+                    self.pushed_back_sep.take();
+                    self.read_pending_heredocs()?;
+                    continue;
+                }
+                Some(Sep::Semi) => {
+                    self.pushed_back_sep.take();
+                    continue;
+                }
+                Some(_) => break,
+                None => {}
+            }
             match self.peek_byte() {
                 Some(b'\n') => {
                     self.advance_byte();
                     self.read_pending_heredocs()?;
                 }
-                Some(b';') if self.peek_byte_at_offset(1) != Some(b';')
-                    && self.peek_byte_at_offset(1) != Some(b'&') =>
-                {
+                Some(b';') => {
                     self.advance_byte();
+                    match self.peek_byte() {
+                        Some(b';') => {
+                            self.advance_byte();
+                            self.push_back_sep(Sep::DSemi);
+                            break;
+                        }
+                        Some(b'&') => {
+                            self.advance_byte();
+                            self.push_back_sep(Sep::SemiAmp);
+                            break;
+                        }
+                        _ => {}
+                    }
                 }
                 _ => break,
             }
@@ -802,11 +858,20 @@ impl<'src, 'a> Parser<'src, 'a> {
 
     fn consume_amp(&mut self) -> bool {
         self.skip_blanks();
-        if self.peek_byte() == Some(b'&') && self.peek_byte_at_offset(1) != Some(b'&') {
-            self.advance_byte();
-            true
-        } else {
-            false
+        if let Some(Sep::Async) = self.pushed_back_sep {
+            self.pushed_back_sep.take();
+            return true;
+        }
+        if self.peek_byte() != Some(b'&') {
+            return false;
+        }
+        match self.scan_separator() {
+            Some(Sep::Async) => true,
+            Some(sep) => {
+                self.push_back_sep(sep);
+                false
+            }
+            None => false,
         }
     }
 
@@ -819,123 +884,151 @@ impl<'src, 'a> Parser<'src, 'a> {
     // that `scan_word` can slice the full raw word at the end.
 
     /// Advance past `'...'`.  The opening `'` must be the current byte.
-    fn skip_single_quote(&mut self) -> Result<(), ParseError> {
+    fn skip_single_quote(&mut self, raw: &mut String) -> Result<(), ParseError> {
+        raw.push('\'');
         self.advance_byte();
         loop {
             match self.peek_byte() {
-                None => {
-                    return Err(ParseError {
-                        message: "unterminated single quote".into(),
-                        line: Some(self.line),
-                    })
-                }
+                None => return Err(self.error("unterminated single quote")),
                 Some(b'\'') => {
+                    raw.push('\'');
                     self.advance_byte();
                     return Ok(());
                 }
-                Some(_) => self.advance_byte(),
+                Some(b) => {
+                    raw.push(b as char);
+                    self.advance_byte();
+                }
             }
         }
     }
 
-    fn skip_double_quote(&mut self) -> Result<(), ParseError> {
+    fn skip_double_quote(&mut self, raw: &mut String) -> Result<(), ParseError> {
+        raw.push('"');
         self.advance_byte();
         loop {
             match self.peek_byte() {
-                None => {
-                    return Err(ParseError {
-                        message: "unterminated double quote".into(),
-                        line: Some(self.line),
-                    })
-                }
+                None => return Err(self.error("unterminated double quote")),
                 Some(b'"') => {
+                    raw.push('"');
                     self.advance_byte();
                     return Ok(());
                 }
                 Some(b'\\') => {
+                    raw.push('\\');
                     self.advance_byte();
-                    if self.peek_byte().is_some() {
+                    if let Some(b) = self.peek_byte() {
+                        raw.push(b as char);
                         self.advance_byte();
                     }
                 }
-                Some(b'$') if matches!(self.peek_byte_at_offset(1), Some(b'(' | b'{')) => {
-                    self.skip_dollar_construct()?;
+                Some(b'$') => {
+                    raw.push('$');
+                    self.advance_byte();
+                    self.skip_dollar_construct(raw)?;
                 }
                 Some(b'`') => {
+                    raw.push('`');
                     self.advance_byte();
-                    self.skip_backtick_inner()?;
+                    self.skip_backtick_inner(raw)?;
                 }
-                Some(_) => self.advance_byte(),
+                Some(b) => {
+                    raw.push(b as char);
+                    self.advance_byte();
+                }
             }
         }
     }
 
-    fn skip_dollar_construct(&mut self) -> Result<(), ParseError> {
-        let next = self.peek_byte_at_offset(1);
-        if next == Some(b'(') {
-            if self.peek_byte_at_offset(2) == Some(b'(') {
-                self.advance_bytes::<3>();
-                let mut depth = 1usize;
-                loop {
-                    match self.peek_byte() {
-                        None => {
-                            return Err(self.error("unterminated arithmetic expansion"))
-                        }
-                        Some(b'(') => {
-                            depth += 1;
+    /// `$` already consumed and pushed to raw by caller.
+    fn skip_dollar_construct(&mut self, raw: &mut String) -> Result<(), ParseError> {
+        match self.peek_byte() {
+            Some(b'(') => {
+                raw.push('(');
+                self.advance_byte();
+                if self.peek_byte() == Some(b'(') {
+                    raw.push('(');
+                    self.advance_byte();
+                    self.skip_arith_body(raw)
+                } else {
+                    self.skip_paren_body(raw)
+                }
+            }
+            Some(b'{') => {
+                raw.push('{');
+                self.advance_byte();
+                self.skip_brace_body(raw)
+            }
+            Some(b'\'') => self.skip_dollar_single_quote(raw),
+            _ => Ok(()),
+        }
+    }
+
+    fn skip_arith_body(&mut self, raw: &mut String) -> Result<(), ParseError> {
+        let mut depth = 1usize;
+        loop {
+            match self.peek_byte() {
+                None => return Err(self.error("unterminated arithmetic expansion")),
+                Some(b'(') => {
+                    depth += 1;
+                    raw.push('(');
+                    self.advance_byte();
+                }
+                Some(b')') => {
+                    if depth == 1 {
+                        raw.push(')');
+                        self.advance_byte();
+                        if self.peek_byte() == Some(b')') {
+                            raw.push(')');
                             self.advance_byte();
+                            return Ok(());
                         }
-                        Some(b')') => {
-                            if depth == 1 {
-                                if self.peek_byte_at_offset(1) == Some(b')') {
-                                    self.advance_bytes::<2>();
-                                    return Ok(());
-                                }
-                                self.advance_byte();
-                            } else {
-                                depth -= 1;
-                                self.advance_byte();
-                            }
-                        }
-                        Some(b) if is_quote(b) => {
-                            self.skip_quoted_element()?;
-                        }
-                        Some(_) => self.advance_byte(),
+                    } else {
+                        depth -= 1;
+                        raw.push(')');
+                        self.advance_byte();
                     }
                 }
+                Some(b) if is_quote(b) => {
+                    self.skip_quoted_element(raw)?;
+                }
+                Some(b) => {
+                    raw.push(b as char);
+                    self.advance_byte();
+                }
             }
-            self.advance_bytes::<2>();
-            return self.skip_paren_body();
         }
-        if next == Some(b'{') {
-            self.advance_bytes::<2>();
-            return self.skip_brace_body();
-        }
-        self.advance_byte();
-        Ok(())
     }
 
-    fn skip_dollar_single_quote(&mut self) -> Result<(), ParseError> {
-        self.advance_bytes::<2>();
+    /// `$` already consumed and pushed to raw by caller.
+    fn skip_dollar_single_quote(&mut self, raw: &mut String) -> Result<(), ParseError> {
+        raw.push('\'');
+        self.advance_byte();
         loop {
             match self.peek_byte() {
                 None => return Err(self.error("unterminated dollar-single-quotes")),
                 Some(b'\'') => {
+                    raw.push('\'');
                     self.advance_byte();
                     return Ok(());
                 }
                 Some(b'\\') => {
+                    raw.push('\\');
                     self.advance_byte();
-                    if self.peek_byte().is_some() {
+                    if let Some(b) = self.peek_byte() {
+                        raw.push(b as char);
                         self.advance_byte();
                     }
                 }
-                Some(_) => self.advance_byte(),
+                Some(b) => {
+                    raw.push(b as char);
+                    self.advance_byte();
+                }
             }
         }
     }
 
-    fn skip_paren_body(&mut self) -> Result<(), ParseError> {
+    fn skip_paren_body(&mut self, raw: &mut String) -> Result<(), ParseError> {
         let mut depth = 1usize;
         let mut at_boundary = true;
         loop {
@@ -944,10 +1037,12 @@ impl<'src, 'a> Parser<'src, 'a> {
                 Some(b'(') => {
                     depth += 1;
                     at_boundary = true;
+                    raw.push('(');
                     self.advance_byte();
                 }
                 Some(b')') => {
                     depth -= 1;
+                    raw.push(')');
                     self.advance_byte();
                     if depth == 0 {
                         return Ok(());
@@ -956,85 +1051,117 @@ impl<'src, 'a> Parser<'src, 'a> {
                 }
                 Some(b'#') if at_boundary => {
                     while !matches!(self.peek_byte(), None | Some(b'\n')) {
+                        if let Some(b) = self.peek_byte() {
+                            raw.push(b as char);
+                        }
                         self.advance_byte();
                     }
                 }
-                Some(b'\\') if self.peek_byte_at_offset(1) == Some(b'\n') => {
-                    self.advance_bytes::<2>();
+                Some(b'\\') => {
+                    raw.push('\\');
+                    self.advance_byte();
+                    if self.peek_byte() == Some(b'\n') {
+                        raw.push('\n');
+                        self.advance_byte();
+                    } else {
+                        at_boundary = false;
+                        if let Some(b) = self.peek_byte() {
+                            raw.push(b as char);
+                            self.advance_byte();
+                        }
+                    }
                 }
                 Some(b) if is_quote(b) => {
                     at_boundary = false;
-                    self.skip_quoted_element()?;
+                    self.skip_quoted_element(raw)?;
                 }
                 Some(b) if is_word_break(b) => {
                     at_boundary = true;
+                    raw.push(b as char);
                     self.advance_byte();
                 }
-                Some(_) => {
+                Some(b) => {
                     at_boundary = false;
+                    raw.push(b as char);
                     self.advance_byte();
                 }
             }
         }
     }
 
-    fn skip_brace_body(&mut self) -> Result<(), ParseError> {
+    fn skip_brace_body(&mut self, raw: &mut String) -> Result<(), ParseError> {
         loop {
             match self.peek_byte() {
                 None => return Err(self.error("unterminated parameter expansion")),
                 Some(b'}') => {
+                    raw.push('}');
                     self.advance_byte();
                     return Ok(());
                 }
                 Some(b) if is_quote(b) => {
-                    self.skip_quoted_element()?;
+                    self.skip_quoted_element(raw)?;
                 }
-                Some(_) => self.advance_byte(),
+                Some(b) => {
+                    raw.push(b as char);
+                    self.advance_byte();
+                }
             }
         }
     }
 
-    fn skip_backtick_inner(&mut self) -> Result<(), ParseError> {
+    /// Opening `` ` `` already consumed and pushed to raw by caller.
+    fn skip_backtick_inner(&mut self, raw: &mut String) -> Result<(), ParseError> {
         loop {
             match self.peek_byte() {
                 None => return Err(self.error("unterminated backquote")),
                 Some(b'`') => {
+                    raw.push('`');
                     self.advance_byte();
                     return Ok(());
                 }
                 Some(b'\\') => {
+                    raw.push('\\');
                     self.advance_byte();
-                    if self.peek_byte().is_some() {
+                    if let Some(b) = self.peek_byte() {
+                        raw.push(b as char);
                         self.advance_byte();
                     }
                 }
-                Some(_) => self.advance_byte(),
+                Some(b) => {
+                    raw.push(b as char);
+                    self.advance_byte();
+                }
             }
         }
     }
 
-    fn skip_quoted_element(&mut self) -> Result<(), ParseError> {
+    fn skip_quoted_element(&mut self, raw: &mut String) -> Result<(), ParseError> {
         match self.peek_byte() {
-            Some(b'\'') => self.skip_single_quote(),
-            Some(b'"') => self.skip_double_quote(),
+            Some(b'\'') => self.skip_single_quote(raw),
+            Some(b'"') => self.skip_double_quote(raw),
             Some(b'\\') => {
+                raw.push('\\');
                 self.advance_byte();
-                if self.peek_byte().is_some() {
+                if let Some(b) = self.peek_byte() {
+                    raw.push(b as char);
                     self.advance_byte();
                 }
                 Ok(())
             }
-            Some(b'$') if self.peek_byte_at_offset(1) == Some(b'\'') => {
-                self.skip_dollar_single_quote()
-            }
-            Some(b'$') if matches!(self.peek_byte_at_offset(1), Some(b'(' | b'{')) => {
-                self.skip_dollar_construct()
+            Some(b'$') => {
+                raw.push('$');
+                self.advance_byte();
+                self.skip_dollar_construct(raw)
             }
             Some(b'`') => {
+                raw.push('`');
                 self.advance_byte();
-                self.skip_backtick_inner()
+                self.skip_backtick_inner(raw)
             }
             _ => {
+                if let Some(b) = self.peek_byte() {
+                    raw.push(b as char);
+                }
                 self.advance_byte();
                 Ok(())
             }
@@ -1047,32 +1174,14 @@ impl<'src, 'a> Parser<'src, 'a> {
     /// or alias match.  The keyword trie is stepped per-character during the
     /// scan; alias lookup is a single HashMap `get` after the word is collected.
     ///
-    /// # Arguments
-    ///
-    /// * `keyword_ok` — whether the caller's grammar position allows reserved
-    ///   words.  If false, even a keyword-matching word is returned as `Word`.
-    /// * `alias_ok` — whether alias expansion is allowed here.  If false,
-    ///   alias matches are ignored.
-    ///
-    /// # Pushback
-    ///
-    /// If `self.pushed_back` already holds a result from a prior scan, that
-    /// result is returned immediately — **downgraded** if the current caller's
-    /// `keyword_ok`/`alias_ok` flags are more restrictive than the original
-    /// scanner's.  This ensures a word is never read from the source twice.
-    ///
-    /// # Cross-layer boundary
-    ///
-    /// A single word cannot span across alias layer boundaries.  If the
-    /// source pointer changes mid-word (e.g. an alias layer is exhausted
-    /// and we fall back to `self.source`), the loop breaks and the word
-    /// is sliced from the layer where it started.
+    /// Raw text is built byte-by-byte into a `String` via `peek_byte()`/
+    /// `advance_byte()`.  Words can span alias layer boundaries transparently
+    /// because the layer machinery is handled by `advance_byte` and `peek_byte`.
     fn scan_word(
         &mut self,
         keyword_ok: bool,
         alias_ok: bool,
     ) -> Result<ScanResult<'a>, ParseError> {
-        // --- Pushback fast-path ---
         if let Some(prev) = self.pushed_back.take() {
             return Ok(match prev {
                 ScanResult::Keyword(kw) if !keyword_ok => {
@@ -1088,180 +1197,89 @@ impl<'src, 'a> Parser<'src, 'a> {
             return Ok(ScanResult::None);
         }
 
-        // Record whether the scan starts in an alias layer or the main source.
-        // A word is always fully contained within one source buffer.
-        let started_in_alias = self.in_alias();
-        let start = if started_in_alias {
-            self.alias_stack.last().unwrap().pos
-        } else {
-            self.pos
-        };
-        let alias_depth_at_start = self.alias_stack.len();
-
+        let mut raw = String::new();
         let mut kw: u8 = if keyword_ok { KW_ROOT } else { KW_NONE };
-        let mut cont_buf = [0usize; 8];
-        let mut cont_len: usize = 0;
-        let mut cont_overflow: Vec<usize> = Vec::new();
-        // `word_started` tracks whether we've consumed any actual word
-        // characters.  A `#` only starts a comment if `word_started` is
-        // false (i.e. at the beginning of a potential word).
-        let mut word_started = false;
         let mut had_quote = false;
 
-        // --- Main scan loop — each byte is read exactly once ---
-        //
-        // We do NOT call pop_exhausted_layers() inside this loop; instead
-        // we check for buffer exhaustion explicitly and break.  Layers are
-        // popped naturally by subsequent operations (peek_byte, skip_blanks,
-        // etc.) after we've extracted the raw slice.
         loop {
-            // Check current buffer position — break if exhausted or switched.
-            if started_in_alias {
-                if self.alias_stack.len() != alias_depth_at_start {
-                    break;
-                }
-                let layer = self.alias_stack.last().unwrap();
-                if layer.pos >= layer.text.len() {
-                    break;
-                }
-            } else if self.in_alias() || self.pos < start {
-                break;
-            }
-
-            let cur_in_alias = started_in_alias && !self.alias_stack.is_empty();
-            let (cur_bytes, cur_pos) = if cur_in_alias {
-                let layer = self.alias_stack.last().unwrap();
-                (layer.text.as_bytes(), layer.pos)
-            } else {
-                (self.source.as_bytes(), self.pos)
-            };
-
-            match cur_bytes.get(cur_pos) {
+            match self.peek_byte() {
                 None => break,
-                Some(&b) if is_word_break(b) => break,
-                Some(b'#') if !word_started => break,
-                // Backslash-newline (line continuation) — kills the keyword
-                // cursor since the word now spans a physical line break.
-                Some(&b'\\')
-                    if cur_bytes.get(cur_pos + 1) == Some(&b'\n') =>
-                {
-                    if cont_len < cont_buf.len() {
-                        cont_buf[cont_len] = cur_pos - start;
-                    } else {
-                        if cont_len == cont_buf.len() {
-                            cont_overflow.extend_from_slice(&cont_buf);
+                Some(b) if is_word_break(b) => break,
+                Some(b'#') if raw.is_empty() => break,
+                Some(b'\\') => {
+                    self.advance_byte();
+                    match self.peek_byte() {
+                        Some(b'\n') => {
+                            self.advance_byte();
+                            kw = KW_NONE;
+                            if raw.is_empty() {
+                                self.skip_blanks_and_comments();
+                                if self.at_eof()
+                                    || matches!(self.peek_byte(), Some(b) if is_delim(b))
+                                {
+                                    return Ok(ScanResult::None);
+                                }
+                            }
                         }
-                        cont_overflow.push(cur_pos - start);
-                    }
-                    cont_len += 1;
-                    kw = KW_NONE;
-                    if cur_in_alias {
-                        if let Some(layer) = self.alias_stack.last_mut() {
-                            layer.pos += 2;
-                            self.cached_byte = layer.text.as_bytes().get(layer.pos).copied();
+                        Some(b) => {
+                            raw.push('\\');
+                            raw.push(b as char);
+                            self.advance_byte();
+                            had_quote = true;
+                            kw = KW_NONE;
                         }
-                    } else {
-                        self.pos += 2;
-                        self.line += 1;
-                        self.cached_byte = self.source.as_bytes().get(self.pos).copied();
+                        None => {
+                            raw.push('\\');
+                            had_quote = true;
+                            kw = KW_NONE;
+                        }
                     }
                 }
-                // Quoting — kills the keyword cursor since quoted words
-                // can't match keywords or aliases.
-                Some(&b'\'') => {
-                    word_started = true;
+                Some(b'\'') => {
                     had_quote = true;
                     kw = KW_NONE;
-                    self.skip_single_quote()?;
+                    self.skip_single_quote(&mut raw)?;
                 }
-                Some(&b'"') => {
-                    word_started = true;
+                Some(b'"') => {
                     had_quote = true;
                     kw = KW_NONE;
-                    self.skip_double_quote()?;
+                    self.skip_double_quote(&mut raw)?;
                 }
-                Some(&b'$') if matches!(cur_bytes.get(cur_pos + 1), Some(b'\'')) => {
-                    word_started = true;
-                    had_quote = true;
-                    kw = KW_NONE;
-                    self.skip_dollar_single_quote()?;
-                }
-                Some(&b'$') if matches!(cur_bytes.get(cur_pos + 1), Some(b'(' | b'{'))
-                    =>
-                {
-                    word_started = true;
-                    kw = KW_NONE;
-                    self.skip_dollar_construct()?;
-                }
-                Some(&b'`') => {
-                    word_started = true;
-                    had_quote = true;
-                    kw = KW_NONE;
+                Some(b'$') => {
+                    raw.push('$');
                     self.advance_byte();
-                    self.skip_backtick_inner()?;
-                }
-                Some(&b'\\') => {
-                    word_started = true;
-                    had_quote = true;
                     kw = KW_NONE;
-                    self.advance_byte();
-                    if self.peek_byte().is_some() {
-                        self.advance_byte();
+                    match self.peek_byte() {
+                        Some(b'\'') => {
+                            had_quote = true;
+                            self.skip_dollar_single_quote(&mut raw)?;
+                        }
+                        _ => {
+                            self.skip_dollar_construct(&mut raw)?;
+                        }
                     }
                 }
-                Some(&b'$') => {
-                    word_started = true;
-                    kw = KW_NONE;
+                Some(b'`') => {
+                    raw.push('`');
                     self.advance_byte();
+                    had_quote = true;
+                    kw = KW_NONE;
+                    self.skip_backtick_inner(&mut raw)?;
                 }
-                // Plain character — step the keyword trie.
-                Some(_) => {
-                    word_started = true;
-                    kw = kw_step(kw, cur_bytes[cur_pos]);
+                Some(b) => {
+                    raw.push(b as char);
+                    kw = kw_step(kw, b);
                     self.advance_byte();
                 }
             }
         }
 
-        // Compute end and extract the raw slice.  The alias layer (if any)
-        // has NOT been popped yet, so its buffer is still valid.
-        let (end, raw_slice) = if started_in_alias {
-            if self.alias_stack.len() == alias_depth_at_start {
-                let layer = self.alias_stack.last().unwrap();
-                (layer.pos, &layer.text[start..layer.pos])
-            } else {
-                // Layer was popped by a quote-scanning routine (shouldn't
-                // happen for well-formed input, but handle gracefully).
-                return Ok(ScanResult::None);
-            }
-        } else {
-            (self.pos, &self.source[start..self.pos])
-        };
-
-        if start == end {
+        if raw.is_empty() {
             return Ok(ScanResult::None);
         }
 
-        let raw: Box<str> = if cont_len == 0 {
-            raw_slice.into()
-        } else {
-            let conts: &[usize] = if cont_overflow.is_empty() {
-                &cont_buf[..cont_len]
-            } else {
-                &cont_overflow
-            };
-            let mut buf = String::with_capacity(raw_slice.len() - conts.len() * 2);
-            let mut prev = 0;
-            for &off in conts {
-                buf.push_str(&raw_slice[prev..off]);
-                prev = off + 2;
-            }
-            buf.push_str(&raw_slice[prev..]);
-            buf.into()
-        };
+        let raw: Box<str> = raw.into();
 
-        // Classify: alias before keyword (POSIX 2.3.1).
-        // Quoting disables both (a quoted `if` is a plain word, not a keyword).
         if !had_quote {
             if alias_ok {
                 if let Some(value) = self.aliases.get(&*raw) {
@@ -1543,42 +1561,47 @@ impl<'src, 'a> Parser<'src, 'a> {
         self.skip_separators()?;
 
         loop {
+            if stop_on_dsemi
+                && matches!(self.pushed_back_sep, Some(Sep::DSemi | Sep::SemiAmp))
+            {
+                break;
+            }
+
             self.expand_alias_at_command_position()?;
 
-            // Single scan: stop-keyword check + first-word classification.
-            // After expand_alias (which restores position), this scans the
-            // first non-alias word with keyword trie active.
             match self.scan_word(true, false)? {
-                // Stop keyword: push back so the caller can consume with
-                // expect_keyword (which provides its own error message).
                 ScanResult::Keyword(kw) if stop_kw(kw) => {
                     self.push_back(ScanResult::Keyword(kw));
                     break;
                 }
-                // } closer: push back so the caller can consume with expect_word
                 ScanResult::Word(raw) if stop_on_closer && &*raw == "}" => {
                     self.push_back(ScanResult::Word(raw));
                     break;
                 }
                 ScanResult::None => {
-                    // At EOF or delimiter byte
                     if self.at_eof() {
                         break;
                     }
                     if stop_on_closer && self.peek_byte() == Some(b')') {
                         break;
                     }
-                    if stop_on_dsemi
-                        && self.peek_byte() == Some(b';')
-                        && matches!(
-                            self.peek_byte_at_offset(1),
-                            Some(b';' | b'&')
-                        )
-                    {
-                        break;
+                    if stop_on_dsemi {
+                        if matches!(
+                            self.pushed_back_sep,
+                            Some(Sep::DSemi | Sep::SemiAmp)
+                        ) {
+                            break;
+                        }
+                        if self.peek_byte() == Some(b';') {
+                            if let Some(sep) = self.scan_separator() {
+                                if matches!(sep, Sep::DSemi | Sep::SemiAmp) {
+                                    self.push_back_sep(sep);
+                                    break;
+                                }
+                                self.push_back_sep(sep);
+                            }
+                        }
                     }
-                    // Not at a stop condition — at ( or < or > etc.
-                    // Don't push back None; let downstream re-scan.
                 }
                 other => self.push_back(other),
             }
@@ -1613,18 +1636,30 @@ impl<'src, 'a> Parser<'src, 'a> {
         let mut rest = Vec::new();
         loop {
             self.skip_blanks_and_comments();
-            let op = if self.peek_byte() == Some(b'&')
-                && self.peek_byte_at_offset(1) == Some(b'&')
-            {
-                self.advance_bytes::<2>();
-                LogicalOp::And
-            } else if self.peek_byte() == Some(b'|')
-                && self.peek_byte_at_offset(1) == Some(b'|')
-            {
-                self.advance_bytes::<2>();
-                LogicalOp::Or
-            } else {
-                break;
+            let op = match self.pushed_back_sep {
+                Some(Sep::OrIf) => {
+                    self.pushed_back_sep.take();
+                    LogicalOp::Or
+                }
+                Some(Sep::AndIf) => {
+                    self.pushed_back_sep.take();
+                    LogicalOp::And
+                }
+                Some(_) => break,
+                None => {
+                    if self.peek_byte() == Some(b'&') {
+                        self.advance_byte();
+                        if self.peek_byte() == Some(b'&') {
+                            self.advance_byte();
+                            LogicalOp::And
+                        } else {
+                            self.push_back_sep(Sep::Async);
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
             };
             self.skip_linebreaks()?;
             let rhs = self.parse_pipeline()?;
@@ -1661,8 +1696,13 @@ impl<'src, 'a> Parser<'src, 'a> {
         let mut commands = vec![self.parse_command()?];
         loop {
             self.skip_blanks_and_comments();
-            if self.peek_byte() == Some(b'|') && self.peek_byte_at_offset(1) != Some(b'|') {
+            if self.peek_byte() == Some(b'|') {
                 self.advance_byte();
+                if self.peek_byte() == Some(b'|') {
+                    self.advance_byte();
+                    self.push_back_sep(Sep::OrIf);
+                    break;
+                }
                 self.skip_linebreaks()?;
                 commands.push(self.parse_command()?);
             } else {
@@ -1960,6 +2000,7 @@ impl<'src, 'a> Parser<'src, 'a> {
                     }
                 }
             }
+            self.sync_cache();
         }
 
         let (kind, strip_tabs) = match self.peek_byte() {
@@ -2013,6 +2054,7 @@ impl<'src, 'a> Parser<'src, 'a> {
                         }
                     }
                 }
+                self.sync_cache();
                 return Ok(None);
             }
         };
@@ -2247,9 +2289,7 @@ impl<'src, 'a> Parser<'src, 'a> {
                 });
 
                 self.skip_blanks_and_comments();
-                if self.peek_byte() == Some(b'|')
-                    && self.peek_byte_at_offset(1) != Some(b'|')
-                {
+                if self.peek_byte() == Some(b'|') {
                     self.advance_byte();
                     continue;
                 }
@@ -2269,8 +2309,9 @@ impl<'src, 'a> Parser<'src, 'a> {
                 true,
             )?;
 
-            let fallthrough = self.peek_byte() == Some(b';')
-                && self.peek_byte_at_offset(1) == Some(b'&');
+            self.skip_blanks_and_comments();
+            let sep = self.scan_separator();
+            let fallthrough = sep == Some(Sep::SemiAmp);
 
             arms.push(CaseArm {
                 patterns: patterns.into_boxed_slice(),
@@ -2278,19 +2319,23 @@ impl<'src, 'a> Parser<'src, 'a> {
                 fallthrough,
             });
 
-            self.skip_blanks_and_comments();
-            if self.peek_byte() == Some(b';') {
-                if self.peek_byte_at_offset(1) == Some(b';') {
-                    self.advance_bytes::<2>();
+            match sep {
+                Some(Sep::DSemi | Sep::SemiAmp) => {
                     self.skip_separators()?;
-                } else if self.peek_byte_at_offset(1) == Some(b'&') {
-                    self.advance_bytes::<2>();
-                    self.skip_separators()?;
-                } else if self.peek_next_keyword()? != Some(Keyword::Esac) {
-                    return Err(self.error("expected ';;', ';&', or 'esac'"));
                 }
-            } else if self.peek_next_keyword()? != Some(Keyword::Esac) {
-                break;
+                Some(Sep::Semi) => {
+                    if self.peek_next_keyword()? != Some(Keyword::Esac) {
+                        return Err(self.error("expected ';;', ';&', or 'esac'"));
+                    }
+                }
+                _ => {
+                    if let Some(s) = sep {
+                        self.push_back_sep(s);
+                    }
+                    if self.peek_next_keyword()? != Some(Keyword::Esac) {
+                        break;
+                    }
+                }
             }
         }
 
