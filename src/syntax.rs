@@ -583,6 +583,7 @@ pub struct Parser<'src, 'a> {
     read_heredocs: VecDeque<HereDoc>,
     pushed_back: Option<ScanResult<'a>>,
     pushed_back_sep: Option<Sep>,
+    next_cached_byte: Option<u8>,
 }
 
 impl<'src, 'a> Parser<'src, 'a> {
@@ -611,6 +612,7 @@ impl<'src, 'a> Parser<'src, 'a> {
             read_heredocs: VecDeque::new(),
             pushed_back: None,
             pushed_back_sep: None,
+            next_cached_byte: None,
         }
     }
 
@@ -684,6 +686,10 @@ impl<'src, 'a> Parser<'src, 'a> {
     /// Consume one byte, tracking newlines and updating the cache.
     #[inline(always)]
     fn advance_byte(&mut self) {
+        if let Some(b) = self.next_cached_byte.take() {
+            self.cached_byte = Some(b);
+            return;
+        }
         if let Some(layer) = self.alias_stack.last_mut() {
             layer.pos += 1;
             self.cached_byte = layer.text.as_bytes().get(layer.pos).copied();
@@ -701,6 +707,26 @@ impl<'src, 'a> Parser<'src, 'a> {
             self.pos += 1;
         }
         self.cached_byte = bytes.get(self.pos).copied();
+    }
+
+    /// Consume `\<newline>` line continuations at the current position.
+    /// If `\` is followed by a non-newline byte, stash that byte in
+    /// `next_cached_byte` and replay `\` through `cached_byte` so the
+    /// caller sees `\` as the next byte.
+    fn skip_continuations(&mut self) {
+        loop {
+            if self.cached_byte != Some(b'\\') {
+                return;
+            }
+            self.advance_byte();
+            if self.cached_byte == Some(b'\n') {
+                self.advance_byte();
+            } else {
+                self.next_cached_byte = self.cached_byte;
+                self.cached_byte = Some(b'\\');
+                return;
+            }
+        }
     }
 
     /// True only when every layer and the main source are exhausted **and**
@@ -721,6 +747,7 @@ impl<'src, 'a> Parser<'src, 'a> {
         match self.peek_byte() {
             Some(b'|') => {
                 self.advance_byte();
+                self.skip_continuations();
                 if self.peek_byte() == Some(b'|') {
                     self.advance_byte();
                     Some(Sep::OrIf)
@@ -730,6 +757,7 @@ impl<'src, 'a> Parser<'src, 'a> {
             }
             Some(b'&') => {
                 self.advance_byte();
+                self.skip_continuations();
                 if self.peek_byte() == Some(b'&') {
                     self.advance_byte();
                     Some(Sep::AndIf)
@@ -739,6 +767,7 @@ impl<'src, 'a> Parser<'src, 'a> {
             }
             Some(b';') => {
                 self.advance_byte();
+                self.skip_continuations();
                 match self.peek_byte() {
                     Some(b';') => {
                         self.advance_byte();
@@ -773,14 +802,12 @@ impl<'src, 'a> Parser<'src, 'a> {
     //   skip_separators:         blanks + comments + newlines + lone `;`
 
     fn skip_blanks(&mut self) {
-        self.sync_cache();
         loop {
             match self.peek_byte() {
                 Some(b' ' | b'\t') => self.advance_byte(),
                 _ => break,
             }
         }
-        self.sync_cache();
     }
 
     fn skip_blanks_and_comments(&mut self) {
@@ -819,6 +846,7 @@ impl<'src, 'a> Parser<'src, 'a> {
                 }
                 Some(b';') => {
                     self.advance_byte();
+                    self.skip_continuations();
                     match self.peek_byte() {
                         Some(b';') => {
                             self.advance_byte();
@@ -942,6 +970,7 @@ impl<'src, 'a> Parser<'src, 'a> {
             Some(b'(') => {
                 raw.push('(');
                 self.advance_byte();
+                self.skip_continuations();
                 if self.peek_byte() == Some(b'(') {
                     raw.push('(');
                     self.advance_byte();
@@ -974,6 +1003,7 @@ impl<'src, 'a> Parser<'src, 'a> {
                     if depth == 1 {
                         raw.push(')');
                         self.advance_byte();
+                        self.skip_continuations();
                         if self.peek_byte() == Some(b')') {
                             raw.push(')');
                             self.advance_byte();
@@ -1207,7 +1237,6 @@ impl<'src, 'a> Parser<'src, 'a> {
                     match self.peek_byte() {
                         Some(b'\n') => {
                             self.advance_byte();
-                            kw = KW_NONE;
                             if raw.is_empty() {
                                 self.skip_blanks_and_comments();
                                 if self.at_eof()
@@ -1245,6 +1274,7 @@ impl<'src, 'a> Parser<'src, 'a> {
                     raw.push('$');
                     self.advance_byte();
                     kw = KW_NONE;
+                    self.skip_continuations();
                     match self.peek_byte() {
                         Some(b'\'') => {
                             had_quote = true;
@@ -1652,6 +1682,7 @@ impl<'src, 'a> Parser<'src, 'a> {
                 None => {
                     if self.peek_byte() == Some(b'&') {
                         self.advance_byte();
+                        self.skip_continuations();
                         if self.peek_byte() == Some(b'&') {
                             self.advance_byte();
                             LogicalOp::And
@@ -1701,6 +1732,7 @@ impl<'src, 'a> Parser<'src, 'a> {
             self.skip_blanks_and_comments();
             if self.peek_byte() == Some(b'|') {
                 self.advance_byte();
+                self.skip_continuations();
                 if self.peek_byte() == Some(b'|') {
                     self.advance_byte();
                     self.push_back_sep(Sep::OrIf);
@@ -1983,6 +2015,7 @@ impl<'src, 'a> Parser<'src, 'a> {
             }
         }
 
+        self.skip_continuations();
         let need_backtrack = if !digits.is_empty() {
             if matches!(self.peek_byte(), Some(b'<' | b'>')) {
                 fd = digits.parse::<i32>().ok();
@@ -1995,6 +2028,7 @@ impl<'src, 'a> Parser<'src, 'a> {
         };
 
         if need_backtrack {
+            self.next_cached_byte = None;
             self.pos = saved_source_pos;
             if self.alias_stack.len() == saved_stack_len {
                 if let Some(ap) = saved_alias_pos {
@@ -2009,9 +2043,11 @@ impl<'src, 'a> Parser<'src, 'a> {
         let (kind, strip_tabs) = match self.peek_byte() {
             Some(b'<') => {
                 self.advance_byte();
+                self.skip_continuations();
                 match self.peek_byte() {
                     Some(b'<') => {
                         self.advance_byte();
+                        self.skip_continuations();
                         if self.peek_byte() == Some(b'-') {
                             self.advance_byte();
                             (RedirectionKind::HereDoc, true)
@@ -2032,6 +2068,7 @@ impl<'src, 'a> Parser<'src, 'a> {
             }
             Some(b'>') => {
                 self.advance_byte();
+                self.skip_continuations();
                 match self.peek_byte() {
                     Some(b'>') => {
                         self.advance_byte();
@@ -2049,6 +2086,7 @@ impl<'src, 'a> Parser<'src, 'a> {
                 }
             }
             _ => {
+                self.next_cached_byte = None;
                 self.pos = saved_source_pos;
                 if self.alias_stack.len() == saved_stack_len {
                     if let Some(ap) = saved_alias_pos {
@@ -3925,6 +3963,475 @@ mod tests {
         assert_eq!(&*doc.body, "hello\n");
         assert_eq!(&*doc.delimiter, "EOF");
         assert!(doc.expand);
+    }
+
+    #[test]
+    fn continuation_splits_keyword_if() {
+        // POSIX 2.2.1: \<newline> removed before tokenization.
+        // i\<newline>f must be recognized as reserved word "if".
+        let program = parse_test("i\\\nf true; then echo ha; fi\n")
+            .expect("if split by continuation");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::If(_)
+        ));
+    }
+
+    #[test]
+    fn continuation_splits_keyword_then() {
+        let program = parse_test("if true; th\\\nen echo ha; fi\n")
+            .expect("then split by continuation");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::If(c) => c,
+            other => panic!("expected If, got {other:?}"),
+        };
+        assert_eq!(cmd.then_branch.items.len(), 1);
+    }
+
+    #[test]
+    fn continuation_splits_keyword_while() {
+        let program = parse_test("wh\\\nile false; do :; done\n")
+            .expect("while split by continuation");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Loop(_)
+        ));
+    }
+
+    #[test]
+    fn continuation_splits_keyword_do() {
+        let program = parse_test("while false; d\\\no :; done\n")
+            .expect("do split by continuation");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Loop(_)
+        ));
+    }
+
+    #[test]
+    fn continuation_splits_keyword_done() {
+        let program = parse_test("while false; do :; do\\\nne\n")
+            .expect("done split by continuation");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Loop(_)
+        ));
+    }
+
+    #[test]
+    fn continuation_splits_keyword_for() {
+        let program = parse_test("fo\\\nr i in a; do echo $i; done\n")
+            .expect("for split by continuation");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::For(_)
+        ));
+    }
+
+    #[test]
+    fn continuation_splits_keyword_case() {
+        let program = parse_test("cas\\\ne x in x) echo y;; esac\n")
+            .expect("case split by continuation");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Case(_)
+        ));
+    }
+
+    #[test]
+    fn continuation_splits_alias_name() {
+        // \<newline> removed before tokenization means fo\<newline>o
+        // should be recognized as alias "foo".
+        let aliases: HashMap<Box<str>, Box<str>> =
+            [("foo".into(), "echo aliased".into())]
+                .into_iter()
+                .collect();
+        let program = parse_with_aliases_test("fo\\\no\n", &aliases)
+            .expect("alias split by continuation");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert_eq!(&*cmd.words[0].raw, "echo");
+        assert_eq!(&*cmd.words[1].raw, "aliased");
+    }
+
+    #[test]
+    fn continuation_in_word() {
+        // \<newline> in the middle of a word: he\<newline>llo → "hello"
+        let program = parse_test("echo he\\\nllo\n").expect("word continuation");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert_eq!(&*cmd.words[1].raw, "hello");
+    }
+
+    #[test]
+    fn continuation_splits_double_semicolon() {
+        // POSIX 2.2.1: \<newline> removed before tokenization.
+        // ;\<newline>; must form the ;; operator in case arms.
+        let program = parse_test("case x in x) echo y;\\\n;esac\n")
+            .expect(";; split by continuation");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Case(cmd) => cmd,
+            other => panic!("expected Case, got {other:?}"),
+        };
+        assert_eq!(cmd.arms.len(), 1);
+        assert!(!cmd.arms[0].fallthrough);
+    }
+
+    #[test]
+    fn continuation_splits_and_if() {
+        // &\<newline>& must form the && operator.
+        let program = parse_test("true &\\\n& echo ok\n")
+            .expect("&& split by continuation");
+        assert_eq!(program.items[0].and_or.rest.len(), 1);
+        assert_eq!(program.items[0].and_or.rest[0].0, LogicalOp::And);
+    }
+
+    #[test]
+    fn continuation_splits_or_if() {
+        // |\<newline>| must form the || operator.
+        let program = parse_test("false |\\\n| echo ok\n")
+            .expect("|| split by continuation");
+        assert_eq!(program.items[0].and_or.rest.len(), 1);
+        assert_eq!(program.items[0].and_or.rest[0].0, LogicalOp::Or);
+    }
+
+    #[test]
+    fn continuation_splits_heredoc_operator() {
+        // <\<newline>< must form the << operator.
+        let program = parse_test("cat <\\\n<EOF\nhello\nEOF\n")
+            .expect("<< split by continuation");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert_eq!(cmd.redirections.len(), 1);
+        assert_eq!(cmd.redirections[0].kind, RedirectionKind::HereDoc);
+        let doc = cmd.redirections[0].here_doc.as_ref().expect("heredoc body");
+        assert_eq!(&*doc.body, "hello\n");
+    }
+
+    #[test]
+    fn continuation_splits_append_operator() {
+        // >\<newline>> must form the >> operator.
+        let program = parse_test("echo hi >\\\n> /dev/null\n")
+            .expect(">> split by continuation");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert_eq!(cmd.redirections.len(), 1);
+        assert_eq!(cmd.redirections[0].kind, RedirectionKind::Append);
+    }
+
+    #[test]
+    fn multiple_continuations_in_keyword() {
+        // Multiple \<newline> sequences: w\<nl>h\<nl>i\<nl>l\<nl>e
+        let program = parse_test("w\\\nh\\\ni\\\nl\\\ne false; do :; done\n")
+            .expect("while with many continuations");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Loop(_)
+        ));
+    }
+
+    #[test]
+    fn continuation_at_start_of_input() {
+        // \<newline> before any token: removed, then "if" recognized normally.
+        let program = parse_test("\\\nif true; then echo ha; fi\n")
+            .expect("continuation at start");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::If(_)
+        ));
+    }
+
+    // ---- More keyword continuations ----
+
+    #[test]
+    fn continuation_splits_keyword_esac() {
+        let program = parse_test("case x in x) echo y;; es\\\nac\n")
+            .expect("esac split by continuation");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Case(_)
+        ));
+    }
+
+    #[test]
+    fn continuation_splits_keyword_elif() {
+        let program =
+            parse_test("if false; then :; el\\\nif true; then echo ok; fi\n")
+                .expect("elif split by continuation");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::If(c) => c,
+            other => panic!("expected If, got {other:?}"),
+        };
+        assert_eq!(cmd.elif_branches.len(), 1);
+    }
+
+    #[test]
+    fn continuation_splits_keyword_else() {
+        let program =
+            parse_test("if false; then :; el\\\nse echo ok; fi\n")
+                .expect("else split by continuation");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::If(c) => c,
+            other => panic!("expected If, got {other:?}"),
+        };
+        assert!(cmd.else_branch.is_some());
+    }
+
+    #[test]
+    fn continuation_splits_keyword_fi() {
+        let program = parse_test("if true; then echo ok; f\\\ni\n")
+            .expect("fi split by continuation");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::If(_)
+        ));
+    }
+
+    #[test]
+    fn continuation_splits_keyword_in() {
+        let program = parse_test("for i i\\\nn a b; do echo $i; done\n")
+            .expect("in split by continuation");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::For(_)
+        ));
+    }
+
+    #[test]
+    fn continuation_splits_keyword_until() {
+        let program = parse_test("un\\\ntil false; do echo ok; break; done\n")
+            .expect("until split by continuation");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Loop(_)
+        ));
+    }
+
+    // ---- Redirection operator continuations ----
+
+    #[test]
+    fn continuation_splits_dup_input() {
+        // <\<newline>& must form the <& operator.
+        let program = parse_test("cat <\\\n&0 < /dev/null\n")
+            .expect("<& split by continuation");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert!(cmd.redirections.iter().any(|r| r.kind == RedirectionKind::DupInput));
+    }
+
+    #[test]
+    fn continuation_splits_dup_output() {
+        // >\<newline>& must form the >& operator.
+        let program = parse_test("echo hi >\\\n&2\n")
+            .expect(">& split by continuation");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert!(cmd.redirections.iter().any(|r| r.kind == RedirectionKind::DupOutput));
+    }
+
+    #[test]
+    fn continuation_splits_read_write() {
+        // <\<newline>> must form the <> operator.
+        let program = parse_test("echo ok <\\\n> /dev/null\n")
+            .expect("<> split by continuation");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert!(cmd.redirections.iter().any(|r| r.kind == RedirectionKind::ReadWrite));
+    }
+
+    #[test]
+    fn continuation_splits_clobber_write() {
+        // >\<newline>| must form the >| operator.
+        let program = parse_test("echo ok >\\\n| /dev/null\n")
+            .expect(">| split by continuation");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert!(cmd.redirections.iter().any(|r| r.kind == RedirectionKind::ClobberWrite));
+    }
+
+    #[test]
+    fn continuation_splits_heredoc_strip_tabs() {
+        // <<\<newline>- must form the <<- operator.
+        let program = parse_test("cat <\\\n<-EOF\n\thello\n\tEOF\n")
+            .expect("<<- split by continuation");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert_eq!(cmd.redirections[0].kind, RedirectionKind::HereDoc);
+        let doc = cmd.redirections[0].here_doc.as_ref().expect("heredoc body");
+        assert!(doc.strip_tabs);
+    }
+
+    // ---- Case arm operators ----
+
+    #[test]
+    fn continuation_splits_semi_amp() {
+        // ;\<newline>& must form the ;& (fallthrough) operator.
+        let program =
+            parse_test("case x in x) echo first;\\\n& y) echo second;; esac\n")
+                .expect(";& split by continuation");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Case(c) => c,
+            other => panic!("expected Case, got {other:?}"),
+        };
+        assert!(cmd.arms[0].fallthrough);
+    }
+
+    // ---- Other constructs ----
+
+    #[test]
+    fn continuation_splits_bang_negation() {
+        // !\<newline> command: the ! is a reserved word, continuation
+        // doesn't change that.
+        let program = parse_test("!\\\n true\n")
+            .expect("! with continuation");
+        assert!(program.items[0].and_or.first.negated);
+    }
+
+    #[test]
+    fn continuation_splits_heredoc_delimiter_word() {
+        // \<newline> in the heredoc delimiter word: EO\<nl>F → EOF.
+        let program = parse_test("cat <<EO\\\nF\nhello\nEOF\n")
+            .expect("heredoc delimiter split by continuation");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        let doc = cmd.redirections[0].here_doc.as_ref().expect("heredoc body");
+        assert_eq!(&*doc.delimiter, "EOF");
+        assert_eq!(&*doc.body, "hello\n");
+    }
+
+    #[test]
+    fn continuation_splits_assignment() {
+        // VA\<newline>R=value should be assignment VAR=value.
+        let program = parse_test("x\\\n=hello echo $x\n")
+            .expect("assignment split by continuation");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert_eq!(cmd.assignments.len(), 1);
+        assert_eq!(&*cmd.assignments[0].name, "x");
+    }
+
+    #[test]
+    fn continuation_splits_io_number() {
+        // 2\<newline>> must be recognized as IO number 2 + redirect.
+        let program = parse_test("echo ok 2\\\n>/dev/null\n")
+            .expect("IO number split by continuation");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert!(cmd.redirections.iter().any(|r| r.fd == Some(2)));
+    }
+
+    #[test]
+    fn continuation_inside_double_quotes() {
+        // POSIX 2.2.3: \<newline> inside double quotes is line continuation
+        // and shall be removed.
+        let program = parse_test("echo \"he\\\nllo\"\n")
+            .expect("continuation inside double quotes");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert_eq!(cmd.words.len(), 2);
+    }
+
+    #[test]
+    fn continuation_inside_backticks() {
+        // \<newline> inside backtick command substitution is continuation.
+        let program = parse_test("echo `echo he\\\nllo`\n")
+            .expect("continuation inside backticks");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert_eq!(cmd.words.len(), 2);
+    }
+
+    #[test]
+    fn continuation_splits_arith_close() {
+        // $((1+2)\<newline>) — the two ) must form )) closing arithmetic.
+        let program = parse_test("echo $((1+2)\\\n)\n")
+            .expect("arith close split by continuation");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert_eq!(cmd.words.len(), 2);
+        assert!(cmd.words[1].raw.starts_with("$(("));
+    }
+
+    // ---- Dollar construct continuations ----
+
+    #[test]
+    fn continuation_splits_dollar_paren() {
+        // $\<newline>( must be recognized as $( command substitution.
+        let program = parse_test("echo $\\\n(echo inner)\n")
+            .expect("$( split by continuation");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert_eq!(cmd.words.len(), 2);
+    }
+
+    #[test]
+    fn continuation_splits_dollar_brace() {
+        // $\<newline>{ must be recognized as ${ parameter expansion.
+        let program = parse_test("x=hello; echo $\\\n{x}\n")
+            .expect("${ split by continuation");
+        let cmd = match &program.items[1].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert_eq!(cmd.words.len(), 2);
+        assert_eq!(&*cmd.words[1].raw, "${x}");
+    }
+
+    #[test]
+    fn continuation_splits_dollar_double_paren() {
+        // $(\<newline>( must be recognized as $(( arithmetic expansion.
+        let program = parse_test("echo $(\\\n(1+2))\n")
+            .expect("$(( split by continuation");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert_eq!(cmd.words.len(), 2);
+        assert!(cmd.words[1].raw.starts_with("$(("));
+    }
+
+    #[test]
+    fn continuation_splits_dollar_single_quote() {
+        // $\<newline>' must be recognized as $'...' quoting.
+        let program = parse_test("echo $\\\n'hello'\n")
+            .expect("$' split by continuation");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert_eq!(cmd.words.len(), 2);
     }
 
     #[test]
