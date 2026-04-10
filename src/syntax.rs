@@ -619,7 +619,6 @@ impl<'src, 'a> Parser<'src, 'a> {
     }
 
     fn sync_cache(&mut self) {
-        self.pop_exhausted_layers();
         if let Some(layer) = self.alias_stack.last() {
             self.cached_byte = layer.text.as_bytes().get(layer.pos).copied();
         } else {
@@ -642,10 +641,11 @@ impl<'src, 'a> Parser<'src, 'a> {
     // below (or to `self.source`).
     //
     // `cached_byte` always holds the next available byte (or None at EOF).
-    // `peek_byte` is a single field read; `advance_byte` updates
-    // the position and refreshes the cache.  Exhausted layers are popped
-    // lazily by `sync_cache()`, called at transition points (skip_blanks,
-    // alias push, heredoc read, state restore).
+    // `peek_byte` is a single field read; `advance_byte` is the sole
+    // consumer of bytes — it updates the position, pops exhausted layers,
+    // and refreshes the cache.  Other code that mutates positions directly
+    // (backtracking, alias push, heredoc read) calls `sync_cache()` which
+    // only refreshes `cached_byte` without popping.
 
     /// Remove fully-consumed alias layers.  When popping a layer that had
     /// a trailing blank, record it so `parse_simple_command` can trigger
@@ -685,17 +685,13 @@ impl<'src, 'a> Parser<'src, 'a> {
     #[inline(always)]
     fn advance_byte(&mut self) {
         if let Some(layer) = self.alias_stack.last_mut() {
-            if layer.pos < layer.text.len() {
-                if layer.text.as_bytes()[layer.pos] == b'\n' {
-                    self.line += 1;
-                }
-                layer.pos += 1;
-                self.cached_byte = layer.text.as_bytes().get(layer.pos).copied();
-                if self.cached_byte.is_none() {
-                    self.sync_cache();
-                }
-                return;
+            layer.pos += 1;
+            self.cached_byte = layer.text.as_bytes().get(layer.pos).copied();
+            if self.cached_byte.is_none() {
+                self.pop_exhausted_layers();
+                self.sync_cache();
             }
+            return;
         }
         let bytes = self.source.as_bytes();
         if self.pos < bytes.len() {
@@ -1401,73 +1397,80 @@ impl<'src, 'a> Parser<'src, 'a> {
         Ok(())
     }
 
-    /// Read the body of a heredoc from the main source.
+    /// Read the body of a heredoc from the virtual stream.
     ///
-    /// Lines are consumed until one matches `delimiter` (after optional tab
-    /// stripping).  For unquoted delimiters (`expand == true`), POSIX 2.7.4
-    /// requires `\<newline>` continuation to be applied during the search
-    /// for the trailing delimiter.  For quoted delimiters (`expand == false`),
-    /// no continuation is applied.
+    /// Lines are consumed via `peek_byte`/`advance_byte` so that the body
+    /// can reside in alias layers as well as the main source.  For unquoted
+    /// delimiters (`expand == true`), POSIX 2.7.4 requires `\<newline>`
+    /// continuation to be applied during the search for the trailing
+    /// delimiter.  For quoted delimiters (`expand == false`), no
+    /// continuation is applied.
+    ///
+    /// Raw body text (including `\<newline>` sequences and leading tabs)
+    /// is returned as-is; normalization happens at expansion time.
     fn read_here_doc_body(
         &mut self,
         delimiter: &str,
         strip_tabs: bool,
         expand: bool,
-    ) -> Result<&str, ParseError> {
-        let body_start = self.pos;
-        let mut continued_line = String::new();
-        let mut continuation_start: Option<usize> = None;
+    ) -> Result<String, ParseError> {
+        let mut body = String::new();
+        let mut delim_compare = String::new();
+        let mut body_before_continuation = 0;
         loop {
-            let line_start = self.pos;
-            while self.pos < self.source.len() && self.source.as_bytes()[self.pos] != b'\n' {
-                self.pos += 1;
-            }
-            let line_text = &self.source[line_start..self.pos];
-            let has_newline = self.pos < self.source.len();
-            if has_newline {
-                self.pos += 1;
-                self.line += 1;
-            }
-
-            if expand && line_text.ends_with('\\') && has_newline {
-                if continuation_start.is_none() {
-                    continuation_start = Some(line_start);
+            let mut line = String::new();
+            let has_newline = loop {
+                match self.peek_byte() {
+                    Some(b'\n') => {
+                        self.advance_byte();
+                        break true;
+                    }
+                    Some(b) => {
+                        line.push(b as char);
+                        self.advance_byte();
+                    }
+                    None => break false,
                 }
-                continued_line.push_str(&line_text[..line_text.len() - 1]);
+            };
+
+            if expand && line.ends_with('\\') && has_newline {
+                if delim_compare.is_empty() {
+                    body_before_continuation = body.len();
+                }
+                delim_compare.push_str(&line[..line.len() - 1]);
+                body.push_str(&line);
+                body.push('\n');
                 continue;
             }
 
-            let (compare_line_owned, effective_start);
-            let compare = if !continued_line.is_empty() {
-                continued_line.push_str(line_text);
-                compare_line_owned = std::mem::take(&mut continued_line);
-                effective_start = continuation_start.take().unwrap_or(line_start);
-                if strip_tabs {
-                    compare_line_owned.trim_start_matches('\t')
-                } else {
-                    &compare_line_owned
-                }
+            let compare = if !delim_compare.is_empty() {
+                delim_compare.push_str(&line);
+                &delim_compare
             } else {
-                effective_start = line_start;
-                continuation_start = None;
-                if strip_tabs {
-                    line_text.trim_start_matches('\t')
-                } else {
-                    line_text
-                }
+                &line
+            };
+            let compare = if strip_tabs {
+                compare.trim_start_matches('\t')
+            } else {
+                compare
             };
             if compare == delimiter {
-                self.sync_cache();
-                return Ok(&self.source[body_start..effective_start]);
+                if !delim_compare.is_empty() {
+                    body.truncate(body_before_continuation);
+                }
+                return Ok(body);
             }
+            delim_compare.clear();
 
             if !has_newline {
-                self.sync_cache();
                 return Err(ParseError {
                     message: "unterminated here-document".into(),
                     line: Some(self.line),
                 });
             }
+
+            body.push_str(&line);
+            body.push('\n');
         }
     }
 
@@ -3894,6 +3897,34 @@ mod tests {
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words.len() == 2
         ));
+    }
+
+    #[test]
+    fn heredoc_body_inside_alias_expansion() {
+        // POSIX 2.3.1: alias value is processed "as if it had been read
+        // from the input".  A newline inside the alias value is a real
+        // NEWLINE token that triggers heredoc body reading per 2.3/2.7.4.
+        let aliases: HashMap<Box<str>, Box<str>> =
+            [("x".into(), "cat <<EOF\nhello\nEOF".into())]
+                .into_iter()
+                .collect();
+        let program =
+            parse_with_aliases_test("x\n", &aliases).expect("heredoc inside alias");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert_eq!(cmd.words.len(), 1, "word count");
+        assert_eq!(&*cmd.words[0].raw, "cat");
+        assert_eq!(cmd.redirections.len(), 1, "redirection count");
+        assert_eq!(cmd.redirections[0].kind, RedirectionKind::HereDoc);
+        let doc = cmd.redirections[0]
+            .here_doc
+            .as_ref()
+            .expect("heredoc body should be present");
+        assert_eq!(&*doc.body, "hello\n");
+        assert_eq!(&*doc.delimiter, "EOF");
+        assert!(doc.expand);
     }
 
     #[test]
