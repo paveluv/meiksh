@@ -557,6 +557,7 @@ pub struct Parser<'src, 'a> {
     source: &'src str,
     pos: usize,
     line: usize,
+    cached_byte: Option<u8>,
     aliases: &'a HashMap<Box<str>, Box<str>>,
     alias_stack: Vec<AliasLayer<'a>>,
     alias_depth: usize,
@@ -578,10 +579,12 @@ impl<'src, 'a> Parser<'src, 'a> {
         line: usize,
         aliases: &'a HashMap<Box<str>, Box<str>>,
     ) -> Self {
+        let cached_byte = source.as_bytes().get(pos).copied();
         Self {
             source,
             pos,
             line,
+            cached_byte,
             aliases,
             alias_stack: Vec::new(),
             alias_depth: 0,
@@ -597,6 +600,15 @@ impl<'src, 'a> Parser<'src, 'a> {
         self.line
     }
 
+    fn sync_cache(&mut self) {
+        self.pop_exhausted_layers();
+        if let Some(layer) = self.alias_stack.last() {
+            self.cached_byte = layer.text.as_bytes().get(layer.pos).copied();
+        } else {
+            self.cached_byte = self.source.as_bytes().get(self.pos).copied();
+        }
+    }
+
     fn error(&self, message: impl Into<Box<str>>) -> ParseError {
         ParseError {
             message: message.into(),
@@ -609,9 +621,13 @@ impl<'src, 'a> Parser<'src, 'a> {
     // The parser reads from a virtual stream that can have alias-expansion
     // overlays on top of the main source.  The topmost non-exhausted alias
     // layer is read first; when it runs out, we fall back to the layer
-    // below (or to `self.source`).  Every read primitive below follows
-    // this pattern: pop exhausted layers, then read from the topmost layer
-    // or from `self.source`.
+    // below (or to `self.source`).
+    //
+    // `cached_byte` always holds the next available byte (or None at EOF).
+    // `peek_byte` is a single field read; `advance_bytes::<N>` updates
+    // the position and refreshes the cache.  Exhausted layers are popped
+    // lazily by `sync_cache()`, called at transition points (skip_blanks,
+    // alias push, heredoc read, state restore).
 
     fn in_alias(&self) -> bool {
         !self.alias_stack.is_empty()
@@ -646,12 +662,9 @@ impl<'src, 'a> Parser<'src, 'a> {
     }
 
     /// Return the next byte from the virtual stream without consuming it.
-    fn peek_byte(&mut self) -> Option<u8> {
-        self.pop_exhausted_layers();
-        if let Some(layer) = self.alias_stack.last() {
-            return layer.text.as_bytes().get(layer.pos).copied();
-        }
-        self.source.as_bytes().get(self.pos).copied()
+    #[inline(always)]
+    fn peek_byte(&self) -> Option<u8> {
+        self.cached_byte
     }
 
     /// Look ahead `offset` bytes from the current position in the current
@@ -665,27 +678,54 @@ impl<'src, 'a> Parser<'src, 'a> {
         self.source.as_bytes().get(self.pos + offset).copied()
     }
 
-    /// Consume one byte, tracking newlines for line counting.
-    fn advance_byte(&mut self) {
-        self.pop_exhausted_layers();
+    /// Peek through the alias stack (skipping exhausted top) to find
+    /// the next available byte, without popping any layers.
+    fn peek_through_layers(&self) -> Option<u8> {
+        for layer in self.alias_stack.iter().rev().skip(1) {
+            if let Some(&b) = layer.text.as_bytes().get(layer.pos) {
+                return Some(b);
+            }
+        }
+        self.source.as_bytes().get(self.pos).copied()
+    }
+
+    /// Advance past `N` bytes, counting newlines and updating the cache.
+    /// `N` is a compile-time constant so the newline loop unrolls fully.
+    #[inline(always)]
+    fn advance_bytes<const N: usize>(&mut self) {
         if let Some(layer) = self.alias_stack.last_mut() {
-            layer.pos += 1;
-        } else if self.pos < self.source.len() {
-            if self.source.as_bytes()[self.pos] == b'\n' {
+            if layer.pos < layer.text.len() {
+                layer.pos += N;
+                if let Some(&b) = layer.text.as_bytes().get(layer.pos) {
+                    self.cached_byte = Some(b);
+                    return;
+                }
+                self.cached_byte = self.peek_through_layers();
+                return;
+            }
+        }
+        let bytes = self.source.as_bytes();
+        let mut i = 0;
+        while i < N && self.pos + i < bytes.len() {
+            if bytes[self.pos + i] == b'\n' {
                 self.line += 1;
             }
-            self.pos += 1;
+            i += 1;
         }
+        self.pos += N;
+        self.cached_byte = bytes.get(self.pos).copied();
+    }
+
+    /// Consume one byte, tracking newlines for line counting.
+    #[inline(always)]
+    fn advance_byte(&mut self) {
+        self.advance_bytes::<1>();
     }
 
     /// True only when every layer and the main source are exhausted **and**
     /// there is nothing in the pushback buffer.
-    fn at_eof(&mut self) -> bool {
-        if self.pushed_back.is_some() {
-            return false;
-        }
-        self.pop_exhausted_layers();
-        self.alias_stack.is_empty() && self.pos >= self.source.len()
+    fn at_eof(&self) -> bool {
+        self.pushed_back.is_none() && self.cached_byte.is_none()
     }
 
     fn push_back(&mut self, result: ScanResult<'a>) {
@@ -702,20 +742,17 @@ impl<'src, 'a> Parser<'src, 'a> {
     //   skip_separators:         blanks + comments + newlines + lone `;`
 
     fn skip_blanks(&mut self) {
+        self.sync_cache();
         loop {
             match self.peek_byte() {
                 Some(b' ' | b'\t') => self.advance_byte(),
                 Some(b'\\') if self.peek_byte_at_offset(1) == Some(b'\n') => {
-                    if let Some(layer) = self.alias_stack.last_mut() {
-                        layer.pos += 2;
-                    } else {
-                        self.pos += 2;
-                        self.line += 1;
-                    }
+                    self.advance_bytes::<2>();
                 }
                 _ => break,
             }
         }
+        self.sync_cache();
     }
 
     fn skip_blanks_and_comments(&mut self) {
@@ -837,9 +874,7 @@ impl<'src, 'a> Parser<'src, 'a> {
         let next = self.peek_byte_at_offset(1);
         if next == Some(b'(') {
             if self.peek_byte_at_offset(2) == Some(b'(') {
-                self.advance_byte();
-                self.advance_byte();
-                self.advance_byte();
+                self.advance_bytes::<3>();
                 let mut depth = 1usize;
                 loop {
                     match self.peek_byte() {
@@ -853,8 +888,7 @@ impl<'src, 'a> Parser<'src, 'a> {
                         Some(b')') => {
                             if depth == 1 {
                                 if self.peek_byte_at_offset(1) == Some(b')') {
-                                    self.advance_byte();
-                                    self.advance_byte();
+                                    self.advance_bytes::<2>();
                                     return Ok(());
                                 }
                                 self.advance_byte();
@@ -870,13 +904,11 @@ impl<'src, 'a> Parser<'src, 'a> {
                     }
                 }
             }
-            self.advance_byte();
-            self.advance_byte();
+            self.advance_bytes::<2>();
             return self.skip_paren_body();
         }
         if next == Some(b'{') {
-            self.advance_byte();
-            self.advance_byte();
+            self.advance_bytes::<2>();
             return self.skip_brace_body();
         }
         self.advance_byte();
@@ -884,8 +916,7 @@ impl<'src, 'a> Parser<'src, 'a> {
     }
 
     fn skip_dollar_single_quote(&mut self) -> Result<(), ParseError> {
-        self.advance_byte();
-        self.advance_byte();
+        self.advance_bytes::<2>();
         loop {
             match self.peek_byte() {
                 None => return Err(self.error("unterminated dollar-single-quotes")),
@@ -929,8 +960,7 @@ impl<'src, 'a> Parser<'src, 'a> {
                     }
                 }
                 Some(b'\\') if self.peek_byte_at_offset(1) == Some(b'\n') => {
-                    self.advance_byte();
-                    self.advance_byte();
+                    self.advance_bytes::<2>();
                 }
                 Some(b) if is_quote(b) => {
                     at_boundary = false;
@@ -1128,10 +1158,12 @@ impl<'src, 'a> Parser<'src, 'a> {
                     if cur_in_alias {
                         if let Some(layer) = self.alias_stack.last_mut() {
                             layer.pos += 2;
+                            self.cached_byte = layer.text.as_bytes().get(layer.pos).copied();
                         }
                     } else {
                         self.pos += 2;
                         self.line += 1;
+                        self.cached_byte = self.source.as_bytes().get(self.pos).copied();
                     }
                 }
                 // Quoting — kills the keyword cursor since quoted words
@@ -1407,10 +1439,12 @@ impl<'src, 'a> Parser<'src, 'a> {
                 }
             };
             if compare == delimiter {
+                self.sync_cache();
                 return Ok(&self.source[body_start..effective_start]);
             }
 
             if !has_newline {
+                self.sync_cache();
                 return Err(ParseError {
                     message: "unterminated here-document".into(),
                     line: Some(self.line),
@@ -1459,6 +1493,7 @@ impl<'src, 'a> Parser<'src, 'a> {
                         trailing_blank,
                     });
                     self.alias_depth += 1;
+                    self.sync_cache();
                     continue;
                 }
                 ScanResult::Alias { raw, .. } => {
@@ -1581,14 +1616,12 @@ impl<'src, 'a> Parser<'src, 'a> {
             let op = if self.peek_byte() == Some(b'&')
                 && self.peek_byte_at_offset(1) == Some(b'&')
             {
-                self.advance_byte();
-                self.advance_byte();
+                self.advance_bytes::<2>();
                 LogicalOp::And
             } else if self.peek_byte() == Some(b'|')
                 && self.peek_byte_at_offset(1) == Some(b'|')
             {
-                self.advance_byte();
-                self.advance_byte();
+                self.advance_bytes::<2>();
                 LogicalOp::Or
             } else {
                 break;
@@ -2248,12 +2281,10 @@ impl<'src, 'a> Parser<'src, 'a> {
             self.skip_blanks_and_comments();
             if self.peek_byte() == Some(b';') {
                 if self.peek_byte_at_offset(1) == Some(b';') {
-                    self.advance_byte();
-                    self.advance_byte();
+                    self.advance_bytes::<2>();
                     self.skip_separators()?;
                 } else if self.peek_byte_at_offset(1) == Some(b'&') {
-                    self.advance_byte();
-                    self.advance_byte();
+                    self.advance_bytes::<2>();
                     self.skip_separators()?;
                 } else if self.peek_next_keyword()? != Some(Keyword::Esac) {
                     return Err(self.error("expected ';;', ';&', or 'esac'"));
@@ -2489,6 +2520,7 @@ impl<'src> ParseSession<'src> {
             parser.alias_depth = saved.depth;
             parser.expanding_aliases = saved.expanding;
             parser.alias_trailing_blank_pending = saved.trailing_blank_pending;
+            parser.sync_cache();
         }
 
         let result = parser.next_complete_command();
