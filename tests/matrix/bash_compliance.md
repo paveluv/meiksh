@@ -521,3 +521,35 @@ Observed (dash):
 - exit status `2`
 
 ---
+
+## 16) Here-document body inside alias expansion is not recognized
+
+**POSIX passage (exact quote)**
+From `docs/posix/md/utilities/V3_chap02.md`, section 2.3.1:
+
+> "When a TOKEN is subject to alias substitution, the value of the alias shall be processed as if it had been read from the input instead of the TOKEN"
+
+From section 2.3:
+
+> "When an io_here token has been recognized by the grammar, one or more of the subsequent lines immediately following the next NEWLINE token form the body of a here-document"
+
+**Why this is non-compliant**
+When an alias value contains a here-document operator followed by a newline and body text (e.g., `cat <<EOF\nhello\nEOF`), POSIX requires the embedded newline to act as a NEWLINE token that triggers heredoc body reading within the alias expansion. Bash instead treats the here-document as delimited by end-of-file and executes the body lines as separate commands.
+
+**Reproduction (portable shell commands)**
+
+```sh
+/usr/bin/bash --posix -c $'alias x=$\'cat <<EOF\\nhello\\nEOF\'\nx'
+```
+
+Expected:
+- stdout: `hello`
+- exit status `0`
+
+Observed:
+- `bash: line 2: warning: here-document at line 2 delimited by end-of-file (wanted 'EOF')`
+- `bash: line 2: hello: command not found`
+- `bash: line 2: EOF: command not found`
+- exit status `127`
+
+---

@@ -1561,3 +1561,84 @@ begin interactive test "alias is not inherited by child shell"
 end interactive test "alias is not inherited by child shell"
 ```
 
+#### Test: alias value with embedded newline forms separate commands
+
+Per POSIX 2.3.1, an alias value is processed "as if it had been read from
+the input." A literal newline inside the alias value therefore acts as a
+NEWLINE token, separating complete commands.
+
+```
+begin interactive test "alias value with embedded newline forms separate commands"
+  spawn -i
+  expect "$ "
+  send "alias x=$'echo first\\necho second'"
+  expect "$ "
+  send "x"
+  expect "first"
+  expect "second"
+  sendeof
+  wait
+end interactive test "alias value with embedded newline forms separate commands"
+```
+
+#### Test: alias value with newline and compound command
+
+An alias value containing a compound command with embedded newlines is
+re-tokenized from the start, so reserved words and command structure are
+recognized normally within the alias expansion.
+
+```
+begin interactive test "alias value with newline and compound command"
+  spawn -i
+  expect "$ "
+  send "alias x=$'for i in a b c; do\\necho $i\\ndone'"
+  expect "$ "
+  send "x"
+  expect "a"
+  expect "b"
+  expect "c"
+  sendeof
+  wait
+end interactive test "alias value with newline and compound command"
+```
+
+#### Test: alias defining another alias then invoking it
+
+An alias value that defines a new alias and then invokes it on the next
+line (via an embedded newline) exercises both alias creation during
+re-tokenization and immediate expansion of the newly defined alias.
+
+```
+begin interactive test "alias defining another alias then invoking it"
+  spawn -i
+  expect "$ "
+  send "alias aa=$'alias bb=\"echo hh\"\\nbb'"
+  expect "$ "
+  send "aa"
+  expect "hh"
+  sendeof
+  wait
+end interactive test "alias defining another alias then invoking it"
+```
+
+#### Test: heredoc body inside alias expansion
+
+Per POSIX 2.3.1 and 2.3, when an alias value is processed "as if it had
+been read from the input," a NEWLINE inside the alias triggers here-document
+body reading. The heredoc body and delimiter reside entirely within the
+alias expansion text. Note: bash --posix does not handle this correctly
+(it fails to connect the heredoc body from the alias value).
+
+```
+begin interactive test "heredoc body inside alias expansion"
+  spawn -i
+  expect "$ "
+  send "alias x=$'cat <<EOF\\nhello\\nEOF'"
+  expect "$ "
+  send "x"
+  expect "hello"
+  sendeof
+  wait
+end interactive test "heredoc body inside alias expansion"
+```
+
