@@ -1,4 +1,4 @@
-use super::token::{token_to_keyword_name, Parser, Token};
+use super::token::{Parser, Token};
 use super::ParseError;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -442,7 +442,7 @@ impl<'a> Parser<'a> {
             | Token::Amp | Token::Pipe | Token::OrIf | Token::AndIf
             | Token::RParen => Err(self.error("expected command")),
             _ => {
-                let name = token_to_keyword_name(self.peek_token()?);
+                let name = self.peek_token()?.display_name();
                 self.advance_token();
                 self.parse_simple_command_with_first_word(name, line)
                     .map(Command::Simple)

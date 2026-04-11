@@ -62,9 +62,9 @@ impl<'src> ParseSession<'src> {
                 parser.alias_stack.push(layer);
             }
             parser.alias_depth = saved.depth;
-            parser.expanding_aliases = saved.expanding;
+            parser.active_alias_names = saved.active_names;
             parser.alias_trailing_blank_pending = saved.trailing_blank_pending;
-            parser.sync_cache();
+            parser.sync_cached_byte();
         }
 
         let result = parser.next_complete_command();
@@ -88,7 +88,7 @@ impl<'src> ParseSession<'src> {
             self.saved_alias = Some(SavedAliasState {
                 layers,
                 depth: parser.alias_depth,
-                expanding: parser.expanding_aliases,
+                active_names: parser.active_alias_names,
                 trailing_blank_pending: parser.alias_trailing_blank_pending,
             });
         }
