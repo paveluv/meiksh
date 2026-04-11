@@ -12,10 +12,10 @@ pub(super) fn line_at(source: &str, index: usize) -> usize {
         + 1
 }
 
-pub(super) struct AliasLayer<'a> {
-    pub(super) text: Cow<'a, str>,
-    pub(super) pos: usize,
-    pub(super) trailing_blank: bool,
+struct AliasLayer<'a> {
+    text: Cow<'a, str>,
+    pos: usize,
+    trailing_blank: bool,
 }
 
 const BC_WORD_BREAK: u8 = 0x01;
@@ -218,11 +218,10 @@ pub struct Parser<'a> {
     pub(super) line: usize,
     cached_byte: Option<u8>,
     pub(super) aliases: &'a HashMap<Box<str>, Box<str>>,
-    // Layer 0 is always the source text; layers 1..n are alias expansions.
-    pub(super) alias_stack: Vec<AliasLayer<'a>>,
-    pub(super) alias_depth: usize,
-    pub(super) active_alias_names: Vec<String>,
-    pub(super) alias_trailing_blank_pending: bool,
+    alias_stack: Vec<AliasLayer<'a>>,
+    alias_depth: usize,
+    active_alias_names: Vec<String>,
+    alias_trailing_blank_pending: bool,
     pushed_back_byte: Option<u8>,
     cached_token: Option<Token>,
     token_queue: VecDeque<Token>,
@@ -270,7 +269,39 @@ impl<'a> Parser<'a> {
         self.alias_stack[0].pos
     }
 
-    pub(super) fn sync_cached_byte(&mut self) {
+    pub(super) fn restore_alias_state(&mut self, saved: SavedAliasState) {
+        for layer in saved.layers {
+            self.alias_stack.push(layer);
+        }
+        self.alias_depth = saved.depth;
+        self.active_alias_names = saved.active_names;
+        self.alias_trailing_blank_pending = saved.trailing_blank_pending;
+        self.sync_cached_byte();
+    }
+
+    pub(super) fn save_alias_state(self) -> Option<SavedAliasState> {
+        if self.alias_stack.len() <= 1 {
+            return None;
+        }
+        let layers = self
+            .alias_stack
+            .into_iter()
+            .skip(1)
+            .map(|layer| AliasLayer {
+                text: Cow::Owned(layer.text.into_owned()),
+                pos: layer.pos,
+                trailing_blank: layer.trailing_blank,
+            })
+            .collect();
+        Some(SavedAliasState {
+            layers,
+            depth: self.alias_depth,
+            active_names: self.active_alias_names,
+            trailing_blank_pending: self.alias_trailing_blank_pending,
+        })
+    }
+
+    fn sync_cached_byte(&mut self) {
         let layer = self.alias_stack.last().unwrap();
         self.cached_byte = layer.text.as_bytes().get(layer.pos).copied();
     }
@@ -1285,10 +1316,10 @@ impl<'a> Parser<'a> {
 }
 
 pub(super) struct SavedAliasState {
-    pub(super) layers: Vec<AliasLayer<'static>>,
-    pub(super) depth: usize,
-    pub(super) active_names: Vec<String>,
-    pub(super) trailing_blank_pending: bool,
+    layers: Vec<AliasLayer<'static>>,
+    depth: usize,
+    active_names: Vec<String>,
+    trailing_blank_pending: bool,
 }
 
 pub(super) fn parse_here_doc_delimiter(raw: &str) -> (Box<str>, bool) {
