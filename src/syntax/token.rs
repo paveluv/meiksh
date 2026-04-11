@@ -89,8 +89,19 @@ pub(super) fn alias_has_trailing_blank(s: &str) -> bool {
         .map_or(false, |&b| BYTE_CLASS[b as usize] & BC_BLANK != 0)
 }
 
-fn is_alias_word(word: &str) -> bool {
+fn is_alias_eligible(word: &str) -> bool {
     !word.is_empty() && !word.bytes().any(|b| is_quote(b))
+}
+
+struct HereDocInfo {
+    delimiter: Box<str>,
+    strip_tabs: bool,
+    expand: bool,
+}
+
+enum HereDocLineItem {
+    Token(Token),
+    HereDocRef(usize),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -167,15 +178,17 @@ impl Token {
     }
 }
 
-pub(super) fn token_to_keyword_name(tok: &Token) -> Box<str> {
-    tok.keyword_name()
-        .unwrap_or(match tok {
-            Token::Bang => "!",
-            Token::LBrace => "{",
-            Token::RBrace => "}",
-            _ => "word",
-        })
-        .into()
+impl Token {
+    pub(super) fn display_name(&self) -> Box<str> {
+        self.keyword_name()
+            .unwrap_or(match self {
+                Token::Bang => "!",
+                Token::LBrace => "{",
+                Token::RBrace => "}",
+                _ => "word",
+            })
+            .into()
+    }
 }
 
 fn word_to_keyword_token(w: &str) -> Option<Token> {
@@ -208,9 +221,9 @@ pub struct Parser<'a> {
     // Layer 0 is always the source text; layers 1..n are alias expansions.
     pub(super) alias_stack: Vec<AliasLayer<'a>>,
     pub(super) alias_depth: usize,
-    pub(super) expanding_aliases: Vec<String>,
+    pub(super) active_alias_names: Vec<String>,
     pub(super) alias_trailing_blank_pending: bool,
-    next_cached_byte: Option<u8>,
+    pushed_back_byte: Option<u8>,
     cached_token: Option<Token>,
     token_queue: VecDeque<Token>,
     pub(super) keyword_mode: bool,
@@ -239,9 +252,9 @@ impl<'a> Parser<'a> {
                 trailing_blank: false,
             }],
             alias_depth: 0,
-            expanding_aliases: Vec::new(),
+            active_alias_names: Vec::new(),
             alias_trailing_blank_pending: false,
-            next_cached_byte: None,
+            pushed_back_byte: None,
             cached_token: None,
             token_queue: VecDeque::new(),
             keyword_mode: true,
@@ -257,7 +270,7 @@ impl<'a> Parser<'a> {
         self.alias_stack[0].pos
     }
 
-    pub(super) fn sync_cache(&mut self) {
+    pub(super) fn sync_cached_byte(&mut self) {
         let layer = self.alias_stack.last().unwrap();
         self.cached_byte = layer.text.as_bytes().get(layer.pos).copied();
     }
@@ -292,7 +305,7 @@ impl<'a> Parser<'a> {
             }
             self.alias_stack.pop();
             self.alias_depth = self.alias_depth.saturating_sub(1);
-            self.expanding_aliases.pop();
+            self.active_alias_names.pop();
         }
     }
 
@@ -303,7 +316,7 @@ impl<'a> Parser<'a> {
 
     #[inline(always)]
     fn advance_byte(&mut self) {
-        if let Some(b) = self.next_cached_byte.take() {
+        if let Some(b) = self.pushed_back_byte.take() {
             self.cached_byte = Some(b);
             return;
         }
@@ -323,7 +336,7 @@ impl<'a> Parser<'a> {
             self.cached_byte = bytes.get(layer.pos).copied();
             if self.cached_byte.is_none() {
                 self.pop_exhausted_layers();
-                self.sync_cache();
+                self.sync_cached_byte();
             }
         }
     }
@@ -338,7 +351,7 @@ impl<'a> Parser<'a> {
             if self.cached_byte == Some(b'\n') {
                 self.advance_byte();
             } else {
-                self.next_cached_byte = self.cached_byte;
+                self.pushed_back_byte = self.cached_byte;
                 self.cached_byte = Some(b'\\');
                 return;
             }
@@ -366,7 +379,7 @@ impl<'a> Parser<'a> {
     }
 
     fn consume_single_quote(&mut self, raw: &mut String) -> Result<(), ParseError> {
-        if self.next_cached_byte.is_none() && self.alias_stack.len() == 1 {
+        if self.pushed_back_byte.is_none() && self.alias_stack.len() == 1 {
             let layer = &mut self.alias_stack[0];
             let bytes = layer.text.as_bytes();
             let start = layer.pos;
@@ -449,7 +462,7 @@ impl<'a> Parser<'a> {
                 if self.peek_byte() == Some(b'(') {
                     raw.push('(');
                     self.advance_byte();
-                    self.consume_arith_body(raw)
+                    self.consume_arithmetic_body(raw)
                 } else {
                     self.consume_paren_body(raw)
                 }
@@ -463,7 +476,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn consume_arith_body(&mut self, raw: &mut String) -> Result<(), ParseError> {
+    fn consume_arithmetic_body(&mut self, raw: &mut String) -> Result<(), ParseError> {
         let mut depth = 1usize;
         loop {
             match self.peek_byte() {
@@ -529,13 +542,13 @@ impl<'a> Parser<'a> {
 
     fn consume_paren_body(&mut self, raw: &mut String) -> Result<(), ParseError> {
         let mut depth = 1usize;
-        let mut at_boundary = true;
+        let mut at_command_start = true;
         loop {
             match self.peek_byte() {
                 None => return Err(self.error("unterminated command substitution")),
                 Some(b'(') => {
                     depth += 1;
-                    at_boundary = true;
+                    at_command_start = true;
                     raw.push('(');
                     self.advance_byte();
                 }
@@ -546,9 +559,9 @@ impl<'a> Parser<'a> {
                     if depth == 0 {
                         return Ok(());
                     }
-                    at_boundary = true;
+                    at_command_start = true;
                 }
-                Some(b'#') if at_boundary => {
+                Some(b'#') if at_command_start => {
                     while let Some(b) = self.peek_byte() {
                         if b == b'\n' {
                             break;
@@ -564,7 +577,7 @@ impl<'a> Parser<'a> {
                         raw.push('\n');
                         self.advance_byte();
                     } else {
-                        at_boundary = false;
+                        at_command_start = false;
                         if let Some(b) = self.peek_byte() {
                             raw.push(b as char);
                             self.advance_byte();
@@ -572,16 +585,16 @@ impl<'a> Parser<'a> {
                     }
                 }
                 Some(b) if is_quote(b) => {
-                    at_boundary = false;
+                    at_command_start = false;
                     self.consume_quoted_element(raw)?;
                 }
                 Some(b) if is_word_break(b) => {
-                    at_boundary = true;
+                    at_command_start = true;
                     raw.push(b as char);
                     self.advance_byte();
                 }
                 Some(b) => {
-                    at_boundary = false;
+                    at_command_start = false;
                     raw.push(b as char);
                     self.advance_byte();
                 }
@@ -682,9 +695,9 @@ impl<'a> Parser<'a> {
         expand: bool,
     ) -> Result<String, ParseError> {
         let mut body = String::new();
-        let mut delim_compare = String::new();
+        let mut continuation_buffer = String::new();
         let mut line = String::with_capacity(80);
-        let mut body_before_continuation = 0;
+        let mut body_len_before_continuation = 0;
         loop {
             line.clear();
             let has_newline = loop {
@@ -702,18 +715,18 @@ impl<'a> Parser<'a> {
             };
 
             if expand && line.as_bytes().last() == Some(&b'\\') && has_newline {
-                if delim_compare.is_empty() {
-                    body_before_continuation = body.len();
+                if continuation_buffer.is_empty() {
+                    body_len_before_continuation = body.len();
                 }
-                delim_compare.push_str(&line[..line.len() - 1]);
+                continuation_buffer.push_str(&line[..line.len() - 1]);
                 body.push_str(&line);
                 body.push('\n');
                 continue;
             }
 
-            let compare = if !delim_compare.is_empty() {
-                delim_compare.push_str(&line);
-                &delim_compare
+            let compare = if !continuation_buffer.is_empty() {
+                continuation_buffer.push_str(&line);
+                &continuation_buffer
             } else {
                 &line
             };
@@ -723,12 +736,12 @@ impl<'a> Parser<'a> {
                 compare
             };
             if compare == delimiter {
-                if !delim_compare.is_empty() {
-                    body.truncate(body_before_continuation);
+                if !continuation_buffer.is_empty() {
+                    body.truncate(body_len_before_continuation);
                 }
                 return Ok(body);
             }
-            delim_compare.clear();
+            continuation_buffer.clear();
 
             if !has_newline {
                 return Err(ParseError {
@@ -794,20 +807,20 @@ impl<'a> Parser<'a> {
             }
             if check_alias {
                 if let Some(value) = self.aliases.get(&*w) {
-                    if is_alias_word(&w)
-                        && !self.expanding_aliases.iter().any(|n| n == &*w)
+                    if is_alias_eligible(&w)
+                        && !self.active_alias_names.iter().any(|n| n == &*w)
                         && self.alias_depth < 1024
                     {
                         let value: &str = value;
                         let trailing_blank = alias_has_trailing_blank(value);
-                        self.expanding_aliases.push(String::from(w));
+                        self.active_alias_names.push(String::from(w));
                         self.alias_stack.push(AliasLayer {
                             text: Cow::Borrowed(value),
                             pos: 0,
                             trailing_blank,
                         });
                         self.alias_depth += 1;
-                        self.sync_cache();
+                        self.sync_cached_byte();
                         return self.produce_token_from_bytes();
                     }
                 }
@@ -871,7 +884,7 @@ impl<'a> Parser<'a> {
             }
             Some(b'<') => self.produce_less_token(),
             Some(b'>') => self.produce_great_token(),
-            Some(b'0'..=b'9') => self.produce_digit_or_word(),
+            Some(b'0'..=b'9') => self.produce_io_number_or_word(),
             _ => self.produce_word_token(),
         }
     }
@@ -889,7 +902,7 @@ impl<'a> Parser<'a> {
                 } else {
                     false
                 };
-                self.produce_heredoc_line(strip_tabs)
+                self.produce_heredoc_token(strip_tabs)
             }
             Some(b'&') => {
                 self.advance_byte();
@@ -923,20 +936,22 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn produce_heredoc_line(&mut self, first_strip_tabs: bool) -> Result<Token, ParseError> {
+    fn produce_heredoc_token(&mut self, first_strip_tabs: bool) -> Result<Token, ParseError> {
         self.skip_blanks();
         let mut first_raw = String::new();
         self.scan_raw_word(&mut first_raw)?;
         if first_raw.is_empty() {
             return Err(self.error("expected heredoc delimiter"));
         }
-        let (first_delim, first_expand) = parse_here_doc_delimiter(&first_raw);
+        let (first_delimiter, first_expand) = parse_here_doc_delimiter(&first_raw);
 
-        let mut hd_infos: Vec<(Box<str>, bool, bool)> = vec![
-            (first_delim, first_strip_tabs, first_expand),
-        ];
+        let mut heredoc_entries: Vec<HereDocInfo> = vec![HereDocInfo {
+            delimiter: first_delimiter,
+            strip_tabs: first_strip_tabs,
+            expand: first_expand,
+        }];
 
-        let mut line_items: Vec<Result<Token, usize>> = Vec::new();
+        let mut queued_items: Vec<HereDocLineItem> = Vec::new();
 
         loop {
             self.skip_blanks_and_comments();
@@ -949,42 +964,42 @@ impl<'a> Parser<'a> {
                         Some(b'<') => {
                             self.advance_byte();
                             self.skip_continuations();
-                            let st = if self.peek_byte() == Some(b'-') {
+                            let strip_tabs = if self.peek_byte() == Some(b'-') {
                                 self.advance_byte();
                                 true
                             } else {
                                 false
                             };
                             self.skip_blanks();
-                            let mut dw = String::new();
-                            self.scan_raw_word(&mut dw)?;
-                            if dw.is_empty() {
+                            let mut delimiter_raw = String::new();
+                            self.scan_raw_word(&mut delimiter_raw)?;
+                            if delimiter_raw.is_empty() {
                                 return Err(self.error("expected heredoc delimiter"));
                             }
-                            let (d, e) = parse_here_doc_delimiter(&dw);
-                            let idx = hd_infos.len();
-                            hd_infos.push((d, st, e));
-                            line_items.push(Err(idx));
+                            let (delimiter, expand) = parse_here_doc_delimiter(&delimiter_raw);
+                            let idx = heredoc_entries.len();
+                            heredoc_entries.push(HereDocInfo { delimiter, strip_tabs, expand });
+                            queued_items.push(HereDocLineItem::HereDocRef(idx));
                         }
                         Some(b'&') => {
                             self.advance_byte();
-                            line_items.push(Ok(Token::LessAnd));
+                            queued_items.push(HereDocLineItem::Token(Token::LessAnd));
                         }
                         Some(b'>') => {
                             self.advance_byte();
-                            line_items.push(Ok(Token::LessGreat));
+                            queued_items.push(HereDocLineItem::Token(Token::LessGreat));
                         }
-                        _ => line_items.push(Ok(Token::Less)),
+                        _ => queued_items.push(HereDocLineItem::Token(Token::Less)),
                     }
                 }
                 Some(b'>') => {
                     self.advance_byte();
                     self.skip_continuations();
                     match self.peek_byte() {
-                        Some(b'>') => { self.advance_byte(); line_items.push(Ok(Token::DGreat)); }
-                        Some(b'&') => { self.advance_byte(); line_items.push(Ok(Token::GreatAnd)); }
-                        Some(b'|') => { self.advance_byte(); line_items.push(Ok(Token::Clobber)); }
-                        _ => line_items.push(Ok(Token::Great)),
+                        Some(b'>') => { self.advance_byte(); queued_items.push(HereDocLineItem::Token(Token::DGreat)); }
+                        Some(b'&') => { self.advance_byte(); queued_items.push(HereDocLineItem::Token(Token::GreatAnd)); }
+                        Some(b'|') => { self.advance_byte(); queued_items.push(HereDocLineItem::Token(Token::Clobber)); }
+                        _ => queued_items.push(HereDocLineItem::Token(Token::Great)),
                     }
                 }
                 Some(b'|') => {
@@ -992,9 +1007,9 @@ impl<'a> Parser<'a> {
                     self.skip_continuations();
                     if self.peek_byte() == Some(b'|') {
                         self.advance_byte();
-                        line_items.push(Ok(Token::OrIf));
+                        queued_items.push(HereDocLineItem::Token(Token::OrIf));
                     } else {
-                        line_items.push(Ok(Token::Pipe));
+                        queued_items.push(HereDocLineItem::Token(Token::Pipe));
                     }
                 }
                 Some(b'&') => {
@@ -1002,22 +1017,22 @@ impl<'a> Parser<'a> {
                     self.skip_continuations();
                     if self.peek_byte() == Some(b'&') {
                         self.advance_byte();
-                        line_items.push(Ok(Token::AndIf));
+                        queued_items.push(HereDocLineItem::Token(Token::AndIf));
                     } else {
-                        line_items.push(Ok(Token::Amp));
+                        queued_items.push(HereDocLineItem::Token(Token::Amp));
                     }
                 }
                 Some(b';') => {
                     self.advance_byte();
                     self.skip_continuations();
                     match self.peek_byte() {
-                        Some(b';') => { self.advance_byte(); line_items.push(Ok(Token::DSemi)); }
-                        Some(b'&') => { self.advance_byte(); line_items.push(Ok(Token::SemiAmp)); }
-                        _ => line_items.push(Ok(Token::Semi)),
+                        Some(b';') => { self.advance_byte(); queued_items.push(HereDocLineItem::Token(Token::DSemi)); }
+                        Some(b'&') => { self.advance_byte(); queued_items.push(HereDocLineItem::Token(Token::SemiAmp)); }
+                        _ => queued_items.push(HereDocLineItem::Token(Token::Semi)),
                     }
                 }
-                Some(b'(') => { self.advance_byte(); line_items.push(Ok(Token::LParen)); }
-                Some(b')') => { self.advance_byte(); line_items.push(Ok(Token::RParen)); }
+                Some(b'(') => { self.advance_byte(); queued_items.push(HereDocLineItem::Token(Token::LParen)); }
+                Some(b')') => { self.advance_byte(); queued_items.push(HereDocLineItem::Token(Token::RParen)); }
                 Some(b) if b.is_ascii_digit() => {
                     let mut digits = String::new();
                     while let Some(b) = self.peek_byte() {
@@ -1031,21 +1046,21 @@ impl<'a> Parser<'a> {
                     self.skip_continuations();
                     if matches!(self.peek_byte(), Some(b'<' | b'>')) {
                         if let Ok(fd) = digits.parse::<i32>() {
-                            line_items.push(Ok(Token::IoNumber(fd)));
+                            queued_items.push(HereDocLineItem::Token(Token::IoNumber(fd)));
                             continue;
                         }
                     }
                     let mut raw = digits;
                     self.scan_raw_word(&mut raw)?;
                     if !raw.is_empty() {
-                        line_items.push(Ok(Token::Word(raw.into())));
+                        queued_items.push(HereDocLineItem::Token(Token::Word(raw.into())));
                     }
                 }
                 _ => {
                     let mut raw = String::new();
                     self.scan_raw_word(&mut raw)?;
                     if !raw.is_empty() {
-                        line_items.push(Ok(Token::Word(raw.into())));
+                        queued_items.push(HereDocLineItem::Token(Token::Word(raw.into())));
                     }
                 }
             }
@@ -1056,21 +1071,22 @@ impl<'a> Parser<'a> {
         }
 
         let mut bodies: Vec<(Box<str>, usize)> = Vec::new();
-        for (delim, strip_tabs, expand) in &hd_infos {
+        for entry in &heredoc_entries {
             let body_line = self.line;
-            let body: Box<str> = self.read_here_doc_body(delim, *strip_tabs, *expand)?.into();
+            let body: Box<str> = self.read_here_doc_body(&entry.delimiter, entry.strip_tabs, entry.expand)?.into();
             bodies.push((body, body_line));
         }
 
-        for item in line_items {
+        for item in queued_items {
             match item {
-                Ok(tok) => self.token_queue.push_back(tok),
-                Err(idx) => {
+                HereDocLineItem::Token(tok) => self.token_queue.push_back(tok),
+                HereDocLineItem::HereDocRef(idx) => {
                     let (ref body, body_line) = bodies[idx];
+                    let entry = &heredoc_entries[idx];
                     self.token_queue.push_back(Token::HereDoc {
-                        strip_tabs: hd_infos[idx].1,
-                        expand: hd_infos[idx].2,
-                        delimiter: hd_infos[idx].0.clone(),
+                        strip_tabs: entry.strip_tabs,
+                        expand: entry.expand,
+                        delimiter: entry.delimiter.clone(),
                         body: body.clone(),
                         body_line,
                     });
@@ -1080,16 +1096,17 @@ impl<'a> Parser<'a> {
         self.token_queue.push_back(Token::Newline);
 
         let (ref body, body_line) = bodies[0];
+        let first = &heredoc_entries[0];
         Ok(Token::HereDoc {
-            strip_tabs: hd_infos[0].1,
-            expand: hd_infos[0].2,
-            delimiter: hd_infos[0].0.clone(),
+            strip_tabs: first.strip_tabs,
+            expand: first.expand,
+            delimiter: first.delimiter.clone(),
             body: body.clone(),
             body_line,
         })
     }
 
-    fn produce_digit_or_word(&mut self) -> Result<Token, ParseError> {
+    fn produce_io_number_or_word(&mut self) -> Result<Token, ParseError> {
         let mut digits = String::new();
         while let Some(b) = self.peek_byte() {
             if b.is_ascii_digit() {
@@ -1105,15 +1122,15 @@ impl<'a> Parser<'a> {
                 return Ok(Token::IoNumber(fd));
             }
         }
-        self.produce_word_with_prefix(digits)
+        self.produce_word(digits)
     }
 
     #[inline(always)]
     fn produce_word_token(&mut self) -> Result<Token, ParseError> {
-        self.produce_word_with_prefix(String::new())
+        self.produce_word(String::new())
     }
 
-    fn produce_word_with_prefix(
+    fn produce_word(
         &mut self,
         prefix: String,
     ) -> Result<Token, ParseError> {
@@ -1141,20 +1158,20 @@ impl<'a> Parser<'a> {
             if !had_quote {
                 if check_alias {
                     if let Some(value) = self.aliases.get(&*raw) {
-                        if is_alias_word(&raw)
-                            && !self.expanding_aliases.iter().any(|n| n == &*raw)
+                        if is_alias_eligible(&raw)
+                            && !self.active_alias_names.iter().any(|n| n == &*raw)
                             && self.alias_depth < 1024
                         {
                             let value: &str = value;
                             let trailing_blank = alias_has_trailing_blank(value);
-                            self.expanding_aliases.push(std::mem::take(&mut raw));
+                            self.active_alias_names.push(std::mem::take(&mut raw));
                             self.alias_stack.push(AliasLayer {
                                 text: Cow::Borrowed(value),
                                 pos: 0,
                                 trailing_blank,
                             });
                             self.alias_depth += 1;
-                            self.sync_cache();
+                            self.sync_cached_byte();
                             self.skip_blanks_and_comments();
                             continue;
                         }
@@ -1237,7 +1254,7 @@ impl<'a> Parser<'a> {
                     self.consume_backtick_inner(raw)?;
                 }
                 Some(b) => {
-                    if self.next_cached_byte.is_none()
+                    if self.pushed_back_byte.is_none()
                         && self.alias_stack.len() == 1
                     {
                         let layer = &mut self.alias_stack[0];
@@ -1270,7 +1287,7 @@ impl<'a> Parser<'a> {
 pub(super) struct SavedAliasState {
     pub(super) layers: Vec<AliasLayer<'static>>,
     pub(super) depth: usize,
-    pub(super) expanding: Vec<String>,
+    pub(super) active_names: Vec<String>,
     pub(super) trailing_blank_pending: bool,
 }
 
