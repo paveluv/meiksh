@@ -187,9 +187,10 @@ pub(super) fn split_assignment(input: &str) -> Option<(&str, &str)> {
 
 impl<'a> Parser<'a> {
     pub(super) fn eat_keyword(&mut self, expected: Token, name: &str) -> Result<(), ParseError> {
-        self.set_keyword_mode(true);
+        self.set_keyword_position();
         if *self.peek_token()? == expected {
             self.advance_token();
+            self.set_command_position();
             self.skip_linebreaks_t()?;
             Ok(())
         } else {
@@ -199,7 +200,6 @@ impl<'a> Parser<'a> {
 
     pub(super) fn skip_separators_t(&mut self) -> Result<(), ParseError> {
         loop {
-            self.set_keyword_mode(true);
             match self.peek_token()? {
                 Token::Newline | Token::Semi => {
                     self.advance_token();
@@ -212,7 +212,6 @@ impl<'a> Parser<'a> {
 
     pub(super) fn skip_linebreaks_t(&mut self) -> Result<(), ParseError> {
         loop {
-            self.set_keyword_mode(true);
             match self.peek_token()? {
                 Token::Newline => {
                     self.advance_token();
@@ -237,10 +236,11 @@ impl<'a> Parser<'a> {
         stop_on_dsemi: bool,
     ) -> Result<Program, ParseError> {
         let mut items = Vec::new();
+        self.set_command_position();
         self.skip_separators_t()?;
 
         loop {
-            self.set_keyword_mode(true);
+            self.set_command_position();
 
             if stop_on_dsemi
                 && matches!(self.peek_token()?, Token::DSemi | Token::SemiAmp)
@@ -268,6 +268,7 @@ impl<'a> Parser<'a> {
             if asynchronous {
                 self.advance_token();
             }
+            self.set_command_position();
             self.skip_separators_t()?;
 
             items.push(ListItem {
@@ -297,6 +298,7 @@ impl<'a> Parser<'a> {
                 }
                 _ => break,
             };
+            self.set_command_position();
             self.skip_linebreaks_t()?;
             let rhs = self.parse_pipeline()?;
             rest.push((op, rhs));
@@ -308,14 +310,14 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_pipeline(&mut self) -> Result<Pipeline, ParseError> {
-        self.set_keyword_mode(true);
+        self.set_command_position();
 
         let timed = if matches!(self.peek_token()?, Token::Word(w) if &**w == "time") {
             self.advance_token();
-            self.set_keyword_mode(true);
+            self.set_command_position();
             if matches!(self.peek_token()?, Token::Word(w) if &**w == "-p") {
                 self.advance_token();
-                self.set_keyword_mode(true);
+                self.set_command_position();
                 TimedMode::Posix
             } else {
                 TimedMode::Default
@@ -326,7 +328,7 @@ impl<'a> Parser<'a> {
 
         let negated = if matches!(self.peek_token()?, Token::Bang) {
             self.advance_token();
-            self.set_keyword_mode(true);
+            self.set_command_position();
             true
         } else {
             false
@@ -337,6 +339,7 @@ impl<'a> Parser<'a> {
             match self.peek_token()? {
                 Token::Pipe => {
                     self.advance_token();
+                    self.set_command_position();
                     self.skip_linebreaks_t()?;
                     commands.push(self.parse_command()?);
                 }
@@ -352,7 +355,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_command(&mut self) -> Result<Command, ParseError> {
-        self.set_keyword_mode(true);
+        self.set_command_position();
         let command = self.parse_command_inner()?;
         self.parse_command_redirections(command)
     }
@@ -386,12 +389,14 @@ impl<'a> Parser<'a> {
             }
             Token::LBrace => {
                 self.advance_token();
+                self.set_command_position();
                 self.skip_separators_t()?;
                 let body = self.parse_program_until(|_| false, true, false)?;
                 if !matches!(self.peek_token()?, Token::RBrace) {
                     return Err(self.error("expected '}'"));
                 }
                 self.advance_token();
+                self.set_command_position();
                 self.skip_separators_t()?;
                 Ok(Command::Group(body))
             }
@@ -407,11 +412,12 @@ impl<'a> Parser<'a> {
             Token::Bang => Err(self.error("expected command")),
             Token::Word(_) => {
                 let raw = self.take_word();
-                self.set_keyword_mode(false);
+                self.set_argument_position();
                 if super::is_name(&raw) && matches!(self.peek_token()?, Token::LParen) {
                     self.advance_token();
                     if matches!(self.peek_token()?, Token::RParen) {
                         self.advance_token();
+                        self.set_command_position();
                         self.skip_linebreaks_t().ok();
                         let body = self.parse_command()?;
                         return Ok(Command::FunctionDef(FunctionDef {
@@ -530,7 +536,11 @@ impl<'a> Parser<'a> {
         loop {
             let at_command_pos = words.is_empty()
                 && (!assignments.is_empty() || !redirections.is_empty());
-            self.set_keyword_mode(at_command_pos);
+            if at_command_pos {
+                self.set_command_position();
+            } else {
+                self.set_argument_position();
+            }
             let line = self.current_line();
 
             if let Some(redir) = self.try_parse_redirection()? {
@@ -621,7 +631,7 @@ impl<'a> Parser<'a> {
                     Token::Clobber => RedirectionKind::ClobberWrite,
                     _ => unreachable!(),
                 };
-                self.set_keyword_mode(false);
+                self.set_argument_position();
                 let target_line = self.current_line();
                 match self.peek_token()? {
                     Token::Word(_) => {
@@ -682,9 +692,10 @@ impl<'a> Parser<'a> {
             self.parse_program_until(at_elif_else_fi, false, false)?;
         let mut elif_branches = Vec::new();
 
-        self.set_keyword_mode(true);
+        self.set_keyword_position();
         while matches!(self.peek_token()?, Token::Elif) {
             self.advance_token();
+            self.set_command_position();
             self.skip_separators_t()?;
             let cond = self.parse_program_until(
                 |tok| matches!(tok, Token::Then),
@@ -701,12 +712,13 @@ impl<'a> Parser<'a> {
                 condition: cond,
                 body,
             });
-            self.set_keyword_mode(true);
+            self.set_keyword_position();
         }
 
         let else_branch =
             if matches!(self.peek_token()?, Token::Else) {
                 self.advance_token();
+                self.set_command_position();
                 self.skip_separators_t()?;
                 Some(self.parse_program_until(
                     |tok| matches!(tok, Token::Fi),
@@ -759,7 +771,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_for_command(&mut self) -> Result<Command, ParseError> {
-        self.set_keyword_mode(false);
+        self.set_argument_position();
         let name = match self.peek_token()? {
             Token::Word(_) => self.take_word(),
             _ => return Err(self.error("expected for loop variable name")),
@@ -768,12 +780,12 @@ impl<'a> Parser<'a> {
             return Err(self.error("expected for loop variable name"));
         }
 
+        self.set_keyword_position();
         self.skip_linebreaks_t()?;
-        self.set_keyword_mode(true);
         let items = if matches!(self.peek_token()?, Token::In) {
             self.advance_token();
             let mut items = Vec::new();
-            self.set_keyword_mode(false);
+            self.set_argument_position();
             loop {
                 match self.peek_token()? {
                     Token::Newline | Token::Semi | Token::Eof => break,
@@ -793,6 +805,7 @@ impl<'a> Parser<'a> {
             None
         };
 
+        self.set_keyword_position();
         self.skip_separators_t()?;
         self.eat_keyword(Token::Do, "do")?;
         let body = self.parse_program_until(
@@ -805,7 +818,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_case_command(&mut self) -> Result<Command, ParseError> {
-        self.set_keyword_mode(false);
+        self.set_argument_position();
         let line = self.current_line();
         let word_raw = match self.peek_token()? {
             Token::Word(_) => self.take_word(),
@@ -816,13 +829,15 @@ impl<'a> Parser<'a> {
             line,
         };
 
+        self.set_keyword_position();
         self.skip_linebreaks_t()?;
         self.eat_keyword(Token::In, "in")?;
+        self.set_keyword_position();
         self.skip_linebreaks_t()?;
 
         let mut arms = Vec::new();
         loop {
-            self.set_keyword_mode(true);
+            self.set_keyword_position();
             if matches!(self.peek_token()?, Token::Esac | Token::Eof) {
                 break;
             }
@@ -833,7 +848,7 @@ impl<'a> Parser<'a> {
 
             let mut patterns = Vec::new();
             loop {
-                self.set_keyword_mode(false);
+                self.set_argument_position();
                 let pat_line = self.current_line();
                 match self.peek_token()? {
                     Token::Word(_) => {
@@ -861,6 +876,7 @@ impl<'a> Parser<'a> {
                 );
             }
             self.advance_token();
+            self.set_command_position();
             self.skip_separators_t()?;
 
             let body = self.parse_program_until(
@@ -869,7 +885,7 @@ impl<'a> Parser<'a> {
                 true,
             )?;
 
-            self.set_keyword_mode(true);
+            self.set_keyword_position();
             let (fallthrough, sep_kind) = match self.peek_token()? {
                 Token::DSemi => {
                     self.advance_token();
@@ -894,10 +910,11 @@ impl<'a> Parser<'a> {
 
             match sep_kind {
                 0 | 1 => {
+                    self.set_keyword_position();
                     self.skip_separators_t()?;
                 }
                 2 => {
-                    self.set_keyword_mode(true);
+                    self.set_keyword_position();
                     if !matches!(self.peek_token()?, Token::Esac) {
                         return Err(self.error(
                             "expected ';;', ';&', or 'esac'",
@@ -905,7 +922,7 @@ impl<'a> Parser<'a> {
                     }
                 }
                 _ => {
-                    self.set_keyword_mode(true);
+                    self.set_keyword_position();
                     if !matches!(self.peek_token()?, Token::Esac) {
                         break;
                     }
@@ -921,7 +938,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_function_keyword(&mut self) -> Result<Command, ParseError> {
-        self.set_keyword_mode(false);
+        self.set_argument_position();
         let name = match self.peek_token()? {
             Token::Word(_) => self.take_word(),
             _ => return Err(self.error("expected function name")),
@@ -935,6 +952,7 @@ impl<'a> Parser<'a> {
                 self.advance_token();
             }
         }
+        self.set_command_position();
         self.skip_linebreaks_t().ok();
         let body = self.parse_command()?;
         Ok(Command::FunctionDef(FunctionDef {
@@ -952,7 +970,7 @@ impl<'a> Parser<'a> {
         }
         let mut items = Vec::new();
         loop {
-            self.set_keyword_mode(true);
+            self.set_command_position();
             if matches!(self.peek_token()?, Token::Eof) {
                 break;
             }
@@ -976,7 +994,7 @@ impl<'a> Parser<'a> {
                 line,
             });
 
-            self.set_keyword_mode(true);
+            self.set_command_position();
             if at_newline || matches!(self.peek_token()?, Token::Eof) {
                 break;
             }

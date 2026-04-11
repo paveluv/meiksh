@@ -956,6 +956,14 @@ mod tests {
     }
 
     #[test]
+    fn alias_not_expanded_in_reserved_word_position() {
+        let mut aliases = HashMap::new();
+        aliases.insert("bla".into(), "in".into());
+        let result = parse_with_aliases_test("for i bla a b c; do echo $i; done", &aliases);
+        assert!(result.is_err(), "alias should not expand to 'in' in reserved word position");
+    }
+
+    #[test]
     fn backslash_newline_mid_word_produces_stripped_form() {
         let program = parse_test("ec\\\nho ok").expect("continuation in command");
         assert!(matches!(
