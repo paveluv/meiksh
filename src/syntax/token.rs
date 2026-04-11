@@ -328,6 +328,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[inline]
     fn skip_continuations(&mut self) {
         loop {
             if self.cached_byte != Some(b'\\') {
@@ -344,6 +345,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[inline]
     fn skip_blanks(&mut self) {
         loop {
             match self.peek_byte() {
@@ -359,7 +361,6 @@ impl<'a> Parser<'a> {
             while !matches!(self.peek_byte(), None | Some(b'\n')) {
                 self.advance_byte();
             }
-            self.skip_blanks();
         }
     }
 
@@ -524,10 +525,11 @@ impl<'a> Parser<'a> {
                     at_boundary = true;
                 }
                 Some(b'#') if at_boundary => {
-                    while !matches!(self.peek_byte(), None | Some(b'\n')) {
-                        if let Some(b) = self.peek_byte() {
-                            raw.push(b as char);
+                    while let Some(b) = self.peek_byte() {
+                        if b == b'\n' {
+                            break;
                         }
+                        raw.push(b as char);
                         self.advance_byte();
                     }
                 }
@@ -657,9 +659,10 @@ impl<'a> Parser<'a> {
     ) -> Result<String, ParseError> {
         let mut body = String::new();
         let mut delim_compare = String::new();
+        let mut line = String::with_capacity(80);
         let mut body_before_continuation = 0;
         loop {
-            let mut line = String::new();
+            line.clear();
             let has_newline = loop {
                 match self.peek_byte() {
                     Some(b'\n') => {
@@ -674,7 +677,7 @@ impl<'a> Parser<'a> {
                 }
             };
 
-            if expand && line.ends_with('\\') && has_newline {
+            if expand && line.as_bytes().last() == Some(&b'\\') && has_newline {
                 if delim_compare.is_empty() {
                     body_before_continuation = body.len();
                 }
@@ -759,22 +762,21 @@ impl<'a> Parser<'a> {
             self.alias_trailing_blank_pending = false;
         }
 
-        if let Token::Word(ref w) = tok {
+        if let Token::Word(w) = tok {
             if check_keyword {
-                if let Some(kw_tok) = word_to_keyword_token(w) {
+                if let Some(kw_tok) = word_to_keyword_token(&w) {
                     return Ok(kw_tok);
                 }
             }
             if check_alias {
-                if let Some(value) = self.aliases.get(&**w) {
-                    if is_alias_word(w)
-                        && !self.expanding_aliases.iter().any(|n| n == &**w)
+                if let Some(value) = self.aliases.get(&*w) {
+                    if is_alias_word(&w)
+                        && !self.expanding_aliases.iter().any(|n| n == &*w)
                         && self.alias_depth < 1024
                     {
                         let value: &str = value;
                         let trailing_blank = alias_has_trailing_blank(value);
-                        let name: String = (**w).into();
-                        self.expanding_aliases.push(name);
+                        self.expanding_aliases.push(String::from(w));
                         self.alias_stack.push(AliasLayer {
                             text: Cow::Borrowed(value),
                             pos: 0,
@@ -786,8 +788,10 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
+            Ok(Token::Word(w))
+        } else {
+            Ok(tok)
         }
-        Ok(tok)
     }
 
     fn produce_token_from_bytes(&mut self) -> Result<Token, ParseError> {
@@ -1080,6 +1084,7 @@ impl<'a> Parser<'a> {
         self.produce_word_with_prefix(digits)
     }
 
+    #[inline(always)]
     fn produce_word_token(&mut self) -> Result<Token, ParseError> {
         self.produce_word_with_prefix(String::new())
     }
@@ -1118,8 +1123,7 @@ impl<'a> Parser<'a> {
                         {
                             let value: &str = value;
                             let trailing_blank = alias_has_trailing_blank(value);
-                            let name: String = raw.clone();
-                            self.expanding_aliases.push(name);
+                            self.expanding_aliases.push(std::mem::take(&mut raw));
                             self.alias_stack.push(AliasLayer {
                                 text: Cow::Borrowed(value),
                                 pos: 0,
@@ -1127,7 +1131,6 @@ impl<'a> Parser<'a> {
                             });
                             self.alias_depth += 1;
                             self.sync_cache();
-                            raw.clear();
                             self.skip_blanks_and_comments();
                             continue;
                         }
