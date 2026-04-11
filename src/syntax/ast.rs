@@ -894,12 +894,18 @@ impl<'a> Parser<'a> {
                 self.advance_token();
             }
 
-            let at_newline = matches!(self.peek_token()?, Token::Newline);
-            if at_newline {
-                self.advance_token();
-            } else if matches!(self.peek_token()?, Token::Semi) {
-                self.advance_token();
-            }
+            let terminated = match self.peek_token()? {
+                Token::Newline => {
+                    self.advance_token();
+                    true
+                }
+                Token::Semi => {
+                    self.advance_token();
+                    self.set_command_position();
+                    matches!(self.peek_token()?, Token::Newline | Token::Eof)
+                }
+                _ => false,
+            };
 
             items.push(ListItem {
                 and_or,
@@ -907,8 +913,7 @@ impl<'a> Parser<'a> {
                 line,
             });
 
-            self.set_command_position();
-            if at_newline || matches!(self.peek_token()?, Token::Eof) {
+            if terminated || matches!(self.peek_token()?, Token::Eof) {
                 break;
             }
         }

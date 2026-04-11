@@ -222,6 +222,7 @@ pub struct Parser<'a> {
     alias_stack: Vec<AliasLayer<'a>>,
     alias_depth: usize,
     active_alias_names: Vec<String>,
+    popped_alias_names: Vec<String>,
     alias_trailing_blank_pending: bool,
     pushed_back_byte: Option<u8>,
     cached_token: Option<Token>,
@@ -253,6 +254,7 @@ impl<'a> Parser<'a> {
             }],
             alias_depth: 0,
             active_alias_names: Vec::new(),
+            popped_alias_names: Vec::new(),
             alias_trailing_blank_pending: false,
             pushed_back_byte: None,
             cached_token: None,
@@ -333,7 +335,9 @@ impl<'a> Parser<'a> {
             }
             self.alias_stack.pop();
             self.alias_depth = self.alias_depth.saturating_sub(1);
-            self.active_alias_names.pop();
+            if let Some(name) = self.active_alias_names.pop() {
+                self.popped_alias_names.push(name);
+            }
         }
     }
 
@@ -1185,12 +1189,14 @@ impl<'a> Parser<'a> {
             if raw.is_empty() {
                 if self.cached_byte.is_none() || matches!(self.peek_byte(), Some(b) if is_delim(b))
                 {
+                    self.popped_alias_names.clear();
                     return Ok(Token::Eof);
                 }
             }
 
             let had_quote = self.scan_raw_word(&mut raw)?;
             if raw.is_empty() {
+                self.popped_alias_names.clear();
                 return Ok(Token::Eof);
             }
 
@@ -1199,6 +1205,7 @@ impl<'a> Parser<'a> {
                     if let Some(value) = self.aliases.get(&*raw) {
                         if is_alias_eligible(&raw)
                             && !self.active_alias_names.iter().any(|n| n == &*raw)
+                            && !self.popped_alias_names.iter().any(|n| n == &*raw)
                             && self.alias_depth < 1024
                         {
                             let value: &str = value;
@@ -1218,11 +1225,13 @@ impl<'a> Parser<'a> {
                 }
                 if check_keyword {
                     if let Some(kw_tok) = word_to_keyword_token(&raw) {
+                        self.popped_alias_names.clear();
                         return Ok(kw_tok);
                     }
                 }
             }
 
+            self.popped_alias_names.clear();
             return Ok(Token::Word(raw.into()));
         }
     }

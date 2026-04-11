@@ -2665,4 +2665,50 @@ mod tests {
     fn unterminated_case_arm_breaks_loop() {
         assert!(parse_test("case x in x) echo hi").is_err());
     }
+
+    #[test]
+    fn trailing_semicolon_is_valid() {
+        let source = "true;\n";
+        let mut session = ParseSession::new(source).unwrap();
+        let aliases = HashMap::new();
+        let p = session.next_command(&aliases).unwrap().expect("first cmd");
+        assert_eq!(p.items.len(), 1);
+        assert!(session.next_command(&aliases).unwrap().is_none());
+    }
+
+    #[test]
+    fn semicolon_then_newline_then_command() {
+        let source = "echo a;\necho b\n";
+        let mut session = ParseSession::new(source).unwrap();
+        let aliases = HashMap::new();
+        let p1 = session.next_command(&aliases).unwrap().expect("first cmd");
+        assert_eq!(p1.items.len(), 1);
+        let p2 = session.next_command(&aliases).unwrap().expect("second cmd");
+        assert_eq!(p2.items.len(), 1);
+    }
+
+    #[test]
+    fn comment_after_semicolon_is_ignored() {
+        let source = "echo a;#comment\necho b\n";
+        let mut session = ParseSession::new(source).unwrap();
+        let aliases = HashMap::new();
+        let p1 = session.next_command(&aliases).unwrap().expect("first cmd");
+        assert_eq!(p1.items.len(), 1);
+        let p2 = session.next_command(&aliases).unwrap().expect("second cmd");
+        assert_eq!(p2.items.len(), 1);
+    }
+
+    #[test]
+    fn self_referential_alias_does_not_loop() {
+        let mut aliases = HashMap::new();
+        aliases.insert(Box::from("a"), Box::from("a"));
+        let program =
+            parse_with_aliases_test("a\n", &aliases).expect("self-referential alias should parse");
+        assert_eq!(program.items.len(), 1);
+        if let Command::Simple(cmd) = &program.items[0].and_or.first.commands[0] {
+            assert_eq!(&*cmd.words[0].raw, "a");
+        } else {
+            panic!("expected simple command");
+        }
+    }
 }
