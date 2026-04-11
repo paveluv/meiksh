@@ -224,7 +224,7 @@ impl<'a> Parser<'a> {
     }
 
     fn take_word(&mut self) -> Box<str> {
-        match self.advance_token() {
+        match self.next_token() {
             Token::Word(w) => w,
             _ => unreachable!("expected Word token"),
         }
@@ -579,14 +579,14 @@ impl<'a> Parser<'a> {
 
         let mut fd: Option<i32> = None;
         if matches!(self.peek_token()?, Token::IoNumber(_)) {
-            if let Token::IoNumber(n) = self.advance_token() {
+            if let Token::IoNumber(n) = self.next_token() {
                 fd = Some(n);
             }
         }
 
         let line = self.current_line();
         let _ = self.peek_token()?;
-        let tok = self.advance_token();
+        let tok = self.next_token();
         match tok {
             Token::HereDoc {
                 delimiter,
