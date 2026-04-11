@@ -225,19 +225,25 @@ pub enum FlowSignal {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WaitOutcome {
+    Exited(i32),
+    Stopped(i32),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChildWaitResult {
     Exited(i32),
     Stopped(i32),
     Interrupted(i32),
 }
 
-fn try_wait_child(pid: sys::Pid) -> sys::SysResult<Option<ChildWaitResult>> {
+fn try_wait_child(pid: sys::Pid) -> sys::SysResult<Option<WaitOutcome>> {
     match sys::wait_pid_untraced(pid, true) {
         Ok(Some(waited)) => {
             if sys::wifstopped(waited.status) {
-                Ok(Some(ChildWaitResult::Stopped(sys::wstopsig(waited.status))))
+                Ok(Some(WaitOutcome::Stopped(sys::wstopsig(waited.status))))
             } else {
-                Ok(Some(ChildWaitResult::Exited(sys::decode_wait_status(
+                Ok(Some(WaitOutcome::Exited(sys::decode_wait_status(
                     waited.status,
                 ))))
             }
@@ -526,8 +532,7 @@ impl Shell {
 
     fn execute_source_incrementally(&mut self, source: &str) -> Result<i32, ShellError> {
         let saved_lineno = self.lineno;
-        let mut session =
-            syntax::ParseSession::new(source).map_err(|e| self.parse_to_err(e))?;
+        let mut session = syntax::ParseSession::new(source).map_err(|e| self.parse_to_err(e))?;
         let mut status = 0;
         self.run_pending_traps()?;
         loop {
@@ -733,19 +738,16 @@ impl Shell {
             let mut stop_signal = 0i32;
             for child in job.children.drain(..) {
                 match try_wait_child(child.pid) {
-                    Ok(Some(ChildWaitResult::Exited(code))) => {
+                    Ok(Some(WaitOutcome::Exited(code))) => {
                         self.known_pid_statuses.insert(child.pid, code);
                         if job.last_pid == Some(child.pid) {
                             job.last_status = Some(code);
                         }
                     }
-                    Ok(Some(ChildWaitResult::Stopped(sig))) => {
+                    Ok(Some(WaitOutcome::Stopped(sig))) => {
                         any_stopped = true;
                         stop_signal = sig;
                         running.push(child);
-                    }
-                    Ok(Some(ChildWaitResult::Interrupted(_))) => {
-                        unreachable!("non-blocking wait")
                     }
                     Ok(None) => running.push(child),
                     Err(_) => {
@@ -795,8 +797,8 @@ impl Shell {
         let mut status = self.jobs[index].last_status.unwrap_or(0);
         let children: Vec<sys::ChildHandle> = self.jobs[index].children.clone();
         for child in &children {
-            match self.wait_for_child_pid(child.pid, false)? {
-                ChildWaitResult::Exited(code) => {
+            match self.wait_for_child_blocking(child.pid)? {
+                WaitOutcome::Exited(code) => {
                     status = code;
                     let idx = self
                         .jobs
@@ -815,7 +817,7 @@ impl Shell {
                         self.jobs[idx].children.remove(ci);
                     }
                 }
-                ChildWaitResult::Stopped(sig) => {
+                WaitOutcome::Stopped(sig) => {
                     self.restore_foreground(saved_foreground);
                     let idx = self
                         .jobs
@@ -830,7 +832,6 @@ impl Shell {
                     self.last_status = 128 + sig;
                     return Ok(128 + sig);
                 }
-                ChildWaitResult::Interrupted(_) => unreachable!("non-interruptible wait"),
             }
         }
         self.restore_foreground(saved_foreground);
@@ -1014,7 +1015,7 @@ impl Shell {
             Some(position) => position,
             None => return Ok(127),
         };
-        match self.wait_for_child_pid(pid, true) {
+        match self.wait_for_child_interruptible(pid) {
             Ok(ChildWaitResult::Exited(status)) => {
                 self.record_completed_child(job_index, child_index, pid, status);
                 Ok(status)
@@ -1093,25 +1094,42 @@ impl Shell {
         while !self.jobs[index].children.is_empty() {
             let pid = self.jobs[index].children[0].pid;
             let child_index = 0;
-            match self.wait_for_child_pid(pid, interruptible) {
-                Ok(ChildWaitResult::Exited(code)) => {
-                    status = code;
-                    self.record_completed_child(index, child_index, pid, code);
+            if interruptible {
+                match self.wait_for_child_interruptible(pid) {
+                    Ok(ChildWaitResult::Exited(code)) => {
+                        status = code;
+                        self.record_completed_child(index, child_index, pid, code);
+                    }
+                    Ok(ChildWaitResult::Stopped(sig)) => {
+                        self.restore_foreground(saved_foreground);
+                        return Ok(128 + sig);
+                    }
+                    Ok(ChildWaitResult::Interrupted(int_status)) => {
+                        self.restore_foreground(saved_foreground);
+                        self.last_status = int_status;
+                        self.run_pending_traps()?;
+                        self.last_status = int_status;
+                        return Ok(int_status);
+                    }
+                    Err(error) => {
+                        self.restore_foreground(saved_foreground);
+                        return Err(error);
+                    }
                 }
-                Ok(ChildWaitResult::Stopped(_sig)) => {
-                    self.restore_foreground(saved_foreground);
-                    return Ok(128 + _sig);
-                }
-                Ok(ChildWaitResult::Interrupted(int_status)) => {
-                    self.restore_foreground(saved_foreground);
-                    self.last_status = int_status;
-                    self.run_pending_traps()?;
-                    self.last_status = int_status;
-                    return Ok(int_status);
-                }
-                Err(error) => {
-                    self.restore_foreground(saved_foreground);
-                    return Err(error);
+            } else {
+                match self.wait_for_child_blocking(pid) {
+                    Ok(WaitOutcome::Exited(code)) => {
+                        status = code;
+                        self.record_completed_child(index, child_index, pid, code);
+                    }
+                    Ok(WaitOutcome::Stopped(sig)) => {
+                        self.restore_foreground(saved_foreground);
+                        return Ok(128 + sig);
+                    }
+                    Err(error) => {
+                        self.restore_foreground(saved_foreground);
+                        return Err(error);
+                    }
                 }
             }
         }
@@ -1122,27 +1140,40 @@ impl Shell {
         Ok(final_status)
     }
 
-    pub fn wait_for_child_pid(
+    pub fn wait_for_child_blocking(&mut self, pid: sys::Pid) -> Result<WaitOutcome, ShellError> {
+        loop {
+            match sys::wait_pid_untraced(pid, false) {
+                Ok(Some(waited)) => {
+                    return if sys::wifstopped(waited.status) {
+                        Ok(WaitOutcome::Stopped(sys::wstopsig(waited.status)))
+                    } else {
+                        Ok(WaitOutcome::Exited(sys::decode_wait_status(waited.status)))
+                    };
+                }
+                Ok(None) => continue,
+                Err(error) if sys::interrupted(&error) => continue,
+                Err(error) => return Err(self.diagnostic(1, &error)),
+            }
+        }
+    }
+
+    pub fn wait_for_child_interruptible(
         &mut self,
         pid: sys::Pid,
-        interruptible: bool,
     ) -> Result<ChildWaitResult, ShellError> {
         loop {
             match sys::wait_pid_untraced(pid, false) {
                 Ok(Some(waited)) => {
-                    if sys::wifstopped(waited.status) {
-                        return Ok(ChildWaitResult::Stopped(sys::wstopsig(waited.status)));
-                    }
-                    return Ok(ChildWaitResult::Exited(sys::decode_wait_status(
-                        waited.status,
-                    )));
+                    return if sys::wifstopped(waited.status) {
+                        Ok(ChildWaitResult::Stopped(sys::wstopsig(waited.status)))
+                    } else {
+                        Ok(ChildWaitResult::Exited(sys::decode_wait_status(
+                            waited.status,
+                        )))
+                    };
                 }
                 Ok(None) => continue,
-                Err(error)
-                    if interruptible
-                        && sys::interrupted(&error)
-                        && sys::has_pending_signal().is_some() =>
-                {
+                Err(error) if sys::interrupted(&error) && sys::has_pending_signal().is_some() => {
                     let signal = sys::has_pending_signal().unwrap_or(sys::SIGINT);
                     return Ok(ChildWaitResult::Interrupted(128 + signal));
                 }
@@ -1312,9 +1343,15 @@ impl expand::Context for Shell {
         sys::home_dir_for_user(name).map(Cow::Owned)
     }
 
-    fn set_lineno(&mut self, line: usize) { self.lineno = line; }
-    fn inc_lineno(&mut self) { self.lineno += 1; }
-    fn lineno(&self) -> usize { self.lineno }
+    fn set_lineno(&mut self, line: usize) {
+        self.lineno = line;
+    }
+    fn inc_lineno(&mut self) {
+        self.lineno += 1;
+    }
+    fn lineno(&self) -> usize {
+        self.lineno
+    }
 }
 
 fn parse_options(args: &[String]) -> Result<ShellOptions, ShellError> {
@@ -2256,10 +2293,9 @@ mod tests {
                 assert!(stdin_parse_error_requires_more_input(&error), "{source}");
             }
 
-            let program = syntax::parse(
-                "999999999999999999999999999999999999999999999999999999999999<in",
-            )
-            .expect("overflowing number is a word, not an io_number");
+            let program =
+                syntax::parse("999999999999999999999999999999999999999999999999999999999999<in")
+                    .expect("overflowing number is a word, not an io_number");
             assert_eq!(program.items.len(), 1);
         });
     }
@@ -2764,7 +2800,7 @@ mod tests {
     }
 
     #[test]
-    fn wait_for_child_pid_retries_on_eintr_and_pid_zero() {
+    fn wait_for_child_blocking_retries_on_eintr_and_pid_zero() {
         run_trace(
             vec![
                 t(
@@ -2798,10 +2834,8 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 assert_eq!(
-                    shell
-                        .wait_for_child_pid(99, false)
-                        .expect("retry after none"),
-                    ChildWaitResult::Exited(7)
+                    shell.wait_for_child_blocking(99).expect("retry after none"),
+                    WaitOutcome::Exited(7)
                 );
             },
         );
@@ -2836,7 +2870,7 @@ mod tests {
                 let mut shell = test_shell();
                 shell.register_background_job("sleep".into(), None, vec![fake_handle(2002)]);
                 assert!(shell.wait_for_job_operand(1).is_err());
-                assert!(shell.wait_for_child_pid(99, false).is_err());
+                assert!(shell.wait_for_child_blocking(99).is_err());
             },
         );
     }
@@ -3111,7 +3145,7 @@ mod tests {
             )],
             || {
                 let result = try_wait_child(2222).expect("try_wait_child");
-                assert_eq!(result, Some(ChildWaitResult::Stopped(sys::SIGTSTP)));
+                assert_eq!(result, Some(WaitOutcome::Stopped(sys::SIGTSTP)));
             },
         );
     }
@@ -3638,5 +3672,116 @@ mod tests {
             let shell = Shell::from_args(&["meiksh", "-c", "echo hello"]).expect("from_args");
             assert_eq!(&*shell.shell_name, "meiksh");
         });
+    }
+
+    #[test]
+    fn shell_error_display_and_exit_status() {
+        let err = ShellError::Status(42);
+        assert_eq!(format!("{err}"), "exit status 42");
+        assert_eq!(err.exit_status(), 42);
+        assert!(err.to_string().contains("42"));
+    }
+
+    #[test]
+    fn wait_on_job_index_blocking_exited() {
+        run_trace(
+            vec![t(
+                "waitpid",
+                vec![
+                    ArgMatcher::Int(5001),
+                    ArgMatcher::Any,
+                    ArgMatcher::Int(sys::WUNTRACED as i64),
+                ],
+                TraceResult::Status(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.register_background_job("sleep".into(), None, vec![fake_handle(5001)]);
+                let status = shell
+                    .wait_on_job_index(0, false)
+                    .expect("wait blocking exited");
+                assert_eq!(status, 0);
+            },
+        );
+    }
+
+    #[test]
+    fn wait_on_job_index_blocking_error() {
+        run_trace(
+            vec![
+                t(
+                    "waitpid",
+                    vec![
+                        ArgMatcher::Int(5002),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
+                    TraceResult::Err(sys::ECHILD),
+                ),
+                t_stderr("meiksh: No child processes"),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.register_background_job("sleep".into(), None, vec![fake_handle(5002)]);
+                let result = shell.wait_on_job_index(0, false);
+                assert!(result.is_err());
+            },
+        );
+    }
+
+    #[test]
+    fn wait_on_job_index_interruptible_stopped() {
+        run_trace(
+            vec![t(
+                "waitpid",
+                vec![
+                    ArgMatcher::Int(5003),
+                    ArgMatcher::Any,
+                    ArgMatcher::Int(sys::WUNTRACED as i64),
+                ],
+                TraceResult::StoppedSig(sys::SIGTSTP),
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.register_background_job("sleep".into(), None, vec![fake_handle(5003)]);
+                let status = shell
+                    .wait_on_job_index(0, true)
+                    .expect("wait interruptible stopped");
+                assert_eq!(status, 128 + sys::SIGTSTP);
+            },
+        );
+    }
+
+    #[test]
+    fn wait_for_child_interruptible_retries_on_pid_zero() {
+        run_trace(
+            vec![
+                t(
+                    "waitpid",
+                    vec![
+                        ArgMatcher::Int(5004),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
+                    TraceResult::Pid(0),
+                ),
+                t(
+                    "waitpid",
+                    vec![
+                        ArgMatcher::Int(5004),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
+                    TraceResult::Status(42),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let result = shell
+                    .wait_for_child_interruptible(5004)
+                    .expect("retry after none");
+                assert_eq!(result, ChildWaitResult::Exited(42));
+            },
+        );
     }
 }

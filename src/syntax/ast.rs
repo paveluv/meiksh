@@ -1,5 +1,5 @@
-use super::token::{Parser, Token};
 use super::ParseError;
+use super::token::{Parser, Token};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Program {
@@ -223,10 +223,7 @@ impl<'a> Parser<'a> {
     }
 
     fn take_word(&mut self) -> Box<str> {
-        match self.next_token() {
-            Token::Word(w) => w,
-            _ => unreachable!("expected Word token"),
-        }
+        self.next_token().into_word().unwrap()
     }
 
     pub(super) fn parse_program_until(
@@ -242,9 +239,7 @@ impl<'a> Parser<'a> {
         loop {
             self.set_command_position();
 
-            if stop_on_dsemi
-                && matches!(self.peek_token()?, Token::DSemi | Token::SemiAmp)
-            {
+            if stop_on_dsemi && matches!(self.peek_token()?, Token::DSemi | Token::SemiAmp) {
                 break;
             }
 
@@ -425,21 +420,31 @@ impl<'a> Parser<'a> {
                             body: Box::new(body),
                         }));
                     }
-                    return Err(
-                        self.error("syntax error near unexpected token `('"),
-                    );
+                    return Err(self.error("syntax error near unexpected token `('"));
                 }
                 self.parse_simple_command_with_first_word(raw, line)
                     .map(Command::Simple)
             }
-            Token::IoNumber(_) | Token::Less | Token::Great | Token::DGreat
-            | Token::LessAnd | Token::GreatAnd | Token::LessGreat
-            | Token::Clobber | Token::HereDoc { .. } => self
+            Token::IoNumber(_)
+            | Token::Less
+            | Token::Great
+            | Token::DGreat
+            | Token::LessAnd
+            | Token::GreatAnd
+            | Token::LessGreat
+            | Token::Clobber
+            | Token::HereDoc { .. } => self
                 .parse_simple_command_with_first_redir()
                 .map(Command::Simple),
             Token::Eof => Err(self.error("expected command")),
-            Token::Newline | Token::Semi | Token::DSemi | Token::SemiAmp
-            | Token::Amp | Token::Pipe | Token::OrIf | Token::AndIf
+            Token::Newline
+            | Token::Semi
+            | Token::DSemi
+            | Token::SemiAmp
+            | Token::Amp
+            | Token::Pipe
+            | Token::OrIf
+            | Token::AndIf
             | Token::RParen => Err(self.error("expected command")),
             _ => {
                 let name = self.peek_token()?.display_name();
@@ -474,21 +479,10 @@ impl<'a> Parser<'a> {
             });
         }
 
-        self.simple_command_scan_loop(
-            &mut assignments,
-            &mut words,
-            &mut redirections,
-        )?;
-
-        if words.is_empty() && assignments.is_empty() && redirections.is_empty()
-        {
-            return Err(self.error("expected command"));
-        }
+        self.simple_command_scan_loop(&mut assignments, &mut words, &mut redirections)?;
 
         if !words.is_empty() && matches!(self.peek_token()?, Token::LParen) {
-            return Err(
-                self.error("syntax error near unexpected token `('"),
-            );
+            return Err(self.error("syntax error near unexpected token `('"));
         }
 
         Ok(SimpleCommand {
@@ -498,9 +492,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_simple_command_with_first_redir(
-        &mut self,
-    ) -> Result<SimpleCommand, ParseError> {
+    fn parse_simple_command_with_first_redir(&mut self) -> Result<SimpleCommand, ParseError> {
         let mut assignments = Vec::new();
         let mut words: Vec<Word> = Vec::new();
         let mut redirections = Vec::new();
@@ -509,16 +501,7 @@ impl<'a> Parser<'a> {
             redirections.push(redir);
         }
 
-        self.simple_command_scan_loop(
-            &mut assignments,
-            &mut words,
-            &mut redirections,
-        )?;
-
-        if words.is_empty() && assignments.is_empty() && redirections.is_empty()
-        {
-            return Err(self.error("expected command"));
-        }
+        self.simple_command_scan_loop(&mut assignments, &mut words, &mut redirections)?;
 
         Ok(SimpleCommand {
             assignments: assignments.into_boxed_slice(),
@@ -534,8 +517,8 @@ impl<'a> Parser<'a> {
         redirections: &mut Vec<Redirection>,
     ) -> Result<(), ParseError> {
         loop {
-            let at_command_pos = words.is_empty()
-                && (!assignments.is_empty() || !redirections.is_empty());
+            let at_command_pos =
+                words.is_empty() && (!assignments.is_empty() || !redirections.is_empty());
             if at_command_pos {
                 self.set_command_position();
             } else {
@@ -571,9 +554,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn try_parse_redirection(
-        &mut self,
-    ) -> Result<Option<Redirection>, ParseError> {
+    fn try_parse_redirection(&mut self) -> Result<Option<Redirection>, ParseError> {
         match self.peek_token()? {
             Token::IoNumber(_)
             | Token::Less
@@ -597,14 +578,16 @@ impl<'a> Parser<'a> {
         let line = self.current_line();
         let _ = self.peek_token()?;
         let tok = self.next_token();
-        match tok {
-            Token::HereDoc {
-                delimiter,
-                body,
-                strip_tabs,
-                expand,
-                body_line,
-            } => Ok(Some(Redirection {
+
+        if let Token::HereDoc {
+            delimiter,
+            body,
+            strip_tabs,
+            expand,
+            body_line,
+        } = tok
+        {
+            return Ok(Some(Redirection {
                 fd,
                 kind: RedirectionKind::HereDoc,
                 target: Word {
@@ -618,45 +601,44 @@ impl<'a> Parser<'a> {
                     strip_tabs,
                     body_line,
                 }),
-            })),
-            Token::Less | Token::Great | Token::DGreat | Token::LessAnd
-            | Token::GreatAnd | Token::LessGreat | Token::Clobber => {
-                let kind = match tok {
-                    Token::Less => RedirectionKind::Read,
-                    Token::Great => RedirectionKind::Write,
-                    Token::DGreat => RedirectionKind::Append,
-                    Token::LessAnd => RedirectionKind::DupInput,
-                    Token::GreatAnd => RedirectionKind::DupOutput,
-                    Token::LessGreat => RedirectionKind::ReadWrite,
-                    Token::Clobber => RedirectionKind::ClobberWrite,
-                    _ => unreachable!(),
-                };
-                self.set_argument_position();
-                let target_line = self.current_line();
-                match self.peek_token()? {
-                    Token::Word(_) => {
-                        let w = self.take_word();
-                        Ok(Some(Redirection {
-                            fd,
-                            kind,
-                            target: Word {
-                                raw: w,
-                                line: target_line,
-                            },
-                            here_doc: None,
-                        }))
-                    }
-                    _ => Err(self.error("expected redirection target")),
-                }
+            }));
+        }
+
+        let kind = if matches!(tok, Token::Less) {
+            RedirectionKind::Read
+        } else if matches!(tok, Token::Great) {
+            RedirectionKind::Write
+        } else if matches!(tok, Token::DGreat) {
+            RedirectionKind::Append
+        } else if matches!(tok, Token::LessAnd) {
+            RedirectionKind::DupInput
+        } else if matches!(tok, Token::GreatAnd) {
+            RedirectionKind::DupOutput
+        } else if matches!(tok, Token::LessGreat) {
+            RedirectionKind::ReadWrite
+        } else {
+            RedirectionKind::ClobberWrite
+        };
+        self.set_argument_position();
+        let target_line = self.current_line();
+        match self.peek_token()? {
+            Token::Word(_) => {
+                let w = self.take_word();
+                Ok(Some(Redirection {
+                    fd,
+                    kind,
+                    target: Word {
+                        raw: w,
+                        line: target_line,
+                    },
+                    here_doc: None,
+                }))
             }
-            _ => unreachable!("peek guaranteed a redirect token"),
+            _ => Err(self.error("expected redirection target")),
         }
     }
 
-    fn parse_command_redirections(
-        &mut self,
-        command: Command,
-    ) -> Result<Command, ParseError> {
+    fn parse_command_redirections(&mut self, command: Command) -> Result<Command, ParseError> {
         if matches!(command, Command::Simple(_)) {
             return Ok(command);
         }
@@ -675,11 +657,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_if_command(&mut self) -> Result<Command, ParseError> {
-        let condition = self.parse_program_until(
-            |tok| matches!(tok, Token::Then),
-            false,
-            false,
-        )?;
+        let condition = self.parse_program_until(|tok| matches!(tok, Token::Then), false, false)?;
         if condition.items.is_empty() {
             return Err(self.error("expected command list after 'if'"));
         }
@@ -688,8 +666,7 @@ impl<'a> Parser<'a> {
         fn at_elif_else_fi(tok: &Token) -> bool {
             matches!(tok, Token::Elif | Token::Else | Token::Fi)
         }
-        let then_branch =
-            self.parse_program_until(at_elif_else_fi, false, false)?;
+        let then_branch = self.parse_program_until(at_elif_else_fi, false, false)?;
         let mut elif_branches = Vec::new();
 
         self.set_keyword_position();
@@ -697,17 +674,12 @@ impl<'a> Parser<'a> {
             self.advance_token();
             self.set_command_position();
             self.skip_separators_t()?;
-            let cond = self.parse_program_until(
-                |tok| matches!(tok, Token::Then),
-                false,
-                false,
-            )?;
+            let cond = self.parse_program_until(|tok| matches!(tok, Token::Then), false, false)?;
             if cond.items.is_empty() {
                 return Err(self.error("expected command list after 'elif'"));
             }
             self.eat_keyword(Token::Then, "then")?;
-            let body =
-                self.parse_program_until(at_elif_else_fi, false, false)?;
+            let body = self.parse_program_until(at_elif_else_fi, false, false)?;
             elif_branches.push(ElifBranch {
                 condition: cond,
                 body,
@@ -715,19 +687,14 @@ impl<'a> Parser<'a> {
             self.set_keyword_position();
         }
 
-        let else_branch =
-            if matches!(self.peek_token()?, Token::Else) {
-                self.advance_token();
-                self.set_command_position();
-                self.skip_separators_t()?;
-                Some(self.parse_program_until(
-                    |tok| matches!(tok, Token::Fi),
-                    false,
-                    false,
-                )?)
-            } else {
-                None
-            };
+        let else_branch = if matches!(self.peek_token()?, Token::Else) {
+            self.advance_token();
+            self.set_command_position();
+            self.skip_separators_t()?;
+            Some(self.parse_program_until(|tok| matches!(tok, Token::Fi), false, false)?)
+        } else {
+            None
+        };
 
         self.eat_keyword(Token::Fi, "fi")?;
         Ok(Command::If(IfCommand {
@@ -738,30 +705,17 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    fn parse_loop_command(
-        &mut self,
-        kind: LoopKind,
-    ) -> Result<Command, ParseError> {
+    fn parse_loop_command(&mut self, kind: LoopKind) -> Result<Command, ParseError> {
         let keyword = match kind {
             LoopKind::While => "while",
             LoopKind::Until => "until",
         };
-        let condition = self.parse_program_until(
-            |tok| matches!(tok, Token::Do),
-            false,
-            false,
-        )?;
+        let condition = self.parse_program_until(|tok| matches!(tok, Token::Do), false, false)?;
         if condition.items.is_empty() {
-            return Err(self.error(format!(
-                "expected command list after '{keyword}'"
-            )));
+            return Err(self.error(format!("expected command list after '{keyword}'")));
         }
         self.eat_keyword(Token::Do, "do")?;
-        let body = self.parse_program_until(
-            |tok| matches!(tok, Token::Done),
-            false,
-            false,
-        )?;
+        let body = self.parse_program_until(|tok| matches!(tok, Token::Done), false, false)?;
         self.eat_keyword(Token::Done, "done")?;
         Ok(Command::Loop(LoopCommand {
             kind,
@@ -786,19 +740,13 @@ impl<'a> Parser<'a> {
             self.advance_token();
             let mut items = Vec::new();
             self.set_argument_position();
-            loop {
-                match self.peek_token()? {
-                    Token::Newline | Token::Semi | Token::Eof => break,
-                    Token::Word(_) => {
-                        let word_line = self.current_line();
-                        let w = self.take_word();
-                        items.push(Word {
-                            raw: w,
-                            line: word_line,
-                        });
-                    }
-                    _ => break,
-                }
+            while matches!(self.peek_token()?, Token::Word(_)) {
+                let word_line = self.current_line();
+                let w = self.take_word();
+                items.push(Word {
+                    raw: w,
+                    line: word_line,
+                });
             }
             Some(items.into_boxed_slice())
         } else {
@@ -808,11 +756,7 @@ impl<'a> Parser<'a> {
         self.set_keyword_position();
         self.skip_separators_t()?;
         self.eat_keyword(Token::Do, "do")?;
-        let body = self.parse_program_until(
-            |tok| matches!(tok, Token::Done),
-            false,
-            false,
-        )?;
+        let body = self.parse_program_until(|tok| matches!(tok, Token::Done), false, false)?;
         self.eat_keyword(Token::Done, "done")?;
         Ok(Command::For(ForCommand { name, items, body }))
     }
@@ -858,9 +802,7 @@ impl<'a> Parser<'a> {
                             line: pat_line,
                         });
                     }
-                    _ => {
-                        return Err(self.error("expected case pattern"))
-                    }
+                    _ => return Err(self.error("expected case pattern")),
                 }
 
                 if matches!(self.peek_token()?, Token::Pipe) {
@@ -871,35 +813,25 @@ impl<'a> Parser<'a> {
             }
 
             if !matches!(self.peek_token()?, Token::RParen) {
-                return Err(
-                    self.error("expected ')' after case pattern"),
-                );
+                return Err(self.error("expected ')' after case pattern"));
             }
             self.advance_token();
             self.set_command_position();
             self.skip_separators_t()?;
 
-            let body = self.parse_program_until(
-                |tok| matches!(tok, Token::Esac),
-                false,
-                true,
-            )?;
+            let body = self.parse_program_until(|tok| matches!(tok, Token::Esac), false, true)?;
 
             self.set_keyword_position();
-            let (fallthrough, sep_kind) = match self.peek_token()? {
+            let (fallthrough, has_explicit_sep) = match self.peek_token()? {
                 Token::DSemi => {
                     self.advance_token();
-                    (false, 0u8)
+                    (false, true)
                 }
                 Token::SemiAmp => {
                     self.advance_token();
-                    (true, 1)
+                    (true, true)
                 }
-                Token::Semi => {
-                    self.advance_token();
-                    (false, 2)
-                }
-                _ => (false, 3),
+                _ => (false, false),
             };
 
             arms.push(CaseArm {
@@ -908,25 +840,11 @@ impl<'a> Parser<'a> {
                 fallthrough,
             });
 
-            match sep_kind {
-                0 | 1 => {
-                    self.set_keyword_position();
-                    self.skip_separators_t()?;
-                }
-                2 => {
-                    self.set_keyword_position();
-                    if !matches!(self.peek_token()?, Token::Esac) {
-                        return Err(self.error(
-                            "expected ';;', ';&', or 'esac'",
-                        ));
-                    }
-                }
-                _ => {
-                    self.set_keyword_position();
-                    if !matches!(self.peek_token()?, Token::Esac) {
-                        break;
-                    }
-                }
+            self.set_keyword_position();
+            if has_explicit_sep {
+                self.skip_separators_t()?;
+            } else if !matches!(self.peek_token()?, Token::Esac) {
+                break;
             }
         }
 
@@ -961,9 +879,7 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    pub(super) fn next_complete_command(
-        &mut self,
-    ) -> Result<Option<Program>, ParseError> {
+    pub(super) fn next_complete_command(&mut self) -> Result<Option<Program>, ParseError> {
         self.skip_separators_t()?;
         if matches!(self.peek_token()?, Token::Eof) {
             return Ok(None);
@@ -971,9 +887,6 @@ impl<'a> Parser<'a> {
         let mut items = Vec::new();
         loop {
             self.set_command_position();
-            if matches!(self.peek_token()?, Token::Eof) {
-                break;
-            }
             let line = self.current_line();
             let and_or = self.parse_and_or()?;
             let asynchronous = matches!(self.peek_token()?, Token::Amp);
@@ -998,9 +911,6 @@ impl<'a> Parser<'a> {
             if at_newline || matches!(self.peek_token()?, Token::Eof) {
                 break;
             }
-        }
-        if items.is_empty() {
-            return Ok(None);
         }
         Ok(Some(Program {
             items: items.into_boxed_slice(),

@@ -87,7 +87,7 @@ pub fn is_name(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::token::{alias_has_trailing_blank, parse_here_doc_delimiter};
+    use super::token::{Token, alias_has_trailing_blank, parse_here_doc_delimiter};
     use super::*;
 
     fn parse_test(source: &str) -> Result<Program, ParseError> {
@@ -2398,5 +2398,271 @@ mod tests {
         assert_eq!(&*Token::LBrace.display_name(), "{");
         assert_eq!(&*Token::RBrace.display_name(), "}");
         assert_eq!(&*Token::Word("foo".into()).display_name(), "word");
+    }
+
+    #[test]
+    fn token_into_word_some_and_none() {
+        assert_eq!(Token::Word("hi".into()).into_word(), Some(Box::from("hi")));
+        assert_eq!(Token::Eof.into_word(), None);
+        assert_eq!(Token::Semi.into_word(), None);
+    }
+
+    #[test]
+    fn nested_alias_pop_exhausted_layers_break() {
+        let mut aliases = HashMap::new();
+        aliases.insert(Box::from("outer"), Box::from("inner rest"));
+        aliases.insert(Box::from("inner"), Box::from("echo"));
+        let program =
+            parse_with_aliases_test("outer\n", &aliases).expect("nested alias should parse");
+        if let Command::Simple(cmd) = &program.items[0].and_or.first.commands[0] {
+            assert_eq!(&*cmd.words[0].raw, "echo");
+            assert_eq!(&*cmd.words[1].raw, "rest");
+        } else {
+            panic!("expected simple command");
+        }
+    }
+
+    #[test]
+    fn skip_continuations_pushback_between_operators() {
+        let program = parse_test("echo a >\\\nout\n").expect("continuation in redirect");
+        if let Command::Simple(cmd) = &program.items[0].and_or.first.commands[0] {
+            assert!(!cmd.redirections.is_empty());
+        } else {
+            panic!("expected simple command");
+        }
+    }
+
+    #[test]
+    fn unterminated_single_quote_in_alias_layer() {
+        let mut aliases = HashMap::new();
+        aliases.insert(Box::from("bad"), Box::from("echo 'unterminated"));
+        let result = parse_with_aliases_test("bad\n", &aliases);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn empty_heredoc_delimiter_error() {
+        let result = parse_test("cat << \n");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn heredoc_line_huge_ionumber_becomes_word() {
+        let big = "99999999999999999999";
+        let src = format!("cat <<EOF {big}hello\nbody\nEOF\n");
+        let result = parse_test(&src);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn produce_word_eof_on_empty_prefix_and_delim() {
+        let program = parse_test("echo $()\n").expect("parse");
+        if let Command::Simple(cmd) = &program.items[0].and_or.first.commands[0] {
+            assert_eq!(cmd.words.len(), 2);
+        } else {
+            panic!("expected simple command");
+        }
+    }
+
+    #[test]
+    fn case_fall_through_semi_amp() {
+        let program = parse_test("case x in a) echo a ;& b) echo b ;; esac").expect("parse");
+        if let Command::Case(c) = &program.items[0].and_or.first.commands[0] {
+            assert!(c.arms[0].fallthrough);
+            assert!(!c.arms[1].fallthrough);
+        } else {
+            panic!("expected case command");
+        }
+    }
+
+    #[test]
+    fn case_semi_before_non_esac_error() {
+        let result = parse_test("case x in a) echo a ; b) echo b ;; esac");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn case_arm_without_separator_before_esac() {
+        let program = parse_test("case x in a) echo a\nesac").expect("parse");
+        if let Command::Case(c) = &program.items[0].and_or.first.commands[0] {
+            assert_eq!(c.arms.len(), 1);
+        } else {
+            panic!("expected case command");
+        }
+    }
+
+    #[test]
+    fn for_loop_break_on_non_word() {
+        let program = parse_test("for i in a b; do echo $i; done").expect("parse");
+        if let Command::For(f) = &program.items[0].and_or.first.commands[0] {
+            assert_eq!(f.items.as_ref().unwrap().len(), 2);
+        } else {
+            panic!("expected for command");
+        }
+    }
+
+    #[test]
+    fn syntax_error_unexpected_lparen_after_name_without_rparen() {
+        let result = parse_test("foo(bar");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn empty_command_at_if_position() {
+        let result = parse_test("if ; then true; fi");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn for_loop_non_word_token_breaks_word_list() {
+        let program = parse_test("for i in a b\ndo echo $i; done").expect("parse");
+        if let Command::For(f) = &program.items[0].and_or.first.commands[0] {
+            assert_eq!(f.items.as_ref().unwrap().len(), 2);
+        } else {
+            panic!("expected for command");
+        }
+    }
+
+    #[test]
+    fn next_complete_command_eof() {
+        let aliases = HashMap::new();
+        let mut session = ParseSession::new("echo hi").expect("session");
+        let cmd = session.next_command(&aliases).expect("first cmd");
+        assert!(cmd.is_some());
+        let cmd2 = session.next_command(&aliases).expect("eof");
+        assert!(cmd2.is_none());
+    }
+
+    #[test]
+    fn next_complete_command_empty_line_returns_none() {
+        let aliases = HashMap::new();
+        let mut session = ParseSession::new("\n").expect("session");
+        let cmd = session.next_command(&aliases).expect("newline only");
+        assert!(cmd.is_none());
+    }
+
+    #[test]
+    fn reclassify_queued_token_trailing_blank_alias_on_heredoc_line() {
+        let mut aliases = HashMap::new();
+        aliases.insert(Box::from("mycmd"), Box::from("echo "));
+        aliases.insert(Box::from("myarg"), Box::from("hello"));
+        let program =
+            parse_with_aliases_test("cat <<EOF mycmd myarg\nbody\nEOF\n", &aliases).expect("parse");
+        assert_eq!(program.items.len(), 1);
+    }
+
+    #[test]
+    fn heredoc_line_skip_continuations_between_tokens() {
+        let program = parse_test("cat <<EOF >\\\nout\nbody\nEOF\n").expect("parse");
+        if let Command::Simple(cmd) = &program.items[0].and_or.first.commands[0] {
+            assert!(!cmd.redirections.is_empty());
+        } else {
+            panic!("expected simple command");
+        }
+    }
+
+    #[test]
+    fn backslash_newline_at_word_start_before_delim() {
+        let program = parse_test("echo \\\n\n").expect("parse");
+        assert_eq!(program.items.len(), 1);
+    }
+
+    #[test]
+    fn skip_continuations_pushback_on_heredoc_line() {
+        let program = parse_test("cat <<EOF >\\out\nbody\nEOF\n").expect("parse");
+        if let Command::Simple(cmd) = &program.items[0].and_or.first.commands[0] {
+            assert!(!cmd.redirections.is_empty());
+        } else {
+            panic!("expected simple command");
+        }
+    }
+
+    #[test]
+    fn heredoc_line_large_number_not_ionumber() {
+        let big = "999999999999";
+        let src = format!("cat <<EOF {big}word\nbody\nEOF\n");
+        let program = parse_test(&src).expect("parse");
+        assert_eq!(program.items.len(), 1);
+    }
+
+    #[test]
+    fn empty_heredoc_delimiter_after_ltlt() {
+        let result = parse_test("cat <<\n");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn reclassify_trailing_blank_alias_on_heredoc_line() {
+        let mut aliases = HashMap::new();
+        aliases.insert(Box::from("myalias"), Box::from("echo "));
+        let program = parse_with_aliases_test("cat <<EOF myalias world\nbody\nEOF\n", &aliases)
+            .expect("parse");
+        assert_eq!(program.items.len(), 1);
+    }
+
+    #[test]
+    fn produce_word_returns_eof_on_empty_continuation() {
+        let program = parse_test("echo \\\n  \n").expect("parse");
+        assert_eq!(program.items.len(), 1);
+    }
+
+    #[test]
+    fn alias_trailing_blank_triggers_reclassify_on_heredoc_line() {
+        let mut aliases = HashMap::new();
+        aliases.insert(Box::from("A"), Box::from("cat "));
+        aliases.insert(Box::from("B"), Box::from("extra"));
+        let program = parse_with_aliases_test("A <<EOF B\nhello\nEOF\n", &aliases).expect("parse");
+        if let Command::Simple(cmd) = &program.items[0].and_or.first.commands[0] {
+            assert_eq!(&*cmd.words[0].raw, "cat");
+            assert_eq!(&*cmd.words[1].raw, "extra");
+            assert_eq!(cmd.redirections.len(), 1);
+        } else {
+            panic!("expected simple command");
+        }
+    }
+
+    #[test]
+    fn second_heredoc_empty_delimiter_error() {
+        assert!(parse_test("cat <<EOF <<\nhello\nEOF\n").is_err());
+    }
+
+    #[test]
+    fn heredoc_line_overflow_ionumber_becomes_word() {
+        let src = "cat <<EOF 99999999999>out\nhello\nEOF\n";
+        let program = parse_test(src).expect("parse");
+        if let Command::Simple(cmd) = &program.items[0].and_or.first.commands[0] {
+            assert_eq!(&*cmd.words[1].raw, "99999999999");
+            assert_eq!(cmd.redirections.len(), 2);
+        } else {
+            panic!("expected simple command");
+        }
+    }
+
+    #[test]
+    fn alias_expanding_to_blanks_produces_eof_in_produce_word() {
+        let mut aliases = HashMap::new();
+        aliases.insert(Box::from("A"), Box::from("   "));
+        let program = parse_with_aliases_test("A ; echo done\n", &aliases).expect("parse");
+        assert!(program.items.is_empty());
+    }
+
+    #[test]
+    fn alias_ineligible_word_on_heredoc_line_skips_expansion() {
+        let mut aliases = HashMap::new();
+        aliases.insert(Box::from("A"), Box::from("cat "));
+        aliases.insert(Box::from("'B'"), Box::from("extra"));
+        let program =
+            parse_with_aliases_test("A <<EOF 'B'\nhello\nEOF\n", &aliases).expect("parse");
+        if let Command::Simple(cmd) = &program.items[0].and_or.first.commands[0] {
+            assert_eq!(&*cmd.words[0].raw, "cat");
+            assert_eq!(&*cmd.words[1].raw, "'B'");
+        } else {
+            panic!("expected simple command");
+        }
+    }
+
+    #[test]
+    fn unterminated_case_arm_breaks_loop() {
+        assert!(parse_test("case x in x) echo hi").is_err());
     }
 }
