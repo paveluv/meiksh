@@ -907,10 +907,9 @@ impl<'src, 'a> Parser<'src, 'a> {
     // simply ensure the cursor moves past the entire quoted region so
     // that `scan_word` can slice the full raw word at the end.
 
-    /// Advance past `'...'`.  The opening `'` must be the current byte.
+    /// Consume body and closing `'`.  Opening `'` already consumed and
+    /// pushed to raw by caller.
     fn consume_single_quote(&mut self, raw: &mut String) -> Result<(), ParseError> {
-        raw.push('\'');
-        self.advance_byte();
         loop {
             match self.peek_byte() {
                 None => return Err(self.error("unterminated single quote")),
@@ -927,9 +926,9 @@ impl<'src, 'a> Parser<'src, 'a> {
         }
     }
 
+    /// Consume body and closing `"`.  Opening `"` already consumed and
+    /// pushed to raw by caller.
     fn consume_double_quote(&mut self, raw: &mut String) -> Result<(), ParseError> {
-        raw.push('"');
-        self.advance_byte();
         loop {
             match self.peek_byte() {
                 None => return Err(self.error("unterminated double quote")),
@@ -984,7 +983,6 @@ impl<'src, 'a> Parser<'src, 'a> {
                 self.advance_byte();
                 self.consume_brace_body(raw)
             }
-            Some(b'\'') => self.consume_dollar_single_quote(raw),
             _ => Ok(()),
         }
     }
@@ -1163,8 +1161,16 @@ impl<'src, 'a> Parser<'src, 'a> {
 
     fn consume_quoted_element(&mut self, raw: &mut String) -> Result<(), ParseError> {
         match self.peek_byte() {
-            Some(b'\'') => self.consume_single_quote(raw),
-            Some(b'"') => self.consume_double_quote(raw),
+            Some(b'\'') => {
+                raw.push('\'');
+                self.advance_byte();
+                self.consume_single_quote(raw)
+            }
+            Some(b'"') => {
+                raw.push('"');
+                self.advance_byte();
+                self.consume_double_quote(raw)
+            }
             Some(b'\\') => {
                 raw.push('\\');
                 self.advance_byte();
@@ -1263,11 +1269,15 @@ impl<'src, 'a> Parser<'src, 'a> {
                 Some(b'\'') => {
                     had_quote = true;
                     kw = KW_NONE;
+                    raw.push('\'');
+                    self.advance_byte();
                     self.consume_single_quote(&mut raw)?;
                 }
                 Some(b'"') => {
                     had_quote = true;
                     kw = KW_NONE;
+                    raw.push('"');
+                    self.advance_byte();
                     self.consume_double_quote(&mut raw)?;
                 }
                 Some(b'$') => {
