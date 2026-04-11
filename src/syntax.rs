@@ -1,75 +1,12 @@
-//! Single-pass POSIX shell parser with separate tokenizer and AST builder.
-//!
-//! # Architecture
-//!
-//! The parser has two layers that operate as cooperating state machines:
-//!
-//! 1. **Tokenizer** — consumes the byte stream one character at a time
-//!    (via `peek_byte`/`advance_byte`), handles alias expansion layers,
-//!    heredoc line buffering, and emits [`Token`] values through
-//!    `peek_token`/`advance_token`.
-//!
-//! 2. **AST builder** — consumes tokens via `peek_token`/`advance_token`
-//!    and drives recursive-descent parsing to produce the AST.  It
-//!    controls keyword/alias recognition by calling `set_keyword_mode`:
-//!    `true` at command position (keywords recognized, aliases expanded),
-//!    `false` at argument position (plain words only).
-//!
-//! # Key invariant — single pass
-//!
-//! Every source character is read at most once.  Every token is produced
-//! exactly once and consumed exactly once.  There is no re-scanning,
-//! no lookahead beyond one cached token, and no backtracking.
-//!
-//! # Alias expansion
-//!
-//! When `keyword_mode` is true, the tokenizer checks each scanned word
-//! against the alias table.  If a match is found, the alias value is
-//! pushed as a new [`AliasLayer`] on the input stack and scanning
-//! continues from the expanded text.  If the alias value ends with a
-//! blank, the next word is also subject to alias expansion (POSIX 2.3.1).
-//!
-//! # Heredoc line buffering
-//!
-//! When `<<` is encountered, the tokenizer scans the delimiter, then
-//! buffers remaining tokens on the line.  At the newline, it reads all
-//! pending heredoc bodies before emitting the buffered tokens.  This
-//! ensures heredoc errors surface before grammar errors on the same line.
-//!
-//! # Owned AST
-//!
-//! All AST string fields use `Box<str>` — fully owned, no lifetime
-//! parameters.  The parser copies source slices into `Box<str>` when
-//! constructing AST nodes.
-
 use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
-
-// ============================================================
-// AST types
-// ============================================================
-//
-// POSIX shell grammar, bottom-up:
-//
-//   Program      = ListItem*
-//   ListItem     = AndOr ('&')?          (optionally asynchronous)
-//   AndOr        = Pipeline ('&&'|'||' Pipeline)*
-//   Pipeline     = ['time' ['-p']] ['!'] Command ('|' Command)*
-//   Command      = Simple | Subshell | Group | If | Loop | For | Case
-//                 | FunctionDef | Redirected(Command, Redir*)
-//   SimpleCommand = Assignment* Word* Redirection*
-//
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Program {
     pub items: Box<[ListItem]>,
 }
 
-/// One entry in a command list.  `asynchronous` is true when the item
-/// is terminated by `&`, causing it to run in the background.
-/// `line` records the source line for diagnostic messages.
-/// Equality ignores `line` (same rationale as `Word`).
 #[derive(Clone, Debug)]
 pub struct ListItem {
     pub and_or: AndOr,
@@ -110,8 +47,6 @@ pub struct Pipeline {
     pub commands: Box<[Command]>,
 }
 
-/// A single shell command.  `Redirected` wraps a compound command with
-/// trailing redirections (simple commands carry redirections inline).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
     Simple(SimpleCommand),
@@ -138,9 +73,6 @@ pub struct Assignment {
     pub value: Word,
 }
 
-/// A shell word — the raw source text before expansion.
-/// `line` records where the word appeared for diagnostics.
-/// Equality ignores `line` so tests can compare ASTs without position noise.
 #[derive(Clone, Debug)]
 pub struct Word {
     pub raw: Box<str>,
@@ -202,9 +134,6 @@ pub struct CaseCommand {
     pub arms: Box<[CaseArm]>,
 }
 
-/// One arm of a `case` statement.  `fallthrough` is true when the arm
-/// is terminated by `;&` instead of `;;`, meaning execution continues
-/// into the next arm's body.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CaseArm {
     pub patterns: Box<[Word]>,
@@ -212,16 +141,6 @@ pub struct CaseArm {
     pub fallthrough: bool,
 }
 
-/// A here-document body.
-///
-/// * `expand` — `true` unless the delimiter was quoted (e.g. `<<'EOF'`),
-///   in which case the body is taken literally.
-/// * `strip_tabs` — `true` for `<<-`, which strips leading tabs from
-///   each body line and from the delimiter line.
-/// * `body_line` — the source line where the body starts, for diagnostics.
-///
-/// Tab stripping and `\\\n` continuation are left in the raw body here;
-/// normalization happens at expansion time in `exec.rs`.
 #[derive(Clone, Debug)]
 pub struct HereDoc {
     pub delimiter: Box<str>,
@@ -240,7 +159,6 @@ impl PartialEq for HereDoc {
     }
 }
 impl Eq for HereDoc {}
-
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoopKind {
@@ -283,46 +201,26 @@ fn line_at(source: &str, index: usize) -> usize {
         + 1
 }
 
-// ============================================================
-// Internal types
-// ============================================================
-
-/// An overlay on the input stream produced by alias expansion.
-/// When an alias is expanded, its value is pushed as a new layer.
-/// The parser reads from the topmost layer until exhausted, then
-/// falls back to the layer beneath (or the main source).
-/// Borrows its text from the alias HashMap so no cloning is needed.
 struct AliasLayer<'a> {
     text: Cow<'a, str>,
     pos: usize,
-    /// POSIX: if an alias value ends with a blank, the next word at
-    /// command position is also subject to alias expansion.
+
     trailing_blank: bool,
 }
 
-// ---- Byte classification table ----
-//
-// A single `[u8; 256]` lookup table where each bit encodes an
-// independent character class.  One load from this table serves every
-// per-byte classification the parser needs — `is_delim`, `is_word_break`,
-// blank testing, quoting detection, and POSIX name validation — all from
-// a single cache-line-friendly array.
-
-const BC_WORD_BREAK: u8 = 0x01; // terminates a word mid-scan
-const BC_DELIM: u8      = 0x02; // terminates AND prevents starting a word (word_break + #)
-const BC_BLANK: u8      = 0x04; // horizontal whitespace: space, tab
-const BC_QUOTE: u8      = 0x08; // quoting chars: ' " \ $ `
-const BC_NAME_START: u8 = 0x10; // valid first char of a POSIX name: [A-Za-z_]
-const BC_NAME_CONT: u8  = 0x20; // valid name continuation: [A-Za-z0-9_]
+const BC_WORD_BREAK: u8 = 0x01;
+const BC_DELIM: u8      = 0x02;
+const BC_BLANK: u8      = 0x04;
+const BC_QUOTE: u8      = 0x08;
+const BC_NAME_START: u8 = 0x10;
+const BC_NAME_CONT: u8  = 0x20;
 
 const BYTE_CLASS: [u8; 256] = {
     let mut t = [0u8; 256];
 
-    // word-break + delim + blank
     t[b' '  as usize] = BC_WORD_BREAK | BC_DELIM | BC_BLANK;
     t[b'\t' as usize] = BC_WORD_BREAK | BC_DELIM | BC_BLANK;
 
-    // word-break + delim (not blank)
     t[b'\n' as usize] = BC_WORD_BREAK | BC_DELIM;
     t[b';'  as usize] = BC_WORD_BREAK | BC_DELIM;
     t[b'&'  as usize] = BC_WORD_BREAK | BC_DELIM;
@@ -332,17 +230,14 @@ const BYTE_CLASS: [u8; 256] = {
     t[b'<'  as usize] = BC_WORD_BREAK | BC_DELIM;
     t[b'>'  as usize] = BC_WORD_BREAK | BC_DELIM;
 
-    // delim only (not word-break): # starts a comment at token boundaries
     t[b'#'  as usize] = BC_DELIM;
 
-    // quoting characters
     t[b'\'' as usize] |= BC_QUOTE;
     t[b'"'  as usize] |= BC_QUOTE;
     t[b'\\' as usize] |= BC_QUOTE;
     t[b'$'  as usize] |= BC_QUOTE;
     t[b'`'  as usize] |= BC_QUOTE;
 
-    // POSIX name chars: [A-Za-z_] get NAME_START | NAME_CONT, [0-9] get NAME_CONT
     t[b'_' as usize] |= BC_NAME_START | BC_NAME_CONT;
     let mut c: u8 = b'A';
     while c <= b'Z' {
@@ -388,17 +283,11 @@ fn is_alias_word(word: &str) -> bool {
     !word.is_empty() && !word.bytes().any(|b| is_quote(b))
 }
 
-// ============================================================
-// Token — the unified token type emitted by the tokenizer
-// ============================================================
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Token {
-    // -- Words --
     Word(Box<str>),
     IoNumber(i32),
 
-    // -- Operators --
     Pipe,
     OrIf,
     Amp,
@@ -416,7 +305,6 @@ enum Token {
     LParen,
     RParen,
 
-    // -- Heredoc (operator + delimiter + body, bundled) --
     HereDoc {
         strip_tabs: bool,
         expand: bool,
@@ -425,7 +313,6 @@ enum Token {
         body_line: usize,
     },
 
-    // -- Keywords (emitted only when keyword_mode is on) --
     If,
     Then,
     Else,
@@ -444,7 +331,6 @@ enum Token {
     RBrace,
     Function,
 
-    // -- Structural --
     Newline,
     Eof,
 }
@@ -505,25 +391,6 @@ fn word_to_keyword_token(w: &str) -> Option<Token> {
     }
 }
 
-// ============================================================
-// Parser
-// ============================================================
-//
-// State overview:
-//
-//  source                – the entire input string
-//  pos / line            – current read position and line counter
-//  cached_byte           – one-byte lookahead cache (None at EOF)
-//  alias_stack           – stack of alias expansion overlays (read before `source`)
-//  expanding_aliases     – names currently being expanded (prevents recursion)
-//  alias_depth           – depth counter for alias nesting limit (1024)
-//  alias_trailing_blank_pending – set when an exhausted alias layer had a trailing
-//                          blank, signaling the next word at command position
-//                          should also attempt alias expansion
-//  cached_token          – one-token lookahead for peek/advance
-//  token_queue           – buffered tokens from heredoc line scanning
-//  keyword_mode          – controls keyword recognition at command position
-
 pub struct Parser<'src, 'a> {
     source: &'src str,
     pos: usize,
@@ -535,7 +402,6 @@ pub struct Parser<'src, 'a> {
     expanding_aliases: Vec<String>,
     alias_trailing_blank_pending: bool,
     next_cached_byte: Option<u8>,
-    // -- Token-level state --
     cached_token: Option<Token>,
     token_queue: VecDeque<Token>,
     keyword_mode: bool,
@@ -589,23 +455,6 @@ impl<'src, 'a> Parser<'src, 'a> {
         }
     }
 
-    // ---- Input layer management ----
-    //
-    // The parser reads from a virtual stream that can have alias-expansion
-    // overlays on top of the main source.  The topmost non-exhausted alias
-    // layer is read first; when it runs out, we fall back to the layer
-    // below (or to `self.source`).
-    //
-    // `cached_byte` always holds the next available byte (or None at EOF).
-    // `peek_byte` is a single field read; `advance_byte` is the sole
-    // consumer of bytes — it updates the position, pops exhausted layers,
-    // and refreshes the cache.  Other code that mutates positions directly
-    // (backtracking, alias push, heredoc read) calls `sync_cache()` which
-    // only refreshes `cached_byte` without popping.
-
-    /// Remove fully-consumed alias layers.  When popping a layer that had
-    /// a trailing blank, record it so `parse_simple_command` can trigger
-    /// alias expansion on the next word.
     #[inline(always)]
     fn pop_exhausted_layers(&mut self) {
         if let Some(layer) = self.alias_stack.last() {
@@ -631,13 +480,11 @@ impl<'src, 'a> Parser<'src, 'a> {
         }
     }
 
-    /// Return the next byte from the virtual stream without consuming it.
     #[inline(always)]
     fn peek_byte(&self) -> Option<u8> {
         self.cached_byte
     }
 
-    /// Consume one byte, tracking newlines and updating the cache.
     #[inline(always)]
     fn advance_byte(&mut self) {
         if let Some(b) = self.next_cached_byte.take() {
@@ -663,10 +510,6 @@ impl<'src, 'a> Parser<'src, 'a> {
         self.cached_byte = bytes.get(self.pos).copied();
     }
 
-    /// Consume `\<newline>` line continuations at the current position.
-    /// If `\` is followed by a non-newline byte, stash that byte in
-    /// `next_cached_byte` and replay `\` through `cached_byte` so the
-    /// caller sees `\` as the next byte.
     fn skip_continuations(&mut self) {
         loop {
             if self.cached_byte != Some(b'\\') {
@@ -682,12 +525,6 @@ impl<'src, 'a> Parser<'src, 'a> {
             }
         }
     }
-
-    // ---- Whitespace / separator handling ----
-    //
-    // POSIX distinguishes three levels of whitespace skipping:
-    //   skip_blanks:             spaces, tabs, and backslash-newline
-    //   skip_blanks_and_comments: blanks + `#`-comments
 
     fn skip_blanks(&mut self) {
         loop {
@@ -708,16 +545,6 @@ impl<'src, 'a> Parser<'src, 'a> {
         }
     }
 
-    // ---- Quote/expansion scanning ----
-    //
-    // These routines advance the position past quoted/expanded regions
-    // inside a word.  They are called from the token scanner when a quoting
-    // character is encountered.  They don't produce AST nodes — they
-    // simply ensure the cursor moves past the entire quoted region so
-    // that the scanner can slice the full raw word at the end.
-
-    /// Consume body and closing `'`.  Opening `'` already consumed and
-    /// pushed to raw by caller.
     fn consume_single_quote(&mut self, raw: &mut String) -> Result<(), ParseError> {
         loop {
             match self.peek_byte() {
@@ -735,8 +562,6 @@ impl<'src, 'a> Parser<'src, 'a> {
         }
     }
 
-    /// Consume body and closing `"`.  Opening `"` already consumed and
-    /// pushed to raw by caller.
     fn consume_double_quote(&mut self, raw: &mut String) -> Result<(), ParseError> {
         loop {
             match self.peek_byte() {
@@ -772,7 +597,6 @@ impl<'src, 'a> Parser<'src, 'a> {
         }
     }
 
-    /// `$` already consumed and pushed to raw by caller.
     fn consume_dollar_construct(&mut self, raw: &mut String) -> Result<(), ParseError> {
         match self.peek_byte() {
             Some(b'(') => {
@@ -833,7 +657,6 @@ impl<'src, 'a> Parser<'src, 'a> {
         }
     }
 
-    /// `$` already consumed and pushed to raw by caller.
     fn consume_dollar_single_quote(&mut self, raw: &mut String) -> Result<(), ParseError> {
         raw.push('\'');
         self.advance_byte();
@@ -942,7 +765,6 @@ impl<'src, 'a> Parser<'src, 'a> {
         }
     }
 
-    /// Opening `` ` `` already consumed and pushed to raw by caller.
     fn consume_backtick_inner(&mut self, raw: &mut String) -> Result<(), ParseError> {
         loop {
             match self.peek_byte() {
@@ -1009,23 +831,6 @@ impl<'src, 'a> Parser<'src, 'a> {
         }
     }
 
-    // ---- Heredoc body reading ----
-    //
-    // POSIX: heredoc bodies appear after the newline that ends the command
-    // containing `<<`.  `read_here_doc_body` reads lines from the virtual
-    // stream until the delimiter is found.
-
-    /// Read the body of a heredoc from the virtual stream.
-    ///
-    /// Lines are consumed via `peek_byte`/`advance_byte` so that the body
-    /// can reside in alias layers as well as the main source.  For unquoted
-    /// delimiters (`expand == true`), POSIX 2.7.4 requires `\<newline>`
-    /// continuation to be applied during the search for the trailing
-    /// delimiter.  For quoted delimiters (`expand == false`), no
-    /// continuation is applied.
-    ///
-    /// Raw body text (including `\<newline>` sequences and leading tabs)
-    /// is returned as-is; normalization happens at expansion time.
     fn read_here_doc_body(
         &mut self,
         delimiter: &str,
@@ -1092,16 +897,6 @@ impl<'src, 'a> Parser<'src, 'a> {
         }
     }
 
-    // ---- Token-level interface ----
-    //
-    // The token layer sits on top of the byte layer and produces Token
-    // values.  `peek_token` lazily scans the next token (or drains from
-    // the heredoc line buffer queue), caches it, and returns a reference.
-    // `advance_token` clears the cache.
-    //
-    // The AST builder controls keyword/alias recognition via
-    // `set_keyword_mode`: true at command position, false elsewhere.
-
     fn set_keyword_mode(&mut self, enabled: bool) {
         self.keyword_mode = enabled;
     }
@@ -1118,8 +913,6 @@ impl<'src, 'a> Parser<'src, 'a> {
         self.cached_token.take().expect("advance_token without peek_token")
     }
 
-    /// Main entry point for token production.  Drains from the
-    /// heredoc line-buffer queue first, then scans fresh bytes.
     fn produce_next_token(&mut self) -> Result<Token, ParseError> {
         if let Some(tok) = self.token_queue.pop_front() {
             return self.reclassify_queued_token(tok);
@@ -1127,8 +920,6 @@ impl<'src, 'a> Parser<'src, 'a> {
         self.produce_token_from_bytes()
     }
 
-    /// Apply keyword/alias classification to a token that was buffered
-    /// during heredoc line scanning (stored as a raw Word).
     fn reclassify_queued_token(&mut self, tok: Token) -> Result<Token, ParseError> {
         let check_keyword = self.keyword_mode;
         let check_alias = self.keyword_mode || self.alias_trailing_blank_pending;
@@ -1167,7 +958,6 @@ impl<'src, 'a> Parser<'src, 'a> {
         Ok(tok)
     }
 
-    /// Scan the next token from the byte stream (alias layers + main source).
     fn produce_token_from_bytes(&mut self) -> Result<Token, ParseError> {
         self.skip_blanks_and_comments();
         match self.peek_byte() {
@@ -1273,9 +1063,6 @@ impl<'src, 'a> Parser<'src, 'a> {
         }
     }
 
-    /// Handle `<<` or `<<-`: scan delimiter, buffer rest of line,
-    /// read heredoc body(ies), then return the first HereDoc token
-    /// with remaining tokens queued.
     fn produce_heredoc_line(&mut self, first_strip_tabs: bool) -> Result<Token, ParseError> {
         self.skip_blanks();
         let mut first_raw = String::new();
@@ -1285,12 +1072,10 @@ impl<'src, 'a> Parser<'src, 'a> {
         }
         let (first_delim, first_expand) = parse_here_doc_delimiter(&first_raw);
 
-        // (delimiter, strip_tabs, expand)
         let mut hd_infos: Vec<(Box<str>, bool, bool)> = vec![
             (first_delim, first_strip_tabs, first_expand),
         ];
 
-        // Line items: Ok(Token) for regular tokens, Err(idx) for heredoc slots
         let mut line_items: Vec<Result<Token, usize>> = Vec::new();
 
         loop {
@@ -1410,7 +1195,6 @@ impl<'src, 'a> Parser<'src, 'a> {
             self.advance_byte();
         }
 
-        // Read heredoc bodies in order
         let mut bodies: Vec<(Box<str>, usize)> = Vec::new();
         for (delim, strip_tabs, expand) in &hd_infos {
             let body_line = self.line;
@@ -1418,7 +1202,6 @@ impl<'src, 'a> Parser<'src, 'a> {
             bodies.push((body, body_line));
         }
 
-        // Build token queue
         for item in line_items {
             match item {
                 Ok(tok) => self.token_queue.push_back(tok),
@@ -1436,7 +1219,6 @@ impl<'src, 'a> Parser<'src, 'a> {
         }
         self.token_queue.push_back(Token::Newline);
 
-        // Return first HereDoc token
         let (ref body, body_line) = bodies[0];
         Ok(Token::HereDoc {
             strip_tabs: hd_infos[0].1,
@@ -1447,8 +1229,6 @@ impl<'src, 'a> Parser<'src, 'a> {
         })
     }
 
-    /// Digits at the start of a token: IO number if followed by `<`/`>`,
-    /// otherwise part of a word.
     fn produce_digit_or_word(&mut self) -> Result<Token, ParseError> {
         let mut digits = String::new();
         while let Some(b) = self.peek_byte() {
@@ -1472,9 +1252,6 @@ impl<'src, 'a> Parser<'src, 'a> {
         self.produce_word_with_prefix(String::new())
     }
 
-    /// Scan a word (optionally starting with an already-consumed prefix),
-    /// then classify it as a keyword (if keyword_mode), expand as an
-    /// alias, or return as a plain Word.
     fn produce_word_with_prefix(
         &mut self,
         prefix: String,
@@ -1535,8 +1312,6 @@ impl<'src, 'a> Parser<'src, 'a> {
         }
     }
 
-    /// Core word scanning loop.  Appends bytes to `raw` until a word
-    /// break is hit.  Returns true if quoting was encountered.
     fn scan_raw_word(&mut self, raw: &mut String) -> Result<bool, ParseError> {
         let mut had_quote = false;
         loop {
@@ -1611,26 +1386,6 @@ impl<'src, 'a> Parser<'src, 'a> {
         Ok(had_quote)
     }
 
-    // ---- Parsing methods (legacy — being migrated to AstBuilder) ----
-    //
-    // The grammar is parsed by mutually recursive functions, each consuming
-    // the portion of input they're responsible for:
-    //
-    //   parse_program_until  — sequence of ListItems, stopping at a keyword,
-    //                          closer token, or `;;`/`;&`
-    //   parse_and_or         — Pipeline (&&/|| Pipeline)*
-    //   parse_pipeline       — [time [-p]] [!] Command (| Command)*
-    //   parse_command        — Command with trailing redirections
-    //   parse_command_inner  — dispatches keyword/subshell/group/simple
-    //   parse_simple_command — assignments, words, redirections
-    //   parse_if/for/case/while/until — compound commands
-    //
-    // All parsing methods use `self.aliases` (stored on the Parser) and call
-    // `expand_alias_at_command_position` at the top of each command
-    // position.  The pushback guard makes redundant calls O(1) no-ops.
-
-    // ---- New helper methods for token-based parsing ----
-
     fn eat_keyword(&mut self, expected: Token, name: &str) -> Result<(), ParseError> {
         self.set_keyword_mode(true);
         if *self.peek_token()? == expected {
@@ -1668,15 +1423,12 @@ impl<'src, 'a> Parser<'src, 'a> {
         Ok(())
     }
 
-    /// Take the current token's Word content.  Panics if not a Word.
     fn take_word(&mut self) -> Box<str> {
         match self.advance_token() {
             Token::Word(w) => w,
             _ => unreachable!("expected Word token"),
         }
     }
-
-    // ---- Parsing methods ----
 
     fn parse_program_until(
         &mut self,
@@ -2112,8 +1864,6 @@ impl<'src, 'a> Parser<'src, 'a> {
         }
     }
 
-    // ---- Compound commands ----
-
     fn parse_if_command(&mut self) -> Result<Command, ParseError> {
         let condition = self.parse_program_until(
             |tok| matches!(tok, Token::Then),
@@ -2393,8 +2143,6 @@ impl<'src, 'a> Parser<'src, 'a> {
         }))
     }
 
-    // ---- Public incremental API ----
-
     fn next_complete_command(
         &mut self,
     ) -> Result<Option<Program>, ParseError> {
@@ -2442,16 +2190,10 @@ impl<'src, 'a> Parser<'src, 'a> {
     }
 }
 
-// ============================================================
-// Public API — entry points for callers
-// ============================================================
-
-/// Parse the entire source as a single program (batch mode).
 pub fn parse(source: &str) -> Result<Program, ParseError> {
     parse_with_aliases(source, &HashMap::new())
 }
 
-/// Parse with alias expansion using the shell's alias HashMap directly.
 pub fn parse_with_aliases(
     source: &str,
     aliases: &HashMap<Box<str>, Box<str>>,
@@ -2460,11 +2202,6 @@ pub fn parse_with_aliases(
     parser.parse_program_until(|_| false, false, false)
 }
 
-/// Alias expansion state saved between `next_command` calls.  Layers
-/// use `'static` because the `Cow` inside is always `Owned` — the
-/// `Parser` (and its borrowed alias references) is dropped between
-/// calls.  Cloning only happens for the rare case of multi-line
-/// aliases whose newline terminated a complete command.
 struct SavedAliasState {
     layers: Vec<AliasLayer<'static>>,
     depth: usize,
@@ -2472,11 +2209,6 @@ struct SavedAliasState {
     trailing_blank_pending: bool,
 }
 
-/// Incremental parsing session — holds the state that persists
-/// between `next_command` calls (source position plus any residual
-/// alias-expansion layers from multi-line aliases).  A fresh `Parser`
-/// is created for each call, borrowing the alias HashMap for that
-/// call's duration only.
 pub struct ParseSession<'src> {
     source: &'src str,
     pos: usize,
@@ -2543,12 +2275,6 @@ impl<'src> ParseSession<'src> {
     }
 }
 
-// ============================================================
-// Utility functions
-// ============================================================
-
-/// Split `NAME=VALUE` into `(NAME, VALUE)`.  Returns `None` if the
-/// left side is not a valid shell identifier or there is no `=`.
 fn split_assignment(input: &str) -> Option<(&str, &str)> {
     let (name, value) = input.split_once('=')?;
     if !is_name(name) {
@@ -2557,10 +2283,6 @@ fn split_assignment(input: &str) -> Option<(&str, &str)> {
     Some((name, value))
 }
 
-/// Strip quoting from a heredoc delimiter word and determine whether the
-/// body should undergo parameter/command expansion.
-/// Any quoting character (`'`, `"`, `\`) in the delimiter suppresses
-/// expansion of the body (POSIX 2.7.4).
 fn parse_here_doc_delimiter(raw: &str) -> (Box<str>, bool) {
     let mut delimiter = String::new();
     let mut index = 0usize;
@@ -2647,8 +2369,6 @@ fn parse_here_doc_delimiter(raw: &str) -> (Box<str>, bool) {
     (delimiter.into_boxed_str(), expand)
 }
 
-/// Check whether `name` is a valid POSIX shell identifier:
-/// starts with `[A-Za-z_]`, followed by `[A-Za-z0-9_]*`.
 pub fn is_name(name: &str) -> bool {
     let bytes = name.as_bytes();
     !bytes.is_empty()
@@ -2657,10 +2377,6 @@ pub fn is_name(name: &str) -> bool {
             & BC_NAME_CONT
             != 0
 }
-
-// ============================================================
-// Tests
-// ============================================================
 
 #[cfg(test)]
 mod tests {
@@ -3642,7 +3358,6 @@ mod tests {
         ));
     }
 
-
     #[test]
     fn consume_scan_covers_dollar_single_quote_and_default_in_subshell() {
         let program = parse_test("echo $(echo $'hi' done)").expect("dollar-sq in paren");
@@ -3687,9 +3402,6 @@ mod tests {
         aliases.insert("both".into(), "echo a\necho b".into());
         let mut session = ParseSession::new("both\necho c").unwrap();
 
-        // The alias "both" expands to "echo a\necho b".  The newline in the
-        // alias terminates the first complete command, just as if it had been
-        // read from the input (POSIX 2.3.1).
         let first = session.next_command(&aliases).expect("first").expect("some");
         assert_eq!(first.items.len(), 1);
         assert!(matches!(
@@ -3697,8 +3409,6 @@ mod tests {
             Command::Simple(cmd) if cmd.words.iter().map(|w| &*w.raw).collect::<Vec<_>>() == ["echo", "a"]
         ));
 
-        // The remaining alias text ("echo b") is preserved across calls and
-        // parsed as the second complete command.
         let second = session.next_command(&aliases).expect("second").expect("some");
         assert_eq!(second.items.len(), 1);
         assert!(matches!(
@@ -3706,7 +3416,6 @@ mod tests {
             Command::Simple(cmd) if cmd.words.iter().map(|w| &*w.raw).collect::<Vec<_>>() == ["echo", "b"]
         ));
 
-        // "echo c" follows on the next source line.
         let third = session.next_command(&aliases).expect("third").expect("some");
         assert_eq!(third.items.len(), 1);
         assert!(matches!(
@@ -3717,13 +3426,9 @@ mod tests {
         assert!(session.next_command(&aliases).expect("eof").is_none());
     }
 
-    // ---- Bug regression tests ----
-
     #[test]
     fn heredoc_delimiter_backslash_preserves_non_special_in_dquotes() {
-        // POSIX 2.6.7: inside double quotes, backslash only escapes
-        // $, `, ", \, and newline.  For other characters the backslash
-        // is preserved literally.
+
         assert_eq!(
             parse_here_doc_delimiter("\"E\\OF\""),
             ("E\\OF".into(), false)
@@ -3732,7 +3437,7 @@ mod tests {
             parse_here_doc_delimiter("\"a\\nb\""),
             ("a\\nb".into(), false)
         );
-        // Backslash before a POSIX-special char IS stripped:
+
         assert_eq!(
             parse_here_doc_delimiter("\"a\\$b\""),
             ("a$b".into(), false)
@@ -3764,7 +3469,7 @@ mod tests {
                 let has_redir_fd2 = cmd.redirections.iter().any(|r|
                     r.fd == Some(2) && r.kind == RedirectionKind::Write
                 );
-                // "2" must NOT appear as a word — it should be the IO number
+
                 let no_word_2 = !cmd.words.iter().any(|w| &*w.raw == "2");
                 has_echo && has_redir_fd2 && no_word_2
             }
@@ -3773,10 +3478,10 @@ mod tests {
 
     #[test]
     fn comment_with_close_paren_inside_command_substitution() {
-        // A ')' inside a #-comment must not close the $(...) substitution.
+
         let program = parse_test("echo $(echo hello # )\necho world\n)")
             .expect("comment with ) in $(...)");
-        // The entire $(...) is one word, so the outer "echo" has 2 words.
+
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words.len() == 2
@@ -3785,9 +3490,7 @@ mod tests {
 
     #[test]
     fn backslash_newline_continuation_in_alias() {
-        // Alias value contains a literal backslash-newline, which per
-        // POSIX 2.3.1 should be treated as line continuation (removed),
-        // joining "hell" and "o" into "hello".
+
         let mut aliases: HashMap<Box<str>, Box<str>> = HashMap::new();
         aliases.insert("foo".into(), "echo hell\\\no".into());
         let program =
@@ -3800,18 +3503,7 @@ mod tests {
 
     #[test]
     fn heredoc_quoted_delimiter_no_continuation() {
-        // POSIX 2.7.4: \<newline> continuation during delimiter search
-        // is only specified for UNQUOTED delimiters.  For quoted delimiters,
-        // the body lines are not expanded and continuation must not apply.
-        //
-        // Input:
-        //   cat <<'EOF'
-        //   EO\            <- line ending with backslash
-        //   F              <- next line
-        //   real body
-        //   EOF            <- actual delimiter
-        //
-        // The body must include "EO\\\nF\nreal body\n" — not terminate early.
+
         let program = parse_test("cat <<'EOF'\nEO\\\nF\nreal body\nEOF\n")
             .expect("quoted heredoc with backslash line");
         let cmd = match &program.items[0].and_or.first.commands[0] {
@@ -3825,10 +3517,7 @@ mod tests {
 
     #[test]
     fn backslash_newline_before_comment_in_command_substitution() {
-        // POSIX 2.2.1: \<newline> is removed before tokenization.
-        // POSIX 2.2.3: tokenizing rules apply recursively inside $().
-        // So after \<newline> removal, # at a token boundary starts a
-        // comment, and ) inside the comment must not close $().
+
         let program =
             parse_test("echo $(echo foo \\\n# comment with )\necho bar)\n")
                 .expect("continuation before comment in $(...)");
@@ -3840,9 +3529,7 @@ mod tests {
 
     #[test]
     fn heredoc_body_inside_alias_expansion() {
-        // POSIX 2.3.1: alias value is processed "as if it had been read
-        // from the input".  A newline inside the alias value is a real
-        // NEWLINE token that triggers heredoc body reading per 2.3/2.7.4.
+
         let aliases: HashMap<Box<str>, Box<str>> =
             [("x".into(), "cat <<EOF\nhello\nEOF".into())]
                 .into_iter()
@@ -3868,8 +3555,7 @@ mod tests {
 
     #[test]
     fn continuation_splits_keyword_if() {
-        // POSIX 2.2.1: \<newline> removed before tokenization.
-        // i\<newline>f must be recognized as reserved word "if".
+
         let program = parse_test("i\\\nf true; then echo ha; fi\n")
             .expect("if split by continuation");
         assert!(matches!(
@@ -3941,8 +3627,7 @@ mod tests {
 
     #[test]
     fn continuation_splits_alias_name() {
-        // \<newline> removed before tokenization means fo\<newline>o
-        // should be recognized as alias "foo".
+
         let aliases: HashMap<Box<str>, Box<str>> =
             [("foo".into(), "echo aliased".into())]
                 .into_iter()
@@ -3959,7 +3644,7 @@ mod tests {
 
     #[test]
     fn continuation_in_word() {
-        // \<newline> in the middle of a word: he\<newline>llo → "hello"
+
         let program = parse_test("echo he\\\nllo\n").expect("word continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
             Command::Simple(cmd) => cmd,
@@ -3970,8 +3655,7 @@ mod tests {
 
     #[test]
     fn continuation_splits_double_semicolon() {
-        // POSIX 2.2.1: \<newline> removed before tokenization.
-        // ;\<newline>; must form the ;; operator in case arms.
+
         let program = parse_test("case x in x) echo y;\\\n;esac\n")
             .expect(";; split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
@@ -3984,7 +3668,7 @@ mod tests {
 
     #[test]
     fn continuation_splits_and_if() {
-        // &\<newline>& must form the && operator.
+
         let program = parse_test("true &\\\n& echo ok\n")
             .expect("&& split by continuation");
         assert_eq!(program.items[0].and_or.rest.len(), 1);
@@ -3993,7 +3677,7 @@ mod tests {
 
     #[test]
     fn continuation_splits_or_if() {
-        // |\<newline>| must form the || operator.
+
         let program = parse_test("false |\\\n| echo ok\n")
             .expect("|| split by continuation");
         assert_eq!(program.items[0].and_or.rest.len(), 1);
@@ -4002,7 +3686,7 @@ mod tests {
 
     #[test]
     fn continuation_splits_heredoc_operator() {
-        // <\<newline>< must form the << operator.
+
         let program = parse_test("cat <\\\n<EOF\nhello\nEOF\n")
             .expect("<< split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
@@ -4017,7 +3701,7 @@ mod tests {
 
     #[test]
     fn continuation_splits_append_operator() {
-        // >\<newline>> must form the >> operator.
+
         let program = parse_test("echo hi >\\\n> /dev/null\n")
             .expect(">> split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
@@ -4030,7 +3714,7 @@ mod tests {
 
     #[test]
     fn multiple_continuations_in_keyword() {
-        // Multiple \<newline> sequences: w\<nl>h\<nl>i\<nl>l\<nl>e
+
         let program = parse_test("w\\\nh\\\ni\\\nl\\\ne false; do :; done\n")
             .expect("while with many continuations");
         assert!(matches!(
@@ -4041,7 +3725,7 @@ mod tests {
 
     #[test]
     fn continuation_at_start_of_input() {
-        // \<newline> before any token: removed, then "if" recognized normally.
+
         let program = parse_test("\\\nif true; then echo ha; fi\n")
             .expect("continuation at start");
         assert!(matches!(
@@ -4049,8 +3733,6 @@ mod tests {
             Command::If(_)
         ));
     }
-
-    // ---- More keyword continuations ----
 
     #[test]
     fn continuation_splits_keyword_esac() {
@@ -4116,11 +3798,9 @@ mod tests {
         ));
     }
 
-    // ---- Redirection operator continuations ----
-
     #[test]
     fn continuation_splits_dup_input() {
-        // <\<newline>& must form the <& operator.
+
         let program = parse_test("cat <\\\n&0 < /dev/null\n")
             .expect("<& split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
@@ -4132,7 +3812,7 @@ mod tests {
 
     #[test]
     fn continuation_splits_dup_output() {
-        // >\<newline>& must form the >& operator.
+
         let program = parse_test("echo hi >\\\n&2\n")
             .expect(">& split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
@@ -4144,7 +3824,7 @@ mod tests {
 
     #[test]
     fn continuation_splits_read_write() {
-        // <\<newline>> must form the <> operator.
+
         let program = parse_test("echo ok <\\\n> /dev/null\n")
             .expect("<> split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
@@ -4156,7 +3836,7 @@ mod tests {
 
     #[test]
     fn continuation_splits_clobber_write() {
-        // >\<newline>| must form the >| operator.
+
         let program = parse_test("echo ok >\\\n| /dev/null\n")
             .expect(">| split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
@@ -4168,7 +3848,7 @@ mod tests {
 
     #[test]
     fn continuation_splits_heredoc_strip_tabs() {
-        // <<\<newline>- must form the <<- operator.
+
         let program = parse_test("cat <\\\n<-EOF\n\thello\n\tEOF\n")
             .expect("<<- split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
@@ -4180,11 +3860,9 @@ mod tests {
         assert!(doc.strip_tabs);
     }
 
-    // ---- Case arm operators ----
-
     #[test]
     fn continuation_splits_semi_amp() {
-        // ;\<newline>& must form the ;& (fallthrough) operator.
+
         let program =
             parse_test("case x in x) echo first;\\\n& y) echo second;; esac\n")
                 .expect(";& split by continuation");
@@ -4195,12 +3873,9 @@ mod tests {
         assert!(cmd.arms[0].fallthrough);
     }
 
-    // ---- Other constructs ----
-
     #[test]
     fn continuation_splits_bang_negation() {
-        // !\<newline> command: the ! is a reserved word, continuation
-        // doesn't change that.
+
         let program = parse_test("!\\\n true\n")
             .expect("! with continuation");
         assert!(program.items[0].and_or.first.negated);
@@ -4208,7 +3883,7 @@ mod tests {
 
     #[test]
     fn continuation_splits_heredoc_delimiter_word() {
-        // \<newline> in the heredoc delimiter word: EO\<nl>F → EOF.
+
         let program = parse_test("cat <<EO\\\nF\nhello\nEOF\n")
             .expect("heredoc delimiter split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
@@ -4222,7 +3897,7 @@ mod tests {
 
     #[test]
     fn continuation_splits_assignment() {
-        // VA\<newline>R=value should be assignment VAR=value.
+
         let program = parse_test("x\\\n=hello echo $x\n")
             .expect("assignment split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
@@ -4235,7 +3910,7 @@ mod tests {
 
     #[test]
     fn continuation_splits_io_number() {
-        // 2\<newline>> must be recognized as IO number 2 + redirect.
+
         let program = parse_test("echo ok 2\\\n>/dev/null\n")
             .expect("IO number split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
@@ -4247,8 +3922,7 @@ mod tests {
 
     #[test]
     fn continuation_inside_double_quotes() {
-        // POSIX 2.2.3: \<newline> inside double quotes is line continuation
-        // and shall be removed.
+
         let program = parse_test("echo \"he\\\nllo\"\n")
             .expect("continuation inside double quotes");
         let cmd = match &program.items[0].and_or.first.commands[0] {
@@ -4260,7 +3934,7 @@ mod tests {
 
     #[test]
     fn continuation_inside_backticks() {
-        // \<newline> inside backtick command substitution is continuation.
+
         let program = parse_test("echo `echo he\\\nllo`\n")
             .expect("continuation inside backticks");
         let cmd = match &program.items[0].and_or.first.commands[0] {
@@ -4272,7 +3946,7 @@ mod tests {
 
     #[test]
     fn continuation_splits_arith_close() {
-        // $((1+2)\<newline>) — the two ) must form )) closing arithmetic.
+
         let program = parse_test("echo $((1+2)\\\n)\n")
             .expect("arith close split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
@@ -4283,11 +3957,9 @@ mod tests {
         assert!(cmd.words[1].raw.starts_with("$(("));
     }
 
-    // ---- Dollar construct continuations ----
-
     #[test]
     fn continuation_splits_dollar_paren() {
-        // $\<newline>( must be recognized as $( command substitution.
+
         let program = parse_test("echo $\\\n(echo inner)\n")
             .expect("$( split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
@@ -4299,7 +3971,7 @@ mod tests {
 
     #[test]
     fn continuation_splits_dollar_brace() {
-        // $\<newline>{ must be recognized as ${ parameter expansion.
+
         let program = parse_test("x=hello; echo $\\\n{x}\n")
             .expect("${ split by continuation");
         let cmd = match &program.items[1].and_or.first.commands[0] {
@@ -4312,7 +3984,7 @@ mod tests {
 
     #[test]
     fn continuation_splits_dollar_double_paren() {
-        // $(\<newline>( must be recognized as $(( arithmetic expansion.
+
         let program = parse_test("echo $(\\\n(1+2))\n")
             .expect("$(( split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
@@ -4325,7 +3997,7 @@ mod tests {
 
     #[test]
     fn continuation_splits_dollar_single_quote() {
-        // $\<newline>' must be recognized as $'...' quoting.
+
         let program = parse_test("echo $\\\n'hello'\n")
             .expect("$' split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
@@ -4337,10 +4009,7 @@ mod tests {
 
     #[test]
     fn arithmetic_unmatched_close_paren() {
-        // POSIX 2.6.4 / 2.3 rule 5: the parser must find )) to close
-        // $(()), even if the expression contains unmatched ).
-        // An unmatched ) at the top level is an arithmetic-level error,
-        // not a syntax-level one.
+
         let program = parse_test("echo $(( 1 ) + 2 ))")
             .expect("arithmetic with unmatched )");
         assert!(matches!(
