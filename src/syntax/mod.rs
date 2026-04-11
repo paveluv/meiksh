@@ -1,12 +1,11 @@
 mod ast;
 mod token;
 
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
 
 pub use ast::*;
-use token::{AliasLayer, Parser, SavedAliasState};
+use token::{Parser, SavedAliasState};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParseError {
@@ -58,40 +57,14 @@ impl<'src> ParseSession<'src> {
         let mut parser = Parser::new_at(self.source, self.pos, self.line, aliases);
 
         if let Some(saved) = self.saved_alias.take() {
-            for layer in saved.layers {
-                parser.alias_stack.push(layer);
-            }
-            parser.alias_depth = saved.depth;
-            parser.active_alias_names = saved.active_names;
-            parser.alias_trailing_blank_pending = saved.trailing_blank_pending;
-            parser.sync_cached_byte();
+            parser.restore_alias_state(saved);
         }
 
         let result = parser.next_complete_command();
 
         self.pos = parser.source_pos();
         self.line = parser.line;
-
-        if parser.alias_stack.len() <= 1 {
-            self.saved_alias = None;
-        } else {
-            let layers = parser
-                .alias_stack
-                .into_iter()
-                .skip(1)
-                .map(|layer| AliasLayer {
-                    text: Cow::Owned(layer.text.into_owned()),
-                    pos: layer.pos,
-                    trailing_blank: layer.trailing_blank,
-                })
-                .collect();
-            self.saved_alias = Some(SavedAliasState {
-                layers,
-                depth: parser.alias_depth,
-                active_names: parser.active_alias_names,
-                trailing_blank_pending: parser.alias_trailing_blank_pending,
-            });
-        }
+        self.saved_alias = parser.save_alias_state();
 
         result
     }
