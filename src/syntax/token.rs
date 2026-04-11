@@ -214,6 +214,7 @@ pub struct Parser<'a> {
     cached_token: Option<Token>,
     token_queue: VecDeque<Token>,
     pub(super) keyword_mode: bool,
+    alias_mode: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -244,6 +245,7 @@ impl<'a> Parser<'a> {
             cached_token: None,
             token_queue: VecDeque::new(),
             keyword_mode: true,
+            alias_mode: true,
         }
     }
 
@@ -713,8 +715,19 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub(super) fn set_keyword_mode(&mut self, enabled: bool) {
-        self.keyword_mode = enabled;
+    pub(super) fn set_command_position(&mut self) {
+        self.keyword_mode = true;
+        self.alias_mode = true;
+    }
+
+    pub(super) fn set_keyword_position(&mut self) {
+        self.keyword_mode = true;
+        self.alias_mode = false;
+    }
+
+    pub(super) fn set_argument_position(&mut self) {
+        self.keyword_mode = false;
+        self.alias_mode = false;
     }
 
     pub(super) fn peek_token(&mut self) -> Result<&Token, ParseError> {
@@ -741,7 +754,7 @@ impl<'a> Parser<'a> {
 
     fn reclassify_queued_token(&mut self, tok: Token) -> Result<Token, ParseError> {
         let check_keyword = self.keyword_mode;
-        let check_alias = self.keyword_mode || self.alias_trailing_blank_pending;
+        let check_alias = self.alias_mode || self.alias_trailing_blank_pending;
         if self.alias_trailing_blank_pending {
             self.alias_trailing_blank_pending = false;
         }
@@ -1076,7 +1089,7 @@ impl<'a> Parser<'a> {
         prefix: String,
     ) -> Result<Token, ParseError> {
         let check_keyword = self.keyword_mode;
-        let check_alias = self.keyword_mode || self.alias_trailing_blank_pending;
+        let check_alias = self.alias_mode || self.alias_trailing_blank_pending;
         if self.alias_trailing_blank_pending {
             self.alias_trailing_blank_pending = false;
         }
