@@ -499,6 +499,46 @@ fn parse_timeout_value(val: &str) -> Result<Duration, String> {
     }
 }
 
+// ── Cgroup v2 helpers ────────────────────────────────────────────────────────
+
+fn discover_cgroup_base() -> Option<String> {
+    let cgroup_info = std::fs::read_to_string("/proc/self/cgroup").ok()?;
+    for line in cgroup_info.lines() {
+        if let Some(path) = line.strip_prefix("0::") {
+            let sysfs = format!("/sys/fs/cgroup{path}");
+            let procs_path = format!("{sysfs}/cgroup.procs");
+            if std::fs::metadata(&procs_path).is_ok() {
+                return Some(sysfs);
+            }
+        }
+    }
+    None
+}
+
+fn create_test_cgroup(base: &str, id: &str) -> io::Result<String> {
+    let path = format!("{base}/epty_{id}");
+    std::fs::create_dir(&path)?;
+    Ok(path)
+}
+
+fn move_to_cgroup(cg: &str, pid: u32) -> io::Result<()> {
+    std::fs::write(format!("{cg}/cgroup.procs"), pid.to_string())
+}
+
+fn kill_cgroup(cg: &str) -> io::Result<()> {
+    std::fs::write(format!("{cg}/cgroup.kill"), "1")
+}
+
+fn remove_cgroup(cg: &str) {
+    for _ in 0..20 {
+        if std::fs::remove_dir(cg).is_ok() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let _ = std::fs::remove_dir(cg);
+}
+
 /// Parse the arguments of an expect command, handling optional timeout=Nms/Ns prefix.
 /// Returns (None, pattern_str) when no timeout is given — caller picks default.
 fn parse_expect_args(rest: &str) -> Result<(Option<Duration>, &str), String> {
@@ -2032,6 +2072,155 @@ fn dump_log(log: &[String]) {
     eprintln!("--- end log ---");
 }
 
+// ── Per-test isolation ───────────────────────────────────────────────────────
+
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn run_test_isolated(
+    test: &TestCase,
+    shell_argv: &[String],
+    shell_str: &str,
+    script_modes: &[ScriptMode],
+    locale_dir: Option<&str>,
+    timeout: Duration,
+    cgroup_base: Option<&str>,
+) -> TestReport {
+    let test_id = format!(
+        "{}_{}_{}",
+        std::process::id(),
+        TEST_COUNTER.fetch_add(1, Ordering::Relaxed),
+        test.name.replace(|c: char| !c.is_alphanumeric(), "_")
+    );
+
+    let cgroup_path = cgroup_base.and_then(|base| create_test_cgroup(base, &test_id).ok());
+
+    let mut pipe_fds = [0 as CInt; 2];
+    if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } != 0 {
+        return TestReport {
+            name: test.name.clone(),
+            outcome: TestOutcome::Fail,
+            error: Some("failed to create IPC pipe".to_string()),
+        };
+    }
+    let pipe_r = pipe_fds[0];
+    let pipe_w = pipe_fds[1];
+
+    let child_pid = unsafe { libc::fork() };
+    if child_pid < 0 {
+        unsafe {
+            libc::close(pipe_r);
+            libc::close(pipe_w);
+        }
+        if let Some(ref cg) = cgroup_path {
+            remove_cgroup(cg);
+        }
+        return TestReport {
+            name: test.name.clone(),
+            outcome: TestOutcome::Fail,
+            error: Some("fork() failed".to_string()),
+        };
+    }
+
+    if child_pid == 0 {
+        // ── Child process ──
+        unsafe {
+            libc::setsid();
+            libc::close(pipe_r);
+        }
+
+        if let Some(ref cg) = cgroup_path {
+            let _ = move_to_cgroup(cg, std::process::id());
+        }
+
+        match run_suite_test(test, shell_argv, shell_str, script_modes, locale_dir) {
+            Ok(()) => {
+                unsafe { libc::close(pipe_w) };
+                unsafe { libc::_exit(0) };
+            }
+            Err(msg) => {
+                let bytes = msg.as_bytes();
+                unsafe {
+                    libc::write(pipe_w, bytes.as_ptr() as *const libc::c_void, bytes.len());
+                    libc::close(pipe_w);
+                    libc::_exit(1);
+                }
+            }
+        }
+    }
+
+    // ── Parent process ──
+    unsafe { libc::close(pipe_w) };
+
+    let deadline = Instant::now() + timeout;
+    let mut status: CInt = 0;
+    let mut reaped = false;
+
+    loop {
+        let ret = unsafe { libc::waitpid(child_pid, &mut status, libc::WNOHANG) };
+        if ret == child_pid {
+            reaped = true;
+            break;
+        }
+        if Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    if !reaped {
+        if let Some(ref cg) = cgroup_path {
+            let _ = kill_cgroup(cg);
+        } else {
+            unsafe { libc::kill(-child_pid, libc::SIGKILL) };
+        }
+        unsafe { libc::waitpid(child_pid, &mut status, 0) };
+
+        let pipe_read = unsafe { std::fs::File::from_raw_fd(pipe_r) };
+        drop(pipe_read);
+
+        if let Some(ref cg) = cgroup_path {
+            remove_cgroup(cg);
+        }
+        return TestReport {
+            name: test.name.clone(),
+            outcome: TestOutcome::Fail,
+            error: Some(format!("timed out after {}s", timeout.as_secs_f64())),
+        };
+    }
+
+    let mut error_buf = String::new();
+    {
+        let mut pipe_read = unsafe { std::fs::File::from_raw_fd(pipe_r) };
+        let _ = pipe_read.read_to_string(&mut error_buf);
+    }
+
+    if let Some(ref cg) = cgroup_path {
+        remove_cgroup(cg);
+    }
+
+    if wifexited(status) && wexitstatus(status) == 0 {
+        TestReport {
+            name: test.name.clone(),
+            outcome: TestOutcome::Pass,
+            error: None,
+        }
+    } else if !error_buf.is_empty() {
+        TestReport {
+            name: test.name.clone(),
+            outcome: TestOutcome::Fail,
+            error: Some(error_buf),
+        }
+    } else {
+        TestReport {
+            name: test.name.clone(),
+            outcome: TestOutcome::Fail,
+            error: Some(format!("child exited with status {status}")),
+        }
+    }
+}
+
 // ── Suite runner ─────────────────────────────────────────────────────────────
 
 fn run_suite(
@@ -2040,22 +2229,21 @@ fn run_suite(
     shell_str: &str,
     script_modes: &[ScriptMode],
     locale_dir: Option<&str>,
+    timeout: Duration,
+    cgroup_base: Option<&str>,
 ) -> Vec<TestReport> {
     let mut reports = Vec::new();
     for test in &suite.tests {
-        let outcome = match run_suite_test(test, shell_argv, shell_str, script_modes, locale_dir) {
-            Ok(()) => TestReport {
-                name: test.name.clone(),
-                outcome: TestOutcome::Pass,
-                error: None,
-            },
-            Err(e) => TestReport {
-                name: test.name.clone(),
-                outcome: TestOutcome::Fail,
-                error: Some(e),
-            },
-        };
-        reports.push(outcome);
+        let report = run_test_isolated(
+            test,
+            shell_argv,
+            shell_str,
+            script_modes,
+            locale_dir,
+            timeout,
+            cgroup_base,
+        );
+        reports.push(report);
     }
     reports
 }
@@ -2109,6 +2297,7 @@ fn main() {
     let mut shell_flag: Option<String> = None;
     let mut script_modes_flag: Option<String> = None;
     let mut test_filter: Option<String> = None;
+    let mut timeout_flag: Option<String> = None;
     let mut parse_only = false;
     let mut files: Vec<String> = Vec::new();
     let mut i = 1;
@@ -2137,6 +2326,14 @@ fn main() {
                     std::process::exit(2);
                 }
                 test_filter = Some(args[i].clone());
+            }
+            "--timeout" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("expect_pty: --timeout requires a duration (e.g. 10s, 500ms)");
+                    std::process::exit(2);
+                }
+                timeout_flag = Some(args[i].clone());
             }
             "--parse-only" => {
                 parse_only = true;
@@ -2180,9 +2377,28 @@ fn main() {
             None => vec![ScriptMode::DashC],
         };
 
+        let test_timeout = match timeout_flag {
+            Some(ref s) => match parse_timeout_value(s) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("expect_pty: --timeout: {e}");
+                    std::process::exit(2);
+                }
+            },
+            None => Duration::from_secs(10),
+        };
+
         // Attempt to compile the test locale for locale-dependent tests
         let locale_dir = compile_test_locale();
         let locale_dir_ref = locale_dir.as_deref();
+
+        let cgroup_base = discover_cgroup_base();
+        if cgroup_base.is_none() {
+            eprintln!(
+                "expect_pty: cgroup v2 unavailable, falling back to session-group kill on timeout"
+            );
+        }
+        let cgroup_base_ref = cgroup_base.as_deref();
 
         let mut total_passed: usize = 0;
         let mut total_failed: usize = 0;
@@ -2247,6 +2463,8 @@ fn main() {
                 &shell_str,
                 &script_modes,
                 locale_dir_ref,
+                test_timeout,
+                cgroup_base_ref,
             );
             let (p, f) = print_suite_report(suite, &reports);
             total_passed += p;
