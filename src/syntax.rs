@@ -908,7 +908,7 @@ impl<'src, 'a> Parser<'src, 'a> {
     // that `scan_word` can slice the full raw word at the end.
 
     /// Advance past `'...'`.  The opening `'` must be the current byte.
-    fn skip_single_quote(&mut self, raw: &mut String) -> Result<(), ParseError> {
+    fn consume_single_quote(&mut self, raw: &mut String) -> Result<(), ParseError> {
         raw.push('\'');
         self.advance_byte();
         loop {
@@ -927,7 +927,7 @@ impl<'src, 'a> Parser<'src, 'a> {
         }
     }
 
-    fn skip_double_quote(&mut self, raw: &mut String) -> Result<(), ParseError> {
+    fn consume_double_quote(&mut self, raw: &mut String) -> Result<(), ParseError> {
         raw.push('"');
         self.advance_byte();
         loop {
@@ -949,12 +949,12 @@ impl<'src, 'a> Parser<'src, 'a> {
                 Some(b'$') => {
                     raw.push('$');
                     self.advance_byte();
-                    self.skip_dollar_construct(raw)?;
+                    self.consume_dollar_construct(raw)?;
                 }
                 Some(b'`') => {
                     raw.push('`');
                     self.advance_byte();
-                    self.skip_backtick_inner(raw)?;
+                    self.consume_backtick_inner(raw)?;
                 }
                 Some(b) => {
                     raw.push(b as char);
@@ -965,7 +965,7 @@ impl<'src, 'a> Parser<'src, 'a> {
     }
 
     /// `$` already consumed and pushed to raw by caller.
-    fn skip_dollar_construct(&mut self, raw: &mut String) -> Result<(), ParseError> {
+    fn consume_dollar_construct(&mut self, raw: &mut String) -> Result<(), ParseError> {
         match self.peek_byte() {
             Some(b'(') => {
                 raw.push('(');
@@ -974,22 +974,22 @@ impl<'src, 'a> Parser<'src, 'a> {
                 if self.peek_byte() == Some(b'(') {
                     raw.push('(');
                     self.advance_byte();
-                    self.skip_arith_body(raw)
+                    self.consume_arith_body(raw)
                 } else {
-                    self.skip_paren_body(raw)
+                    self.consume_paren_body(raw)
                 }
             }
             Some(b'{') => {
                 raw.push('{');
                 self.advance_byte();
-                self.skip_brace_body(raw)
+                self.consume_brace_body(raw)
             }
-            Some(b'\'') => self.skip_dollar_single_quote(raw),
+            Some(b'\'') => self.consume_dollar_single_quote(raw),
             _ => Ok(()),
         }
     }
 
-    fn skip_arith_body(&mut self, raw: &mut String) -> Result<(), ParseError> {
+    fn consume_arith_body(&mut self, raw: &mut String) -> Result<(), ParseError> {
         let mut depth = 1usize;
         loop {
             match self.peek_byte() {
@@ -1016,7 +1016,7 @@ impl<'src, 'a> Parser<'src, 'a> {
                     }
                 }
                 Some(b) if is_quote(b) => {
-                    self.skip_quoted_element(raw)?;
+                    self.consume_quoted_element(raw)?;
                 }
                 Some(b) => {
                     raw.push(b as char);
@@ -1027,7 +1027,7 @@ impl<'src, 'a> Parser<'src, 'a> {
     }
 
     /// `$` already consumed and pushed to raw by caller.
-    fn skip_dollar_single_quote(&mut self, raw: &mut String) -> Result<(), ParseError> {
+    fn consume_dollar_single_quote(&mut self, raw: &mut String) -> Result<(), ParseError> {
         raw.push('\'');
         self.advance_byte();
         loop {
@@ -1054,7 +1054,7 @@ impl<'src, 'a> Parser<'src, 'a> {
         }
     }
 
-    fn skip_paren_body(&mut self, raw: &mut String) -> Result<(), ParseError> {
+    fn consume_paren_body(&mut self, raw: &mut String) -> Result<(), ParseError> {
         let mut depth = 1usize;
         let mut at_boundary = true;
         loop {
@@ -1099,7 +1099,7 @@ impl<'src, 'a> Parser<'src, 'a> {
                 }
                 Some(b) if is_quote(b) => {
                     at_boundary = false;
-                    self.skip_quoted_element(raw)?;
+                    self.consume_quoted_element(raw)?;
                 }
                 Some(b) if is_word_break(b) => {
                     at_boundary = true;
@@ -1115,7 +1115,7 @@ impl<'src, 'a> Parser<'src, 'a> {
         }
     }
 
-    fn skip_brace_body(&mut self, raw: &mut String) -> Result<(), ParseError> {
+    fn consume_brace_body(&mut self, raw: &mut String) -> Result<(), ParseError> {
         loop {
             match self.peek_byte() {
                 None => return Err(self.error("unterminated parameter expansion")),
@@ -1125,7 +1125,7 @@ impl<'src, 'a> Parser<'src, 'a> {
                     return Ok(());
                 }
                 Some(b) if is_quote(b) => {
-                    self.skip_quoted_element(raw)?;
+                    self.consume_quoted_element(raw)?;
                 }
                 Some(b) => {
                     raw.push(b as char);
@@ -1136,7 +1136,7 @@ impl<'src, 'a> Parser<'src, 'a> {
     }
 
     /// Opening `` ` `` already consumed and pushed to raw by caller.
-    fn skip_backtick_inner(&mut self, raw: &mut String) -> Result<(), ParseError> {
+    fn consume_backtick_inner(&mut self, raw: &mut String) -> Result<(), ParseError> {
         loop {
             match self.peek_byte() {
                 None => return Err(self.error("unterminated backquote")),
@@ -1161,10 +1161,10 @@ impl<'src, 'a> Parser<'src, 'a> {
         }
     }
 
-    fn skip_quoted_element(&mut self, raw: &mut String) -> Result<(), ParseError> {
+    fn consume_quoted_element(&mut self, raw: &mut String) -> Result<(), ParseError> {
         match self.peek_byte() {
-            Some(b'\'') => self.skip_single_quote(raw),
-            Some(b'"') => self.skip_double_quote(raw),
+            Some(b'\'') => self.consume_single_quote(raw),
+            Some(b'"') => self.consume_double_quote(raw),
             Some(b'\\') => {
                 raw.push('\\');
                 self.advance_byte();
@@ -1177,12 +1177,12 @@ impl<'src, 'a> Parser<'src, 'a> {
             Some(b'$') => {
                 raw.push('$');
                 self.advance_byte();
-                self.skip_dollar_construct(raw)
+                self.consume_dollar_construct(raw)
             }
             Some(b'`') => {
                 raw.push('`');
                 self.advance_byte();
-                self.skip_backtick_inner(raw)
+                self.consume_backtick_inner(raw)
             }
             _ => {
                 if let Some(b) = self.peek_byte() {
@@ -1263,12 +1263,12 @@ impl<'src, 'a> Parser<'src, 'a> {
                 Some(b'\'') => {
                     had_quote = true;
                     kw = KW_NONE;
-                    self.skip_single_quote(&mut raw)?;
+                    self.consume_single_quote(&mut raw)?;
                 }
                 Some(b'"') => {
                     had_quote = true;
                     kw = KW_NONE;
-                    self.skip_double_quote(&mut raw)?;
+                    self.consume_double_quote(&mut raw)?;
                 }
                 Some(b'$') => {
                     raw.push('$');
@@ -1278,10 +1278,10 @@ impl<'src, 'a> Parser<'src, 'a> {
                     match self.peek_byte() {
                         Some(b'\'') => {
                             had_quote = true;
-                            self.skip_dollar_single_quote(&mut raw)?;
+                            self.consume_dollar_single_quote(&mut raw)?;
                         }
                         _ => {
-                            self.skip_dollar_construct(&mut raw)?;
+                            self.consume_dollar_construct(&mut raw)?;
                         }
                     }
                 }
@@ -1290,7 +1290,7 @@ impl<'src, 'a> Parser<'src, 'a> {
                     self.advance_byte();
                     had_quote = true;
                     kw = KW_NONE;
-                    self.skip_backtick_inner(&mut raw)?;
+                    self.consume_backtick_inner(&mut raw)?;
                 }
                 Some(b) => {
                     raw.push(b as char);
@@ -3743,7 +3743,7 @@ mod tests {
 
 
     #[test]
-    fn skip_scan_covers_dollar_single_quote_and_default_in_subshell() {
+    fn consume_scan_covers_dollar_single_quote_and_default_in_subshell() {
         let program = parse_test("echo $(echo $'hi' done)").expect("dollar-sq in paren");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
