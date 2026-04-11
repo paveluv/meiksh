@@ -355,6 +355,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[inline]
     fn skip_blanks_and_comments(&mut self) {
         self.skip_blanks();
         if self.peek_byte() == Some(b'#') {
@@ -365,6 +366,29 @@ impl<'a> Parser<'a> {
     }
 
     fn consume_single_quote(&mut self, raw: &mut String) -> Result<(), ParseError> {
+        if self.next_cached_byte.is_none() && self.alias_stack.len() == 1 {
+            let layer = &mut self.alias_stack[0];
+            let bytes = layer.text.as_bytes();
+            let start = layer.pos;
+            let mut pos = start;
+            while pos < bytes.len() {
+                let c = bytes[pos];
+                if c == b'\'' {
+                    pos += 1;
+                    raw.push_str(&layer.text[start..pos]);
+                    layer.pos = pos;
+                    self.cached_byte = bytes.get(pos).copied();
+                    return Ok(());
+                }
+                if c == b'\n' {
+                    self.line += 1;
+                }
+                pos += 1;
+            }
+            layer.pos = pos;
+            self.cached_byte = None;
+            return Err(self.error("unterminated single quote"));
+        }
         loop {
             match self.peek_byte() {
                 None => return Err(self.error("unterminated single quote")),
@@ -847,7 +871,7 @@ impl<'a> Parser<'a> {
             }
             Some(b'<') => self.produce_less_token(),
             Some(b'>') => self.produce_great_token(),
-            Some(b) if b.is_ascii_digit() => self.produce_digit_or_word(),
+            Some(b'0'..=b'9') => self.produce_digit_or_word(),
             _ => self.produce_word_token(),
         }
     }
@@ -1213,8 +1237,29 @@ impl<'a> Parser<'a> {
                     self.consume_backtick_inner(raw)?;
                 }
                 Some(b) => {
-                    raw.push(b as char);
-                    self.advance_byte();
+                    if self.next_cached_byte.is_none()
+                        && self.alias_stack.len() == 1
+                    {
+                        let layer = &mut self.alias_stack[0];
+                        let bytes = layer.text.as_bytes();
+                        let start = layer.pos;
+                        let mut pos = start + 1;
+                        while pos < bytes.len() {
+                            if BYTE_CLASS[bytes[pos] as usize]
+                                & (BC_WORD_BREAK | BC_QUOTE)
+                                != 0
+                            {
+                                break;
+                            }
+                            pos += 1;
+                        }
+                        raw.push_str(&layer.text[start..pos]);
+                        layer.pos = pos;
+                        self.cached_byte = bytes.get(pos).copied();
+                    } else {
+                        raw.push(b as char);
+                        self.advance_byte();
+                    }
                 }
             }
         }
