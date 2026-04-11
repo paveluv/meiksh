@@ -78,15 +78,17 @@ pub fn is_name(name: &str) -> bool {
     let bytes = name.as_bytes();
     !bytes.is_empty()
         && token::BYTE_CLASS[bytes[0] as usize] & token::BC_NAME_START != 0
-        && bytes[1..].iter().fold(0xFFu8, |acc, &b| acc & token::BYTE_CLASS[b as usize])
+        && bytes[1..]
+            .iter()
+            .fold(0xFFu8, |acc, &b| acc & token::BYTE_CLASS[b as usize])
             & token::BC_NAME_CONT
             != 0
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::token::{alias_has_trailing_blank, parse_here_doc_delimiter};
+    use super::*;
 
     fn parse_test(source: &str) -> Result<Program, ParseError> {
         parse(source)
@@ -180,8 +182,7 @@ mod tests {
 
     #[test]
     fn parses_extended_redirection_forms() {
-        let program =
-            parse_test("cat 3<in 2>out 4>>log 5<>rw 0<&3 1>&2 2>|force").expect("parse");
+        let program = parse_test("cat 3<in 2>out 4>>log 5<>rw 0<&3 1>&2 2>|force").expect("parse");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
@@ -423,14 +424,16 @@ mod tests {
 
     #[test]
     fn parse_session_uses_updated_aliases_between_commands() {
-        let mut session =
-            ParseSession::new("alias setok='printf ok'\nsetok\n").expect("session");
+        let mut session = ParseSession::new("alias setok='printf ok'\nsetok\n").expect("session");
         let first = session
             .next_command(&HashMap::new())
             .expect("first cmd")
             .expect("some cmd");
         assert_eq!(first.items.len(), 1);
-        assert!(matches!(first.items[0].and_or.first.commands[0], Command::Simple(_)));
+        assert!(matches!(
+            first.items[0].and_or.first.commands[0],
+            Command::Simple(_)
+        ));
 
         let second = session
             .next_command(&HashMap::from([(
@@ -446,7 +449,12 @@ mod tests {
                 if simple.words.iter().map(|word| &*word.raw).collect::<Vec<_>>() == vec!["printf", "ok"]
         ));
 
-        assert!(session.next_command(&HashMap::new()).expect("eof").is_none());
+        assert!(
+            session
+                .next_command(&HashMap::new())
+                .expect("eof")
+                .is_none()
+        );
     }
 
     #[test]
@@ -683,17 +691,21 @@ mod tests {
     #[test]
     fn while_empty_condition_is_parse_error() {
         let error = parse_test("while do true; done").expect_err("empty while condition");
-        assert!(error
-            .message
-            .contains("expected command list after 'while'"));
+        assert!(
+            error
+                .message
+                .contains("expected command list after 'while'")
+        );
     }
 
     #[test]
     fn until_empty_condition_is_parse_error() {
         let error = parse_test("until do true; done").expect_err("empty until condition");
-        assert!(error
-            .message
-            .contains("expected command list after 'until'"));
+        assert!(
+            error
+                .message
+                .contains("expected command list after 'until'")
+        );
     }
 
     #[test]
@@ -747,14 +759,24 @@ mod tests {
         let simple = Command::Simple(SimpleCommand {
             assignments: vec![Assignment {
                 name: "X".into(),
-                value: Word { raw: "1".into(), line: 0 },
+                value: Word {
+                    raw: "1".into(),
+                    line: 0,
+                },
             }]
             .into_boxed_slice(),
-            words: vec![Word { raw: "echo".into(), line: 0 }].into_boxed_slice(),
+            words: vec![Word {
+                raw: "echo".into(),
+                line: 0,
+            }]
+            .into_boxed_slice(),
             redirections: vec![Redirection {
                 fd: Some(2),
                 kind: RedirectionKind::Write,
-                target: Word { raw: "err".into(), line: 0 },
+                target: Word {
+                    raw: "err".into(),
+                    line: 0,
+                },
                 here_doc: None,
             }]
             .into_boxed_slice(),
@@ -779,7 +801,9 @@ mod tests {
         });
         assert!(matches!(subshell.clone(), Command::Subshell(_)));
 
-        let group = Command::Group(Program { items: vec![].into_boxed_slice() });
+        let group = Command::Group(Program {
+            items: vec![].into_boxed_slice(),
+        });
         assert!(matches!(group.clone(), Command::Group(_)));
 
         let func = Command::FunctionDef(FunctionDef {
@@ -789,36 +813,67 @@ mod tests {
         assert!(matches!(&func, Command::FunctionDef(fd) if &*fd.name == "f"));
 
         let if_cmd = Command::If(IfCommand {
-            condition: Program { items: vec![].into_boxed_slice() },
-            then_branch: Program { items: vec![].into_boxed_slice() },
+            condition: Program {
+                items: vec![].into_boxed_slice(),
+            },
+            then_branch: Program {
+                items: vec![].into_boxed_slice(),
+            },
             elif_branches: vec![ElifBranch {
-                condition: Program { items: vec![].into_boxed_slice() },
-                body: Program { items: vec![].into_boxed_slice() },
+                condition: Program {
+                    items: vec![].into_boxed_slice(),
+                },
+                body: Program {
+                    items: vec![].into_boxed_slice(),
+                },
             }]
             .into_boxed_slice(),
-            else_branch: Some(Program { items: vec![].into_boxed_slice() }),
+            else_branch: Some(Program {
+                items: vec![].into_boxed_slice(),
+            }),
         });
         assert!(matches!(if_cmd, Command::If(_)));
 
         let loop_cmd = Command::Loop(LoopCommand {
             kind: LoopKind::While,
-            condition: Program { items: vec![].into_boxed_slice() },
-            body: Program { items: vec![].into_boxed_slice() },
+            condition: Program {
+                items: vec![].into_boxed_slice(),
+            },
+            body: Program {
+                items: vec![].into_boxed_slice(),
+            },
         });
         assert!(matches!(loop_cmd, Command::Loop(_)));
 
         let for_cmd = Command::For(ForCommand {
             name: "i".into(),
-            items: Some(vec![Word { raw: "a".into(), line: 0 }].into_boxed_slice()),
-            body: Program { items: vec![].into_boxed_slice() },
+            items: Some(
+                vec![Word {
+                    raw: "a".into(),
+                    line: 0,
+                }]
+                .into_boxed_slice(),
+            ),
+            body: Program {
+                items: vec![].into_boxed_slice(),
+            },
         });
         assert!(matches!(&for_cmd, Command::For(fc) if &*fc.name == "i"));
 
         let case_cmd = Command::Case(CaseCommand {
-            word: Word { raw: "x".into(), line: 0 },
+            word: Word {
+                raw: "x".into(),
+                line: 0,
+            },
             arms: vec![CaseArm {
-                patterns: vec![Word { raw: "*".into(), line: 0 }].into_boxed_slice(),
-                body: Program { items: vec![].into_boxed_slice() },
+                patterns: vec![Word {
+                    raw: "*".into(),
+                    line: 0,
+                }]
+                .into_boxed_slice(),
+                body: Program {
+                    items: vec![].into_boxed_slice(),
+                },
                 fallthrough: false,
             }]
             .into_boxed_slice(),
@@ -830,7 +885,10 @@ mod tests {
             vec![Redirection {
                 fd: None,
                 kind: RedirectionKind::Write,
-                target: Word { raw: "out".into(), line: 0 },
+                target: Word {
+                    raw: "out".into(),
+                    line: 0,
+                },
                 here_doc: Some(HereDoc {
                     delimiter: "EOF".into(),
                     body: "test\n".into(),
@@ -868,10 +926,7 @@ mod tests {
         ));
 
         let mut aliases = HashMap::new();
-        aliases.insert(
-            "mywhile".into(),
-            "while false; do echo loop; done".into(),
-        );
+        aliases.insert("mywhile".into(), "while false; do echo loop; done".into());
         let program = parse_with_aliases_test("mywhile", &aliases).expect("alias while/do/done");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
@@ -879,10 +934,7 @@ mod tests {
         ));
 
         let mut aliases = HashMap::new();
-        aliases.insert(
-            "myuntil".into(),
-            "until true; do echo u; done".into(),
-        );
+        aliases.insert("myuntil".into(), "until true; do echo u; done".into());
         let program = parse_with_aliases_test("myuntil", &aliases).expect("alias until");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
@@ -890,10 +942,7 @@ mod tests {
         ));
 
         let mut aliases = HashMap::new();
-        aliases.insert(
-            "myfor".into(),
-            "for x in a b; do echo $x; done".into(),
-        );
+        aliases.insert("myfor".into(), "for x in a b; do echo $x; done".into());
         let program = parse_with_aliases_test("myfor", &aliases).expect("alias for/in");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
@@ -901,10 +950,7 @@ mod tests {
         ));
 
         let mut aliases = HashMap::new();
-        aliases.insert(
-            "mycase".into(),
-            "case x in a) echo a;; esac".into(),
-        );
+        aliases.insert("mycase".into(), "case x in a) echo a;; esac".into());
         let program = parse_with_aliases_test("mycase", &aliases).expect("alias case/esac");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
@@ -912,10 +958,7 @@ mod tests {
         ));
 
         let mut aliases = HashMap::new();
-        aliases.insert(
-            "myfn".into(),
-            "function myfunc { echo hi; }".into(),
-        );
+        aliases.insert("myfn".into(), "function myfunc { echo hi; }".into());
         let program = parse_with_aliases_test("myfn", &aliases).expect("alias function/{/}");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
@@ -933,7 +976,10 @@ mod tests {
         let mut aliases = HashMap::new();
         aliases.insert("bla".into(), "in".into());
         let result = parse_with_aliases_test("for i bla a b c; do echo $i; done", &aliases);
-        assert!(result.is_err(), "alias should not expand to 'in' in reserved word position");
+        assert!(
+            result.is_err(),
+            "alias should not expand to 'in' in reserved word position"
+        );
     }
 
     #[test]
@@ -1027,8 +1073,7 @@ mod tests {
 
     #[test]
     fn backslash_newline_mixed_unquoted_and_dquoted() {
-        let program =
-            parse_test("echo hel\\\nlo\"wor\\\nld\"").expect("mixed continuation");
+        let program = parse_test("echo hel\\\nlo\"wor\\\nld\"").expect("mixed continuation");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if &*cmd.words[1].raw == "hello\"wor\\\nld\""
@@ -1051,18 +1096,12 @@ mod tests {
             parse_here_doc_delimiter("\"a\\\\b\""),
             ("a\\b".into(), false)
         );
-        assert_eq!(
-            parse_here_doc_delimiter("\"a\\$b\""),
-            ("a$b".into(), false)
-        );
+        assert_eq!(parse_here_doc_delimiter("\"a\\$b\""), ("a$b".into(), false));
     }
 
     #[test]
     fn heredoc_delimiter_dollar_single_quote() {
-        assert_eq!(
-            parse_here_doc_delimiter("$'EOF'"),
-            ("EOF".into(), false)
-        );
+        assert_eq!(parse_here_doc_delimiter("$'EOF'"), ("EOF".into(), false));
         assert_eq!(
             parse_here_doc_delimiter("$'ab\\'cd'"),
             ("ab'cd".into(), false)
@@ -1071,15 +1110,13 @@ mod tests {
 
     #[test]
     fn arithmetic_expansion_with_quoting() {
-        let program =
-            parse_test("echo $(( 1 + 2 ))").expect("basic arithmetic");
+        let program = parse_test("echo $(( 1 + 2 ))").expect("basic arithmetic");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words.len() == 2
         ));
 
-        let program =
-            parse_test("echo $(( \")\" ))").expect("arithmetic with quoted paren");
+        let program = parse_test("echo $(( \")\" ))").expect("arithmetic with quoted paren");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words.len() == 2
@@ -1130,21 +1167,30 @@ mod tests {
         aliases.insert("both".into(), "echo a\necho b".into());
         let mut session = ParseSession::new("both\necho c").unwrap();
 
-        let first = session.next_command(&aliases).expect("first").expect("some");
+        let first = session
+            .next_command(&aliases)
+            .expect("first")
+            .expect("some");
         assert_eq!(first.items.len(), 1);
         assert!(matches!(
             &first.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words.iter().map(|w| &*w.raw).collect::<Vec<_>>() == ["echo", "a"]
         ));
 
-        let second = session.next_command(&aliases).expect("second").expect("some");
+        let second = session
+            .next_command(&aliases)
+            .expect("second")
+            .expect("some");
         assert_eq!(second.items.len(), 1);
         assert!(matches!(
             &second.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words.iter().map(|w| &*w.raw).collect::<Vec<_>>() == ["echo", "b"]
         ));
 
-        let third = session.next_command(&aliases).expect("third").expect("some");
+        let third = session
+            .next_command(&aliases)
+            .expect("third")
+            .expect("some");
         assert_eq!(third.items.len(), 1);
         assert!(matches!(
             &third.items[0].and_or.first.commands[0],
@@ -1156,7 +1202,6 @@ mod tests {
 
     #[test]
     fn heredoc_delimiter_backslash_preserves_non_special_in_dquotes() {
-
         assert_eq!(
             parse_here_doc_delimiter("\"E\\OF\""),
             ("E\\OF".into(), false)
@@ -1166,10 +1211,7 @@ mod tests {
             ("a\\nb".into(), false)
         );
 
-        assert_eq!(
-            parse_here_doc_delimiter("\"a\\$b\""),
-            ("a$b".into(), false)
-        );
+        assert_eq!(parse_here_doc_delimiter("\"a\\$b\""), ("a$b".into(), false));
         assert_eq!(
             parse_here_doc_delimiter("\"a\\\\b\""),
             ("a\\b".into(), false)
@@ -1178,18 +1220,14 @@ mod tests {
             parse_here_doc_delimiter("\"a\\\"b\""),
             ("a\"b".into(), false)
         );
-        assert_eq!(
-            parse_here_doc_delimiter("\"a\\`b\""),
-            ("a`b".into(), false)
-        );
+        assert_eq!(parse_here_doc_delimiter("\"a\\`b\""), ("a`b".into(), false));
     }
 
     #[test]
     fn io_number_recognised_inside_alias() {
         let mut aliases: HashMap<Box<str>, Box<str>> = HashMap::new();
         aliases.insert("redir".into(), "echo hello 2>/dev/null".into());
-        let program =
-            parse_with_aliases_test("redir", &aliases).expect("alias with IO number");
+        let program = parse_with_aliases_test("redir", &aliases).expect("alias with IO number");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if {
@@ -1206,9 +1244,8 @@ mod tests {
 
     #[test]
     fn comment_with_close_paren_inside_command_substitution() {
-
-        let program = parse_test("echo $(echo hello # )\necho world\n)")
-            .expect("comment with ) in $(...)");
+        let program =
+            parse_test("echo $(echo hello # )\necho world\n)").expect("comment with ) in $(...)");
 
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
@@ -1218,11 +1255,9 @@ mod tests {
 
     #[test]
     fn backslash_newline_continuation_in_alias() {
-
         let mut aliases: HashMap<Box<str>, Box<str>> = HashMap::new();
         aliases.insert("foo".into(), "echo hell\\\no".into());
-        let program =
-            parse_with_aliases_test("foo", &aliases).expect("alias with continuation");
+        let program = parse_with_aliases_test("foo", &aliases).expect("alias with continuation");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words.iter().map(|w| &*w.raw).collect::<Vec<_>>() == ["echo", "hello"]
@@ -1231,7 +1266,6 @@ mod tests {
 
     #[test]
     fn heredoc_quoted_delimiter_no_continuation() {
-
         let program = parse_test("cat <<'EOF'\nEO\\\nF\nreal body\nEOF\n")
             .expect("quoted heredoc with backslash line");
         let cmd = match &program.items[0].and_or.first.commands[0] {
@@ -1245,10 +1279,8 @@ mod tests {
 
     #[test]
     fn backslash_newline_before_comment_in_command_substitution() {
-
-        let program =
-            parse_test("echo $(echo foo \\\n# comment with )\necho bar)\n")
-                .expect("continuation before comment in $(...)");
+        let program = parse_test("echo $(echo foo \\\n# comment with )\necho bar)\n")
+            .expect("continuation before comment in $(...)");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words.len() == 2
@@ -1257,13 +1289,10 @@ mod tests {
 
     #[test]
     fn heredoc_body_inside_alias_expansion() {
-
-        let aliases: HashMap<Box<str>, Box<str>> =
-            [("x".into(), "cat <<EOF\nhello\nEOF".into())]
-                .into_iter()
-                .collect();
-        let program =
-            parse_with_aliases_test("x\n", &aliases).expect("heredoc inside alias");
+        let aliases: HashMap<Box<str>, Box<str>> = [("x".into(), "cat <<EOF\nhello\nEOF".into())]
+            .into_iter()
+            .collect();
+        let program = parse_with_aliases_test("x\n", &aliases).expect("heredoc inside alias");
         let cmd = match &program.items[0].and_or.first.commands[0] {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
@@ -1283,9 +1312,8 @@ mod tests {
 
     #[test]
     fn continuation_splits_keyword_if() {
-
-        let program = parse_test("i\\\nf true; then echo ha; fi\n")
-            .expect("if split by continuation");
+        let program =
+            parse_test("i\\\nf true; then echo ha; fi\n").expect("if split by continuation");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::If(_)
@@ -1294,8 +1322,8 @@ mod tests {
 
     #[test]
     fn continuation_splits_keyword_then() {
-        let program = parse_test("if true; th\\\nen echo ha; fi\n")
-            .expect("then split by continuation");
+        let program =
+            parse_test("if true; th\\\nen echo ha; fi\n").expect("then split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
             Command::If(c) => c,
             other => panic!("expected If, got {other:?}"),
@@ -1305,8 +1333,8 @@ mod tests {
 
     #[test]
     fn continuation_splits_keyword_while() {
-        let program = parse_test("wh\\\nile false; do :; done\n")
-            .expect("while split by continuation");
+        let program =
+            parse_test("wh\\\nile false; do :; done\n").expect("while split by continuation");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Loop(_)
@@ -1315,8 +1343,8 @@ mod tests {
 
     #[test]
     fn continuation_splits_keyword_do() {
-        let program = parse_test("while false; d\\\no :; done\n")
-            .expect("do split by continuation");
+        let program =
+            parse_test("while false; d\\\no :; done\n").expect("do split by continuation");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Loop(_)
@@ -1325,8 +1353,8 @@ mod tests {
 
     #[test]
     fn continuation_splits_keyword_done() {
-        let program = parse_test("while false; do :; do\\\nne\n")
-            .expect("done split by continuation");
+        let program =
+            parse_test("while false; do :; do\\\nne\n").expect("done split by continuation");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Loop(_)
@@ -1335,8 +1363,8 @@ mod tests {
 
     #[test]
     fn continuation_splits_keyword_for() {
-        let program = parse_test("fo\\\nr i in a; do echo $i; done\n")
-            .expect("for split by continuation");
+        let program =
+            parse_test("fo\\\nr i in a; do echo $i; done\n").expect("for split by continuation");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::For(_)
@@ -1345,8 +1373,8 @@ mod tests {
 
     #[test]
     fn continuation_splits_keyword_case() {
-        let program = parse_test("cas\\\ne x in x) echo y;; esac\n")
-            .expect("case split by continuation");
+        let program =
+            parse_test("cas\\\ne x in x) echo y;; esac\n").expect("case split by continuation");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Case(_)
@@ -1355,13 +1383,11 @@ mod tests {
 
     #[test]
     fn continuation_splits_alias_name() {
-
-        let aliases: HashMap<Box<str>, Box<str>> =
-            [("foo".into(), "echo aliased".into())]
-                .into_iter()
-                .collect();
-        let program = parse_with_aliases_test("fo\\\no\n", &aliases)
-            .expect("alias split by continuation");
+        let aliases: HashMap<Box<str>, Box<str>> = [("foo".into(), "echo aliased".into())]
+            .into_iter()
+            .collect();
+        let program =
+            parse_with_aliases_test("fo\\\no\n", &aliases).expect("alias split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
@@ -1372,7 +1398,6 @@ mod tests {
 
     #[test]
     fn continuation_in_word() {
-
         let program = parse_test("echo he\\\nllo\n").expect("word continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
             Command::Simple(cmd) => cmd,
@@ -1383,9 +1408,8 @@ mod tests {
 
     #[test]
     fn continuation_splits_double_semicolon() {
-
-        let program = parse_test("case x in x) echo y;\\\n;esac\n")
-            .expect(";; split by continuation");
+        let program =
+            parse_test("case x in x) echo y;\\\n;esac\n").expect(";; split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
             Command::Case(cmd) => cmd,
             other => panic!("expected Case, got {other:?}"),
@@ -1396,27 +1420,21 @@ mod tests {
 
     #[test]
     fn continuation_splits_and_if() {
-
-        let program = parse_test("true &\\\n& echo ok\n")
-            .expect("&& split by continuation");
+        let program = parse_test("true &\\\n& echo ok\n").expect("&& split by continuation");
         assert_eq!(program.items[0].and_or.rest.len(), 1);
         assert_eq!(program.items[0].and_or.rest[0].0, LogicalOp::And);
     }
 
     #[test]
     fn continuation_splits_or_if() {
-
-        let program = parse_test("false |\\\n| echo ok\n")
-            .expect("|| split by continuation");
+        let program = parse_test("false |\\\n| echo ok\n").expect("|| split by continuation");
         assert_eq!(program.items[0].and_or.rest.len(), 1);
         assert_eq!(program.items[0].and_or.rest[0].0, LogicalOp::Or);
     }
 
     #[test]
     fn continuation_splits_heredoc_operator() {
-
-        let program = parse_test("cat <\\\n<EOF\nhello\nEOF\n")
-            .expect("<< split by continuation");
+        let program = parse_test("cat <\\\n<EOF\nhello\nEOF\n").expect("<< split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
@@ -1429,9 +1447,7 @@ mod tests {
 
     #[test]
     fn continuation_splits_append_operator() {
-
-        let program = parse_test("echo hi >\\\n> /dev/null\n")
-            .expect(">> split by continuation");
+        let program = parse_test("echo hi >\\\n> /dev/null\n").expect(">> split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
@@ -1442,7 +1458,6 @@ mod tests {
 
     #[test]
     fn multiple_continuations_in_keyword() {
-
         let program = parse_test("w\\\nh\\\ni\\\nl\\\ne false; do :; done\n")
             .expect("while with many continuations");
         assert!(matches!(
@@ -1453,9 +1468,7 @@ mod tests {
 
     #[test]
     fn continuation_at_start_of_input() {
-
-        let program = parse_test("\\\nif true; then echo ha; fi\n")
-            .expect("continuation at start");
+        let program = parse_test("\\\nif true; then echo ha; fi\n").expect("continuation at start");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::If(_)
@@ -1464,8 +1477,8 @@ mod tests {
 
     #[test]
     fn continuation_splits_keyword_esac() {
-        let program = parse_test("case x in x) echo y;; es\\\nac\n")
-            .expect("esac split by continuation");
+        let program =
+            parse_test("case x in x) echo y;; es\\\nac\n").expect("esac split by continuation");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Case(_)
@@ -1474,9 +1487,8 @@ mod tests {
 
     #[test]
     fn continuation_splits_keyword_elif() {
-        let program =
-            parse_test("if false; then :; el\\\nif true; then echo ok; fi\n")
-                .expect("elif split by continuation");
+        let program = parse_test("if false; then :; el\\\nif true; then echo ok; fi\n")
+            .expect("elif split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
             Command::If(c) => c,
             other => panic!("expected If, got {other:?}"),
@@ -1486,9 +1498,8 @@ mod tests {
 
     #[test]
     fn continuation_splits_keyword_else() {
-        let program =
-            parse_test("if false; then :; el\\\nse echo ok; fi\n")
-                .expect("else split by continuation");
+        let program = parse_test("if false; then :; el\\\nse echo ok; fi\n")
+            .expect("else split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
             Command::If(c) => c,
             other => panic!("expected If, got {other:?}"),
@@ -1498,8 +1509,8 @@ mod tests {
 
     #[test]
     fn continuation_splits_keyword_fi() {
-        let program = parse_test("if true; then echo ok; f\\\ni\n")
-            .expect("fi split by continuation");
+        let program =
+            parse_test("if true; then echo ok; f\\\ni\n").expect("fi split by continuation");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::If(_)
@@ -1508,8 +1519,8 @@ mod tests {
 
     #[test]
     fn continuation_splits_keyword_in() {
-        let program = parse_test("for i i\\\nn a b; do echo $i; done\n")
-            .expect("in split by continuation");
+        let program =
+            parse_test("for i i\\\nn a b; do echo $i; done\n").expect("in split by continuation");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::For(_)
@@ -1528,57 +1539,64 @@ mod tests {
 
     #[test]
     fn continuation_splits_dup_input() {
-
-        let program = parse_test("cat <\\\n&0 < /dev/null\n")
-            .expect("<& split by continuation");
+        let program = parse_test("cat <\\\n&0 < /dev/null\n").expect("<& split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
         };
-        assert!(cmd.redirections.iter().any(|r| r.kind == RedirectionKind::DupInput));
+        assert!(
+            cmd.redirections
+                .iter()
+                .any(|r| r.kind == RedirectionKind::DupInput)
+        );
     }
 
     #[test]
     fn continuation_splits_dup_output() {
-
-        let program = parse_test("echo hi >\\\n&2\n")
-            .expect(">& split by continuation");
+        let program = parse_test("echo hi >\\\n&2\n").expect(">& split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
         };
-        assert!(cmd.redirections.iter().any(|r| r.kind == RedirectionKind::DupOutput));
+        assert!(
+            cmd.redirections
+                .iter()
+                .any(|r| r.kind == RedirectionKind::DupOutput)
+        );
     }
 
     #[test]
     fn continuation_splits_read_write() {
-
-        let program = parse_test("echo ok <\\\n> /dev/null\n")
-            .expect("<> split by continuation");
+        let program = parse_test("echo ok <\\\n> /dev/null\n").expect("<> split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
         };
-        assert!(cmd.redirections.iter().any(|r| r.kind == RedirectionKind::ReadWrite));
+        assert!(
+            cmd.redirections
+                .iter()
+                .any(|r| r.kind == RedirectionKind::ReadWrite)
+        );
     }
 
     #[test]
     fn continuation_splits_clobber_write() {
-
-        let program = parse_test("echo ok >\\\n| /dev/null\n")
-            .expect(">| split by continuation");
+        let program = parse_test("echo ok >\\\n| /dev/null\n").expect(">| split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
         };
-        assert!(cmd.redirections.iter().any(|r| r.kind == RedirectionKind::ClobberWrite));
+        assert!(
+            cmd.redirections
+                .iter()
+                .any(|r| r.kind == RedirectionKind::ClobberWrite)
+        );
     }
 
     #[test]
     fn continuation_splits_heredoc_strip_tabs() {
-
-        let program = parse_test("cat <\\\n<-EOF\n\thello\n\tEOF\n")
-            .expect("<<- split by continuation");
+        let program =
+            parse_test("cat <\\\n<-EOF\n\thello\n\tEOF\n").expect("<<- split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
@@ -1590,10 +1608,8 @@ mod tests {
 
     #[test]
     fn continuation_splits_semi_amp() {
-
-        let program =
-            parse_test("case x in x) echo first;\\\n& y) echo second;; esac\n")
-                .expect(";& split by continuation");
+        let program = parse_test("case x in x) echo first;\\\n& y) echo second;; esac\n")
+            .expect(";& split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
             Command::Case(c) => c,
             other => panic!("expected Case, got {other:?}"),
@@ -1603,15 +1619,12 @@ mod tests {
 
     #[test]
     fn continuation_splits_bang_negation() {
-
-        let program = parse_test("!\\\n true\n")
-            .expect("! with continuation");
+        let program = parse_test("!\\\n true\n").expect("! with continuation");
         assert!(program.items[0].and_or.first.negated);
     }
 
     #[test]
     fn continuation_splits_heredoc_delimiter_word() {
-
         let program = parse_test("cat <<EO\\\nF\nhello\nEOF\n")
             .expect("heredoc delimiter split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
@@ -1625,9 +1638,8 @@ mod tests {
 
     #[test]
     fn continuation_splits_assignment() {
-
-        let program = parse_test("x\\\n=hello echo $x\n")
-            .expect("assignment split by continuation");
+        let program =
+            parse_test("x\\\n=hello echo $x\n").expect("assignment split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
@@ -1638,9 +1650,8 @@ mod tests {
 
     #[test]
     fn continuation_splits_io_number() {
-
-        let program = parse_test("echo ok 2\\\n>/dev/null\n")
-            .expect("IO number split by continuation");
+        let program =
+            parse_test("echo ok 2\\\n>/dev/null\n").expect("IO number split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
@@ -1650,9 +1661,8 @@ mod tests {
 
     #[test]
     fn continuation_inside_double_quotes() {
-
-        let program = parse_test("echo \"he\\\nllo\"\n")
-            .expect("continuation inside double quotes");
+        let program =
+            parse_test("echo \"he\\\nllo\"\n").expect("continuation inside double quotes");
         let cmd = match &program.items[0].and_or.first.commands[0] {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
@@ -1662,9 +1672,7 @@ mod tests {
 
     #[test]
     fn continuation_inside_backticks() {
-
-        let program = parse_test("echo `echo he\\\nllo`\n")
-            .expect("continuation inside backticks");
+        let program = parse_test("echo `echo he\\\nllo`\n").expect("continuation inside backticks");
         let cmd = match &program.items[0].and_or.first.commands[0] {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
@@ -1674,9 +1682,7 @@ mod tests {
 
     #[test]
     fn continuation_splits_arith_close() {
-
-        let program = parse_test("echo $((1+2)\\\n)\n")
-            .expect("arith close split by continuation");
+        let program = parse_test("echo $((1+2)\\\n)\n").expect("arith close split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
@@ -1687,9 +1693,7 @@ mod tests {
 
     #[test]
     fn continuation_splits_dollar_paren() {
-
-        let program = parse_test("echo $\\\n(echo inner)\n")
-            .expect("$( split by continuation");
+        let program = parse_test("echo $\\\n(echo inner)\n").expect("$( split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
@@ -1699,9 +1703,7 @@ mod tests {
 
     #[test]
     fn continuation_splits_dollar_brace() {
-
-        let program = parse_test("x=hello; echo $\\\n{x}\n")
-            .expect("${ split by continuation");
+        let program = parse_test("x=hello; echo $\\\n{x}\n").expect("${ split by continuation");
         let cmd = match &program.items[1].and_or.first.commands[0] {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
@@ -1712,9 +1714,7 @@ mod tests {
 
     #[test]
     fn continuation_splits_dollar_double_paren() {
-
-        let program = parse_test("echo $(\\\n(1+2))\n")
-            .expect("$(( split by continuation");
+        let program = parse_test("echo $(\\\n(1+2))\n").expect("$(( split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
@@ -1725,9 +1725,7 @@ mod tests {
 
     #[test]
     fn continuation_splits_dollar_single_quote() {
-
-        let program = parse_test("echo $\\\n'hello'\n")
-            .expect("$' split by continuation");
+        let program = parse_test("echo $\\\n'hello'\n").expect("$' split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
@@ -1737,12 +1735,668 @@ mod tests {
 
     #[test]
     fn arithmetic_unmatched_close_paren() {
-
-        let program = parse_test("echo $(( 1 ) + 2 ))")
-            .expect("arithmetic with unmatched )");
+        let program = parse_test("echo $(( 1 ) + 2 ))").expect("arithmetic with unmatched )");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if cmd.words.len() == 2
         ));
+    }
+
+    #[test]
+    fn heredoc_with_operators_on_same_line() {
+        let program =
+            parse_test("cat <<EOF | wc -l\nhello\nEOF\n").expect("heredoc with pipe on line");
+        let pipeline = &program.items[0].and_or.first;
+        assert_eq!(pipeline.commands.len(), 2);
+    }
+
+    #[test]
+    fn heredoc_with_redirect_on_same_line() {
+        let program =
+            parse_test("cat <<EOF >out\nhello\nEOF\n").expect("heredoc with redirect on line");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert!(cmd.redirections.len() >= 2);
+    }
+
+    #[test]
+    fn heredoc_with_append_redirect_on_same_line() {
+        let program =
+            parse_test("cat <<EOF >>out\nhello\nEOF\n").expect("heredoc with append on line");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert!(
+            cmd.redirections
+                .iter()
+                .any(|r| r.kind == RedirectionKind::Append)
+        );
+    }
+
+    #[test]
+    fn heredoc_with_fd_dup_on_same_line() {
+        let program = parse_test("cat <<EOF 2>&1\nhello\nEOF\n").expect("heredoc with dup on line");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert!(
+            cmd.redirections
+                .iter()
+                .any(|r| r.kind == RedirectionKind::DupOutput)
+        );
+    }
+
+    #[test]
+    fn heredoc_with_clobber_on_same_line() {
+        let program =
+            parse_test("cat <<EOF >|out\nhello\nEOF\n").expect("heredoc with clobber on line");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert!(
+            cmd.redirections
+                .iter()
+                .any(|r| r.kind == RedirectionKind::ClobberWrite)
+        );
+    }
+
+    #[test]
+    fn heredoc_with_and_on_same_line() {
+        let program =
+            parse_test("cat <<EOF && echo ok\nhello\nEOF\n").expect("heredoc with && on line");
+        assert_eq!(program.items[0].and_or.rest.len(), 1);
+        assert_eq!(program.items[0].and_or.rest[0].0, LogicalOp::And);
+    }
+
+    #[test]
+    fn heredoc_with_or_on_same_line() {
+        let program =
+            parse_test("cat <<EOF || echo fail\nhello\nEOF\n").expect("heredoc with || on line");
+        assert_eq!(program.items[0].and_or.rest.len(), 1);
+        assert_eq!(program.items[0].and_or.rest[0].0, LogicalOp::Or);
+    }
+
+    #[test]
+    fn heredoc_with_semicolon_on_same_line() {
+        let program =
+            parse_test("cat <<EOF ; echo after\nhello\nEOF\n").expect("heredoc with ; on line");
+        assert_eq!(program.items.len(), 2);
+    }
+
+    #[test]
+    fn heredoc_with_background_on_same_line() {
+        let program =
+            parse_test("cat <<EOF & echo after\nhello\nEOF\n").expect("heredoc with & on line");
+        assert!(program.items[0].asynchronous);
+    }
+
+    #[test]
+    fn heredoc_with_word_on_same_line() {
+        let program = parse_test("cmd <<EOF arg\nhello\nEOF\n").expect("heredoc with word on line");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert_eq!(&*cmd.words[1].raw, "arg");
+    }
+
+    #[test]
+    fn heredoc_with_io_number_on_same_line() {
+        let program =
+            parse_test("cmd <<EOF 2>err\nhello\nEOF\n").expect("heredoc with io number on line");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert!(cmd.redirections.iter().any(|r| r.fd == Some(2)));
+    }
+
+    #[test]
+    fn multiple_heredocs_on_same_line() {
+        let program = parse_test("cat <<A <<B\nbody1\nA\nbody2\nB\n")
+            .expect("multiple heredocs on same line");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert!(cmd.redirections.len() >= 2);
+    }
+
+    #[test]
+    fn heredoc_with_less_and_on_same_line() {
+        let program = parse_test("cat <<EOF <&3\nhello\nEOF\n").expect("heredoc with <& on line");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert!(
+            cmd.redirections
+                .iter()
+                .any(|r| r.kind == RedirectionKind::DupInput)
+        );
+    }
+
+    #[test]
+    fn heredoc_with_less_great_on_same_line() {
+        let program =
+            parse_test("cat <<EOF <>file\nhello\nEOF\n").expect("heredoc with <> on line");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert!(
+            cmd.redirections
+                .iter()
+                .any(|r| r.kind == RedirectionKind::ReadWrite)
+        );
+    }
+
+    #[test]
+    fn heredoc_with_less_on_same_line() {
+        let program = parse_test("cat <<EOF <input\nhello\nEOF\n").expect("heredoc with < on line");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert!(
+            cmd.redirections
+                .iter()
+                .any(|r| r.kind == RedirectionKind::Read)
+        );
+    }
+
+    #[test]
+    fn heredoc_with_dsemi_on_same_line() {
+        let program =
+            parse_test("case x in\nx) cat <<EOF ;;\nhello\nEOF\nesac\n").expect("heredoc dsemi");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Case(_)
+        ));
+    }
+
+    #[test]
+    fn heredoc_with_strip_tabs_on_subsequent() {
+        let program = parse_test("cat <<A <<-B\nbody1\nA\n\tbody2\nB\n")
+            .expect("heredoc with <<- on same line");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert!(cmd.redirections.len() >= 2);
+        assert!(
+            cmd.redirections[1]
+                .here_doc
+                .as_ref()
+                .map_or(false, |h| h.strip_tabs)
+        );
+    }
+
+    #[test]
+    fn heredoc_continuation_in_body() {
+        let program = parse_test("cat <<EOF\nline\\\ncontinued\nEOF\n")
+            .expect("heredoc continuation in body");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        let body = &cmd.redirections[0].here_doc.as_ref().unwrap().body;
+        assert!(body.contains("line\\\n"));
+    }
+
+    #[test]
+    fn reclassify_queued_alias_on_heredoc_line() {
+        let mut aliases = HashMap::new();
+        aliases.insert("myalias".into(), "echo hello".into());
+        let program = parse_with_aliases_test("cat <<EOF | myalias\nbody\nEOF\n", &aliases)
+            .expect("alias on heredoc line");
+        let pipeline = &program.items[0].and_or.first;
+        assert!(pipeline.commands.len() >= 2);
+    }
+
+    #[test]
+    fn single_quote_in_alias_expansion() {
+        let mut aliases = HashMap::new();
+        aliases.insert("sq".into(), "echo 'hello world'".into());
+        let program = parse_with_aliases_test("sq", &aliases).expect("alias with single quote");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert!(cmd.words.iter().any(|w| w.raw.contains("hello")));
+    }
+
+    #[test]
+    fn consume_paren_body_with_nested_parens() {
+        let program = parse_test("echo $( (echo inner) )").expect("nested parens in $()");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert!(cmd.words[1].raw.contains("inner"));
+    }
+
+    #[test]
+    fn consume_paren_body_with_comment() {
+        let program =
+            parse_test("echo $(# comment\necho ok)").expect("comment inside command subst");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert!(cmd.words[1].raw.contains("ok"));
+    }
+
+    #[test]
+    fn consume_paren_body_with_backslash() {
+        let program =
+            parse_test("echo $(printf '%s\\n' hello)").expect("backslash inside command subst");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert!(cmd.words[1].raw.contains("\\n"));
+    }
+
+    #[test]
+    fn consume_quoted_element_backtick() {
+        let program = parse_test("echo \"`echo inner`\"").expect("backtick in double quote");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert!(cmd.words[1].raw.contains("`echo inner`"));
+    }
+
+    #[test]
+    fn dollar_construct_in_double_quotes() {
+        let program = parse_test("echo \"$(echo inner)\"").expect("dollar-paren in double quotes");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert!(cmd.words[1].raw.contains("$(echo inner)"));
+    }
+
+    #[test]
+    fn scan_raw_word_trailing_backslash_eof() {
+        let program = parse_test("echo \\").expect("trailing backslash at eof");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert!(cmd.words.iter().any(|w| *w.raw == *"\\"));
+    }
+
+    #[test]
+    fn scan_raw_word_continuation_at_word_start_produces_word() {
+        let program = parse_test("\\\necho hello").expect("continuation at start then word");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert_eq!(&*cmd.words[0].raw, "echo");
+    }
+
+    #[test]
+    fn error_expected_close_brace() {
+        let result = parse_test("{ echo ok");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("}"));
+    }
+
+    #[test]
+    fn error_expected_close_paren_subshell() {
+        let result = parse_test("(echo ok");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains(")"));
+    }
+
+    #[test]
+    fn error_unexpected_lparen_after_word() {
+        let result = parse_test("echo hello(");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn function_def_via_word_lparen_rparen() {
+        let program = parse_test("myfn() { echo hi; }").expect("function def");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::FunctionDef(f) if &*f.name == "myfn"
+        ));
+    }
+
+    #[test]
+    fn command_starts_with_redirect() {
+        let program = parse_test(">out echo hello").expect("redirect before command");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert!(!cmd.redirections.is_empty());
+        assert!(!cmd.words.is_empty());
+    }
+
+    #[test]
+    fn heredoc_delimiter_parse_dollar_single_quote() {
+        let (delim, expand) = parse_here_doc_delimiter("$'EOF'");
+        assert_eq!(&*delim, "EOF");
+        assert!(!expand);
+    }
+
+    #[test]
+    fn heredoc_delimiter_parse_double_quoted() {
+        let (delim, expand) = parse_here_doc_delimiter("\"EOF\"");
+        assert_eq!(&*delim, "EOF");
+        assert!(!expand);
+    }
+
+    #[test]
+    fn heredoc_delimiter_parse_backslash_escape() {
+        let (delim, expand) = parse_here_doc_delimiter("E\\OF");
+        assert_eq!(&*delim, "EOF");
+        assert!(!expand);
+    }
+
+    #[test]
+    fn heredoc_delimiter_double_quote_with_backslash() {
+        let (delim, expand) = parse_here_doc_delimiter("\"E\\$OF\"");
+        assert_eq!(&*delim, "E$OF");
+        assert!(!expand);
+    }
+
+    #[test]
+    fn heredoc_delimiter_dollar_single_quote_with_escape() {
+        let (delim, expand) = parse_here_doc_delimiter("$'E\\'OF'");
+        assert_eq!(&*delim, "E'OF");
+        assert!(!expand);
+    }
+
+    #[test]
+    fn parse_session_saves_alias_state() {
+        let source = "ls\nls\n";
+        let mut session = ParseSession::new(source).unwrap();
+        let mut aliases = HashMap::new();
+        aliases.insert("ls".into(), "ls --color ".into());
+        let r1 = session.next_command(&aliases).unwrap();
+        assert!(r1.is_some());
+        let r2 = session.next_command(&aliases).unwrap();
+        assert!(r2.is_some());
+    }
+
+    #[test]
+    fn case_with_semi_amp_fallthrough() {
+        let program =
+            parse_test("case x in\nx) echo ok ;&\ny) echo y ;;\nesac\n").expect("case fallthrough");
+        let case = match &program.items[0].and_or.first.commands[0] {
+            Command::Case(c) => c,
+            other => panic!("expected case, got {other:?}"),
+        };
+        assert!(case.arms[0].fallthrough);
+    }
+
+    #[test]
+    fn case_with_plain_semi_before_esac() {
+        let result = parse_test("case x in\nx) echo ok ;\nesac\n");
+        assert!(
+            result.is_err()
+                || matches!(
+                    result.as_ref().unwrap().items[0].and_or.first.commands[0],
+                    Command::Case(_)
+                )
+        );
+    }
+
+    #[test]
+    fn for_loop_without_in_clause() {
+        let program = parse_test("for x do echo $x; done").expect("for loop without in");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::For(f) if f.items.is_none()
+        ));
+    }
+
+    #[test]
+    fn for_loop_with_non_word_after_in() {
+        let program = parse_test("for x in ; do echo $x; done").expect("for in with empty list");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::For(f) if f.items.as_ref().map_or(false, |i| i.is_empty())
+        ));
+    }
+
+    #[test]
+    fn function_keyword_def() {
+        let program = parse_test("function myfn { echo hi; }").expect("function keyword def");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::FunctionDef(f) if &*f.name == "myfn"
+        ));
+    }
+
+    #[test]
+    fn function_keyword_def_with_optional_parens() {
+        let program =
+            parse_test("function myfn() { echo hi; }").expect("function keyword with parens");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::FunctionDef(f) if &*f.name == "myfn"
+        ));
+    }
+
+    #[test]
+    fn heredoc_with_paren_on_same_line() {
+        let program =
+            parse_test("(cat <<EOF\nhello\nEOF\n)").expect("heredoc with paren on same line");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Subshell(_)
+        ));
+    }
+
+    #[test]
+    fn parse_session_current_line() {
+        let source = "echo hello\necho world\n";
+        let session = ParseSession::new(source).unwrap();
+        assert_eq!(session.current_line(), 1);
+    }
+
+    #[test]
+    fn heredoc_with_semi_amp_on_same_line() {
+        let program = parse_test("case x in\nx) cat <<EOF ;&\nhello\nEOF\ny) echo y ;;\nesac\n")
+            .expect("heredoc semiamp on same line");
+        let case = match &program.items[0].and_or.first.commands[0] {
+            Command::Case(c) => c,
+            other => panic!("expected case, got {other:?}"),
+        };
+        assert!(case.arms[0].fallthrough);
+    }
+
+    #[test]
+    fn heredoc_with_rparen_on_same_line() {
+        let program =
+            parse_test("(cat <<EOF )\nhello\nEOF\n").expect("heredoc with rparen on same line");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Subshell(_)
+        ));
+    }
+
+    #[test]
+    fn heredoc_with_lparen_on_same_line() {
+        let program = parse_test("cat <<EOF ; (echo sub)\nhello\nEOF\n")
+            .expect("heredoc with lparen on same line");
+        assert!(
+            program.items.len() >= 2 || {
+                let pipeline = &program.items[0].and_or.first;
+                pipeline.commands.len() >= 1
+            }
+        );
+    }
+
+    #[test]
+    fn heredoc_empty_delimiter_error() {
+        let result = parse_test("cat << \nhello\n");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn reclassify_queued_keyword_on_heredoc_line() {
+        let program = parse_test("cat <<EOF ; if true; then echo yes; fi\nbody\nEOF\n")
+            .expect("keyword on heredoc line");
+        assert!(program.items.len() >= 2);
+    }
+
+    #[test]
+    fn reclassify_queued_alias_with_trailing_blank() {
+        let mut aliases = HashMap::new();
+        aliases.insert("ll".into(), "ls -l ".into());
+        let program = parse_with_aliases_test("cat <<EOF | ll foo\nbody\nEOF\n", &aliases)
+            .expect("alias with trailing blank on heredoc line");
+        let pipeline = &program.items[0].and_or.first;
+        assert!(pipeline.commands.len() >= 2);
+    }
+
+    #[test]
+    fn consume_paren_body_backslash_non_newline() {
+        let program =
+            parse_test("echo $(printf '\\t')").expect("backslash non-newline in paren body");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert!(cmd.words[1].raw.contains("\\t"));
+    }
+
+    #[test]
+    fn error_case_expected_word() {
+        let result = parse_test("case ; in esac");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn error_for_expected_variable_name() {
+        let result = parse_test("for ; do echo hi; done");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn error_case_pattern_missing_rparen() {
+        let result = parse_test("case x in\nx echo ;;\nesac\n");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn error_function_keyword_expected_name() {
+        let result = parse_test("function ; { echo hi; }");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn error_function_keyword_invalid_name() {
+        let result = parse_test("function 123 { echo hi; }");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn split_assignment_non_name_returns_none() {
+        use super::ast::split_assignment;
+        assert!(split_assignment("123=val").is_none());
+    }
+
+    #[test]
+    fn list_item_partial_eq() {
+        let p1 = parse_test("echo a").unwrap();
+        let p2 = parse_test("echo a").unwrap();
+        assert_eq!(p1.items[0], p2.items[0]);
+    }
+
+    #[test]
+    fn word_partial_eq() {
+        let p1 = parse_test("echo hello").unwrap();
+        let p2 = parse_test("echo hello").unwrap();
+        let cmd1 = match &p1.items[0].and_or.first.commands[0] {
+            Command::Simple(c) => c,
+            _ => panic!(),
+        };
+        let cmd2 = match &p2.items[0].and_or.first.commands[0] {
+            Command::Simple(c) => c,
+            _ => panic!(),
+        };
+        assert_eq!(cmd1.words[0], cmd2.words[0]);
+    }
+
+    #[test]
+    fn heredoc_partial_eq() {
+        let p1 = parse_test("cat <<EOF\nhello\nEOF\n").unwrap();
+        let p2 = parse_test("cat <<EOF\nhello\nEOF\n").unwrap();
+        let r1 = &match &p1.items[0].and_or.first.commands[0] {
+            Command::Simple(c) => c,
+            _ => panic!(),
+        }
+        .redirections[0]
+            .here_doc;
+        let r2 = &match &p2.items[0].and_or.first.commands[0] {
+            Command::Simple(c) => c,
+            _ => panic!(),
+        }
+        .redirections[0]
+            .here_doc;
+        assert_eq!(r1, r2);
+    }
+
+    #[test]
+    fn error_redirect_only_no_command() {
+        let result = parse_test("< ;");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn consume_paren_body_backslash_escape_non_newline() {
+        let program = parse_test("echo $(echo a\\b)").expect("backslash escape inside $()");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert!(cmd.words[1].raw.contains("\\b"));
+    }
+
+    #[test]
+    fn consume_paren_body_backtick_inside_command_substitution() {
+        let program = parse_test("echo $(echo `echo inner`)").expect("backtick inside $()");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        assert!(cmd.words[1].raw.contains("`echo inner`"));
+    }
+
+    #[test]
+    fn display_name_for_keywords_and_word() {
+        use super::token::Token;
+        assert_eq!(&*Token::If.display_name(), "if");
+        assert_eq!(&*Token::Then.display_name(), "then");
+        assert_eq!(&*Token::Else.display_name(), "else");
+        assert_eq!(&*Token::Elif.display_name(), "elif");
+        assert_eq!(&*Token::Fi.display_name(), "fi");
+        assert_eq!(&*Token::Do.display_name(), "do");
+        assert_eq!(&*Token::Done.display_name(), "done");
+        assert_eq!(&*Token::Case.display_name(), "case");
+        assert_eq!(&*Token::Esac.display_name(), "esac");
+        assert_eq!(&*Token::In.display_name(), "in");
+        assert_eq!(&*Token::While.display_name(), "while");
+        assert_eq!(&*Token::Until.display_name(), "until");
+        assert_eq!(&*Token::For.display_name(), "for");
+        assert_eq!(&*Token::Function.display_name(), "function");
+        assert_eq!(&*Token::Bang.display_name(), "!");
+        assert_eq!(&*Token::LBrace.display_name(), "{");
+        assert_eq!(&*Token::RBrace.display_name(), "}");
+        assert_eq!(&*Token::Word("foo".into()).display_name(), "word");
     }
 }
