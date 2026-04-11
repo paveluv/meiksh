@@ -3,15 +3,6 @@ use std::collections::{HashMap, VecDeque};
 
 use super::ParseError;
 
-#[allow(dead_code)]
-pub(super) fn line_at(source: &str, index: usize) -> usize {
-    source[..index.min(source.len())]
-        .bytes()
-        .filter(|&b| b == b'\n')
-        .count()
-        + 1
-}
-
 struct AliasLayer<'a> {
     text: Cow<'a, str>,
     pos: usize,
@@ -19,34 +10,34 @@ struct AliasLayer<'a> {
 }
 
 const BC_WORD_BREAK: u8 = 0x01;
-const BC_DELIM: u8      = 0x02;
-const BC_BLANK: u8      = 0x04;
-const BC_QUOTE: u8      = 0x08;
+const BC_DELIM: u8 = 0x02;
+const BC_BLANK: u8 = 0x04;
+const BC_QUOTE: u8 = 0x08;
 pub(super) const BC_NAME_START: u8 = 0x10;
-pub(super) const BC_NAME_CONT: u8  = 0x20;
+pub(super) const BC_NAME_CONT: u8 = 0x20;
 
 pub(super) const BYTE_CLASS: [u8; 256] = {
     let mut t = [0u8; 256];
 
-    t[b' '  as usize] = BC_WORD_BREAK | BC_DELIM | BC_BLANK;
+    t[b' ' as usize] = BC_WORD_BREAK | BC_DELIM | BC_BLANK;
     t[b'\t' as usize] = BC_WORD_BREAK | BC_DELIM | BC_BLANK;
 
     t[b'\n' as usize] = BC_WORD_BREAK | BC_DELIM;
-    t[b';'  as usize] = BC_WORD_BREAK | BC_DELIM;
-    t[b'&'  as usize] = BC_WORD_BREAK | BC_DELIM;
-    t[b'|'  as usize] = BC_WORD_BREAK | BC_DELIM;
-    t[b'('  as usize] = BC_WORD_BREAK | BC_DELIM;
-    t[b')'  as usize] = BC_WORD_BREAK | BC_DELIM;
-    t[b'<'  as usize] = BC_WORD_BREAK | BC_DELIM;
-    t[b'>'  as usize] = BC_WORD_BREAK | BC_DELIM;
+    t[b';' as usize] = BC_WORD_BREAK | BC_DELIM;
+    t[b'&' as usize] = BC_WORD_BREAK | BC_DELIM;
+    t[b'|' as usize] = BC_WORD_BREAK | BC_DELIM;
+    t[b'(' as usize] = BC_WORD_BREAK | BC_DELIM;
+    t[b')' as usize] = BC_WORD_BREAK | BC_DELIM;
+    t[b'<' as usize] = BC_WORD_BREAK | BC_DELIM;
+    t[b'>' as usize] = BC_WORD_BREAK | BC_DELIM;
 
-    t[b'#'  as usize] = BC_DELIM;
+    t[b'#' as usize] = BC_DELIM;
 
     t[b'\'' as usize] |= BC_QUOTE;
-    t[b'"'  as usize] |= BC_QUOTE;
+    t[b'"' as usize] |= BC_QUOTE;
     t[b'\\' as usize] |= BC_QUOTE;
-    t[b'$'  as usize] |= BC_QUOTE;
-    t[b'`'  as usize] |= BC_QUOTE;
+    t[b'$' as usize] |= BC_QUOTE;
+    t[b'`' as usize] |= BC_QUOTE;
 
     t[b'_' as usize] |= BC_NAME_START | BC_NAME_CONT;
     let mut c: u8 = b'A';
@@ -174,6 +165,16 @@ impl Token {
             Token::For => Some("for"),
             Token::Function => Some("function"),
             _ => None,
+        }
+    }
+}
+
+impl Token {
+    pub(super) fn into_word(self) -> Option<Box<str>> {
+        if let Token::Word(w) = self {
+            Some(w)
+        } else {
+            None
         }
     }
 }
@@ -316,10 +317,6 @@ impl<'a> Parser<'a> {
     #[inline(always)]
     fn pop_exhausted_layers(&mut self) {
         if self.alias_stack.len() > 1 {
-            let layer = self.alias_stack.last().unwrap();
-            if layer.pos < layer.text.len() {
-                return;
-            }
             self.pop_exhausted_layers_slow();
         }
     }
@@ -355,12 +352,10 @@ impl<'a> Parser<'a> {
         let layer = self.alias_stack.last_mut().unwrap();
         let bytes = layer.text.as_bytes();
         if at_source {
-            if layer.pos < bytes.len() {
-                if bytes[layer.pos] == b'\n' {
-                    self.line += 1;
-                }
-                layer.pos += 1;
+            if bytes[layer.pos] == b'\n' {
+                self.line += 1;
             }
+            layer.pos += 1;
             self.cached_byte = bytes.get(layer.pos).copied();
         } else {
             layer.pos += 1;
@@ -679,43 +674,31 @@ impl<'a> Parser<'a> {
     }
 
     fn consume_quoted_element(&mut self, raw: &mut String) -> Result<(), ParseError> {
-        match self.peek_byte() {
-            Some(b'\'') => {
-                raw.push('\'');
+        let b = self.peek_byte().unwrap();
+        if b == b'\'' {
+            raw.push('\'');
+            self.advance_byte();
+            self.consume_single_quote(raw)
+        } else if b == b'"' {
+            raw.push('"');
+            self.advance_byte();
+            self.consume_double_quote(raw)
+        } else if b == b'\\' {
+            raw.push('\\');
+            self.advance_byte();
+            if let Some(c) = self.peek_byte() {
+                raw.push(c as char);
                 self.advance_byte();
-                self.consume_single_quote(raw)
             }
-            Some(b'"') => {
-                raw.push('"');
-                self.advance_byte();
-                self.consume_double_quote(raw)
-            }
-            Some(b'\\') => {
-                raw.push('\\');
-                self.advance_byte();
-                if let Some(b) = self.peek_byte() {
-                    raw.push(b as char);
-                    self.advance_byte();
-                }
-                Ok(())
-            }
-            Some(b'$') => {
-                raw.push('$');
-                self.advance_byte();
-                self.consume_dollar_construct(raw)
-            }
-            Some(b'`') => {
-                raw.push('`');
-                self.advance_byte();
-                self.consume_backtick_inner(raw)
-            }
-            _ => {
-                if let Some(b) = self.peek_byte() {
-                    raw.push(b as char);
-                }
-                self.advance_byte();
-                Ok(())
-            }
+            Ok(())
+        } else if b == b'$' {
+            raw.push('$');
+            self.advance_byte();
+            self.consume_dollar_construct(raw)
+        } else {
+            raw.push('`');
+            self.advance_byte();
+            self.consume_backtick_inner(raw)
         }
     }
 
@@ -813,7 +796,9 @@ impl<'a> Parser<'a> {
     }
 
     pub(super) fn next_token(&mut self) -> Token {
-        self.cached_token.take().expect("next_token without peek_token")
+        self.cached_token
+            .take()
+            .expect("next_token without peek_token")
     }
 
     fn produce_token(&mut self) -> Result<Token, ParseError> {
@@ -1009,7 +994,11 @@ impl<'a> Parser<'a> {
                             }
                             let (delimiter, expand) = parse_here_doc_delimiter(&delimiter_raw);
                             let idx = heredoc_entries.len();
-                            heredoc_entries.push(HereDocInfo { delimiter, strip_tabs, expand });
+                            heredoc_entries.push(HereDocInfo {
+                                delimiter,
+                                strip_tabs,
+                                expand,
+                            });
                             queued_items.push(HereDocLineItem::HereDocRef(idx));
                         }
                         Some(b'&') => {
@@ -1027,9 +1016,18 @@ impl<'a> Parser<'a> {
                     self.advance_byte();
                     self.skip_continuations();
                     match self.peek_byte() {
-                        Some(b'>') => { self.advance_byte(); queued_items.push(HereDocLineItem::Token(Token::DGreat)); }
-                        Some(b'&') => { self.advance_byte(); queued_items.push(HereDocLineItem::Token(Token::GreatAnd)); }
-                        Some(b'|') => { self.advance_byte(); queued_items.push(HereDocLineItem::Token(Token::Clobber)); }
+                        Some(b'>') => {
+                            self.advance_byte();
+                            queued_items.push(HereDocLineItem::Token(Token::DGreat));
+                        }
+                        Some(b'&') => {
+                            self.advance_byte();
+                            queued_items.push(HereDocLineItem::Token(Token::GreatAnd));
+                        }
+                        Some(b'|') => {
+                            self.advance_byte();
+                            queued_items.push(HereDocLineItem::Token(Token::Clobber));
+                        }
                         _ => queued_items.push(HereDocLineItem::Token(Token::Great)),
                     }
                 }
@@ -1057,13 +1055,25 @@ impl<'a> Parser<'a> {
                     self.advance_byte();
                     self.skip_continuations();
                     match self.peek_byte() {
-                        Some(b';') => { self.advance_byte(); queued_items.push(HereDocLineItem::Token(Token::DSemi)); }
-                        Some(b'&') => { self.advance_byte(); queued_items.push(HereDocLineItem::Token(Token::SemiAmp)); }
+                        Some(b';') => {
+                            self.advance_byte();
+                            queued_items.push(HereDocLineItem::Token(Token::DSemi));
+                        }
+                        Some(b'&') => {
+                            self.advance_byte();
+                            queued_items.push(HereDocLineItem::Token(Token::SemiAmp));
+                        }
                         _ => queued_items.push(HereDocLineItem::Token(Token::Semi)),
                     }
                 }
-                Some(b'(') => { self.advance_byte(); queued_items.push(HereDocLineItem::Token(Token::LParen)); }
-                Some(b')') => { self.advance_byte(); queued_items.push(HereDocLineItem::Token(Token::RParen)); }
+                Some(b'(') => {
+                    self.advance_byte();
+                    queued_items.push(HereDocLineItem::Token(Token::LParen));
+                }
+                Some(b')') => {
+                    self.advance_byte();
+                    queued_items.push(HereDocLineItem::Token(Token::RParen));
+                }
                 Some(b) if b.is_ascii_digit() => {
                     let mut digits = String::new();
                     while let Some(b) = self.peek_byte() {
@@ -1104,7 +1114,9 @@ impl<'a> Parser<'a> {
         let mut bodies: Vec<(Box<str>, usize)> = Vec::new();
         for entry in &heredoc_entries {
             let body_line = self.line;
-            let body: Box<str> = self.read_here_doc_body(&entry.delimiter, entry.strip_tabs, entry.expand)?.into();
+            let body: Box<str> = self
+                .read_here_doc_body(&entry.delimiter, entry.strip_tabs, entry.expand)?
+                .into();
             bodies.push((body, body_line));
         }
 
@@ -1161,10 +1173,7 @@ impl<'a> Parser<'a> {
         self.produce_word(String::new())
     }
 
-    fn produce_word(
-        &mut self,
-        prefix: String,
-    ) -> Result<Token, ParseError> {
+    fn produce_word(&mut self, prefix: String) -> Result<Token, ParseError> {
         let check_keyword = self.keyword_mode;
         let check_alias = self.alias_mode || self.alias_trailing_blank_pending;
         if self.alias_trailing_blank_pending {
@@ -1174,8 +1183,7 @@ impl<'a> Parser<'a> {
         let mut raw = prefix;
         loop {
             if raw.is_empty() {
-                if self.cached_byte.is_none()
-                    || matches!(self.peek_byte(), Some(b) if is_delim(b))
+                if self.cached_byte.is_none() || matches!(self.peek_byte(), Some(b) if is_delim(b))
                 {
                     return Ok(Token::Eof);
                 }
@@ -1285,18 +1293,13 @@ impl<'a> Parser<'a> {
                     self.consume_backtick_inner(raw)?;
                 }
                 Some(b) => {
-                    if self.pushed_back_byte.is_none()
-                        && self.alias_stack.len() == 1
-                    {
+                    if self.pushed_back_byte.is_none() && self.alias_stack.len() == 1 {
                         let layer = &mut self.alias_stack[0];
                         let bytes = layer.text.as_bytes();
                         let start = layer.pos;
                         let mut pos = start + 1;
                         while pos < bytes.len() {
-                            if BYTE_CLASS[bytes[pos] as usize]
-                                & (BC_WORD_BREAK | BC_QUOTE)
-                                != 0
-                            {
+                            if BYTE_CLASS[bytes[pos] as usize] & (BC_WORD_BREAK | BC_QUOTE) != 0 {
                                 break;
                             }
                             pos += 1;

@@ -53,7 +53,9 @@ pub trait Context {
     fn home_dir_for_user(&self, name: &str) -> Option<Cow<'_, str>>;
     fn set_lineno(&mut self, _line: usize) {}
     fn inc_lineno(&mut self) {}
-    fn lineno(&self) -> usize { 0 }
+    fn lineno(&self) -> usize {
+        0
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2070,9 +2072,7 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
                 };
                 self.ctx
                     .set_var(&name, value.to_string())
-                    .map_err(|e| {
-                        ExpandError { message: e.message }
-                    })?;
+                    .map_err(|e| ExpandError { message: e.message })?;
                 return Ok(value);
             }
             self.index = save;
@@ -2580,7 +2580,9 @@ mod tests {
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "~/$USER".into(), line: 0 },
+                raw: "~/$USER".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect("expand");
@@ -2595,7 +2597,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((1 + 2 * 3))".into(), line: 0 },
+                    raw: "$((1 + 2 * 3))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("expand"),
@@ -2612,9 +2616,13 @@ mod tests {
                 &mut ctx,
                 &[
                     Word {
-                        raw: "$WORDS".into(), line: 0 },
+                        raw: "$WORDS".into(),
+                        line: 0
+                    },
                     Word {
-                        raw: "$(printf hi)".into(), line: 0 },
+                        raw: "$(printf hi)".into(),
+                        line: 0
+                    },
                 ],
                 &arena,
             )
@@ -2637,7 +2645,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"$0 $1\"".into(), line: 0 },
+                    raw: "\"$0 $1\"".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("expand"),
@@ -2647,7 +2657,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\\$HOME".into(), line: 0 },
+                    raw: "\\$HOME".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("expand"),
@@ -2657,7 +2669,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "a\\ b".into(), line: 0 },
+                    raw: "a\\ b".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("expand"),
@@ -2667,7 +2681,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "'literal text'".into(), line: 0 },
+                    raw: "'literal text'".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("expand"),
@@ -2677,7 +2693,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"cost:\\$USER\"".into(), line: 0 },
+                    raw: "\"cost:\\$USER\"".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("expand"),
@@ -2687,7 +2705,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$'a b'".into(), line: 0 },
+                    raw: "$'a b'".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("expand"),
@@ -2697,7 +2717,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$'line\\nnext'".into(), line: 0 },
+                    raw: "$'line\\nnext'".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("expand"),
@@ -2707,7 +2729,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"$'a b'\"".into(), line: 0 },
+                    raw: "\"$'a b'\"".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("expand"),
@@ -2724,7 +2748,15 @@ mod tests {
         let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         for raw in ["'oops", "\"oops", "${USER", "$(echo", "$((1 + 2)", "$'oops"] {
-            let error = expand_word(&mut ctx, &Word { raw: raw.into(), line: 0 }, &arena).expect_err("error");
+            let error = expand_word(
+                &mut ctx,
+                &Word {
+                    raw: raw.into(),
+                    line: 0,
+                },
+                &arena,
+            )
+            .expect_err("error");
             assert!(!error.message.is_empty());
         }
     }
@@ -2768,7 +2800,15 @@ mod tests {
         let arena = StringArena::new();
         let mut ctx = FakeContext::new();
         for raw in ["$((1 / 0))", "$((1 + ))", "$((1 1))"] {
-            let error = expand_word(&mut ctx, &Word { raw: raw.into(), line: 0 }, &arena).expect_err("error");
+            let error = expand_word(
+                &mut ctx,
+                &Word {
+                    raw: raw.into(),
+                    line: 0,
+                },
+                &arena,
+            )
+            .expect_err("error");
             assert!(!error.message.is_empty());
         }
     }
@@ -2794,21 +2834,33 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${10}".into(), line: 0 },
+                    raw: "${10}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("expand"),
             vec!["j".to_string()]
         );
         assert_eq!(
-            expand_word(&mut ctx, &Word { raw: "$10".into(), line: 0 }, &arena).expect("expand"),
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$10".into(),
+                    line: 0
+                },
+                &arena
+            )
+            .expect("expand"),
             vec!["a0".to_string()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${#10}".into(), line: 0 },
+                    raw: "${#10}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("expand"),
@@ -2816,7 +2868,15 @@ mod tests {
         );
         ctx.env.insert("IFS".into(), ":".into());
         assert_eq!(
-            expand_word(&mut ctx, &Word { raw: "$*".into(), line: 0 }, &arena).expect("expand"),
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$*".into(),
+                    line: 0
+                },
+                &arena
+            )
+            .expect("expand"),
             vec![
                 "a".to_string(),
                 "b".to_string(),
@@ -2834,7 +2894,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"$*\"".into(), line: 0 },
+                    raw: "\"$*\"".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("expand"),
@@ -2844,7 +2906,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${UNSET-word}".into(), line: 0 },
+                    raw: "${UNSET-word}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("expand"),
@@ -2854,7 +2918,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${UNSET:-word}".into(), line: 0 },
+                    raw: "${UNSET:-word}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("expand"),
@@ -2864,7 +2930,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${EMPTY-word}".into(), line: 0 },
+                    raw: "${EMPTY-word}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("expand"),
@@ -2874,7 +2942,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${EMPTY:-word}".into(), line: 0 },
+                    raw: "${EMPTY:-word}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("expand"),
@@ -2884,7 +2954,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${USER:+alt}".into(), line: 0 },
+                    raw: "${USER:+alt}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("expand"),
@@ -2894,7 +2966,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${UNSET+alt}".into(), line: 0 },
+                    raw: "${UNSET+alt}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("expand"),
@@ -2904,7 +2978,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${NEW:=value}".into(), line: 0 },
+                    raw: "${NEW:=value}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("expand"),
@@ -2912,14 +2988,24 @@ mod tests {
         );
         assert_eq!(ctx.env.get("NEW").map(String::as_str), Some("value"));
         assert_eq!(
-            expand_word(&mut ctx, &Word { raw: "${#}".into(), line: 0 }, &arena).expect("expand"),
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "${#}".into(),
+                    line: 0
+                },
+                &arena
+            )
+            .expect("expand"),
             vec!["10".to_string()]
         );
 
         let error = expand_word(
             &mut ctx,
             &Word {
-                raw: "${UNSET:?boom}".into(), line: 0 },
+                raw: "${UNSET:?boom}".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect_err("unset error");
@@ -2928,7 +3014,9 @@ mod tests {
         let error = expand_word(
             &mut ctx,
             &Word {
-                raw: "${UNSET:?$'unterminated}".into(), line: 0 },
+                raw: "${UNSET:?$'unterminated}".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect_err("colon-question word expansion error");
@@ -2937,7 +3025,9 @@ mod tests {
         let error = expand_word(
             &mut ctx,
             &Word {
-                raw: "${MISSING?$'unterminated}".into(), line: 0 },
+                raw: "${MISSING?$'unterminated}".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect_err("plain-question word expansion error");
@@ -2952,7 +3042,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$WORDS".into(), line: 0 },
+                    raw: "$WORDS".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("expand"),
@@ -2962,7 +3054,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$DELIMS".into(), line: 0 },
+                    raw: "$DELIMS".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("expand"),
@@ -2972,7 +3066,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$EMPTY".into(), line: 0 },
+                    raw: "$EMPTY".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("expand"),
@@ -2990,14 +3086,24 @@ mod tests {
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "$WORDS".into(), line: 0 },
+                    raw: "$WORDS".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("expand"),
             "one two"
         );
         assert_eq!(
-            expand_word_text(&mut ctx, &Word { raw: "*".into(), line: 0 }, &arena).expect("expand"),
+            expand_word_text(
+                &mut ctx,
+                &Word {
+                    raw: "*".into(),
+                    line: 0
+                },
+                &arena
+            )
+            .expect("expand"),
             "*"
         );
     }
@@ -3057,7 +3163,9 @@ mod tests {
                 expand_word(
                     &mut ctx,
                     &Word {
-                        raw: "/testdir/*.txt".into(), line: 0 },
+                        raw: "/testdir/*.txt".into(),
+                        line: 0
+                    },
                     &arena,
                 )
                 .expect("glob"),
@@ -3067,7 +3175,9 @@ mod tests {
                 expand_word(
                     &mut ctx,
                     &Word {
-                        raw: "\\*.txt".into(), line: 0 },
+                        raw: "\\*.txt".into(),
+                        line: 0
+                    },
                     &arena,
                 )
                 .expect("escaped glob"),
@@ -3077,7 +3187,9 @@ mod tests {
                 expand_word(
                     &mut ctx,
                     &Word {
-                        raw: "/testdir/.*.txt".into(), line: 0 },
+                        raw: "/testdir/.*.txt".into(),
+                        line: 0
+                    },
                     &arena,
                 )
                 .expect("hidden glob"),
@@ -3094,7 +3206,15 @@ mod tests {
             ctx.pathname_expansion_enabled = false;
             let pattern = "/testdir/*.txt";
             assert_eq!(
-                expand_word(&mut ctx, &Word { raw: pattern.into(), line: 0 }, &arena,).expect("noglob"),
+                expand_word(
+                    &mut ctx,
+                    &Word {
+                        raw: pattern.into(),
+                        line: 0
+                    },
+                    &arena,
+                )
+                .expect("noglob"),
                 vec![pattern]
             );
         });
@@ -3151,7 +3271,9 @@ mod tests {
         let error = expand_word(
             &mut ctx,
             &Word {
-                raw: "$UNSET".into(), line: 0 },
+                raw: "$UNSET".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect_err("nounset variable");
@@ -3160,21 +3282,32 @@ mod tests {
         let error = expand_word(
             &mut ctx,
             &Word {
-                raw: "${UNSET}".into(), line: 0 },
+                raw: "${UNSET}".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect_err("nounset braced");
         assert_eq!(&*error.message, "UNSET: parameter not set");
 
-        let error = expand_word(&mut ctx, &Word { raw: "$9".into(), line: 0 }, &arena)
-            .expect_err("nounset positional");
+        let error = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "$9".into(),
+                line: 0,
+            },
+            &arena,
+        )
+        .expect_err("nounset positional");
         assert_eq!(&*error.message, "9: parameter not set");
 
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${UNSET-word}".into(), line: 0 },
+                    raw: "${UNSET-word}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("default still works"),
@@ -3184,7 +3317,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"$*\"".into(), line: 0 },
+                    raw: "\"$*\"".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("star exempt"),
@@ -3683,7 +3818,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${PATHNAME#*/}".into(), line: 0 },
+                    raw: "${PATHNAME#*/}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("small prefix"),
@@ -3693,7 +3830,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${PATHNAME##*/}".into(), line: 0 },
+                    raw: "${PATHNAME##*/}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("large prefix"),
@@ -3703,7 +3842,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${PATHNAME%/*}".into(), line: 0 },
+                    raw: "${PATHNAME%/*}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("small suffix"),
@@ -3713,7 +3854,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${PATHNAME%%/*}".into(), line: 0 },
+                    raw: "${PATHNAME%%/*}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("large suffix"),
@@ -3723,7 +3866,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${PATHNAME#\"src/\"}".into(), line: 0 },
+                    raw: "${PATHNAME#\"src/\"}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("quoted pattern"),
@@ -3733,7 +3878,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${DOTTED#*.}".into(), line: 0 },
+                    raw: "${DOTTED#*.}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("wildcard prefix"),
@@ -3743,7 +3890,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${DOTTED##*.}".into(), line: 0 },
+                    raw: "${DOTTED##*.}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("largest wildcard prefix"),
@@ -3753,7 +3902,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${DOTTED%.*}".into(), line: 0 },
+                    raw: "${DOTTED%.*}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("wildcard suffix"),
@@ -3763,7 +3914,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${DOTTED%%.*}".into(), line: 0 },
+                    raw: "${DOTTED%%.*}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("largest wildcard suffix"),
@@ -3773,7 +3926,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${DOTTED#\"*.\"}".into(), line: 0 },
+                    raw: "${DOTTED#\"*.\"}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("quoted wildcard"),
@@ -3783,7 +3938,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${DOTTED%}".into(), line: 0 },
+                    raw: "${DOTTED%}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("empty suffix pattern"),
@@ -3793,7 +3950,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${MISSING%%*.}".into(), line: 0 },
+                    raw: "${MISSING%%*.}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("unset value"),
@@ -3851,7 +4010,9 @@ mod tests {
                     expand_word(
                         &mut ctx,
                         &Word {
-                            raw: "*.definitely-no-match".into(), line: 0 },
+                            raw: "*.definitely-no-match".into(),
+                            line: 0
+                        },
                         &arena,
                     )
                     .expect("unmatched glob"),
@@ -3870,9 +4031,13 @@ mod tests {
     fn expands_here_documents_without_field_splitting() {
         let arena = StringArena::new();
         let mut ctx = FakeContext::new();
-        let expanded =
-            expand_here_document(&mut ctx, "hello $USER\n$(printf hi)\n$((1 + 2))\n", 0, &arena)
-                .expect("expand heredoc");
+        let expanded = expand_here_document(
+            &mut ctx,
+            "hello $USER\n$(printf hi)\n$((1 + 2))\n",
+            0,
+            &arena,
+        )
+        .expect("expand heredoc");
         assert_eq!(expanded, "hello meiksh\nprintf hi\n3\n");
 
         let escaped = expand_here_document(&mut ctx, "\\$USER\nline\\\ncontinued\n", 0, &arena)
@@ -3899,7 +4064,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"$@\"".into(), line: 0 },
+                    raw: "\"$@\"".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("quoted at 3"),
@@ -3911,7 +4078,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"$@\"".into(), line: 0 },
+                    raw: "\"$@\"".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("quoted at 1"),
@@ -3923,7 +4092,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"$@\"".into(), line: 0 },
+                    raw: "\"$@\"".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("quoted at 0"),
@@ -3940,7 +4111,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"pre$@suf\"".into(), line: 0 },
+                    raw: "\"pre$@suf\"".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("prefix suffix"),
@@ -3952,7 +4125,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"[$@]\"".into(), line: 0 },
+                    raw: "\"[$@]\"".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("brackets one"),
@@ -3964,7 +4139,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"pre$@suf\"".into(), line: 0 },
+                    raw: "\"pre$@suf\"".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("prefix empty"),
@@ -3981,7 +4158,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"$@$@\"".into(), line: 0 },
+                    raw: "\"$@$@\"".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("at at"),
@@ -3995,13 +4174,29 @@ mod tests {
         let mut ctx = FakeContext::new();
         ctx.positional = vec!["a b".into(), "c".into()];
         assert_eq!(
-            expand_word(&mut ctx, &Word { raw: "$@".into(), line: 0 }, &arena).expect("unquoted at"),
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$@".into(),
+                    line: 0
+                },
+                &arena
+            )
+            .expect("unquoted at"),
             vec!["a", "b", "c"]
         );
 
         ctx.positional = Vec::new();
         assert_eq!(
-            expand_word(&mut ctx, &Word { raw: "$@".into(), line: 0 }, &arena).expect("unquoted at empty"),
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$@".into(),
+                    line: 0
+                },
+                &arena
+            )
+            .expect("unquoted at empty"),
             Vec::<String>::new()
         );
     }
@@ -4016,7 +4211,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"$*\"".into(), line: 0 },
+                    raw: "\"$*\"".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("star colon"),
@@ -4028,7 +4225,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"$*\"".into(), line: 0 },
+                    raw: "\"$*\"".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("star empty ifs"),
@@ -4040,7 +4239,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"$*\"".into(), line: 0 },
+                    raw: "\"$*\"".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("star unset ifs"),
@@ -4056,7 +4257,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "`echo hello`".into(), line: 0 },
+                    raw: "`echo hello`".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("backtick"),
@@ -4066,7 +4269,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"`echo hello`\"".into(), line: 0 },
+                    raw: "\"`echo hello`\"".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("quoted bt"),
@@ -4082,7 +4287,9 @@ mod tests {
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "`echo \\$USER`".into(), line: 0 },
+                    raw: "`echo \\$USER`".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("escaped dollar"),
@@ -4092,7 +4299,9 @@ mod tests {
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "\"`echo \\$USER`\"".into(), line: 0 },
+                    raw: "\"`echo \\$USER`\"".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("escaped dollar dq"),
@@ -4110,7 +4319,9 @@ mod tests {
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${VAR:-\"a}b\"}".into(), line: 0 },
+                    raw: "${VAR:-\"a}b\"}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("quoted brace in default"),
@@ -4121,7 +4332,9 @@ mod tests {
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${VAR:-$(echo ok)}".into(), line: 0 },
+                    raw: "${VAR:-$(echo ok)}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("command sub in brace"),
@@ -4132,7 +4345,9 @@ mod tests {
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${VAR:-$((1+2))}".into(), line: 0 },
+                    raw: "${VAR:-$((1+2))}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("arith in brace"),
@@ -4144,7 +4359,9 @@ mod tests {
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${VAR:-${INNER}}".into(), line: 0 },
+                    raw: "${VAR:-${INNER}}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("nested brace"),
@@ -4155,7 +4372,9 @@ mod tests {
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${VAR:-`echo hi`}".into(), line: 0 },
+                    raw: "${VAR:-`echo hi`}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("backtick in brace"),
@@ -4166,7 +4385,9 @@ mod tests {
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${VAR:-'a}b'}".into(), line: 0 },
+                    raw: "${VAR:-'a}b'}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("single quote in brace"),
@@ -4177,7 +4398,9 @@ mod tests {
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${VAR:-\\}}".into(), line: 0 },
+                    raw: "${VAR:-\\}}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("escaped brace"),
@@ -4201,7 +4424,9 @@ mod tests {
         let error = expand_word(
             &mut ctx,
             &Word {
-                raw: "${UNSET:?custom error}".into(), line: 0 },
+                raw: "${UNSET:?custom error}".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect_err("colon question");
@@ -4210,7 +4435,9 @@ mod tests {
         let error = expand_word(
             &mut ctx,
             &Word {
-                raw: "${UNSET?also error}".into(), line: 0 },
+                raw: "${UNSET?also error}".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect_err("question");
@@ -4246,7 +4473,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"\"\"$@\"".into(), line: 0 },
+                    raw: "\"\"\"$@\"".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("empty at dq"),
@@ -4262,7 +4491,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"hello `echo world`\"".into(), line: 0 },
+                    raw: "\"hello `echo world`\"".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("bt dq buffer"),
@@ -4304,7 +4535,9 @@ mod tests {
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${VAR:-$((2+3))}".into(), line: 0 },
+                    raw: "${VAR:-$((2+3))}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("arith in brace scan"),
@@ -4315,7 +4548,9 @@ mod tests {
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${VAR:-$(echo deep)}".into(), line: 0 },
+                    raw: "${VAR:-$(echo deep)}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("cmd sub in brace scan"),
@@ -4326,7 +4561,9 @@ mod tests {
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${VAR:-`echo bt`}".into(), line: 0 },
+                    raw: "${VAR:-`echo bt`}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("backtick in brace scan"),
@@ -4337,7 +4574,9 @@ mod tests {
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${VAR:-\"inside\"}".into(), line: 0 },
+                    raw: "${VAR:-\"inside\"}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("dq in brace scan with escape"),
@@ -4354,7 +4593,9 @@ mod tests {
         let err = expand_word(
             &mut ctx,
             &Word {
-                raw: "${EMPTY:?null or unset}".into(), line: 0 },
+                raw: "${EMPTY:?null or unset}".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect_err("colon question null");
@@ -4363,7 +4604,9 @@ mod tests {
         let ok = expand_word(
             &mut ctx,
             &Word {
-                raw: "\"${EMPTY?not an error}\"".into(), line: 0 },
+                raw: "\"${EMPTY?not an error}\"".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect("question set but empty");
@@ -4372,7 +4615,9 @@ mod tests {
         let err = expand_word(
             &mut ctx,
             &Word {
-                raw: "${NOEXIST?custom msg}".into(), line: 0 },
+                raw: "${NOEXIST?custom msg}".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect_err("question unset");
@@ -4385,7 +4630,15 @@ mod tests {
         let mut ctx = FakeContext::new();
         ctx.env.insert("WS".into(), "   ".into());
         assert_eq!(
-            expand_word(&mut ctx, &Word { raw: "$WS".into(), line: 0 }, &arena).expect("whitespace only"),
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: "$WS".into(),
+                    line: 0
+                },
+                &arena
+            )
+            .expect("whitespace only"),
             Vec::<String>::new()
         );
     }
@@ -4399,7 +4652,9 @@ mod tests {
         let result = expand_word(
             &mut ctx,
             &Word {
-                raw: "\"$@\"".into(), line: 0 },
+                raw: "\"$@\"".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect("at with glob-like");
@@ -4431,7 +4686,9 @@ mod tests {
         let result = expand_word(
             &mut ctx,
             &Word {
-                raw: "\"$@\"".into(), line: 0 },
+                raw: "\"$@\"".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect("at one param");
@@ -4441,7 +4698,9 @@ mod tests {
         let result2 = expand_word(
             &mut ctx,
             &Word {
-                raw: "\"$@\"".into(), line: 0 },
+                raw: "\"$@\"".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect("at empty");
@@ -4458,7 +4717,9 @@ mod tests {
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${V:-$((1+(2*3)))}".into(), line: 0 },
+                    raw: "${V:-$((1+(2*3)))}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("nested arith in scan"),
@@ -4469,7 +4730,9 @@ mod tests {
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${V:-$(echo (hi))}".into(), line: 0 },
+                    raw: "${V:-$(echo (hi))}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("nested cmd sub in scan"),
@@ -4480,7 +4743,9 @@ mod tests {
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${V:-`echo \\\\x`}".into(), line: 0 },
+                    raw: "${V:-`echo \\\\x`}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("bt escape in scan"),
@@ -4491,7 +4756,9 @@ mod tests {
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${V:-\"q\\}x\"}".into(), line: 0 },
+                    raw: "${V:-\"q\\}x\"}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("dq escape in scan"),
@@ -4507,7 +4774,9 @@ mod tests {
         let err = expand_word(
             &mut ctx,
             &Word {
-                raw: "${NULL:?is null}".into(), line: 0 },
+                raw: "${NULL:?is null}".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect_err(":? with null");
@@ -4517,7 +4786,9 @@ mod tests {
         let err = expand_word(
             &mut ctx,
             &Word {
-                raw: "${NULL:?$NOVAR}".into(), line: 0 },
+                raw: "${NULL:?$NOVAR}".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect_err(":? nounset propagation");
@@ -4526,7 +4797,9 @@ mod tests {
         let err = expand_word(
             &mut ctx,
             &Word {
-                raw: "${NOEXIST?$NOVAR}".into(), line: 0 },
+                raw: "${NOEXIST?$NOVAR}".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect_err("? nounset propagation");
@@ -4540,7 +4813,9 @@ mod tests {
         let err = expand_word(
             &mut ctx,
             &Word {
-                raw: "${NOVAR?}".into(), line: 0 },
+                raw: "${NOVAR?}".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect_err("? with unset");
@@ -4551,7 +4826,9 @@ mod tests {
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${SET:?no error}".into(), line: 0 },
+                    raw: "${SET:?no error}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect(":? success"),
@@ -4561,7 +4838,9 @@ mod tests {
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${SET?no error}".into(), line: 0 },
+                    raw: "${SET?no error}".into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("? success"),
@@ -4571,7 +4850,9 @@ mod tests {
         let err_colon = expand_word(
             &mut ctx,
             &Word {
-                raw: "${NOVAR:?}".into(), line: 0 },
+                raw: "${NOVAR:?}".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect_err(":? with unset");
@@ -4585,7 +4866,9 @@ mod tests {
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: r#""\a\b\c""#.into(), line: 0 },
+                raw: r#""\a\b\c""#.into(),
+                line: 0,
+            },
             &arena,
         )
         .expect("dquote bs");
@@ -4600,7 +4883,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: r#""\$""#.into(), line: 0 },
+                    raw: r#""\$""#.into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("escape $"),
@@ -4610,7 +4895,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: r#""\\""#.into(), line: 0 },
+                    raw: r#""\\""#.into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("escape bs"),
@@ -4620,7 +4907,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: r#""\"""#.into(), line: 0 },
+                    raw: r#""\"""#.into(),
+                    line: 0
+                },
                 &arena,
             )
             .expect("escape dq"),
@@ -4630,7 +4919,8 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"\\`\"".into(), line: 0,
+                    raw: "\"\\`\"".into(),
+                    line: 0,
                 },
                 &arena,
             )
@@ -4646,7 +4936,9 @@ mod tests {
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "\"ab\\\ncd\"".into(), line: 0 },
+                raw: "\"ab\\\ncd\"".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect("line continuation");
@@ -4660,7 +4952,9 @@ mod tests {
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "~testuser/bin".into(), line: 0 },
+                raw: "~testuser/bin".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect("tilde user");
@@ -4674,7 +4968,9 @@ mod tests {
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "~nosuchuser/dir".into(), line: 0 },
+                raw: "~nosuchuser/dir".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect("tilde unknown");
@@ -4688,7 +4984,9 @@ mod tests {
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "~testuser".into(), line: 0 },
+                raw: "~testuser".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect("tilde user no slash");
@@ -4702,7 +5000,9 @@ mod tests {
         let result = expand_assignment_value(
             &mut ctx,
             &Word {
-                raw: "~/bin:~testuser/lib".into(), line: 0 },
+                raw: "~/bin:~testuser/lib".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect("tilde colon");
@@ -4717,7 +5017,9 @@ mod tests {
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "$((count + 3))".into(), line: 0 },
+                raw: "$((count + 3))".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect("arith var");
@@ -4732,7 +5034,9 @@ mod tests {
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "$(($n * 2))".into(), line: 0 },
+                raw: "$(($n * 2))".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect("arith $var");
@@ -4747,7 +5051,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((3 < 5))".into(), line: 0 },
+                    raw: "$((3 < 5))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -4757,7 +5063,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((5 < 3))".into(), line: 0 },
+                    raw: "$((5 < 3))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -4767,7 +5075,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((3 <= 3))".into(), line: 0 },
+                    raw: "$((3 <= 3))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -4777,7 +5087,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((5 > 3))".into(), line: 0 },
+                    raw: "$((5 > 3))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -4787,7 +5099,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((3 >= 5))".into(), line: 0 },
+                    raw: "$((3 >= 5))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -4797,7 +5111,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((3 == 3))".into(), line: 0 },
+                    raw: "$((3 == 3))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -4807,7 +5123,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((3 != 5))".into(), line: 0 },
+                    raw: "$((3 != 5))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -4823,7 +5141,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((6 & 3))".into(), line: 0 },
+                    raw: "$((6 & 3))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -4833,7 +5153,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((6 | 3))".into(), line: 0 },
+                    raw: "$((6 | 3))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -4843,7 +5165,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((6 ^ 3))".into(), line: 0 },
+                    raw: "$((6 ^ 3))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -4853,7 +5177,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((~0))".into(), line: 0 },
+                    raw: "$((~0))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -4863,7 +5189,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((1 << 4))".into(), line: 0 },
+                    raw: "$((1 << 4))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -4873,7 +5201,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((16 >> 2))".into(), line: 0 },
+                    raw: "$((16 >> 2))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -4889,7 +5219,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((1 && 1))".into(), line: 0 },
+                    raw: "$((1 && 1))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -4899,7 +5231,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((1 && 0))".into(), line: 0 },
+                    raw: "$((1 && 0))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -4909,7 +5243,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((0 || 1))".into(), line: 0 },
+                    raw: "$((0 || 1))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -4919,7 +5255,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((0 || 0))".into(), line: 0 },
+                    raw: "$((0 || 0))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -4929,7 +5267,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((!0))".into(), line: 0 },
+                    raw: "$((!0))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -4939,7 +5279,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((!5))".into(), line: 0 },
+                    raw: "$((!5))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -4955,7 +5297,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((1 ? 10 : 20))".into(), line: 0 },
+                    raw: "$((1 ? 10 : 20))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -4965,7 +5309,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((0 ? 10 : 20))".into(), line: 0 },
+                    raw: "$((0 ? 10 : 20))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -4982,7 +5328,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((x = 5))".into(), line: 0 },
+                    raw: "$((x = 5))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -4994,7 +5342,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((x += 3))".into(), line: 0 },
+                    raw: "$((x += 3))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -5006,7 +5356,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((x -= 2))".into(), line: 0 },
+                    raw: "$((x -= 2))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -5017,7 +5369,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((x *= 3))".into(), line: 0 },
+                    raw: "$((x *= 3))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -5028,7 +5382,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((x /= 6))".into(), line: 0 },
+                    raw: "$((x /= 6))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -5039,7 +5395,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((x %= 2))".into(), line: 0 },
+                    raw: "$((x %= 2))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -5051,7 +5409,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((x <<= 2))".into(), line: 0 },
+                    raw: "$((x <<= 2))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -5062,7 +5422,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((x >>= 1))".into(), line: 0 },
+                    raw: "$((x >>= 1))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -5073,7 +5435,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((x &= 3))".into(), line: 0 },
+                    raw: "$((x &= 3))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -5085,7 +5449,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((x |= 2))".into(), line: 0 },
+                    raw: "$((x |= 2))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -5096,7 +5462,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((x ^= 3))".into(), line: 0 },
+                    raw: "$((x ^= 3))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -5112,7 +5480,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((0xff))".into(), line: 0 },
+                    raw: "$((0xff))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -5122,7 +5492,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((0X1A))".into(), line: 0 },
+                    raw: "$((0X1A))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -5132,7 +5504,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((010))".into(), line: 0 },
+                    raw: "$((010))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -5142,7 +5516,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((0))".into(), line: 0 },
+                    raw: "$((0))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -5158,7 +5534,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((+5))".into(), line: 0 },
+                    raw: "$((+5))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -5174,7 +5552,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((nosuch))".into(), line: 0 },
+                    raw: "$((nosuch))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -5190,7 +5570,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((2 + 3 * 4))".into(), line: 0 },
+                    raw: "$((2 + 3 * 4))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -5200,7 +5582,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$(((2 + 3) * 4))".into(), line: 0 },
+                    raw: "$(((2 + 3) * 4))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -5217,7 +5601,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((h))".into(), line: 0 },
+                    raw: "$((h))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -5234,7 +5620,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((o))".into(), line: 0 },
+                    raw: "$((o))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -5273,7 +5661,9 @@ mod tests {
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: r#""abc\"#.into(), line: 0 },
+                raw: r#""abc\"#.into(),
+                line: 0,
+            },
             &arena,
         );
         assert!(fields.is_err());
@@ -5286,7 +5676,9 @@ mod tests {
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "~'user'".into(), line: 0 },
+                raw: "~'user'".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect("tilde quoted");
@@ -5300,7 +5692,9 @@ mod tests {
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "$((`7` + 3))".into(), line: 0 },
+                raw: "$((`7` + 3))".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect("arith backtick");
@@ -5315,7 +5709,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((3 != 3))".into(), line: 0 },
+                    raw: "$((3 != 3))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -5331,7 +5727,9 @@ mod tests {
         let err = expand_word(
             &mut ctx,
             &Word {
-                raw: "$((x /= 0))".into(), line: 0 },
+                raw: "$((x /= 0))".into(),
+                line: 0,
+            },
             &arena,
         )
         .unwrap_err();
@@ -5341,7 +5739,9 @@ mod tests {
         let err = expand_word(
             &mut ctx,
             &Word {
-                raw: "$((x %= 0))".into(), line: 0 },
+                raw: "$((x %= 0))".into(),
+                line: 0,
+            },
             &arena,
         )
         .unwrap_err();
@@ -5355,7 +5755,9 @@ mod tests {
         let result = expand_assignment_value(
             &mut ctx,
             &Word {
-                raw: "~/a:'literal:colon'".into(), line: 0 },
+                raw: "~/a:'literal:colon'".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect("colon assign with quotes");
@@ -5371,7 +5773,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((x == 5))".into(), line: 0 },
+                    raw: "$((x == 5))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -5381,7 +5785,9 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((x == 3))".into(), line: 0 },
+                    raw: "$((x == 3))".into(),
+                    line: 0
+                },
                 &arena,
             )
             .unwrap(),
@@ -5396,7 +5802,9 @@ mod tests {
         let err = expand_word(
             &mut ctx,
             &Word {
-                raw: "$((1 ? 2 3))".into(), line: 0 },
+                raw: "$((1 ? 2 3))".into(),
+                line: 0,
+            },
             &arena,
         )
         .unwrap_err();
@@ -5410,7 +5818,9 @@ mod tests {
         let err = expand_word(
             &mut ctx,
             &Word {
-                raw: "$((0x))".into(), line: 0 },
+                raw: "$((0x))".into(),
+                line: 0,
+            },
             &arena,
         )
         .unwrap_err();
@@ -5425,7 +5835,9 @@ mod tests {
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "$(($@ + 2))".into(), line: 0 },
+                raw: "$(($@ + 2))".into(),
+                line: 0,
+            },
             &arena,
         )
         .expect("at fields arith");
@@ -5491,7 +5903,9 @@ mod tests {
                 expand_word(
                     &mut ctx,
                     &Word {
-                        raw: "''\"$@\"".into(), line: 0 },
+                        raw: "''\"$@\"".into(),
+                        line: 0
+                    },
                     &arena,
                 )
                 .unwrap(),
@@ -5508,7 +5922,9 @@ mod tests {
             let result = expand_redirect_word(
                 &mut ctx,
                 &Word {
-                    raw: "file_*.txt".into(), line: 0 },
+                    raw: "file_*.txt".into(),
+                    line: 0,
+                },
                 &arena,
             )
             .expect("redirect word");
@@ -5524,7 +5940,9 @@ mod tests {
             let result = expand_redirect_word(
                 &mut ctx,
                 &Word {
-                    raw: "$UNSET_VAR".into(), line: 0 },
+                    raw: "$UNSET_VAR".into(),
+                    line: 0,
+                },
                 &arena,
             )
             .expect("redirect word empty");
@@ -5538,8 +5956,15 @@ mod tests {
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
             ctx.env.insert("V".into(), "a b".into());
-            let result = expand_redirect_word(&mut ctx, &Word { raw: "$V".into(), line: 0 }, &arena)
-                .expect("redirect word split");
+            let result = expand_redirect_word(
+                &mut ctx,
+                &Word {
+                    raw: "$V".into(),
+                    line: 0,
+                },
+                &arena,
+            )
+            .expect("redirect word split");
             assert_eq!(result, "a b");
         });
     }
@@ -5549,8 +5974,8 @@ mod tests {
         let arena = StringArena::new();
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
-            let result =
-                expand_here_document(&mut ctx, "`echo ok`\n", 0, &arena).expect("here doc backtick");
+            let result = expand_here_document(&mut ctx, "`echo ok`\n", 0, &arena)
+                .expect("here doc backtick");
             assert_eq!(result, "echo ok\n");
         });
     }
@@ -5574,5 +5999,119 @@ mod tests {
         let ctx = FakeContext::new();
         assert_eq!(ctx.special_param('*').as_deref(), Some("alpha beta"));
         assert_eq!(ctx.special_param('@').as_deref(), Some("alpha beta"));
+    }
+
+    #[test]
+    fn newline_inside_single_quote_increments_lineno() {
+        let arena = StringArena::new();
+        let mut ctx = FakeContext::new();
+        let fields = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "'hello\nworld'".into(),
+                line: 1,
+            },
+            &arena,
+        )
+        .expect("single quote newline");
+        assert_eq!(fields, vec!["hello\nworld"]);
+    }
+
+    #[test]
+    fn newline_inside_double_quote_increments_lineno() {
+        let arena = StringArena::new();
+        let mut ctx = FakeContext::new();
+        let fields = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "\"hello\nworld\"".into(),
+                line: 1,
+            },
+            &arena,
+        )
+        .expect("double quote newline");
+        assert_eq!(fields, vec!["hello\nworld"]);
+    }
+
+    #[test]
+    fn backslash_newline_inside_double_quote() {
+        let arena = StringArena::new();
+        let mut ctx = FakeContext::new();
+        let fields = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "\"a\\\nb\"".into(),
+                line: 1,
+            },
+            &arena,
+        )
+        .expect("backslash newline in dquote");
+        assert_eq!(fields, vec!["ab"]);
+    }
+
+    #[test]
+    fn backslash_escape_in_unquoted_context() {
+        let arena = StringArena::new();
+        let mut ctx = FakeContext::new();
+        let fields = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "\\a\\b".into(),
+                line: 1,
+            },
+            &arena,
+        )
+        .expect("backslash escape");
+        assert_eq!(fields, vec!["ab"]);
+    }
+
+    #[test]
+    fn backslash_newline_in_unquoted_context() {
+        let arena = StringArena::new();
+        let mut ctx = FakeContext::new();
+        let fields = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "a\\\nb".into(),
+                line: 1,
+            },
+            &arena,
+        )
+        .expect("backslash newline unquoted");
+        assert_eq!(fields.len(), 1);
+        assert!(fields[0].contains('\n'));
+    }
+
+    #[test]
+    fn trailing_backslash_in_unquoted_context() {
+        let arena = StringArena::new();
+        let mut ctx = FakeContext::new();
+        let fields = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "a\\".into(),
+                line: 1,
+            },
+            &arena,
+        )
+        .expect("trailing backslash");
+        assert_eq!(fields, vec!["a"]);
+    }
+
+    #[test]
+    fn bare_newline_in_unquoted_context() {
+        let arena = StringArena::new();
+        let mut ctx = FakeContext::new();
+        let fields = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "hello\nworld".into(),
+                line: 1,
+            },
+            &arena,
+        )
+        .expect("bare newline");
+        assert_eq!(fields.len(), 1);
+        assert!(fields[0].contains('\n'));
     }
 }
