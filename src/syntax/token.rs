@@ -719,17 +719,20 @@ impl<'a> Parser<'a> {
 
     pub(super) fn peek_token(&mut self) -> Result<&Token, ParseError> {
         if self.cached_token.is_none() {
-            let tok = self.produce_next_token()?;
-            self.cached_token = Some(tok);
+            self.cached_token = Some(self.produce_token()?);
         }
         Ok(self.cached_token.as_ref().unwrap())
     }
 
-    pub(super) fn advance_token(&mut self) -> Token {
-        self.cached_token.take().expect("advance_token without peek_token")
+    pub(super) fn advance_token(&mut self) {
+        self.cached_token = None;
     }
 
-    fn produce_next_token(&mut self) -> Result<Token, ParseError> {
+    pub(super) fn next_token(&mut self) -> Token {
+        self.cached_token.take().expect("next_token without peek_token")
+    }
+
+    fn produce_token(&mut self) -> Result<Token, ParseError> {
         if let Some(tok) = self.token_queue.pop_front() {
             return self.reclassify_queued_token(tok);
         }
