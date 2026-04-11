@@ -964,6 +964,20 @@ mod tests {
     }
 
     #[test]
+    fn alias_shadows_keyword_at_command_position() {
+        // POSIX 2024 §2.3.1: "it is unspecified whether the TOKEN is subject
+        // to alias substitution" when it would also be a reserved word.
+        // We choose alias-first (like bash/zsh).
+        let mut aliases = HashMap::new();
+        aliases.insert("if".into(), "hello".into());
+        let program = parse_with_aliases_test("if", &aliases).expect("parse");
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::Simple(s) if s.words.iter().map(|w| &*w.raw).collect::<Vec<_>>() == vec!["hello"]
+        ));
+    }
+
+    #[test]
     fn backslash_newline_mid_word_produces_stripped_form() {
         let program = parse_test("ec\\\nho ok").expect("continuation in command");
         assert!(matches!(
