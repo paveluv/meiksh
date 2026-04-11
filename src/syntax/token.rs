@@ -201,12 +201,11 @@ fn word_to_keyword_token(w: &str) -> Option<Token> {
     }
 }
 
-pub struct Parser<'src, 'a> {
-    pub(super) source: &'src str,
-    pub(super) pos: usize,
+pub struct Parser<'a> {
     pub(super) line: usize,
     cached_byte: Option<u8>,
     pub(super) aliases: &'a HashMap<Box<str>, Box<str>>,
+    // Layer 0 is always the source text; layers 1..n are alias expansions.
     pub(super) alias_stack: Vec<AliasLayer<'a>>,
     pub(super) alias_depth: usize,
     pub(super) expanding_aliases: Vec<String>,
@@ -217,25 +216,27 @@ pub struct Parser<'src, 'a> {
     pub(super) keyword_mode: bool,
 }
 
-impl<'src, 'a> Parser<'src, 'a> {
-    pub(super) fn new(source: &'src str, aliases: &'a HashMap<Box<str>, Box<str>>) -> Self {
+impl<'a> Parser<'a> {
+    pub(super) fn new(source: &'a str, aliases: &'a HashMap<Box<str>, Box<str>>) -> Self {
         Self::new_at(source, 0, 1, aliases)
     }
 
     pub(super) fn new_at(
-        source: &'src str,
+        source: &'a str,
         pos: usize,
         line: usize,
         aliases: &'a HashMap<Box<str>, Box<str>>,
     ) -> Self {
         let cached_byte = source.as_bytes().get(pos).copied();
         Self {
-            source,
-            pos,
             line,
             cached_byte,
             aliases,
-            alias_stack: Vec::new(),
+            alias_stack: vec![AliasLayer {
+                text: Cow::Borrowed(source),
+                pos,
+                trailing_blank: false,
+            }],
             alias_depth: 0,
             expanding_aliases: Vec::new(),
             alias_trailing_blank_pending: false,
@@ -250,12 +251,13 @@ impl<'src, 'a> Parser<'src, 'a> {
         self.line
     }
 
+    pub(super) fn source_pos(&self) -> usize {
+        self.alias_stack[0].pos
+    }
+
     pub(super) fn sync_cache(&mut self) {
-        if let Some(layer) = self.alias_stack.last() {
-            self.cached_byte = layer.text.as_bytes().get(layer.pos).copied();
-        } else {
-            self.cached_byte = self.source.as_bytes().get(self.pos).copied();
-        }
+        let layer = self.alias_stack.last().unwrap();
+        self.cached_byte = layer.text.as_bytes().get(layer.pos).copied();
     }
 
     pub(super) fn error(&self, message: impl Into<Box<str>>) -> ParseError {
@@ -267,7 +269,8 @@ impl<'src, 'a> Parser<'src, 'a> {
 
     #[inline(always)]
     fn pop_exhausted_layers(&mut self) {
-        if let Some(layer) = self.alias_stack.last() {
+        if self.alias_stack.len() > 1 {
+            let layer = self.alias_stack.last().unwrap();
             if layer.pos < layer.text.len() {
                 return;
             }
@@ -277,7 +280,8 @@ impl<'src, 'a> Parser<'src, 'a> {
 
     #[cold]
     fn pop_exhausted_layers_slow(&mut self) {
-        while let Some(layer) = self.alias_stack.last() {
+        while self.alias_stack.len() > 1 {
+            let layer = self.alias_stack.last().unwrap();
             if layer.pos < layer.text.len() {
                 break;
             }
@@ -301,23 +305,25 @@ impl<'src, 'a> Parser<'src, 'a> {
             self.cached_byte = Some(b);
             return;
         }
-        if let Some(layer) = self.alias_stack.last_mut() {
+        let at_source = self.alias_stack.len() == 1;
+        let layer = self.alias_stack.last_mut().unwrap();
+        let bytes = layer.text.as_bytes();
+        if at_source {
+            if layer.pos < bytes.len() {
+                if bytes[layer.pos] == b'\n' {
+                    self.line += 1;
+                }
+                layer.pos += 1;
+            }
+            self.cached_byte = bytes.get(layer.pos).copied();
+        } else {
             layer.pos += 1;
-            self.cached_byte = layer.text.as_bytes().get(layer.pos).copied();
+            self.cached_byte = bytes.get(layer.pos).copied();
             if self.cached_byte.is_none() {
                 self.pop_exhausted_layers();
                 self.sync_cache();
             }
-            return;
         }
-        let bytes = self.source.as_bytes();
-        if self.pos < bytes.len() {
-            if bytes[self.pos] == b'\n' {
-                self.line += 1;
-            }
-            self.pos += 1;
-        }
-        self.cached_byte = bytes.get(self.pos).copied();
     }
 
     fn skip_continuations(&mut self) {

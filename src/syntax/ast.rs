@@ -185,7 +185,7 @@ pub(super) fn split_assignment(input: &str) -> Option<(&str, &str)> {
     Some((name, value))
 }
 
-impl<'src, 'a> Parser<'src, 'a> {
+impl<'a> Parser<'a> {
     pub(super) fn eat_keyword(&mut self, expected: Token, name: &str) -> Result<(), ParseError> {
         self.set_keyword_mode(true);
         if *self.peek_token()? == expected {

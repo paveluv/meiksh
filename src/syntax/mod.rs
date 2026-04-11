@@ -69,15 +69,16 @@ impl<'src> ParseSession<'src> {
 
         let result = parser.next_complete_command();
 
-        self.pos = parser.pos;
+        self.pos = parser.source_pos();
         self.line = parser.line;
 
-        if parser.alias_stack.is_empty() {
+        if parser.alias_stack.len() <= 1 {
             self.saved_alias = None;
         } else {
             let layers = parser
                 .alias_stack
                 .into_iter()
+                .skip(1)
                 .map(|layer| AliasLayer {
                     text: Cow::Owned(layer.text.into_owned()),
                     pos: layer.pos,
