@@ -588,20 +588,21 @@ begin test "command -v for defined function prints function name"
 end test "command -v for defined function prints function name"
 ```
 
-#### Test: command -v for alias or no alias
+#### Test: command -v for alias prints alias definition
 
-For an alias, `command -v` must write a command line representing its alias definition. If the shell does not support aliases in the current context, a fallback is acceptable. This test accepts either form.
+For an alias, `command -v` shall write a command line representing that
+alias definition.
 
 ```
-begin test "command -v for alias or no alias"
+begin test "command -v for alias prints alias definition"
   script
-    alias greet="echo hi" 2>/dev/null
-    command -v greet 2>/dev/null || echo NO_ALIAS
+    alias greet="echo hi"
+    command -v greet
   expect
-    stdout "(alias greet=.*|NO_ALIAS)"
+    stdout "alias greet=.*"
     stderr ""
     exit_code 0
-end test "command -v for alias or no alias"
+end test "command -v for alias prints alias definition"
 ```
 
 #### Test: command -v for nonexistent command fails

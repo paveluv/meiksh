@@ -234,22 +234,6 @@ begin test "wait for a single PID"
 end test "wait for a single PID"
 ```
 
-#### Test: unknown PID returns 127
-
-`wait` returns 127 for a PID that is not a known child process.
-
-```
-begin test "unknown PID returns 127"
-  script
-    wait 99999999 2>/dev/null
-    echo $?
-  expect
-    stdout "127"
-    stderr ""
-    exit_code 0
-end test "unknown PID returns 127"
-```
-
 #### Test: wait blocks until child is finished
 
 `wait` blocks execution until the background job completes.
@@ -266,21 +250,6 @@ begin test "wait blocks until child is finished"
     stderr ""
     exit_code 0
 end test "wait blocks until child is finished"
-```
-
-#### Test: all background jobs finish normally: wait exits 0
-
-When `wait` is invoked with no operands, it waits until all known background process IDs have terminated and then exits with status 0.
-
-```
-begin test "all background jobs finish normally: wait exits 0"
-  script
-    true & true & wait
-  expect
-    stdout ""
-    stderr ""
-    exit_code 0
-end test "all background jobs finish normally: wait exits 0"
 ```
 
 #### Test: single background job finishes: wait exits 0
@@ -387,39 +356,6 @@ begin test "wait with no operands after failing background pipeline"
 end test "wait with no operands after failing background pipeline"
 ```
 
-#### Test: wait after all background jobs succeed
-
-After all background jobs succeed, `wait` with no operands exits 0 and `$?` reflects that zero exit status.
-
-```
-begin test "wait after all background jobs succeed"
-  script
-    true & true & wait
-    echo $?
-  expect
-    stdout "0"
-    stderr ""
-    exit_code 0
-end test "wait after all background jobs succeed"
-```
-
-#### Test: single operand: wait returns that process exit status
-
-When `wait` is given a single PID operand, its exit status must be the exit status of that process. Here the child exits 42, so `wait` must also return 42.
-
-```
-begin test "single operand: wait returns that process exit status"
-  script
-    (exit 42) & p=$!
-    wait $p
-    echo $?
-  expect
-    stdout "42"
-    stderr ""
-    exit_code 0
-end test "single operand: wait returns that process exit status"
-```
-
 #### Test: multiple operands: wait returns exit status of last
 
 When multiple PID operands are given, `wait` returns the exit status of the process specified by the last operand. Here the last child exits 13, so `wait` must return 13.
@@ -438,12 +374,35 @@ begin test "multiple operands: wait returns exit status of last"
 end test "multiple operands: wait returns exit status of last"
 ```
 
-#### Test: signal death >128 with no-operand wait
+#### Test: wait on job ID returns last pipeline status
 
-If a process is terminated by a signal, its exit status as reported by `wait` must be greater than 128. This kills a background process with SIGTERM and checks that the resulting status exceeds 128.
+`wait` shall accept a job ID in the current shell execution environment.
+For a background pipeline job, the exit status shall be that of the
+last command in the pipeline.
 
 ```
-begin test "signal death >128 with no-operand wait"
+begin interactive test "wait on job ID returns last pipeline status"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "true | false &"
+  expect "$ "
+  send "wait %1; echo wait_status:$?"
+  expect "wait_status:1"
+  sendeof
+  wait
+end interactive test "wait on job ID returns last pipeline status"
+```
+
+#### Test: signal death gives wait status above 128
+
+If a process is terminated by a signal, its exit status as reported by
+`wait` shall be greater than 128. This kills a background process with
+SIGTERM and checks that required property.
+
+```
+begin test "signal death gives wait status above 128"
   script
     sleep 60 & p=$!
     kill -TERM $p
@@ -454,30 +413,16 @@ begin test "signal death >128 with no-operand wait"
     stdout "no_op_sig_ok"
     stderr ""
     exit_code 0
-end test "signal death >128 with no-operand wait"
+end test "signal death gives wait status above 128"
 ```
 
-#### Test: wait -l 143 prints TERM signal name
+#### Test: SIGKILL termination gives wait status above 128
 
-`kill -l 143` (128 + SIGTERM's number 15) must print a string identifying the TERM signal. This helps scripts determine which signal caused a process to exit with status > 128.
-
-```
-begin test "wait -l 143 prints TERM signal name"
-  script
-    kill -l 143
-  expect
-    stdout ".*(TERM|Term|term).*"
-    stderr ""
-    exit_code 0
-end test "wait -l 143 prints TERM signal name"
-```
-
-#### Test: wait -l 137 prints KILL signal name
-
-A process killed by SIGKILL should produce a `wait` exit status greater than 128. This sends SIGKILL to a background job and verifies the resulting exit code exceeds 128.
+A process killed by SIGKILL shall also produce a `wait` exit status
+greater than 128.
 
 ```
-begin test "wait -l 137 prints KILL signal name"
+begin test "SIGKILL termination gives wait status above 128"
   script
     sleep 5 & p=$!
     kill -KILL "$p"
@@ -488,7 +433,7 @@ begin test "wait -l 137 prints KILL signal name"
     stdout "sigkill_ok"
     stderr ""
     exit_code 0
-end test "wait -l 137 prints KILL signal name"
+end test "SIGKILL termination gives wait status above 128"
 ```
 
 #### Test: wait for unknown pid exits 127

@@ -164,18 +164,23 @@ begin test "type with unknown name returns non-zero"
 end test "type with unknown name returns non-zero"
 ```
 
-#### Test: type with known builtin produces output
+#### Test: type reports each operand
 
-`type` must produce non-empty output for a known command name. This verifies that when `echo` is recognized (as a built-in or external utility), `type` writes descriptive information to standard output.
+`type` shall indicate how each operand would be interpreted as a
+command name. With two known operands, the output should mention both
+names.
 
 ```
-begin test "type with known builtin produces output"
+begin test "type reports each operand"
   script
-    out=$(type echo 2>/dev/null)
-    [ -n "$out" ] && echo pass || echo fail
+    out=$(type echo cd)
+    case "$out" in
+      *echo*cd*) echo pass ;;
+      *) echo fail ;;
+    esac
   expect
     stdout "pass"
     stderr ""
     exit_code 0
-end test "type with known builtin produces output"
+end test "type reports each operand"
 ```
