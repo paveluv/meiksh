@@ -1259,4 +1259,132 @@ mod tests {
             let _ = run_loop(&mut shell);
         });
     }
+
+    #[test]
+    fn run_loop_sigchld_install_and_remove() {
+        let mut trace = vec![
+            t(
+                "signal",
+                vec![ArgMatcher::Int(sys::SIGCHLD as i64), ArgMatcher::Any],
+                TraceResult::Int(0),
+            ),
+            t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Bytes(b"$ ".to_vec()),
+                ],
+                TraceResult::Auto,
+            ),
+        ];
+        trace.extend(read_line_trace(b"set +b\n"));
+        trace.extend(vec![
+            t(
+                "open",
+                vec![
+                    ArgMatcher::Str("/tmp/hist".into()),
+                    ArgMatcher::Any,
+                    ArgMatcher::Any,
+                ],
+                TraceResult::Fd(10),
+            ),
+            t(
+                "write",
+                vec![ArgMatcher::Fd(10), ArgMatcher::Bytes(b"set +b\n".to_vec())],
+                TraceResult::Auto,
+            ),
+            t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
+            t(
+                "signal",
+                vec![ArgMatcher::Int(sys::SIGCHLD as i64), ArgMatcher::Any],
+                TraceResult::Int(0),
+            ),
+            t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Bytes(b"$ ".to_vec()),
+                ],
+                TraceResult::Auto,
+            ),
+            t(
+                "read",
+                vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(vec![]),
+            ),
+        ]);
+        run_trace(trace, || {
+            let mut shell = test_shell();
+            shell.options.notify = true;
+            shell.env.insert("HISTFILE".into(), "/tmp/hist".into());
+            let _ = run_loop(&mut shell);
+        });
+    }
+
+    #[test]
+    fn run_loop_signaled_and_done_nonzero_notifications() {
+        run_trace(
+            vec![
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(6001), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::SignaledSig(15),
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(6002), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Status(7),
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"[1] Terminated (SIGTERM)\tkilled\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"[2] Done(7)\tfailed\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"$ ".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "read",
+                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                    TraceResult::Bytes(vec![]),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.register_background_job(
+                    "killed".into(),
+                    None,
+                    vec![sys::ChildHandle {
+                        pid: 6001,
+                        stdout_fd: None,
+                    }],
+                );
+                shell.register_background_job(
+                    "failed".into(),
+                    None,
+                    vec![sys::ChildHandle {
+                        pid: 6002,
+                        stdout_fd: None,
+                    }],
+                );
+                let _ = run_loop(&mut shell);
+            },
+        );
+    }
 }

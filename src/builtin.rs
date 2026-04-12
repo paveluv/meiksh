@@ -814,8 +814,7 @@ fn kill(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
     for operand in args {
         if operand.starts_with('%') {
             let resolved_id = resolve_job_id(shell, Some(operand));
-            let resolved = resolved_id
-                .and_then(|id| shell.jobs.iter().find(|j| j.id == id));
+            let resolved = resolved_id.and_then(|id| shell.jobs.iter().find(|j| j.id == id));
             if let Some(job) = resolved {
                 let pid = job
                     .pgid
@@ -824,12 +823,10 @@ fn kill(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
                     if sys::send_signal(-pid, signal).is_err() {
                         shell.diagnostic(1, format_args!("kill: ({pid}): No such process"));
                         status = 1;
-                    } else if signal == sys::SIGCONT {
-                        if let Some(id) = resolved_id {
-                            if let Some(j) = shell.jobs.iter_mut().find(|j| j.id == id) {
-                                j.state = crate::shell::JobState::Running;
-                                j.cont_pending = true;
-                            }
+                    } else if signal == sys::SIGCONT && resolved_id.is_some() {
+                        let id = resolved_id.unwrap();
+                        if let Some(j) = shell.jobs.iter_mut().find(|j| j.id == id) {
+                            j.state = crate::shell::JobState::Running;
                         }
                     }
                 }
@@ -5060,7 +5057,6 @@ mod tests {
                 children: Vec::new(),
                 state: JobState::Running,
                 saved_termios: None,
-                cont_pending: false,
             });
             shell.jobs.push(crate::shell::Job {
                 id: 2,
@@ -5071,7 +5067,6 @@ mod tests {
                 children: Vec::new(),
                 state: JobState::Running,
                 saved_termios: None,
-                cont_pending: false,
             });
             assert_eq!(
                 parse_jobs_operands(&["%1".into(), "%2".into()], &shell).expect("job ids"),
@@ -5834,7 +5829,6 @@ mod tests {
                     }],
                     state: crate::shell::JobState::Running,
                     saved_termios: None,
-                    cont_pending: false,
                 });
                 shell.jobs.push(crate::shell::Job {
                     id: 2,
@@ -5848,7 +5842,6 @@ mod tests {
                     }],
                     state: crate::shell::JobState::Running,
                     saved_termios: None,
-                    cont_pending: false,
                 });
                 assert!(matches!(
                     invoke(&mut shell, &["jobs".into(), "%2".into()]).expect("jobs %2"),
@@ -5871,7 +5864,6 @@ mod tests {
             }],
             state: crate::shell::JobState::Running,
             saved_termios: None,
-            cont_pending: false,
         }
     }
 
@@ -6567,12 +6559,13 @@ mod tests {
                 ),
                 t(
                     "write",
-                vec![
-                    ArgMatcher::Fd(1),
-                    ArgMatcher::Bytes(b"[1] + Stopped (SIGTSTP) vim\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+                    vec![
+                        ArgMatcher::Fd(1),
+                        ArgMatcher::Bytes(b"[1] + Stopped (SIGTSTP) vim\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+            ],
             || {
                 let mut shell = test_shell();
                 let mut job = make_job(1, 5050, "vim");
@@ -6595,12 +6588,13 @@ mod tests {
                 ),
                 t(
                     "write",
-                vec![
-                    ArgMatcher::Fd(1),
-                    ArgMatcher::Bytes(b"[1] + 5060 Stopped (SIGTSTP) vim\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+                    vec![
+                        ArgMatcher::Fd(1),
+                        ArgMatcher::Bytes(b"[1] + 5060 Stopped (SIGTSTP) vim\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+            ],
             || {
                 let mut shell = test_shell();
                 let mut job = make_job(1, 5060, "vim");
@@ -6624,7 +6618,6 @@ mod tests {
                 children: vec![],
                 state: crate::shell::JobState::Done(5),
                 saved_termios: None,
-                cont_pending: false,
             };
             let (state_str, pid_str) = format_job_state(&job);
             assert_eq!(state_str, "Done(5)");
@@ -6644,7 +6637,6 @@ mod tests {
                 children: vec![],
                 state: crate::shell::JobState::Done(0),
                 saved_termios: None,
-                cont_pending: false,
             };
             let (state_str, _) = format_job_state(&job);
             assert_eq!(state_str, "Done");
@@ -7027,6 +7019,57 @@ mod tests {
                 let error = invoke(&mut shell, &["exec".into(), "nonexistent".into()])
                     .expect_err("exec not found");
                 assert_eq!(error.exit_status(), 127);
+            },
+        );
+    }
+
+    #[test]
+    fn jobs_displays_signaled_job() {
+        run_trace(
+            vec![
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(7001), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::SignaledSig(15),
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(1),
+                        ArgMatcher::Bytes(b"[1]   Terminated (SIGTERM)\tkilled\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(make_job(1, 7001, "killed"));
+                let outcome = invoke(&mut shell, &["jobs".into()]).expect("jobs");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn kill_sigcont_updates_job_state() {
+        run_trace(
+            vec![t(
+                "kill",
+                vec![ArgMatcher::Int(-8001), ArgMatcher::Int(sys::SIGCONT as i64)],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                let mut job = make_job(1, 8001, "stopped");
+                job.state = crate::shell::JobState::Stopped(sys::SIGTSTP);
+                shell.jobs.push(job);
+                let outcome = invoke(&mut shell, &["kill".into(), "-CONT".into(), "%1".into()])
+                    .expect("kill -CONT");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert!(matches!(
+                    shell.jobs[0].state,
+                    crate::shell::JobState::Running
+                ));
             },
         );
     }

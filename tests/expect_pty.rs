@@ -255,8 +255,7 @@ impl PtySession {
                         break;
                     }
                     if fds[0].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 {
-                        let n =
-                            libc::read(reader_fd, tmp.as_mut_ptr() as *mut _, tmp.len());
+                        let n = libc::read(reader_fd, tmp.as_mut_ptr() as *mut _, tmp.len());
                         if n <= 0 {
                             break;
                         }
