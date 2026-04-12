@@ -747,21 +747,6 @@ begin test "variable references expand in assignment values"
 end test "variable references expand in assignment values"
 ```
 
-#### Test: type finds known command
-
-The `type` utility must successfully identify a known command. When given `sh` (which must always be available), `type` must exit with status 0 to confirm the command was found.
-
-```
-begin test "type finds known command"
-  script
-    type sh >/dev/null && echo pass || echo fail
-  expect
-    stdout "pass"
-    stderr ""
-    exit_code 0
-end test "type finds known command"
-```
-
 #### Test: command bypasses alias
 
 `command` must prevent alias substitution on the command_name. Even when an alias for `echo` is defined, `command echo` must invoke the real utility and output the literal argument.

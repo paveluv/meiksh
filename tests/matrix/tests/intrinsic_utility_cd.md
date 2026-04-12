@@ -486,23 +486,6 @@ begin test "cd without CDPATH produces no stdout"
 end test "cd without CDPATH produces no stdout"
 ```
 
-#### Test: ENV variable is subject to parameter expansion for interactive shell
-
-Placeholder smoke-test confirming the shell executes a trivial script
-successfully; originally intended to verify ENV expansion in an
-interactive shell context.
-
-```
-begin test "ENV variable is subject to parameter expansion for interactive shell"
-  script
-    echo pass
-  expect
-    stdout "pass"
-    stderr ""
-    exit_code 0
-end test "ENV variable is subject to parameter expansion for interactive shell"
-```
-
 #### Test: single hyphen-minus operand treated as first operand
 
 A single `-` operand tells `cd` to change to OLDPWD, the previous
@@ -523,22 +506,6 @@ begin test "single hyphen-minus operand treated as first operand"
     stderr ""
     exit_code 0
 end test "single hyphen-minus operand treated as first operand"
-```
-
-#### Test: empty script exits zero
-
-A script that contains only comments and no commands should complete
-successfully with exit status zero.
-
-```
-begin test "empty script exits zero"
-  script
-    # only a comment
-  expect
-    stdout ""
-    stderr ""
-    exit_code 0
-end test "empty script exits zero"
 ```
 
 #### Test: cd -L keeps logical symlink path in PWD

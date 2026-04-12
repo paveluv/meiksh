@@ -178,16 +178,18 @@ end test "unalias -a removes all aliases"
 
 #### Test: querying removed alias fails
 
-After `unalias` removes an alias, querying that alias name no longer shows its former definition.
+After `unalias` removes an alias, querying that alias name shall fail
+because the definition no longer exists.
 
 ```
 begin test "querying removed alias fails"
   script
     alias rmme="echo gone"
     unalias rmme
-    alias rmme 2>&1 | grep -c 'echo gone' || true
+    alias rmme >/dev/null 2>&1
+    echo $?
   expect
-    stdout "0"
+    stdout "[1-9].*"
     stderr ""
     exit_code 0
 end test "querying removed alias fails"
@@ -229,72 +231,3 @@ begin test "unalias removes multiple aliases"
 end test "unalias removes multiple aliases"
 ```
 
-#### Test: unaliased name no longer expands
-
-Once an alias is removed, subsequent commands that previously matched the alias name are no longer subject to alias substitution.
-
-```
-begin test "unaliased name no longer expands"
-  script
-    alias zz="echo WRONG"
-    unalias zz
-    echo after_removal
-  expect
-    stdout "after_removal"
-    stderr ""
-    exit_code 0
-end test "unaliased name no longer expands"
-```
-
-#### Test: unalias -a clears environment
-
-`unalias -a` removes all alias definitions from the current shell execution environment so that no aliases remain active.
-
-```
-begin test "unalias -a clears environment"
-  script
-    alias yy="echo WRONG"
-    unalias -a
-    echo clean
-  expect
-    stdout "clean"
-    stderr ""
-    exit_code 0
-end test "unalias -a clears environment"
-```
-
-#### Test: unalias removes alias and query fails
-
-After `unalias` removes a named alias, querying that alias returns a non-zero exit status indicating the definition no longer exists.
-
-```
-begin test "unalias removes alias and query fails"
-  script
-    alias foo=bar
-    unalias foo
-    alias foo >/dev/null 2>&1 || echo pass
-  expect
-    stdout "pass"
-    stderr ""
-    exit_code 0
-end test "unalias removes alias and query fails"
-```
-
-#### Test: unalias -a empties alias list
-
-After `unalias -a`, the output of `alias` with no operands is empty, confirming that all definitions have been removed.
-
-```
-begin test "unalias -a empties alias list"
-  script
-    alias foo=bar
-    alias baz=qux
-    unalias -a
-    val=$(alias)
-    [ -z "$val" ] && echo pass || echo fail
-  expect
-    stdout "pass"
-    stderr ""
-    exit_code 0
-end test "unalias -a empties alias list"
-```

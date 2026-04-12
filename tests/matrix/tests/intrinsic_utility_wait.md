@@ -520,7 +520,8 @@ begin interactive test "waited job removed from jobs list"
   send "sleep 0.1 &"
   expect "$ "
   sleep 500ms
-  send "wait; jobs; echo end_of_jobs"
+  send "wait; jobs | wc -l; echo end_of_jobs"
+  expect "0"
   expect "end_of_jobs"
   sendeof
   wait
