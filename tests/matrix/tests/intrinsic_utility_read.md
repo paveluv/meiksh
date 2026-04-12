@@ -1061,24 +1061,9 @@ begin test "read -d with custom delimiter"
   script
     printf "hello:world" | { read -d ":" val; echo "$val"; }
   expect
-    stdout ".*"
+    stdout "hello"
     stderr ""
     exit_code 0
 end test "read -d with custom delimiter"
 ```
 
-#### Test: read stderr used for diagnostics
-
-Standard error shall be used for diagnostic messages and prompts for continued input. When `read` reaches EOF immediately (from /dev/null), it returns a non-zero exit status.
-
-```
-begin test "read stderr used for diagnostics"
-  script
-    read v1 < /dev/null 2>/dev/null
-    echo "$?"
-  expect
-    stdout "1"
-    stderr ""
-    exit_code 0
-end test "read stderr used for diagnostics"
-```

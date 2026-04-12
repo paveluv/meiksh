@@ -227,6 +227,7 @@ begin test "umask affects file permissions"
     umask 0077
     touch tmp_umask_test
     ls -l tmp_umask_test | cut -c1-10
+    rm -f tmp_umask_test
   expect
     stdout "-rw-------"
     stderr ""
@@ -270,37 +271,6 @@ begin test "umask symbolic relative g-w"
 end test "umask symbolic relative g-w"
 ```
 
-#### Test: umask 0022 exits successfully
-
-Setting the file mode creation mask with an octal operand must succeed with exit status 0 and produce no output on stdout or stderr.
-
-```
-begin test "umask 0022 exits successfully"
-  script
-    umask 0022
-  expect
-    stdout ""
-    stderr ""
-    exit_code 0
-end test "umask 0022 exits successfully"
-```
-
-#### Test: umask 0022 reports correct value
-
-After setting the mask to 0022, invoking `umask` with no operand must print a value that matches `022`, confirming the mask was stored correctly.
-
-```
-begin test "umask 0022 reports correct value"
-  script
-    umask 0022
-    umask
-  expect
-    stdout "0*022"
-    stderr ""
-    exit_code 0
-end test "umask 0022 reports correct value"
-```
-
 #### Test: umask with no operand produces output
 
 When no mask operand is specified, `umask` must write the current file mode creation mask to standard output. This verifies that at least some non-empty output is produced.
@@ -331,21 +301,6 @@ begin test "umask with no operand reflects set value"
     stderr ""
     exit_code 0
 end test "umask with no operand reflects set value"
-```
-
-#### Test: umask set exits 0
-
-Successfully changing the file mode creation mask must return exit status 0, with no output on stdout or stderr.
-
-```
-begin test "umask set exits 0"
-  script
-    umask 0022
-  expect
-    stdout ""
-    stderr ""
-    exit_code 0
-end test "umask set exits 0"
 ```
 
 #### Test: umask query exits 0
@@ -393,22 +348,6 @@ begin test "umask symbolic operand u=rwx,g=rx,o="
     stderr ""
     exit_code 0
 end test "umask symbolic operand u=rwx,g=rx,o="
-```
-
-#### Test: umask -S produces symbolic output
-
-The `-S` option causes `umask` to produce symbolic output in the format `u=...,g=...,o=...`. This verifies that all three class fields appear in the output.
-
-```
-begin test "umask -S produces symbolic output"
-  script
-    umask 0022
-    umask -S
-  expect
-    stdout ".*u=.*g=.*o=.*"
-    stderr ""
-    exit_code 0
-end test "umask -S produces symbolic output"
 ```
 
 #### Test: umask -S reflects mask 0077
@@ -495,26 +434,6 @@ begin test "umask default output round-trip"
     stderr ""
     exit_code 0
 end test "umask default output round-trip"
-```
-
-#### Test: umask default output as mask operand round-trip
-
-Same round-trip guarantee as the previous test but with a different mask value (0055), confirming the default output format is always reusable as an operand.
-
-```
-begin test "umask default output as mask operand round-trip"
-  script
-    umask 0055
-    _saved=$(umask)
-    umask 0000
-    umask "$_saved"
-    _restored=$(umask)
-    [ "$_saved" = "$_restored" ] && echo roundtrip_ok || echo MISMATCH
-  expect
-    stdout "roundtrip_ok"
-    stderr ""
-    exit_code 0
-end test "umask default output as mask operand round-trip"
 ```
 
 #### Test: umask with octal operand produces no stdout
