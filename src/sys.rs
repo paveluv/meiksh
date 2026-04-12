@@ -46,8 +46,10 @@ pub const SIGSEGV: c_int = libc::SIGSEGV;
 pub const SIGUSR2: c_int = libc::SIGUSR2;
 pub const SIGPIPE: c_int = libc::SIGPIPE;
 pub const SIGALRM: c_int = libc::SIGALRM;
+pub const SIGSTOP: c_int = libc::SIGSTOP;
 pub const SIGCONT: c_int = libc::SIGCONT;
 pub const SIGTERM: c_int = libc::SIGTERM;
+pub const SIGTRAP: c_int = libc::SIGTRAP;
 pub const SIGCHLD: c_int = libc::SIGCHLD;
 pub const SIGTSTP: c_int = libc::SIGTSTP;
 pub const SIGTTIN: c_int = libc::SIGTTIN;
@@ -56,6 +58,7 @@ pub const SIGBUS: c_int = libc::SIGBUS;
 pub const SIGSYS: c_int = libc::SIGSYS;
 pub const WNOHANG: c_int = libc::WNOHANG;
 pub const WUNTRACED: c_int = libc::WUNTRACED;
+pub const WCONTINUED: c_int = libc::WCONTINUED;
 pub const ENOENT: c_int = libc::ENOENT;
 pub const ENOEXEC: c_int = libc::ENOEXEC;
 pub const EBADF: c_int = libc::EBADF;
@@ -210,7 +213,17 @@ pub(crate) fn default_interface() -> SystemInterface {
         getppid: || unsafe { libc::getppid() },
         waitpid: |pid, status, options| unsafe { libc::waitpid(pid, status, options) },
         kill: |pid, sig| unsafe { libc::kill(pid, sig) },
-        signal: |sig, handler| unsafe { libc::signal(sig, handler) },
+        signal: |sig, handler| unsafe {
+            let mut sa: libc::sigaction = std::mem::zeroed();
+            sa.sa_sigaction = handler;
+            libc::sigemptyset(&mut sa.sa_mask);
+            let mut old_sa: libc::sigaction = std::mem::zeroed();
+            if libc::sigaction(sig, &sa, &mut old_sa) < 0 {
+                libc::SIG_ERR
+            } else {
+                old_sa.sa_sigaction
+            }
+        },
         isatty: |fd| unsafe { libc::isatty(fd) },
         tcgetpgrp: |fd| unsafe { libc::tcgetpgrp(fd) },
         tcsetpgrp: |fd, pgrp| unsafe { libc::tcsetpgrp(fd, pgrp) },
@@ -1689,6 +1702,22 @@ pub fn wait_pid_untraced(pid: Pid, nohang: bool) -> SysResult<Option<WaitStatus>
     }
 }
 
+pub fn wait_pid_job_status(pid: Pid) -> SysResult<Option<WaitStatus>> {
+    let mut status = 0;
+    let options = WUNTRACED | WCONTINUED | WNOHANG;
+    let result = (sys_interface().waitpid)(pid, &mut status, options);
+    if result > 0 {
+        Ok(Some(WaitStatus {
+            pid: result,
+            status,
+        }))
+    } else if result == 0 {
+        Ok(None)
+    } else {
+        Err(last_error())
+    }
+}
+
 pub fn send_signal(pid: Pid, signal: c_int) -> SysResult<()> {
     let result = (sys_interface().kill)(pid, signal);
     if result == 0 {
@@ -1751,7 +1780,7 @@ pub fn take_pending_signals() -> Vec<c_int> {
 pub fn supported_trap_signals() -> Vec<c_int> {
     vec![
         SIGHUP, SIGINT, SIGQUIT, SIGILL, SIGABRT, SIGFPE, SIGBUS, SIGUSR1, SIGSEGV, SIGUSR2,
-        SIGPIPE, SIGALRM, SIGTERM, SIGCHLD, SIGTSTP, SIGTTIN, SIGTTOU, SIGSYS,
+        SIGPIPE, SIGALRM, SIGTERM, SIGCHLD, SIGCONT, SIGTRAP, SIGTSTP, SIGTTIN, SIGTTOU, SIGSYS,
     ]
 }
 
@@ -2407,7 +2436,9 @@ pub fn signal_name(sig: c_int) -> &'static str {
         SIGALRM => "SIGALRM",
         SIGTERM => "SIGTERM",
         SIGCHLD => "SIGCHLD",
+        SIGSTOP => "SIGSTOP",
         SIGCONT => "SIGCONT",
+        SIGTRAP => "SIGTRAP",
         SIGTSTP => "SIGTSTP",
         SIGTTIN => "SIGTTIN",
         SIGTTOU => "SIGTTOU",
@@ -2433,7 +2464,9 @@ pub fn all_signal_names() -> &'static [(&'static str, c_int)] {
         ("ALRM", SIGALRM),
         ("TERM", SIGTERM),
         ("CHLD", SIGCHLD),
+        ("STOP", SIGSTOP),
         ("CONT", SIGCONT),
+        ("TRAP", SIGTRAP),
         ("TSTP", SIGTSTP),
         ("TTIN", SIGTTIN),
         ("TTOU", SIGTTOU),
@@ -2461,6 +2494,8 @@ fn signal_mask(signal: c_int) -> Option<usize> {
         SIGTTIN => 15,
         SIGTTOU => 16,
         SIGSYS => 17,
+        SIGCONT => 18,
+        SIGTRAP => 19,
         _ => return None,
     };
     Some(1usize << bit)
@@ -2470,20 +2505,24 @@ fn wifexited(status: c_int) -> bool {
     (status & 0x7f) == 0
 }
 
-fn wexitstatus(status: c_int) -> i32 {
+pub fn wexitstatus(status: c_int) -> i32 {
     (status >> 8) & 0xff
 }
 
-fn wifsignaled(status: c_int) -> bool {
+pub fn wifsignaled(status: c_int) -> bool {
     (status & 0x7f) != 0 && (status & 0x7f) != 0x7f
 }
 
-fn wtermsig(status: c_int) -> i32 {
+pub fn wtermsig(status: c_int) -> i32 {
     status & 0x7f
 }
 
 pub fn wifstopped(status: c_int) -> bool {
     (status & 0xff) == 0x7f
+}
+
+pub fn wifcontinued(status: c_int) -> bool {
+    status == 0xffff
 }
 
 pub fn wstopsig(status: c_int) -> i32 {
@@ -3023,7 +3062,9 @@ mod tests {
         assert!(trap_sigs.contains(&SIGUSR2));
         assert!(trap_sigs.contains(&SIGPIPE));
         assert!(trap_sigs.contains(&SIGCHLD));
-        assert_eq!(trap_sigs.len(), 18);
+        assert!(trap_sigs.contains(&SIGCONT));
+        assert!(trap_sigs.contains(&SIGTRAP));
+        assert_eq!(trap_sigs.len(), 20);
     }
 
     #[test]
@@ -3519,7 +3560,9 @@ mod tests {
         assert_eq!(signal_name(SIGALRM), "SIGALRM");
         assert_eq!(signal_name(SIGTERM), "SIGTERM");
         assert_eq!(signal_name(SIGCHLD), "SIGCHLD");
+        assert_eq!(signal_name(SIGSTOP), "SIGSTOP");
         assert_eq!(signal_name(SIGCONT), "SIGCONT");
+        assert_eq!(signal_name(SIGTRAP), "SIGTRAP");
         assert_eq!(signal_name(SIGTSTP), "SIGTSTP");
         assert_eq!(signal_name(SIGTTIN), "SIGTTIN");
         assert_eq!(signal_name(SIGTTOU), "SIGTTOU");
