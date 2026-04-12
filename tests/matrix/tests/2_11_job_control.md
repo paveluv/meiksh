@@ -192,7 +192,8 @@ end interactive test "bg resumes stopped background job with SIGCONT"
 
 When a process associated with a background job is stopped by `SIGSTOP`, the
 shell shall convert that background job into a suspended job and, for an
-interactive shell, write a suspended-job status message.
+interactive shell, write a suspended-job status message. Per POSIX, the state
+shall be `Stopped (SIGSTOP)` (or `Suspended (SIGSTOP)`).
 
 ```
 begin interactive test "stopped background job becomes suspended job"
@@ -206,7 +207,7 @@ begin interactive test "stopped background job becomes suspended job"
   send "kill -STOP %1"
   sleep 500ms
   send "jobs"
-  expect "(Stopped|Suspended).*sleep 30"
+  expect "(Stopped|Suspended).*(SIGSTOP).*sleep 30"
   expect "$ "
   send "kill -CONT %1; kill %1; wait 2>/dev/null"
   expect "$ "
@@ -230,7 +231,7 @@ begin interactive test "background job completion notification"
   expect "$ "
   sleep 500ms
   send "echo trigger_prompt"
-  expect "\[[[:digit:]]+\].*Done.*sleep"
+  expect "\[[[:digit:]]+\].* Done .*sleep"
   sendeof
   wait
 end interactive test "background job completion notification"
@@ -321,7 +322,7 @@ begin interactive test "background pipeline processes share process group"
   expect "$ "
   send "set -m"
   expect "$ "
-  send "(echo $BASHPID > tmp_pgtest_a.txt; sleep 30) | (echo $BASHPID > tmp_pgtest_b.txt; sleep 30) &"
+  send "(sh -c 'echo $$ > tmp_pgtest_a.txt; sleep 30') | (sh -c 'echo $$ > tmp_pgtest_b.txt; sleep 30') &"
   expect "\[[[:digit:]]+\] [[:digit:]]+"
   expect "$ "
   sleep 500ms
@@ -349,7 +350,7 @@ begin interactive test "foreground pipeline processes share process group"
   expect "$ "
   send "set -m"
   expect "$ "
-  send "(ps -o pgid= -p $BASHPID | tr -d ' ' > tmp_fgpg_a.txt; echo a) | (ps -o pgid= -p $BASHPID | tr -d ' ' > tmp_fgpg_b.txt; cat)"
+  send "(sh -c 'ps -o pgid= -p $$ | tr -d \" \" > tmp_fgpg_a.txt; echo a') | (sh -c 'ps -o pgid= -p $$ | tr -d \" \" > tmp_fgpg_b.txt; cat')"
   expect "a"
   expect "$ "
   send "PG_A=$(cat tmp_fgpg_a.txt); PG_B=$(cat tmp_fgpg_b.txt); [ $PG_A -eq $PG_B ] && echo same_pgrp"
@@ -392,7 +393,8 @@ end interactive test "sequential list with trailing async creates background job
 
 When a process in a foreground job is stopped by a catchable signal
 (SIGTSTP), the shell shall create a suspended job, assign it a job
-number, and write a suspension message to standard error.
+number, and write a suspension message to standard error formatted per
+the `jobs` utility.
 
 ```
 begin interactive test "foreground job stopped by SIGTSTP becomes suspended"
@@ -402,7 +404,7 @@ begin interactive test "foreground job stopped by SIGTSTP becomes suspended"
   expect "$ "
   send "sh -c 'sleep 0.2; kill -TSTP $$'"
   sleep 1000ms
-  expect "(Stopped|Suspended)"
+  expect "\[[[:digit:]]+\].*(Stopped|Suspended)"
   expect "$ "
   send "kill -9 %1 2>/dev/null; wait 2>/dev/null"
   expect "$ "
@@ -415,7 +417,8 @@ end interactive test "foreground job stopped by SIGTSTP becomes suspended"
 
 When a foreground job is stopped by SIGSTOP, the behavior shall be the
 same as for a catchable signal: the shell creates a suspended job,
-assigns it a job number, and writes a suspension message.
+assigns it a job number, and writes a suspension message. The state
+shall indicate `Stopped (SIGSTOP)` (or `Suspended (SIGSTOP)`).
 
 ```
 begin interactive test "foreground job stopped by SIGSTOP becomes suspended"
@@ -425,7 +428,7 @@ begin interactive test "foreground job stopped by SIGSTOP becomes suspended"
   expect "$ "
   send "sh -c 'sleep 0.2; kill -STOP $$'"
   sleep 1000ms
-  expect "(Stopped|Suspended)"
+  expect "\[[[:digit:]]+\].*(Stopped|Suspended).*(SIGSTOP)"
   expect "$ "
   send "kill -9 %1 2>/dev/null; wait 2>/dev/null"
   expect "$ "
@@ -451,7 +454,7 @@ begin interactive test "fg resumes suspended job as foreground"
   expect "$ "
   sleep 500ms
   send "true"
-  expect "(Stopped|Suspended)"
+  expect "(Stopped|Suspended).*(SIGSTOP)"
   expect "$ "
   send "fg %1"
   expect "$ "
@@ -481,7 +484,7 @@ begin interactive test "background job terminated by signal produces notificatio
   send "kill %1"
   expect "$ "
   send "true"
-  expect "(Terminated|Kill).*sleep"
+  expect "\[[[:digit:]]+\].*sleep"
   expect "$ "
   send "exit"
   wait
@@ -507,7 +510,7 @@ begin interactive test "set -b immediate notification for signal-terminated back
   expect "$ "
   send "kill %1"
   sleep 500ms
-  expect "(Terminated|Kill).*sleep"
+  expect "\[[[:digit:]]+\].*sleep"
   send "echo ok"
   expect "ok"
   sendeof
@@ -534,7 +537,7 @@ begin interactive test "set -b notification for stopped background job"
   expect "$ "
   send "kill -STOP %1"
   sleep 500ms
-  expect "(Stopped|Suspended).*sleep"
+  expect "(Stopped|Suspended).*(SIGSTOP).*sleep"
   send "kill -9 %1 2>/dev/null; wait 2>/dev/null"
   expect "$ "
   send "exit"
@@ -604,9 +607,9 @@ begin interactive test "foreground job sets terminal foreground process group"
   expect "$ "
   send "set -m"
   expect "$ "
-  send "(ps -o tpgid= -p \$BASHPID | tr -d ' ' > tmp_fgpgid.txt; ps -o pgid= -p \$BASHPID | tr -d ' ' > tmp_pgid.txt)"
+  send "sh -c 'ps -o tpgid= -p $$ | tr -d \" \" > tmp_fgpgid.txt; ps -o pgid= -p $$ | tr -d \" \" > tmp_pgid.txt'"
   expect "$ "
-  send "[ \$(cat tmp_fgpgid.txt) -eq \$(cat tmp_pgid.txt) ] && echo tpgid_match"
+  send "[ $(cat tmp_fgpgid.txt) -eq $(cat tmp_pgid.txt) ] && echo tpgid_match"
   expect "tpgid_match"
   expect "$ "
   send "rm -f tmp_fgpgid.txt tmp_pgid.txt"
@@ -629,7 +632,7 @@ begin interactive test "built-in foreground pipeline does not change tpgid"
   expect "$ "
   send "set -m"
   expect "$ "
-  send "TPGID1=\$(ps -o tpgid= -p \$BASHPID | tr -d ' '); :; TPGID2=\$(ps -o tpgid= -p \$BASHPID | tr -d ' '); [ \$TPGID1 -eq \$TPGID2 ] && echo unchanged"
+  send "TPGID1=$(ps -o tpgid= -p $$ | tr -d ' '); :; TPGID2=$(ps -o tpgid= -p $$ | tr -d ' '); [ $TPGID1 -eq $TPGID2 ] && echo unchanged"
   expect "unchanged"
   expect "$ "
   sendeof
@@ -651,7 +654,7 @@ begin interactive test "shell restores terminal foreground process group after f
   expect "$ "
   send "true"
   expect "$ "
-  send "PGID=\$(ps -o pgid= -p \$BASHPID | tr -d ' '); TPGID=\$(ps -o tpgid= -p \$BASHPID | tr -d ' '); [ \$PGID -eq \$TPGID ] && echo restored"
+  send "PGID=$(ps -o pgid= -p $$ | tr -d ' '); TPGID=$(ps -o tpgid= -p $$ | tr -d ' '); [ $PGID -eq $TPGID ] && echo restored"
   expect "restored"
   expect "$ "
   sendeof
@@ -679,7 +682,7 @@ begin interactive test "background job brought to foreground and stopped becomes
   expect "$ "
   send "fg %1 >/dev/null"
   sleep 500ms
-  expect "(Stopped|Suspended)"
+  expect "(Stopped|Suspended).*(SIGSTOP)"
   expect "$ "
   send "kill -9 %1 %2 2>/dev/null; wait 2>/dev/null"
   expect "$ "
@@ -728,7 +731,7 @@ begin interactive test "foreground job stopped by SIGTTIN becomes suspended"
   expect "$ "
   send "sh -c 'sleep 0.2; kill -TTIN $$'"
   sleep 1000ms
-  expect "(Stopped|Suspended)"
+  expect "\[[[:digit:]]+\].*(Stopped|Suspended).*(SIGTTIN)"
   expect "$ "
   send "kill -9 %1 2>/dev/null; wait 2>/dev/null"
   expect "$ "
@@ -750,7 +753,7 @@ begin interactive test "foreground job stopped by SIGTTOU becomes suspended"
   expect "$ "
   send "sh -c 'sleep 0.2; kill -TTOU $$'"
   sleep 1000ms
-  expect "(Stopped|Suspended)"
+  expect "\[[[:digit:]]+\].*(Stopped|Suspended).*(SIGTTOU)"
   expect "$ "
   send "kill -9 %1 2>/dev/null; wait 2>/dev/null"
   expect "$ "
@@ -802,7 +805,7 @@ begin interactive test "background job stopped by SIGTTIN becomes suspended job"
   send "kill -TTIN %1"
   sleep 500ms
   send "jobs"
-  expect "(Stopped|Suspended).*sleep"
+  expect "(Stopped|Suspended).*(SIGTTIN).*sleep"
   expect "$ "
   send "kill -9 %1 2>/dev/null; wait 2>/dev/null"
   expect "$ "
@@ -828,7 +831,7 @@ begin interactive test "background job stopped by SIGTTOU becomes suspended job"
   send "kill -TTOU %1"
   sleep 500ms
   send "jobs"
-  expect "(Stopped|Suspended).*sleep"
+  expect "(Stopped|Suspended).*(SIGTTOU).*sleep"
   expect "$ "
   send "kill -9 %1 2>/dev/null; wait 2>/dev/null"
   expect "$ "
@@ -856,7 +859,7 @@ begin interactive test "stopped background job produces notification at next pro
   expect "$ "
   sleep 500ms
   send "echo trigger_prompt"
-  expect "(Stopped|Suspended)"
+  expect "\[[[:digit:]]+\].*(Stopped|Suspended).*(SIGSTOP)"
   expect "$ "
   send "kill -9 %1 2>/dev/null; wait 2>/dev/null"
   expect "$ "
@@ -886,7 +889,7 @@ begin interactive test "SIGCONT to stopped background job continues it in backgr
   expect "$ "
   sleep 500ms
   send "jobs"
-  expect "(Running|Running).*sleep 30"
+  expect "Running.*sleep 30"
   expect "$ "
   send "kill %1; wait 2>/dev/null"
   expect "$ "
@@ -895,6 +898,11 @@ begin interactive test "SIGCONT to stopped background job continues it in backgr
 end interactive test "SIGCONT to stopped background job continues it in background"
 ```
 #### Test: non-interactive shell may write suspended job message
+
+A non-interactive shell may write a suspended-job message when a
+background job is stopped. The test verifies that the shell does not
+error out; any stderr output is acceptable.
+
 ```
 begin test "non-interactive shell may write suspended job message"
   script
@@ -910,9 +918,39 @@ begin test "non-interactive shell may write suspended job message"
 end test "non-interactive shell may write suspended job message"
 ```
 
-#### Test: background job and pgid initialization
+#### Test: fg writes command to stdout
+
+Per POSIX, `fg` shall write the command line of the job to standard output
+in the format `"%s\n", <command>`.
+
 ```
-begin interactive test "background job and pgid initialization"
+begin interactive test "fg writes command to stdout"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sh -c 'trap \"exit 0\" CONT; sleep 0.1; kill -STOP $$' &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  sleep 500ms
+  send "true"
+  expect "(Stopped|Suspended)"
+  expect "$ "
+  send "fg %1"
+  expect "sh -c"
+  expect "$ "
+  send "exit"
+  wait
+end interactive test "fg writes command to stdout"
+```
+
+#### Test: bg writes job-number and command to stdout
+
+Per POSIX, `bg` shall write `"[%d] %s\n", <job-number>, <command>` to
+standard output when resuming a suspended job.
+
+```
+begin interactive test "bg writes job-number and command to stdout"
   spawn -i
   expect "$ "
   send "set -m"
@@ -920,12 +958,265 @@ begin interactive test "background job and pgid initialization"
   send "sleep 30 &"
   expect "\[[[:digit:]]+\] [[:digit:]]+"
   expect "$ "
-  send "ps -o pgid= -p \$! | tr -d ' ' | grep -E '^[0-9]+$' >/dev/null && echo has_pgid"
-  expect "has_pgid"
+  send "kill -STOP %1"
+  sleep 500ms
+  send "true"
+  expect "(Stopped|Suspended)"
   expect "$ "
-  send "kill %1 2>/dev/null; wait"
+  send "bg %1"
+  expect "\[1\] sleep 30"
   expect "$ "
-  sendeof
+  send "kill %1; wait 2>/dev/null"
+  expect "$ "
+  send "exit"
   wait
-end interactive test "background job and pgid initialization"
+end interactive test "bg writes job-number and command to stdout"
+```
+
+#### Test: fg without operand uses default job
+
+Per POSIX, if no `job_id` operand is given to `fg`, the job that was most
+recently suspended, placed in the background, or run as a background job
+shall be used.
+
+```
+begin interactive test "fg without operand uses default job"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sh -c 'trap \"exit 0\" CONT; sleep 0.1; kill -STOP $$' &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  sleep 500ms
+  send "true"
+  expect "(Stopped|Suspended)"
+  expect "$ "
+  send "fg"
+  expect "sh -c"
+  expect "$ "
+  send "exit"
+  wait
+end interactive test "fg without operand uses default job"
+```
+
+#### Test: bg without operand uses most recently suspended job
+
+Per POSIX, if no `job_id` operand is given to `bg`, the most recently
+suspended job shall be used.
+
+```
+begin interactive test "bg without operand uses most recently suspended job"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 30 &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  send "kill -STOP %1"
+  sleep 500ms
+  send "true"
+  expect "(Stopped|Suspended)"
+  expect "$ "
+  send "bg"
+  expect "\[1\] sleep 30"
+  expect "$ "
+  send "kill %1; wait 2>/dev/null"
+  expect "$ "
+  send "exit"
+  wait
+end interactive test "bg without operand uses most recently suspended job"
+```
+
+#### Test: current job marker is a suspended job
+
+Per POSIX, if there is any suspended job, then the current job (marked
+with `+`) shall be a suspended job.
+
+```
+begin interactive test "current job marker is a suspended job"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 30 &"
+  expect "\[1\]"
+  expect "$ "
+  send "sleep 31 &"
+  expect "\[2\]"
+  expect "$ "
+  send "kill -STOP %1"
+  sleep 500ms
+  send "jobs"
+  expect "\[1\].*\+.*(Stopped|Suspended)"
+  expect "$ "
+  send "kill -CONT %1; kill %1 %2; wait 2>/dev/null"
+  expect "$ "
+  send "exit"
+  wait
+end interactive test "current job marker is a suspended job"
+```
+
+#### Test: previous job marker is a suspended job when two exist
+
+Per POSIX, if there are at least two suspended jobs, then the previous job
+(marked with `-`) also shall be a suspended job.
+
+```
+begin interactive test "previous job marker is a suspended job when two exist"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 30 &"
+  expect "\[1\]"
+  expect "$ "
+  send "sleep 31 &"
+  expect "\[2\]"
+  expect "$ "
+  send "kill -STOP %1"
+  sleep 300ms
+  send "kill -STOP %2"
+  sleep 500ms
+  send "jobs"
+  expect "\[[[:digit:]]+\].*-.*(Stopped|Suspended)"
+  expect "\[[[:digit:]]+\].*\+.*(Stopped|Suspended)"
+  expect "$ "
+  send "kill -CONT %1; kill -CONT %2; kill %1 %2; wait 2>/dev/null"
+  expect "$ "
+  send "exit"
+  wait
+end interactive test "previous job marker is a suspended job when two exist"
+```
+
+#### Test: Done with non-zero exit code shows exit status
+
+Per POSIX, when a background job exits with non-zero status, the `jobs`
+output shall use the format `Done(code)` where `code` is the exit status.
+
+```
+begin interactive test "Done with non-zero exit code shows exit status"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "(exit 42) &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  sleep 500ms
+  send "true"
+  expect "Done.?42"
+  expect "$ "
+  send "exit"
+  wait
+end interactive test "Done with non-zero exit code shows exit status"
+```
+
+#### Test: bg on already-running job succeeds
+
+Per POSIX, if the job specified by `job_id` is already a running background
+job, `bg` shall have no effect and shall exit successfully.
+
+```
+begin interactive test "bg on already-running job succeeds"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 30 &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  send "bg %1; echo bg_exit=$?"
+  expect "bg_exit=0"
+  expect "$ "
+  send "kill %1; wait 2>/dev/null"
+  expect "$ "
+  send "exit"
+  wait
+end interactive test "bg on already-running job succeeds"
+```
+
+#### Test: fg error when job control disabled
+
+Per POSIX, if job control is disabled, the `fg` utility shall exit with an
+error and no job shall be placed in the foreground.
+
+```
+begin interactive test "fg error when job control disabled"
+  spawn -i
+  expect "$ "
+  send "set +m"
+  expect "$ "
+  send "fg 2>&1; echo fg_exit=$?"
+  expect "fg_exit=[^0]"
+  expect "$ "
+  send "exit"
+  wait
+end interactive test "fg error when job control disabled"
+```
+
+#### Test: bg error when job control disabled
+
+Per POSIX, if job control is disabled, the `bg` utility shall exit with an
+error and no job shall be placed in the background.
+
+```
+begin interactive test "bg error when job control disabled"
+  spawn -i
+  expect "$ "
+  send "set +m"
+  expect "$ "
+  send "bg 2>&1; echo bg_exit=$?"
+  expect "bg_exit=[^0]"
+  expect "$ "
+  send "exit"
+  wait
+end interactive test "bg error when job control disabled"
+```
+
+#### Test: asynchronous list writes job-number and pid
+
+Per POSIX (2.9.3.1), when an asynchronous list is entered, the shell
+shall write `"[%d] %d\n", <job-number>, <last-pid>` to standard error.
+
+```
+begin interactive test "asynchronous list writes job-number and pid"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 30 &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  send "kill %1; wait 2>/dev/null"
+  expect "$ "
+  send "exit"
+  wait
+end interactive test "asynchronous list writes job-number and pid"
+```
+
+#### Test: stopped notification shows signal-specific state
+
+Per POSIX, the `jobs` state field for a job stopped by SIGSTOP shall be
+`Stopped (SIGSTOP)` (or `Suspended (SIGSTOP)`), not plain `Stopped`.
+
+```
+begin interactive test "stopped notification shows signal-specific state"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 30 &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  send "kill -STOP %1"
+  sleep 500ms
+  send "jobs"
+  expect "(Stopped|Suspended).*(SIGSTOP)"
+  expect "$ "
+  send "kill -CONT %1; kill %1; wait 2>/dev/null"
+  expect "$ "
+  send "exit"
+  wait
+end interactive test "stopped notification shows signal-specific state"
 ```
