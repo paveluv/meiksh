@@ -718,7 +718,6 @@ impl<'a> Parser<'a> {
         let mut body = String::new();
         let mut continuation_buffer = String::new();
         let mut line = String::with_capacity(80);
-        let mut body_len_before_continuation = 0;
         loop {
             line.clear();
             let has_newline = loop {
@@ -735,44 +734,43 @@ impl<'a> Parser<'a> {
                 }
             };
 
-            if expand && line.as_bytes().last() == Some(&b'\\') && has_newline {
-                if continuation_buffer.is_empty() {
-                    body_len_before_continuation = body.len();
-                }
+            let trailing_backslashes = line
+                .as_bytes()
+                .iter()
+                .rev()
+                .take_while(|&&b| b == b'\\')
+                .count();
+            if expand && trailing_backslashes % 2 == 1 && has_newline {
                 continuation_buffer.push_str(&line[..line.len() - 1]);
-                body.push_str(&line);
-                body.push('\n');
                 continue;
             }
 
-            let compare = if !continuation_buffer.is_empty() {
+            let logical_line = if !continuation_buffer.is_empty() {
                 continuation_buffer.push_str(&line);
                 &continuation_buffer
             } else {
                 &line
             };
-            let compare = if strip_tabs {
-                compare.trim_start_matches('\t')
+            let stripped = if strip_tabs {
+                logical_line.trim_start_matches('\t')
             } else {
-                compare
+                logical_line
             };
-            if compare == delimiter {
-                if !continuation_buffer.is_empty() {
-                    body.truncate(body_len_before_continuation);
-                }
+            if stripped == delimiter {
                 return Ok(body);
             }
-            continuation_buffer.clear();
 
             if !has_newline {
+                body.push_str(stripped);
                 return Err(ParseError {
                     message: "unterminated here-document".into(),
                     line: Some(self.line),
                 });
             }
 
-            body.push_str(&line);
+            body.push_str(stripped);
             body.push('\n');
+            continuation_buffer.clear();
         }
     }
 

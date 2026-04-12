@@ -1085,16 +1085,11 @@ fn expand_simple<'a>(
                 .here_doc
                 .as_ref()
                 .ok_or_else(|| shell.diagnostic(2, "missing here-document body"))?;
-            let raw_body = if here_doc.strip_tabs {
-                arena.intern(strip_heredoc_tabs(&here_doc.body))
-            } else {
-                &here_doc.body
-            };
             let body = if here_doc.expand {
-                expand::expand_here_document(shell, raw_body, here_doc.body_line, arena)
+                expand::expand_here_document(shell, &here_doc.body, here_doc.body_line, arena)
                     .map_err(|e| shell.expand_to_err(e))?
             } else {
-                arena.intern_str(raw_body)
+                arena.intern_str(&here_doc.body)
             };
             (arena.intern_str(&here_doc.delimiter), Some(body))
         } else {
@@ -1165,7 +1160,7 @@ fn expand_redirections<'a>(
     redirections: &[crate::syntax::Redirection],
     arena: &'a StringArena,
 ) -> Result<Vec<ExpandedRedirection<'a>>, ShellError> {
-    let mut expanded = Vec::new();
+    let mut expanded_vec = Vec::new();
     for redirection in redirections {
         let fd = redirection
             .fd
@@ -1175,16 +1170,11 @@ fn expand_redirections<'a>(
                 .here_doc
                 .as_ref()
                 .ok_or_else(|| shell.diagnostic(2, "missing here-document body"))?;
-            let raw_body = if here_doc.strip_tabs {
-                arena.intern(strip_heredoc_tabs(&here_doc.body))
-            } else {
-                &here_doc.body
-            };
             let body = if here_doc.expand {
-                expand::expand_here_document(shell, raw_body, here_doc.body_line, arena)
+                expand::expand_here_document(shell, &here_doc.body, here_doc.body_line, arena)
                     .map_err(|e| shell.expand_to_err(e))?
             } else {
-                arena.intern_str(raw_body)
+                arena.intern_str(&here_doc.body)
             };
             (arena.intern_str(&here_doc.delimiter), Some(body))
         } else {
@@ -1202,7 +1192,7 @@ fn expand_redirections<'a>(
             }
             (target, None)
         };
-        expanded.push(ExpandedRedirection {
+        expanded_vec.push(ExpandedRedirection {
             fd,
             kind: redirection.kind,
             target,
@@ -1210,7 +1200,7 @@ fn expand_redirections<'a>(
             line: redirection.target.line,
         });
     }
-    Ok(expanded)
+    Ok(expanded_vec)
 }
 
 fn build_process_from_expanded(
@@ -1656,14 +1646,6 @@ fn close_shell_fd(target_fd: i32) -> sys::SysResult<()> {
         }
     }
     Ok(())
-}
-
-fn strip_heredoc_tabs(body: &str) -> String {
-    body.lines()
-        .map(|line| line.trim_start_matches('\t'))
-        .collect::<Vec<_>>()
-        .join("\n")
-        + if body.ends_with('\n') { "\n" } else { "" }
 }
 
 fn default_fd_for_redirection(kind: RedirectionKind) -> i32 {
@@ -2797,7 +2779,7 @@ mod tests {
                         },
                         here_doc: Some(HereDoc {
                             delimiter: "EOF".into(),
-                            body: "\t\thello\n\tworld\n".into(),
+                            body: "hello\nworld\n".into(),
                             expand: false,
                             strip_tabs: true,
                             body_line: 0,

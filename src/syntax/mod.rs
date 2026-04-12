@@ -175,7 +175,7 @@ mod tests {
         assert!(matches!(
             &tab_stripped.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
-                if cmd.redirections[0].here_doc.as_ref().map(|doc| &*doc.body) == Some("\tone\n")
+                if cmd.redirections[0].here_doc.as_ref().map(|doc| &*doc.body) == Some("one\n")
                     && cmd.redirections[0].here_doc.as_ref().map(|doc| doc.strip_tabs) == Some(true)
         ));
     }
@@ -1946,7 +1946,19 @@ mod tests {
             other => panic!("expected simple command, got {other:?}"),
         };
         let body = &cmd.redirections[0].here_doc.as_ref().unwrap().body;
-        assert!(body.contains("line\\\n"));
+        assert_eq!(&**body, "linecontinued\n");
+    }
+
+    #[test]
+    fn heredoc_escaped_backslash_at_eol_is_not_continuation() {
+        let program = parse_test("cat <<EOF\n\\$val\n\\\\\nEOF\n")
+            .expect("escaped backslash at end of line should not be continuation");
+        let cmd = match &program.items[0].and_or.first.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got {other:?}"),
+        };
+        let body = &cmd.redirections[0].here_doc.as_ref().unwrap().body;
+        assert_eq!(&**body, "\\$val\n\\\\\n");
     }
 
     #[test]
