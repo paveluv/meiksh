@@ -2540,6 +2540,36 @@ fn here_document_backslash_newline_continuation() {
 }
 
 #[test]
+fn heredoc_escaped_backslash_not_continuation() {
+    let out = Command::new(meiksh())
+        .args(["-c", "cat <<EOF\n\\$val\n\\\\\nEOF\n"])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(stdout.trim(), "$val\n\\");
+}
+
+#[test]
+fn heredoc_strip_tabs_after_continuation() {
+    let out = Command::new(meiksh())
+        .args(["-c", "cat <<-DELIM\n\tcont\\\n\tinued\nDELIM\n"])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(stdout.trim(), "cont\tinued");
+}
+
+#[test]
 fn fd_close_via_exec_and_child_error() {
     let tmp = TempDir::new("fd-close");
     let script = format!(
