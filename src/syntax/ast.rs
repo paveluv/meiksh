@@ -794,16 +794,19 @@ impl<'a> Parser<'a> {
             loop {
                 self.set_argument_position();
                 let pat_line = self.current_line();
-                match self.peek_token()? {
-                    Token::Word(_) => {
-                        let w = self.take_word();
-                        patterns.push(Word {
-                            raw: w,
-                            line: pat_line,
-                        });
-                    }
-                    _ => return Err(self.error("expected case pattern")),
-                }
+                let pattern_raw = if matches!(self.peek_token()?, Token::Word(_)) {
+                    self.take_word()
+                } else if let Some(name) = self.peek_token()?.keyword_name() {
+                    let w: Box<str> = name.into();
+                    self.advance_token();
+                    w
+                } else {
+                    return Err(self.error("expected case pattern"));
+                };
+                patterns.push(Word {
+                    raw: pattern_raw,
+                    line: pat_line,
+                });
 
                 if matches!(self.peek_token()?, Token::Pipe) {
                     self.advance_token();
@@ -864,13 +867,13 @@ impl<'a> Parser<'a> {
         if !super::is_name(&name) {
             return Err(self.error("expected function name"));
         }
+        self.set_command_position();
         if matches!(self.peek_token()?, Token::LParen) {
             self.advance_token();
             if matches!(self.peek_token()?, Token::RParen) {
                 self.advance_token();
             }
         }
-        self.set_command_position();
         self.skip_linebreaks_t().ok();
         let body = self.parse_command()?;
         Ok(Command::FunctionDef(FunctionDef {

@@ -75,7 +75,17 @@ cargo run --quiet --bin expect_pty -- \
 
 ## Phase 3b — Fix meiksh source bugs
 
-When fixing meiksh Rust source code, apply these constraints strictly:
+For each meiksh bug, follow a **test-first** workflow:
+
+1. **Write a failing test first.** Add a unit test (in the relevant
+   `src/…/mod.rs` `#[cfg(test)]` block) or an integration test (in
+   `tests/integration/`) that reproduces the exact bug. The test must
+   **fail** against the current code — run it to confirm.
+2. **Fix the bug** in the meiksh source so the new test passes.
+3. **Run `cargo test`** to verify all existing tests still pass alongside
+   the new one.
+
+When writing the fix, apply these constraints strictly:
 
 - **Zero-copy philosophy**: minimize allocations and string copies. Prefer
   `&str` / `Cow<'_, str>` over `String`. Prefer slicing over cloning.
@@ -88,9 +98,6 @@ When fixing meiksh Rust source code, apply these constraints strictly:
   surrounding code unless the fix requires it.
 - **No narrating comments**: don't add comments that just describe what the
   code does. Only comment non-obvious intent or trade-offs.
-
-After source changes, make sure `cargo test` still passes (all unit +
-integration tests).
 
 ---
 

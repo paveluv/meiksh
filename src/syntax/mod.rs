@@ -2699,6 +2699,27 @@ mod tests {
     }
 
     #[test]
+    fn case_pattern_accepts_keyword_word() {
+        let program = parse_test("case if in if) echo ok;; esac").expect("parse");
+        assert_eq!(program.items.len(), 1);
+        if let Command::Case(case) = &program.items[0].and_or.first.commands[0] {
+            assert_eq!(&*case.arms[0].patterns[0].raw, "if");
+        } else {
+            panic!("expected case command");
+        }
+    }
+
+    #[test]
+    fn function_keyword_without_parens() {
+        let program = parse_test("function foo { echo hi; }").expect("parse");
+        assert_eq!(program.items.len(), 1);
+        assert!(matches!(
+            &program.items[0].and_or.first.commands[0],
+            Command::FunctionDef(f) if &*f.name == "foo"
+        ));
+    }
+
+    #[test]
     fn self_referential_alias_does_not_loop() {
         let mut aliases = HashMap::new();
         aliases.insert(Box::from("a"), Box::from("a"));
