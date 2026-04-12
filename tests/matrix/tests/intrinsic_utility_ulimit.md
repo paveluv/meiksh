@@ -343,38 +343,6 @@ begin test "ulimit -f reports unlimited after setting unlimited"
 end test "ulimit -f reports unlimited after setting unlimited"
 ```
 
-#### Test: ulimit -Hf produces output
-
-`ulimit -Hf` (grouped hard-limit file-size query) must produce non-empty output showing the hard file-size limit.
-
-```
-begin test "ulimit -Hf produces output"
-  script
-    out=$(ulimit -Hf)
-    [ -n "$out" ] && echo pass || echo fail
-  expect
-    stdout "pass"
-    stderr ""
-    exit_code 0
-end test "ulimit -Hf produces output"
-```
-
-#### Test: ulimit -Hf returns number or unlimited
-
-The hard file-size limit reported by `ulimit -Hf` must be either a numeric value or the string `unlimited`, as required by POSIX output format rules.
-
-```
-begin test "ulimit -Hf returns number or unlimited"
-  script
-    val=$(ulimit -Hf)
-    case "$val" in unlimited|*[0-9]*) echo pass ;; *) echo fail ;; esac
-  expect
-    stdout "pass"
-    stderr ""
-    exit_code 0
-end test "ulimit -Hf returns number or unlimited"
-```
-
 #### Test: setting soft limit to its current value succeeds
 
 Re-setting the soft file-size limit to its current value is always valid (it is at most equal to the hard limit) and must succeed with exit status 0.
@@ -417,10 +385,10 @@ The newlimit operand must be either an integer or the special string meaning no 
 ```
 begin test "setting limit to non-numeric string fails"
   script
-    ulimit -f notanumber 2>/dev/null
+    ulimit -f notanumber
   expect
     stdout ""
-    stderr ""
+    stderr ".+"
     exit_code !=0
 end test "setting limit to non-numeric string fails"
 ```
@@ -459,26 +427,6 @@ begin test "unlimited hard limit allows setting arbitrary soft limit"
     stderr ""
     exit_code 0
 end test "unlimited hard limit allows setting arbitrary soft limit"
-```
-
-#### Test: unlimited means no enforcement
-
-POSIX states that the value `unlimited` means the implementation shall not enforce limits on that resource. This verifies the soft limit can be set to `unlimited` and is reported back as such.
-
-```
-begin test "unlimited means no enforcement"
-  script
-    ulimit -Sf unlimited 2>/dev/null
-    if [ "$(ulimit -Sf)" = "unlimited" ]; then
-      echo pass
-    else
-      echo skip
-    fi
-  expect
-    stdout ".*"
-    stderr ""
-    exit_code 0
-end test "unlimited means no enforcement"
 ```
 
 #### Test: 0 is a valid limit

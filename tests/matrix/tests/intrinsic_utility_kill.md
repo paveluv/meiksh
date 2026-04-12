@@ -250,7 +250,8 @@ as specified by POSIX.1-2024 (Section 1.7).
 
 #### Test: kill with default signal sends SIGTERM
 
-`kill` with no signal option sends SIGTERM to the process.
+`kill` with no signal option sends SIGTERM to the process. The resulting
+wait status can be decoded with `kill -l` and should identify `TERM`.
 
 ```
 begin test "kill with default signal sends SIGTERM"
@@ -259,9 +260,9 @@ begin test "kill with default signal sends SIGTERM"
     pid=$!
     kill $pid
     wait $pid 2>/dev/null
-    echo $?
+    kill -l $?
   expect
-    stdout "(14[3-9]|1[5-9][0-9])"
+    stdout ".*TERM.*"
     stderr ""
     exit_code 0
 end test "kill with default signal sends SIGTERM"
@@ -284,12 +285,12 @@ end test "kill -l lists standard POSIX signals"
 
 #### Test: kill -0 own PID succeeds
 
-`kill -s 0` tests whether the process exists without sending a signal.
+`kill -0` tests whether the process exists without sending a signal.
 
 ```
 begin test "kill -0 own PID succeeds"
   script
-    kill -s 0 $$
+    kill -0 $$
   expect
     stdout ""
     stderr ""
@@ -507,12 +508,13 @@ begin test "kill exits 0 on success with default signal"
   script
     sleep 60 & p=$!
     kill $p
-    echo $?
-    wait $p 2>/dev/null
+    rc=$?
+    wait $p 2>/dev/null || :
+    echo $rc
   expect
-    stdout "0.*"
-    stderr "(.|\n)*"
-    exit_code >128
+    stdout "0"
+    stderr ""
+    exit_code 0
 end test "kill exits 0 on success with default signal"
 ```
 
@@ -525,12 +527,13 @@ begin test "kill -s KILL exits 0 on success"
   script
     sleep 60 & p=$!
     kill -s KILL $p
-    echo $?
-    wait $p 2>/dev/null
+    rc=$?
+    wait $p 2>/dev/null || :
+    echo $rc
   expect
-    stdout "0.*"
-    stderr "(.|\n)*"
-    exit_code >128
+    stdout "0"
+    stderr ""
+    exit_code 0
 end test "kill -s KILL exits 0 on success"
 ```
 
@@ -541,11 +544,19 @@ POSIX states that when `-l` is not specified, the standard output shall not be u
 ```
 begin test "kill without -l produces no stdout"
   script
-    kill -s TERM $$ 2>/dev/null
+    sleep 60 & p=$!
+    out=$(kill -s TERM "$p")
+    rc=$?
+    wait "$p" 2>/dev/null || :
+    if [ "$rc" -eq 0 ] && [ -z "$out" ]; then
+      echo pass
+    else
+      echo fail
+    fi
   expect
-    stdout "(.|\n)*"
-    stderr "(.|\n)*"
-    exit_code >=128
+    stdout "pass"
+    stderr ""
+    exit_code 0
 end test "kill without -l produces no stdout"
 ```
 

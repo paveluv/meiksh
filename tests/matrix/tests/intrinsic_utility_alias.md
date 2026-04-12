@@ -260,9 +260,13 @@ begin test "alias with no operands lists all definitions"
   script
     alias a1="echo a"
     alias a2="echo b"
-    alias | grep -c "^.*="
+    out=$(alias)
+    case "$out" in
+      *a1=*a2=*|*a2=*a1=*) echo pass ;;
+      *) echo fail ;;
+    esac
   expect
-    stdout "[2-9].*"
+    stdout "pass"
     stderr ""
     exit_code 0
 end test "alias with no operands lists all definitions"
@@ -418,16 +422,18 @@ end test "alias quoting handles single quotes in value"
 
 #### Test: querying removed alias fails
 
-After removing an alias with `unalias`, querying that alias name no longer shows its former definition.
+After removing an alias with `unalias`, querying that alias name shall
+fail because the definition no longer exists.
 
 ```
 begin test "querying removed alias fails"
   script
     alias rmme="echo gone"
     unalias rmme
-    alias rmme 2>&1 | grep -c 'echo gone' || true
+    alias rmme >/dev/null 2>&1
+    echo $?
   expect
-    stdout "0"
+    stdout "[1-9].*"
     stderr ""
     exit_code 0
 end test "querying removed alias fails"

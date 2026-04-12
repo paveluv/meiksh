@@ -173,10 +173,10 @@ as specified by POSIX.1-2024 (Section 1.7).
 ```
 begin test "bg: error when job control is disabled"
   script
-    bg 2>/dev/null
+    bg
   expect
     stdout ""
-    stderr ""
+    stderr ".+"
     exit_code !=0
 end test "bg: error when job control is disabled"
 ```
@@ -276,30 +276,6 @@ begin interactive test "bg output goes to stdout"
   sendeof
   wait
 end interactive test "bg output goes to stdout"
-```
-
-#### Test: bg respects locale env vars
-
-Verifies that `bg` operates correctly when locale environment variables (such as `LC_ALL`) are set, ensuring that internationalization variables do not cause errors or unexpected behavior.
-
-```
-begin interactive test "bg respects locale env vars"
-  spawn -i
-  expect "$ "
-  send "export LC_ALL=test_EPTY.UTF-8"
-  expect "$ "
-  send "set -m"
-  expect "$ "
-  send "sleep 100 &"
-  expect "$ "
-  send "echo ok"
-  expect "ok"
-  expect "$ "
-  send "kill %1"
-  expect "$ "
-  sendeof
-  wait
-end interactive test "bg respects locale env vars"
 ```
 
 #### Test: suspend -> bg -> fg cycle

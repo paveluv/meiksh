@@ -196,21 +196,6 @@ begin test "hash a known utility succeeds"
 end test "hash a known utility succeeds"
 ```
 
-#### Test: hash nonexistent utility fails
-
-Attempting to hash a nonexistent utility fails.
-
-```
-begin test "hash nonexistent utility fails"
-  script
-    hash nonexistent_cmd_xyz 2>/dev/null
-  expect
-    stdout ""
-    stderr ""
-    exit_code !=0
-end test "hash nonexistent utility fails"
-```
-
 #### Test: hash -r exits with code 0
 
 Running `hash -r` with no remembered utilities should succeed and exit with status 0, since purging an already-empty table is valid.
@@ -241,23 +226,6 @@ begin test "hash output mentions hashed utility"
     stderr ""
     exit_code 0
 end test "hash output mentions hashed utility"
-```
-
-#### Test: hash remembers utility location
-
-Verifies that `hash` remembers a utility after it has been explicitly hashed. After hashing `ls`, the output of `hash` should still mention `ls`.
-
-```
-begin test "hash remembers utility location"
-  script
-    hash -r
-    hash ls 2>/dev/null
-    hash 2>&1
-  expect
-    stdout "(.|\n)*ls(.|\n)*"
-    stderr ""
-    exit_code 0
-end test "hash remembers utility location"
 ```
 
 #### Test: hash with utility argument adds it

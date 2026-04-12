@@ -121,17 +121,22 @@ struct PtySession {
 
 impl PtySession {
     fn spawn(argv: &[String], env_vars: &[(String, String)]) -> io::Result<Self> {
-        Self::spawn_inner(argv, env_vars, false)
+        Self::spawn_inner(argv, env_vars, false, None)
     }
 
-    fn spawn_clean(argv: &[String], env_vars: &[(String, String)]) -> io::Result<Self> {
-        Self::spawn_inner(argv, env_vars, true)
+    fn spawn_clean(
+        argv: &[String],
+        env_vars: &[(String, String)],
+        workdir: &str,
+    ) -> io::Result<Self> {
+        Self::spawn_inner(argv, env_vars, true, Some(workdir))
     }
 
     fn spawn_inner(
         argv: &[String],
         env_vars: &[(String, String)],
         clear_env: bool,
+        workdir: Option<&str>,
     ) -> io::Result<Self> {
         if argv.is_empty() {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty argv"));
@@ -176,6 +181,9 @@ impl PtySession {
                 }
                 for (k, v) in env_vars {
                     cmd.env(k, v);
+                }
+                if let Some(dir) = workdir {
+                    cmd.current_dir(dir);
                 }
                 let err = cmd.exec();
                 eprintln!("expect_pty: exec failed: {err}");
@@ -1593,6 +1601,10 @@ fn baseline_env(
     env.insert("ENV".into(), String::new());
     env.insert("HISTFILE".into(), "/dev/null".into());
     env.insert("SHELL".into(), shell_str.into());
+    env.insert(
+        "LLVM_PROFILE_FILE".into(),
+        format!("{tmpdir}/default_%p_%m.profraw"),
+    );
     env
 }
 
@@ -1669,6 +1681,7 @@ fn run_command(
     script: &str,
     shell_argv: &[String],
     test_env: &HashMap<String, String>,
+    workdir: &str,
     tmpdir: &str,
     mode: ScriptMode,
 ) -> Result<RunResult, String> {
@@ -1683,7 +1696,7 @@ fn run_command(
             for (k, v) in test_env {
                 cmd.env(k, v);
             }
-            cmd.current_dir(tmpdir);
+            cmd.current_dir(workdir);
             cmd.output()
                 .map_err(|e| format!("failed to execute shell (dash-c): {e}"))?
         }
@@ -1700,7 +1713,7 @@ fn run_command(
             for (k, v) in test_env {
                 cmd.env(k, v);
             }
-            cmd.current_dir(tmpdir);
+            cmd.current_dir(workdir);
             let result = cmd
                 .output()
                 .map_err(|e| format!("failed to execute shell (tempfile): {e}"))?;
@@ -1721,7 +1734,7 @@ fn run_command(
             for (k, v) in test_env {
                 cmd.env(k, v);
             }
-            cmd.current_dir(tmpdir);
+            cmd.current_dir(workdir);
             let mut child = cmd
                 .spawn()
                 .map_err(|e| format!("failed to execute shell (stdin): {e}"))?;
@@ -1750,12 +1763,15 @@ fn run_suite_test(
     locale_dir: Option<&str>,
 ) -> Result<(), String> {
     let tmpdir = make_test_tmpdir().map_err(|e| format!("failed to create tmpdir: {e}"))?;
+    let workdir = format!("{tmpdir}/sandbox");
+    fs::create_dir(&workdir).map_err(|e| format!("failed to create sandbox dir: {e}"))?;
 
     let result = run_suite_test_inner(
         test,
         shell_argv,
         shell_str,
         &tmpdir,
+        &workdir,
         script_modes,
         locale_dir,
     );
@@ -1768,6 +1784,7 @@ fn run_suite_test_inner(
     shell_argv: &[String],
     shell_str: &str,
     tmpdir: &str,
+    workdir: &str,
     script_modes: &[ScriptMode],
     locale_dir: Option<&str>,
 ) -> Result<(), String> {
@@ -1792,7 +1809,7 @@ fn run_suite_test_inner(
         ));
         let mut reference: Option<RunResult> = None;
         for &mode in script_modes {
-            let rr = run_command(script, shell_argv, &test_env, tmpdir, mode)?;
+            let rr = run_command(script, shell_argv, &test_env, workdir, tmpdir, mode)?;
             if let Some(ref prev) = reference {
                 if rr.stdout != prev.stdout
                     || rr.stderr != prev.stderr
@@ -1911,7 +1928,7 @@ fn run_suite_test_inner(
                     .collect();
                 log.push(format!(">>> spawn {}", words.join(" ")));
                 session = Some(
-                    PtySession::spawn_clean(&words, &env_pairs)
+                    PtySession::spawn_clean(&words, &env_pairs, workdir)
                         .map_err(|e| format!("line {line_num}: spawn failed: {e}"))?,
                 );
             }
