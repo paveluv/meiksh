@@ -231,3 +231,19 @@ begin test "unalias removes multiple aliases"
 end test "unalias removes multiple aliases"
 ```
 
+#### Test: unalias of unknown name exits non-zero
+
+If an operand does not name a valid alias definition, `unalias` shall
+exit with a status greater than zero.
+
+```
+begin test "unalias of unknown name exits non-zero"
+  script
+    unalias definitely_not_an_alias
+  expect
+    stdout ""
+    stderr ".+"
+    exit_code !=0
+end test "unalias of unknown name exits non-zero"
+```
+

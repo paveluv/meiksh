@@ -736,7 +736,9 @@ end test "read in pipeline subshell does not affect parent"
 
 #### Test: read into readonly variable returns non-zero
 
-Attempting to `read` into a variable that has been marked `readonly` is an error and must return a non-zero exit status with a diagnostic on stderr.
+Attempting to `read` into a variable that has been marked `readonly` is
+an error and must return a non-zero exit status with a diagnostic on
+stderr.
 
 ```
 begin test "read into readonly variable returns non-zero"
@@ -751,7 +753,9 @@ end test "read into readonly variable returns non-zero"
 
 #### Test: partial assignment with readonly second var returns non-zero
 
-When `read` assigns multiple variables and one of them is `readonly`, the operation fails with a non-zero exit status and a diagnostic, even though earlier variables may have been assigned successfully.
+When `read` assigns multiple variables and one of them is `readonly`,
+the operation fails with a non-zero exit status and a diagnostic, even
+though earlier variables may have been assigned successfully.
 
 ```
 begin test "partial assignment with readonly second var returns non-zero"
