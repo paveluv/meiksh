@@ -1648,12 +1648,11 @@ extension.)
 ```
 begin test "multiple bangs in pipeline cause syntax error"
   script
-    ! ! true 2>/dev/null
-    exit 127
+    ! ! true
   expect
     stdout ""
-    stderr ""
-    exit_code 127
+    stderr ".+"
+    exit_code 2
 end test "multiple bangs in pipeline cause syntax error"
 ```
 
