@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::ParseError;
 
@@ -221,8 +221,7 @@ pub struct Parser<'a> {
     pub(super) aliases: &'a HashMap<Box<str>, Box<str>>,
     alias_stack: Vec<AliasLayer<'a>>,
     alias_depth: usize,
-    active_alias_names: Vec<String>,
-    popped_alias_names: Vec<String>,
+    expanding_aliases: HashSet<Cow<'a, str>>,
     alias_trailing_blank_pending: bool,
     pushed_back_byte: Option<u8>,
     cached_token: Option<Token>,
@@ -253,8 +252,7 @@ impl<'a> Parser<'a> {
                 trailing_blank: false,
             }],
             alias_depth: 0,
-            active_alias_names: Vec::new(),
-            popped_alias_names: Vec::new(),
+            expanding_aliases: HashSet::new(),
             alias_trailing_blank_pending: false,
             pushed_back_byte: None,
             cached_token: None,
@@ -277,7 +275,11 @@ impl<'a> Parser<'a> {
             self.alias_stack.push(layer);
         }
         self.alias_depth = saved.depth;
-        self.active_alias_names = saved.active_names;
+        self.expanding_aliases = saved
+            .expanding_aliases
+            .into_iter()
+            .map(Cow::Owned)
+            .collect();
         self.alias_trailing_blank_pending = saved.trailing_blank_pending;
         self.sync_cached_byte();
     }
@@ -299,7 +301,11 @@ impl<'a> Parser<'a> {
         Some(SavedAliasState {
             layers,
             depth: self.alias_depth,
-            active_names: self.active_alias_names,
+            expanding_aliases: self
+                .expanding_aliases
+                .into_iter()
+                .map(Cow::into_owned)
+                .collect(),
             trailing_blank_pending: self.alias_trailing_blank_pending,
         })
     }
@@ -335,9 +341,6 @@ impl<'a> Parser<'a> {
             }
             self.alias_stack.pop();
             self.alias_depth = self.alias_depth.saturating_sub(1);
-            if let Some(name) = self.active_alias_names.pop() {
-                self.popped_alias_names.push(name);
-            }
         }
     }
 
@@ -815,6 +818,9 @@ impl<'a> Parser<'a> {
     fn reclassify_queued_token(&mut self, tok: Token) -> Result<Token, ParseError> {
         let check_keyword = self.keyword_mode;
         let check_alias = self.alias_mode || self.alias_trailing_blank_pending;
+        if !self.alias_trailing_blank_pending && self.alias_stack.len() == 1 {
+            self.expanding_aliases.clear();
+        }
         if self.alias_trailing_blank_pending {
             self.alias_trailing_blank_pending = false;
         }
@@ -826,14 +832,14 @@ impl<'a> Parser<'a> {
                 }
             }
             if check_alias {
-                if let Some(value) = self.aliases.get(&*w) {
+                if let Some((key, value)) = self.aliases.get_key_value(&*w) {
                     if is_alias_eligible(&w)
-                        && !self.active_alias_names.iter().any(|n| n == &*w)
+                        && !self.expanding_aliases.contains(&*w)
                         && self.alias_depth < 1024
                     {
                         let value: &str = value;
                         let trailing_blank = alias_has_trailing_blank(value);
-                        self.active_alias_names.push(String::from(w));
+                        self.expanding_aliases.insert(Cow::Borrowed(&**key));
                         self.alias_stack.push(AliasLayer {
                             text: Cow::Borrowed(value),
                             pos: 0,
@@ -1180,6 +1186,9 @@ impl<'a> Parser<'a> {
     fn produce_word(&mut self, prefix: String) -> Result<Token, ParseError> {
         let check_keyword = self.keyword_mode;
         let check_alias = self.alias_mode || self.alias_trailing_blank_pending;
+        if !self.alias_trailing_blank_pending && self.alias_stack.len() == 1 {
+            self.expanding_aliases.clear();
+        }
         if self.alias_trailing_blank_pending {
             self.alias_trailing_blank_pending = false;
         }
@@ -1189,28 +1198,26 @@ impl<'a> Parser<'a> {
             if raw.is_empty() {
                 if self.cached_byte.is_none() || matches!(self.peek_byte(), Some(b) if is_delim(b))
                 {
-                    self.popped_alias_names.clear();
                     return Ok(Token::Eof);
                 }
             }
 
             let had_quote = self.scan_raw_word(&mut raw)?;
             if raw.is_empty() {
-                self.popped_alias_names.clear();
                 return Ok(Token::Eof);
             }
 
             if !had_quote {
                 if check_alias {
-                    if let Some(value) = self.aliases.get(&*raw) {
+                    if let Some((key, value)) = self.aliases.get_key_value(raw.as_str()) {
                         if is_alias_eligible(&raw)
-                            && !self.active_alias_names.iter().any(|n| n == &*raw)
-                            && !self.popped_alias_names.iter().any(|n| n == &*raw)
+                            && !self.expanding_aliases.contains(raw.as_str())
                             && self.alias_depth < 1024
                         {
                             let value: &str = value;
                             let trailing_blank = alias_has_trailing_blank(value);
-                            self.active_alias_names.push(std::mem::take(&mut raw));
+                            self.expanding_aliases.insert(Cow::Borrowed(&**key));
+                            raw.clear();
                             self.alias_stack.push(AliasLayer {
                                 text: Cow::Borrowed(value),
                                 pos: 0,
@@ -1225,13 +1232,11 @@ impl<'a> Parser<'a> {
                 }
                 if check_keyword {
                     if let Some(kw_tok) = word_to_keyword_token(&raw) {
-                        self.popped_alias_names.clear();
                         return Ok(kw_tok);
                     }
                 }
             }
 
-            self.popped_alias_names.clear();
             return Ok(Token::Word(raw.into()));
         }
     }
@@ -1330,7 +1335,7 @@ impl<'a> Parser<'a> {
 pub(super) struct SavedAliasState {
     layers: Vec<AliasLayer<'static>>,
     depth: usize,
-    active_names: Vec<String>,
+    expanding_aliases: HashSet<String>,
     trailing_blank_pending: bool,
 }
 
