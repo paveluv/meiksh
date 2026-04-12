@@ -462,16 +462,15 @@ fn dot(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError>
     Ok(BuiltinOutcome::Status(status))
 }
 
-fn resolve_dot_path(shell: &Shell, path: &str) -> Result<PathBuf, ShellError> {
+fn resolve_dot_path(shell: &Shell, path: &str) -> Result<PathBuf, ()> {
     if path.contains('/') {
         let candidate = PathBuf::from(path);
         if readable_regular_file(&candidate) {
             return Ok(candidate);
         }
-        return Err(shell.diagnostic(1, format_args!(".: {path}: not found")));
+        return Err(());
     }
-    search_path(path, shell, false, readable_regular_file)
-        .ok_or_else(|| shell.diagnostic(1, format_args!(".: {path}: not found")))
+    search_path(path, shell, false, readable_regular_file).ok_or(())
 }
 
 fn exec_builtin(
@@ -4983,14 +4982,6 @@ mod tests {
                     ],
                     TraceResult::Err(sys::ENOENT),
                 ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(2),
-                        ArgMatcher::Bytes(b"meiksh: .: missing-dot.sh: not found\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
             ],
             || {
                 let mut shell = test_shell();
@@ -5428,16 +5419,6 @@ mod tests {
                         ArgMatcher::Any,
                     ],
                     TraceResult::Err(sys::ENOENT),
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(
-                            b"meiksh: .: /definitely/missing-meiksh-dot-file: not found\n".to_vec(),
-                        ),
-                    ],
-                    TraceResult::Auto,
                 ),
                 t(
                     "write",
