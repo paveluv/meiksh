@@ -218,11 +218,8 @@ pub(crate) fn default_interface() -> SystemInterface {
             sa.sa_sigaction = handler;
             libc::sigemptyset(&mut sa.sa_mask);
             let mut old_sa: libc::sigaction = std::mem::zeroed();
-            if libc::sigaction(sig, &sa, &mut old_sa) < 0 {
-                libc::SIG_ERR
-            } else {
-                old_sa.sa_sigaction
-            }
+            let rc = libc::sigaction(sig, &sa, &mut old_sa);
+            [old_sa.sa_sigaction, libc::SIG_ERR][(rc < 0) as usize]
         },
         isatty: |fd| unsafe { libc::isatty(fd) },
         tcgetpgrp: |fd| unsafe { libc::tcgetpgrp(fd) },
@@ -527,6 +524,8 @@ pub(crate) mod test_support {
         Interrupt(c_int),
         Status(i32),
         StoppedSig(i32),
+        SignaledSig(i32),
+        ContinuedStatus,
         Fds(c_int, c_int),
         Void,
         CwdStr(String),
@@ -710,6 +709,18 @@ pub(crate) mod test_support {
                 TraceResult::StoppedSig(sig) => {
                     unsafe {
                         *status = (sig << 8) | 0x7f;
+                    }
+                    return pid;
+                }
+                TraceResult::SignaledSig(sig) => {
+                    unsafe {
+                        *status = sig & 0x7f;
+                    }
+                    return pid;
+                }
+                TraceResult::ContinuedStatus => {
+                    unsafe {
+                        *status = 0xffff;
                     }
                     return pid;
                 }
@@ -1683,13 +1694,9 @@ pub fn wait_pid(pid: Pid, nohang: bool) -> SysResult<Option<WaitStatus>> {
     }
 }
 
-pub fn wait_pid_untraced(pid: Pid, nohang: bool) -> SysResult<Option<WaitStatus>> {
+pub fn wait_pid_untraced(pid: Pid, _nohang: bool) -> SysResult<Option<WaitStatus>> {
     let mut status = 0;
-    let mut options = WUNTRACED;
-    if nohang {
-        options |= WNOHANG;
-    }
-    let result = (sys_interface().waitpid)(pid, &mut status, options);
+    let result = (sys_interface().waitpid)(pid, &mut status, WUNTRACED);
     if result > 0 {
         Ok(Some(WaitStatus {
             pid: result,

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::arena::StringArena;
 use crate::builtin;
 use crate::expand;
-use crate::shell::{FlowSignal, JobState, PendingControl, Shell, ShellError, WaitOutcome};
+use crate::shell::{BlockingWaitOutcome, FlowSignal, JobState, PendingControl, Shell, ShellError};
 use crate::syntax::{
     AndOr, CaseCommand, Command, ForCommand, FunctionDef, HereDoc, IfCommand, ListItem, LogicalOp,
     LoopCommand, LoopKind, Pipeline, Program, RedirectionKind, SimpleCommand, TimedMode,
@@ -401,19 +401,18 @@ fn wait_for_children_inner(
     let mut rightmost_nonzero = 0;
     for i in 0..spawned.children.len() {
         match shell.wait_for_child_blocking(spawned.children[i].pid, !shell.in_subshell)? {
-            WaitOutcome::Exited(code) => {
+            BlockingWaitOutcome::Exited(code) => {
                 last_status = code;
                 if code != 0 {
                     rightmost_nonzero = code;
                 }
             }
-            WaitOutcome::Signaled(sig) => {
+            BlockingWaitOutcome::Signaled(sig) => {
                 let code = 128 + sig;
                 last_status = code;
                 rightmost_nonzero = code;
             }
-            WaitOutcome::Continued => {}
-            WaitOutcome::Stopped(sig) => {
+            BlockingWaitOutcome::Stopped(sig) => {
                 restore_foreground(saved_foreground);
                 let desc: Box<str> = command_desc.unwrap_or("").into();
                 let children = std::mem::take(&mut spawned.children);
@@ -450,16 +449,15 @@ fn wait_for_external_child(
     };
     loop {
         match shell.wait_for_child_blocking(handle.pid, !shell.in_subshell)? {
-            WaitOutcome::Exited(status) => {
+            BlockingWaitOutcome::Exited(status) => {
                 restore_foreground(saved_foreground);
                 return Ok(status);
             }
-            WaitOutcome::Signaled(sig) => {
+            BlockingWaitOutcome::Signaled(sig) => {
                 restore_foreground(saved_foreground);
                 return Ok(128 + sig);
             }
-            WaitOutcome::Continued => continue,
-            WaitOutcome::Stopped(sig) => {
+            BlockingWaitOutcome::Stopped(sig) => {
                 restore_foreground(saved_foreground);
                 let desc: Box<str> = command_desc.unwrap_or("").into();
                 let children = vec![handle.clone()];
@@ -467,8 +465,7 @@ fn wait_for_external_child(
                 let idx = shell.jobs.iter().position(|j| j.id == id).unwrap();
                 shell.jobs[idx].state = JobState::Stopped(sig);
                 if shell.interactive {
-                    shell.jobs[idx].saved_termios =
-                        sys::get_terminal_attrs(sys::STDIN_FILENO).ok();
+                    shell.jobs[idx].saved_termios = sys::get_terminal_attrs(sys::STDIN_FILENO).ok();
                     let msg = format!(
                         "[{id}] Stopped ({})\t{}\n",
                         sys::signal_name(sig),
@@ -1322,52 +1319,6 @@ fn file_needs_binary_rejection(path: &str) -> bool {
     }
     let nl_pos = prefix.iter().position(|&b| b == b'\n').unwrap_or(n);
     prefix[..nl_pos].contains(&0)
-}
-
-fn exec_in_place(shell: &Shell, prepared: &PreparedProcess) -> ! {
-    let redir_result = prepare_redirections(&prepared.redirections, prepared.noclobber);
-    match redir_result {
-        Ok(pr) => {
-            if let Err(err) = apply_child_fd_actions(&pr.actions) {
-                sys_eprintln!("{}: {}", prepared.argv[0], err);
-                sys::exit_process(1);
-            }
-        }
-        Err(err) => {
-            sys_eprintln!("{}: {}", prepared.argv[0], err);
-            sys::exit_process(1);
-        }
-    }
-    for (key, value) in &prepared.child_env {
-        let _ = sys::env_set_var(key, value);
-    }
-    if file_needs_binary_rejection(&prepared.exec_path) {
-        sys_eprintln!("{}: cannot execute binary file", prepared.argv[0]);
-        sys::exit_process(126);
-    }
-    shell.restore_signals_for_child();
-    match sys::exec_replace(&prepared.exec_path, &prepared.argv) {
-        Err(err) if err.is_enoexec() => {
-            let mut child_shell = shell.clone();
-            child_shell.owns_terminal = false;
-            child_shell.in_subshell = true;
-            let _ = child_shell.reset_traps_for_subshell();
-            child_shell.shell_name = prepared.argv[0].clone();
-            child_shell.positional = prepared.argv[1..]
-                .iter()
-                .map(|s| String::from(&**s))
-                .collect();
-            let status = child_shell
-                .source_path(Path::new(&*prepared.exec_path))
-                .unwrap_or(1);
-            sys::exit_process(status as sys::RawFd);
-        }
-        Err(err) => {
-            sys_eprintln!("{}: {}", prepared.argv[0], err);
-            sys::exit_process(126);
-        }
-        Ok(()) => sys::exit_process(0),
-    }
 }
 
 fn spawn_prepared(
@@ -2245,7 +2196,11 @@ mod tests {
                         ),
                         t(
                             "waitpid",
-                            vec![ArgMatcher::Int(1100), ArgMatcher::Any, ArgMatcher::Int(sys::WUNTRACED as i64)],
+                            vec![
+                                ArgMatcher::Int(1100),
+                                ArgMatcher::Any,
+                                ArgMatcher::Int(sys::WUNTRACED as i64),
+                            ],
                             TraceResult::Status(0),
                         ),
                     ],
@@ -2302,7 +2257,11 @@ mod tests {
                         ),
                         t(
                             "waitpid",
-                            vec![ArgMatcher::Int(1101), ArgMatcher::Any, ArgMatcher::Int(sys::WUNTRACED as i64)],
+                            vec![
+                                ArgMatcher::Int(1101),
+                                ArgMatcher::Any,
+                                ArgMatcher::Int(sys::WUNTRACED as i64),
+                            ],
                             TraceResult::Status(0),
                         ),
                     ],
@@ -6054,17 +6013,18 @@ mod tests {
                                 ),
                                 t(
                                     "execvp",
-                                    vec![
-                                        ArgMatcher::Str("/usr/bin/sleep".into()),
-                                        ArgMatcher::Any,
-                                    ],
+                                    vec![ArgMatcher::Str("/usr/bin/sleep".into()), ArgMatcher::Any],
                                     TraceResult::Int(0),
                                 ),
                             ],
                         ),
                         t(
                             "waitpid",
-                            vec![ArgMatcher::Int(9150), ArgMatcher::Any, ArgMatcher::Int(sys::WUNTRACED as i64)],
+                            vec![
+                                ArgMatcher::Int(9150),
+                                ArgMatcher::Any,
+                                ArgMatcher::Int(sys::WUNTRACED as i64),
+                            ],
                             TraceResult::Status(0),
                         ),
                     ],
@@ -6184,17 +6144,18 @@ mod tests {
                                 ),
                                 t(
                                     "execvp",
-                                    vec![
-                                        ArgMatcher::Str("/usr/bin/sleep".into()),
-                                        ArgMatcher::Any,
-                                    ],
+                                    vec![ArgMatcher::Str("/usr/bin/sleep".into()), ArgMatcher::Any],
                                     TraceResult::Int(0),
                                 ),
                             ],
                         ),
                         t(
                             "waitpid",
-                            vec![ArgMatcher::Int(9250), ArgMatcher::Any, ArgMatcher::Int(sys::WUNTRACED as i64)],
+                            vec![
+                                ArgMatcher::Int(9250),
+                                ArgMatcher::Any,
+                                ArgMatcher::Int(sys::WUNTRACED as i64),
+                            ],
                             TraceResult::Status(0),
                         ),
                     ],
@@ -7467,6 +7428,58 @@ mod tests {
                 shell.env.insert("PATH".into(), "/usr/bin".into());
                 let status = shell.execute_string("myext\n").expect("fork failure");
                 assert_eq!(status, 1);
+            },
+        );
+    }
+
+    #[test]
+    fn wait_for_children_signaled_child() {
+        run_trace(
+            vec![t(
+                "waitpid",
+                vec![
+                    ArgMatcher::Int(9050),
+                    ArgMatcher::Any,
+                    ArgMatcher::Int(sys::WUNTRACED as i64),
+                ],
+                TraceResult::SignaledSig(11),
+            )],
+            || {
+                let mut shell = test_shell();
+                let spawned = SpawnedProcesses {
+                    children: vec![sys::ChildHandle {
+                        pid: 9050,
+                        stdout_fd: None,
+                    }],
+                    pgid: None,
+                };
+                let status = wait_for_children(&mut shell, spawned, Some("segv")).unwrap();
+                assert_eq!(status, 128 + 11);
+            },
+        );
+    }
+
+    #[test]
+    fn wait_for_external_child_signaled() {
+        run_trace(
+            vec![t(
+                "waitpid",
+                vec![
+                    ArgMatcher::Int(9060),
+                    ArgMatcher::Any,
+                    ArgMatcher::Int(sys::WUNTRACED as i64),
+                ],
+                TraceResult::SignaledSig(9),
+            )],
+            || {
+                let mut shell = test_shell();
+                let handle = sys::ChildHandle {
+                    pid: 9060,
+                    stdout_fd: None,
+                };
+                let status =
+                    wait_for_external_child(&mut shell, &handle, None, Some("killed")).unwrap();
+                assert_eq!(status, 128 + 9);
             },
         );
     }

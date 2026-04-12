@@ -208,7 +208,6 @@ pub struct Job {
     pub children: Vec<sys::ChildHandle>,
     pub state: JobState,
     pub saved_termios: Option<libc::termios>,
-    pub cont_pending: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -235,6 +234,13 @@ pub enum WaitOutcome {
     Signaled(i32),
     Stopped(i32),
     Continued,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlockingWaitOutcome {
+    Exited(i32),
+    Signaled(i32),
+    Stopped(i32),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -739,7 +745,6 @@ impl Shell {
             children,
             state: JobState::Running,
             saved_termios: None,
-            cont_pending: false,
         });
         id
     }
@@ -749,21 +754,6 @@ impl Shell {
         let mut remaining = Vec::new();
 
         for mut job in self.jobs.drain(..) {
-            if matches!(job.state, JobState::Stopped(_)) {
-                let mut continued = false;
-                for child in &job.children {
-                    if let Ok(Some(WaitOutcome::Continued)) = try_wait_child(child.pid) {
-                        continued = true;
-                    }
-                }
-                if continued {
-                    job.state = JobState::Running;
-                    job.cont_pending = false;
-                } else {
-                    remaining.push(job);
-                    continue;
-                }
-            }
             let mut running = Vec::new();
             let mut any_stopped = false;
             let mut stop_signal = 0i32;
@@ -787,8 +777,6 @@ impl Shell {
                     Ok(Some(WaitOutcome::Stopped(sig))) => {
                         if let Ok(Some(WaitOutcome::Continued)) = try_wait_child(child.pid) {
                             running.push(child);
-                        } else if job.cont_pending {
-                            running.push(child);
                         } else {
                             any_stopped = true;
                             stop_signal = sig;
@@ -796,7 +784,7 @@ impl Shell {
                         }
                     }
                     Ok(Some(WaitOutcome::Continued)) => {
-                        job.cont_pending = false;
+                        job.state = JobState::Running;
                         running.push(child);
                     }
                     Ok(None) => running.push(child),
@@ -809,7 +797,7 @@ impl Shell {
                 }
             }
             job.children = running;
-            if job.children.is_empty() {
+            if job.children.is_empty() && !matches!(job.state, JobState::Stopped(_)) {
                 let final_status = job.last_status.unwrap_or(0);
                 self.known_job_statuses.insert(job.id, final_status);
                 job.state = JobState::Done(final_status);
@@ -860,9 +848,8 @@ impl Shell {
         let mut status = self.jobs[index].last_status.unwrap_or(0);
         let children: Vec<sys::ChildHandle> = self.jobs[index].children.clone();
         for child in &children {
-            let outcome = self.wait_for_child_blocking(child.pid, true)?;
-            match outcome {
-                WaitOutcome::Exited(code) => {
+            match self.wait_for_child_blocking(child.pid, true)? {
+                BlockingWaitOutcome::Exited(code) => {
                     status = code;
                     let idx = self
                         .jobs
@@ -881,7 +868,7 @@ impl Shell {
                         self.jobs[idx].children.remove(ci);
                     }
                 }
-                WaitOutcome::Signaled(sig) => {
+                BlockingWaitOutcome::Signaled(sig) => {
                     let code = 128 + sig;
                     status = code;
                     let idx = self
@@ -901,8 +888,7 @@ impl Shell {
                         self.jobs[idx].children.remove(ci);
                     }
                 }
-                WaitOutcome::Continued => {}
-                WaitOutcome::Stopped(sig) => {
+                BlockingWaitOutcome::Stopped(sig) => {
                     self.restore_foreground(saved_foreground);
                     let idx = self
                         .jobs
@@ -926,15 +912,14 @@ impl Shell {
             }
         }
         self.restore_foreground(saved_foreground);
-        let idx = self.jobs.iter().position(|j| j.id == id);
-        if let Some(idx) = idx {
-            let removed = self.jobs.remove(idx);
-            for child in &removed.children {
-                self.known_pid_statuses.remove(&child.pid);
-            }
-            if let Some(pid) = removed.last_pid {
-                self.known_pid_statuses.remove(&pid);
-            }
+        let idx = self
+            .jobs
+            .iter()
+            .position(|j| j.id == id)
+            .expect("job vanished during wait");
+        let removed = self.jobs.remove(idx);
+        if let Some(pid) = removed.last_pid {
+            self.known_pid_statuses.remove(&pid);
         }
         for child in &children {
             self.known_pid_statuses.remove(&child.pid);
@@ -950,7 +935,6 @@ impl Shell {
             .position(|job| job.id == id)
             .ok_or_else(|| self.diagnostic(1, format_args!("job {id}: not found")))?;
         self.jobs[idx].state = JobState::Running;
-        self.jobs[idx].cont_pending = true;
         if let Some(pgid) = self.jobs[idx].pgid {
             if foreground && self.owns_terminal {
                 let _ = sys::set_foreground_pgrp(sys::STDIN_FILENO, pgid);
@@ -1254,16 +1238,15 @@ impl Shell {
                 }
             } else {
                 match self.wait_for_child_blocking(pid, true) {
-                    Ok(WaitOutcome::Exited(code)) => {
+                    Ok(BlockingWaitOutcome::Exited(code)) => {
                         status = code;
                         self.record_completed_child(index, child_index, pid, code);
                     }
-                    Ok(WaitOutcome::Signaled(sig)) => {
+                    Ok(BlockingWaitOutcome::Signaled(sig)) => {
                         status = 128 + sig;
                         self.record_completed_child(index, child_index, pid, 128 + sig);
                     }
-                    Ok(WaitOutcome::Continued) => {}
-                    Ok(WaitOutcome::Stopped(sig)) => {
+                    Ok(BlockingWaitOutcome::Stopped(sig)) => {
                         self.restore_foreground(saved_foreground);
                         return Ok(128 + sig);
                     }
@@ -1285,27 +1268,21 @@ impl Shell {
         &mut self,
         pid: sys::Pid,
         report_stopped: bool,
-    ) -> Result<WaitOutcome, ShellError> {
+    ) -> Result<BlockingWaitOutcome, ShellError> {
         loop {
             match sys::wait_pid_untraced(pid, false) {
                 Ok(Some(waited)) => {
                     self.run_pending_traps()?;
                     if sys::wifstopped(waited.status) {
                         if report_stopped {
-                            return Ok(WaitOutcome::Stopped(sys::wstopsig(waited.status)));
+                            return Ok(BlockingWaitOutcome::Stopped(sys::wstopsig(waited.status)));
                         }
-                        let already_continued = matches!(
-                            sys::wait_pid_job_status(pid),
-                            Ok(Some(ws)) if sys::wifcontinued(ws.status)
-                        );
-                        if !already_continued {
-                            let _ = sys::send_signal(sys::current_pid(), sys::SIGSTOP);
-                        }
+                        let _ = sys::send_signal(sys::current_pid(), sys::SIGSTOP);
                         continue;
                     } else if sys::wifsignaled(waited.status) {
-                        return Ok(WaitOutcome::Signaled(sys::wtermsig(waited.status)));
+                        return Ok(BlockingWaitOutcome::Signaled(sys::wtermsig(waited.status)));
                     } else {
-                        return Ok(WaitOutcome::Exited(sys::wexitstatus(waited.status)));
+                        return Ok(BlockingWaitOutcome::Exited(sys::wexitstatus(waited.status)));
                     }
                 }
                 Ok(None) => continue,
@@ -3009,8 +2986,10 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 assert_eq!(
-                    shell.wait_for_child_blocking(99, true).expect("retry after none"),
-                    WaitOutcome::Exited(7)
+                    shell
+                        .wait_for_child_blocking(99, true)
+                        .expect("retry after none"),
+                    BlockingWaitOutcome::Exited(7)
                 );
             },
         );
@@ -3749,7 +3728,6 @@ mod tests {
                     pgid: None,
                     state: JobState::Stopped(sys::SIGTSTP),
                     saved_termios: None,
-                    cont_pending: false,
                 });
                 shell.jobs.push(Job {
                     id: 2,
@@ -3760,7 +3738,6 @@ mod tests {
                     pgid: None,
                     state: JobState::Done(0),
                     saved_termios: None,
-                    cont_pending: false,
                 });
                 shell.jobs.push(Job {
                     id: 3,
@@ -3771,7 +3748,6 @@ mod tests {
                     pgid: None,
                     state: JobState::Running,
                     saved_termios: None,
-                    cont_pending: false,
                 });
                 shell.print_jobs();
             },
@@ -3967,6 +3943,509 @@ mod tests {
                     .wait_for_child_interruptible(5004)
                     .expect("retry after none");
                 assert_eq!(result, ChildWaitResult::Exited(42));
+            },
+        );
+    }
+
+    #[test]
+    fn try_wait_child_returns_continued() {
+        run_trace(
+            vec![t(
+                "waitpid",
+                vec![ArgMatcher::Int(3333), ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::ContinuedStatus,
+            )],
+            || {
+                let result = try_wait_child(3333).expect("try_wait_child");
+                assert_eq!(result, Some(WaitOutcome::Continued));
+            },
+        );
+    }
+
+    #[test]
+    fn try_wait_child_returns_signaled() {
+        run_trace(
+            vec![t(
+                "waitpid",
+                vec![ArgMatcher::Int(3334), ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::SignaledSig(9),
+            )],
+            || {
+                let result = try_wait_child(3334).expect("try_wait_child");
+                assert_eq!(result, Some(WaitOutcome::Signaled(9)));
+            },
+        );
+    }
+
+    #[test]
+    fn reap_jobs_signaled_child() {
+        run_trace(
+            vec![t(
+                "waitpid",
+                vec![ArgMatcher::Int(4001), ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::SignaledSig(9),
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.register_background_job("killed".into(), None, vec![fake_handle(4001)]);
+                let finished = shell.reap_jobs();
+                assert_eq!(
+                    finished,
+                    vec![(1, ReapedJobState::Signaled(9, "killed".into()))]
+                );
+                assert!(shell.jobs.is_empty());
+            },
+        );
+    }
+
+    #[test]
+    fn reap_jobs_continued_child_transitions_to_running() {
+        run_trace(
+            vec![t(
+                "waitpid",
+                vec![ArgMatcher::Int(4002), ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::ContinuedStatus,
+            )],
+            || {
+                let mut shell = test_shell();
+                let id =
+                    shell.register_background_job("cont".into(), None, vec![fake_handle(4002)]);
+                shell.jobs[0].state = JobState::Stopped(sys::SIGTSTP);
+                let finished = shell.reap_jobs();
+                assert!(finished.is_empty());
+                let job = shell.jobs.iter().find(|j| j.id == id).expect("job");
+                assert!(matches!(job.state, JobState::Running));
+            },
+        );
+    }
+
+    #[test]
+    fn reap_jobs_stopped_then_continued() {
+        run_trace(
+            vec![
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(4003), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::StoppedSig(sys::SIGTSTP),
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(4003), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::ContinuedStatus,
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.register_background_job("stopcont".into(), None, vec![fake_handle(4003)]);
+                let finished = shell.reap_jobs();
+                assert!(finished.is_empty());
+                assert!(matches!(shell.jobs[0].state, JobState::Running));
+            },
+        );
+    }
+
+    #[test]
+    fn reap_jobs_signaled_produces_finished_entry() {
+        run_trace(
+            vec![t(
+                "waitpid",
+                vec![ArgMatcher::Int(4004), ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::SignaledSig(15),
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.register_background_job("termed".into(), None, vec![fake_handle(4004)]);
+                let finished = shell.reap_jobs();
+                assert_eq!(
+                    finished,
+                    vec![(1, ReapedJobState::Signaled(15, "termed".into()))]
+                );
+                assert_eq!(*shell.known_pid_statuses.get(&4004).unwrap(), 128 + 15);
+            },
+        );
+    }
+
+    #[test]
+    fn wait_for_job_signaled_child() {
+        run_trace(
+            vec![t(
+                "waitpid",
+                vec![
+                    ArgMatcher::Int(5001),
+                    ArgMatcher::Any,
+                    ArgMatcher::Int(sys::WUNTRACED as i64),
+                ],
+                TraceResult::SignaledSig(9),
+            )],
+            || {
+                let mut shell = test_shell();
+                let id =
+                    shell.register_background_job("killed".into(), None, vec![fake_handle(5001)]);
+                let status = shell.wait_for_job(id).expect("wait signaled");
+                assert_eq!(status, 128 + 9);
+                assert!(shell.jobs.is_empty());
+            },
+        );
+    }
+
+    #[test]
+    fn wait_for_job_cleanup_removes_known_pids() {
+        run_trace(
+            vec![t(
+                "waitpid",
+                vec![
+                    ArgMatcher::Int(5003),
+                    ArgMatcher::Any,
+                    ArgMatcher::Int(sys::WUNTRACED as i64),
+                ],
+                TraceResult::Status(42),
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.known_pid_statuses.insert(5003, 0);
+                let id =
+                    shell.register_background_job("clean".into(), None, vec![fake_handle(5003)]);
+                let status = shell.wait_for_job(id).expect("wait");
+                assert_eq!(status, 42);
+                assert!(!shell.known_pid_statuses.contains_key(&5003));
+            },
+        );
+    }
+
+    #[test]
+    fn continue_job_foreground_with_owns_terminal() {
+        run_trace(
+            vec![
+                t(
+                    "tcsetpgrp",
+                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Int(6001)],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "kill",
+                    vec![ArgMatcher::Int(-6001), ArgMatcher::Int(sys::SIGCONT as i64)],
+                    TraceResult::Int(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.owns_terminal = true;
+                let id =
+                    shell.register_background_job("fg".into(), Some(6001), vec![fake_handle(6001)]);
+                shell.jobs[0].state = JobState::Stopped(sys::SIGTSTP);
+                shell.continue_job(id, true).expect("continue");
+                assert!(matches!(shell.jobs[0].state, JobState::Running));
+            },
+        );
+    }
+
+    #[test]
+    fn print_jobs_signaled_and_done_nonzero() {
+        run_trace(
+            vec![
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(7001), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::SignaledSig(15),
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(7002), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Status(3),
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(1),
+                        ArgMatcher::Bytes(b"[1] Terminated (SIGTERM)\tsig-job\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(1),
+                        ArgMatcher::Bytes(b"[2] Done(3)\tfail-job\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.register_background_job("sig-job".into(), None, vec![fake_handle(7001)]);
+                shell.register_background_job("fail-job".into(), None, vec![fake_handle(7002)]);
+                shell.print_jobs();
+            },
+        );
+    }
+
+    #[test]
+    fn wait_on_job_index_signaled() {
+        run_trace(
+            vec![t(
+                "waitpid",
+                vec![
+                    ArgMatcher::Int(8001),
+                    ArgMatcher::Any,
+                    ArgMatcher::Int(sys::WUNTRACED as i64),
+                ],
+                TraceResult::SignaledSig(11),
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.register_background_job("segv".into(), None, vec![fake_handle(8001)]);
+                let status = shell.wait_on_job_index(0, false).expect("wait signaled");
+                assert_eq!(status, 128 + 11);
+            },
+        );
+    }
+
+    #[test]
+    fn wait_for_child_blocking_report_stopped_false_self_stops() {
+        run_trace(
+            vec![
+                t(
+                    "waitpid",
+                    vec![
+                        ArgMatcher::Int(9001),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
+                    TraceResult::StoppedSig(sys::SIGTSTP),
+                ),
+                t("getpid", vec![], TraceResult::Pid(1234)),
+                t(
+                    "kill",
+                    vec![ArgMatcher::Int(1234), ArgMatcher::Int(sys::SIGSTOP as i64)],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "waitpid",
+                    vec![
+                        ArgMatcher::Int(9001),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
+                    TraceResult::Status(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome = shell.wait_for_child_blocking(9001, false).expect("wait");
+                assert_eq!(outcome, BlockingWaitOutcome::Exited(0));
+            },
+        );
+    }
+
+    #[test]
+    fn wait_for_child_blocking_signaled() {
+        run_trace(
+            vec![t(
+                "waitpid",
+                vec![
+                    ArgMatcher::Int(9002),
+                    ArgMatcher::Any,
+                    ArgMatcher::Int(sys::WUNTRACED as i64),
+                ],
+                TraceResult::SignaledSig(6),
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = shell.wait_for_child_blocking(9002, true).expect("wait");
+                assert_eq!(outcome, BlockingWaitOutcome::Signaled(6));
+            },
+        );
+    }
+
+    #[test]
+    fn foreground_handoff_with_owns_terminal() {
+        run_trace(
+            vec![
+                t(
+                    "isatty",
+                    vec![ArgMatcher::Fd(sys::STDIN_FILENO)],
+                    TraceResult::Int(1),
+                ),
+                t(
+                    "isatty",
+                    vec![ArgMatcher::Fd(sys::STDERR_FILENO)],
+                    TraceResult::Int(1),
+                ),
+                t(
+                    "tcgetpgrp",
+                    vec![ArgMatcher::Fd(sys::STDIN_FILENO)],
+                    TraceResult::Pid(1000),
+                ),
+                t(
+                    "tcsetpgrp",
+                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Int(2000)],
+                    TraceResult::Int(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.owns_terminal = true;
+                let saved = shell.foreground_handoff(Some(2000));
+                assert_eq!(saved, Some(1000));
+            },
+        );
+    }
+
+    #[test]
+    fn foreground_handoff_not_interactive_returns_none() {
+        run_trace(
+            vec![t(
+                "isatty",
+                vec![ArgMatcher::Fd(sys::STDIN_FILENO)],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.owns_terminal = true;
+                let saved = shell.foreground_handoff(Some(2000));
+                assert_eq!(saved, None);
+            },
+        );
+    }
+
+    #[test]
+    fn wait_for_job_with_owns_terminal_and_signaled_cleanup() {
+        run_trace(
+            vec![
+                t(
+                    "tcsetpgrp",
+                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Int(5010)],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "waitpid",
+                    vec![
+                        ArgMatcher::Int(5010),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
+                    TraceResult::SignaledSig(9),
+                ),
+                t(
+                    "tcsetpgrp",
+                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Int(100)],
+                    TraceResult::Int(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.owns_terminal = true;
+                shell.pid = 100;
+                let id = shell.register_background_job(
+                    "killed".into(),
+                    Some(5010),
+                    vec![fake_handle(5010)],
+                );
+                shell.known_pid_statuses.insert(5010, 0);
+                let status = shell.wait_for_job(id).expect("wait signaled");
+                assert_eq!(status, 128 + 9);
+                assert!(shell.jobs.is_empty());
+                assert!(!shell.known_pid_statuses.contains_key(&5010));
+            },
+        );
+    }
+
+    #[test]
+    fn print_jobs_stopped_notification_is_noop() {
+        run_trace(
+            vec![
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(7010), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::StoppedSig(sys::SIGTSTP),
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(7010), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Pid(0),
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(1),
+                        ArgMatcher::Bytes(
+                            format!(
+                                "[1] Stopped ({}) stopped-job\n",
+                                sys::signal_name(sys::SIGTSTP)
+                            )
+                            .into_bytes(),
+                        ),
+                    ],
+                    TraceResult::Auto,
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.register_background_job("stopped-job".into(), None, vec![fake_handle(7010)]);
+                shell.print_jobs();
+            },
+        );
+    }
+
+    #[test]
+    fn wait_for_job_cleanup_iterates_remaining_children() {
+        run_trace(
+            vec![
+                t(
+                    "waitpid",
+                    vec![
+                        ArgMatcher::Int(5020),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
+                    TraceResult::Status(0),
+                ),
+                t(
+                    "waitpid",
+                    vec![
+                        ArgMatcher::Int(5021),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
+                    TraceResult::Status(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let id = shell.register_background_job(
+                    "multi".into(),
+                    None,
+                    vec![fake_handle(5020), fake_handle(5021)],
+                );
+                shell.known_pid_statuses.insert(5020, 0);
+                shell.known_pid_statuses.insert(5021, 0);
+                let status = shell.wait_for_job(id).expect("wait");
+                assert_eq!(status, 0);
+                assert!(!shell.known_pid_statuses.contains_key(&5020));
+                assert!(!shell.known_pid_statuses.contains_key(&5021));
+            },
+        );
+    }
+
+    #[test]
+    fn wait_on_job_index_signaled_with_cleanup() {
+        run_trace(
+            vec![t(
+                "waitpid",
+                vec![
+                    ArgMatcher::Int(8010),
+                    ArgMatcher::Any,
+                    ArgMatcher::Int(sys::WUNTRACED as i64),
+                ],
+                TraceResult::SignaledSig(11),
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.register_background_job("segv".into(), None, vec![fake_handle(8010)]);
+                shell.known_pid_statuses.insert(8010, 0);
+                let status = shell.wait_on_job_index(0, false).expect("wait signaled");
+                assert_eq!(status, 128 + 11);
+                assert!(shell.jobs.is_empty());
             },
         );
     }
