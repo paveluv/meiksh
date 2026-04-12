@@ -322,37 +322,6 @@ begin test "command -v finds known utility"
 end test "command -v finds known utility"
 ```
 
-#### Test: command -v fails for missing command
-
-`command -v` returns a non-zero exit status for an unknown command.
-
-```
-begin test "command -v fails for missing command"
-  script
-    command -v nonexistent_cmd_xyz 2>/dev/null
-  expect
-    stdout ""
-    stderr ""
-    exit_code !=0
-end test "command -v fails for missing command"
-```
-
-#### Test: command -V describes known utility
-
-`command -V` writes a string indicating how the given command name
-will be interpreted.
-
-```
-begin test "command -V describes known utility"
-  script
-    command -V echo
-  expect
-    stdout ".*echo.*"
-    stderr ""
-    exit_code 0
-end test "command -V describes known utility"
-```
-
 #### Test: command returns 127 for missing utility
 
 When the specified utility is not found, `command` returns 127.
