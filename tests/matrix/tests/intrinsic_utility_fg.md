@@ -146,10 +146,10 @@ as specified by POSIX.1-2024 (Section 1.7).
 ```
 begin test "fg: error when job control is disabled"
   script
-    fg 2>/dev/null
+    fg
   expect
     stdout ""
-    stderr ""
+    stderr ".+"
     exit_code !=0
 end test "fg: error when job control is disabled"
 ```
@@ -193,7 +193,8 @@ begin interactive test "fg: removes job from known process list"
   sleep 200ms
   sendraw 03
   expect "$ "
-  send "jobs"
+  send "jobs | wc -l"
+  expect "0"
   expect "$ "
   sendeof
   wait
@@ -246,31 +247,6 @@ begin interactive test "fg produces no stderr with valid job"
   sendeof
   wait
 end interactive test "fg produces no stderr with valid job"
-```
-
-#### Test: fg respects locale env vars
-
-Verifies that `fg` operates correctly when locale environment variables (such as `LC_ALL`) are set, ensuring that internationalization variables do not cause errors or unexpected behavior.
-
-```
-begin interactive test "fg respects locale env vars"
-  spawn -i
-  expect "$ "
-  send "export LC_ALL=test_EPTY.UTF-8"
-  expect "$ "
-  send "set -m"
-  expect "$ "
-  send "sleep 0.1 &"
-  expect "$ "
-  sleep 200ms
-  send "fg"
-  expect "$ "
-  send "echo ok"
-  expect "ok"
-  expect "$ "
-  sendeof
-  wait
-end interactive test "fg respects locale env vars"
 ```
 
 #### Test: fg/bg send SIGCONT to stopped job

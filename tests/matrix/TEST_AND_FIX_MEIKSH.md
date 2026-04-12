@@ -49,6 +49,22 @@ that fails against bash is fine if POSIX requires it.
 
 ---
 
+## Test sandbox
+
+Every test runs inside a unique, initially empty temporary directory created by
+`expect_pty`. The directory is automatically removed after the test finishes
+(whether it passes, fails, or times out). Tests can therefore:
+
+- Assume the current working directory is empty at the start.
+- Create files and directories freely — no cleanup is needed.
+- Rely on glob patterns like `*` matching only files the test itself created.
+
+`HOME` and `TMPDIR` point to the parent of the sandbox directory. Coverage
+profile files (`LLVM_PROFILE_FILE`) are redirected there as well, so they never
+appear inside the sandbox.
+
+---
+
 ## Phase 3a — Fix test bugs
 
 Follow the rules in `tests/matrix/IMPROVING_MD_TEST_SUITES.md`:

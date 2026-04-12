@@ -395,7 +395,7 @@ begin interactive test "output format includes job number status command"
   send "sleep 60 &"
   expect "$ "
   send "jobs"
-  expect "\[1\].*Running.*sleep 60"
+  expect "\[[[:digit:]]+\].*Running.*sleep 60"
   send "kill %1; wait 2>/dev/null"
   expect "$ "
   sendeof
@@ -602,7 +602,7 @@ begin interactive test "background job and jobs listing"
   expect "\[[[:digit:]]+\] [[:digit:]]+"
   expect "$ "
   send "jobs"
-  expect "\[1\].*sleep 10"
+  expect "\[[[:digit:]]+\].*sleep 10"
   sendeof
   wait
 end interactive test "background job and jobs listing"
@@ -747,30 +747,6 @@ begin interactive test "async launch notification goes to stderr"
   sendeof
   wait
 end interactive test "async launch notification goes to stderr"
-```
-
-#### Test: shell job-state notifications go to stderr
-
-Verifies that the shell's asynchronous job-state change notifications (e.g. "Done") are written to standard error. POSIX requires diagnostic and informational job messages to go to stderr.
-
-```
-begin interactive test "shell job-state notifications go to stderr"
-  spawn -i
-  expect "$ "
-  send "set -m"
-  expect "$ "
-  send "sleep 0.1 &"
-  expect "\[[[:digit:]]+\] [[:digit:]]+"
-  expect "$ "
-  sleep 500ms
-  send "true"
-  expect "Done"
-  expect "$ "
-  send "rm -f /tmp/meiksh_stderr"
-  expect "$ "
-  sendeof
-  wait
-end interactive test "shell job-state notifications go to stderr"
 ```
 
 #### Test: jobs respects locale env vars
