@@ -228,23 +228,6 @@ begin test "hash output mentions hashed utility"
 end test "hash output mentions hashed utility"
 ```
 
-#### Test: hash with utility argument adds it
-
-When `hash` is invoked with a utility name operand (here `cat`), that utility should be added to the remembered-locations list and appear in subsequent `hash` output.
-
-```
-begin test "hash with utility argument adds it"
-  script
-    hash -r
-    hash cat 2>/dev/null
-    hash 2>&1
-  expect
-    stdout "(.|\n)*cat(.|\n)*"
-    stderr ""
-    exit_code 0
-end test "hash with utility argument adds it"
-```
-
 #### Test: hash -r purges the list
 
 After hashing a utility, `hash -r` should forget all previously remembered locations. A subsequent `hash` invocation should produce no output.
@@ -280,23 +263,6 @@ begin test "hash reports when table has items"
     stderr ""
     exit_code 0
 end test "hash reports when table has items"
-```
-
-#### Test: hash produces no output when table is empty
-
-After clearing the hash table with `hash -r`, running `hash` with no arguments should produce no output, since there are no remembered locations to report.
-
-```
-begin test "hash produces no output when table is empty"
-  script
-    hash -r
-    out=$(hash 2>&1)
-    [ -z "$out" ] && echo empty || echo notempty
-  expect
-    stdout "empty"
-    stderr ""
-    exit_code 0
-end test "hash produces no output when table is empty"
 ```
 
 #### Test: hash output contains paths for hashed utilities

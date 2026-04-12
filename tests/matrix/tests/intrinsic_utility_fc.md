@@ -243,29 +243,6 @@ as specified by POSIX.1-2024 (Section 1.7).
 
 ### Tests
 
-#### Test: fc -l exit status is zero
-
-`fc -l` lists commands from the history and returns zero.
-
-```
-begin interactive test "fc -l exit status is zero"
-  spawn -i
-  expect "$ "
-  send "echo fc_check_1"
-  expect "fc_check_1"
-  expect "$ "
-  send "echo fc_check_2"
-  expect "fc_check_2"
-  expect "$ "
-  send "fc -l -2 -1"
-  expect "fc_check_1"
-  expect "fc_check_2"
-  expect "$ "
-  sendeof
-  wait
-end interactive test "fc -l exit status is zero"
-```
-
 #### Test: fc -l lists command history
 
 Verifies that `fc -l` with no range arguments lists previously entered commands from the history, including their command text.
@@ -427,28 +404,6 @@ begin interactive test "fc -e non-zero exit suppresses re-execution"
   sendeof
   wait
 end interactive test "fc -e non-zero exit suppresses re-execution"
-```
-
-#### Test: fc -l with string pattern operand
-
-Verifies that `fc -l` can list commands selected by a range of negative offsets, confirming the listed entries include the expected command text.
-
-```
-begin interactive test "fc -l with string pattern operand"
-  spawn -i
-  expect "$ "
-  send "echo unique_pat_cmd"
-  expect "unique_pat_cmd"
-  expect "$ "
-  send "echo other_cmd"
-  expect "other_cmd"
-  expect "$ "
-  send "fc -l -2 -1"
-  expect "echo unique_pat_cmd"
-  expect "echo other_cmd"
-  sendeof
-  wait
-end interactive test "fc -l with string pattern operand"
 ```
 
 #### Test: fc -l reverse order
@@ -694,32 +649,6 @@ begin interactive test "fc -l with first > last lists in reverse sequence"
   sendeof
   wait
 end interactive test "fc -l with first > last lists in reverse sequence"
-```
-
-#### Test: reversed range with positive numbers
-
-Verifies that a reversed range using negative offsets (first newer than last) lists commands in reverse order, equivalent to using the `-r` option on a forward range.
-
-```
-begin interactive test "reversed range with positive numbers"
-  spawn -i
-  expect "$ "
-  send "echo posrev_a"
-  expect "posrev_a"
-  expect "$ "
-  send "echo posrev_b"
-  expect "posrev_b"
-  expect "$ "
-  send "echo posrev_c"
-  expect "posrev_c"
-  expect "$ "
-  send "fc -l -1 -3"
-  expect "posrev_c"
-  expect "posrev_b"
-  expect "posrev_a"
-  sendeof
-  wait
-end interactive test "reversed range with positive numbers"
 ```
 
 #### Test: fc -l output contains command text
