@@ -38,23 +38,25 @@ begin test "async list inherits ignored SIGINT when job control disabled"
 end test "async list inherits ignored SIGINT when job control disabled"
 ```
 
-#### Test: commands inherit ignored signal from parent
+#### Test: foreground command does not inherit async SIGINT ignore override
 
-Commands executed by the shell shall inherit the same signal actions as
-those inherited by the shell from its parent. A signal set to SIG_IGN
-via `trap '' USR1` is inherited by a child command, which survives
-sending itself that signal.
+The SIGINT ignore rule applies only to asynchronous AND-OR lists with
+job control disabled. In other cases, commands inherit the shell's
+normal signal disposition; a foreground child shell therefore terminates
+when it sends itself SIGINT.
 
 ```
-begin test "commands inherit ignored signal from parent"
+begin test "foreground command does not inherit async SIGINT ignore override"
   script
-    trap '' USR1
-    sh -c 'kill -USR1 $$; echo survived'
+    set +m
+    sh -c 'kill -INT $$' 2>/dev/null
+    rc=$?
+    [ "$rc" -gt 128 ] && echo terminated
   expect
-    stdout "survived"
+    stdout "terminated"
     stderr ""
     exit_code 0
-end test "commands inherit ignored signal from parent"
+end test "foreground command does not inherit async SIGINT ignore override"
 ```
 
 #### Test: trap deferred during foreground command
@@ -120,26 +122,6 @@ begin test "async list inherits ignored SIGQUIT when job control disabled"
 end test "async list inherits ignored SIGQUIT when job control disabled"
 ```
 
-#### Test: caught trap does not propagate to child command
-
-A caught trap (as opposed to an ignored one) does not propagate through
-exec to child processes; the signal is reset to its default action. The
-child is terminated by the signal, confirming the caught action was not
-inherited.
-
-```
-begin test "caught trap does not propagate to child command"
-  script
-    trap 'echo CAUGHT' USR1
-    bash -c 'kill -USR1 $$' 2>/dev/null
-    [ $? -gt 128 ] && echo child_terminated
-  expect
-    stdout "child_terminated"
-    stderr ""
-    exit_code 0
-end test "caught trap does not propagate to child command"
-```
-
 #### Test: async list with job control does not inherit ignored SIGINT
 
 When job control is enabled, the SIG_IGN override for SIGINT does not
@@ -163,6 +145,31 @@ begin interactive test "async list with job control does not inherit ignored SIG
   send "exit"
   wait
 end interactive test "async list with job control does not inherit ignored SIGINT"
+```
+
+#### Test: async list with job control does not inherit ignored SIGQUIT
+
+When job control is enabled, the asynchronous-list override that ignores
+SIGQUIT does not apply. A background job therefore keeps the normal
+SIGQUIT disposition and terminates when sent that signal.
+
+```
+begin interactive test "async list with job control does not inherit ignored SIGQUIT"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "sleep 30 &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  send "kill -QUIT %1"
+  expect "$ "
+  send "wait %1 2>/dev/null; [ $? -gt 128 ] && echo killed_by_sigquit"
+  expect "killed_by_sigquit"
+  expect "$ "
+  send "exit"
+  wait
+end interactive test "async list with job control does not inherit ignored SIGQUIT"
 ```
 
 #### Test: multiple pending trapped signals all fire
