@@ -109,6 +109,29 @@ fn wexitstatus(status: CInt) -> i32 {
     libc::WEXITSTATUS(status)
 }
 
+/// Kill every process whose session ID equals `sid`.
+/// Since forkpty() makes the child the session leader, `sid` == child PID.
+fn kill_session(sid: libc::pid_t) {
+    unsafe {
+        libc::kill(-sid, libc::SIGKILL);
+    }
+    let Ok(entries) = fs::read_dir("/proc") else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Ok(pid) = name.to_string_lossy().parse::<libc::pid_t>() else {
+            continue;
+        };
+        let got_sid = unsafe { libc::getsid(pid) };
+        if got_sid == sid {
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+            }
+        }
+    }
+}
+
 // ── PTY spawning ─────────────────────────────────────────────────────────────
 
 struct PtySession {
@@ -116,6 +139,7 @@ struct PtySession {
     child_pid: libc::pid_t,
     buf: Arc<Mutex<Vec<u8>>>,
     reader_handle: Option<thread::JoinHandle<()>>,
+    stop_pipe_w: RawFd,
     eof_sent: bool,
 }
 
@@ -190,31 +214,57 @@ impl PtySession {
                 std::process::exit(127);
             }
 
-            // Parent — start reader thread
+            // Parent — create a stop-pipe so we can interrupt the reader thread
+            let mut stop_fds = [0 as CInt; 2];
+            if libc::pipe(stop_fds.as_mut_ptr()) != 0 {
+                libc::kill(pid, libc::SIGKILL);
+                libc::waitpid(pid, std::ptr::null_mut(), 0);
+                return Err(io::Error::last_os_error());
+            }
+            let stop_r = stop_fds[0];
+            let stop_w = stop_fds[1];
+
             let buf = Arc::new(Mutex::new(Vec::new()));
             let buf_clone = Arc::clone(&buf);
             let reader_fd = master;
 
             let reader_handle = thread::spawn(move || {
-                let mut f = std::fs::File::from_raw_fd(reader_fd);
                 let mut tmp = [0u8; 4096];
                 loop {
-                    match f.read(&mut tmp) {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            let mut lock = buf_clone.lock().unwrap();
-                            lock.extend_from_slice(&tmp[..n]);
+                    let mut fds = [
+                        libc::pollfd {
+                            fd: reader_fd,
+                            events: libc::POLLIN,
+                            revents: 0,
+                        },
+                        libc::pollfd {
+                            fd: stop_r,
+                            events: libc::POLLIN,
+                            revents: 0,
+                        },
+                    ];
+                    let ret = libc::poll(fds.as_mut_ptr(), 2, -1);
+                    if ret < 0 {
+                        let e = io::Error::last_os_error();
+                        if e.raw_os_error() == Some(libc::EINTR) {
+                            continue;
                         }
-                        Err(e) => {
-                            if e.raw_os_error() == Some(libc::EIO) {
-                                break; // child closed the PTY
-                            }
+                        break;
+                    }
+                    if fds[1].revents != 0 {
+                        break;
+                    }
+                    if fds[0].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 {
+                        let n =
+                            libc::read(reader_fd, tmp.as_mut_ptr() as *mut _, tmp.len());
+                        if n <= 0 {
                             break;
                         }
+                        let mut lock = buf_clone.lock().unwrap();
+                        lock.extend_from_slice(&tmp[..n as usize]);
                     }
                 }
-                // Prevent the File from closing the fd — we manage it ourselves
-                std::mem::forget(f);
+                libc::close(stop_r);
             });
 
             Ok(PtySession {
@@ -222,6 +272,7 @@ impl PtySession {
                 child_pid: pid,
                 buf,
                 reader_handle: Some(reader_handle),
+                stop_pipe_w: stop_w,
                 eof_sent: false,
             })
         }
@@ -343,11 +394,7 @@ impl PtySession {
             self.master_fd = -1;
         }
 
-        // Wait for the reader thread to finish (it will exit once the fd closes)
-        if let Some(h) = self.reader_handle.take() {
-            let _ = h.join();
-        }
-
+        // Wait for the direct child (the shell) to exit.
         let mut status: CInt = 0;
         unsafe {
             let ret = libc::waitpid(self.child_pid, &mut status, 0);
@@ -355,6 +402,14 @@ impl PtySession {
                 return Err(format!("waitpid failed: {}", io::Error::last_os_error()));
             }
         }
+
+        // Kill any remaining processes in the child's session (background
+        // jobs that still hold the PTY slave open).
+        kill_session(self.child_pid);
+
+        // Now stop the reader thread — all slave holders are dead so the
+        // stop-pipe write wakes poll() and the thread exits cleanly.
+        self.stop_reader();
 
         let code = if wifexited(status) {
             wexitstatus(status)
@@ -370,19 +425,29 @@ impl PtySession {
         Ok(code)
     }
 
-    fn cleanup(&mut self) {
-        // Kill the child so the reader thread can finish
-        unsafe {
-            libc::kill(self.child_pid, libc::SIGKILL);
+    fn stop_reader(&mut self) {
+        if self.stop_pipe_w >= 0 {
+            unsafe {
+                libc::close(self.stop_pipe_w);
+            }
+            self.stop_pipe_w = -1;
         }
-        // Close master fd so the reader thread's read() returns
-        unsafe {
-            libc::close(self.master_fd);
-        }
-        self.master_fd = -1;
-        // Join the reader thread
         if let Some(h) = self.reader_handle.take() {
             let _ = h.join();
+        }
+    }
+
+    fn cleanup(&mut self) {
+        // Kill all processes in the child's session (shell + background jobs)
+        kill_session(self.child_pid);
+        // Signal the reader thread to stop, then join it
+        self.stop_reader();
+        // Close master fd
+        if self.master_fd >= 0 {
+            unsafe {
+                libc::close(self.master_fd);
+            }
+            self.master_fd = -1;
         }
         // Reap child
         unsafe {
@@ -394,7 +459,7 @@ impl PtySession {
 
 impl Drop for PtySession {
     fn drop(&mut self) {
-        if self.master_fd >= 0 {
+        if self.master_fd >= 0 || self.stop_pipe_w >= 0 || self.reader_handle.is_some() {
             self.cleanup();
         }
     }
@@ -2144,6 +2209,7 @@ fn run_test_isolated(
         // ── Child process ──
         unsafe {
             libc::setsid();
+            libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0);
             libc::close(pipe_r);
         }
 

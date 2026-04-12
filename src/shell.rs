@@ -177,6 +177,9 @@ pub struct Shell {
     pub pending_control: Option<PendingControl>,
     pub(crate) interactive: bool,
     pub(crate) errexit_suppressed: bool,
+    pub(crate) owns_terminal: bool,
+    pub(crate) in_subshell: bool,
+    pub(crate) wait_was_interrupted: bool,
     pub(crate) pid: sys::Pid,
     pub(crate) lineno: usize,
 }
@@ -188,10 +191,11 @@ pub enum JobState {
     Done(i32),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReapedJobState {
-    Stopped(i32),
-    Done(i32),
+    Stopped(i32, Box<str>),
+    Done(i32, Box<str>),
+    Signaled(i32, Box<str>),
 }
 
 #[derive(Clone, Debug)]
@@ -204,6 +208,7 @@ pub struct Job {
     pub children: Vec<sys::ChildHandle>,
     pub state: JobState,
     pub saved_termios: Option<libc::termios>,
+    pub cont_pending: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -227,7 +232,9 @@ pub enum FlowSignal {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WaitOutcome {
     Exited(i32),
+    Signaled(i32),
     Stopped(i32),
+    Continued,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -238,14 +245,16 @@ pub enum ChildWaitResult {
 }
 
 fn try_wait_child(pid: sys::Pid) -> sys::SysResult<Option<WaitOutcome>> {
-    match sys::wait_pid_untraced(pid, true) {
+    match sys::wait_pid_job_status(pid) {
         Ok(Some(waited)) => {
-            if sys::wifstopped(waited.status) {
+            if sys::wifcontinued(waited.status) {
+                Ok(Some(WaitOutcome::Continued))
+            } else if sys::wifstopped(waited.status) {
                 Ok(Some(WaitOutcome::Stopped(sys::wstopsig(waited.status))))
+            } else if sys::wifsignaled(waited.status) {
+                Ok(Some(WaitOutcome::Signaled(sys::wtermsig(waited.status))))
             } else {
-                Ok(Some(WaitOutcome::Exited(sys::decode_wait_status(
-                    waited.status,
-                ))))
+                Ok(Some(WaitOutcome::Exited(sys::wexitstatus(waited.status))))
             }
         }
         Ok(None) => Ok(None),
@@ -337,6 +346,9 @@ impl Shell {
             pending_control: None,
             interactive,
             errexit_suppressed: false,
+            owns_terminal: false,
+            in_subshell: false,
+            wait_was_interrupted: false,
             pid: sys::current_pid(),
             lineno: 0,
         })
@@ -396,6 +408,9 @@ impl Shell {
             source_depth: 0,
             pending_control: None,
             errexit_suppressed: false,
+            owns_terminal: false,
+            in_subshell: false,
+            wait_was_interrupted: false,
             pid: sys::current_pid(),
             lineno: 0,
         })
@@ -442,10 +457,11 @@ impl Shell {
         Ok(())
     }
 
-    fn setup_job_control(&self) {
+    fn setup_job_control(&mut self) {
         let pid = sys::current_pid();
         let _ = sys::set_process_group(pid, pid);
         let _ = sys::set_foreground_pgrp(sys::STDIN_FILENO, pid);
+        self.owns_terminal = true;
     }
 
     pub fn is_interactive(&self) -> bool {
@@ -591,6 +607,9 @@ impl Shell {
             let _ = sys::duplicate_fd(write_fd, sys::STDOUT_FILENO);
             let _ = sys::close_fd(write_fd);
             let mut child_shell = self.clone();
+            child_shell.owns_terminal = false;
+            child_shell.in_subshell = true;
+            child_shell.restore_signals_for_child();
             let _ = child_shell.reset_traps_for_subshell();
             let status = child_shell.execute_string(source).unwrap_or(1);
             sys::exit_process(status as sys::RawFd);
@@ -720,6 +739,7 @@ impl Shell {
             children,
             state: JobState::Running,
             saved_termios: None,
+            cont_pending: false,
         });
         id
     }
@@ -730,12 +750,24 @@ impl Shell {
 
         for mut job in self.jobs.drain(..) {
             if matches!(job.state, JobState::Stopped(_)) {
-                remaining.push(job);
-                continue;
+                let mut continued = false;
+                for child in &job.children {
+                    if let Ok(Some(WaitOutcome::Continued)) = try_wait_child(child.pid) {
+                        continued = true;
+                    }
+                }
+                if continued {
+                    job.state = JobState::Running;
+                    job.cont_pending = false;
+                } else {
+                    remaining.push(job);
+                    continue;
+                }
             }
             let mut running = Vec::new();
             let mut any_stopped = false;
             let mut stop_signal = 0i32;
+            let mut last_signal: Option<i32> = None;
             for child in job.children.drain(..) {
                 match try_wait_child(child.pid) {
                     Ok(Some(WaitOutcome::Exited(code))) => {
@@ -744,9 +776,27 @@ impl Shell {
                             job.last_status = Some(code);
                         }
                     }
+                    Ok(Some(WaitOutcome::Signaled(sig))) => {
+                        let code = 128 + sig;
+                        self.known_pid_statuses.insert(child.pid, code);
+                        if job.last_pid == Some(child.pid) {
+                            job.last_status = Some(code);
+                            last_signal = Some(sig);
+                        }
+                    }
                     Ok(Some(WaitOutcome::Stopped(sig))) => {
-                        any_stopped = true;
-                        stop_signal = sig;
+                        if let Ok(Some(WaitOutcome::Continued)) = try_wait_child(child.pid) {
+                            running.push(child);
+                        } else if job.cont_pending {
+                            running.push(child);
+                        } else {
+                            any_stopped = true;
+                            stop_signal = sig;
+                            running.push(child);
+                        }
+                    }
+                    Ok(Some(WaitOutcome::Continued)) => {
+                        job.cont_pending = false;
                         running.push(child);
                     }
                     Ok(None) => running.push(child),
@@ -763,10 +813,16 @@ impl Shell {
                 let final_status = job.last_status.unwrap_or(0);
                 self.known_job_statuses.insert(job.id, final_status);
                 job.state = JobState::Done(final_status);
-                finished.push((job.id, ReapedJobState::Done(final_status)));
+                let cmd = job.command.clone();
+                if let Some(sig) = last_signal {
+                    finished.push((job.id, ReapedJobState::Signaled(sig, cmd)));
+                } else {
+                    finished.push((job.id, ReapedJobState::Done(final_status, cmd)));
+                }
             } else if any_stopped {
                 job.state = JobState::Stopped(stop_signal);
-                finished.push((job.id, ReapedJobState::Stopped(stop_signal)));
+                let cmd = job.command.clone();
+                finished.push((job.id, ReapedJobState::Stopped(stop_signal, cmd)));
                 remaining.push(job);
             } else {
                 remaining.push(job);
@@ -791,13 +847,21 @@ impl Shell {
         if let Some(ref termios) = self.jobs[index].saved_termios {
             let _ = sys::set_terminal_attrs(sys::STDIN_FILENO, termios);
         }
-        let saved_foreground = self.foreground_handoff(pgid);
+        let saved_foreground = if self.owns_terminal {
+            if let Some(pg) = pgid {
+                let _ = sys::set_foreground_pgrp(sys::STDIN_FILENO, pg);
+            }
+            Some(self.pid)
+        } else {
+            None
+        };
         self.jobs[index].state = JobState::Running;
         self.jobs[index].saved_termios = None;
         let mut status = self.jobs[index].last_status.unwrap_or(0);
         let children: Vec<sys::ChildHandle> = self.jobs[index].children.clone();
         for child in &children {
-            match self.wait_for_child_blocking(child.pid)? {
+            let outcome = self.wait_for_child_blocking(child.pid, true)?;
+            match outcome {
                 WaitOutcome::Exited(code) => {
                     status = code;
                     let idx = self
@@ -817,6 +881,27 @@ impl Shell {
                         self.jobs[idx].children.remove(ci);
                     }
                 }
+                WaitOutcome::Signaled(sig) => {
+                    let code = 128 + sig;
+                    status = code;
+                    let idx = self
+                        .jobs
+                        .iter()
+                        .position(|j| j.id == id)
+                        .expect("job vanished");
+                    self.known_pid_statuses.insert(child.pid, code);
+                    if self.jobs[idx].last_pid == Some(child.pid) {
+                        self.jobs[idx].last_status = Some(code);
+                    }
+                    if let Some(ci) = self.jobs[idx]
+                        .children
+                        .iter()
+                        .position(|c| c.pid == child.pid)
+                    {
+                        self.jobs[idx].children.remove(ci);
+                    }
+                }
+                WaitOutcome::Continued => {}
                 WaitOutcome::Stopped(sig) => {
                     self.restore_foreground(saved_foreground);
                     let idx = self
@@ -828,6 +913,12 @@ impl Shell {
                     if self.interactive {
                         self.jobs[idx].saved_termios =
                             sys::get_terminal_attrs(sys::STDIN_FILENO).ok();
+                        let msg = format!(
+                            "\n[{id}] Stopped ({})\t{}\n",
+                            sys::signal_name(sig),
+                            self.jobs[idx].command
+                        );
+                        let _ = sys::write_all_fd(sys::STDERR_FILENO, msg.as_bytes());
                     }
                     self.last_status = 128 + sig;
                     return Ok(128 + sig);
@@ -837,7 +928,16 @@ impl Shell {
         self.restore_foreground(saved_foreground);
         let idx = self.jobs.iter().position(|j| j.id == id);
         if let Some(idx) = idx {
-            self.jobs.remove(idx);
+            let removed = self.jobs.remove(idx);
+            for child in &removed.children {
+                self.known_pid_statuses.remove(&child.pid);
+            }
+            if let Some(pid) = removed.last_pid {
+                self.known_pid_statuses.remove(&pid);
+            }
+        }
+        for child in &children {
+            self.known_pid_statuses.remove(&child.pid);
         }
         self.last_status = status;
         Ok(status)
@@ -849,19 +949,17 @@ impl Shell {
             .iter()
             .position(|job| job.id == id)
             .ok_or_else(|| self.diagnostic(1, format_args!("job {id}: not found")))?;
-        let was_stopped = matches!(self.jobs[idx].state, JobState::Stopped(_));
         self.jobs[idx].state = JobState::Running;
-        if was_stopped {
-            if let Some(pgid) = self.jobs[idx].pgid {
-                if foreground {
-                    let _ = sys::set_foreground_pgrp(sys::STDIN_FILENO, pgid);
-                }
-                sys::send_signal(-pgid, sys::SIGCONT).map_err(|e| self.diagnostic(1, &e))?;
-            } else {
-                let pids: Vec<sys::Pid> = self.jobs[idx].children.iter().map(|c| c.pid).collect();
-                for pid in pids {
-                    sys::send_signal(pid, sys::SIGCONT).map_err(|e| self.diagnostic(1, &e))?;
-                }
+        self.jobs[idx].cont_pending = true;
+        if let Some(pgid) = self.jobs[idx].pgid {
+            if foreground && self.owns_terminal {
+                let _ = sys::set_foreground_pgrp(sys::STDIN_FILENO, pgid);
+            }
+            sys::send_signal(-pgid, sys::SIGCONT).map_err(|e| self.diagnostic(1, &e))?;
+        } else {
+            let pids: Vec<sys::Pid> = self.jobs[idx].children.iter().map(|c| c.pid).collect();
+            for pid in pids {
+                sys::send_signal(pid, sys::SIGCONT).map_err(|e| self.diagnostic(1, &e))?;
             }
         }
         Ok(())
@@ -893,8 +991,18 @@ impl Shell {
     pub fn print_jobs(&mut self) {
         let finished = self.reap_jobs();
         for (id, state) in finished {
-            if let ReapedJobState::Done(status) = state {
-                sys_println!("[{id}] Done {status}");
+            match state {
+                ReapedJobState::Done(status, cmd) => {
+                    if status == 0 {
+                        sys_println!("[{id}] Done\t{cmd}");
+                    } else {
+                        sys_println!("[{id}] Done({status})\t{cmd}");
+                    }
+                }
+                ReapedJobState::Signaled(sig, cmd) => {
+                    sys_println!("[{id}] Terminated ({})\t{cmd}", sys::signal_name(sig));
+                }
+                ReapedJobState::Stopped(..) => {}
             }
         }
         for job in &self.jobs {
@@ -995,6 +1103,32 @@ impl Shell {
         Ok(())
     }
 
+    pub fn restore_signals_for_child(&self) {
+        let user_ignored = |sig: i32| -> bool {
+            matches!(
+                self.trap_actions.get(&TrapCondition::Signal(sig)),
+                Some(TrapAction::Ignore)
+            )
+        };
+        if self.interactive {
+            for sig in [sys::SIGTERM, sys::SIGQUIT] {
+                if !user_ignored(sig) {
+                    let _ = sys::default_signal_action(sig);
+                }
+            }
+            if !user_ignored(sys::SIGINT) {
+                let _ = sys::default_signal_action(sys::SIGINT);
+            }
+        }
+        if self.options.monitor {
+            for sig in [sys::SIGTSTP, sys::SIGTTIN, sys::SIGTTOU] {
+                if !user_ignored(sig) {
+                    let _ = sys::default_signal_action(sig);
+                }
+            }
+        }
+    }
+
     pub fn wait_for_job_operand(&mut self, id: usize) -> Result<i32, ShellError> {
         if let Some(status) = self.known_job_statuses.remove(&id) {
             self.remove_known_pids_for_job(id);
@@ -1027,10 +1161,11 @@ impl Shell {
     }
 
     pub fn wait_for_all_jobs(&mut self) -> Result<i32, ShellError> {
+        self.wait_was_interrupted = false;
         let ids: Vec<usize> = self.jobs.iter().map(|job| job.id).collect();
         for id in ids {
             let status = self.wait_for_job_operand(id)?;
-            if status > 128 && sys::has_pending_signal().is_none() {
+            if self.wait_was_interrupted {
                 return Ok(status);
             }
         }
@@ -1107,6 +1242,7 @@ impl Shell {
                     Ok(ChildWaitResult::Interrupted(int_status)) => {
                         self.restore_foreground(saved_foreground);
                         self.last_status = int_status;
+                        self.wait_was_interrupted = true;
                         self.run_pending_traps()?;
                         self.last_status = int_status;
                         return Ok(int_status);
@@ -1117,11 +1253,16 @@ impl Shell {
                     }
                 }
             } else {
-                match self.wait_for_child_blocking(pid) {
+                match self.wait_for_child_blocking(pid, true) {
                     Ok(WaitOutcome::Exited(code)) => {
                         status = code;
                         self.record_completed_child(index, child_index, pid, code);
                     }
+                    Ok(WaitOutcome::Signaled(sig)) => {
+                        status = 128 + sig;
+                        self.record_completed_child(index, child_index, pid, 128 + sig);
+                    }
+                    Ok(WaitOutcome::Continued) => {}
                     Ok(WaitOutcome::Stopped(sig)) => {
                         self.restore_foreground(saved_foreground);
                         return Ok(128 + sig);
@@ -1140,18 +1281,38 @@ impl Shell {
         Ok(final_status)
     }
 
-    pub fn wait_for_child_blocking(&mut self, pid: sys::Pid) -> Result<WaitOutcome, ShellError> {
+    pub fn wait_for_child_blocking(
+        &mut self,
+        pid: sys::Pid,
+        report_stopped: bool,
+    ) -> Result<WaitOutcome, ShellError> {
         loop {
             match sys::wait_pid_untraced(pid, false) {
                 Ok(Some(waited)) => {
-                    return if sys::wifstopped(waited.status) {
-                        Ok(WaitOutcome::Stopped(sys::wstopsig(waited.status)))
+                    self.run_pending_traps()?;
+                    if sys::wifstopped(waited.status) {
+                        if report_stopped {
+                            return Ok(WaitOutcome::Stopped(sys::wstopsig(waited.status)));
+                        }
+                        let already_continued = matches!(
+                            sys::wait_pid_job_status(pid),
+                            Ok(Some(ws)) if sys::wifcontinued(ws.status)
+                        );
+                        if !already_continued {
+                            let _ = sys::send_signal(sys::current_pid(), sys::SIGSTOP);
+                        }
+                        continue;
+                    } else if sys::wifsignaled(waited.status) {
+                        return Ok(WaitOutcome::Signaled(sys::wtermsig(waited.status)));
                     } else {
-                        Ok(WaitOutcome::Exited(sys::decode_wait_status(waited.status)))
-                    };
+                        return Ok(WaitOutcome::Exited(sys::wexitstatus(waited.status)));
+                    }
                 }
                 Ok(None) => continue,
-                Err(error) if sys::interrupted(&error) => continue,
+                Err(error) if sys::interrupted(&error) => {
+                    self.run_pending_traps()?;
+                    continue;
+                }
                 Err(error) => return Err(self.diagnostic(1, &error)),
             }
         }
@@ -1166,10 +1327,10 @@ impl Shell {
                 Ok(Some(waited)) => {
                     return if sys::wifstopped(waited.status) {
                         Ok(ChildWaitResult::Stopped(sys::wstopsig(waited.status)))
+                    } else if sys::wifsignaled(waited.status) {
+                        Ok(ChildWaitResult::Exited(128 + sys::wtermsig(waited.status)))
                     } else {
-                        Ok(ChildWaitResult::Exited(sys::decode_wait_status(
-                            waited.status,
-                        )))
+                        Ok(ChildWaitResult::Exited(sys::wexitstatus(waited.status)))
                     };
                 }
                 Ok(None) => continue,
@@ -1259,6 +1420,9 @@ impl Shell {
         let Some(pgid) = pgid else {
             return None;
         };
+        if !self.owns_terminal {
+            return None;
+        }
         if !(sys::is_interactive_fd(sys::STDIN_FILENO)
             && sys::is_interactive_fd(sys::STDERR_FILENO))
         {
@@ -1629,6 +1793,9 @@ mod tests {
             pending_control: None,
             interactive: false,
             errexit_suppressed: false,
+            owns_terminal: false,
+            in_subshell: false,
+            wait_was_interrupted: false,
             pid: 0,
             lineno: 0,
         }
@@ -1951,7 +2118,10 @@ mod tests {
                 let mut shell = test_shell();
                 shell.register_background_job("exit 0".into(), None, vec![fake_handle(1001)]);
                 let finished = shell.reap_jobs();
-                assert_eq!(finished, vec![(1, ReapedJobState::Done(0))]);
+                assert_eq!(
+                    finished,
+                    vec![(1, ReapedJobState::Done(0, "exit 0".into()))]
+                );
                 assert!(shell.jobs.is_empty());
             },
         );
@@ -2009,7 +2179,10 @@ mod tests {
                 let id =
                     shell.register_background_job("exit 0".into(), None, vec![fake_handle(1001)]);
                 let finished = shell.reap_jobs();
-                assert_eq!(finished, vec![(id, ReapedJobState::Done(1))]);
+                assert_eq!(
+                    finished,
+                    vec![(id, ReapedJobState::Done(1, "exit 0".into()))]
+                );
                 assert!(shell.jobs.is_empty());
             },
         );
@@ -2430,7 +2603,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(1),
-                        ArgMatcher::Bytes(b"[1] Done 0\n".to_vec()),
+                        ArgMatcher::Bytes(b"[1] Done\tsleep\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -2537,7 +2710,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(1),
-                        ArgMatcher::Bytes(b"[1] Done 0\n".to_vec()),
+                        ArgMatcher::Bytes(b"[1] Done\tdone\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -2637,7 +2810,8 @@ mod tests {
                 ),
             ],
             || {
-                let shell = test_shell();
+                let mut shell = test_shell();
+                shell.owns_terminal = true;
                 assert_eq!(shell.foreground_handoff(Some(88)), Some(77));
                 shell.restore_foreground(Some(77));
             },
@@ -2665,7 +2839,8 @@ mod tests {
                 ),
             ],
             || {
-                let shell = test_shell();
+                let mut shell = test_shell();
+                shell.owns_terminal = true;
                 assert_eq!(shell.foreground_handoff(Some(88)), None);
             },
         );
@@ -2834,7 +3009,7 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 assert_eq!(
-                    shell.wait_for_child_blocking(99).expect("retry after none"),
+                    shell.wait_for_child_blocking(99, true).expect("retry after none"),
                     WaitOutcome::Exited(7)
                 );
             },
@@ -2870,7 +3045,7 @@ mod tests {
                 let mut shell = test_shell();
                 shell.register_background_job("sleep".into(), None, vec![fake_handle(2002)]);
                 assert!(shell.wait_for_job_operand(1).is_err());
-                assert!(shell.wait_for_child_blocking(99).is_err());
+                assert!(shell.wait_for_child_blocking(99, true).is_err());
             },
         );
     }
@@ -3348,6 +3523,14 @@ mod tests {
                     vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
                     TraceResult::Int(0),
                 ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"\n[1] Stopped (SIGTSTP)\tsleep 99\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
             ],
             || {
                 let mut shell = test_shell();
@@ -3526,7 +3709,7 @@ mod tests {
                     vec![
                         ArgMatcher::Int(3001),
                         ArgMatcher::Any,
-                        ArgMatcher::Int((sys::WUNTRACED | sys::WNOHANG) as i64),
+                        ArgMatcher::Int((sys::WUNTRACED | sys::WCONTINUED | sys::WNOHANG) as i64),
                     ],
                     TraceResult::Int(0),
                 ),
@@ -3534,7 +3717,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(1),
-                        ArgMatcher::Bytes(b"[2] Done 0\n".to_vec()),
+                        ArgMatcher::Bytes(b"[2] Done\texit 0\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -3566,6 +3749,7 @@ mod tests {
                     pgid: None,
                     state: JobState::Stopped(sys::SIGTSTP),
                     saved_termios: None,
+                    cont_pending: false,
                 });
                 shell.jobs.push(Job {
                     id: 2,
@@ -3576,6 +3760,7 @@ mod tests {
                     pgid: None,
                     state: JobState::Done(0),
                     saved_termios: None,
+                    cont_pending: false,
                 });
                 shell.jobs.push(Job {
                     id: 3,
@@ -3586,6 +3771,7 @@ mod tests {
                     pgid: None,
                     state: JobState::Running,
                     saved_termios: None,
+                    cont_pending: false,
                 });
                 shell.print_jobs();
             },

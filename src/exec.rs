@@ -129,6 +129,9 @@ fn spawn_and_or(
             let _ = sys::ignore_signal(sys::SIGQUIT);
         }
         let mut child_shell = shell.clone();
+        child_shell.owns_terminal = false;
+        child_shell.in_subshell = true;
+        child_shell.restore_signals_for_child();
         let _ = child_shell.reset_traps_for_subshell();
         let status = if node.rest.is_empty() {
             execute_pipeline(&mut child_shell, &node.first, false).unwrap_or(1)
@@ -301,6 +304,9 @@ fn fork_and_execute_command(
             _ => {}
         }
         let mut child_shell = shell.clone();
+        child_shell.owns_terminal = false;
+        child_shell.in_subshell = true;
+        child_shell.restore_signals_for_child();
         let _ = child_shell.reset_traps_for_subshell();
         let status = execute_command(&mut child_shell, command).unwrap_or(1);
         sys::exit_process(status as sys::RawFd);
@@ -386,17 +392,27 @@ fn wait_for_children_inner(
     mut spawned: SpawnedProcesses,
     command_desc: Option<&str>,
 ) -> Result<(i32, i32), ShellError> {
-    let saved_foreground = handoff_foreground(spawned.pgid);
+    let saved_foreground = if shell.owns_terminal {
+        handoff_foreground(spawned.pgid)
+    } else {
+        None
+    };
     let mut last_status = 0;
     let mut rightmost_nonzero = 0;
     for i in 0..spawned.children.len() {
-        match shell.wait_for_child_blocking(spawned.children[i].pid)? {
+        match shell.wait_for_child_blocking(spawned.children[i].pid, !shell.in_subshell)? {
             WaitOutcome::Exited(code) => {
                 last_status = code;
                 if code != 0 {
                     rightmost_nonzero = code;
                 }
             }
+            WaitOutcome::Signaled(sig) => {
+                let code = 128 + sig;
+                last_status = code;
+                rightmost_nonzero = code;
+            }
+            WaitOutcome::Continued => {}
             WaitOutcome::Stopped(sig) => {
                 restore_foreground(saved_foreground);
                 let desc: Box<str> = command_desc.unwrap_or("").into();
@@ -427,29 +443,41 @@ fn wait_for_external_child(
     pgid: Option<sys::Pid>,
     command_desc: Option<&str>,
 ) -> Result<i32, ShellError> {
-    let saved_foreground = handoff_foreground(pgid);
-    match shell.wait_for_child_blocking(handle.pid)? {
-        WaitOutcome::Exited(status) => {
-            restore_foreground(saved_foreground);
-            Ok(status)
-        }
-        WaitOutcome::Stopped(sig) => {
-            restore_foreground(saved_foreground);
-            let desc: Box<str> = command_desc.unwrap_or("").into();
-            let children = vec![handle.clone()];
-            let id = shell.register_background_job(desc, pgid, children);
-            let idx = shell.jobs.iter().position(|j| j.id == id).unwrap();
-            shell.jobs[idx].state = JobState::Stopped(sig);
-            if shell.interactive {
-                shell.jobs[idx].saved_termios = sys::get_terminal_attrs(sys::STDIN_FILENO).ok();
-                let msg = format!(
-                    "[{id}] Stopped ({})\t{}\n",
-                    sys::signal_name(sig),
-                    shell.jobs[idx].command
-                );
-                let _ = sys::write_all_fd(sys::STDERR_FILENO, msg.as_bytes());
+    let saved_foreground = if shell.owns_terminal {
+        handoff_foreground(pgid)
+    } else {
+        None
+    };
+    loop {
+        match shell.wait_for_child_blocking(handle.pid, !shell.in_subshell)? {
+            WaitOutcome::Exited(status) => {
+                restore_foreground(saved_foreground);
+                return Ok(status);
             }
-            Ok(128 + sig)
+            WaitOutcome::Signaled(sig) => {
+                restore_foreground(saved_foreground);
+                return Ok(128 + sig);
+            }
+            WaitOutcome::Continued => continue,
+            WaitOutcome::Stopped(sig) => {
+                restore_foreground(saved_foreground);
+                let desc: Box<str> = command_desc.unwrap_or("").into();
+                let children = vec![handle.clone()];
+                let id = shell.register_background_job(desc, pgid, children);
+                let idx = shell.jobs.iter().position(|j| j.id == id).unwrap();
+                shell.jobs[idx].state = JobState::Stopped(sig);
+                if shell.interactive {
+                    shell.jobs[idx].saved_termios =
+                        sys::get_terminal_attrs(sys::STDIN_FILENO).ok();
+                    let msg = format!(
+                        "[{id}] Stopped ({})\t{}\n",
+                        sys::signal_name(sig),
+                        shell.jobs[idx].command
+                    );
+                    let _ = sys::write_all_fd(sys::STDERR_FILENO, msg.as_bytes());
+                }
+                return Ok(128 + sig);
+            }
         }
     }
 }
@@ -461,6 +489,9 @@ fn execute_command(shell: &mut Shell, command: &Command) -> Result<i32, ShellErr
             let pid = sys::fork_process().map_err(|e| shell.diagnostic(1, &e))?;
             if pid == 0 {
                 let mut child_shell = shell.clone();
+                child_shell.owns_terminal = false;
+                child_shell.in_subshell = true;
+                child_shell.restore_signals_for_child();
                 let _ = child_shell.reset_traps_for_subshell();
                 let status = match execute_nested_program(&mut child_shell, program) {
                     Ok(s) => s,
@@ -544,6 +575,7 @@ fn execute_loop(shell: &mut Shell, loop_command: &LoopCommand) -> Result<i32, Sh
     let result = (|| {
         let mut last_status = 0;
         loop {
+            shell.run_pending_traps()?;
             let saved_suppressed = shell.errexit_suppressed;
             shell.errexit_suppressed = true;
             let condition_status = execute_nested_program(shell, &loop_command.condition)?;
@@ -928,15 +960,25 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
             sys_eprintln!("{}: not found", command_name);
             return Ok(127);
         }
-        let handle = match spawn_prepared(shell, &prepared, ProcessGroupPlan::NewGroup) {
+        let pgid_plan = if shell.in_subshell {
+            ProcessGroupPlan::None
+        } else {
+            ProcessGroupPlan::NewGroup
+        };
+        let handle = match spawn_prepared(shell, &prepared, pgid_plan) {
             Ok(h) => h,
             Err(error) => return Ok(error.exit_status()),
         };
-        let pgid = handle.pid;
-        let _ = sys::set_process_group(pgid, pgid);
         let desc = prepared.argv.join(" ");
-        let status = wait_for_external_child(shell, &handle, Some(pgid), Some(&desc))?;
-        Ok(status)
+        if shell.in_subshell {
+            let status = wait_for_external_child(shell, &handle, None, Some(&desc))?;
+            Ok(status)
+        } else {
+            let pgid = handle.pid;
+            let _ = sys::set_process_group(pgid, pgid);
+            let status = wait_for_external_child(shell, &handle, Some(pgid), Some(&desc))?;
+            Ok(status)
+        }
     }
 }
 
@@ -1282,6 +1324,52 @@ fn file_needs_binary_rejection(path: &str) -> bool {
     prefix[..nl_pos].contains(&0)
 }
 
+fn exec_in_place(shell: &Shell, prepared: &PreparedProcess) -> ! {
+    let redir_result = prepare_redirections(&prepared.redirections, prepared.noclobber);
+    match redir_result {
+        Ok(pr) => {
+            if let Err(err) = apply_child_fd_actions(&pr.actions) {
+                sys_eprintln!("{}: {}", prepared.argv[0], err);
+                sys::exit_process(1);
+            }
+        }
+        Err(err) => {
+            sys_eprintln!("{}: {}", prepared.argv[0], err);
+            sys::exit_process(1);
+        }
+    }
+    for (key, value) in &prepared.child_env {
+        let _ = sys::env_set_var(key, value);
+    }
+    if file_needs_binary_rejection(&prepared.exec_path) {
+        sys_eprintln!("{}: cannot execute binary file", prepared.argv[0]);
+        sys::exit_process(126);
+    }
+    shell.restore_signals_for_child();
+    match sys::exec_replace(&prepared.exec_path, &prepared.argv) {
+        Err(err) if err.is_enoexec() => {
+            let mut child_shell = shell.clone();
+            child_shell.owns_terminal = false;
+            child_shell.in_subshell = true;
+            let _ = child_shell.reset_traps_for_subshell();
+            child_shell.shell_name = prepared.argv[0].clone();
+            child_shell.positional = prepared.argv[1..]
+                .iter()
+                .map(|s| String::from(&**s))
+                .collect();
+            let status = child_shell
+                .source_path(Path::new(&*prepared.exec_path))
+                .unwrap_or(1);
+            sys::exit_process(status as sys::RawFd);
+        }
+        Err(err) => {
+            sys_eprintln!("{}: {}", prepared.argv[0], err);
+            sys::exit_process(126);
+        }
+        Ok(()) => sys::exit_process(0),
+    }
+}
+
 fn spawn_prepared(
     shell: &Shell,
     prepared: &PreparedProcess,
@@ -1330,9 +1418,12 @@ fn spawn_prepared(
             sys::exit_process(126);
         }
 
+        shell.restore_signals_for_child();
         match sys::exec_replace(&prepared.exec_path, &prepared.argv) {
             Err(err) if err.is_enoexec() => {
                 let mut child_shell = shell.clone();
+                child_shell.owns_terminal = false;
+                child_shell.in_subshell = true;
                 let _ = child_shell.reset_traps_for_subshell();
                 child_shell.shell_name = prepared.argv[0].clone();
                 child_shell.positional = prepared.argv[1..]
@@ -2037,6 +2128,9 @@ mod tests {
             pending_control: None,
             interactive: false,
             errexit_suppressed: false,
+            owns_terminal: false,
+            in_subshell: false,
+            wait_was_interrupted: false,
             pid: 0,
             lineno: 0,
         }
@@ -2122,13 +2216,8 @@ mod tests {
                             TraceResult::StatFile(0o755),
                         ),
                         t_fork(
-                            TraceResult::Pid(1500),
+                            TraceResult::Pid(1100),
                             vec![
-                                t(
-                                    "setpgid",
-                                    vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
-                                    TraceResult::Int(0),
-                                ),
                                 t(
                                     "open",
                                     vec![
@@ -2155,18 +2244,8 @@ mod tests {
                             ],
                         ),
                         t(
-                            "setpgid",
-                            vec![ArgMatcher::Int(1500), ArgMatcher::Int(1500)],
-                            TraceResult::Int(0),
-                        ),
-                        t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                        t(
                             "waitpid",
-                            vec![
-                                ArgMatcher::Int(1500),
-                                ArgMatcher::Any,
-                                ArgMatcher::Int(sys::WUNTRACED as i64),
-                            ],
+                            vec![ArgMatcher::Int(1100), ArgMatcher::Any, ArgMatcher::Int(sys::WUNTRACED as i64)],
                             TraceResult::Status(0),
                         ),
                     ],
@@ -2197,13 +2276,8 @@ mod tests {
                             TraceResult::StatFile(0o755),
                         ),
                         t_fork(
-                            TraceResult::Pid(1501),
+                            TraceResult::Pid(1101),
                             vec![
-                                t(
-                                    "setpgid",
-                                    vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
-                                    TraceResult::Int(0),
-                                ),
                                 t(
                                     "open",
                                     vec![
@@ -2227,18 +2301,8 @@ mod tests {
                             ],
                         ),
                         t(
-                            "setpgid",
-                            vec![ArgMatcher::Int(1501), ArgMatcher::Int(1501)],
-                            TraceResult::Int(0),
-                        ),
-                        t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                        t(
                             "waitpid",
-                            vec![
-                                ArgMatcher::Int(1501),
-                                ArgMatcher::Any,
-                                ArgMatcher::Int(sys::WUNTRACED as i64),
-                            ],
+                            vec![ArgMatcher::Int(1101), ArgMatcher::Any, ArgMatcher::Int(sys::WUNTRACED as i64)],
                             TraceResult::Status(0),
                         ),
                     ],
@@ -2249,7 +2313,6 @@ mod tests {
                     vec![ArgMatcher::Int(1001), ArgMatcher::Int(1000)],
                     TraceResult::Int(0),
                 ),
-                t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
                 t(
                     "waitpid",
                     vec![
@@ -5826,6 +5889,7 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 shell.interactive = true;
+                shell.owns_terminal = true;
                 let spawned = SpawnedProcesses {
                     children: vec![sys::ChildHandle {
                         pid: 9010,
@@ -5910,6 +5974,7 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 shell.interactive = true;
+                shell.owns_terminal = true;
                 let handle = sys::ChildHandle {
                     pid: 9030,
                     stdout_fd: None,
@@ -5935,18 +6000,28 @@ mod tests {
                             TraceResult::Int(0),
                         ),
                         t(
+                            "signal",
+                            vec![ArgMatcher::Int(sys::SIGTSTP as i64), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "signal",
+                            vec![ArgMatcher::Int(sys::SIGTTIN as i64), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "signal",
+                            vec![ArgMatcher::Int(sys::SIGTTOU as i64), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                        t(
                             "stat",
                             vec![ArgMatcher::Str("/usr/bin/sleep".into()), ArgMatcher::Any],
                             TraceResult::StatFile(0o755),
                         ),
                         t_fork(
-                            TraceResult::Pid(9101),
+                            TraceResult::Pid(9150),
                             vec![
-                                t(
-                                    "setpgid",
-                                    vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
-                                    TraceResult::Int(0),
-                                ),
                                 t(
                                     "open",
                                     vec![
@@ -5963,25 +6038,33 @@ mod tests {
                                 ),
                                 t("close", vec![ArgMatcher::Fd(20)], TraceResult::Int(0)),
                                 t(
+                                    "signal",
+                                    vec![ArgMatcher::Int(sys::SIGTSTP as i64), ArgMatcher::Any],
+                                    TraceResult::Int(0),
+                                ),
+                                t(
+                                    "signal",
+                                    vec![ArgMatcher::Int(sys::SIGTTIN as i64), ArgMatcher::Any],
+                                    TraceResult::Int(0),
+                                ),
+                                t(
+                                    "signal",
+                                    vec![ArgMatcher::Int(sys::SIGTTOU as i64), ArgMatcher::Any],
+                                    TraceResult::Int(0),
+                                ),
+                                t(
                                     "execvp",
-                                    vec![ArgMatcher::Str("/usr/bin/sleep".into()), ArgMatcher::Any],
+                                    vec![
+                                        ArgMatcher::Str("/usr/bin/sleep".into()),
+                                        ArgMatcher::Any,
+                                    ],
                                     TraceResult::Int(0),
                                 ),
                             ],
                         ),
                         t(
-                            "setpgid",
-                            vec![ArgMatcher::Int(9101), ArgMatcher::Int(9101)],
-                            TraceResult::Int(0),
-                        ),
-                        t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                        t(
                             "waitpid",
-                            vec![
-                                ArgMatcher::Int(9101),
-                                ArgMatcher::Any,
-                                ArgMatcher::Int(sys::WUNTRACED as i64),
-                            ],
+                            vec![ArgMatcher::Int(9150), ArgMatcher::Any, ArgMatcher::Int(sys::WUNTRACED as i64)],
                             TraceResult::Status(0),
                         ),
                     ],
@@ -6017,18 +6100,43 @@ mod tests {
                             TraceResult::Int(0),
                         ),
                         t(
+                            "signal",
+                            vec![ArgMatcher::Int(sys::SIGTERM as i64), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "signal",
+                            vec![ArgMatcher::Int(sys::SIGQUIT as i64), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "signal",
+                            vec![ArgMatcher::Int(sys::SIGINT as i64), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "signal",
+                            vec![ArgMatcher::Int(sys::SIGTSTP as i64), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "signal",
+                            vec![ArgMatcher::Int(sys::SIGTTIN as i64), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "signal",
+                            vec![ArgMatcher::Int(sys::SIGTTOU as i64), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                        t(
                             "stat",
                             vec![ArgMatcher::Str("/usr/bin/sleep".into()), ArgMatcher::Any],
                             TraceResult::StatFile(0o755),
                         ),
                         t_fork(
-                            TraceResult::Pid(9201),
+                            TraceResult::Pid(9250),
                             vec![
-                                t(
-                                    "setpgid",
-                                    vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
-                                    TraceResult::Int(0),
-                                ),
                                 t(
                                     "open",
                                     vec![
@@ -6045,25 +6153,48 @@ mod tests {
                                 ),
                                 t("close", vec![ArgMatcher::Fd(20)], TraceResult::Int(0)),
                                 t(
+                                    "signal",
+                                    vec![ArgMatcher::Int(sys::SIGTERM as i64), ArgMatcher::Any],
+                                    TraceResult::Int(0),
+                                ),
+                                t(
+                                    "signal",
+                                    vec![ArgMatcher::Int(sys::SIGQUIT as i64), ArgMatcher::Any],
+                                    TraceResult::Int(0),
+                                ),
+                                t(
+                                    "signal",
+                                    vec![ArgMatcher::Int(sys::SIGINT as i64), ArgMatcher::Any],
+                                    TraceResult::Int(0),
+                                ),
+                                t(
+                                    "signal",
+                                    vec![ArgMatcher::Int(sys::SIGTSTP as i64), ArgMatcher::Any],
+                                    TraceResult::Int(0),
+                                ),
+                                t(
+                                    "signal",
+                                    vec![ArgMatcher::Int(sys::SIGTTIN as i64), ArgMatcher::Any],
+                                    TraceResult::Int(0),
+                                ),
+                                t(
+                                    "signal",
+                                    vec![ArgMatcher::Int(sys::SIGTTOU as i64), ArgMatcher::Any],
+                                    TraceResult::Int(0),
+                                ),
+                                t(
                                     "execvp",
-                                    vec![ArgMatcher::Str("/usr/bin/sleep".into()), ArgMatcher::Any],
+                                    vec![
+                                        ArgMatcher::Str("/usr/bin/sleep".into()),
+                                        ArgMatcher::Any,
+                                    ],
                                     TraceResult::Int(0),
                                 ),
                             ],
                         ),
                         t(
-                            "setpgid",
-                            vec![ArgMatcher::Int(9201), ArgMatcher::Int(9201)],
-                            TraceResult::Int(0),
-                        ),
-                        t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                        t(
                             "waitpid",
-                            vec![
-                                ArgMatcher::Int(9201),
-                                ArgMatcher::Any,
-                                ArgMatcher::Int(sys::WUNTRACED as i64),
-                            ],
+                            vec![ArgMatcher::Int(9250), ArgMatcher::Any, ArgMatcher::Int(sys::WUNTRACED as i64)],
                             TraceResult::Status(0),
                         ),
                     ],
@@ -6101,11 +6232,28 @@ mod tests {
             vec![
                 t_fork(
                     TraceResult::Pid(9300),
-                    vec![t(
-                        "setpgid",
-                        vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
-                        TraceResult::Int(0),
-                    )],
+                    vec![
+                        t(
+                            "setpgid",
+                            vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "signal",
+                            vec![ArgMatcher::Int(sys::SIGTSTP as i64), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "signal",
+                            vec![ArgMatcher::Int(sys::SIGTTIN as i64), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "signal",
+                            vec![ArgMatcher::Int(sys::SIGTTOU as i64), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                    ],
                 ),
                 t(
                     "setpgid",

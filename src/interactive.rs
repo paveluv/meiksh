@@ -12,13 +12,31 @@ pub fn run(shell: &mut Shell) -> Result<i32, ShellError> {
 
 fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
     let mut accumulated = String::new();
+    let mut sigchld_installed = false;
     loop {
+        if shell.options.notify && !sigchld_installed {
+            let _ = sys::install_shell_signal_handler(sys::SIGCHLD);
+            sigchld_installed = true;
+        } else if !shell.options.notify && sigchld_installed {
+            let _ = sys::default_signal_action(sys::SIGCHLD);
+            sigchld_installed = false;
+        }
+
         for (id, state) in shell.reap_jobs() {
             use crate::shell::ReapedJobState;
             let msg = match state {
-                ReapedJobState::Done(status) => format!("[{id}] Done {status}\n"),
-                ReapedJobState::Stopped(sig) => {
-                    format!("[{id}] Stopped ({})\n", sys::signal_name(sig))
+                ReapedJobState::Done(status, cmd) => {
+                    if status == 0 {
+                        format!("[{id}] Done\t{cmd}\n")
+                    } else {
+                        format!("[{id}] Done({status})\t{cmd}\n")
+                    }
+                }
+                ReapedJobState::Signaled(sig, cmd) => {
+                    format!("[{id}] Terminated ({})\t{cmd}\n", sys::signal_name(sig))
+                }
+                ReapedJobState::Stopped(sig, cmd) => {
+                    format!("[{id}] Stopped ({})\t{cmd}\n", sys::signal_name(sig))
                 }
             };
             let _ = sys::write_all_fd(sys::STDERR_FILENO, msg.as_bytes());
@@ -231,6 +249,9 @@ mod tests {
             pending_control: None,
             interactive: false,
             errexit_suppressed: false,
+            owns_terminal: false,
+            in_subshell: false,
+            wait_was_interrupted: false,
             pid: 0,
             lineno: 0,
         }
@@ -503,7 +524,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"[1] Done 0\n".to_vec()),
+                        ArgMatcher::Bytes(b"[1] Done\tdone\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -854,6 +875,12 @@ mod tests {
                     vec![ArgMatcher::Int(4010), ArgMatcher::Any, ArgMatcher::Any],
                     TraceResult::StoppedSig(sys::SIGTSTP),
                 ),
+                // reap_jobs: check if 4010 was subsequently continued
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(4010), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Pid(0),
+                ),
                 // reap_jobs: job 4011 is still running
                 t(
                     "waitpid",
@@ -865,7 +892,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"[1] Stopped (SIGTSTP)\n".to_vec()),
+                        ArgMatcher::Bytes(b"[1] Stopped (SIGTSTP)\tvim\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),

@@ -566,14 +566,23 @@ fn jobs(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
             if !selected_contains(*id) {
                 continue;
             }
-            if let crate::shell::ReapedJobState::Done(status) = state {
-                let marker = job_current_marker(*id, current_id, previous_id);
-                let state_str = if *status == 0 {
-                    "Done".to_string()
-                } else {
-                    format!("Done({status})")
-                };
-                sys_println!("[{id}] {marker} {state_str}");
+            let marker = job_current_marker(*id, current_id, previous_id);
+            match state {
+                crate::shell::ReapedJobState::Done(status, cmd) => {
+                    let state_str = if *status == 0 {
+                        "Done".to_string()
+                    } else {
+                        format!("Done({status})")
+                    };
+                    sys_println!("[{id}] {marker} {state_str}\t{cmd}");
+                }
+                crate::shell::ReapedJobState::Signaled(sig, cmd) => {
+                    sys_println!(
+                        "[{id}] {marker} Terminated ({})\t{cmd}",
+                        sys::signal_name(*sig)
+                    );
+                }
+                crate::shell::ReapedJobState::Stopped(..) => {}
             }
         }
     }
@@ -804,7 +813,8 @@ fn kill(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
     let mut status = 0;
     for operand in args {
         if operand.starts_with('%') {
-            let resolved = resolve_job_id(shell, Some(operand))
+            let resolved_id = resolve_job_id(shell, Some(operand));
+            let resolved = resolved_id
                 .and_then(|id| shell.jobs.iter().find(|j| j.id == id));
             if let Some(job) = resolved {
                 let pid = job
@@ -814,6 +824,13 @@ fn kill(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError
                     if sys::send_signal(-pid, signal).is_err() {
                         shell.diagnostic(1, format_args!("kill: ({pid}): No such process"));
                         status = 1;
+                    } else if signal == sys::SIGCONT {
+                        if let Some(id) = resolved_id {
+                            if let Some(j) = shell.jobs.iter_mut().find(|j| j.id == id) {
+                                j.state = crate::shell::JobState::Running;
+                                j.cont_pending = true;
+                            }
+                        }
                     }
                 }
             } else {
@@ -1476,7 +1493,9 @@ fn parse_trap_condition(text: &str) -> Option<TrapCondition> {
         "ALRM" | "14" => Some(TrapCondition::Signal(sys::SIGALRM)),
         "TERM" | "15" => Some(TrapCondition::Signal(sys::SIGTERM)),
         "CHLD" | "17" => Some(TrapCondition::Signal(sys::SIGCHLD)),
+        "STOP" | "19" => Some(TrapCondition::Signal(sys::SIGSTOP)),
         "CONT" | "18" => Some(TrapCondition::Signal(sys::SIGCONT)),
+        "TRAP" | "5" => Some(TrapCondition::Signal(sys::SIGTRAP)),
         "TSTP" | "20" => Some(TrapCondition::Signal(sys::SIGTSTP)),
         "TTIN" | "21" => Some(TrapCondition::Signal(sys::SIGTTIN)),
         "TTOU" | "22" => Some(TrapCondition::Signal(sys::SIGTTOU)),
@@ -1504,6 +1523,7 @@ fn format_trap_condition(condition: TrapCondition) -> String {
         TrapCondition::Signal(sys::SIGTERM) => "TERM".to_string(),
         TrapCondition::Signal(sys::SIGCHLD) => "CHLD".to_string(),
         TrapCondition::Signal(sys::SIGCONT) => "CONT".to_string(),
+        TrapCondition::Signal(sys::SIGTRAP) => "TRAP".to_string(),
         TrapCondition::Signal(sys::SIGTSTP) => "TSTP".to_string(),
         TrapCondition::Signal(sys::SIGTTIN) => "TTIN".to_string(),
         TrapCondition::Signal(sys::SIGTTOU) => "TTOU".to_string(),
@@ -2162,6 +2182,9 @@ mod tests {
             pending_control: None,
             interactive: false,
             errexit_suppressed: false,
+            owns_terminal: false,
+            in_subshell: false,
+            wait_was_interrupted: false,
             pid: 0,
             lineno: 0,
         }
@@ -4051,6 +4074,22 @@ mod tests {
                 "write",
                 vec![
                     ArgMatcher::Fd(1),
+                    ArgMatcher::Bytes(b"trap -- - CONT\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            ),
+            t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(1),
+                    ArgMatcher::Bytes(b"trap -- - TRAP\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            ),
+            t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"trap -- - TSTP\n".to_vec()),
                 ],
                 TraceResult::Auto,
@@ -4336,7 +4375,7 @@ mod tests {
                 matches!(parse_wait_operand("bad", &shell), Err(message) if message.contains("invalid process id"))
             );
             assert_eq!(format_trap_condition(TrapCondition::Signal(99)), "99");
-            assert_eq!(supported_trap_conditions().len(), 19);
+            assert_eq!(supported_trap_conditions().len(), 21);
             assert_eq!(parse_trap_condition("BAD"), None);
         });
     }
@@ -5021,6 +5060,7 @@ mod tests {
                 children: Vec::new(),
                 state: JobState::Running,
                 saved_termios: None,
+                cont_pending: false,
             });
             shell.jobs.push(crate::shell::Job {
                 id: 2,
@@ -5031,6 +5071,7 @@ mod tests {
                 children: Vec::new(),
                 state: JobState::Running,
                 saved_termios: None,
+                cont_pending: false,
             });
             assert_eq!(
                 parse_jobs_operands(&["%1".into(), "%2".into()], &shell).expect("job ids"),
@@ -5207,7 +5248,13 @@ mod tests {
                     vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"sleep\n".to_vec())],
                     TraceResult::Auto,
                 ),
-                // fg %2 (running job) → wait_for_job → waitpid(3002, WUNTRACED)
+                // fg %2 (running job) → continue_job → kill(3002, SIGCONT)
+                t(
+                    "kill",
+                    vec![ArgMatcher::Int(3002), ArgMatcher::Int(sys::SIGCONT as i64)],
+                    TraceResult::Int(0),
+                ),
+                // fg %2 → wait_for_job → waitpid(3002, WUNTRACED)
                 t(
                     "waitpid",
                     vec![
@@ -5727,7 +5774,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(1),
-                        ArgMatcher::Bytes(b"[1]   Done\n".to_vec()),
+                        ArgMatcher::Bytes(b"[1]   Done\tsleep 1\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -5787,6 +5834,7 @@ mod tests {
                     }],
                     state: crate::shell::JobState::Running,
                     saved_termios: None,
+                    cont_pending: false,
                 });
                 shell.jobs.push(crate::shell::Job {
                     id: 2,
@@ -5800,6 +5848,7 @@ mod tests {
                     }],
                     state: crate::shell::JobState::Running,
                     saved_termios: None,
+                    cont_pending: false,
                 });
                 assert!(matches!(
                     invoke(&mut shell, &["jobs".into(), "%2".into()]).expect("jobs %2"),
@@ -5822,6 +5871,7 @@ mod tests {
             }],
             state: crate::shell::JobState::Running,
             saved_termios: None,
+            cont_pending: false,
         }
     }
 
@@ -5835,6 +5885,12 @@ mod tests {
                     vec![ArgMatcher::Int(5001), ArgMatcher::Any, ArgMatcher::Any],
                     TraceResult::Pid(0),
                 ),
+                // reap_jobs: job 2 (Stopped) → try_wait_child checks for WCONTINUED
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(5002), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Pid(0),
+                ),
                 // reap_jobs: job 3 (Running) → try_wait_child returns exited(42)
                 t(
                     "waitpid",
@@ -5846,7 +5902,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(1),
-                        ArgMatcher::Bytes(b"[3]   Done(42)\n".to_vec()),
+                        ArgMatcher::Bytes(b"[3]   Done(42)\tfalse\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -5953,7 +6009,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(1),
-                        ArgMatcher::Bytes(b"[1]   Done(7)\n".to_vec()),
+                        ArgMatcher::Bytes(b"[1]   Done(7)\texit7\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -5994,20 +6050,13 @@ mod tests {
                     vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"sleep 5\n".to_vec())],
                     TraceResult::Auto,
                 ),
-                // continue_job: set foreground pgrp + send SIGCONT
-                t(
-                    "tcsetpgrp",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(6001)],
-                    TraceResult::Int(0),
-                ),
+                // continue_job: send SIGCONT (tcsetpgrp skipped: owns_terminal=false)
                 t(
                     "kill",
                     vec![ArgMatcher::Int(-6001), ArgMatcher::Int(sys::SIGCONT as i64)],
                     TraceResult::Int(0),
                 ),
-                // wait_for_job → foreground_handoff: isatty(0), isatty(2), tcgetpgrp, tcsetpgrp
-                t("isatty", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                // wait_for_job: waitpid on child
+                // wait_for_job: waitpid on child (foreground_handoff skipped: owns_terminal=false)
                 t(
                     "waitpid",
                     vec![
@@ -6105,7 +6154,7 @@ mod tests {
         run_trace(
             vec![t(
                 "write",
-                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"HUP INT QUIT ILL ABRT FPE KILL BUS USR1 SEGV USR2 PIPE ALRM TERM CHLD CONT TSTP TTIN TTOU SYS\n".to_vec())],
+                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"HUP INT QUIT ILL ABRT FPE KILL BUS USR1 SEGV USR2 PIPE ALRM TERM CHLD STOP CONT TRAP TSTP TTIN TTOU SYS\n".to_vec())],
                 TraceResult::Auto,
             )],
             || {
@@ -6510,8 +6559,14 @@ mod tests {
     #[test]
     fn jobs_stopped_job_format_state() {
         run_trace(
-            vec![t(
-                "write",
+            vec![
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(5050), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Pid(0),
+                ),
+                t(
+                    "write",
                 vec![
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"[1] + Stopped (SIGTSTP) vim\n".to_vec()),
@@ -6532,8 +6587,14 @@ mod tests {
     #[test]
     fn jobs_long_mode_stopped_job() {
         run_trace(
-            vec![t(
-                "write",
+            vec![
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(5060), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Pid(0),
+                ),
+                t(
+                    "write",
                 vec![
                     ArgMatcher::Fd(1),
                     ArgMatcher::Bytes(b"[1] + 5060 Stopped (SIGTSTP) vim\n".to_vec()),
@@ -6563,6 +6624,7 @@ mod tests {
                 children: vec![],
                 state: crate::shell::JobState::Done(5),
                 saved_termios: None,
+                cont_pending: false,
             };
             let (state_str, pid_str) = format_job_state(&job);
             assert_eq!(state_str, "Done(5)");
@@ -6582,6 +6644,7 @@ mod tests {
                 children: vec![],
                 state: crate::shell::JobState::Done(0),
                 saved_termios: None,
+                cont_pending: false,
             };
             let (state_str, _) = format_job_state(&job);
             assert_eq!(state_str, "Done");
@@ -6610,7 +6673,7 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(1),
-                        ArgMatcher::Bytes(b"[1]   Done\n".to_vec()),
+                        ArgMatcher::Bytes(b"[1]   Done\tdone-cmd\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -6665,6 +6728,11 @@ mod tests {
                     "waitpid",
                     vec![ArgMatcher::Int(5090), ArgMatcher::Any, ArgMatcher::Any],
                     TraceResult::StoppedSig(sys::SIGTSTP),
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(5090), ArgMatcher::Any, ArgMatcher::Int(11)],
+                    TraceResult::Int(0),
                 ),
                 t(
                     "write",
