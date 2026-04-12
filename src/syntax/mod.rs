@@ -2744,4 +2744,34 @@ mod tests {
             panic!("expected simple command");
         }
     }
+
+    #[test]
+    fn empty_subshell_is_syntax_error() {
+        assert!(parse("( )\n").is_err());
+    }
+
+    #[test]
+    fn empty_brace_group_is_syntax_error() {
+        assert!(parse("{ }\n").is_err());
+    }
+
+    #[test]
+    fn empty_do_group_is_syntax_error() {
+        assert!(parse("for i in a; do done\n").is_err());
+        assert!(parse("while true; do done\n").is_err());
+        assert!(parse("until true; do done\n").is_err());
+    }
+
+    #[test]
+    fn empty_then_clause_is_syntax_error() {
+        assert!(parse("if true; then fi\n").is_err());
+        assert!(parse("if true; then true; elif true; then fi\n").is_err());
+        assert!(parse("if true; then true; else fi\n").is_err());
+    }
+
+    #[test]
+    fn leading_semicolon_is_syntax_error() {
+        assert!(parse(";\n").is_err());
+        assert!(parse("; echo hi\n").is_err());
+    }
 }

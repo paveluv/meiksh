@@ -234,7 +234,7 @@ impl<'a> Parser<'a> {
     ) -> Result<Program, ParseError> {
         let mut items = Vec::new();
         self.set_command_position();
-        self.skip_separators_t()?;
+        self.skip_linebreaks_t()?;
 
         loop {
             self.set_command_position();
@@ -387,6 +387,9 @@ impl<'a> Parser<'a> {
                 self.set_command_position();
                 self.skip_separators_t()?;
                 let body = self.parse_program_until(|_| false, true, false)?;
+                if body.items.is_empty() {
+                    return Err(self.error("expected command list in brace group"));
+                }
                 if !matches!(self.peek_token()?, Token::RBrace) {
                     return Err(self.error("expected '}'"));
                 }
@@ -398,6 +401,9 @@ impl<'a> Parser<'a> {
             Token::LParen => {
                 self.advance_token();
                 let body = self.parse_program_until(|_| false, true, false)?;
+                if body.items.is_empty() {
+                    return Err(self.error("expected command list in subshell"));
+                }
                 if !matches!(self.peek_token()?, Token::RParen) {
                     return Err(self.error("expected ')' to close subshell"));
                 }
@@ -667,6 +673,9 @@ impl<'a> Parser<'a> {
             matches!(tok, Token::Elif | Token::Else | Token::Fi)
         }
         let then_branch = self.parse_program_until(at_elif_else_fi, false, false)?;
+        if then_branch.items.is_empty() {
+            return Err(self.error("expected command list after 'then'"));
+        }
         let mut elif_branches = Vec::new();
 
         self.set_keyword_position();
@@ -680,6 +689,9 @@ impl<'a> Parser<'a> {
             }
             self.eat_keyword(Token::Then, "then")?;
             let body = self.parse_program_until(at_elif_else_fi, false, false)?;
+            if body.items.is_empty() {
+                return Err(self.error("expected command list after 'then'"));
+            }
             elif_branches.push(ElifBranch {
                 condition: cond,
                 body,
@@ -691,7 +703,11 @@ impl<'a> Parser<'a> {
             self.advance_token();
             self.set_command_position();
             self.skip_separators_t()?;
-            Some(self.parse_program_until(|tok| matches!(tok, Token::Fi), false, false)?)
+            let body = self.parse_program_until(|tok| matches!(tok, Token::Fi), false, false)?;
+            if body.items.is_empty() {
+                return Err(self.error("expected command list after 'else'"));
+            }
+            Some(body)
         } else {
             None
         };
@@ -716,6 +732,9 @@ impl<'a> Parser<'a> {
         }
         self.eat_keyword(Token::Do, "do")?;
         let body = self.parse_program_until(|tok| matches!(tok, Token::Done), false, false)?;
+        if body.items.is_empty() {
+            return Err(self.error("expected command list in do group"));
+        }
         self.eat_keyword(Token::Done, "done")?;
         Ok(Command::Loop(LoopCommand {
             kind,
@@ -757,6 +776,9 @@ impl<'a> Parser<'a> {
         self.skip_separators_t()?;
         self.eat_keyword(Token::Do, "do")?;
         let body = self.parse_program_until(|tok| matches!(tok, Token::Done), false, false)?;
+        if body.items.is_empty() {
+            return Err(self.error("expected command list in do group"));
+        }
         self.eat_keyword(Token::Done, "done")?;
         Ok(Command::For(ForCommand { name, items, body }))
     }
@@ -883,7 +905,7 @@ impl<'a> Parser<'a> {
     }
 
     pub(super) fn next_complete_command(&mut self) -> Result<Option<Program>, ParseError> {
-        self.skip_separators_t()?;
+        self.skip_linebreaks_t()?;
         if matches!(self.peek_token()?, Token::Eof) {
             return Ok(None);
         }
