@@ -286,15 +286,17 @@ end test "trap with signal number resets to default"
 
 #### Test: trap with no args lists active traps
 
-`trap` with no operands writes commands associated with active traps.
+`trap` with no operands writes commands associated with conditions that
+are not in the default state. The output includes any traps inherited as
+ignored on entry, so we filter to only the trap we just set.
 
 ```
 begin test "trap with no args lists active traps"
   script
     trap "echo hi" INT
-    trap
+    trap | grep INT
   expect
-    stdout "trap -- .*echo hi.* INT"
+    stdout "trap -- 'echo hi' INT"
     stderr ""
     exit_code 0
 end test "trap with no args lists active traps"
@@ -338,16 +340,18 @@ end test "subshell resets traps to default"
 
 #### Test: subshell inherits trap list before entry
 
-`trap` in a subshell reports the commands that were associated with
-conditions immediately before the subshell was entered.
+`trap` in a subshell (before any trap-with-operands) reports the
+commands that were associated with conditions immediately before the
+subshell was entered. We filter to EXIT to avoid extra lines from
+inherited-ignored signals.
 
 ```
 begin test "subshell inherits trap list before entry"
   script
     trap "echo exit_trap" 0
-    ( trap )
+    ( trap | grep EXIT )
   expect
-    stdout "trap -- .*exit_trap.* (EXIT|0)\nexit_trap"
+    stdout "trap -- 'echo exit_trap' EXIT\nexit_trap"
     stderr ""
     exit_code 0
 end test "subshell inherits trap list before entry"

@@ -362,7 +362,11 @@ fn unset(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellErro
             }
         }
     }
-    Ok(BuiltinOutcome::Status(status))
+    if status != 0 {
+        Ok(BuiltinOutcome::UtilityError(status))
+    } else {
+        Ok(BuiltinOutcome::Status(status))
+    }
 }
 
 fn set(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
@@ -370,7 +374,7 @@ fn set(shell: &mut Shell, argv: &[String]) -> BuiltinOutcome {
         let mut items: Vec<_> = shell.env.iter().collect();
         items.sort_by(|a, b| a.0.cmp(b.0));
         for (name, value) in items {
-            sys_println!("{name}={value}");
+            sys_println!("{name}={}", shell_quote_if_needed(value));
         }
     } else {
         let mut index = 1usize;
@@ -1298,6 +1302,28 @@ fn shell_quote(value: &str) -> String {
     format!("'{escaped}'")
 }
 
+fn needs_quoting(value: &str) -> bool {
+    value.is_empty()
+        || value.bytes().any(|b| {
+            !b.is_ascii_alphanumeric()
+                && b != b'_'
+                && b != b'/'
+                && b != b'.'
+                && b != b'-'
+                && b != b'+'
+                && b != b':'
+                && b != b','
+        })
+}
+
+fn shell_quote_if_needed(value: &str) -> std::borrow::Cow<'_, str> {
+    if needs_quoting(value) {
+        std::borrow::Cow::Owned(shell_quote(value))
+    } else {
+        std::borrow::Cow::Borrowed(value)
+    }
+}
+
 fn unalias(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
     if argv.len() < 2 {
         return Err(shell.diagnostic(1, "unalias: name required"));
@@ -1396,8 +1422,17 @@ fn trap_impl(shell: &mut Shell, argv: &[String]) -> Result<i32, ShellError> {
         print_traps(shell, true, &argv[2..])?;
         return Ok(0);
     }
-    if is_unsigned_decimal(&argv[1]) {
-        for condition in &argv[1..] {
+    let (action_index, conditions_start) = if argv[1] == "--" {
+        if argv.len() == 2 {
+            print_traps(shell, false, &[])?;
+            return Ok(0);
+        }
+        (2, 3)
+    } else {
+        (1, 2)
+    };
+    if is_unsigned_decimal(&argv[action_index]) {
+        for condition in &argv[action_index..] {
             if let Some(condition) = parse_trap_condition(condition) {
                 shell.set_trap(condition, None)?;
             } else {
@@ -1407,13 +1442,13 @@ fn trap_impl(shell: &mut Shell, argv: &[String]) -> Result<i32, ShellError> {
         }
         return Ok(0);
     }
-    let action = &argv[1];
-    if argv.len() == 2 {
+    let action = &argv[action_index];
+    if argv.len() <= conditions_start {
         return Err(shell.diagnostic(1, "trap: condition argument required"));
     }
     let trap_action = parse_trap_action(action);
     let mut status = 0;
-    for condition in &argv[2..] {
+    for condition in &argv[conditions_start..] {
         let Some(condition) = parse_trap_condition(condition) else {
             shell.diagnostic(1, format_args!("trap: invalid condition: {condition}"));
             status = 1;
@@ -3453,7 +3488,7 @@ mod tests {
                 shell.readonly.insert("RO".into());
                 assert!(matches!(
                     invoke(&mut shell, &["unset".into(), "RO".into()]).expect("unset readonly"),
-                    BuiltinOutcome::Status(1)
+                    BuiltinOutcome::UtilityError(1)
                 ));
             },
         );
@@ -7113,6 +7148,49 @@ mod tests {
                 assert!(matches!(
                     shell.jobs[0].state,
                     crate::shell::JobState::Running
+                ));
+            },
+        );
+    }
+
+    #[test]
+    fn needs_quoting_and_shell_quote_if_needed_coverage() {
+        assert!(!super::needs_quoting("simple"));
+        assert!(!super::needs_quoting("path/to.file-1+2:3,4"));
+        assert!(super::needs_quoting("has space"));
+        assert!(super::needs_quoting(""));
+        assert!(super::needs_quoting("quo'te"));
+
+        let cow = super::shell_quote_if_needed("hello");
+        assert!(matches!(cow, std::borrow::Cow::Borrowed("hello")));
+
+        let cow = super::shell_quote_if_needed("has space");
+        assert!(matches!(cow, std::borrow::Cow::Owned(_)));
+        assert_eq!(cow.as_ref(), "'has space'");
+    }
+
+    #[test]
+    fn trap_double_dash_lists_and_sets() {
+        run_trace(
+            vec![t(
+                "signal",
+                vec![ArgMatcher::Int(sys::SIGUSR1 as i64), ArgMatcher::Any],
+                TraceResult::Int(0),
+            )],
+            || {
+                let mut shell = test_shell();
+                let result = invoke(&mut shell, &["trap".into(), "--".into()]).expect("trap --");
+                assert!(matches!(result, BuiltinOutcome::Status(0)));
+
+                let result = invoke(
+                    &mut shell,
+                    &["trap".into(), "--".into(), "echo hi".into(), "USR1".into()],
+                )
+                .expect("trap -- action cond");
+                assert!(matches!(result, BuiltinOutcome::Status(0)));
+                assert!(matches!(
+                    shell.trap_actions.get(&TrapCondition::Signal(sys::SIGUSR1)),
+                    Some(TrapAction::Command(cmd)) if cmd.as_ref() == "echo hi"
                 ));
             },
         );
