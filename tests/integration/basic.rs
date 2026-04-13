@@ -2601,6 +2601,26 @@ fn blank_between_fd_and_redirect_operator() {
 }
 
 #[test]
+fn ignored_on_entry_signal_reported_by_trap() {
+    let out = unsafe {
+        Command::new(meiksh())
+            .args(["-c", "trap -p USR1"])
+            .pre_exec(|| {
+                libc::signal(libc::SIGUSR1, libc::SIG_IGN);
+                Ok(())
+            })
+            .output()
+            .expect("run")
+    };
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("trap -- '' USR1"),
+        "expected ignored trap, got: {stdout}"
+    );
+}
+
+#[test]
 fn getopts_reset_optind_allows_reparsing() {
     let out = Command::new(meiksh())
         .args([

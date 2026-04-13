@@ -325,6 +325,7 @@ impl Shell {
         let interactive = options.force_interactive
             || (sys::is_interactive_fd(sys::STDIN_FILENO)
                 && sys::is_interactive_fd(sys::STDERR_FILENO));
+        let _ = sys::default_signal_action(sys::SIGPIPE);
         let ignored_on_entry = Self::probe_ignored_signals();
         let trap_actions: BTreeMap<TrapCondition, TrapAction> = ignored_on_entry
             .iter()
@@ -482,7 +483,6 @@ impl Shell {
     }
 
     pub fn run_source(&mut self, _name: &str, source: &str) -> Result<i32, ShellError> {
-        self.echo_verbose_input(source);
         self.run_source_buffer(source)
     }
 
@@ -502,7 +502,6 @@ impl Shell {
     }
 
     pub fn execute_string(&mut self, source: &str) -> Result<i32, ShellError> {
-        self.echo_verbose_input(source);
         self.execute_source_incrementally(source)
     }
 
@@ -565,6 +564,7 @@ impl Shell {
         let mut status = 0;
         self.run_pending_traps()?;
         loop {
+            let prev_pos = session.current_pos();
             let program = match session
                 .next_command(&self.aliases)
                 .map_err(|e| self.parse_to_err(e))?
@@ -572,6 +572,13 @@ impl Shell {
                 Some(p) => p,
                 None => break,
             };
+            if self.options.syntax_check_only {
+                continue;
+            }
+            if self.options.verbose {
+                let cmd_source = &source[prev_pos..session.current_pos()];
+                self.echo_verbose_input(cmd_source);
+            }
             status = self.execute_program(&program)?;
             self.run_pending_traps()?;
             if !self.running || self.has_pending_control() {
@@ -625,6 +632,7 @@ impl Shell {
             child_shell.restore_signals_for_child();
             let _ = child_shell.reset_traps_for_subshell();
             let status = child_shell.execute_string(source).unwrap_or(1);
+            let status = child_shell.run_exit_trap(status).unwrap_or(status);
             sys::exit_process(status as sys::RawFd);
         }
         sys::close_fd(write_fd).map_err(|e| self.diagnostic(1, &e))?;
@@ -1078,7 +1086,9 @@ impl Shell {
     }
 
     pub fn reset_traps_for_subshell(&mut self) -> Result<(), ShellError> {
-        self.subshell_saved_traps = Some(self.trap_actions.clone());
+        if self.subshell_saved_traps.is_none() {
+            self.subshell_saved_traps = Some(self.trap_actions.clone());
+        }
         let to_reset: Vec<TrapCondition> = self
             .trap_actions
             .iter()
@@ -1184,7 +1194,7 @@ impl Shell {
         Ok(())
     }
 
-    fn run_exit_trap(&mut self, status: i32) -> Result<i32, ShellError> {
+    pub(crate) fn run_exit_trap(&mut self, status: i32) -> Result<i32, ShellError> {
         let Some(TrapAction::Command(action)) =
             self.trap_actions.get(&TrapCondition::Exit).cloned()
         else {
@@ -4482,5 +4492,17 @@ mod tests {
                 assert_eq!(outcome, BlockingWaitOutcome::Exited(42));
             },
         );
+    }
+
+    #[test]
+    fn syntax_check_only_skips_execution() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.options.syntax_check_only = true;
+            let status = shell
+                .execute_string("echo this should not run; false")
+                .expect("syntax check");
+            assert_eq!(status, 0);
+        });
     }
 }

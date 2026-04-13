@@ -72,6 +72,10 @@ impl<'src> ParseSession<'src> {
     pub fn current_line(&self) -> usize {
         self.line
     }
+
+    pub fn current_pos(&self) -> usize {
+        self.pos
+    }
 }
 
 pub fn is_name(name: &str) -> bool {

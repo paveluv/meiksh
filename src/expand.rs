@@ -2394,7 +2394,11 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
     }
 
     fn resolve_var(&mut self, name: &str) -> Result<i64, ExpandError> {
-        let val_str = self.ctx.env_var(name).unwrap_or_default();
+        let val_opt = self.ctx.env_var(name);
+        if val_opt.is_none() && self.ctx.nounset_enabled() {
+            return Err(self.error_at_current(&format!("{name}: parameter not set")));
+        }
+        let val_str = val_opt.unwrap_or_default();
         if val_str.is_empty() {
             return Ok(0);
         }
@@ -6113,5 +6117,21 @@ mod tests {
         .expect("bare newline");
         assert_eq!(fields.len(), 1);
         assert!(fields[0].contains('\n'));
+    }
+
+    #[test]
+    fn arithmetic_nounset_rejects_unset_variable() {
+        let arena = StringArena::new();
+        let mut ctx = FakeContext::new();
+        ctx.nounset_enabled = true;
+        let result = expand_word(
+            &mut ctx,
+            &Word {
+                raw: "$((nosuch_var))".into(),
+                line: 0,
+            },
+            &arena,
+        );
+        assert!(result.is_err());
     }
 }

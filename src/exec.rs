@@ -138,6 +138,7 @@ fn spawn_and_or(
         } else {
             execute_and_or(&mut child_shell, node).unwrap_or(1)
         };
+        let status = child_shell.run_exit_trap(status).unwrap_or(status);
         sys::exit_process(status as sys::RawFd);
     }
     if let Some(fd) = stdin_override {
@@ -309,6 +310,7 @@ fn fork_and_execute_command(
         child_shell.restore_signals_for_child();
         let _ = child_shell.reset_traps_for_subshell();
         let status = execute_command_in_pipeline_child(&mut child_shell, command).unwrap_or(1);
+        let status = child_shell.run_exit_trap(status).unwrap_or(status);
         sys::exit_process(status as sys::RawFd);
     }
 
@@ -509,6 +511,7 @@ fn execute_command_inner(
                     Ok(s) => s,
                     Err(error) => error.exit_status(),
                 };
+                let status = child_shell.run_exit_trap(status).unwrap_or(status);
                 sys::exit_process(status as sys::RawFd);
             }
             let ws = loop {
@@ -1484,12 +1487,12 @@ fn prepare_redirections<R: RedirectionRef>(
                 });
             }
             RedirectionKind::Write | RedirectionKind::ClobberWrite => {
-                let flags = if noclobber && redirection.kind() == RedirectionKind::Write {
-                    sys::O_WRONLY | sys::O_CREAT | sys::O_EXCL | sys::O_CLOEXEC
+                let fd = if noclobber && redirection.kind() == RedirectionKind::Write {
+                    open_for_write_noclobber(redirection.target())?
                 } else {
-                    sys::O_WRONLY | sys::O_CREAT | sys::O_TRUNC | sys::O_CLOEXEC
+                    let flags = sys::O_WRONLY | sys::O_CREAT | sys::O_TRUNC | sys::O_CLOEXEC;
+                    sys::open_file(redirection.target(), flags, 0o666)?
                 };
-                let fd = sys::open_file(redirection.target(), flags, 0o666)?;
                 prepared.actions.push(ChildFdAction::DupRawFd {
                     fd,
                     target_fd: redirection.fd(),
@@ -1673,6 +1676,21 @@ fn apply_shell_redirections<R: RedirectionRef>(
     Ok(guard)
 }
 
+fn open_for_write_noclobber(path: &str) -> sys::SysResult<i32> {
+    let flags = sys::O_WRONLY | sys::O_CREAT | sys::O_EXCL | sys::O_CLOEXEC;
+    match sys::open_file(path, flags, 0o666) {
+        Ok(fd) => Ok(fd),
+        Err(e) if e.errno() == Some(sys::EEXIST) => {
+            if sys::is_regular_file(path) {
+                Err(e)
+            } else {
+                sys::open_file(path, sys::O_WRONLY | sys::O_CLOEXEC, 0o666)
+            }
+        }
+        Err(e) => Err(e),
+    }
+}
+
 fn apply_shell_redirection<R: RedirectionRef>(
     redirection: &R,
     noclobber: bool,
@@ -1683,12 +1701,12 @@ fn apply_shell_redirection<R: RedirectionRef>(
             replace_shell_fd(fd, redirection.fd())?;
         }
         RedirectionKind::Write | RedirectionKind::ClobberWrite => {
-            let flags = if noclobber && redirection.kind() == RedirectionKind::Write {
-                sys::O_WRONLY | sys::O_CREAT | sys::O_EXCL | sys::O_CLOEXEC
+            let fd = if noclobber && redirection.kind() == RedirectionKind::Write {
+                open_for_write_noclobber(redirection.target())?
             } else {
-                sys::O_WRONLY | sys::O_CREAT | sys::O_TRUNC | sys::O_CLOEXEC
+                let flags = sys::O_WRONLY | sys::O_CREAT | sys::O_TRUNC | sys::O_CLOEXEC;
+                sys::open_file(redirection.target(), flags, 0o666)?
             };
-            let fd = sys::open_file(redirection.target(), flags, 0o666)?;
             replace_shell_fd(fd, redirection.fd())?;
         }
         RedirectionKind::Append => {
@@ -4367,6 +4385,15 @@ mod tests {
                         ArgMatcher::Any,
                     ],
                     TraceResult::Err(sys::EEXIST),
+                ),
+                // noclobber checks if it's a regular file → yes → return EEXIST
+                t(
+                    "stat",
+                    vec![
+                        ArgMatcher::Str("/redir/noclobber.txt".into()),
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::StatFile(0o644),
                 ),
                 // Guard drop with saved=(99, None) → close(99)
                 t("close", vec![ArgMatcher::Fd(99)], TraceResult::Int(0)),
@@ -7552,6 +7579,79 @@ mod tests {
                 }
                 let ws = sys::wait_pid(pid, false).expect("wait").expect("status");
                 assert_eq!(sys::decode_wait_status(ws.status), 127);
+            },
+        );
+    }
+
+    #[test]
+    fn open_for_write_noclobber_new_file_succeeds() {
+        run_trace(
+            vec![t(
+                "open",
+                vec![
+                    ArgMatcher::Str("/new/file.txt".into()),
+                    ArgMatcher::Any,
+                    ArgMatcher::Any,
+                ],
+                TraceResult::Int(10),
+            )],
+            || {
+                let fd = open_for_write_noclobber("/new/file.txt").expect("new file");
+                assert_eq!(fd, 10);
+            },
+        );
+    }
+
+    #[test]
+    fn open_for_write_noclobber_non_regular_reopens() {
+        run_trace(
+            vec![
+                t(
+                    "open",
+                    vec![
+                        ArgMatcher::Str("/dev/null".into()),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Err(sys::EEXIST),
+                ),
+                t(
+                    "stat",
+                    vec![ArgMatcher::Str("/dev/null".into()), ArgMatcher::Any],
+                    TraceResult::StatFifo,
+                ),
+                t(
+                    "open",
+                    vec![
+                        ArgMatcher::Str("/dev/null".into()),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Int(11),
+                ),
+            ],
+            || {
+                let fd = open_for_write_noclobber("/dev/null").expect("fifo reopen");
+                assert_eq!(fd, 11);
+            },
+        );
+    }
+
+    #[test]
+    fn open_for_write_noclobber_other_error() {
+        run_trace(
+            vec![t(
+                "open",
+                vec![
+                    ArgMatcher::Str("/noperm".into()),
+                    ArgMatcher::Any,
+                    ArgMatcher::Any,
+                ],
+                TraceResult::Err(libc::EACCES),
+            )],
+            || {
+                let err = open_for_write_noclobber("/noperm").expect_err("eacces");
+                assert_eq!(err.errno(), Some(libc::EACCES));
             },
         );
     }
