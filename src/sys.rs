@@ -2322,6 +2322,37 @@ pub fn process_times() -> SysResult<ProcessTimes> {
     })
 }
 
+pub const RLIMIT_CORE: i32 = libc::RLIMIT_CORE as i32;
+pub const RLIMIT_DATA: i32 = libc::RLIMIT_DATA as i32;
+pub const RLIMIT_FSIZE: i32 = libc::RLIMIT_FSIZE as i32;
+pub const RLIMIT_NOFILE: i32 = libc::RLIMIT_NOFILE as i32;
+pub const RLIMIT_STACK: i32 = libc::RLIMIT_STACK as i32;
+pub const RLIMIT_CPU: i32 = libc::RLIMIT_CPU as i32;
+pub const RLIMIT_AS: i32 = libc::RLIMIT_AS as i32;
+pub const RLIM_INFINITY: u64 = libc::RLIM_INFINITY;
+
+pub fn getrlimit(resource: i32) -> SysResult<(u64, u64)> {
+    let mut rlim = std::mem::MaybeUninit::<libc::rlimit>::zeroed();
+    let rc = unsafe { libc::getrlimit(resource as libc::__rlimit_resource_t, rlim.as_mut_ptr()) };
+    if rc < 0 {
+        return Err(last_error());
+    }
+    let rlim = unsafe { rlim.assume_init() };
+    Ok((rlim.rlim_cur, rlim.rlim_max))
+}
+
+pub fn setrlimit(resource: i32, soft: u64, hard: u64) -> SysResult<()> {
+    let rlim = libc::rlimit {
+        rlim_cur: soft,
+        rlim_max: hard,
+    };
+    let rc = unsafe { libc::setrlimit(resource as libc::__rlimit_resource_t, &rlim) };
+    if rc < 0 {
+        return Err(last_error());
+    }
+    Ok(())
+}
+
 pub fn monotonic_clock_ns() -> u64 {
     (sys_interface().monotonic_clock_ns)()
 }
@@ -4326,5 +4357,15 @@ mod tests {
                 exec_replace_with_env("/nonexistent_path_no_exist", &["no_exist".into()], &[]);
             assert!(result.is_err());
         });
+    }
+
+    #[test]
+    fn getrlimit_invalid_resource_returns_error() {
+        assert!(getrlimit(99999).is_err());
+    }
+
+    #[test]
+    fn setrlimit_invalid_values_returns_error() {
+        assert!(setrlimit(99999, 0, 0).is_err());
     }
 }

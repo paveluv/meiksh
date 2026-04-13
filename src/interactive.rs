@@ -80,6 +80,10 @@ fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
 
         let source = std::mem::take(&mut accumulated);
         append_history(shell, source.trim_end())?;
+        let trimmed = source.trim();
+        if !(trimmed == "fc" || trimmed.starts_with("fc ") || trimmed.starts_with("fc\t")) {
+            shell.add_history(trimmed);
+        }
         match shell.execute_string(&source) {
             Ok(status) => shell.last_status = status,
             Err(error) => {
@@ -255,6 +259,8 @@ mod tests {
             wait_was_interrupted: false,
             pid: 0,
             lineno: 0,
+            path_cache: std::collections::HashMap::new(),
+            history: Vec::new(),
         }
     }
 

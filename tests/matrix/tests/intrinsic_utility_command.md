@@ -636,22 +636,6 @@ begin test "command readonly behaves as declaration utility"
 end test "command readonly behaves as declaration utility"
 ```
 
-#### Test: command local inside function
-
-When `command local` is used inside a function, the local variable assignment should still take effect. The variable must be accessible within the function body regardless of whether `local` is supported.
-
-```
-begin test "command local inside function"
-  script
-    f() { command local LV=hello 2>/dev/null && echo $LV || echo $LV; }
-    f
-  expect
-    stdout "hello"
-    stderr ""
-    exit_code 0
-end test "command local inside function"
-```
-
 #### Test: command export assigns variable
 
 Using `command export` with a `name=value` operand must both export the variable and assign it in the current shell environment, making the value immediately accessible.

@@ -206,9 +206,12 @@ as specified by POSIX.1-2024 (Section 1.7).
 ```
 begin test "jobs -p shows background PID"
   script
+    set -m
     sleep 60 &
     pid=$!
-    result=$(jobs -p 2>/dev/null | grep "^${pid}$")
+    jobs -p > /tmp/_jobs_p_out 2>/dev/null
+    result=$(grep "^${pid}$" /tmp/_jobs_p_out)
+    rm -f /tmp/_jobs_p_out
     kill $pid 2>/dev/null; wait $pid 2>/dev/null
     test -n "$result" && echo "found"
   expect
@@ -490,7 +493,9 @@ begin interactive test "current job marker +"
   send "sleep 61 &"
   expect "$ "
   send "jobs"
-  expect "\[[[:digit:]]+\]\+.*sleep"
+  expect "$ "
+  send "jobs"
+  expect "\[[[:digit:]]+\] [+].*sleep"
   send "kill %1 %2; wait 2>/dev/null"
   expect "$ "
   sendeof
@@ -513,7 +518,9 @@ begin interactive test "previous job marker -"
   send "sleep 61 &"
   expect "$ "
   send "jobs"
-  expect "\[[[:digit:]]+\]-.*sleep"
+  expect "$ "
+  send "jobs"
+  expect "\[[[:digit:]]+\] -.*sleep"
   send "kill %1 %2; wait 2>/dev/null"
   expect "$ "
   sendeof
@@ -718,9 +725,10 @@ begin interactive test "multiple suspended jobs with +/- marking"
   sleep 500ms
   sendraw 1a
   expect "(Stopped|Suspended)"
+  expect "$ "
   send "jobs"
-  expect_line "\[[[:digit:]]+\]-.*(Stopped|Suspended)"
-  expect_line "\[[[:digit:]]+\]\+.*(Stopped|Suspended)"
+  expect_line "\[[[:digit:]]+\] -.*(Stopped|Suspended)"
+  expect_line "\[[[:digit:]]+\] [+].*(Stopped|Suspended)"
   send "kill %1 %2; wait 2>/dev/null"
   expect "$ "
   sendeof

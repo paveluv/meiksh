@@ -266,9 +266,7 @@ begin interactive test "fg/bg send SIGCONT to stopped job"
   expect "$ "
   send "fg %1"
   sleep 500ms
-  send ""
-  sleep 200ms
-  send "kill %1"
+  sendraw 03
   sleep 500ms
   sendeof
   wait
