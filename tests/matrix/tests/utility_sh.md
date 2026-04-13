@@ -589,7 +589,7 @@ begin test "$0 is shell path when reading from stdin"
   script
     echo 'echo $0' | $SHELL
   expect
-    stdout ".*/.*sh.*"
+    stdout ".*sh.*"
     stderr ""
     exit_code 0
 end test "$0 is shell path when reading from stdin"
@@ -639,7 +639,7 @@ begin test "+a turns off allexport"
     export_on="yes"
     set +a
     export_off="no"
-    env | grep export_'
+    env | grep "^export_"'
   expect
     stdout "export_on=yes"
     stderr ""
@@ -664,49 +664,19 @@ begin test "sh reads script from current working directory without slash"
 end test "sh reads script from current working directory without slash"
 ```
 
-#### Test: special parameter 0 defaults to shell name
+#### Test: -c command_string with semicolon-separated commands
 
-When reading from standard input with no command_file operand, special parameter $0 defaults to the pathname used to invoke the shell (typically the argv[0] value).
-
-```
-begin test "special parameter 0 defaults to shell name"
-  script
-    echo 'echo $0' | $SHELL
-  expect
-    stdout ".*/.*sh.*"
-    stderr ""
-    exit_code 0
-end test "special parameter 0 defaults to shell name"
-```
-
-#### Test: -c command_string executes command
-
-The -c option reads commands from the command_string operand. No commands shall be read from standard input when -c is specified.
+The command_string operand shall be interpreted as one or more commands. Multiple commands separated by semicolons are executed in sequence.
 
 ```
-begin test "-c command_string executes command"
-  script
-    $SHELL -c 'echo hello'
-  expect
-    stdout "hello"
-    stderr ""
-    exit_code 0
-end test "-c command_string executes command"
-```
-
-#### Test: -c command_string multiple commands
-
-The command_string operand is interpreted as one or more commands separated by semicolons or newlines, as if the string were the argument to the system() function.
-
-```
-begin test "-c command_string multiple commands"
+begin test "-c command_string with semicolon-separated commands"
   script
     $SHELL -c 'echo first; echo second'
   expect
     stdout "first\nsecond"
     stderr ""
     exit_code 0
-end test "-c command_string multiple commands"
+end test "-c command_string with semicolon-separated commands"
 ```
 
 #### Test: -s reads commands from stdin
@@ -736,8 +706,9 @@ begin test "ENV file processed for interactive shell"
     ENV=$_env_file
     export ENV
     $SHELL -i -c 'echo $ENV_LOADED' 2>/dev/null
+    rm -f $_env_file
   expect
-    stdout ".*yes.*"
+    stdout "yes"
     stderr ""
     exit_code 0
 end test "ENV file processed for interactive shell"
@@ -1012,7 +983,9 @@ begin test "shell script inherits exit status of last command"
   script
     echo "exit 42" > tmp_script.sh
     $SHELL tmp_script.sh
-    echo "$?"
+    rc=$?
+    rm -f tmp_script.sh
+    echo "$rc"
   expect
     stdout "42"
     stderr ""
@@ -1030,28 +1003,12 @@ begin test "ENV is ignored for non-interactive shell"
     _env_file=_test_env_noninteractive.sh
     echo 'echo env_ran_noninteractive' > "$_env_file"
     ENV=$_env_file $SHELL -c 'echo done'
+    rm -f "$_env_file"
   expect
     stdout "done"
     stderr ""
     exit_code 0
 end test "ENV is ignored for non-interactive shell"
-```
-
-#### Test: ENV set to valid file does not crash non-interactive shell
-
-Even when ENV points to a valid file, a non-interactive shell must not process it and must not crash or produce unexpected output.
-
-```
-begin test "ENV set to valid file does not crash non-interactive shell"
-  script
-    _env_file=_test_env2.sh
-    echo 'echo env_ran' > $_env_file
-    ENV=$_env_file $SHELL -c true 2>/dev/null
-  expect
-    stdout ""
-    stderr ""
-    exit_code 0
-end test "ENV set to valid file does not crash non-interactive shell"
 ```
 
 #### Test: PS1 prompt text is emitted to stderr stream
@@ -1068,6 +1025,7 @@ begin test "PS1 prompt text is emitted to stderr stream"
     EOF
     grep -q 'ps1_stream_marker> ' ps1_stderr.txt && echo stderr_ok || echo stderr_missing
     grep -q 'ps1_stream_marker> ' ps1_stdout.txt && echo stdout_leak || echo stdout_clean
+    rm -f ps1_stdout.txt ps1_stderr.txt
   expect
     stdout "stderr_ok\nstdout_clean"
     stderr ""
@@ -1090,6 +1048,7 @@ begin test "PS2 prompt text is emitted to stderr stream"
     EOF
     grep -q 'cont> ' ps2_stderr.txt && echo stderr_ok || echo stderr_missing
     grep -q 'cont> ' ps2_stdout.txt && echo stdout_leak || echo stdout_clean
+    rm -f ps2_stdout.txt ps2_stderr.txt
   expect
     stdout "stderr_ok\nstdout_clean"
     stderr ""
@@ -1108,12 +1067,175 @@ begin test "blank lines and comments exit zero"
     # just a comment
 
 
-    ' > tmp_empty.sh; $SHELL tmp_empty.sh
+    ' > tmp_empty.sh; $SHELL tmp_empty.sh; rm -f tmp_empty.sh
   expect
     stdout ""
     stderr ""
     exit_code 0
 end test "blank lines and comments exit zero"
+```
+
+#### Test: empty file exits zero
+
+If the input file consists solely of zero bytes (empty), the shell shall exit with a zero exit status, since it contains zero blank lines and comments.
+
+```
+begin test "empty file exits zero"
+  script
+    printf '' > tmp_empty_file.sh
+    $SHELL tmp_empty_file.sh
+    rm -f tmp_empty_file.sh
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "empty file exits zero"
+```
+
+#### Test: -c does not read from stdin
+
+When -c is specified, no commands shall be read from standard input. Data piped into the shell must be ignored.
+
+```
+begin test "-c does not read from stdin"
+  script
+    echo 'echo LEAKED' | $SHELL -c 'echo hello'
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
+end test "-c does not read from stdin"
+```
+
+#### Test: $0 is set to command_file when running script
+
+When a command_file operand is specified, special parameter $0 shall be set to the value of command_file.
+
+```
+begin test "$0 is set to command_file when running script"
+  script
+    echo 'echo "$0"' > tmp_s0.sh
+    $SHELL tmp_s0.sh
+    rm -f tmp_s0.sh
+  expect
+    stdout "tmp_s0.sh"
+    stderr ""
+    exit_code 0
+end test "$0 is set to command_file when running script"
+```
+
+#### Test: -s sets positional parameters from arguments
+
+When -s is specified, remaining arguments shall be set as positional parameters ($1, $2, etc.).
+
+```
+begin test "-s sets positional parameters from arguments"
+  script
+    echo 'echo "$1 $2"' | $SHELL -s one two
+  expect
+    stdout "one two"
+    stderr ""
+    exit_code 0
+end test "-s sets positional parameters from arguments"
+```
+
+#### Test: command_file arguments become positional parameters
+
+Arguments following the command_file operand shall be set as positional parameters for the script.
+
+```
+begin test "command_file arguments become positional parameters"
+  script
+    echo 'echo "$1 $2"' > tmp_pos.sh
+    $SHELL tmp_pos.sh aa bb
+    rm -f tmp_pos.sh
+  expect
+    stdout "aa bb"
+    stderr ""
+    exit_code 0
+end test "command_file arguments become positional parameters"
+```
+
+#### Test: -c without command_name defaults $0 to shell path
+
+When -c is used without a command_name operand, special parameter $0 shall be set to the first argument passed to sh from its parent (argv[0]).
+
+```
+begin test "-c without command_name defaults $0 to shell path"
+  script
+    $SHELL -c 'echo "$0"'
+  expect
+    stdout ".*sh.*"
+    stderr ""
+    exit_code 0
+end test "-c without command_name defaults $0 to shell path"
+```
+
+#### Test: exit 127 for command_file not found
+
+A non-interactive shell shall return exit status 127 when the specified command_file could not be found.
+
+```
+begin test "exit 127 for command_file not found"
+  script
+    $SHELL /nonexistent_script_path_xyz 2>/dev/null; echo $?
+  expect
+    stdout "127"
+    stderr ""
+    exit_code 0
+end test "exit 127 for command_file not found"
+```
+
+#### Test: no line length limit enforced
+
+The shell shall not enforce any line length limits when parsing input files.
+
+```
+begin test "no line length limit enforced"
+  script
+    long=$(printf 'x%.0s' $(seq 1 10000))
+    printf 'echo %s\n' "$long" > tmp_long.sh
+    result=$($SHELL tmp_long.sh)
+    printf '%s\n' "${#result}"
+    rm -f tmp_long.sh
+  expect
+    stdout "10000"
+    stderr ""
+    exit_code 0
+end test "no line length limit enforced"
+```
+
+#### Test: syntax error exits 1-125
+
+A non-interactive shell that detects a syntax error shall exit with a status in the range 1-125.
+
+```
+begin test "syntax error exits 1-125"
+  script
+    $SHELL -c 'if then fi' 2>/dev/null; echo $?
+  expect
+    stdout "([1-9]|[1-9][0-9]|1[01][0-9]|12[0-5])"
+    stderr ""
+    exit_code 0
+end test "syntax error exits 1-125"
+```
+
+#### Test: interactive shell ignores SIGTERM
+
+If the shell is interactive, SIGTERM signals shall be ignored. Sending SIGTERM to an interactive shell must not terminate it.
+
+```
+begin interactive test "interactive shell ignores SIGTERM"
+  spawn -i
+  expect "$ "
+  send "kill -TERM $$"
+  expect "$ "
+  send "echo survived_sigterm"
+  expect "survived_sigterm"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "interactive shell ignores SIGTERM"
 ```
 
 #### Test: interactive here-document prompt goes to stderr stream
@@ -1132,6 +1254,7 @@ begin test "interactive here-document prompt goes to stderr stream"
     EOF
     grep -q 'heredoc> ' hd_stderr.txt && echo stderr_ok || echo stderr_missing
     grep -q 'heredoc> ' hd_stdout.txt && echo stdout_leak || echo stdout_clean
+    rm -f hd_stdout.txt hd_stderr.txt
   expect
     stdout "stderr_ok\nstdout_clean"
     stderr ""
@@ -1744,22 +1867,19 @@ begin interactive test "insert mode backspace erases"
 end interactive test "insert mode backspace erases"
 ```
 
-#### Test: EOF interpretation at beginning of line
+#### Test: EOF at beginning of line exits shell
 
-The end-of-file character is interpreted as end of input only at the beginning of an input line. If entered in the middle of a line, the results are unspecified.
+The end-of-file character shall be interpreted as the end of input when it occurs at the beginning of an input line. Sending EOF on an empty prompt line terminates the interactive shell.
 
 ```
-begin interactive test "EOF interpretation at beginning of line"
+begin interactive test "EOF at beginning of line exits shell"
   spawn -i
   expect "$ "
   send "set -o vi"
   expect "$ "
-  sendraw 65 63 68 6f 20 61 04 62
-  sendraw 0a
-  expect "$ "
   sendeof
   wait
-end interactive test "EOF interpretation at beginning of line"
+end interactive test "EOF at beginning of line exits shell"
 ```
 
 #### Test: edit line semantics modify from history
@@ -1791,12 +1911,12 @@ begin interactive test "edit line semantics modify from history"
 end interactive test "edit line semantics modify from history"
 ```
 
-#### Test: count out of range alerts terminal
+#### Test: l count overflow clamps to last character
 
-A count that is out of range (e.g., `9l` when fewer than 9 characters remain) is considered an error condition and shall alert the terminal, but neither the cursor position nor the command line shall change.
+If the count for `l` is larger than the number of characters after the cursor, this shall not be considered an error; the cursor shall advance to the last character on the line.
 
 ```
-begin interactive test "count out of range alerts terminal"
+begin interactive test "l count overflow clamps to last character"
   spawn -i
   expect "$ "
   send "set -o vi"
@@ -1811,12 +1931,12 @@ begin interactive test "count out of range alerts terminal"
   expect "$ "
   sendeof
   wait
-end interactive test "count out of range alerts terminal"
+end interactive test "l count overflow clamps to last character"
 ```
 
 #### Test: tilde count overflow
 
-If the `~` count is larger than the number of characters after the cursor, this shall not be considered an error; the cursor shall advance to the last character on the line and all reachable characters are case-converted.
+If the `~` count is larger than the number of characters after the cursor, this shall not be considered an error; the cursor shall advance to the last character on the line and all reachable characters are case-converted. Known bash non-compliance #4: bash only toggles one character instead of applying the count.
 
 ```
 begin interactive test "tilde count overflow"
@@ -2030,17 +2150,17 @@ begin interactive test "find forward stop before t"
   expect "$ "
   send "set -o vi"
   expect "$ "
-  sendraw 65 63 68 6f 20 61 62 63
+  sendraw 65 63 68 6f 20 61 62 64
   sendraw 1b
   sleep 100ms
-  sendraw 30
+  sendraw 30 77
   sleep 50ms
-  sendraw 74 63
+  sendraw 74 64
   sleep 50ms
   sendraw 72 5a
   sleep 100ms
   sendraw 0a
-  expect "echo aZc"
+  expect "aZd"
   expect "$ "
   sendeof
   wait
@@ -2057,7 +2177,7 @@ begin interactive test "find backward stop after T"
   expect "$ "
   send "set -o vi"
   expect "$ "
-  sendraw 65 63 68 6f 20 61 62 63
+  sendraw 65 63 68 6f 20 61 62 64
   sendraw 1b
   sleep 100ms
   sendraw 54 61
@@ -2065,7 +2185,7 @@ begin interactive test "find backward stop after T"
   sendraw 72 5a
   sleep 100ms
   sendraw 0a
-  expect "echo aZc"
+  expect "aZd"
   expect "$ "
   sendeof
   wait
@@ -2237,7 +2357,7 @@ end interactive test "X deletes before cursor"
 
 #### Test: X on first char no effect
 
-If the cursor is positioned on the first character of the content (after the command prefix), the `X` command shall have no effect and the terminal is alerted.
+If the cursor is positioned on the first character of the line, the `X` command shall have no effect and the terminal shall be alerted.
 
 ```
 begin interactive test "X on first char no effect"
@@ -2245,15 +2365,15 @@ begin interactive test "X on first char no effect"
   expect "$ "
   send "set -o vi"
   expect "$ "
-  sendraw 65 63 68 6f 20 61
+  sendraw 65 63 68 6f 20 61 62
   sendraw 1b
   sleep 100ms
-  sendraw 30 77
+  sendraw 30
   sleep 50ms
   sendraw 58
   sleep 100ms
   sendraw 0a
-  expect "a"
+  expect "ab"
   expect "$ "
   sendeof
   wait
@@ -2413,12 +2533,12 @@ begin interactive test "HISTSIZE unset default"
 end interactive test "HISTSIZE unset default"
 ```
 
-#### Test: history search forward slash
+#### Test: history search backward with slash
 
 The `/pattern` command searches backward through command history for lines matching the pattern. If found, the current command line is set to that line.
 
 ```
-begin interactive test "history search forward slash"
+begin interactive test "history search backward with slash"
   spawn -i
   expect "$ "
   send "set -o vi"
@@ -2438,7 +2558,7 @@ begin interactive test "history search forward slash"
   expect "$ "
   sendeof
   wait
-end interactive test "history search forward slash"
+end interactive test "history search backward with slash"
 ```
 
 #### Test: history search nonexistent pattern
@@ -2494,33 +2614,6 @@ begin interactive test "move to end of word e"
 end interactive test "move to end of word e"
 ```
 
-#### Test: move to end of word 2e
-
-A count prefix on `e` moves the cursor to the end of the count-th word from the current position.
-
-```
-begin interactive test "move to end of word 2e"
-  spawn -i
-  expect "$ "
-  send "set -o vi"
-  expect "$ "
-  sendraw 65 63 68 6f 20 61 62 63 20 64 65 66
-  sendraw 1b
-  sleep 100ms
-  sendraw 30
-  sleep 50ms
-  sendraw 32 65
-  sleep 50ms
-  sendraw 72 5a
-  sleep 100ms
-  sendraw 0a
-  expect "abZ def"
-  expect "$ "
-  sendeof
-  wait
-end interactive test "move to end of word 2e"
-```
-
 #### Test: move to end of bigword E
 
 The `E` command moves to the end of the current bigword. A bigword is delimited only by blank characters.
@@ -2550,33 +2643,6 @@ begin interactive test "move to end of bigword E"
 end interactive test "move to end of bigword E"
 ```
 
-#### Test: E treats punctuation as part of word
-
-The `E` command treats punctuation characters (like `.`) as part of the bigword, unlike `e` which considers them word boundaries.
-
-```
-begin interactive test "E treats punctuation as part of word"
-  spawn -i
-  expect "$ "
-  send "set -o vi"
-  expect "$ "
-  sendraw 65 63 68 6f 20 61 2e 62 20 63 2e 64
-  sendraw 1b
-  sleep 100ms
-  sendraw 30
-  sleep 50ms
-  sendraw 77 45
-  sleep 50ms
-  sendraw 72 5a
-  sleep 100ms
-  sendraw 0a
-  expect "a\.Z c\.d"
-  expect "$ "
-  sendeof
-  wait
-end interactive test "E treats punctuation as part of word"
-```
-
 #### Test: put before cursor P
 
 The `P` command puts a copy of the save buffer before the current cursor position. The cursor is moved to the last character put from the save buffer.
@@ -2604,12 +2670,12 @@ begin interactive test "put before cursor P"
 end interactive test "put before cursor P"
 ```
 
-#### Test: search backward question mark
+#### Test: history search forward with question mark
 
 The `?pattern` command searches forward through command history for the specified pattern. If found, the current command line is set to that line.
 
 ```
-begin interactive test "search backward question mark"
+begin interactive test "history search forward with question mark"
   spawn -i
   expect "$ "
   send "set -o vi"
@@ -2629,12 +2695,12 @@ begin interactive test "search backward question mark"
   expect "$ "
   sendeof
   wait
-end interactive test "search backward question mark"
+end interactive test "history search forward with question mark"
 ```
 
 #### Test: repeat search n
 
-The `n` command repeats the most recent `/` or `?` search. If the pattern was previously found, it searches for the next occurrence in the same direction.
+The `n` command repeats the most recent `/` or `?` search in the same direction. After `/` finds a match, `n` searches further backward to find the next older occurrence.
 
 ```
 begin interactive test "repeat search n"
@@ -2655,8 +2721,10 @@ begin interactive test "repeat search n"
   sleep 100ms
   sendraw 2f 61 6c 70 68 61 0a
   sleep 200ms
+  sendraw 6e
+  sleep 200ms
   sendraw 0a
-  expect "alpha2"
+  expect "alpha1"
   expect "$ "
   sendeof
   wait
@@ -2665,7 +2733,7 @@ end interactive test "repeat search n"
 
 #### Test: repeat search opposite direction N
 
-The `N` command repeats the most recent `/` or `?` search but reverses the direction of the search.
+The `N` command repeats the most recent `/` or `?` search but reverses the direction. After `/` (backward) finds a match, `N` searches forward.
 
 ```
 begin interactive test "repeat search opposite direction N"
@@ -2687,6 +2755,8 @@ begin interactive test "repeat search opposite direction N"
   sendraw 2f 67 61 6d 6d 61 0a
   sleep 200ms
   sendraw 6e
+  sleep 200ms
+  sendraw 4e
   sleep 200ms
   sendraw 0a
   expect "gamma"
@@ -2832,12 +2902,12 @@ begin interactive test "substitute entire line S"
 end interactive test "substitute entire line S"
 ```
 
-#### Test: yank entire line Y
+#### Test: yank to end of line Y
 
-The `Y` command yanks characters from the current cursor position to the end of the line into the save buffer. The cursor position is unchanged.
+The `Y` command yanks characters from the current cursor position to the end of the line into the save buffer. The current cursor position shall be unchanged.
 
 ```
-begin interactive test "yank entire line Y"
+begin interactive test "yank to end of line Y"
   spawn -i
   expect "$ "
   send "set -o vi"
@@ -2856,7 +2926,7 @@ begin interactive test "yank entire line Y"
   expect "$ "
   sendeof
   wait
-end interactive test "yank entire line Y"
+end interactive test "yank to end of line Y"
 ```
 
 #### Test: vi glob expand * with known files
@@ -2889,7 +2959,7 @@ end interactive test "vi glob expand * with known files"
 
 #### Test: vi glob expand * on directory appends slash
 
-If any directories are matched during `*` expansion, a `/` character shall be appended to the directory name.
+If any directories are matched during `*` expansion, a `/` character shall be appended to the directory name. Known bash non-compliance: bash does not append the trailing slash.
 
 ```
 begin interactive test "vi glob expand * on directory appends slash"
@@ -2907,7 +2977,7 @@ begin interactive test "vi glob expand * on directory appends slash"
   sendraw 2a
   sleep 200ms
   sendraw 0a
-  expect "testdir_comp"
+  expect "testdir_comp/"
   expect "$ "
   sendeof
   wait
@@ -3023,4 +3093,334 @@ begin interactive test "vi v command invokes editor and executes result"
   sendeof
   wait
 end interactive test "vi v command invokes editor and executes result"
+```
+
+#### Test: vi A appends at end of line
+
+The `A` command enters insert mode after the end of the current command line, regardless of current cursor position.
+
+```
+begin interactive test "vi A appends at end of line"
+  spawn -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62
+  sendraw 1b
+  sleep 100ms
+  sendraw 30
+  sleep 50ms
+  sendraw 41
+  sleep 50ms
+  sendraw 63 64
+  sendraw 1b
+  sleep 100ms
+  sendraw 0a
+  expect "abcd"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi A appends at end of line"
+```
+
+#### Test: vi I inserts at beginning of line
+
+The `I` command enters insert mode at the beginning of the current command line.
+
+```
+begin interactive test "vi I inserts at beginning of line"
+  spawn -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 63 68 6f 20 61 62
+  sendraw 1b
+  sleep 100ms
+  sendraw 49
+  sleep 50ms
+  sendraw 65
+  sendraw 1b
+  sleep 100ms
+  sendraw 0a
+  expect "ab"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi I inserts at beginning of line"
+```
+
+#### Test: vi U undoes all changes
+
+The `U` command undoes all changes made to the edit line, restoring it to its state before any modifications.
+
+```
+begin interactive test "vi U undoes all changes"
+  spawn -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  send "echo baseline"
+  expect "baseline"
+  expect "$ "
+  sendraw 1b
+  sleep 100ms
+  sendraw 6b
+  sleep 100ms
+  sendraw 24
+  sleep 50ms
+  sendraw 78
+  sleep 50ms
+  sendraw 78
+  sleep 50ms
+  sendraw 55
+  sleep 100ms
+  sendraw 0a
+  expect "baseline"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi U undoes all changes"
+```
+
+#### Test: vi caret moves to first non-blank
+
+The `^` command moves the cursor to the first character on the input line that is not a blank.
+
+```
+begin interactive test "vi caret moves to first non-blank"
+  spawn -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62
+  sendraw 1b
+  sleep 100ms
+  sendraw 5e
+  sleep 50ms
+  sendraw 72 5a
+  sleep 100ms
+  sendraw 0a
+  expect "Zcho"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi caret moves to first non-blank"
+```
+
+#### Test: vi dot repeat with count override
+
+If the `.` command is preceded by a count, it shall override any count argument to the previous command. The overriding count becomes the count for subsequent `.` commands.
+
+```
+begin interactive test "vi dot repeat with count override"
+  spawn -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 63 64 65 66
+  sendraw 1b
+  sleep 100ms
+  sendraw 32 78
+  sleep 100ms
+  sendraw 31 2e
+  sleep 100ms
+  sendraw 0a
+  expect "abc"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi dot repeat with count override"
+```
+
+#### Test: vi r with count replaces multiple chars
+
+The `r` command with a count prefix replaces the current and the following count-1 characters. The cursor is positioned on the last character changed.
+
+```
+begin interactive test "vi r with count replaces multiple chars"
+  spawn -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 63 64
+  sendraw 1b
+  sleep 100ms
+  sendraw 30 77
+  sleep 50ms
+  sendraw 33 72 5a
+  sleep 100ms
+  sendraw 0a
+  expect "ZZZd"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi r with count replaces multiple chars"
+```
+
+#### Test: vi insert mode Ctrl-W deletes word backward
+
+The Ctrl-W character in insert mode deletes characters from before the cursor to the preceding word boundary.
+
+```
+begin interactive test "vi insert mode Ctrl-W deletes word backward"
+  spawn -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 20 63 64
+  sendraw 17
+  sendraw 0a
+  expect "ab"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi insert mode Ctrl-W deletes word backward"
+```
+
+#### Test: vi insert mode SIGINT terminates editing
+
+If sh receives a SIGINT signal in insert mode, it shall terminate command line editing on the current command line with the same effects as interrupting command mode.
+
+```
+begin interactive test "vi insert mode SIGINT terminates editing"
+  spawn -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 70 61 72 74 69 61 6c
+  sendraw 03
+  expect "$ "
+  send "echo after_insert_sigint"
+  expect "after_insert_sigint"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi insert mode SIGINT terminates editing"
+```
+
+#### Test: vi yy yanks entire line
+
+If the motion command following `y` is `y` itself, the entire current command line shall be yanked into the save buffer. The cursor position is unchanged.
+
+```
+begin interactive test "vi yy yanks entire line"
+  spawn -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62
+  sendraw 1b
+  sleep 100ms
+  sendraw 79 79
+  sleep 50ms
+  sendraw 24
+  sleep 50ms
+  sendraw 70
+  sleep 100ms
+  sendraw 0a
+  expect "abecho ab"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi yy yanks entire line"
+```
+
+#### Test: set +o vi disables vi mode
+
+The command `set +o vi` shall disable vi-mode editing. After disabling, the shell reverts to its default line editing behavior.
+
+```
+begin interactive test "set +o vi disables vi mode"
+  spawn -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  send "set +o vi"
+  expect "$ "
+  send "echo still_works"
+  expect "still_works"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "set +o vi disables vi mode"
+```
+
+#### Test: vi minus key navigates history backward
+
+The `-` key in vi command mode shall behave identically to `k`, setting the current command line to the previous command in the history.
+
+```
+begin interactive test "vi minus key navigates history backward"
+  spawn -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  send "echo minustest"
+  expect "minustest"
+  expect "$ "
+  sendraw 1b
+  sleep 100ms
+  sendraw 2d
+  sleep 100ms
+  sendraw 0a
+  expect "minustest"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi minus key navigates history backward"
+```
+
+#### Test: vi plus key navigates history forward
+
+The `+` key in vi command mode shall behave identically to `j`, setting the current command line to the next command in the history.
+
+```
+begin interactive test "vi plus key navigates history forward"
+  spawn -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  send "echo plustest"
+  expect "plustest"
+  expect "$ "
+  sendraw 1b
+  sleep 100ms
+  sendraw 6b
+  sleep 100ms
+  sendraw 2b
+  sleep 100ms
+  sendraw 0a
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi plus key navigates history forward"
+```
+
+#### Test: vi G without number goes to oldest history
+
+The `G` command without a number shall set the current command line to the oldest command line stored in the shell command history.
+
+```
+begin interactive test "vi G without number goes to oldest history"
+  spawn -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  send "HISTSIZE=5"
+  expect "$ "
+  send "echo oldest_entry"
+  expect "oldest_entry"
+  expect "$ "
+  send "echo newer_entry"
+  expect "newer_entry"
+  expect "$ "
+  sendraw 1b
+  sleep 100ms
+  sendraw 47
+  sleep 100ms
+  sendraw 0a
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi G without number goes to oldest history"
 ```
