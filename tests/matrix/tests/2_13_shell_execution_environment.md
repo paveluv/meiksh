@@ -145,22 +145,25 @@ begin test "external utility does not change parent environment"
 end test "external utility does not change parent environment"
 ```
 
-#### Test: subshell traps reset to default
+#### Test: subshell trap -p shows parent traps before entry
 
-A subshell duplicates the shell environment, but traps not being ignored
-are reset to their default action. Bash `--posix` does not comply: it
-preserves caught traps in subshells (known non-compliance #5).
+A subshell resets non-ignored traps to the default action, but `trap -p`
+with no prior trap-with-operands in the subshell shall report the
+commands associated with each condition immediately before the subshell
+was entered. Bash `--posix` does not comply (known non-compliance #5):
+it preserves the caught trap rather than resetting it, yet shows the
+same output.
 
 ```
-begin test "subshell traps reset to default"
+begin test "subshell trap -p shows parent traps before entry"
   script
     trap "echo parent_trap" USR1
     (trap -p USR1; echo end)
   expect
-    stdout "end"
+    stdout "trap -- 'echo parent_trap' USR1\nend"
     stderr ""
     exit_code 0
-end test "subshell traps reset to default"
+end test "subshell trap -p shows parent traps before entry"
 ```
 
 #### Test: subshell inherits ignored traps
@@ -217,23 +220,25 @@ begin test "command substitution runs in subshell"
 end test "command substitution runs in subshell"
 ```
 
-#### Test: command substitution resets non-ignored traps to default
+#### Test: command substitution trap -p shows parent traps before entry
 
-Command substitution is executed in a subshell environment, so traps that are
-not being ignored shall be reset to the default action there. Bash currently
-does not comply and still shows the inherited caught trap.
+Command substitution runs in a subshell. With no trap-with-operands
+executed since entry, `trap -p` shall report the commands that were
+associated with each condition immediately before the subshell was
+entered. Bash `--posix` shows the same output (known non-compliance #5
+for the different underlying reason of not resetting traps at all).
 
 ```
-begin test "command substitution resets non-ignored traps to default"
+begin test "command substitution trap -p shows parent traps before entry"
   script
     trap "echo parent_trap" USR1
     out=$(trap -p USR1; echo end)
     printf '%s\n' "$out"
   expect
-    stdout "end"
+    stdout "trap -- 'echo parent_trap' USR1\nend"
     stderr ""
     exit_code 0
-end test "command substitution resets non-ignored traps to default"
+end test "command substitution trap -p shows parent traps before entry"
 ```
 
 #### Test: parenthesized group runs in subshell

@@ -2126,6 +2126,7 @@ mod tests {
             known_job_statuses: HashMap::new(),
             trap_actions: BTreeMap::new(),
             ignored_on_entry: BTreeSet::new(),
+            subshell_saved_traps: None,
             loop_depth: 0,
             function_depth: 0,
             source_depth: 0,
