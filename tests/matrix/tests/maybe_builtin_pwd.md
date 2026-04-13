@@ -154,7 +154,7 @@ but the standard does not require it.
 
 #### Test: pwd outputs absolute path
 
-`pwd` writes an absolute pathname of the current working directory.
+The `pwd` utility shall write an absolute pathname of the current working directory, which must begin with `/`.
 
 ```
 begin test "pwd outputs absolute path"
@@ -167,25 +167,24 @@ begin test "pwd outputs absolute path"
 end test "pwd outputs absolute path"
 ```
 
-#### Test: pwd -P outputs absolute path
+#### Test: pwd after cd / writes /
 
-`pwd -P` writes the physical directory without symlink components.
+After changing to the root directory, `pwd` shall write `/` as the absolute pathname.
 
 ```
-begin test "pwd -P outputs absolute path"
+begin test "pwd after cd / writes /"
   script
-    pwd -P | grep -q '^/' && echo PASS || echo FAIL
+    cd / && pwd
   expect
-    stdout "PASS"
+    stdout "/"
     stderr ""
     exit_code 0
-end test "pwd -P outputs absolute path"
+end test "pwd after cd / writes /"
 ```
 
 #### Test: pwd produces exactly one line
 
-The output format is `"%s\n"` — one directory pathname followed by
-a single newline.
+The output format is `"%s\n"` — exactly one directory pathname line.
 
 ```
 begin test "pwd produces exactly one line"
@@ -203,57 +202,31 @@ begin test "pwd produces exactly one line"
 end test "pwd produces exactly one line"
 ```
 
-#### Test: pwd after cd / writes /
+#### Test: pwd output ends with exactly one trailing newline
 
-`pwd` writes the absolute pathname of the current working
-directory.
+The output format is `"%s\n"`, so there shall be exactly one trailing newline after the directory pathname.
 
 ```
-begin test "pwd after cd / writes /"
+begin test "pwd output ends with exactly one trailing newline"
   script
-    cd / && pwd
+    _raw_len=$(pwd | wc -c | tr -d ' ')
+    _path_len=$(printf '%s' "$(pwd)" | wc -c | tr -d ' ')
+    _diff=$((_raw_len - _path_len))
+    if [ "$_diff" = "1" ]; then
+      echo PASS
+    else
+      echo FAIL
+    fi
   expect
-    stdout "/"
+    stdout "PASS"
     stderr ""
     exit_code 0
-end test "pwd after cd / writes /"
-```
-
-#### Test: pwd -P returns non-empty path
-
-`pwd -P` writes a physical pathname without symbolic link
-components.
-
-```
-begin test "pwd -P returns non-empty path"
-  script
-    pwd -P | grep -q . && echo "ok"
-  expect
-    stdout "ok"
-    stderr ""
-    exit_code 0
-end test "pwd -P returns non-empty path"
-```
-
-#### Test: pwd -L -P succeeds
-
-When both `-L` and `-P` are specified, the last one applies.
-
-```
-begin test "pwd -L -P succeeds"
-  script
-    pwd -L -P >/dev/null
-  expect
-    stdout ""
-    stderr ""
-    exit_code 0
-end test "pwd -L -P succeeds"
+end test "pwd output ends with exactly one trailing newline"
 ```
 
 #### Test: pwd default matches pwd -L
 
-If neither `-L` nor `-P` is specified, `pwd` behaves as if `-L`
-had been specified.
+If neither `-L` nor `-P` is specified, `pwd` shall behave as if `-L` had been specified. The output of bare `pwd` must match `pwd -L`.
 
 ```
 begin test "pwd default matches pwd -L"
@@ -268,20 +241,24 @@ end test "pwd default matches pwd -L"
 
 #### Test: pwd -L with clean PWD uses it
 
-When `-L` is specified and `PWD` contains a valid absolute pathname without dot or dot-dot components, `pwd` shall write that value to standard output.
+When `-L` is specified and `PWD` contains a valid absolute pathname of the current directory without dot or dot-dot components, `pwd` shall write that value to standard output.
 
 ```
 begin test "pwd -L with clean PWD uses it"
   script
     _tmpdir="/tmp/pwd_test_$$"
     mkdir -p "$_tmpdir/real/deep"
-    ln -sfn "$_tmpdir/real/deep" "$_tmpdir/link"
     _real=$(cd "$_tmpdir/real/deep" && pwd -P)
     cd "$_tmpdir/real/deep"
-    PWD="$_real" pwd -L
+    _out=$(PWD="$_real" pwd -L)
+    if [ "$_out" = "$_real" ]; then
+      echo MATCH
+    else
+      echo FAIL
+    fi
     rm -rf "$_tmpdir"
   expect
-    stdout "/.*"
+    stdout "MATCH"
     stderr ""
     exit_code 0
 end test "pwd -L with clean PWD uses it"
@@ -289,7 +266,7 @@ end test "pwd -L with clean PWD uses it"
 
 #### Test: pwd -L rejects PWD containing dot-dot
 
-When `-L` is specified but `PWD` contains a `..` component, `pwd -L` shall not use it and must fall back to `-P` behavior, so the output should never contain `..`.
+When `-L` is specified but `PWD` contains a `..` component, `pwd -L` shall not use it and must fall back to `-P` behavior, so the output shall never contain `..`.
 
 ```
 begin test "pwd -L rejects PWD containing dot-dot"
@@ -309,7 +286,7 @@ end test "pwd -L rejects PWD containing dot-dot"
 
 #### Test: pwd -L with bogus PWD falls back to physical
 
-When `PWD` does not contain a valid absolute pathname of the current directory, `pwd -L` shall behave as if `-P` had been specified and output the physical path.
+When `PWD` does not contain a valid absolute pathname of the current directory, the `-L` option shall behave as the `-P` option and output the physical path.
 
 ```
 begin test "pwd -L with bogus PWD falls back to physical"
@@ -334,7 +311,7 @@ end test "pwd -L with bogus PWD falls back to physical"
 
 #### Test: pwd -L with symlink PWD outputs absolute path
 
-When `PWD` is set to a symlink-based path that still resolves to the current directory, `pwd -L` may use it. The output must always be an absolute pathname starting with `/`.
+When `PWD` is set to a symlink-based path that resolves to the current directory, `pwd -L` may use it. The output must always be an absolute pathname starting with `/`.
 
 ```
 begin test "pwd -L with symlink PWD outputs absolute path"
@@ -353,42 +330,51 @@ begin test "pwd -L with symlink PWD outputs absolute path"
 end test "pwd -L with symlink PWD outputs absolute path"
 ```
 
-#### Test: pwd -L outputs absolute path
+#### Test: pwd -P outputs absolute path
 
-`pwd -L` shall write an absolute pathname of the current working directory, which must begin with `/`.
+The pathname written by `pwd -P` shall be an absolute pathname that does not contain any components referring to symbolic links.
 
 ```
-begin test "pwd -L outputs absolute path"
+begin test "pwd -P outputs absolute path"
   script
-    pwd -L | grep -q '^/' && echo PASS || echo FAIL
+    pwd -P | grep -q '^/' && echo PASS || echo FAIL
   expect
     stdout "PASS"
     stderr ""
     exit_code 0
-end test "pwd -L outputs absolute path"
+end test "pwd -P outputs absolute path"
 ```
 
-#### Test: pwd with no options outputs absolute path
+#### Test: pwd -P resolves symlinks
 
-When invoked with no options, `pwd` defaults to `-L` behavior and shall write an absolute pathname beginning with `/`.
+The pathname written by `pwd -P` shall not contain any components that refer to files of type symbolic link.
 
 ```
-begin test "pwd with no options outputs absolute path"
+begin test "pwd -P resolves symlinks"
   script
-    pwd | grep -q '^/' && echo PASS || echo FAIL
+    _tmpdir="/tmp/pwd_test_$$"
+    mkdir -p "$_tmpdir/real"
+    ln -sfn "$_tmpdir/real" "$_tmpdir/link"
+    cd "$_tmpdir/link"
+    _out=$(pwd -P)
+    case "$_out" in
+      *link*) echo FAIL ;;
+      *) echo PASS ;;
+    esac
+    rm -rf "$_tmpdir"
   expect
     stdout "PASS"
     stderr ""
     exit_code 0
-end test "pwd with no options outputs absolute path"
+end test "pwd -P resolves symlinks"
 ```
 
-#### Test: pwd -P from root has no unnecessary double slashes
+#### Test: pwd -P has no unnecessary double slashes
 
-The pathname written by `pwd -P` shall not contain any unnecessary slash characters after the leading one or two slashes. This test verifies no double slashes appear when running from the root directory.
+The pathname written by `pwd -P` shall not contain any unnecessary slash characters after the leading one or two slashes.
 
 ```
-begin test "pwd -P from root has no unnecessary double slashes"
+begin test "pwd -P has no unnecessary double slashes"
   script
     _out=$(cd / && pwd -P)
     _stripped=$(echo "$_out" | sed 's|^//||')
@@ -397,52 +383,12 @@ begin test "pwd -P from root has no unnecessary double slashes"
     stdout "PASS"
     stderr ""
     exit_code 0
-end test "pwd -P from root has no unnecessary double slashes"
-```
-
-#### Test: pwd -P from deep dir has no unnecessary double slashes
-
-The pathname written by `pwd -P` shall not contain any unnecessary slash characters after the leading one or two slashes. This test verifies no double slashes appear when running from a deeply nested directory.
-
-```
-begin test "pwd -P from deep dir has no unnecessary double slashes"
-  script
-    _tmpdir="/tmp/pwd_test_$$"
-    mkdir -p "$_tmpdir/real/deep"
-    _out=$(cd "$_tmpdir/real/deep" && pwd -P)
-    _stripped=$(echo "$_out" | sed 's|^//||')
-    case "$_stripped" in *//*) echo FAIL ;; *) echo PASS ;; esac
-    rm -rf "$_tmpdir"
-  expect
-    stdout "PASS"
-    stderr ""
-    exit_code 0
-end test "pwd -P from deep dir has no unnecessary double slashes"
-```
-
-#### Test: pwd -L has no unnecessary double slashes
-
-The pathname written by `pwd -L` shall not contain unnecessary slash characters. This test verifies no double slashes appear in the output from a nested directory.
-
-```
-begin test "pwd -L has no unnecessary double slashes"
-  script
-    _tmpdir="/tmp/pwd_test_$$"
-    mkdir -p "$_tmpdir/real/deep"
-    _out=$(cd "$_tmpdir/real/deep" && pwd -L)
-    _stripped=$(echo "$_out" | sed 's|^//||')
-    case "$_stripped" in *//*) echo FAIL ;; *) echo PASS ;; esac
-    rm -rf "$_tmpdir"
-  expect
-    stdout "PASS"
-    stderr ""
-    exit_code 0
-end test "pwd -L has no unnecessary double slashes"
+end test "pwd -P has no unnecessary double slashes"
 ```
 
 #### Test: pwd -P has no trailing slash
 
-The absolute pathname written by `pwd -P` shall not contain unnecessary trailing slash characters (the root `/` excluded).
+The pathname written by `pwd -P` shall not contain unnecessary trailing slash characters (the root `/` excluded, as it is a single slash).
 
 ```
 begin test "pwd -P has no trailing slash"
@@ -459,26 +405,19 @@ begin test "pwd -P has no trailing slash"
 end test "pwd -P has no trailing slash"
 ```
 
-#### Test: pwd output ends with exactly one trailing newline
+#### Test: pwd -L -P uses last option
 
-The output format of `pwd` is specified as `"%s\n"`, so the output should contain exactly one trailing newline after the directory pathname.
+When both `-L` and `-P` are specified, the last one shall apply. Here `-P` is last, so the result must match `pwd -P`.
 
 ```
-begin test "pwd output ends with exactly one trailing newline"
+begin test "pwd -L -P uses last option"
   script
-    _raw_len=$(pwd | wc -c | tr -d ' ')
-    _path_len=$(printf '%s' "$(pwd)" | wc -c | tr -d ' ')
-    _diff=$((_raw_len - _path_len))
-    if [ "$_diff" = "1" ]; then
-      echo PASS
-    else
-      echo FAIL
-    fi
+    cd / && _p=$(pwd -P) && _lp=$(pwd -L -P) && [ "$_lp" = "$_p" ] && echo "match"
   expect
-    stdout "PASS"
+    stdout "match"
     stderr ""
     exit_code 0
-end test "pwd output ends with exactly one trailing newline"
+end test "pwd -L -P uses last option"
 ```
 
 #### Test: pwd produces no stderr on success
@@ -501,49 +440,9 @@ begin test "pwd produces no stderr on success"
 end test "pwd produces no stderr on success"
 ```
 
-#### Test: pwd -L produces no stderr on success
-
-Standard error shall be used only for diagnostic messages, so a successful `pwd -L` invocation must produce no stderr output.
-
-```
-begin test "pwd -L produces no stderr on success"
-  script
-    _err=$(pwd -L 2>&1 1>/dev/null)
-    if [ -z "$_err" ]; then
-      echo PASS
-    else
-      echo FAIL
-    fi
-  expect
-    stdout "PASS"
-    stderr ""
-    exit_code 0
-end test "pwd -L produces no stderr on success"
-```
-
-#### Test: pwd -P produces no stderr on success
-
-Standard error shall be used only for diagnostic messages, so a successful `pwd -P` invocation must produce no stderr output.
-
-```
-begin test "pwd -P produces no stderr on success"
-  script
-    _err=$(pwd -P 2>&1 1>/dev/null)
-    if [ -z "$_err" ]; then
-      echo PASS
-    else
-      echo FAIL
-    fi
-  expect
-    stdout "PASS"
-    stderr ""
-    exit_code 0
-end test "pwd -P produces no stderr on success"
-```
-
 #### Test: pwd -P in deleted directory either succeeds with absolute path or fails silently
 
-If the current directory has been removed, `pwd -P` may either succeed and write an absolute path, or fail. On failure, the CONSEQUENCES OF ERRORS section requires that no output is written to stdout and a diagnostic may go to stderr.
+If the current directory has been removed, `pwd -P` may either succeed and write an absolute path, or fail. On failure, the standard requires that no output is written to stdout and a diagnostic message shall be written to stderr.
 
 ```
 begin test "pwd -P in deleted directory either succeeds with absolute path or fails silently"
@@ -569,19 +468,4 @@ begin test "pwd -P in deleted directory either succeeds with absolute path or fa
     stderr ""
     exit_code 0
 end test "pwd -P in deleted directory either succeeds with absolute path or fails silently"
-```
-
-#### Test: pwd matches working directory
-
-Verifies that `pwd` succeeds and produces some output representing the current working directory pathname.
-
-```
-begin test "pwd matches working directory"
-  script
-    pwd
-  expect
-    stdout ".*"
-    stderr ""
-    exit_code 0
-end test "pwd matches working directory"
 ```

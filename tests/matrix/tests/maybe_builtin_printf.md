@@ -302,7 +302,7 @@ but the standard does not require it.
 
 #### Test: printf plain string
 
-`printf` writes the format operand to standard output.
+The `printf` utility writes the format operand to standard output (statement 1).
 
 ```
 begin test "printf plain string"
@@ -315,9 +315,24 @@ begin test "printf plain string"
 end test "printf plain string"
 ```
 
+#### Test: printf %s single argument
+
+The `%s` conversion specifier formats a string argument under control of the format operand (statement 2).
+
+```
+begin test "printf %s single argument"
+  script
+    printf "%s" hello
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
+end test "printf %s single argument"
+```
+
 #### Test: printf %s with two arguments
 
-The `%s` conversion specifier writes string arguments.
+A format string with two `%s` specifiers consumes two string arguments sequentially.
 
 ```
 begin test "printf %s with two arguments"
@@ -332,7 +347,7 @@ end test "printf %s with two arguments"
 
 #### Test: printf %d integer
 
-The `%d` conversion specifier writes a signed decimal integer.
+The `%d` conversion specifier formats a signed decimal integer (statement 2).
 
 ```
 begin test "printf %d integer"
@@ -345,9 +360,159 @@ begin test "printf %d integer"
 end test "printf %d integer"
 ```
 
+#### Test: printf %d negative integer
+
+The `%d` conversion specifier correctly formats negative integer arguments, including the leading minus sign.
+
+```
+begin test "printf %d negative integer"
+  script
+    printf "%d" -1
+  expect
+    stdout "-1"
+    stderr ""
+    exit_code 0
+end test "printf %d negative integer"
+```
+
+#### Test: printf %d zero
+
+The `%d` conversion specifier correctly formats a zero argument, producing the string `0`.
+
+```
+begin test "printf %d zero"
+  script
+    printf "%d" 0
+  expect
+    stdout "0"
+    stderr ""
+    exit_code 0
+end test "printf %d zero"
+```
+
+#### Test: printf %u unsigned
+
+The `%u` conversion specifier formats an unsigned decimal integer (statement 6).
+
+```
+begin test "printf %u unsigned"
+  script
+    printf "%u" 42
+  expect
+    stdout "42"
+    stderr ""
+    exit_code 0
+end test "printf %u unsigned"
+```
+
+#### Test: printf %o octal
+
+The `%o` conversion specifier formats an integer as an octal string (statement 7).
+
+```
+begin test "printf %o octal"
+  script
+    printf "%o" 42
+  expect
+    stdout "52"
+    stderr ""
+    exit_code 0
+end test "printf %o octal"
+```
+
+#### Test: printf %x hexadecimal
+
+The `%x` conversion specifier formats an integer as a lowercase hexadecimal string.
+
+```
+begin test "printf %x hexadecimal"
+  script
+    printf "%x" 255
+  expect
+    stdout "ff"
+    stderr ""
+    exit_code 0
+end test "printf %x hexadecimal"
+```
+
+#### Test: printf %d no surrounding blanks
+
+The implementation shall not precede or follow output from the `%d` conversion specifier with blank characters not specified by the format operand (statement 6).
+
+```
+begin test "printf %d no surrounding blanks"
+  script
+    printf "%d" 42
+  expect
+    stdout "42"
+    stderr ""
+    exit_code 0
+end test "printf %d no surrounding blanks"
+```
+
+#### Test: printf %u no surrounding blanks
+
+The implementation shall not precede or follow output from the `%u` conversion specifier with blank characters not specified by the format operand (statement 6).
+
+```
+begin test "printf %u no surrounding blanks"
+  script
+    printf "%u" 42
+  expect
+    stdout "42"
+    stderr ""
+    exit_code 0
+end test "printf %u no surrounding blanks"
+```
+
+#### Test: printf %o without leading zero
+
+The `%o` conversion specifier shall not precede its output with zeros not specified by the format operand (statement 7).
+
+```
+begin test "printf %o without leading zero"
+  script
+    printf "%o" 42
+  expect
+    stdout "52"
+    stderr ""
+    exit_code 0
+end test "printf %o without leading zero"
+```
+
+#### Test: printf %#o with leading zero
+
+The `#` flag on the `%o` conversion specifier forces the output to begin with a leading zero (alternative form), so `%#o` with `42` produces `052`.
+
+```
+begin test "printf %#o with leading zero"
+  script
+    printf "%#o" 42
+  expect
+    stdout "052"
+    stderr ""
+    exit_code 0
+end test "printf %#o with leading zero"
+```
+
+#### Test: printf space in format is literal
+
+A space in the format string, in any context other than a flag of a conversion specification, shall be treated as an ordinary character copied to the output (statement 3).
+
+```
+begin test "printf space in format is literal"
+  script
+    printf "a b c"
+  expect
+    stdout "a b c"
+    stderr ""
+    exit_code 0
+end test "printf space in format is literal"
+```
+
 #### Test: printf newline escape
 
-`\n` in the format produces a newline character.
+The `\n` escape sequence in the format string produces a newline character in the output (statement 4).
 
 ```
 begin test "printf newline escape"
@@ -360,159 +525,49 @@ begin test "printf newline escape"
 end test "printf newline escape"
 ```
 
-#### Test: printf %c takes first byte of abc
+#### Test: printf tab escape
 
-The `%c` conversion writes the first byte of the argument.
+The `\t` escape sequence in the format string produces a horizontal tab character in the output (statement 4).
 
 ```
-begin test "printf %c takes first byte of abc"
+begin test "printf tab escape"
   script
-    printf "%c" abc
+    printf "a\tb"
   expect
-    stdout "a"
+    stdout "a\tb"
     stderr ""
     exit_code 0
-end test "printf %c takes first byte of abc"
+end test "printf tab escape"
 ```
 
-#### Test: printf with %s format
+#### Test: printf backslash escape
 
-`printf` writes formatted operands to standard output under control
-of the format operand.
+The `\\` escape sequence in the format string produces a single literal backslash character in the output (statement 4).
 
 ```
-begin test "printf with %s format"
+begin test "printf backslash escape"
   script
-    printf "%s %s\n" hello world
+    printf "\\\\"
   expect
-    stdout "hello world"
+    stdout "\\"
     stderr ""
     exit_code 0
-end test "printf with %s format"
+end test "printf backslash escape"
 ```
 
-#### Test: printf reuses format for multiple arguments
+#### Test: printf octal escape \101 produces A
 
-The format operand shall be reused as often as necessary to satisfy
-the argument operands.
+An octal escape `\ddd` in the format string writes a byte with the specified numeric value; `\101` is octal for 65, the ASCII character `A` (statement 5).
 
 ```
-begin test "printf reuses format for multiple arguments"
+begin test "printf octal escape \\101 produces A"
   script
-    printf "%s\n" a b c
+    printf "\101"
   expect
-    stdout "a\nb\nc"
+    stdout "A"
     stderr ""
     exit_code 0
-end test "printf reuses format for multiple arguments"
-```
-
-#### Test: printf %s treats argument as string
-
-The argument operands shall be treated as strings if the
-corresponding conversion specifier is `b`, `c`, or `s`.
-
-```
-begin test "printf %s treats argument as string"
-  script
-    printf "%s\n" test
-  expect
-    stdout "test"
-    stderr ""
-    exit_code 0
-end test "printf %s treats argument as string"
-```
-
-#### Test: printf %d treats argument as integer
-
-Arguments for `d`, `i`, `o`, `u`, `x`, `X` specifiers are
-evaluated as integer constants.
-
-```
-begin test "printf %d treats argument as integer"
-  script
-    printf "%d\n" 42
-  expect
-    stdout "42"
-    stderr ""
-    exit_code 0
-end test "printf %d treats argument as integer"
-```
-
-#### Test: printf %d with leading quote gives character value
-
-If the leading character is a single-quote or double-quote, the
-value shall be the numeric value of the following character.
-
-```
-begin test "printf %d with leading quote gives character value"
-  script
-    printf "%d\n" "'A"
-  expect
-    stdout "65"
-    stderr ""
-    exit_code 0
-end test "printf %d with leading quote gives character value"
-```
-
-#### Test: printf %s preserves shift state
-
-The `%s` conversion specifier writes its string argument verbatim, preserving the format string's initial shift state throughout.
-
-```
-begin test "printf %s preserves shift state"
-  script
-    printf "%s" abc
-  expect
-    stdout "abc"
-    stderr ""
-    exit_code 0
-end test "printf %s preserves shift state"
-```
-
-#### Test: printf mixed %s%d shift state
-
-When multiple conversion specifiers appear in a single format string, each consumes the next argument in order — `%s` treats its argument as a string and `%d` treats its argument as a decimal integer.
-
-```
-begin test "printf mixed %s%d shift state"
-  script
-    printf "%s%d" abc 123
-  expect
-    stdout "abc123"
-    stderr ""
-    exit_code 0
-end test "printf mixed %s%d shift state"
-```
-
-#### Test: printf format %s %s
-
-A format string with two `%s` specifiers separated by a space writes both string arguments with the literal space between them.
-
-```
-begin test "printf format %s %s"
-  script
-    printf "%s %s" hello world
-  expect
-    stdout "hello world"
-    stderr ""
-    exit_code 0
-end test "printf format %s %s"
-```
-
-#### Test: printf format num=%d
-
-Literal text in the format string is written verbatim alongside the `%d` conversion, so `"num=%d"` with argument `42` produces `num=42`.
-
-```
-begin test "printf format num=%d"
-  script
-    printf "num=%d" 42
-  expect
-    stdout "num=42"
-    stderr ""
-    exit_code 0
-end test "printf format num=%d"
+end test "printf octal escape \\101 produces A"
 ```
 
 #### Test: printf right-justified width %4d
@@ -537,9 +592,9 @@ The `-` flag causes the output to be left-justified within the specified field w
 ```
 begin test "printf left-justified width %-4d"
   script
-    printf "%-4d" 42
+    printf "%-4d" 42 | od -An -tx1 | tr -d ' \n'
   expect
-    stdout "42.*"
+    stdout "34322020"
     stderr ""
     exit_code 0
 end test "printf left-justified width %-4d"
@@ -547,7 +602,7 @@ end test "printf left-justified width %-4d"
 
 #### Test: printf zero-padded hex %04x
 
-The `0` flag combined with a field width pads numeric output with leading zeros; here `%04x` formats the integer as a four-digit zero-padded hexadecimal value.
+The `0` flag combined with a field width pads numeric output with leading zeros; `%04x` formats the integer as a four-digit zero-padded hexadecimal value.
 
 ```
 begin test "printf zero-padded hex %04x"
@@ -575,414 +630,84 @@ begin test "printf precision %.5s truncates"
 end test "printf precision %.5s truncates"
 ```
 
-#### Test: printf backslash escape
+#### Test: printf format reuse
 
-The `\\` escape sequence in the format string produces a single literal backslash character in the output.
+The format operand shall be reused as often as necessary to satisfy the argument operands (statement 12).
 
 ```
-begin test "printf backslash escape"
+begin test "printf format reuse"
   script
-    printf "\\\\"
+    printf "%s\n" a b c
   expect
-    stdout "\\"
+    stdout "a\nb\nc"
     stderr ""
     exit_code 0
-end test "printf backslash escape"
+end test "printf format reuse"
 ```
 
-#### Test: printf tab escape
+#### Test: printf %c takes first byte
 
-The `\t` escape sequence in the format string produces a horizontal tab character in the output.
+If the argument to `%c` contains one or more bytes, the first byte shall be written and any additional bytes shall be ignored (statement 13).
 
 ```
-begin test "printf tab escape"
+begin test "printf %c takes first byte"
   script
-    printf "a\tb"
+    printf "%c" abc
   expect
-    stdout "a\tb"
+    stdout "a"
     stderr ""
     exit_code 0
-end test "printf tab escape"
+end test "printf %c takes first byte"
 ```
 
-#### Test: printf carriage return escape
+#### Test: printf %c partial use is not error
 
-The `\r` escape sequence in the format string produces a carriage return character in the output.
+It shall not be considered an error if an argument operand is not completely used for a `c` conversion (statement 17). The exit status shall be zero even when extra bytes are ignored.
 
 ```
-begin test "printf carriage return escape"
+begin test "printf %c partial use is not error"
   script
-    printf "a\rb" | cat -v
+    printf "%c" hello
   expect
-    stdout ".*\^M.*|.*b.*"
+    stdout "h"
     stderr ""
     exit_code 0
-end test "printf carriage return escape"
+end test "printf %c partial use is not error"
 ```
 
-#### Test: printf bell escape produces a byte
+#### Test: printf %b interprets backslash escapes
 
-The `\a` escape sequence in the format string produces a bell (alert) character, which is a non-zero byte written to standard output.
+The `%b` conversion specifier treats its argument as a string containing backslash-escape sequences; `\\`, `\n`, and `\t` shall be converted to the characters they represent (statements 8, 9).
 
 ```
-begin test "printf bell escape produces a byte"
+begin test "printf %b interprets backslash escapes"
   script
-    printf "\a" | wc -c | tr -d ' '
+    printf "%b" "a\\\\b\nc\td"
   expect
-    stdout ".*[1-9].*"
+    stdout "a\\b\nc\td"
     stderr ""
     exit_code 0
-end test "printf bell escape produces a byte"
+end test "printf %b interprets backslash escapes"
 ```
 
-#### Test: printf backspace escape
+#### Test: printf %b \0101 octal
 
-The `\b` escape sequence in the format string produces a backspace character in the output.
-
-```
-begin test "printf backspace escape"
-  script
-    printf "a\bb" | cat -v
-  expect
-    stdout ".*\^H.*|.*b.*"
-    stderr ""
-    exit_code 0
-end test "printf backspace escape"
-```
-
-#### Test: printf form feed escape
-
-The `\f` escape sequence in the format string produces a form feed character in the output.
+The `%b` conversion specifier interprets `\0ddd` octal escapes with a leading zero in its argument; `\0101` is octal for 65, producing the ASCII character `A` (statement 10).
 
 ```
-begin test "printf form feed escape"
-  script
-    printf "a\fb" | cat -v
-  expect
-    stdout ".*\^L.*|.*b.*"
-    stderr ""
-    exit_code 0
-end test "printf form feed escape"
-```
-
-#### Test: printf vertical tab escape
-
-The `\v` escape sequence in the format string produces a vertical tab character in the output.
-
-```
-begin test "printf vertical tab escape"
-  script
-    printf "a\vb" | cat -v
-  expect
-    stdout ".*\^K.*|.*b.*"
-    stderr ""
-    exit_code 0
-end test "printf vertical tab escape"
-```
-
-#### Test: printf octal \101 produces A
-
-An octal escape `\ddd` in the format string writes a byte with the specified numeric value; `\101` is octal for 65, which is the ASCII character `A`.
-
-```
-begin test "printf octal \\101 produces A"
-  script
-    printf "\101"
-  expect
-    stdout "A"
-    stderr ""
-    exit_code 0
-end test "printf octal \\101 produces A"
-```
-
-#### Test: printf octal \060 produces 0
-
-An octal escape `\ddd` in the format string writes a byte with the specified numeric value; `\060` is octal for 48, which is the ASCII character `0`.
-
-```
-begin test "printf octal \\060 produces 0"
-  script
-    printf "\060"
-  expect
-    stdout "0"
-    stderr ""
-    exit_code 0
-end test "printf octal \\060 produces 0"
-```
-
-#### Test: printf %d no surrounding blanks
-
-The implementation shall not precede or follow output from the `%d` conversion specifier with blank characters not specified by the format operand.
-
-```
-begin test "printf %d no surrounding blanks"
-  script
-    printf "%d" 42
-  expect
-    stdout "42"
-    stderr ""
-    exit_code 0
-end test "printf %d no surrounding blanks"
-```
-
-#### Test: printf %d negative
-
-The `%d` conversion specifier correctly formats negative integer arguments, including the leading minus sign.
-
-```
-begin test "printf %d negative"
-  script
-    printf "%d" -1
-  expect
-    stdout "-1"
-    stderr ""
-    exit_code 0
-end test "printf %d negative"
-```
-
-#### Test: printf %d zero
-
-The `%d` conversion specifier correctly formats a zero argument, producing the string `0`.
-
-```
-begin test "printf %d zero"
-  script
-    printf "%d" 0
-  expect
-    stdout "0"
-    stderr ""
-    exit_code 0
-end test "printf %d zero"
-```
-
-#### Test: printf %u no surrounding blanks
-
-The implementation shall not precede or follow output from the `%u` conversion specifier with blank characters not specified by the format operand.
-
-```
-begin test "printf %u no surrounding blanks"
-  script
-    printf "%u" 42
-  expect
-    stdout "42"
-    stderr ""
-    exit_code 0
-end test "printf %u no surrounding blanks"
-```
-
-#### Test: printf %u zero
-
-The `%u` conversion specifier correctly formats a zero argument as the unsigned decimal string `0`.
-
-```
-begin test "printf %u zero"
-  script
-    printf "%u" 0
-  expect
-    stdout "0"
-    stderr ""
-    exit_code 0
-end test "printf %u zero"
-```
-
-#### Test: printf %o without leading zero
-
-The `%o` conversion specifier shall not precede its output with zeros not specified by the format operand, so `%o` with `42` produces `52` without a leading zero.
-
-```
-begin test "printf %o without leading zero"
-  script
-    printf "%o" 42
-  expect
-    stdout "52"
-    stderr ""
-    exit_code 0
-end test "printf %o without leading zero"
-```
-
-#### Test: printf %o zero
-
-The `%o` conversion specifier correctly formats a zero argument as the octal string `0`.
-
-```
-begin test "printf %o zero"
-  script
-    printf "%o" 0
-  expect
-    stdout "0"
-    stderr ""
-    exit_code 0
-end test "printf %o zero"
-```
-
-#### Test: printf %#o with leading zero
-
-The `#` flag on the `%o` conversion specifier forces the output to begin with a leading zero (the alternative form), so `%#o` with `42` produces `052`.
-
-```
-begin test "printf %#o with leading zero"
-  script
-    printf "%#o" 42
-  expect
-    stdout "052"
-    stderr ""
-    exit_code 0
-end test "printf %#o with leading zero"
-```
-
-#### Test: printf %b plain string
-
-The `%b` conversion specifier treats its argument as a string that may contain backslash escape sequences; when none are present, the argument is written verbatim.
-
-```
-begin test "printf %b plain string"
-  script
-    printf "%b" hello
-  expect
-    stdout "hello"
-    stderr ""
-    exit_code 0
-end test "printf %b plain string"
-```
-
-#### Test: printf %b two arguments
-
-Multiple `%b` conversion specifiers each consume the next argument in order, writing the interpreted string values separated by the literal text in the format.
-
-```
-begin test "printf %b two arguments"
-  script
-    printf "%b %b" hello world
-  expect
-    stdout "hello world"
-    stderr ""
-    exit_code 0
-end test "printf %b two arguments"
-```
-
-#### Test: printf %b newline in argument
-
-The `%b` conversion specifier interprets `\n` in the argument string as a newline character, converting the escape sequence into an actual newline in the output.
-
-```
-begin test "printf %b newline in argument"
-  script
-    printf "%b" "a\nb"
-  expect
-    stdout "a\nb"
-    stderr ""
-    exit_code 0
-end test "printf %b newline in argument"
-```
-
-#### Test: printf %b tab in argument
-
-The `%b` conversion specifier interprets `\t` in the argument string as a horizontal tab character.
-
-```
-begin test "printf %b tab in argument"
-  script
-    printf "%b" "a\tb"
-  expect
-    stdout "a\tb"
-    stderr ""
-    exit_code 0
-end test "printf %b tab in argument"
-```
-
-#### Test: printf %b hello newline world
-
-The `%b` conversion specifier interprets embedded `\n` escape sequences within its argument, producing a newline between `hello` and `world`.
-
-```
-begin test "printf %b hello newline world"
-  script
-    printf "%b" "hello\nworld"
-  expect
-    stdout "hello\nworld"
-    stderr ""
-    exit_code 0
-end test "printf %b hello newline world"
-```
-
-#### Test: printf %b backslash
-
-The `%b` conversion specifier interprets `\\` in the argument as a single literal backslash character in the output.
-
-```
-begin test "printf %b backslash"
-  script
-    printf "%b" "\\\\"
-  expect
-    stdout "\\"
-    stderr ""
-    exit_code 0
-end test "printf %b backslash"
-```
-
-#### Test: printf %b newline
-
-The `%b` conversion specifier interprets `\n` in its argument as a newline character, splitting the output across two lines.
-
-```
-begin test "printf %b newline"
-  script
-    printf "%b" "x\ny"
-  expect
-    stdout "x\ny"
-    stderr ""
-    exit_code 0
-end test "printf %b newline"
-```
-
-#### Test: printf %b tab
-
-The `%b` conversion specifier interprets `\t` in its argument as a horizontal tab character.
-
-```
-begin test "printf %b tab"
-  script
-    printf "%b" "x\ty"
-  expect
-    stdout "x\ty"
-    stderr ""
-    exit_code 0
-end test "printf %b tab"
-```
-
-#### Test: printf %b \0101 produces A
-
-The `%b` conversion specifier interprets `\0ddd` octal escapes in its argument; `\0101` is octal for 65, producing the ASCII character `A`.
-
-```
-begin test "printf %b \\0101 produces A"
+begin test "printf %b \\0101 octal"
   script
     printf "%b" "\0101"
   expect
     stdout "A"
     stderr ""
     exit_code 0
-end test "printf %b \\0101 produces A"
-```
-
-#### Test: printf %b \0060 produces 0
-
-The `%b` conversion specifier interprets `\0ddd` octal escapes in its argument; `\0060` is octal for 48, producing the ASCII character `0`.
-
-```
-begin test "printf %b \\0060 produces 0"
-  script
-    printf "%b" "\0060"
-  expect
-    stdout "0"
-    stderr ""
-    exit_code 0
-end test "printf %b \\0060 produces 0"
+end test "printf %b \\0101 octal"
 ```
 
 #### Test: printf %b \c stops output
 
-The `%b` conversion specification interprets `\c` in the argument string as an instruction to stop all further output, discarding remaining characters in the current argument.
+The `\c` escape in a `%b` argument shall not be written and shall cause printf to ignore remaining characters in the current string operand (statement 11).
 
 ```
 begin test "printf %b \\c stops output"
@@ -995,24 +720,24 @@ begin test "printf %b \\c stops output"
 end test "printf %b \\c stops output"
 ```
 
-#### Test: printf %b \c stops subsequent %b arguments
+#### Test: printf %b \c stops remaining arguments
 
-When `\c` is encountered in a `%b` argument, `printf` shall ignore any remaining string operands as well, not just the rest of the current argument.
+When `\c` is encountered in a `%b` argument, printf shall ignore any remaining string operands (statement 11).
 
 ```
-begin test "printf %b \\c stops subsequent %b arguments"
+begin test "printf %b \\c stops remaining arguments"
   script
     printf "%b%b" "a\c" "b"
   expect
     stdout "a"
     stderr ""
     exit_code 0
-end test "printf %b \\c stops subsequent %b arguments"
+end test "printf %b \\c stops remaining arguments"
 ```
 
 #### Test: printf %b \c stops format reuse
 
-When `\c` is encountered in a `%b` argument, `printf` shall also stop reusing the format operand for any additional argument operands that would otherwise cause a second pass.
+When `\c` is encountered in a `%b` argument, printf shall stop reusing the format operand for any additional argument operands (statement 11).
 
 ```
 begin test "printf %b \\c stops format reuse"
@@ -1025,401 +750,69 @@ begin test "printf %b \\c stops format reuse"
 end test "printf %b \\c stops format reuse"
 ```
 
-#### Test: printf %s full string
+#### Test: printf %d with leading quote gives character value
 
-The `%s` conversion specifier without a precision writes the entire string argument to standard output.
+If the leading character of an integer argument is a single-quote or double-quote, the value shall be the numeric value of the following character in the underlying codeset (statement 19).
 
 ```
-begin test "printf %s full string"
+begin test "printf %d with leading quote gives character value"
   script
-    printf "%s" hello
+    printf "%d\n" "'A"
   expect
-    stdout "hello"
+    stdout "65"
     stderr ""
     exit_code 0
-end test "printf %s full string"
+end test "printf %d with leading quote gives character value"
 ```
 
-#### Test: printf %.3s truncation
+#### Test: printf extra %s gets null string
 
-A precision of 3 on the `%s` specifier limits output to at most 3 bytes of the argument, so `%.3s` with `hello` produces `hel`.
+When fewer arguments are provided than conversion specifiers require, extra `b`, `c`, or `s` specifiers shall be evaluated as if a null string argument were supplied (statement 14).
 
 ```
-begin test "printf %.3s truncation"
+begin test "printf extra %s gets null string"
   script
-    printf "%.3s" hello
+    printf "[%s][%s]" hello
   expect
-    stdout "hel"
+    stdout "\[hello\]\[\]"
     stderr ""
     exit_code 0
-end test "printf %.3s truncation"
+end test "printf extra %s gets null string"
 ```
 
-#### Test: printf %.2s truncation
+#### Test: printf extra %d gets zero
 
-A precision of 2 on the `%s` specifier limits output to at most 2 bytes of the argument, so `%.2s` with `hello` produces `he`.
-
-```
-begin test "printf %.2s truncation"
-  script
-    printf "%.2s" hello
-  expect
-    stdout "he"
-    stderr ""
-    exit_code 0
-end test "printf %.2s truncation"
-```
-
-#### Test: printf %s without precision prints full string
-
-When no precision is specified on `%s`, the entire string argument is written regardless of its length.
+When fewer arguments are provided than conversion specifiers require, extra numeric conversion specifiers shall be evaluated as if a zero argument were supplied (statement 15).
 
 ```
-begin test "printf %s without precision prints full string"
-  script
-    printf "%s" "hello world this is a long string"
-  expect
-    stdout "hello world this is a long string"
-    stderr ""
-    exit_code 0
-end test "printf %s without precision prints full string"
-```
-
-#### Test: printf %s long string no truncation
-
-The `%s` specifier without a precision writes arbitrarily long string arguments in full, with no implicit truncation.
-
-```
-begin test "printf %s long string no truncation"
-  script
-    printf "%s" "abcdefghijklmnopqrstuvwxyz0123456789"
-  expect
-    stdout "abcdefghijklmnopqrstuvwxyz0123456789"
-    stderr ""
-    exit_code 0
-end test "printf %s long string no truncation"
-```
-
-#### Test: printf %s %d two specs two args
-
-A format string containing both `%s` and `%d` consumes two arguments in order, treating the first as a string and the second as a decimal integer.
-
-```
-begin test "printf %s %d two specs two args"
-  script
-    printf "%s %d" hello 42
-  expect
-    stdout "hello 42"
-    stderr ""
-    exit_code 0
-end test "printf %s %d two specs two args"
-```
-
-#### Test: printf three %s specs
-
-A format string with three `%s` specifiers consumes three arguments sequentially, writing each separated by the literal text in the format.
-
-```
-begin test "printf three %s specs"
-  script
-    printf "%s %s %s" a b c
-  expect
-    stdout "a b c"
-    stderr ""
-    exit_code 0
-end test "printf three %s specs"
-```
-
-#### Test: printf three %d specs
-
-A format string with three `%d` specifiers consumes three integer arguments sequentially, formatting each as a signed decimal.
-
-```
-begin test "printf three %d specs"
-  script
-    printf "%d %d %d" 1 2 3
-  expect
-    stdout "1 2 3"
-    stderr ""
-    exit_code 0
-end test "printf three %d specs"
-```
-
-#### Test: printf positional n$ specifiers (optional)
-
-POSIX allows numbered argument conversion specifications (`%n$`) to select arguments in an order appropriate to specific languages. This test verifies that such specifiers do not cause an error, even if the feature is optional.
-
-```
-begin test "printf positional n$ specifiers (optional)"
-  script
-    printf "%2\$s %1\$s\n" hello world 2>/dev/null
-    true
-  expect
-    stdout ""
-    stderr ""
-    exit_code 0
-end test "printf positional n$ specifiers (optional)"
-```
-
-#### Test: printf sequential argument consumption
-
-When unnumbered conversion specifications are used, each specifier consumes the next argument operand in order from left to right.
-
-```
-begin test "printf sequential argument consumption"
-  script
-    printf "%s %s %s" a b c
-  expect
-    stdout "a b c"
-    stderr ""
-    exit_code 0
-end test "printf sequential argument consumption"
-```
-
-#### Test: printf mixed %d %s %d
-
-A format string that interleaves `%d` and `%s` specifiers consumes arguments in order, applying the appropriate conversion (integer or string) to each.
-
-```
-begin test "printf mixed %d %s %d"
-  script
-    printf "%d %s %d" 1 hello 3
-  expect
-    stdout "1 hello 3"
-    stderr ""
-    exit_code 0
-end test "printf mixed %d %s %d"
-```
-
-#### Test: printf format reuse with %d newline
-
-The format operand is reused as often as necessary to satisfy the argument operands; here `"%d\n"` is applied three times to print each integer on its own line.
-
-```
-begin test "printf format reuse with %d newline"
-  script
-    printf "%d\n" 1 2 3
-  expect
-    stdout "1\n2\n3"
-    stderr ""
-    exit_code 0
-end test "printf format reuse with %d newline"
-```
-
-#### Test: printf format reuse with %s newline
-
-The format operand is reused as often as necessary to satisfy the argument operands; here `"%s\n"` is applied three times to print each string on its own line.
-
-```
-begin test "printf format reuse with %s newline"
-  script
-    printf "%s\n" a b c
-  expect
-    stdout "a\nb\nc"
-    stderr ""
-    exit_code 0
-end test "printf format reuse with %s newline"
-```
-
-#### Test: printf %c takes first byte of xyz
-
-The `%c` conversion specifier writes only the first byte of its argument and ignores any additional bytes, so `xyz` produces `x`.
-
-```
-begin test "printf %c takes first byte of xyz"
-  script
-    printf "%c" xyz
-  expect
-    stdout "x"
-    stderr ""
-    exit_code 0
-end test "printf %c takes first byte of xyz"
-```
-
-#### Test: printf %c takes first byte of 123
-
-The `%c` conversion specifier writes only the first byte of its argument regardless of content, so `123` produces `1`.
-
-```
-begin test "printf %c takes first byte of 123"
-  script
-    printf "%c" 123
-  expect
-    stdout "1"
-    stderr ""
-    exit_code 0
-end test "printf %c takes first byte of 123"
-```
-
-#### Test: printf %c with empty arg produces null/empty
-
-When the argument to `%c` is an empty string, it is unspecified whether nothing is written or a null byte is written; either way, the result should be empty or null.
-
-```
-begin test "printf %c with empty arg produces null/empty"
-  script
-    result=$(printf "%c" "")
-    [ -z "$result" ] && echo "ok" || echo "fail"
-  expect
-    stdout "ok"
-    stderr ".+"
-    exit_code 0
-end test "printf %c with empty arg produces null/empty"
-```
-
-#### Test: extra %s gets null string
-
-When fewer arguments are provided than format specifiers require, missing `%s` arguments are treated as empty (null) strings.
-
-```
-begin test "extra %s gets null string"
-  script
-    printf "%s %s" hello
-  expect
-    stdout "hello.*"
-    stderr ""
-    exit_code 0
-end test "extra %s gets null string"
-```
-
-#### Test: extra %d gets zero
-
-When fewer arguments are provided than format specifiers require, missing `%d` arguments are treated as zero.
-
-```
-begin test "extra %d gets zero"
+begin test "printf extra %d gets zero"
   script
     printf "%d %d" 42
   expect
     stdout "42 0"
     stderr ""
     exit_code 0
-end test "extra %d gets zero"
+end test "printf extra %d gets zero"
 ```
 
-#### Test: extra %o gets zero
+#### Test: printf %d non-numeric exits non-zero
 
-When fewer arguments are provided than format specifiers require, missing `%o` arguments are treated as zero.
+If an argument operand cannot be completely converted for `%d`, the utility shall not exit with a zero exit status (statement 16).
 
 ```
-begin test "extra %o gets zero"
+begin test "printf %d non-numeric exits non-zero"
   script
-    printf "%o %o" 42
-  expect
-    stdout "52 0"
-    stderr ""
-    exit_code 0
-end test "extra %o gets zero"
-```
-
-#### Test: extra %x gets zero
-
-When fewer arguments are provided than format specifiers require, missing `%x` arguments are treated as zero.
-
-```
-begin test "extra %x gets zero"
-  script
-    printf "%x %x" 42
-  expect
-    stdout "2a 0"
-    stderr ""
-    exit_code 0
-end test "extra %x gets zero"
-```
-
-#### Test: extra %b gets null string
-
-When fewer arguments are provided than format specifiers require, missing `%b` arguments are treated as empty (null) strings.
-
-```
-begin test "extra %b gets null string"
-  script
-    printf "%b %b" hello
-  expect
-    stdout "hello.*"
-    stderr ""
-    exit_code 0
-end test "extra %b gets null string"
-```
-
-#### Test: printf %d with non-numeric arg exits non-zero
-
-If an argument operand cannot be completely converted for the `%d` specifier (e.g. a non-numeric string), `printf` shall write a diagnostic to stderr and exit with a non-zero status.
-
-```
-begin test "printf %d with non-numeric arg exits non-zero"
-  script
-    printf "%d" not_a_number 2>/dev/null
+    printf "%d" not_a_number
   expect
     stdout "(.|\n)*"
-    stderr ""
+    stderr ".+"
     exit_code !=0
-end test "printf %d with non-numeric arg exits non-zero"
-```
-
-#### Test: printf %d with trailing non-numeric exits non-zero
-
-If an argument operand is not completely converted (e.g. `42abc` has trailing non-numeric characters), `printf` shall report an error and exit with a non-zero status.
-
-```
-begin test "printf %d with trailing non-numeric exits non-zero"
-  script
-    printf "%d" 42abc 2>/dev/null
-  expect
-    stdout "(.|\n)*"
-    stderr ""
-    exit_code !=0
-end test "printf %d with trailing non-numeric exits non-zero"
-```
-
-#### Test: printf %u with non-numeric arg exits non-zero
-
-If an argument operand cannot be completely converted for the `%u` specifier, `printf` shall write a diagnostic to stderr and exit with a non-zero status.
-
-```
-begin test "printf %u with non-numeric arg exits non-zero"
-  script
-    printf "%u" xyz 2>/dev/null
-  expect
-    stdout "(.|\n)*"
-    stderr ""
-    exit_code !=0
-end test "printf %u with non-numeric arg exits non-zero"
-```
-
-#### Test: printf %o with non-numeric arg exits non-zero
-
-If an argument operand cannot be completely converted for the `%o` specifier, `printf` shall write a diagnostic to stderr and exit with a non-zero status.
-
-```
-begin test "printf %o with non-numeric arg exits non-zero"
-  script
-    printf "%o" xyz 2>/dev/null
-  expect
-    stdout "(.|\n)*"
-    stderr ""
-    exit_code !=0
-end test "printf %o with non-numeric arg exits non-zero"
-```
-
-#### Test: printf %x with non-numeric arg exits non-zero
-
-If an argument operand cannot be completely converted for the `%x` specifier, `printf` shall write a diagnostic to stderr and exit with a non-zero status.
-
-```
-begin test "printf %x with non-numeric arg exits non-zero"
-  script
-    printf "%x" xyz 2>/dev/null
-  expect
-    stdout "(.|\n)*"
-    stderr ""
-    exit_code !=0
-end test "printf %x with non-numeric arg exits non-zero"
+end test "printf %d non-numeric exits non-zero"
 ```
 
 #### Test: printf %d non-numeric produces stderr diagnostic
 
-When a non-numeric argument is given for `%d`, `printf` shall write a diagnostic message to standard error indicating the conversion failure.
+A diagnostic message shall be written to standard error when a conversion error occurs (statement 16, 22). Here stderr is redirected to stdout to verify the diagnostic is non-empty.
 
 ```
 begin test "printf %d non-numeric produces stderr diagnostic"
@@ -1432,79 +825,34 @@ begin test "printf %d non-numeric produces stderr diagnostic"
 end test "printf %d non-numeric produces stderr diagnostic"
 ```
 
-#### Test: printf %c with multi-char arg exits 0
+#### Test: printf %d trailing non-numeric exits non-zero
 
-It is not considered an error if the `%c` argument contains more than one byte; the extra bytes are silently ignored and the exit status shall be zero.
+If an argument operand is not completely converted (e.g. `42abc` has trailing non-numeric characters), a diagnostic shall be written and the exit status shall be non-zero (statement 16).
 
 ```
-begin test "printf %c with multi-char arg exits 0"
+begin test "printf %d trailing non-numeric exits non-zero"
   script
-    printf "%c" hello
+    printf "%d" 42abc 2>/dev/null
   expect
     stdout "(.|\n)*"
     stderr ""
-    exit_code 0
-end test "printf %c with multi-char arg exits 0"
+    exit_code !=0
+end test "printf %d trailing non-numeric exits non-zero"
 ```
 
-#### Test: printf %.3s with truncation exits 0
+#### Test: printf conversion error not masked by %b \c
 
-It is not considered an error if the `%s` argument is not completely used due to a precision specification; the exit status shall be zero.
+When a numeric conversion error occurs, the utility shall not exit with a zero exit status, even if a subsequent `%b` argument contains `\c` which stops output. Known `bash --posix` non-compliance #12: the `\c` escape causes an immediate return that bypasses the conversion error check, resulting in exit status 0.
 
 ```
-begin test "printf %.3s with truncation exits 0"
+begin test "printf conversion error not masked by %b \\c"
   script
-    printf "%.3s" hello
+    printf "%d%b" abc "\c" 2>/dev/null
   expect
-    stdout "(.|\n)*"
+    stdout "0"
     stderr ""
-    exit_code 0
-end test "printf %.3s with truncation exits 0"
-```
-
-#### Test: printf %b with long arg exits 0
-
-It is not considered an error if a `%b` argument is not completely used (e.g. a long string with no escape sequences); the exit status shall be zero.
-
-```
-begin test "printf %b with long arg exits 0"
-  script
-    printf "%b" "hello world"
-  expect
-    stdout "(.|\n)*"
-    stderr ""
-    exit_code 0
-end test "printf %b with long arg exits 0"
-```
-
-#### Test: printf %c output correct despite partial use
-
-When `%c` receives a multi-byte argument, only the first byte (`h` from `hello`) is written; partial use of the argument does not affect correctness.
-
-```
-begin test "printf %c output correct despite partial use"
-  script
-    printf "%c" hello
-  expect
-    stdout "h"
-    stderr ""
-    exit_code 0
-end test "printf %c output correct despite partial use"
-```
-
-#### Test: printf %.3s output correct despite truncation
-
-When `%.3s` truncates the argument to 3 bytes, the output (`hel`) is correct and matches the precision specification.
-
-```
-begin test "printf %.3s output correct despite truncation"
-  script
-    printf "%.3s" hello
-  expect
-    stdout "hel"
-    stderr ""
-    exit_code 0
-end test "printf %.3s output correct despite truncation"
+    exit_code !=0
+end test "printf conversion error not masked by %b \\c"
 ```
 
 #### Test: printf %n$ format reuse
@@ -1520,24 +868,4 @@ begin test "printf %n$ format reuse"
     stderr ""
     exit_code 0
 end test "printf %n$ format reuse"
-```
-
-#### Test: printf conversion error not masked by %b \c
-
-When a numeric conversion error occurs (e.g., a non-numeric string for `%d`),
-the utility shall not exit with a zero exit status, even if a subsequent `%b`
-argument contains `\c` which causes output to stop. The conversion error must
-still be reflected in the exit status.
-Known `bash --posix` non-compliance #12: the `\c` escape causes an immediate
-return that bypasses the conversion error check, resulting in exit status 0.
-
-```
-begin test "printf conversion error not masked by %b \\c"
-  script
-    printf "%d%b" abc "\c" 2>/dev/null
-  expect
-    stdout "0"
-    stderr ""
-    exit_code !=0
-end test "printf conversion error not masked by %b \\c"
 ```

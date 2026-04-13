@@ -404,139 +404,232 @@ but the standard does not require it.
 
 ### Tests
 
-#### Test: bracket string equality
+#### Test: [ ] with zero arguments exits 1
 
-`[ s1 = s2 ]` is equivalent to `test s1 = s2`.
-
-```
-begin test "bracket string equality"
-  script
-    [ "abc" = "abc" ] && echo "equal"
-  expect
-    stdout "equal"
-    stderr ""
-    exit_code 0
-end test "bracket string equality"
-```
-
-#### Test: bracket string inequality
-
-`[ s1 != s2 ]` is true if the strings are not identical.
+0 arguments between `[` and `]`: exit false (1). The `]` is not counted
+in the argument-count algorithm.
 
 ```
-begin test "bracket string inequality"
-  script
-    [ "abc" != "xyz" ] && echo "diff"
-  expect
-    stdout "diff"
-    stderr ""
-    exit_code 0
-end test "bracket string inequality"
-```
-
-#### Test: bracket integer comparison -gt
-
-`[ n1 -gt n2 ]` is true if n1 is greater than n2.
-
-```
-begin test "bracket integer comparison -gt"
-  script
-    [ 10 -gt 5 ] && echo "greater"
-  expect
-    stdout "greater"
-    stderr ""
-    exit_code 0
-end test "bracket integer comparison -gt"
-```
-
-#### Test: bracket -e file exists
-
-`[ -e pathname ]` is true if pathname exists.
-
-```
-begin test "bracket -e file exists"
-  script
-    touch tmp_bracket_test
-    [ -e tmp_bracket_test ] && echo "exists"
-  expect
-    stdout "exists"
-    stderr ""
-    exit_code 0
-end test "bracket -e file exists"
-```
-
-#### Test: bracket negation with !
-
-`[ ! expression ]` is true if expression is false.
-
-```
-begin test "bracket negation with !"
-  script
-    [ ! -e /nonexistent_xyz ] && echo "negated"
-  expect
-    stdout "negated"
-    stderr ""
-    exit_code 0
-end test "bracket negation with !"
-```
-
-#### Test: [ 1 -eq 1 ] returns 0
-
-The `[` utility is equivalent to `test`, with the closing `]`
-required as a separate argument.
-
-```
-begin test "[ 1 -eq 1 ] returns 0"
-  script
-    [ 1 -eq 1 ]
-  expect
-    stdout ""
-    stderr ""
-    exit_code 0
-end test "[ 1 -eq 1 ] returns 0"
-```
-
-#### Test: [ 1 -eq 2 ] returns non-zero
-
-A false arithmetic comparison returns a non-zero exit status.
-
-```
-begin test "[ 1 -eq 2 ] returns non-zero"
-  script
-    [ 1 -eq 2 ]
-  expect
-    stdout ""
-    stderr ""
-    exit_code !=0
-end test "[ 1 -eq 2 ] returns non-zero"
-```
-
-#### Test: [ ] with no arguments returns non-zero
-
-With no arguments between `[` and `]`, the result is false.
-
-```
-begin test "[ ] with no arguments returns non-zero"
+begin test "[ ] with zero arguments exits 1"
   script
     [ ]
   expect
     stdout ""
     stderr ""
-    exit_code !=0
-end test "[ ] with no arguments returns non-zero"
+    exit_code 1
+end test "[ ] with zero arguments exits 1"
 ```
 
-#### Test: [ hello ] returns 0
+#### Test: [ non-null string ] exits 0
 
-With a single non-empty string, the result is true.
+1 argument: exit true (0) if $1 is not null.
 
 ```
-begin test "[ hello ] returns 0"
+begin test "[ non-null string ] exits 0"
   script
     [ hello ]
   expect
     stdout ""
     stderr ""
     exit_code 0
-end test "[ hello ] returns 0"
+end test "[ non-null string ] exits 0"
+```
+
+#### Test: [ empty string ] exits 1
+
+1 argument: exit false (1) if $1 is null (empty string).
+
+```
+begin test "[ empty string ] exits 1"
+  script
+    [ "" ]
+  expect
+    stdout ""
+    stderr ""
+    exit_code 1
+end test "[ empty string ] exits 1"
+```
+
+#### Test: [ string equality ]
+
+`[ s1 = s2 ]` — true if the strings s1 and s2 are identical.
+
+```
+begin test "[ string equality ]"
+  script
+    [ "abc" = "abc" ] && echo "equal"
+  expect
+    stdout "equal"
+    stderr ""
+    exit_code 0
+end test "[ string equality ]"
+```
+
+#### Test: [ string inequality ]
+
+`[ s1 != s2 ]` — true if the strings s1 and s2 are not identical.
+
+```
+begin test "[ string inequality ]"
+  script
+    [ "abc" != "xyz" ] && echo "diff"
+  expect
+    stdout "diff"
+    stderr ""
+    exit_code 0
+end test "[ string inequality ]"
+```
+
+#### Test: [ integer -eq ]
+
+`[ n1 -eq n2 ]` — true if the integers are algebraically equal.
+
+```
+begin test "[ integer -eq ]"
+  script
+    [ 42 -eq 42 ]
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "[ integer -eq ]"
+```
+
+#### Test: [ integer -eq ] false exits 1
+
+A false integer comparison shall return exit status 1.
+
+```
+begin test "[ integer -eq ] false exits 1"
+  script
+    [ 1 -eq 2 ]
+  expect
+    stdout ""
+    stderr ""
+    exit_code 1
+end test "[ integer -eq ] false exits 1"
+```
+
+#### Test: [ integer -gt ]
+
+`[ n1 -gt n2 ]` — true if n1 is algebraically greater than n2.
+
+```
+begin test "[ integer -gt ]"
+  script
+    [ 10 -gt 5 ] && echo "greater"
+  expect
+    stdout "greater"
+    stderr ""
+    exit_code 0
+end test "[ integer -gt ]"
+```
+
+#### Test: [ -d directory ]
+
+`[ -d pathname ]` — true if pathname resolves to an existing directory.
+
+```
+begin test "[ -d directory ]"
+  script
+    mkdir -p tmp_bracket_dir
+    [ -d tmp_bracket_dir ] && echo "isdir"
+  expect
+    stdout "isdir"
+    stderr ""
+    exit_code 0
+end test "[ -d directory ]"
+```
+
+#### Test: [ -f regular file ]
+
+`[ -f pathname ]` — true if pathname resolves to an existing regular file.
+
+```
+begin test "[ -f regular file ]"
+  script
+    touch tmp_bracket_file
+    [ -f tmp_bracket_file ] && echo "isfile"
+  expect
+    stdout "isfile"
+    stderr ""
+    exit_code 0
+end test "[ -f regular file ]"
+```
+
+#### Test: [ -e existing file ]
+
+`[ -e pathname ]` — true if pathname resolves to an existing directory entry.
+
+```
+begin test "[ -e existing file ]"
+  script
+    touch tmp_bracket_exists
+    [ -e tmp_bracket_exists ] && echo "exists"
+  expect
+    stdout "exists"
+    stderr ""
+    exit_code 0
+end test "[ -e existing file ]"
+```
+
+#### Test: [ -n non-empty string ]
+
+`[ -n string ]` — true if the length of string is non-zero.
+
+```
+begin test "[ -n non-empty string ]"
+  script
+    [ -n "hello" ] && echo "nonempty"
+  expect
+    stdout "nonempty"
+    stderr ""
+    exit_code 0
+end test "[ -n non-empty string ]"
+```
+
+#### Test: [ -z empty string ]
+
+`[ -z string ]` — true if the length of string is zero.
+
+```
+begin test "[ -z empty string ]"
+  script
+    [ -z "" ] && echo "zero"
+  expect
+    stdout "zero"
+    stderr ""
+    exit_code 0
+end test "[ -z empty string ]"
+```
+
+#### Test: [ ! false expression ] is true
+
+`[ ! expression ]` — 4-argument form where $1 is `!`, negating the
+three-argument test of $2, $3, and $4.
+
+```
+begin test "[ ! false expression ] is true"
+  script
+    [ ! "abc" = "xyz" ] && echo "negated"
+  expect
+    stdout "negated"
+    stderr ""
+    exit_code 0
+end test "[ ! false expression ] is true"
+```
+
+#### Test: [ -e nonexistent ] exits 1
+
+`[ -e pathname ]` — false (exit 1) if pathname cannot be resolved.
+
+```
+begin test "[ -e nonexistent ] exits 1"
+  script
+    [ -e /no/such/path_bracket_test ]
+  expect
+    stdout ""
+    stderr ""
+    exit_code 1
+end test "[ -e nonexistent ] exits 1"
 ```

@@ -110,56 +110,9 @@ but the standard does not require it.
 
 ### Tests
 
-#### Test: false returns non-zero exit status
-
-The `false` utility returns a non-zero exit status.
-
-```
-begin test "false returns non-zero exit status"
-  script
-    false
-  expect
-    stdout ""
-    stderr ""
-    exit_code !=0
-end test "false returns non-zero exit status"
-```
-
-#### Test: false produces no output
-
-`false` writes nothing to standard output or standard error.
-
-```
-begin test "false produces no output"
-  script
-    output=$(false 2>&1)
-    echo "len=${#output}"
-  expect
-    stdout "len=0"
-    stderr ""
-    exit_code 0
-end test "false produces no output"
-```
-
-#### Test: false ignores operands
-
-Any operands or options given to `false` are ignored.
-
-```
-begin test "false ignores operands"
-  script
-    false --help 2>/dev/null
-    echo $?
-  expect
-    stdout "[1-9].*"
-    stderr ""
-    exit_code 0
-end test "false ignores operands"
-```
-
 #### Test: false returns non-zero exit code
 
-The `false` utility shall return with a non-zero exit code.
+The *false* utility shall return with a non-zero exit code.
 
 ```
 begin test "false returns non-zero exit code"
@@ -168,21 +121,19 @@ begin test "false returns non-zero exit code"
   expect
     stdout ""
     stderr ""
-    exit_code !=0
+    exit_code (>=1 && <=125)
 end test "false returns non-zero exit code"
 ```
 
 #### Test: false exit code is between 1 and 125
 
-The `false` utility shall always exit with a value between 1 and
-125, inclusive.
+The exit value shall always be between 1 and 125 inclusive. Verify
+explicitly with shell arithmetic.
 
 ```
 begin test "false exit code is between 1 and 125"
   script
-    false
-    rc=$?
-    [ $rc -ge 1 ] && [ $rc -le 125 ] && echo "in_range"
+    false; rc=$?; [ $rc -ge 1 ] && [ $rc -le 125 ] && echo "in_range"
   expect
     stdout "in_range"
     stderr ""
@@ -190,17 +141,32 @@ begin test "false exit code is between 1 and 125"
 end test "false exit code is between 1 and 125"
 ```
 
-#### Test: false exits 1
+#### Test: false produces no stdout
 
-The `false` utility shall always return a non-zero exit code. This test checks that the specific exit code is 1, the most common value used by implementations.
+STDOUT: Not used means nothing shall be written to standard output.
 
 ```
-begin test "false exits 1"
+begin test "false produces no stdout"
   script
-    false
+    out=$(false); printf '%s' "$out"
   expect
     stdout ""
     stderr ""
-    exit_code 1
-end test "false exits 1"
+    exit_code 0
+end test "false produces no stdout"
+```
+
+#### Test: false produces no stderr
+
+STDERR: Not used means nothing shall be written to standard error.
+
+```
+begin test "false produces no stderr"
+  script
+    err=$(false 2>&1 1>/dev/null); printf '%s' "$err"
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "false produces no stderr"
 ```
