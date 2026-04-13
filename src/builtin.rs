@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 
 use crate::shell::{Shell, ShellError, TrapAction, TrapCondition};
@@ -1431,6 +1432,10 @@ fn print_traps(
     let conditions = if operands.is_empty() {
         if include_defaults {
             supported_trap_conditions()
+        } else if let Some(saved) = &shell.subshell_saved_traps {
+            let mut keys: BTreeSet<TrapCondition> = shell.trap_actions.keys().copied().collect();
+            keys.extend(saved.keys().copied());
+            keys.into_iter().collect()
         } else {
             shell.trap_actions.keys().copied().collect()
         }
@@ -1536,7 +1541,12 @@ fn trap_output_action(
     include_defaults: bool,
     explicit_operand: bool,
 ) -> Option<String> {
-    match shell.trap_action(condition) {
+    let action = shell
+        .subshell_saved_traps
+        .as_ref()
+        .and_then(|saved| saved.get(&condition))
+        .or_else(|| shell.trap_action(condition));
+    match action {
         Some(TrapAction::Ignore) => Some("''".to_string()),
         Some(TrapAction::Command(command)) => Some(shell_quote(command)),
         None if include_defaults || explicit_operand => Some("-".to_string()),
@@ -2173,6 +2183,7 @@ mod tests {
             known_job_statuses: HashMap::new(),
             trap_actions: BTreeMap::new(),
             ignored_on_entry: BTreeSet::new(),
+            subshell_saved_traps: None,
             loop_depth: 0,
             function_depth: 0,
             source_depth: 0,

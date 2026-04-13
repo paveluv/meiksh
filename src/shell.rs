@@ -170,6 +170,7 @@ pub struct Shell {
     pub known_job_statuses: HashMap<usize, i32>,
     pub trap_actions: BTreeMap<TrapCondition, TrapAction>,
     pub ignored_on_entry: BTreeSet<TrapCondition>,
+    pub(crate) subshell_saved_traps: Option<BTreeMap<TrapCondition, TrapAction>>,
     pub loop_depth: usize,
     pub function_depth: usize,
     /// Nesting depth of dot (`source_path`) files being executed.
@@ -325,6 +326,10 @@ impl Shell {
             || (sys::is_interactive_fd(sys::STDIN_FILENO)
                 && sys::is_interactive_fd(sys::STDERR_FILENO));
         let ignored_on_entry = Self::probe_ignored_signals();
+        let trap_actions: BTreeMap<TrapCondition, TrapAction> = ignored_on_entry
+            .iter()
+            .map(|&cond| (cond, TrapAction::Ignore))
+            .collect();
         env.insert("IFS".into(), " \t\n".into());
         env.insert("PPID".into(), sys::parent_pid().to_string());
         env.insert("OPTIND".into(), "1".into());
@@ -344,8 +349,9 @@ impl Shell {
             jobs: Vec::new(),
             known_pid_statuses: HashMap::new(),
             known_job_statuses: HashMap::new(),
-            trap_actions: BTreeMap::new(),
+            trap_actions,
             ignored_on_entry,
+            subshell_saved_traps: None,
             loop_depth: 0,
             function_depth: 0,
             source_depth: 0,
@@ -409,6 +415,7 @@ impl Shell {
             known_job_statuses: HashMap::new(),
             trap_actions: BTreeMap::new(),
             ignored_on_entry: BTreeSet::new(),
+            subshell_saved_traps: None,
             loop_depth: 0,
             function_depth: 0,
             source_depth: 0,
@@ -1047,6 +1054,7 @@ impl Shell {
         if !self.interactive && self.ignored_on_entry.contains(&condition) {
             return Ok(());
         }
+        self.subshell_saved_traps = None;
         if let TrapCondition::Signal(signal) = condition {
             match action.as_ref() {
                 Some(TrapAction::Ignore) => {
@@ -1070,6 +1078,7 @@ impl Shell {
     }
 
     pub fn reset_traps_for_subshell(&mut self) -> Result<(), ShellError> {
+        self.subshell_saved_traps = Some(self.trap_actions.clone());
         let to_reset: Vec<TrapCondition> = self
             .trap_actions
             .iter()
@@ -1763,6 +1772,7 @@ mod tests {
             known_job_statuses: HashMap::new(),
             trap_actions: BTreeMap::new(),
             ignored_on_entry: BTreeSet::new(),
+            subshell_saved_traps: None,
             loop_depth: 0,
             function_depth: 0,
             source_depth: 0,

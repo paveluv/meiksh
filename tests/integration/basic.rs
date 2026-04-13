@@ -1817,8 +1817,8 @@ fn subshell_resets_command_traps() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        !stdout.contains("PARENT"),
-        "subshell should have reset command traps, got: {stdout}"
+        stdout.contains("PARENT"),
+        "subshell trap (no operands) should show parent traps, got: {stdout}"
     );
 }
 
@@ -1845,8 +1845,8 @@ fn command_substitution_resets_command_traps() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        !stdout.contains("PARENT"),
-        "command substitution should have reset command traps, got: {stdout}"
+        stdout.contains("PARENT"),
+        "command substitution trap (no operands) should show parent traps, got: {stdout}"
     );
 }
 
