@@ -7073,4 +7073,37 @@ mod tests {
             },
         );
     }
+
+    #[test]
+    fn kill_sigcont_then_reap_jobs_keeps_job_running() {
+        run_trace(
+            vec![
+                t(
+                    "kill",
+                    vec![ArgMatcher::Int(-8001), ArgMatcher::Int(sys::SIGCONT as i64)],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(8001), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::ContinuedStatus,
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let mut job = make_job(1, 8001, "stopped");
+                job.state = crate::shell::JobState::Stopped(sys::SIGTSTP);
+                shell.jobs.push(job);
+                let outcome = invoke(&mut shell, &["kill".into(), "-CONT".into(), "%1".into()])
+                    .expect("kill -CONT");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                let finished = shell.reap_jobs();
+                assert!(finished.is_empty());
+                assert!(matches!(
+                    shell.jobs[0].state,
+                    crate::shell::JobState::Running
+                ));
+            },
+        );
+    }
 }
