@@ -227,9 +227,9 @@ is true, `0` otherwise.
 ```
 begin test "relational less-than and greater-than"
   script
-    echo $(( 3 < 5 )) $(( 5 < 3 )) $(( 3 <= 3 )) $(( 5 > 3 )) $(( 3 >= 4 ))
+    echo $(( 3 < 5 )) $(( 5 < 3 )) $(( 3 <= 3 )) $(( 5 > 3 )) $(( 3 >= 4 )) $(( 4 >= 4 ))
   expect
-    stdout "1 0 1 1 0"
+    stdout "1 0 1 1 0 1"
     stderr ""
     exit_code 0
 end test "relational less-than and greater-than"
@@ -553,4 +553,277 @@ begin test "bitwise operators combined"
     stderr ""
     exit_code 0
 end test "bitwise operators combined"
+```
+
+#### Test: addition and subtraction
+
+The binary `+` and `-` operators perform integer addition and
+subtraction respectively, including with negative operands.
+
+```
+begin test "addition and subtraction"
+  script
+    echo $(( 3 + 4 )) $(( 10 - 7 )) $(( -3 + -4 )) $(( -10 - -7 ))
+  expect
+    stdout "7 3 -7 -3"
+    stderr ""
+    exit_code 0
+end test "addition and subtraction"
+```
+
+#### Test: signed long minimum range
+
+Integer variables and constants shall be implemented as equivalent to
+the ISO C signed long data type, which is at least 32 bits. Values
+at the boundaries of a 32-bit signed range (2147483647 and -2147483647)
+shall be representable and arithmetic on them shall work correctly.
+
+```
+begin test "signed long minimum range"
+  script
+    echo $(( 2147483647 ))
+    echo $(( -2147483647 ))
+    echo $(( 2147483646 + 1 ))
+    echo $(( -2147483646 - 1 ))
+  expect
+    stdout "2147483647\n-2147483647\n2147483647\n-2147483647"
+    stderr ""
+    exit_code 0
+end test "signed long minimum range"
+```
+
+#### Test: octal and hexadecimal constants
+
+The shell arithmetic shall support octal constants (leading `0`) and
+hexadecimal constants (leading `0x` or `0X`), consistent with ISO C
+integer constant syntax.
+
+```
+begin test "octal and hexadecimal constants"
+  script
+    echo $(( 010 )) $(( 0x1A )) $(( 0X1a ))
+  expect
+    stdout "8 26 26"
+    stderr ""
+    exit_code 0
+end test "octal and hexadecimal constants"
+```
+
+#### Test: operator precedence ternary vs assignment
+
+The conditional (ternary) operator has lower precedence than logical OR
+but higher precedence than assignment. `x = 1 ? 10 : 20` assigns the
+result of the ternary to `x`.
+
+```
+begin test "operator precedence ternary vs assignment"
+  script
+    echo $(( x = 1 ? 10 : 20 ))
+    echo "$x"
+  expect
+    stdout "10\n10"
+    stderr ""
+    exit_code 0
+end test "operator precedence ternary vs assignment"
+```
+
+#### Test: operator precedence bitwise OR vs logical AND
+
+Bitwise inclusive OR has higher precedence than logical AND.
+`1 && 0 | 2` evaluates as `1 && (0 | 2) = 1 && 2 = 1`.
+
+```
+begin test "operator precedence bitwise OR vs logical AND"
+  script
+    echo $(( 1 && 0 | 2 ))
+  expect
+    stdout "1"
+    stderr ""
+    exit_code 0
+end test "operator precedence bitwise OR vs logical AND"
+```
+
+#### Test: operator precedence bitwise XOR vs bitwise OR
+
+Bitwise exclusive OR has higher precedence than bitwise inclusive OR.
+`3 | 5 ^ 7` evaluates as `3 | (5 ^ 7) = 3 | 2 = 3`.
+
+```
+begin test "operator precedence bitwise XOR vs bitwise OR"
+  script
+    echo $(( 3 | 5 ^ 7 ))
+  expect
+    stdout "3"
+    stderr ""
+    exit_code 0
+end test "operator precedence bitwise XOR vs bitwise OR"
+```
+
+#### Test: operator precedence bitwise AND vs bitwise XOR
+
+Bitwise AND has higher precedence than bitwise exclusive OR.
+`6 ^ 7 & 3` evaluates as `6 ^ (7 & 3) = 6 ^ 3 = 5`.
+
+```
+begin test "operator precedence bitwise AND vs bitwise XOR"
+  script
+    echo $(( 6 ^ 7 & 3 ))
+  expect
+    stdout "5"
+    stderr ""
+    exit_code 0
+end test "operator precedence bitwise AND vs bitwise XOR"
+```
+
+#### Test: operator precedence relational vs equality
+
+Relational operators have higher precedence than equality operators.
+`1 == 2 < 3` evaluates as `1 == (2 < 3) = 1 == 1 = 1`.
+
+```
+begin test "operator precedence relational vs equality"
+  script
+    echo $(( 1 == 2 < 3 ))
+  expect
+    stdout "1"
+    stderr ""
+    exit_code 0
+end test "operator precedence relational vs equality"
+```
+
+#### Test: compound assignment yields assigned value
+
+Each compound assignment operator shall yield the value that was
+assigned, allowing the result to be used in a surrounding expression.
+
+```
+begin test "compound assignment yields assigned value"
+  script
+    x=10
+    echo $(( (x += 5) * 2 ))
+    echo "$x"
+  expect
+    stdout "30\n15"
+    stderr ""
+    exit_code 0
+end test "compound assignment yields assigned value"
+```
+
+#### Test: logical operators yield strictly zero or one
+
+Logical AND, logical OR, and logical NOT shall yield exactly `0` or `1`,
+regardless of the magnitude of non-zero operands.
+
+```
+begin test "logical operators yield strictly zero or one"
+  script
+    echo $(( 42 && 99 )) $(( 42 || 99 )) $(( !0 )) $(( !999 ))
+  expect
+    stdout "1 1 1 0"
+    stderr ""
+    exit_code 0
+end test "logical operators yield strictly zero or one"
+```
+
+#### Test: relational operators yield strictly zero or one
+
+Relational and equality operators shall yield exactly `0` or `1`,
+regardless of the magnitude of the operands.
+
+```
+begin test "relational operators yield strictly zero or one"
+  script
+    echo $(( 100 < 200 )) $(( 200 < 100 )) $(( 999 == 999 )) $(( 999 != 1000 ))
+  expect
+    stdout "1 0 1 1"
+    stderr ""
+    exit_code 0
+end test "relational operators yield strictly zero or one"
+```
+
+#### Test: operator precedence unary vs additive
+
+Unary operators have higher precedence than additive operators.
+`~ 1 + 1` evaluates as `(~1) + 1 = -2 + 1 = -1`, not `~(1 + 1) = ~2 = -3`.
+
+```
+begin test "operator precedence unary vs additive"
+  script
+    echo $(( ~ 1 + 1 ))
+  expect
+    stdout "-1"
+    stderr ""
+    exit_code 0
+end test "operator precedence unary vs additive"
+```
+
+#### Test: operator precedence shift vs relational
+
+Bitwise shift operators have higher precedence than relational operators.
+`1 < 1 << 2` evaluates as `1 < (1 << 2) = 1 < 4 = 1`, not
+`(1 < 1) << 2 = 0 << 2 = 0`.
+
+```
+begin test "operator precedence shift vs relational"
+  script
+    echo $(( 1 < 1 << 2 ))
+  expect
+    stdout "1"
+    stderr ""
+    exit_code 0
+end test "operator precedence shift vs relational"
+```
+
+#### Test: variable used before and after assignment in expression
+
+A variable referenced on the right side of an assignment operator uses
+the value the variable had before the assignment takes effect, consistent
+with ISO C evaluation semantics.
+
+```
+begin test "variable used before and after assignment in expression"
+  script
+    x=5
+    echo $(( x += x ))
+    echo "$x"
+  expect
+    stdout "10\n10"
+    stderr ""
+    exit_code 0
+end test "variable used before and after assignment in expression"
+```
+
+#### Test: nested ternary operators
+
+The ternary operator is right-associative. `a ? b : c ? d : e` evaluates
+as `a ? b : (c ? d : e)`.
+
+```
+begin test "nested ternary operators"
+  script
+    echo $(( 0 ? 1 : 0 ? 2 : 3 ))
+    echo $(( 1 ? 10 : 0 ? 20 : 30 ))
+    echo $(( 0 ? 10 : 1 ? 20 : 30 ))
+  expect
+    stdout "3\n10\n20"
+    stderr ""
+    exit_code 0
+end test "nested ternary operators"
+```
+
+#### Test: bitwise NOT of non-zero value
+
+The `~` operator produces the bitwise complement for arbitrary values,
+not just zero. `~1` shall be `-2` and `~(-1)` shall be `0` on a
+two's-complement system.
+
+```
+begin test "bitwise NOT of non-zero value"
+  script
+    echo $(( ~1 )) $(( ~(-1) )) $(( ~255 ))
+  expect
+    stdout "-2 0 -256"
+    stderr ""
+    exit_code 0
+end test "bitwise NOT of non-zero value"
 ```
