@@ -1560,6 +1560,12 @@ fn resolve_command_path(
         return Some(PathBuf::from(program));
     }
 
+    if path_override.is_none()
+        && let Some(cached) = shell.path_cache.get(program)
+    {
+        return Some(cached.clone());
+    }
+
     let path = path_override
         .map(|s| s.to_string())
         .or_else(|| shell.get_var("PATH").map(|s| s.to_string()))
@@ -2156,6 +2162,8 @@ mod tests {
             wait_was_interrupted: false,
             pid: 0,
             lineno: 0,
+            path_cache: HashMap::new(),
+            history: Vec::new(),
         }
     }
 

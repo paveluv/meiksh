@@ -487,8 +487,14 @@ Every non-empty line produced by `ulimit -a` must include a limit value -- eithe
 ```
 begin test "ulimit -a lines each contain a limit value"
   script
-    bad=$(ulimit -a | while IFS= read -r line; do case "$line" in *unlimited*|*[0-9]*) ;; "") ;; *) echo "bad: $line" ;; esac
-    done)
+    ulimit -a > /tmp/_ulimit_a_out
+    bad=
+    while IFS= read -r line; do
+      if [ -z "$line" ]; then continue; fi
+      if echo "$line" | grep -qE '(unlimited|[0-9])'; then continue; fi
+      bad="bad: $line"
+    done < /tmp/_ulimit_a_out
+    rm -f /tmp/_ulimit_a_out
     [ -z "$bad" ] && echo pass || echo fail
   expect
     stdout "pass"

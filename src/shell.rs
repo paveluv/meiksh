@@ -183,6 +183,8 @@ pub struct Shell {
     pub(crate) wait_was_interrupted: bool,
     pub(crate) pid: sys::Pid,
     pub(crate) lineno: usize,
+    pub path_cache: HashMap<Box<str>, PathBuf>,
+    pub history: Vec<Box<str>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -364,6 +366,8 @@ impl Shell {
             wait_was_interrupted: false,
             pid: sys::current_pid(),
             lineno: 0,
+            path_cache: HashMap::new(),
+            history: Vec::new(),
         })
     }
 
@@ -427,6 +431,8 @@ impl Shell {
             wait_was_interrupted: false,
             pid: sys::current_pid(),
             lineno: 0,
+            path_cache: HashMap::new(),
+            history: Vec::new(),
         })
     }
 
@@ -695,12 +701,30 @@ impl Shell {
     }
 
     pub fn history_number(&self) -> usize {
-        1
+        self.history.len() + 1
+    }
+
+    pub fn add_history(&mut self, line: &str) {
+        let trimmed = line.trim_end();
+        if trimmed.is_empty() {
+            return;
+        }
+        let histsize = self
+            .get_var("HISTSIZE")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(128);
+        if self.history.len() >= histsize && histsize > 0 {
+            self.history.remove(0);
+        }
+        self.history.push(trimmed.into());
     }
 
     pub fn set_var(&mut self, name: &str, value: String) -> Result<(), VarError> {
         if self.readonly.contains(name) {
             return Err(VarError::Readonly(name.into()));
+        }
+        if name == "PATH" {
+            self.path_cache.clear();
         }
         if let Some(existing) = self.env.get_mut(name) {
             *existing = value;
@@ -1150,11 +1174,18 @@ impl Shell {
         }
         let (job_index, child_index) = match self.find_job_child(pid) {
             Some(position) => position,
-            None => return Ok(127),
+            None => {
+                self.diagnostic(
+                    1,
+                    format_args!("wait: pid {pid} is not a child of this shell"),
+                );
+                return Ok(127);
+            }
         };
         match self.wait_for_child_interruptible(pid) {
             Ok(ChildWaitResult::Exited(status)) => {
                 self.record_completed_child(job_index, child_index, pid, status);
+                self.known_pid_statuses.remove(&pid);
                 Ok(status)
             }
             Ok(ChildWaitResult::Stopped(sig)) => Ok(128 + sig),
@@ -1794,6 +1825,8 @@ mod tests {
             wait_was_interrupted: false,
             pid: 0,
             lineno: 0,
+            path_cache: HashMap::new(),
+            history: Vec::new(),
         }
     }
 
@@ -2761,18 +2794,30 @@ mod tests {
 
     #[test]
     fn wait_operands_return_known_statuses_or_127() {
-        run_trace(vec![], || {
-            let mut shell = test_shell();
-            shell.known_job_statuses.insert(9, 44);
-            assert_eq!(shell.wait_for_job_operand(9).expect("known job"), 44);
-            shell.known_pid_statuses.insert(55, 12);
-            assert_eq!(shell.wait_for_pid_operand(55).expect("known pid"), 12);
-            assert_eq!(shell.wait_for_job_operand(999).expect("unknown job"), 127);
-            assert_eq!(
-                shell.wait_for_pid_operand(999_999).expect("unknown pid"),
-                127
-            );
-        });
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(
+                        b"meiksh: wait: pid 999999 is not a child of this shell\n".to_vec(),
+                    ),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.known_job_statuses.insert(9, 44);
+                assert_eq!(shell.wait_for_job_operand(9).expect("known job"), 44);
+                shell.known_pid_statuses.insert(55, 12);
+                assert_eq!(shell.wait_for_pid_operand(55).expect("known pid"), 12);
+                assert_eq!(shell.wait_for_job_operand(999).expect("unknown job"), 127);
+                assert_eq!(
+                    shell.wait_for_pid_operand(999_999).expect("unknown pid"),
+                    127
+                );
+            },
+        );
     }
 
     #[test]
@@ -4504,5 +4549,23 @@ mod tests {
                 .expect("syntax check");
             assert_eq!(status, 0);
         });
+    }
+
+    #[test]
+    fn add_history_skips_empty_and_respects_histsize() {
+        let mut shell = test_shell();
+        shell.add_history("");
+        shell.add_history("   ");
+        assert!(shell.history.is_empty());
+
+        shell.add_history("first");
+        assert_eq!(shell.history.len(), 1);
+
+        shell.env.insert("HISTSIZE".into(), "2".into());
+        shell.add_history("second");
+        shell.add_history("third");
+        assert_eq!(shell.history.len(), 2);
+        assert_eq!(&*shell.history[0], "second");
+        assert_eq!(&*shell.history[1], "third");
     }
 }

@@ -62,6 +62,10 @@ pub fn run(
         "trap" => trap(shell, argv),
         "umask" => umask(shell, argv)?,
         "command" => command(shell, argv)?,
+        "type" => type_builtin(shell, argv)?,
+        "hash" => hash(shell, argv)?,
+        "fc" => fc(shell, argv)?,
+        "ulimit" => ulimit(shell, argv)?,
         _ => BuiltinOutcome::Status(127),
     };
 
@@ -70,8 +74,9 @@ pub fn run(
 
 const BUILTIN_NAMES: &[&str] = &[
     ".", ":", "alias", "bg", "break", "cd", "command", "continue", "eval", "exec", "exit",
-    "export", "false", "fg", "getopts", "jobs", "kill", "pwd", "read", "readonly", "return", "set",
-    "shift", "times", "trap", "true", "umask", "unalias", "unset", "wait",
+    "export", "false", "fc", "fg", "getopts", "hash", "jobs", "kill", "pwd", "read", "readonly",
+    "return", "set", "shift", "times", "trap", "true", "type", "ulimit", "umask", "unalias",
+    "unset", "wait",
 ];
 
 pub fn is_builtin(name: &str) -> bool {
@@ -195,12 +200,10 @@ fn parse_cd_target(
         return Err(shell.diagnostic(1, "cd: too many arguments"));
     }
     let Some(target) = argv.get(index) else {
-        return Ok((
-            shell.get_var("HOME").unwrap_or(".").to_string(),
-            false,
-            physical,
-            check_pwd,
-        ));
+        let home = shell
+            .get_var("HOME")
+            .ok_or_else(|| shell.diagnostic(1, "cd: HOME not set"))?;
+        return Ok((home.to_string(), false, physical, check_pwd));
     };
     if target.is_empty() {
         return Err(shell.diagnostic(1, "cd: empty directory"));
@@ -1342,6 +1345,7 @@ fn unalias(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellEr
     let mut status = 0;
     for item in &argv[start..] {
         if shell.aliases.remove(item.as_str()).is_none() {
+            shell.diagnostic(1, format_args!("unalias: {item}: not found"));
             status = 1;
         }
     }
@@ -1983,7 +1987,9 @@ fn command_usage_status(mode: CommandMode) -> i32 {
 
 fn command_short_description(shell: &Shell, name: &str, use_default_path: bool) -> Option<String> {
     match describe_command(shell, name, use_default_path)? {
-        CommandDescription::Alias(value) => Some(format_alias_definition(name, &value)),
+        CommandDescription::Alias(value) => {
+            Some(format!("alias {}", format_alias_definition(name, &value)))
+        }
         CommandDescription::Function
         | CommandDescription::SpecialBuiltin
         | CommandDescription::RegularBuiltin
@@ -2030,6 +2036,358 @@ fn describe_command(
         return Some(CommandDescription::ReservedWord);
     }
     which_in_path(name, shell, use_default_path).map(CommandDescription::External)
+}
+
+fn type_builtin(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
+    let mut status = 0;
+    for name in &argv[1..] {
+        match command_verbose_description(shell, name, false) {
+            Some(desc) => sys_println!("{desc}"),
+            None => {
+                shell.diagnostic(1, format_args!("{name}: not found"));
+                status = 1;
+            }
+        }
+    }
+    Ok(BuiltinOutcome::Status(status))
+}
+
+fn hash(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
+    if argv.len() >= 2 && argv[1] == "-r" {
+        shell.path_cache.clear();
+        return Ok(BuiltinOutcome::Status(0));
+    }
+    if argv.len() == 1 {
+        if shell.path_cache.is_empty() {
+            return Ok(BuiltinOutcome::Status(0));
+        }
+        for (name, path) in &shell.path_cache {
+            sys_println!("{name}\t{}", path.display());
+        }
+        return Ok(BuiltinOutcome::Status(0));
+    }
+    let mut status = 0;
+    for name in &argv[1..] {
+        if is_builtin(name) || shell.functions.contains_key(name.as_str()) {
+            continue;
+        }
+        match search_path(name, shell, false, |p| {
+            sys::access_path(&p.display().to_string(), sys::X_OK).is_ok()
+        }) {
+            Some(path) => {
+                shell.path_cache.insert(name.as_str().into(), path);
+            }
+            None => {
+                shell.diagnostic(1, format_args!("hash: {name}: not found"));
+                status = 1;
+            }
+        }
+    }
+    Ok(BuiltinOutcome::Status(status))
+}
+
+fn ulimit_resource_for_option(ch: char) -> Option<(i32, &'static str, u64)> {
+    match ch {
+        'c' => Some((sys::RLIMIT_CORE, "core file size (blocks)", 512)),
+        'd' => Some((sys::RLIMIT_DATA, "data seg size (kbytes)", 1024)),
+        'f' => Some((sys::RLIMIT_FSIZE, "file size (blocks)", 512)),
+        'n' => Some((sys::RLIMIT_NOFILE, "open files", 1)),
+        's' => Some((sys::RLIMIT_STACK, "stack size (kbytes)", 1024)),
+        't' => Some((sys::RLIMIT_CPU, "cpu time (seconds)", 1)),
+        'v' => Some((sys::RLIMIT_AS, "virtual memory (kbytes)", 1024)),
+        _ => None,
+    }
+}
+
+fn format_limit(val: u64) -> String {
+    if val == sys::RLIM_INFINITY {
+        "unlimited".into()
+    } else {
+        val.to_string()
+    }
+}
+
+fn ulimit(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
+    let mut use_hard = false;
+    let mut use_soft = false;
+    let mut report_all = false;
+    let mut resource_opt: Option<char> = None;
+    let mut new_limit: Option<&str> = None;
+
+    let mut i = 1;
+    while i < argv.len() {
+        let arg = &argv[i];
+        if arg.starts_with('-') && arg.len() > 1 {
+            for ch in arg[1..].chars() {
+                match ch {
+                    'H' => use_hard = true,
+                    'S' => use_soft = true,
+                    'a' => report_all = true,
+                    'c' | 'd' | 'f' | 'n' | 's' | 't' | 'v' => resource_opt = Some(ch),
+                    _ => {
+                        return Err(
+                            shell.diagnostic(2, format_args!("ulimit: invalid option: -{ch}"))
+                        );
+                    }
+                }
+            }
+        } else {
+            new_limit = Some(arg);
+        }
+        i += 1;
+    }
+
+    if !use_hard && !use_soft {
+        use_soft = true;
+    }
+
+    if report_all {
+        for &opt in &['c', 'd', 'f', 'n', 's', 't', 'v'] {
+            let (resource, desc, unit) = ulimit_resource_for_option(opt).unwrap();
+            let (soft, hard) = sys::getrlimit(resource)
+                .map_err(|e| shell.diagnostic(1, format_args!("ulimit: {e}")))?;
+            let val = if use_hard { hard } else { soft };
+            let display = if val == sys::RLIM_INFINITY {
+                "unlimited".into()
+            } else {
+                (val / unit).to_string()
+            };
+            sys_println!("-{opt}: {desc:40} {display}");
+        }
+        return Ok(BuiltinOutcome::Status(0));
+    }
+
+    let opt = resource_opt.unwrap_or('f');
+    let (resource, _desc, unit) = ulimit_resource_for_option(opt).unwrap();
+
+    if let Some(val_str) = new_limit {
+        let (soft, hard) = sys::getrlimit(resource)
+            .map_err(|e| shell.diagnostic(1, format_args!("ulimit: {e}")))?;
+        let raw_val = if val_str == "unlimited" {
+            sys::RLIM_INFINITY
+        } else {
+            let Ok(n) = val_str.parse::<u64>() else {
+                return Err(shell.diagnostic(2, format_args!("ulimit: invalid limit: {val_str}")));
+            };
+            n * unit
+        };
+        let new_soft = if use_soft { raw_val } else { soft };
+        let new_hard = if use_hard { raw_val } else { hard };
+        sys::setrlimit(resource, new_soft, new_hard)
+            .map_err(|e| shell.diagnostic(1, format_args!("ulimit: {e}")))?;
+        return Ok(BuiltinOutcome::Status(0));
+    }
+
+    let (soft, hard) =
+        sys::getrlimit(resource).map_err(|e| shell.diagnostic(1, format_args!("ulimit: {e}")))?;
+    let val = if use_hard { hard } else { soft };
+    sys_println!(
+        "{}",
+        format_limit(if val == sys::RLIM_INFINITY {
+            val
+        } else {
+            val / unit
+        })
+    );
+    Ok(BuiltinOutcome::Status(0))
+}
+
+fn fc_resolve_operand(history: &[Box<str>], op: &str) -> Option<usize> {
+    if let Ok(n) = op.parse::<i64>() {
+        if n > 0 {
+            let idx = (n as usize).saturating_sub(1);
+            return if idx < history.len() { Some(idx) } else { None };
+        }
+        let offset = n.unsigned_abs() as usize;
+        return history.len().checked_sub(offset);
+    }
+    history.iter().rposition(|entry| entry.starts_with(op))
+}
+
+fn fc(shell: &mut Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
+    let mut list_mode = false;
+    let mut suppress_numbers = false;
+    let mut reverse = false;
+    let mut reexec = false;
+    let mut editor: Option<String> = None;
+    let mut operands = Vec::new();
+
+    let mut i = 1;
+    while i < argv.len() {
+        let arg = &argv[i];
+        if arg == "--" {
+            i += 1;
+            operands.extend(argv[i..].iter().cloned());
+            break;
+        }
+        if arg.starts_with('-')
+            && arg.len() > 1
+            && !arg[1..].starts_with(|c: char| c.is_ascii_digit())
+        {
+            let mut chars = arg[1..].chars();
+            while let Some(ch) = chars.next() {
+                match ch {
+                    'l' => list_mode = true,
+                    'n' => suppress_numbers = true,
+                    'r' => reverse = true,
+                    's' => reexec = true,
+                    'e' => {
+                        let rest: String = chars.collect();
+                        if rest.is_empty() {
+                            i += 1;
+                            if i >= argv.len() {
+                                return Err(shell.diagnostic(2, "fc: -e requires an argument"));
+                            }
+                            editor = Some(argv[i].clone());
+                        } else {
+                            editor = Some(rest);
+                        }
+                        break;
+                    }
+                    _ => {
+                        return Err(shell.diagnostic(2, format_args!("fc: invalid option: -{ch}")));
+                    }
+                }
+            }
+        } else {
+            operands.push(arg.clone());
+        }
+        i += 1;
+    }
+
+    let history = &shell.history;
+    if history.is_empty() {
+        return Ok(BuiltinOutcome::Status(0));
+    }
+
+    if reexec {
+        let mut substitution: Option<(&str, &str)> = None;
+        let mut first_operand: Option<&str> = None;
+        for op in &operands {
+            if let Some(eq_pos) = op.find('=') {
+                let (old, new) = op.split_at(eq_pos);
+                substitution = Some((old, &new[1..]));
+            } else {
+                first_operand = Some(op);
+            }
+        }
+        let idx = match first_operand {
+            Some(op) => fc_resolve_operand(history, op).ok_or_else(|| {
+                shell.diagnostic(1, format_args!("fc: no command found matching '{op}'"))
+            })?,
+            None => history.len() - 1,
+        };
+        let mut cmd = history[idx].to_string();
+        if let Some((old, new)) = substitution {
+            if let Some(pos) = cmd.find(old) {
+                cmd.replace_range(pos..pos + old.len(), new);
+            }
+        }
+        shell.add_history(&cmd);
+        let status = shell
+            .execute_string(&cmd)
+            .unwrap_or_else(|e| e.exit_status());
+        shell.last_status = status;
+        return Ok(BuiltinOutcome::Status(status));
+    }
+
+    if list_mode {
+        let (first, last) = match operands.len() {
+            0 => {
+                let end = history.len().saturating_sub(1);
+                let start = end.saturating_sub(15);
+                (start, end)
+            }
+            1 => {
+                let a = fc_resolve_operand(history, &operands[0])
+                    .unwrap_or(history.len().saturating_sub(1));
+                (a, history.len().saturating_sub(1))
+            }
+            _ => {
+                let a = fc_resolve_operand(history, &operands[0])
+                    .unwrap_or(history.len().saturating_sub(1));
+                let b = fc_resolve_operand(history, &operands[1])
+                    .unwrap_or(history.len().saturating_sub(1));
+                (a, b)
+            }
+        };
+
+        let (lo, hi) = if first <= last {
+            (first, last)
+        } else {
+            (last, first)
+        };
+
+        let do_reverse = if first <= last { reverse } else { !reverse };
+
+        if do_reverse {
+            for idx in (lo..=hi).rev() {
+                if suppress_numbers {
+                    sys_println!("\t{}", history[idx]);
+                } else {
+                    sys_println!("{}\t{}", idx + 1, history[idx]);
+                }
+            }
+        } else {
+            for idx in lo..=hi {
+                if suppress_numbers {
+                    sys_println!("\t{}", history[idx]);
+                } else {
+                    sys_println!("{}\t{}", idx + 1, history[idx]);
+                }
+            }
+        }
+        return Ok(BuiltinOutcome::Status(0));
+    }
+
+    let idx = if operands.is_empty() {
+        history.len() - 1
+    } else {
+        fc_resolve_operand(history, &operands[0])
+            .ok_or_else(|| shell.diagnostic(1, "fc: history specification out of range"))?
+    };
+
+    let editor_cmd = match editor {
+        Some(ref e) => e.as_str(),
+        None => shell.get_var("FCEDIT").unwrap_or("ed"),
+    };
+
+    let tmp_path = format!("/tmp/fc_edit_{}", sys::current_pid());
+    let cmd_text = history[idx].to_string();
+    let fd = sys::open_file(
+        &tmp_path,
+        sys::O_WRONLY | sys::O_CREAT | sys::O_TRUNC,
+        0o600,
+    )
+    .map_err(|e| shell.diagnostic(1, format_args!("fc: {e}")))?;
+    let _ = sys::write_all_fd(fd, cmd_text.as_bytes());
+    let _ = sys::write_all_fd(fd, b"\n");
+    let _ = sys::close_fd(fd);
+
+    let edit_cmd = format!("{editor_cmd} {tmp_path}");
+    let edit_status = shell
+        .execute_string(&edit_cmd)
+        .unwrap_or_else(|e| e.exit_status());
+    if edit_status != 0 {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Ok(BuiltinOutcome::Status(edit_status));
+    }
+
+    let edited =
+        sys::read_file(&tmp_path).map_err(|e| shell.diagnostic(1, format_args!("fc: {e}")))?;
+    let _ = std::fs::remove_file(&tmp_path);
+
+    let edited = edited.trim_end().to_string();
+    if !edited.is_empty() {
+        shell.add_history(&edited);
+        let status = shell
+            .execute_string(&edited)
+            .unwrap_or_else(|e| e.exit_status());
+        shell.last_status = status;
+        return Ok(BuiltinOutcome::Status(status));
+    }
+
+    Ok(BuiltinOutcome::Status(0))
 }
 
 fn execute_command_utility(
@@ -2230,6 +2588,8 @@ mod tests {
             wait_was_interrupted: false,
             pid: 0,
             lineno: 0,
+            path_cache: HashMap::new(),
+            history: Vec::new(),
         }
     }
 
@@ -2338,6 +2698,14 @@ mod tests {
                     vec![
                         ArgMatcher::Fd(2),
                         ArgMatcher::Bytes(b"meiksh: alias: missing: not found\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(2),
+                        ArgMatcher::Bytes(b"meiksh: unalias: missing: not found\n".to_vec()),
                     ],
                     TraceResult::Auto,
                 ),
@@ -3421,7 +3789,7 @@ mod tests {
                 );
                 assert_eq!(
                     command_short_description(&shell, "ll", false),
-                    Some("ll='ls -l'".to_string())
+                    Some("alias ll='ls -l'".to_string())
                 );
                 assert_eq!(
                     command_verbose_description(&shell, "greet", false),
@@ -4604,6 +4972,14 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(2),
+                        ArgMatcher::Bytes(b"meiksh: cd: HOME not set\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(2),
                         ArgMatcher::Bytes(b"meiksh: cd: OLDPWD not set\n".to_vec()),
                     ],
                     TraceResult::Auto,
@@ -4652,15 +5028,19 @@ mod tests {
                 assert!(!logical_pwd_is_valid("./relative"));
                 parse_cd_target(&shell, &["cd".into(), "one".into(), "two".into()])
                     .expect_err("too many");
+                parse_cd_target(&shell, &["cd".into()]).expect_err("HOME not set");
+                shell.env.insert("HOME".into(), "/tmp".into());
                 assert_eq!(
                     parse_cd_target(&shell, &["cd".into()]).expect("default target"),
-                    (".".to_string(), false, false, false)
+                    ("/tmp".to_string(), false, false, false)
                 );
+                shell.env.remove("HOME");
                 parse_cd_target(&shell, &["cd".into(), "-".into()]).expect_err("missing oldpwd");
                 shell.env.insert("OLDPWD".into(), "/tmp/oldpwd".into());
                 let error = invoke(&mut shell, &["cd".into(), "".into()]).expect_err("empty cd");
                 assert_ne!(error.exit_status(), 0);
                 assert!(parse_cd_target(&shell, &["cd".into(), "--".into(), "-".into()]).is_ok());
+                shell.env.insert("HOME".into(), "/tmp".into());
                 let (_, _, physical, check_pwd) =
                     parse_cd_target(&shell, &["cd".into(), "-P".into()]).expect("-P");
                 assert!(physical);
@@ -7194,5 +7574,32 @@ mod tests {
                 ));
             },
         );
+    }
+
+    #[test]
+    fn format_limit_covers_both_branches() {
+        assert_eq!(format_limit(sys::RLIM_INFINITY), "unlimited");
+        assert_eq!(format_limit(42), "42");
+    }
+
+    #[test]
+    fn ulimit_resource_for_option_covers_all_and_unknown() {
+        for ch in ['c', 'd', 'f', 'n', 's', 't', 'v'] {
+            assert!(ulimit_resource_for_option(ch).is_some());
+        }
+        assert!(ulimit_resource_for_option('z').is_none());
+    }
+
+    #[test]
+    fn fc_resolve_operand_covers_positive_negative_and_string() {
+        let h: Vec<Box<str>> = vec!["alpha".into(), "beta".into(), "gamma".into()];
+        assert_eq!(fc_resolve_operand(&h, "1"), Some(0));
+        assert_eq!(fc_resolve_operand(&h, "3"), Some(2));
+        assert_eq!(fc_resolve_operand(&h, "99"), None);
+        assert_eq!(fc_resolve_operand(&h, "-1"), Some(2));
+        assert_eq!(fc_resolve_operand(&h, "-3"), Some(0));
+        assert_eq!(fc_resolve_operand(&h, "al"), Some(0));
+        assert_eq!(fc_resolve_operand(&h, "be"), Some(1));
+        assert_eq!(fc_resolve_operand(&h, "zzz"), None);
     }
 }

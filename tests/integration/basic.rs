@@ -164,7 +164,7 @@ fn command_builtin_reports_and_executes_posix_like_lookups() {
     assert_eq!(lines[0], "ok");
     assert_eq!(lines[1], "export");
     assert!(lines[2].contains("export is a special built-in utility"));
-    assert_eq!(lines[3], "ll='printf alias'");
+    assert_eq!(lines[3], "alias ll='printf alias'");
     assert!(lines[4].contains("if is a reserved word"));
     assert!(!stdout.contains("bad"));
 }
@@ -2637,4 +2637,350 @@ printf '%s\n' "$r"
         .expect("run");
     assert!(out.status.success());
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "abxy");
+}
+
+// ── type builtin ──
+
+#[test]
+fn type_builtin_finds_builtins_and_externals() {
+    let out = Command::new(meiksh())
+        .args(["-c", "type cd"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("cd"));
+
+    let out = Command::new(meiksh())
+        .args(["-c", "type no_such_thing_at_all"])
+        .output()
+        .expect("run");
+    assert!(!out.status.success());
+}
+
+// ── hash builtin ──
+
+#[test]
+fn hash_builtin_caches_and_clears() {
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "hash ls 2>/dev/null\nhash | grep -q ls && echo found || echo empty\nhash -r\nhash | grep -q ls && echo found || echo cleared",
+        ])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("found"), "hash: {stdout}");
+    assert!(stdout.contains("cleared"), "hash -r: {stdout}");
+}
+
+#[test]
+fn hash_skips_builtins_and_functions() {
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "myfunc() { :; }\nhash cd myfunc 2>/dev/null\nhash\necho done",
+        ])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "done");
+}
+
+#[test]
+fn hash_path_change_clears_cache() {
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "hash ls 2>/dev/null\nPATH=\"$PATH\"\nhash | grep -q ls && echo still || echo gone",
+        ])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("gone"));
+}
+
+#[test]
+fn path_cache_hit_resolves_command() {
+    let out = Command::new(meiksh())
+        .args(["-c", "hash ls 2>/dev/null\nls /dev/null"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("/dev/null"));
+}
+
+// ── ulimit builtin ──
+
+#[test]
+fn ulimit_get_and_set() {
+    for opt in ['c', 'd', 'f', 'n', 's', 't', 'v'] {
+        let out = Command::new(meiksh())
+            .args(["-c", &format!("ulimit -{opt}")])
+            .output()
+            .expect("run");
+        assert!(out.status.success(), "ulimit -{opt} failed");
+    }
+
+    let out = Command::new(meiksh())
+        .args(["-c", "ulimit -a"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).lines().count() >= 7);
+
+    let out = Command::new(meiksh())
+        .args(["-c", "ulimit -Hf"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+
+    let out = Command::new(meiksh())
+        .args(["-c", "ulimit -Sf"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+
+    let out = Command::new(meiksh())
+        .args(["-c", "cur=$(ulimit -Sf)\nulimit -Sf \"$cur\"\necho $?"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "0");
+
+    let _out = Command::new(meiksh())
+        .args(["-c", "ulimit -f unlimited"])
+        .output()
+        .expect("run");
+
+    let out = Command::new(meiksh())
+        .args(["-c", "ulimit -Sc 0; echo $?"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "0");
+
+    let out = Command::new(meiksh())
+        .args(["-c", "ulimit bad_value"])
+        .output()
+        .expect("run");
+    assert!(!out.status.success());
+
+    let out = Command::new(meiksh())
+        .args(["-c", "ulimit -z"])
+        .output()
+        .expect("run");
+    assert!(!out.status.success());
+
+    let out = Command::new(meiksh())
+        .args(["-c", "ulimit -Hn 1 2>/dev/null; echo $?"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "1");
+}
+
+// ── fc builtin (interactive mode) ──
+
+fn run_interactive(input: &[u8]) -> std::process::Output {
+    let mut child = Command::new(meiksh())
+        .arg("-i")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    child.stdin.as_mut().unwrap().write_all(input).unwrap();
+    child.wait_with_output().expect("wait")
+}
+
+#[test]
+fn fc_reexec_mode() {
+    let out = run_interactive(b"echo original\nfc -s\nexit\n");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(stdout.matches("original").count(), 2, "fc -s: {stdout}");
+
+    let out = run_interactive(b"echo old_word\nfc -s old_word=new_word\nexit\n");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("old_word") && stdout.contains("new_word"),
+        "fc -s sub: {stdout}"
+    );
+
+    let out = run_interactive(b"echo first\necho second\nfc -s -2\nexit\n");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(stdout.matches("first").count(), 2, "fc -s -2: {stdout}");
+
+    let out = run_interactive(b"echo alpha\necho beta\nfc -s echo\nexit\n");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("beta"), "fc -s echo: {stdout}");
+
+    let out = run_interactive(b"echo hi\nfc -s zzz_none\nexit\n");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("no command found"), "fc -s bad: {stderr}");
+}
+
+#[test]
+fn fc_list_mode() {
+    let out = run_interactive(b"echo aaa\necho bbb\necho ccc\nfc -l\nexit\n");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("echo aaa"), "fc -l: {stdout}");
+
+    let out = run_interactive(b"echo aaa\necho bbb\nfc -ln\nexit\n");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("echo aaa"), "fc -ln: {stdout}");
+
+    let out = run_interactive(b"echo aaa\necho bbb\nfc -lr\nexit\n");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("echo"), "fc -lr: {stdout}");
+
+    let out = run_interactive(b"echo aaa\necho bbb\nfc -lnr\nexit\n");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("echo aaa"), "fc -lnr: {stdout}");
+}
+
+#[test]
+fn fc_edit_mode() {
+    let out = run_interactive(b"echo before_edit\nFCEDIT=cat\nfc\nexit\n");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("before_edit"), "fc FCEDIT: {stdout}");
+
+    let out = run_interactive(b"echo before_edit2\nfc -e cat\nexit\n");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("before_edit2"), "fc -e: {stdout}");
+
+    let out = run_interactive(b"echo hi\nfc -ecat\nexit\n");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("echo hi"), "fc -ecat: {stdout}");
+
+    let out = run_interactive(b"echo target_cmd\nfc -e cat 1\nexit\n");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("target_cmd"), "fc -e cat 1: {stdout}");
+
+    let out = run_interactive(b"echo test_edit\nfc -e false\nexit\n");
+    let _ = out;
+}
+
+#[test]
+fn fc_edit_mode_empty_result() {
+    let editor_script = "/tmp/meiksh_test_empty_editor.sh";
+    fs::write(editor_script, "#!/bin/sh\n: > \"$1\"\n").expect("write");
+    fs::set_permissions(editor_script, fs::Permissions::from_mode(0o755)).expect("chmod");
+    let out = run_interactive(
+        format!("echo original\nfc -e {editor_script}\necho done\nexit\n").as_bytes(),
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("done"), "fc empty: {stdout}");
+    let _ = fs::remove_file(editor_script);
+}
+
+#[test]
+fn fc_option_parsing() {
+    let out = run_interactive(b"echo hello\nfc -l -- -1 -1\nexit\n");
+    assert!(out.status.success());
+
+    let out = Command::new(meiksh())
+        .args(["-c", "fc -z 2>/dev/null; echo $?"])
+        .output()
+        .expect("run");
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "2");
+
+    let out = Command::new(meiksh())
+        .args(["-c", "fc -e 2>/dev/null; echo $?"])
+        .output()
+        .expect("run");
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "2");
+
+    let out = Command::new(meiksh())
+        .args(["-c", "fc -l 2>/dev/null"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+}
+
+#[test]
+fn add_history_edge_cases() {
+    let out = run_interactive(b"HISTSIZE=2\necho a\necho b\necho c\nfc -l\nexit\n");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!stdout.contains("echo a\n"), "evicted: {stdout}");
+}
+
+// ── wait and unalias diagnostics ──
+
+#[test]
+fn wait_second_returns_127_and_diagnostic() {
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "sleep 0 &\np=$!\nwait $p\nwait $p 2>/dev/null\nprintf '%s\\n' $?",
+        ])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "127");
+
+    let out = Command::new(meiksh())
+        .args(["-c", "wait 999999"])
+        .output()
+        .expect("run");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("not a child"));
+}
+
+#[test]
+fn unalias_diagnostic_for_unknown() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unalias no_such_alias"])
+        .output()
+        .expect("run");
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("not found"));
+}
+
+#[test]
+fn cd_unset_home_fails() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset HOME; cd 2>/dev/null; echo $?"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "1");
+}
+
+#[test]
+fn hash_not_found_error() {
+    let out = Command::new(meiksh())
+        .args(["-c", "hash no_such_binary_ever_xyzzy 2>/dev/null; echo $?"])
+        .output()
+        .expect("run");
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "1");
+}
+
+#[test]
+fn fc_list_one_operand() {
+    let out = run_interactive(b"echo first\necho second\necho third\nfc -l 2\nexit\n");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("echo second"), "fc -l 2: {stdout}");
+}
+
+#[test]
+fn fc_list_reversed_range() {
+    let out = run_interactive(b"echo alpha\necho beta\necho gamma\nfc -l 3 1\nexit\n");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("echo alpha") && stdout.contains("echo gamma"),
+        "fc -l 3 1: {stdout}"
+    );
+}
+
+#[test]
+fn command_v_alias_prefix() {
+    let out = Command::new(meiksh())
+        .args(["-c", "alias greet='echo hi'; command -v greet"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "alias greet='echo hi'"
+    );
 }
