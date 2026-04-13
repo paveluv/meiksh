@@ -2236,10 +2236,7 @@ mod tests {
                         t("close", vec![ArgMatcher::Fd(20)], TraceResult::Int(0)),
                         t(
                             "execvp",
-                            vec![
-                                ArgMatcher::Str("/usr/bin/printf".into()),
-                                ArgMatcher::Any,
-                            ],
+                            vec![ArgMatcher::Str("/usr/bin/printf".into()), ArgMatcher::Any],
                             TraceResult::Int(0),
                         ),
                     ],
@@ -7477,6 +7474,83 @@ mod tests {
                 let status =
                     wait_for_external_child(&mut shell, &handle, None, Some("killed")).unwrap();
                 assert_eq!(status, 128 + 9);
+            },
+        );
+    }
+
+    #[test]
+    fn fork_failure_in_subshell_returns_status() {
+        run_trace(
+            vec![
+                t(
+                    "stat",
+                    vec![ArgMatcher::Str("/usr/bin/myext".into()), ArgMatcher::Any],
+                    TraceResult::StatFile(0o755),
+                ),
+                t("fork", vec![], TraceResult::Err(libc::EAGAIN)),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"myext: Resource temporarily unavailable\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert("PATH".into(), "/usr/bin".into());
+                shell.in_subshell = true;
+                let status = shell.execute_string("myext\n").expect("fork failure");
+                assert_eq!(status, 1);
+            },
+        );
+    }
+
+    #[test]
+    fn exec_in_place_access_error_exits_process() {
+        run_trace(
+            vec![
+                t_fork(
+                    TraceResult::Pid(2000),
+                    vec![
+                        t(
+                            "access",
+                            vec![ArgMatcher::Str("/no/such/cmd".into()), ArgMatcher::Int(0)],
+                            TraceResult::Err(sys::ENOENT),
+                        ),
+                        t(
+                            "write",
+                            vec![
+                                ArgMatcher::Fd(sys::STDERR_FILENO),
+                                ArgMatcher::Bytes(b"/no/such/cmd: not found\n".to_vec()),
+                            ],
+                            TraceResult::Auto,
+                        ),
+                    ],
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(2000), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    TraceResult::Status(127),
+                ),
+            ],
+            || {
+                let shell = test_shell();
+                let prepared = PreparedProcess {
+                    exec_path: "/no/such/cmd".into(),
+                    argv: vec!["/no/such/cmd".into()].into_boxed_slice(),
+                    child_env: Vec::new().into_boxed_slice(),
+                    redirections: Vec::new(),
+                    noclobber: false,
+                    path_verified: false,
+                };
+                let pid = sys::fork_process().expect("fork");
+                if pid == 0 {
+                    exec_prepared_in_current_process(&shell, &prepared, ProcessGroupPlan::None);
+                }
+                let ws = sys::wait_pid(pid, false).expect("wait").expect("status");
+                assert_eq!(sys::decode_wait_status(ws.status), 127);
             },
         );
     }

@@ -4066,7 +4066,10 @@ mod tests {
                     finished,
                     vec![(1, ReapedJobState::Stopped(sys::SIGTSTP, "stopped".into()))]
                 );
-                assert!(matches!(shell.jobs[0].state, JobState::Stopped(sys::SIGTSTP)));
+                assert!(matches!(
+                    shell.jobs[0].state,
+                    JobState::Stopped(sys::SIGTSTP)
+                ));
             },
         );
     }
@@ -4436,6 +4439,37 @@ mod tests {
                 let status = shell.wait_on_job_index(0, false).expect("wait signaled");
                 assert_eq!(status, 128 + 11);
                 assert!(shell.jobs.is_empty());
+            },
+        );
+    }
+
+    #[test]
+    fn wait_for_child_blocking_skips_stop_when_not_reporting() {
+        run_trace(
+            vec![
+                t(
+                    "waitpid",
+                    vec![
+                        ArgMatcher::Int(7070),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
+                    TraceResult::StoppedSig(19),
+                ),
+                t(
+                    "waitpid",
+                    vec![
+                        ArgMatcher::Int(7070),
+                        ArgMatcher::Any,
+                        ArgMatcher::Int(sys::WUNTRACED as i64),
+                    ],
+                    TraceResult::Status(42),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome = shell.wait_for_child_blocking(7070, false).expect("wait");
+                assert_eq!(outcome, BlockingWaitOutcome::Exited(42));
             },
         );
     }
