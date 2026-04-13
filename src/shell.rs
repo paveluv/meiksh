@@ -1277,7 +1277,6 @@ impl Shell {
                         if report_stopped {
                             return Ok(BlockingWaitOutcome::Stopped(sys::wstopsig(waited.status)));
                         }
-                        let _ = sys::send_signal(sys::current_pid(), sys::SIGSTOP);
                         continue;
                     } else if sys::wifsignaled(waited.status) {
                         return Ok(BlockingWaitOutcome::Signaled(sys::wtermsig(waited.status)));
@@ -4045,6 +4044,34 @@ mod tests {
     }
 
     #[test]
+    fn reap_jobs_reports_stopped_when_child_remains_stopped() {
+        run_trace(
+            vec![
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(4005), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::StoppedSig(sys::SIGTSTP),
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(4005), ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Pid(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.register_background_job("stopped".into(), None, vec![fake_handle(4005)]);
+                let finished = shell.reap_jobs();
+                assert_eq!(
+                    finished,
+                    vec![(1, ReapedJobState::Stopped(sys::SIGTSTP, "stopped".into()))]
+                );
+                assert!(matches!(shell.jobs[0].state, JobState::Stopped(sys::SIGTSTP)));
+            },
+        );
+    }
+
+    #[test]
     fn reap_jobs_signaled_produces_finished_entry() {
         run_trace(
             vec![t(
@@ -4196,43 +4223,6 @@ mod tests {
                 shell.register_background_job("segv".into(), None, vec![fake_handle(8001)]);
                 let status = shell.wait_on_job_index(0, false).expect("wait signaled");
                 assert_eq!(status, 128 + 11);
-            },
-        );
-    }
-
-    #[test]
-    fn wait_for_child_blocking_report_stopped_false_self_stops() {
-        run_trace(
-            vec![
-                t(
-                    "waitpid",
-                    vec![
-                        ArgMatcher::Int(9001),
-                        ArgMatcher::Any,
-                        ArgMatcher::Int(sys::WUNTRACED as i64),
-                    ],
-                    TraceResult::StoppedSig(sys::SIGTSTP),
-                ),
-                t("getpid", vec![], TraceResult::Pid(1234)),
-                t(
-                    "kill",
-                    vec![ArgMatcher::Int(1234), ArgMatcher::Int(sys::SIGSTOP as i64)],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "waitpid",
-                    vec![
-                        ArgMatcher::Int(9001),
-                        ArgMatcher::Any,
-                        ArgMatcher::Int(sys::WUNTRACED as i64),
-                    ],
-                    TraceResult::Status(0),
-                ),
-            ],
-            || {
-                let mut shell = test_shell();
-                let outcome = shell.wait_for_child_blocking(9001, false).expect("wait");
-                assert_eq!(outcome, BlockingWaitOutcome::Exited(0));
             },
         );
     }

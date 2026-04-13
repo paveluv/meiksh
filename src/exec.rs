@@ -308,7 +308,7 @@ fn fork_and_execute_command(
         child_shell.in_subshell = true;
         child_shell.restore_signals_for_child();
         let _ = child_shell.reset_traps_for_subshell();
-        let status = execute_command(&mut child_shell, command).unwrap_or(1);
+        let status = execute_command_in_pipeline_child(&mut child_shell, command).unwrap_or(1);
         sys::exit_process(status as sys::RawFd);
     }
 
@@ -480,8 +480,23 @@ fn wait_for_external_child(
 }
 
 fn execute_command(shell: &mut Shell, command: &Command) -> Result<i32, ShellError> {
+    execute_command_inner(shell, command, false)
+}
+
+fn execute_command_in_pipeline_child(
+    shell: &mut Shell,
+    command: &Command,
+) -> Result<i32, ShellError> {
+    execute_command_inner(shell, command, true)
+}
+
+fn execute_command_inner(
+    shell: &mut Shell,
+    command: &Command,
+    allow_exec_in_place: bool,
+) -> Result<i32, ShellError> {
     match command {
-        Command::Simple(simple) => execute_simple(shell, simple),
+        Command::Simple(simple) => execute_simple(shell, simple, allow_exec_in_place),
         Command::Subshell(program) => {
             let pid = sys::fork_process().map_err(|e| shell.diagnostic(1, &e))?;
             if pid == 0 {
@@ -518,7 +533,7 @@ fn execute_command(shell: &mut Shell, command: &Command) -> Result<i32, ShellErr
         Command::For(for_command) => execute_for(shell, for_command),
         Command::Case(case_command) => execute_case(shell, case_command),
         Command::Redirected(command, redirections) => {
-            execute_redirected(shell, command, redirections)
+            execute_redirected(shell, command, redirections, allow_exec_in_place)
         }
     }
 }
@@ -527,6 +542,7 @@ fn execute_redirected(
     shell: &mut Shell,
     command: &Command,
     redirections: &[crate::syntax::Redirection],
+    allow_exec_in_place: bool,
 ) -> Result<i32, ShellError> {
     let arena = StringArena::new();
     let expanded = expand_redirections(shell, redirections, &arena)?;
@@ -537,7 +553,7 @@ fn execute_redirected(
         Ok(guard) => guard,
         Err(error) => return Ok(shell.diagnostic(1, &error).exit_status()),
     };
-    let result = execute_command(shell, command);
+    let result = execute_command_inner(shell, command, allow_exec_in_place);
     drop(guard);
     result
 }
@@ -819,7 +835,11 @@ fn has_command_substitution(simple: &SimpleCommand) -> bool {
         .any(|w| w.raw.contains("$(") || w.raw.contains('`'))
 }
 
-fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, ShellError> {
+fn execute_simple(
+    shell: &mut Shell,
+    simple: &SimpleCommand,
+    allow_exec_in_place: bool,
+) -> Result<i32, ShellError> {
     let arena = StringArena::new();
     let expanded = expand_simple(shell, simple, &arena)?;
 
@@ -957,20 +977,21 @@ fn execute_simple(shell: &mut Shell, simple: &SimpleCommand) -> Result<i32, Shel
             sys_eprintln!("{}: not found", command_name);
             return Ok(127);
         }
-        let pgid_plan = if shell.in_subshell {
-            ProcessGroupPlan::None
-        } else {
-            ProcessGroupPlan::NewGroup
-        };
-        let handle = match spawn_prepared(shell, &prepared, pgid_plan) {
-            Ok(h) => h,
-            Err(error) => return Ok(error.exit_status()),
-        };
         let desc = prepared.argv.join(" ");
-        if shell.in_subshell {
+        if allow_exec_in_place {
+            exec_prepared_in_current_process(shell, &prepared, ProcessGroupPlan::None)
+        } else if shell.in_subshell {
+            let handle = match spawn_prepared(shell, &prepared, ProcessGroupPlan::None) {
+                Ok(h) => h,
+                Err(error) => return Ok(error.exit_status()),
+            };
             let status = wait_for_external_child(shell, &handle, None, Some(&desc))?;
             Ok(status)
         } else {
+            let handle = match spawn_prepared(shell, &prepared, ProcessGroupPlan::NewGroup) {
+                Ok(h) => h,
+                Err(error) => return Ok(error.exit_status()),
+            };
             let pgid = handle.pid;
             let _ = sys::set_process_group(pgid, pgid);
             let status = wait_for_external_child(shell, &handle, Some(pgid), Some(&desc))?;
@@ -1321,11 +1342,10 @@ fn file_needs_binary_rejection(path: &str) -> bool {
     prefix[..nl_pos].contains(&0)
 }
 
-fn spawn_prepared(
+fn prepare_prepared_process(
     shell: &Shell,
     prepared: &PreparedProcess,
-    process_group: ProcessGroupPlan,
-) -> Result<sys::ChildHandle, ShellError> {
+) -> Result<PreparedRedirections, ShellError> {
     if !prepared.path_verified && !prepared.exec_path.is_empty() && prepared.exec_path.contains('/')
     {
         if sys::access_path(&prepared.exec_path, sys::F_OK).is_err() {
@@ -1338,66 +1358,81 @@ fn spawn_prepared(
         }
     }
 
-    let prepared_redirections = prepare_redirections(&prepared.redirections, prepared.noclobber)
-        .map_err(|e| shell.diagnostic(1, &e))?;
+    prepare_redirections(&prepared.redirections, prepared.noclobber)
+        .map_err(|e| shell.diagnostic(1, &e))
+}
 
-    let pid = sys::fork_process().map_err(|e| {
-        sys_eprintln!("{}: {}", prepared.argv[0], e);
-        ShellError::Status(1)
-    })?;
-    if pid == 0 {
-        match process_group {
-            ProcessGroupPlan::NewGroup => {
-                let _ = sys::set_process_group(0, 0);
-            }
-            ProcessGroupPlan::Join(pgid) => {
-                let _ = sys::set_process_group(0, pgid);
-            }
-            ProcessGroupPlan::None => {}
+fn run_prepared_process(
+    shell: &Shell,
+    prepared: &PreparedProcess,
+    process_group: ProcessGroupPlan,
+    prepared_redirections: &PreparedRedirections,
+) -> ! {
+    match process_group {
+        ProcessGroupPlan::NewGroup => {
+            let _ = sys::set_process_group(0, 0);
         }
-        if let Err(err) = apply_child_fd_actions(&prepared_redirections.actions) {
-            sys_eprintln!("{}: {}", prepared.argv[0], err);
-            sys::exit_process(1);
+        ProcessGroupPlan::Join(pgid) => {
+            let _ = sys::set_process_group(0, pgid);
         }
-
-        for (key, value) in &prepared.child_env {
-            let _ = sys::env_set_var(key, value);
-        }
-
-        if file_needs_binary_rejection(&prepared.exec_path) {
-            sys_eprintln!("{}: cannot execute binary file", prepared.argv[0]);
-            sys::exit_process(126);
-        }
-
-        shell.restore_signals_for_child();
-        match sys::exec_replace(&prepared.exec_path, &prepared.argv) {
-            Err(err) if err.is_enoexec() => {
-                let mut child_shell = shell.clone();
-                child_shell.owns_terminal = false;
-                child_shell.in_subshell = true;
-                let _ = child_shell.reset_traps_for_subshell();
-                child_shell.shell_name = prepared.argv[0].clone();
-                child_shell.positional = prepared.argv[1..]
-                    .iter()
-                    .map(|s| String::from(&**s))
-                    .collect();
-                let status = child_shell
-                    .source_path(std::path::Path::new(&*prepared.exec_path))
-                    .unwrap_or(126);
-                sys::exit_process(status as sys::RawFd);
-            }
-            Err(err) if err.is_enoent() => {
-                sys_eprintln!("{}: not found", prepared.argv[0]);
-                sys::exit_process(127);
-            }
-            Err(err) => {
-                sys_eprintln!("{}: {}", prepared.argv[0], err);
-                sys::exit_process(126);
-            }
-            Ok(()) => sys::exit_process(0),
-        }
+        ProcessGroupPlan::None => {}
+    }
+    if let Err(err) = apply_child_fd_actions(&prepared_redirections.actions) {
+        sys_eprintln!("{}: {}", prepared.argv[0], err);
+        sys::exit_process(1);
     }
 
+    for (key, value) in &prepared.child_env {
+        let _ = sys::env_set_var(key, value);
+    }
+
+    if file_needs_binary_rejection(&prepared.exec_path) {
+        sys_eprintln!("{}: cannot execute binary file", prepared.argv[0]);
+        sys::exit_process(126);
+    }
+
+    shell.restore_signals_for_child();
+    match sys::exec_replace(&prepared.exec_path, &prepared.argv) {
+        Err(err) if err.is_enoexec() => {
+            let mut child_shell = shell.clone();
+            child_shell.owns_terminal = false;
+            child_shell.in_subshell = true;
+            let _ = child_shell.reset_traps_for_subshell();
+            child_shell.shell_name = prepared.argv[0].clone();
+            child_shell.positional = prepared.argv[1..]
+                .iter()
+                .map(|s| String::from(&**s))
+                .collect();
+            let status = child_shell
+                .source_path(std::path::Path::new(&*prepared.exec_path))
+                .unwrap_or(126);
+            sys::exit_process(status as sys::RawFd);
+        }
+        Err(err) if err.is_enoent() => {
+            sys_eprintln!("{}: not found", prepared.argv[0]);
+            sys::exit_process(127);
+        }
+        Err(err) => {
+            sys_eprintln!("{}: {}", prepared.argv[0], err);
+            sys::exit_process(126);
+        }
+        Ok(()) => sys::exit_process(0),
+    }
+}
+
+fn exec_prepared_in_current_process(
+    shell: &Shell,
+    prepared: &PreparedProcess,
+    process_group: ProcessGroupPlan,
+) -> ! {
+    let prepared_redirections = match prepare_prepared_process(shell, prepared) {
+        Ok(prepared_redirections) => prepared_redirections,
+        Err(error) => sys::exit_process(error.exit_status() as sys::RawFd),
+    };
+    run_prepared_process(shell, prepared, process_group, &prepared_redirections)
+}
+
+fn close_parent_redirection_fds(prepared_redirections: &PreparedRedirections) {
     for action in &prepared_redirections.actions {
         if let ChildFdAction::DupRawFd {
             fd,
@@ -1408,6 +1443,24 @@ fn spawn_prepared(
             let _ = sys::close_fd(*fd);
         }
     }
+}
+
+fn spawn_prepared(
+    shell: &Shell,
+    prepared: &PreparedProcess,
+    process_group: ProcessGroupPlan,
+) -> Result<sys::ChildHandle, ShellError> {
+    let prepared_redirections = prepare_prepared_process(shell, prepared)?;
+
+    let pid = sys::fork_process().map_err(|e| {
+        sys_eprintln!("{}: {}", prepared.argv[0], e);
+        ShellError::Status(1)
+    })?;
+    if pid == 0 {
+        run_prepared_process(shell, prepared, process_group, &prepared_redirections);
+    }
+
+    close_parent_redirection_fds(&prepared_redirections);
 
     Ok(sys::ChildHandle {
         pid,
@@ -2166,42 +2219,28 @@ mod tests {
                             vec![ArgMatcher::Str("/usr/bin/printf".into()), ArgMatcher::Any],
                             TraceResult::StatFile(0o755),
                         ),
-                        t_fork(
-                            TraceResult::Pid(1100),
+                        t(
+                            "open",
                             vec![
-                                t(
-                                    "open",
-                                    vec![
-                                        ArgMatcher::Str("/usr/bin/printf".into()),
-                                        ArgMatcher::Any,
-                                        ArgMatcher::Any,
-                                    ],
-                                    TraceResult::Fd(20),
-                                ),
-                                t(
-                                    "read",
-                                    vec![ArgMatcher::Fd(20), ArgMatcher::Any],
-                                    TraceResult::Bytes(b"#!/bin/sh\n".to_vec()),
-                                ),
-                                t("close", vec![ArgMatcher::Fd(20)], TraceResult::Int(0)),
-                                t(
-                                    "execvp",
-                                    vec![
-                                        ArgMatcher::Str("/usr/bin/printf".into()),
-                                        ArgMatcher::Any,
-                                    ],
-                                    TraceResult::Int(0),
-                                ),
+                                ArgMatcher::Str("/usr/bin/printf".into()),
+                                ArgMatcher::Any,
+                                ArgMatcher::Any,
                             ],
+                            TraceResult::Fd(20),
                         ),
                         t(
-                            "waitpid",
+                            "read",
+                            vec![ArgMatcher::Fd(20), ArgMatcher::Any],
+                            TraceResult::Bytes(b"#!/bin/sh\n".to_vec()),
+                        ),
+                        t("close", vec![ArgMatcher::Fd(20)], TraceResult::Int(0)),
+                        t(
+                            "execvp",
                             vec![
-                                ArgMatcher::Int(1100),
+                                ArgMatcher::Str("/usr/bin/printf".into()),
                                 ArgMatcher::Any,
-                                ArgMatcher::Int(sys::WUNTRACED as i64),
                             ],
-                            TraceResult::Status(0),
+                            TraceResult::Int(0),
                         ),
                     ],
                 ),
@@ -2230,39 +2269,25 @@ mod tests {
                             vec![ArgMatcher::Str("/usr/bin/wc".into()), ArgMatcher::Any],
                             TraceResult::StatFile(0o755),
                         ),
-                        t_fork(
-                            TraceResult::Pid(1101),
+                        t(
+                            "open",
                             vec![
-                                t(
-                                    "open",
-                                    vec![
-                                        ArgMatcher::Str("/usr/bin/wc".into()),
-                                        ArgMatcher::Any,
-                                        ArgMatcher::Any,
-                                    ],
-                                    TraceResult::Fd(20),
-                                ),
-                                t(
-                                    "read",
-                                    vec![ArgMatcher::Fd(20), ArgMatcher::Any],
-                                    TraceResult::Bytes(b"#!/bin/sh\n".to_vec()),
-                                ),
-                                t("close", vec![ArgMatcher::Fd(20)], TraceResult::Int(0)),
-                                t(
-                                    "execvp",
-                                    vec![ArgMatcher::Str("/usr/bin/wc".into()), ArgMatcher::Any],
-                                    TraceResult::Int(0),
-                                ),
+                                ArgMatcher::Str("/usr/bin/wc".into()),
+                                ArgMatcher::Any,
+                                ArgMatcher::Any,
                             ],
+                            TraceResult::Fd(20),
                         ),
                         t(
-                            "waitpid",
-                            vec![
-                                ArgMatcher::Int(1101),
-                                ArgMatcher::Any,
-                                ArgMatcher::Int(sys::WUNTRACED as i64),
-                            ],
-                            TraceResult::Status(0),
+                            "read",
+                            vec![ArgMatcher::Fd(20), ArgMatcher::Any],
+                            TraceResult::Bytes(b"#!/bin/sh\n".to_vec()),
+                        ),
+                        t("close", vec![ArgMatcher::Fd(20)], TraceResult::Int(0)),
+                        t(
+                            "execvp",
+                            vec![ArgMatcher::Str("/usr/bin/wc".into()), ArgMatcher::Any],
+                            TraceResult::Int(0),
                         ),
                     ],
                 ),
@@ -5978,54 +6003,40 @@ mod tests {
                             vec![ArgMatcher::Str("/usr/bin/sleep".into()), ArgMatcher::Any],
                             TraceResult::StatFile(0o755),
                         ),
-                        t_fork(
-                            TraceResult::Pid(9150),
+                        t(
+                            "open",
                             vec![
-                                t(
-                                    "open",
-                                    vec![
-                                        ArgMatcher::Str("/usr/bin/sleep".into()),
-                                        ArgMatcher::Any,
-                                        ArgMatcher::Any,
-                                    ],
-                                    TraceResult::Fd(20),
-                                ),
-                                t(
-                                    "read",
-                                    vec![ArgMatcher::Fd(20), ArgMatcher::Any],
-                                    TraceResult::Bytes(b"#!/bin/sh\n".to_vec()),
-                                ),
-                                t("close", vec![ArgMatcher::Fd(20)], TraceResult::Int(0)),
-                                t(
-                                    "signal",
-                                    vec![ArgMatcher::Int(sys::SIGTSTP as i64), ArgMatcher::Any],
-                                    TraceResult::Int(0),
-                                ),
-                                t(
-                                    "signal",
-                                    vec![ArgMatcher::Int(sys::SIGTTIN as i64), ArgMatcher::Any],
-                                    TraceResult::Int(0),
-                                ),
-                                t(
-                                    "signal",
-                                    vec![ArgMatcher::Int(sys::SIGTTOU as i64), ArgMatcher::Any],
-                                    TraceResult::Int(0),
-                                ),
-                                t(
-                                    "execvp",
-                                    vec![ArgMatcher::Str("/usr/bin/sleep".into()), ArgMatcher::Any],
-                                    TraceResult::Int(0),
-                                ),
+                                ArgMatcher::Str("/usr/bin/sleep".into()),
+                                ArgMatcher::Any,
+                                ArgMatcher::Any,
                             ],
+                            TraceResult::Fd(20),
                         ),
                         t(
-                            "waitpid",
-                            vec![
-                                ArgMatcher::Int(9150),
-                                ArgMatcher::Any,
-                                ArgMatcher::Int(sys::WUNTRACED as i64),
-                            ],
-                            TraceResult::Status(0),
+                            "read",
+                            vec![ArgMatcher::Fd(20), ArgMatcher::Any],
+                            TraceResult::Bytes(b"#!/bin/sh\n".to_vec()),
+                        ),
+                        t("close", vec![ArgMatcher::Fd(20)], TraceResult::Int(0)),
+                        t(
+                            "signal",
+                            vec![ArgMatcher::Int(sys::SIGTSTP as i64), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "signal",
+                            vec![ArgMatcher::Int(sys::SIGTTIN as i64), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "signal",
+                            vec![ArgMatcher::Int(sys::SIGTTOU as i64), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "execvp",
+                            vec![ArgMatcher::Str("/usr/bin/sleep".into()), ArgMatcher::Any],
+                            TraceResult::Int(0),
                         ),
                     ],
                 ),
@@ -6094,69 +6105,55 @@ mod tests {
                             vec![ArgMatcher::Str("/usr/bin/sleep".into()), ArgMatcher::Any],
                             TraceResult::StatFile(0o755),
                         ),
-                        t_fork(
-                            TraceResult::Pid(9250),
+                        t(
+                            "open",
                             vec![
-                                t(
-                                    "open",
-                                    vec![
-                                        ArgMatcher::Str("/usr/bin/sleep".into()),
-                                        ArgMatcher::Any,
-                                        ArgMatcher::Any,
-                                    ],
-                                    TraceResult::Fd(20),
-                                ),
-                                t(
-                                    "read",
-                                    vec![ArgMatcher::Fd(20), ArgMatcher::Any],
-                                    TraceResult::Bytes(b"#!/bin/sh\n".to_vec()),
-                                ),
-                                t("close", vec![ArgMatcher::Fd(20)], TraceResult::Int(0)),
-                                t(
-                                    "signal",
-                                    vec![ArgMatcher::Int(sys::SIGTERM as i64), ArgMatcher::Any],
-                                    TraceResult::Int(0),
-                                ),
-                                t(
-                                    "signal",
-                                    vec![ArgMatcher::Int(sys::SIGQUIT as i64), ArgMatcher::Any],
-                                    TraceResult::Int(0),
-                                ),
-                                t(
-                                    "signal",
-                                    vec![ArgMatcher::Int(sys::SIGINT as i64), ArgMatcher::Any],
-                                    TraceResult::Int(0),
-                                ),
-                                t(
-                                    "signal",
-                                    vec![ArgMatcher::Int(sys::SIGTSTP as i64), ArgMatcher::Any],
-                                    TraceResult::Int(0),
-                                ),
-                                t(
-                                    "signal",
-                                    vec![ArgMatcher::Int(sys::SIGTTIN as i64), ArgMatcher::Any],
-                                    TraceResult::Int(0),
-                                ),
-                                t(
-                                    "signal",
-                                    vec![ArgMatcher::Int(sys::SIGTTOU as i64), ArgMatcher::Any],
-                                    TraceResult::Int(0),
-                                ),
-                                t(
-                                    "execvp",
-                                    vec![ArgMatcher::Str("/usr/bin/sleep".into()), ArgMatcher::Any],
-                                    TraceResult::Int(0),
-                                ),
+                                ArgMatcher::Str("/usr/bin/sleep".into()),
+                                ArgMatcher::Any,
+                                ArgMatcher::Any,
                             ],
+                            TraceResult::Fd(20),
                         ),
                         t(
-                            "waitpid",
-                            vec![
-                                ArgMatcher::Int(9250),
-                                ArgMatcher::Any,
-                                ArgMatcher::Int(sys::WUNTRACED as i64),
-                            ],
-                            TraceResult::Status(0),
+                            "read",
+                            vec![ArgMatcher::Fd(20), ArgMatcher::Any],
+                            TraceResult::Bytes(b"#!/bin/sh\n".to_vec()),
+                        ),
+                        t("close", vec![ArgMatcher::Fd(20)], TraceResult::Int(0)),
+                        t(
+                            "signal",
+                            vec![ArgMatcher::Int(sys::SIGTERM as i64), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "signal",
+                            vec![ArgMatcher::Int(sys::SIGQUIT as i64), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "signal",
+                            vec![ArgMatcher::Int(sys::SIGINT as i64), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "signal",
+                            vec![ArgMatcher::Int(sys::SIGTSTP as i64), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "signal",
+                            vec![ArgMatcher::Int(sys::SIGTTIN as i64), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "signal",
+                            vec![ArgMatcher::Int(sys::SIGTTOU as i64), ArgMatcher::Any],
+                            TraceResult::Int(0),
+                        ),
+                        t(
+                            "execvp",
+                            vec![ArgMatcher::Str("/usr/bin/sleep".into()), ArgMatcher::Any],
+                            TraceResult::Int(0),
                         ),
                     ],
                 ),

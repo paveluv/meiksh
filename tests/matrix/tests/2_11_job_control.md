@@ -231,7 +231,9 @@ begin interactive test "background job completion notification"
   expect "$ "
   sleep 500ms
   send "echo trigger_prompt"
-  expect "\[[[:digit:]]+\].* Done .*sleep"
+  expect "trigger_prompt"
+  expect "\[[[:digit:]]+\].*Done.*sleep"
+  expect "$ "
   sendeof
   wait
 end interactive test "background job completion notification"
@@ -537,7 +539,9 @@ begin interactive test "set -b notification for stopped background job"
   expect "$ "
   send "kill -STOP %1"
   sleep 500ms
+  send "echo trigger_prompt"
   expect "(Stopped|Suspended).*(SIGSTOP).*sleep"
+  expect "$ "
   send "kill -9 %1 2>/dev/null; wait 2>/dev/null"
   expect "$ "
   send "exit"
@@ -896,6 +900,37 @@ begin interactive test "SIGCONT to stopped background job continues it in backgr
   sendeof
   wait
 end interactive test "SIGCONT to stopped background job continues it in background"
+```
+#### Test: SIGCONT to stopped compound background job continues it in background
+
+Execution of a suspended compound background job can be continued as a
+non-suspended background job by sending the stopped processes a `SIGCONT`
+signal.
+
+```
+begin interactive test "SIGCONT to stopped compound background job continues it in background"
+  spawn -i
+  expect "$ "
+  send "set -m"
+  expect "$ "
+  send "(sleep 15; sleep 15) &"
+  expect "\[[[:digit:]]+\] [[:digit:]]+"
+  expect "$ "
+  send "kill -STOP %1"
+  sleep 500ms
+  expect "$ "
+  send "kill -CONT %1"
+  expect "$ "
+  sleep 500ms
+  send "jobs; echo after_jobs"
+  expect "Running(.|\n)*sleep 15(.|\n)*sleep 15\)"
+  expect "after_jobs"
+  expect "$ "
+  send "kill %1; wait 2>/dev/null"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "SIGCONT to stopped compound background job continues it in background"
 ```
 #### Test: non-interactive shell may write suspended job message
 
