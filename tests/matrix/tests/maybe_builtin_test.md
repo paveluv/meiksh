@@ -404,147 +404,41 @@ but the standard does not require it.
 
 ### Tests
 
-#### Test: test string equality
+#### Test: test true expression exits 0
 
-`test s1 = s2` is true if the strings are identical.
-
-```
-begin test "test string equality"
-  script
-    test "abc" = "abc" && echo "equal"
-  expect
-    stdout "equal"
-    stderr ""
-    exit_code 0
-end test "test string equality"
-```
-
-#### Test: test string inequality
-
-`test s1 != s2` is true if the strings are not identical.
+The test utility evaluates an expression and indicates the result by its exit status. An exit status of zero indicates the expression evaluated as true.
 
 ```
-begin test "test string inequality"
-  script
-    test "abc" != "xyz" && echo "diff"
-  expect
-    stdout "diff"
-    stderr ""
-    exit_code 0
-end test "test string inequality"
-```
-
-#### Test: test -z empty string
-
-`test -z string` is true if the length of string is zero.
-
-```
-begin test "test -z empty string"
-  script
-    test -z "" && echo "empty"
-  expect
-    stdout "empty"
-    stderr ""
-    exit_code 0
-end test "test -z empty string"
-```
-
-#### Test: test -n non-empty string
-
-`test -n string` is true if the length of string is non-zero.
-
-```
-begin test "test -n non-empty string"
-  script
-    test -n "hello" && echo "nonempty"
-  expect
-    stdout "nonempty"
-    stderr ""
-    exit_code 0
-end test "test -n non-empty string"
-```
-
-#### Test: test integer comparison -eq
-
-`test n1 -eq n2` is true if the integers are equal.
-
-```
-begin test "test integer comparison -eq"
-  script
-    test 42 -eq 42 && echo "eq"
-  expect
-    stdout "eq"
-    stderr ""
-    exit_code 0
-end test "test integer comparison -eq"
-```
-
-#### Test: test -d checks directory
-
-`test -d pathname` is true if pathname is a directory.
-
-```
-begin test "test -d checks directory"
-  script
-    test -d /tmp && echo "dir"
-  expect
-    stdout "dir"
-    stderr ""
-    exit_code 0
-end test "test -d checks directory"
-```
-
-#### Test: test -f checks regular file
-
-`test -f pathname` is true if pathname exists and is a regular file.
-
-```
-begin test "test -f checks regular file"
-  script
-    touch tmp_test_file
-    test -f tmp_test_file && echo "file"
-  expect
-    stdout "file"
-    stderr ""
-    exit_code 0
-end test "test -f checks regular file"
-```
-
-#### Test: test 1 -eq 1 returns 0
-
-`test` evaluates the expression and indicates the result by exit
-status. True expressions return 0.
-
-```
-begin test "test 1 -eq 1 returns 0"
+begin test "test true expression exits 0"
   script
     test 1 -eq 1
+    echo "$?"
   expect
-    stdout ""
+    stdout "0"
     stderr ""
     exit_code 0
-end test "test 1 -eq 1 returns 0"
+end test "test true expression exits 0"
 ```
 
-#### Test: test 1 -eq 2 returns non-zero
+#### Test: test false expression exits 1
 
-False expressions return non-zero.
+An exit status of 1 indicates the expression evaluated as false.
 
 ```
-begin test "test 1 -eq 2 returns non-zero"
+begin test "test false expression exits 1"
   script
     test 1 -eq 2
+    echo "$?"
   expect
-    stdout ""
+    stdout "1"
     stderr ""
-    exit_code !=0
-end test "test 1 -eq 2 returns non-zero"
+    exit_code 0
+end test "test false expression exits 1"
 ```
 
 #### Test: test does not consume -- as end-of-options
 
-`test` does not recognize `--` in the manner specified by
-Guideline 10 in XBD 12.2 Utility Syntax Guidelines.
+The test utility does not recognize `--` as end-of-options per Guideline 10. Here `--` is treated as a regular string operand in a binary `=` comparison.
 
 ```
 begin test "test does not consume -- as end-of-options"
@@ -557,274 +451,628 @@ begin test "test does not consume -- as end-of-options"
 end test "test does not consume -- as end-of-options"
 ```
 
-#### Test: test -d on existing directory
-
-`test -d` is true if the path is a directory.
-
-```
-begin test "test -d on existing directory"
-  script
-    test -d /
-  expect
-    stdout ""
-    stderr ""
-    exit_code 0
-end test "test -d on existing directory"
-```
-
-#### Test: test -d on nonexistent directory
-
-`test -d` on a nonexistent path returns non-zero.
-
-```
-begin test "test -d on nonexistent directory"
-  script
-    test -d /nonexistent_dir_99999
-  expect
-    stdout ""
-    stderr ""
-    exit_code !=0
-end test "test -d on nonexistent directory"
-```
-
-#### Test: test -n on non-empty string
+#### Test: test -n non-empty string
 
 `test -n string` is true if the length of string is non-zero.
 
 ```
-begin test "test -n on non-empty string"
+begin test "test -n non-empty string"
   script
     test -n "hello"
   expect
     stdout ""
     stderr ""
     exit_code 0
-end test "test -n on non-empty string"
+end test "test -n non-empty string"
 ```
 
-#### Test: test -z on empty string
+#### Test: test -n empty string returns false
 
-`test -z string` is true if the length of string is zero.
-
-```
-begin test "test -z on empty string"
-  script
-    test -z ""
-  expect
-    stdout ""
-    stderr ""
-    exit_code 0
-end test "test -z on empty string"
-```
-
-#### Test: test -z on non-empty string returns non-zero
-
-`-z` tests for zero-length; applied to a non-empty string it must
-return non-zero (false).
+`test -n string` is false if the length of string is zero.
 
 ```
-begin test "test -z on non-empty string returns non-zero"
-  script
-    test -z "hello"
-  expect
-    stdout ""
-    stderr ""
-    exit_code !=0
-end test "test -z on non-empty string returns non-zero"
-```
-
-#### Test: unary -n on non-empty string
-
-Unquoted non-empty argument to `-n` is true; the operator form and
-operand form should agree.
-
-```
-begin test "unary -n on non-empty string"
-  script
-    test -n hello
-  expect
-    stdout ""
-    stderr ""
-    exit_code 0
-end test "unary -n on non-empty string"
-```
-
-#### Test: unary -z on empty string
-
-`-z` with an empty quoted string returns true (exit 0).
-
-```
-begin test "unary -z on empty string"
-  script
-    test -z ""
-  expect
-    stdout ""
-    stderr ""
-    exit_code 0
-end test "unary -z on empty string"
-```
-
-#### Test: unary -n on empty string returns non-zero
-
-`-n` applied to an empty string is false; the exit status must be
-non-zero.
-
-```
-begin test "unary -n on empty string returns non-zero"
+begin test "test -n empty string returns false"
   script
     test -n ""
   expect
     stdout ""
     stderr ""
-    exit_code !=0
-end test "unary -n on empty string returns non-zero"
+    exit_code 1
+end test "test -n empty string returns false"
 ```
 
-#### Test: binary = equality
+#### Test: test -z empty string
 
-`test s1 = s2` is true when the strings are identical.
+`test -z string` is true if the length of string is zero.
 
 ```
-begin test "binary = equality"
+begin test "test -z empty string"
   script
-    test hello = hello
+    test -z ""
   expect
     stdout ""
     stderr ""
     exit_code 0
-end test "binary = equality"
+end test "test -z empty string"
 ```
 
-#### Test: binary = inequality
+#### Test: test -z non-empty string returns false
 
-`test s1 = s2` returns non-zero when strings differ.
+`test -z string` is false if the length of string is non-zero.
 
 ```
-begin test "binary = inequality"
+begin test "test -z non-empty string returns false"
   script
-    test hello = world
+    test -z "hello"
   expect
     stdout ""
     stderr ""
-    exit_code !=0
-end test "binary = inequality"
+    exit_code 1
+end test "test -z non-empty string returns false"
 ```
 
-#### Test: binary -gt true
+#### Test: test string equality
 
-`test n1 -gt n2` is true when n1 is algebraically greater than n2.
+`test s1 = s2` is true if the strings s1 and s2 are identical.
 
 ```
-begin test "binary -gt true"
+begin test "test string equality"
+  script
+    test "abc" = "abc"
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "test string equality"
+```
+
+#### Test: test string inequality
+
+`test s1 != s2` is true if the strings s1 and s2 are not identical.
+
+```
+begin test "test string inequality"
+  script
+    test "abc" != "xyz"
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "test string inequality"
+```
+
+#### Test: test string s1 greater than s2
+
+`test s1 \> s2` is true if s1 collates after s2 in the current locale.
+
+```
+begin test "test string s1 greater than s2"
+  script
+    test abc \> aaa
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "test string s1 greater than s2"
+```
+
+#### Test: test string s1 less than s2
+
+`test s1 \< s2` is true if s1 collates before s2 in the current locale.
+
+```
+begin test "test string s1 less than s2"
+  script
+    test aaa \< abc
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "test string s1 less than s2"
+```
+
+#### Test: test integer -eq
+
+`test n1 -eq n2` is true if the integers n1 and n2 are algebraically equal.
+
+```
+begin test "test integer -eq"
+  script
+    test 42 -eq 42
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "test integer -eq"
+```
+
+#### Test: test integer -ne
+
+`test n1 -ne n2` is true if the integers n1 and n2 are not algebraically equal.
+
+```
+begin test "test integer -ne"
+  script
+    test 1 -ne 2
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "test integer -ne"
+```
+
+#### Test: test integer -gt true
+
+`test n1 -gt n2` is true if n1 is algebraically greater than n2.
+
+```
+begin test "test integer -gt true"
   script
     test 5 -gt 3
   expect
     stdout ""
     stderr ""
     exit_code 0
-end test "binary -gt true"
+end test "test integer -gt true"
 ```
 
-#### Test: binary -gt false
+#### Test: test integer -gt false
 
-When the first integer is not greater than the second, the
-comparison is false and `test` returns non-zero.
+`test n1 -gt n2` is false when n1 is not greater than n2.
 
 ```
-begin test "binary -gt false"
+begin test "test integer -gt false"
   script
     test 3 -gt 5
   expect
     stdout ""
     stderr ""
-    exit_code !=0
-end test "binary -gt false"
+    exit_code 1
+end test "test integer -gt false"
 ```
 
-#### Test: zero arguments returns non-zero
+#### Test: test integer -ge
 
-With zero arguments, `test` returns non-zero (false).
+`test n1 -ge n2` is true if n1 is algebraically greater than or equal to n2.
 
 ```
-begin test "zero arguments returns non-zero"
+begin test "test integer -ge"
   script
-    test
+    test 5 -ge 5 && test 6 -ge 5
   expect
     stdout ""
     stderr ""
-    exit_code !=0
-end test "zero arguments returns non-zero"
+    exit_code 0
+end test "test integer -ge"
 ```
 
-#### Test: one non-empty argument returns 0
+#### Test: test integer -lt
 
-With one non-empty argument, `test` returns 0 (true).
+`test n1 -lt n2` is true if n1 is algebraically less than n2.
 
 ```
-begin test "one non-empty argument returns 0"
+begin test "test integer -lt"
+  script
+    test 3 -lt 5
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "test integer -lt"
+```
+
+#### Test: test integer -le
+
+`test n1 -le n2` is true if n1 is algebraically less than or equal to n2.
+
+```
+begin test "test integer -le"
+  script
+    test 5 -le 5 && test 4 -le 5
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "test integer -le"
+```
+
+#### Test: test -d on directory
+
+`test -d pathname` is true if pathname resolves to an existing directory.
+
+```
+begin test "test -d on directory"
+  script
+    test -d /tmp
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "test -d on directory"
+```
+
+#### Test: test -d on nonexistent
+
+`test -d` is false when the pathname does not resolve to an existing directory.
+
+```
+begin test "test -d on nonexistent"
+  script
+    test -d /nonexistent_dir_99999
+  expect
+    stdout ""
+    stderr ""
+    exit_code 1
+end test "test -d on nonexistent"
+```
+
+#### Test: test -f regular file
+
+`test -f pathname` is true if pathname resolves to an existing regular file.
+
+```
+begin test "test -f regular file"
+  script
+    tmpf=$(mktemp)
+    test -f "$tmpf"
+    r=$?
+    rm -f "$tmpf"
+    exit "$r"
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "test -f regular file"
+```
+
+#### Test: test -e existing file
+
+`test -e pathname` is true if pathname resolves to an existing directory entry.
+
+```
+begin test "test -e existing file"
+  script
+    tmpf=$(mktemp)
+    test -e "$tmpf"
+    r=$?
+    rm -f "$tmpf"
+    exit "$r"
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "test -e existing file"
+```
+
+#### Test: test -e nonexistent
+
+`test -e pathname` is false if pathname cannot be resolved.
+
+```
+begin test "test -e nonexistent"
+  script
+    test -e /no_such_file_99999
+  expect
+    stdout ""
+    stderr ""
+    exit_code 1
+end test "test -e nonexistent"
+```
+
+#### Test: test -r readable file
+
+`test -r pathname` is true if the file exists and read permission is granted.
+
+```
+begin test "test -r readable file"
+  script
+    tmpf=$(mktemp)
+    test -r "$tmpf"
+    r=$?
+    rm -f "$tmpf"
+    exit "$r"
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "test -r readable file"
+```
+
+#### Test: test -w writable file
+
+`test -w pathname` is true if the file exists and write permission is granted.
+
+```
+begin test "test -w writable file"
+  script
+    tmpf=$(mktemp)
+    test -w "$tmpf"
+    r=$?
+    rm -f "$tmpf"
+    exit "$r"
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "test -w writable file"
+```
+
+#### Test: test -x executable file
+
+`test -x pathname` is true if the file exists and execute permission is granted.
+
+```
+begin test "test -x executable file"
+  script
+    tmpf=$(mktemp)
+    chmod +x "$tmpf"
+    test -x "$tmpf"
+    r=$?
+    rm -f "$tmpf"
+    exit "$r"
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "test -x executable file"
+```
+
+#### Test: test -s file with content
+
+`test -s pathname` is true if the file exists and has a size greater than zero.
+
+```
+begin test "test -s file with content"
+  script
+    tmpf=$(mktemp)
+    echo "data" > "$tmpf"
+    test -s "$tmpf"
+    r=$?
+    rm -f "$tmpf"
+    exit "$r"
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "test -s file with content"
+```
+
+#### Test: test -s empty file returns false
+
+`test -s pathname` is false if the file has size zero.
+
+```
+begin test "test -s empty file returns false"
+  script
+    tmpf=$(mktemp)
+    test -s "$tmpf"
+    r=$?
+    rm -f "$tmpf"
+    exit "$r"
+  expect
+    stdout ""
+    stderr ""
+    exit_code 1
+end test "test -s empty file returns false"
+```
+
+#### Test: test -h detects symlink
+
+`test -h pathname` is true if pathname is a symbolic link, without following it.
+
+```
+begin test "test -h detects symlink"
+  script
+    tmpf=$(mktemp)
+    lnk="${tmpf}_link"
+    ln -s "$tmpf" "$lnk"
+    test -h "$lnk"
+    r=$?
+    rm -f "$lnk" "$tmpf"
+    exit "$r"
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "test -h detects symlink"
+```
+
+#### Test: test -L detects symlink
+
+`test -L pathname` is true if pathname is a symbolic link, without following it. This is equivalent to `-h`.
+
+```
+begin test "test -L detects symlink"
+  script
+    tmpf=$(mktemp)
+    lnk="${tmpf}_Llink"
+    ln -s "$tmpf" "$lnk"
+    test -L "$lnk"
+    r=$?
+    rm -f "$lnk" "$tmpf"
+    exit "$r"
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "test -L detects symlink"
+```
+
+#### Test: test -ef same file
+
+`test pathname1 -ef pathname2` is true if both pathnames resolve to the same file (e.g. via a hard link).
+
+```
+begin test "test -ef same file"
+  script
+    tmpf=$(mktemp)
+    hlnk="${tmpf}_hard"
+    ln "$tmpf" "$hlnk"
+    test "$tmpf" -ef "$hlnk"
+    r=$?
+    rm -f "$tmpf" "$hlnk"
+    exit "$r"
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "test -ef same file"
+```
+
+#### Test: test -nt newer file
+
+`test pathname1 -nt pathname2` is true if pathname1 is newer than pathname2 by last data modification timestamp.
+
+```
+begin test "test -nt newer file"
+  script
+    old=$(mktemp)
+    sleep 1
+    new=$(mktemp)
+    test "$new" -nt "$old"
+    r=$?
+    rm -f "$old" "$new"
+    exit "$r"
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "test -nt newer file"
+```
+
+#### Test: test -ot older file
+
+`test pathname1 -ot pathname2` is true if pathname1 is older than pathname2 by last data modification timestamp.
+
+```
+begin test "test -ot older file"
+  script
+    old=$(mktemp)
+    sleep 1
+    new=$(mktemp)
+    test "$old" -ot "$new"
+    r=$?
+    rm -f "$old" "$new"
+    exit "$r"
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "test -ot older file"
+```
+
+#### Test: test -t on non-terminal fd
+
+`test -t fd` is false when the file descriptor is not associated with a terminal. Redirecting stdin from /dev/null ensures fd 0 is not a terminal.
+
+```
+begin test "test -t on non-terminal fd"
+  script
+    test -t 0 < /dev/null
+  expect
+    stdout ""
+    stderr ""
+    exit_code 1
+end test "test -t on non-terminal fd"
+```
+
+#### Test: test negation with !
+
+The `!` operator negates the expression: true if the expression is false. With 3 arguments where $1 is `!`, the two-argument test of $2 and $3 is negated.
+
+```
+begin test "test negation with !"
+  script
+    test ! -d /no_such_dir_99999
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "test negation with !"
+```
+
+#### Test: test ! null string is true
+
+With 2 arguments where $1 is `!`, test exits true if $2 is null.
+
+```
+begin test "test ! null string is true"
+  script
+    test ! ""
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "test ! null string is true"
+```
+
+#### Test: test ! negates three-argument test
+
+With 4 arguments where $1 is `!`, test negates the three-argument test of $2, $3, and $4.
+
+```
+begin test "test ! negates three-argument test"
+  script
+    test ! 1 -eq 2
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "test ! negates three-argument test"
+```
+
+#### Test: test zero arguments returns 1
+
+With zero arguments, the test utility exits false (exit status 1).
+
+```
+begin test "test zero arguments returns 1"
+  script
+    test
+    echo "$?"
+  expect
+    stdout "1"
+    stderr ""
+    exit_code 0
+end test "test zero arguments returns 1"
+```
+
+#### Test: test one non-null argument returns 0
+
+With one argument, test exits true (0) if $1 is not null.
+
+```
+begin test "test one non-null argument returns 0"
   script
     test something
   expect
     stdout ""
     stderr ""
     exit_code 0
-end test "one non-empty argument returns 0"
+end test "test one non-null argument returns 0"
 ```
 
-#### Test: one empty argument returns non-zero
+#### Test: test one null argument returns 1
 
-With one empty argument, `test` returns non-zero (false).
+With one argument, test exits false if $1 is null (empty string).
 
 ```
-begin test "one empty argument returns non-zero"
+begin test "test one null argument returns 1"
   script
     test ""
   expect
     stdout ""
     stderr ""
-    exit_code !=0
-end test "one empty argument returns non-zero"
+    exit_code 1
+end test "test one null argument returns 1"
 ```
 
-#### Test: test true exit code is 0
+#### Test: test single non-null operator-like argument exits 0
 
-A true expression yields exit code 0.
-
-```
-begin test "test true exit code is 0"
-  script
-    test 1 -eq 1
-    echo "$?"
-  expect
-    stdout "0"
-    stderr ""
-    exit_code 0
-end test "test true exit code is 0"
-```
-
-#### Test: test false exit code is 1
-
-A false expression yields exit code 1.
+A single non-null argument is true even if it looks like an operator. With one argument, the algorithm treats it as a string, not as a unary primary.
 
 ```
-begin test "test false exit code is 1"
-  script
-    test 1 -eq 2
-    echo "$?"
-  expect
-    stdout "1"
-    stderr ""
-    exit_code 0
-end test "test false exit code is 1"
-```
-
-#### Test: test with single non-null argument exits 0
-
-When `test` receives a single non-null string argument, even one
-that looks like an operator, it returns 0.
-
-```
-begin test "test with single non-null argument exits 0"
+begin test "test single non-null operator-like argument exits 0"
   script
     test -f
     echo $?
@@ -832,5 +1080,26 @@ begin test "test with single non-null argument exits 0"
     stdout "0"
     stderr ""
     exit_code 0
-end test "test with single non-null argument exits 0"
+end test "test single non-null operator-like argument exits 0"
+```
+
+#### Test: test -f resolves symlink to regular file
+
+With the exception of `-h` and `-L`, if a pathname argument is a symbolic link, test evaluates by resolving the symlink. A symlink to a regular file passes `-f`.
+
+```
+begin test "test -f resolves symlink to regular file"
+  script
+    tmpf=$(mktemp)
+    lnk="${tmpf}_flink"
+    ln -s "$tmpf" "$lnk"
+    test -f "$lnk"
+    r=$?
+    rm -f "$lnk" "$tmpf"
+    exit "$r"
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "test -f resolves symlink to regular file"
 ```

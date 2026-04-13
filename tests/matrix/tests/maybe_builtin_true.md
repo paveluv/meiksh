@@ -124,79 +124,64 @@ but the standard does not require it.
 
 ### Tests
 
-#### Test: true returns exit status zero
+#### Test: true returns exit code zero
 
 The `true` utility returns a zero exit status.
 
 ```
-begin test "true returns exit status zero"
+begin test "true returns exit code zero"
   script
     true
   expect
     stdout ""
     stderr ""
     exit_code 0
-end test "true returns exit status zero"
+end test "true returns exit code zero"
 ```
 
-#### Test: true produces no output
+#### Test: true produces no stdout
 
-`true` writes nothing to standard output or standard error.
+The `true` utility writes nothing to standard output.
 
 ```
-begin test "true produces no output"
+begin test "true produces no stdout"
   script
-    output=$(true 2>&1)
-    echo "len=${#output}"
-  expect
-    stdout "len=0"
-    stderr ""
-    exit_code 0
-end test "true produces no output"
-```
-
-#### Test: true ignores operands
-
-Any operands or options given to `true` are ignored.
-
-```
-begin test "true ignores operands"
-  script
-    true --help 2>/dev/null
-    echo $?
-  expect
-    stdout "0"
-    stderr ""
-    exit_code 0
-end test "true ignores operands"
-```
-
-#### Test: true returns exit code 0
-
-The `true` utility shall return with exit code zero.
-
-```
-begin test "true returns exit code 0"
-  script
-    true
+    output=$(true)
+    printf '%s' "$output"
   expect
     stdout ""
     stderr ""
     exit_code 0
-end test "true returns exit code 0"
+end test "true produces no stdout"
 ```
 
-#### Test: true exits 0
+#### Test: true produces no stderr
 
-The `true` utility shall always return exit code zero, producing no output on stdout or stderr.
+The `true` utility writes nothing to standard error.
 
 ```
-begin test "true exits 0"
+begin test "true produces no stderr"
   script
-    true
+    output=$(true 2>&1 >/dev/null)
+    printf '%s' "$output"
   expect
     stdout ""
     stderr ""
     exit_code 0
-end test "true exits 0"
+end test "true produces no stderr"
+```
+
+#### Test: true with double-dash operand returns zero
+
+The `true` utility accepts and discards a `--` argument and still returns zero.
+
+```
+begin test "true with double-dash operand returns zero"
+  script
+    true --
+  expect
+    stdout ""
+    stderr ""
+    exit_code 0
+end test "true with double-dash operand returns zero"
 ```
