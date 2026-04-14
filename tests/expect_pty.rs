@@ -1,3 +1,8 @@
+#![allow(
+    clippy::disallowed_types,
+    clippy::disallowed_macros,
+    clippy::disallowed_methods
+)]
 //! expect_pty — A scriptable PTY driver and test suite runner.
 //!
 //! ## Legacy mode (backward compatible)

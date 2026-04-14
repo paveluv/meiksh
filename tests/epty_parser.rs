@@ -1,3 +1,8 @@
+#![allow(
+    clippy::disallowed_types,
+    clippy::disallowed_macros,
+    clippy::disallowed_methods
+)]
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Requirement {

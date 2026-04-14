@@ -148,7 +148,9 @@ pub fn is_name(s: &[u8]) -> bool {
     if !first.is_ascii_alphabetic() && first != b'_' {
         return false;
     }
-    s[1..].iter().all(|&b| b.is_ascii_alphanumeric() || b == b'_')
+    s[1..]
+        .iter()
+        .all(|&b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
 // ---------------------------------------------------------------------------
@@ -631,15 +633,95 @@ mod tests {
             .bytes(b"real ")
             .u64_val(2)
             .byte(b'm')
-            .f64_fixed(3.141, 3)
+            .f64_fixed(7.253, 3)
             .byte(b's')
             .finish();
-        assert_eq!(result, b"real 2m3.141s");
+        assert_eq!(result, b"real 2m7.253s");
     }
 
     #[test]
     fn byte_writer_octal() {
         let result = ByteWriter::new().octal_padded(0o22, 4).finish();
         assert_eq!(result, b"0022");
+    }
+
+    #[test]
+    fn parse_i64_sign_only_returns_none() {
+        assert_eq!(parse_i64(b"+"), None);
+        assert_eq!(parse_i64(b"-"), None);
+    }
+
+    #[test]
+    fn parse_hex_i64_edge_cases() {
+        assert_eq!(parse_hex_i64(b""), None);
+        assert_eq!(parse_hex_i64(b"zz"), None);
+        assert_eq!(parse_hex_i64(b"ff"), Some(0xff));
+        assert_eq!(parse_hex_i64(b"FF"), Some(0xff));
+        assert_eq!(parse_hex_i64(b"0"), Some(0));
+    }
+
+    #[test]
+    fn parse_octal_i64_edge_cases() {
+        assert_eq!(parse_octal_i64(b""), None);
+        assert_eq!(parse_octal_i64(b"8"), None);
+        assert_eq!(parse_octal_i64(b"9"), None);
+        assert_eq!(parse_octal_i64(b"abc"), None);
+        assert_eq!(parse_octal_i64(b"77"), Some(0o77));
+    }
+
+    #[test]
+    fn push_u64_hex_alpha_digits() {
+        let mut buf = Vec::new();
+        push_u64_hex(&mut buf, 10);
+        assert_eq!(buf, b"a");
+        buf.clear();
+        push_u64_hex(&mut buf, 255);
+        assert_eq!(buf, b"ff");
+    }
+
+    #[test]
+    fn push_u64_hex_upper_zero_and_alpha() {
+        let mut buf = Vec::new();
+        push_u64_hex_upper(&mut buf, 0);
+        assert_eq!(buf, b"0");
+        buf.clear();
+        push_u64_hex_upper(&mut buf, 10);
+        assert_eq!(buf, b"A");
+        buf.clear();
+        push_u64_hex_upper(&mut buf, 255);
+        assert_eq!(buf, b"FF");
+    }
+
+    #[test]
+    fn push_f64_fixed_nan_and_infinity() {
+        let mut buf = Vec::new();
+        push_f64_fixed(&mut buf, f64::NAN, 3);
+        assert_eq!(buf, b"0.000");
+        buf.clear();
+        push_f64_fixed(&mut buf, f64::INFINITY, 2);
+        assert_eq!(buf, b"0.00");
+        buf.clear();
+        push_f64_fixed(&mut buf, f64::NEG_INFINITY, 0);
+        assert_eq!(buf, b"0");
+    }
+
+    #[test]
+    fn byte_writer_with_capacity() {
+        let result = ByteWriter::with_capacity(32).bytes(b"hello").finish();
+        assert_eq!(result, b"hello");
+    }
+
+    #[test]
+    fn byte_writer_hex_lower_and_upper() {
+        let result = ByteWriter::new().hex_lower(0xff).finish();
+        assert_eq!(result, b"ff");
+        let result = ByteWriter::new().hex_upper(0xff).finish();
+        assert_eq!(result, b"FF");
+    }
+
+    #[test]
+    fn byte_writer_as_bytes() {
+        let writer = ByteWriter::new().bytes(b"test");
+        assert_eq!(writer.as_bytes(), b"test");
     }
 }

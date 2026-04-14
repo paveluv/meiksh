@@ -347,7 +347,10 @@ impl Shell {
             .map(|&cond| (cond, TrapAction::Ignore))
             .collect();
         env.insert(b"IFS".to_vec(), b" \t\n".to_vec());
-        env.insert(b"PPID".to_vec(), bstr::i64_to_bytes(sys::parent_pid() as i64));
+        env.insert(
+            b"PPID".to_vec(),
+            bstr::i64_to_bytes(sys::parent_pid() as i64),
+        );
         env.insert(b"OPTIND".to_vec(), b"1".to_vec());
         if !env.contains_key(&b"MAILCHECK".to_vec()) {
             env.insert(b"MAILCHECK".to_vec(), b"600".to_vec());
@@ -488,7 +491,8 @@ impl Shell {
     fn setup_interactive_signals(&self) -> Result<(), ShellError> {
         sys::ignore_signal(sys::SIGQUIT).map_err(|e| self.diagnostic_syserr(1, &e))?;
         sys::ignore_signal(sys::SIGTERM).map_err(|e| self.diagnostic_syserr(1, &e))?;
-        sys::install_shell_signal_handler(sys::SIGINT).map_err(|e| self.diagnostic_syserr(1, &e))?;
+        sys::install_shell_signal_handler(sys::SIGINT)
+            .map_err(|e| self.diagnostic_syserr(1, &e))?;
         if self.options.monitor {
             sys::ignore_signal(sys::SIGTSTP).map_err(|e| self.diagnostic_syserr(1, &e))?;
             sys::ignore_signal(sys::SIGTTIN).map_err(|e| self.diagnostic_syserr(1, &e))?;
@@ -532,7 +536,8 @@ impl Shell {
     }
 
     fn run_standard_input(&mut self) -> Result<i32, ShellError> {
-        sys::ensure_blocking_read_fd(sys::STDIN_FILENO).map_err(|e| self.diagnostic_syserr(1, &e))?;
+        sys::ensure_blocking_read_fd(sys::STDIN_FILENO)
+            .map_err(|e| self.diagnostic_syserr(1, &e))?;
         let mut status = 0;
         let mut source = Vec::new();
         let mut line_bytes = Vec::new();
@@ -718,7 +723,12 @@ impl Shell {
 
     pub fn add_history(&mut self, line: &[u8]) {
         let mut end = line.len();
-        while end > 0 && (line[end - 1] == b' ' || line[end - 1] == b'\t' || line[end - 1] == b'\n' || line[end - 1] == b'\r') {
+        while end > 0
+            && (line[end - 1] == b' '
+                || line[end - 1] == b'\t'
+                || line[end - 1] == b'\n'
+                || line[end - 1] == b'\r')
+        {
             end -= 1;
         }
         let trimmed = &line[..end];
@@ -1026,8 +1036,7 @@ impl Shell {
     }
 
     pub fn source_path(&mut self, path: &[u8]) -> Result<i32, ShellError> {
-        let contents =
-            sys::read_file(path).map_err(|e| self.diagnostic_syserr(1, &e))?;
+        let contents = sys::read_file(path).map_err(|e| self.diagnostic_syserr(1, &e))?;
         self.source_depth += 1;
         let result = self.execute_string(&contents);
         self.source_depth -= 1;
@@ -1035,14 +1044,13 @@ impl Shell {
     }
 
     fn load_script_source(&self, script: &[u8]) -> Result<(Vec<u8>, Vec<u8>), ShellError> {
-        let resolved = resolve_script_path(self, script)
-            .ok_or_else(|| {
-                let msg = ByteWriter::new()
-                    .bytes(script)
-                    .bytes(b": not found")
-                    .finish();
-                self.diagnostic(127, &msg)
-            })?;
+        let resolved = resolve_script_path(self, script).ok_or_else(|| {
+            let msg = ByteWriter::new()
+                .bytes(script)
+                .bytes(b": not found")
+                .finish();
+            self.diagnostic(127, &msg)
+        })?;
         let bytes = sys::read_file_bytes(&resolved)
             .map_err(|error| classify_script_read_error(&resolved, error))?;
         if script_prefix_cannot_be_shell_input(&bytes) {
@@ -1062,22 +1070,36 @@ impl Shell {
                 ReapedJobState::Done(status, cmd) => {
                     if status == 0 {
                         let msg = ByteWriter::new()
-                            .bytes(b"[").usize_val(id).bytes(b"] Done\t")
-                            .bytes(&cmd).byte(b'\n').finish();
+                            .bytes(b"[")
+                            .usize_val(id)
+                            .bytes(b"] Done\t")
+                            .bytes(&cmd)
+                            .byte(b'\n')
+                            .finish();
                         let _ = sys::write_all_fd(sys::STDOUT_FILENO, &msg);
                     } else {
                         let msg = ByteWriter::new()
-                            .bytes(b"[").usize_val(id).bytes(b"] Done(")
-                            .i32_val(status).bytes(b")\t")
-                            .bytes(&cmd).byte(b'\n').finish();
+                            .bytes(b"[")
+                            .usize_val(id)
+                            .bytes(b"] Done(")
+                            .i32_val(status)
+                            .bytes(b")\t")
+                            .bytes(&cmd)
+                            .byte(b'\n')
+                            .finish();
                         let _ = sys::write_all_fd(sys::STDOUT_FILENO, &msg);
                     }
                 }
                 ReapedJobState::Signaled(sig, cmd) => {
                     let msg = ByteWriter::new()
-                        .bytes(b"[").usize_val(id).bytes(b"] Terminated (")
-                        .bytes(sys::signal_name(sig)).bytes(b")\t")
-                        .bytes(&cmd).byte(b'\n').finish();
+                        .bytes(b"[")
+                        .usize_val(id)
+                        .bytes(b"] Terminated (")
+                        .bytes(sys::signal_name(sig))
+                        .bytes(b")\t")
+                        .bytes(&cmd)
+                        .byte(b'\n')
+                        .finish();
                     let _ = sys::write_all_fd(sys::STDOUT_FILENO, &msg);
                 }
                 ReapedJobState::Stopped(..) => {}
@@ -1086,14 +1108,23 @@ impl Shell {
         for job in &self.jobs {
             if let JobState::Stopped(sig) = job.state {
                 let msg = ByteWriter::new()
-                    .bytes(b"[").usize_val(job.id).bytes(b"] Stopped (")
-                    .bytes(sys::signal_name(sig)).bytes(b") ")
-                    .bytes(&job.command).byte(b'\n').finish();
+                    .bytes(b"[")
+                    .usize_val(job.id)
+                    .bytes(b"] Stopped (")
+                    .bytes(sys::signal_name(sig))
+                    .bytes(b") ")
+                    .bytes(&job.command)
+                    .byte(b'\n')
+                    .finish();
                 let _ = sys::write_all_fd(sys::STDOUT_FILENO, &msg);
             } else {
                 let msg = ByteWriter::new()
-                    .bytes(b"[").usize_val(job.id).bytes(b"] Running ")
-                    .bytes(&job.command).byte(b'\n').finish();
+                    .bytes(b"[")
+                    .usize_val(job.id)
+                    .bytes(b"] Running ")
+                    .bytes(&job.command)
+                    .byte(b'\n')
+                    .finish();
                 let _ = sys::write_all_fd(sys::STDOUT_FILENO, &msg);
             }
         }
@@ -1151,10 +1182,11 @@ impl Shell {
                 Some(TrapAction::Ignore) => {
                     sys::ignore_signal(signal).map_err(|e| self.diagnostic_syserr(1, &e))?
                 }
-                Some(TrapAction::Command(_)) => {
-                    sys::install_shell_signal_handler(signal).map_err(|e| self.diagnostic_syserr(1, &e))?
+                Some(TrapAction::Command(_)) => sys::install_shell_signal_handler(signal)
+                    .map_err(|e| self.diagnostic_syserr(1, &e))?,
+                None => {
+                    sys::default_signal_action(signal).map_err(|e| self.diagnostic_syserr(1, &e))?
                 }
-                None => sys::default_signal_action(signal).map_err(|e| self.diagnostic_syserr(1, &e))?,
             }
         }
         match action {
@@ -1499,11 +1531,7 @@ impl Shell {
     pub fn find_job_by_substring(&self, substring: &[u8]) -> Option<usize> {
         self.jobs
             .iter()
-            .find(|j| {
-                j.command
-                    .windows(substring.len())
-                    .any(|w| w == substring)
-            })
+            .find(|j| j.command.windows(substring.len()).any(|w| w == substring))
             .map(|j| j.id)
     }
 
@@ -1579,7 +1607,9 @@ impl expand::Context for Shell {
     fn set_var(&mut self, name: &[u8], value: Vec<u8>) -> Result<(), ExpandError> {
         self.set_var(name, value).map_err(|e| {
             let msg = var_error_message(&e);
-            ExpandError { message: msg.into() }
+            ExpandError {
+                message: msg.into(),
+            }
         })
     }
 
@@ -1596,10 +1626,9 @@ impl expand::Context for Shell {
     }
 
     fn command_substitute(&mut self, command: &[u8]) -> Result<Vec<u8>, ExpandError> {
-        self.capture_output(command)
-            .map_err(|_| ExpandError {
-                message: Vec::new().into(),
-            })
+        self.capture_output(command).map_err(|_| ExpandError {
+            message: Vec::new().into(),
+        })
     }
 
     fn home_dir_for_user(&self, name: &[u8]) -> Option<Cow<'_, [u8]>> {
@@ -1677,11 +1706,7 @@ fn parse_options(args: &[Vec<u8>]) -> Result<ShellOptions, ShellError> {
             index += 1;
             break;
         }
-        if !arg.is_empty()
-            && (arg[0] == b'-' || arg[0] == b'+')
-            && arg != b"-"
-            && arg != b"+"
-        {
+        if !arg.is_empty() && (arg[0] == b'-' || arg[0] == b'+') && arg != b"-" && arg != b"+" {
             let enabled = arg[0] == b'-';
             let mut read_stdin = false;
             let mut saw_c = false;
@@ -1703,7 +1728,8 @@ fn parse_options(args: &[Vec<u8>]) -> Result<ShellOptions, ShellError> {
             }
             if saw_c {
                 let command = args.get(index + 1).ok_or_else(|| {
-                    let _ = sys::write_all_fd(sys::STDERR_FILENO, b"meiksh: -c requires an argument\n");
+                    let _ =
+                        sys::write_all_fd(sys::STDERR_FILENO, b"meiksh: -c requires an argument\n");
                     ShellError::Status(2)
                 })?;
                 options.command_string = Some(command.clone().into());
@@ -1733,29 +1759,23 @@ fn parse_options(args: &[Vec<u8>]) -> Result<ShellOptions, ShellError> {
 
 fn var_error_message(e: &VarError) -> Vec<u8> {
     match e {
-        VarError::Readonly(name) => {
-            ByteWriter::new()
-                .bytes(name)
-                .bytes(b": readonly variable")
-                .finish()
-        }
+        VarError::Readonly(name) => ByteWriter::new()
+            .bytes(name)
+            .bytes(b": readonly variable")
+            .finish(),
     }
 }
 
 fn option_error_message(e: &OptionError) -> Vec<u8> {
     match e {
-        OptionError::InvalidShort(ch) => {
-            ByteWriter::new()
-                .bytes(b"invalid option: ")
-                .byte(*ch)
-                .finish()
-        }
-        OptionError::InvalidName(name) => {
-            ByteWriter::new()
-                .bytes(b"invalid option name: ")
-                .bytes(name)
-                .finish()
-        }
+        OptionError::InvalidShort(ch) => ByteWriter::new()
+            .bytes(b"invalid option: ")
+            .byte(*ch)
+            .finish(),
+        OptionError::InvalidName(name) => ByteWriter::new()
+            .bytes(b"invalid option name: ")
+            .bytes(name)
+            .finish(),
     }
 }
 
@@ -1805,7 +1825,6 @@ impl Shell {
         }
         flags
     }
-
 }
 
 fn resolve_script_path(shell: &Shell, script: &[u8]) -> Option<Vec<u8>> {
@@ -1901,6 +1920,11 @@ fn script_prefix_cannot_be_shell_input(bytes: &[u8]) -> bool {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_types,
+    clippy::disallowed_macros,
+    clippy::disallowed_methods
+)]
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
@@ -1981,8 +2005,14 @@ mod tests {
                     b"arg".to_vec(),
                 ])
                 .expect("parse");
-                assert_eq!(options.command_string.as_deref(), Some(b"echo ok".as_slice()));
-                assert_eq!(options.shell_name_override.as_deref(), Some(b"name".as_slice()));
+                assert_eq!(
+                    options.command_string.as_deref(),
+                    Some(b"echo ok".as_slice())
+                );
+                assert_eq!(
+                    options.shell_name_override.as_deref(),
+                    Some(b"name".as_slice())
+                );
                 assert_eq!(options.positional, vec![b"arg".to_vec()]);
 
                 let options = parse_options(&[
@@ -2000,17 +2030,19 @@ mod tests {
                 assert_eq!(options.script_path, Some(b"script.sh".to_vec()));
                 assert_eq!(options.positional, vec![b"a".to_vec()]);
 
-                let options =
-                    parse_options(&[b"meiksh".to_vec(), b"-s".to_vec(), b"arg1".to_vec(), b"arg2".to_vec()])
-                        .expect("parse -s");
+                let options = parse_options(&[
+                    b"meiksh".to_vec(),
+                    b"-s".to_vec(),
+                    b"arg1".to_vec(),
+                    b"arg2".to_vec(),
+                ])
+                .expect("parse -s");
                 assert_eq!(options.script_path, None);
-                assert_eq!(
-                    options.positional,
-                    vec![b"arg1".to_vec(), b"arg2".to_vec()]
-                );
+                assert_eq!(options.positional, vec![b"arg1".to_vec(), b"arg2".to_vec()]);
 
-                let options = parse_options(&[b"meiksh".to_vec(), b"-is".to_vec(), b"arg".to_vec()])
-                    .expect("parse -is");
+                let options =
+                    parse_options(&[b"meiksh".to_vec(), b"-is".to_vec(), b"arg".to_vec()])
+                        .expect("parse -is");
                 assert!(options.force_interactive);
                 assert_eq!(options.positional, vec![b"arg".to_vec()]);
 
@@ -2034,8 +2066,8 @@ mod tests {
                     parse_options(&[b"meiksh".to_vec(), b"-c".to_vec()]).expect_err("missing arg");
                 assert_eq!(error.exit_status(), 2);
 
-                let error =
-                    parse_options(&[b"meiksh".to_vec(), b"-o".to_vec()]).expect_err("missing -o arg");
+                let error = parse_options(&[b"meiksh".to_vec(), b"-o".to_vec()])
+                    .expect_err("missing -o arg");
                 assert_eq!(error.exit_status(), 2);
 
                 let options = parse_options(&[
@@ -2063,7 +2095,9 @@ mod tests {
             shell.exported.insert(b"A".to_vec());
             let env = shell.env_for_child();
             assert_eq!(
-                env.iter().find(|(k, _)| k == b"A").map(|(_, v)| v.as_slice()),
+                env.iter()
+                    .find(|(k, _)| k == b"A")
+                    .map(|(_, v)| v.as_slice()),
                 Some(b"1".as_slice())
             );
             assert!(!env.iter().any(|(k, _)| k == b"B"));
@@ -2072,7 +2106,9 @@ mod tests {
             shell.set_var(b"B", b"3".to_vec()).expect("allexport set");
             let env = shell.env_for_child();
             assert_eq!(
-                env.iter().find(|(k, _)| k == b"B").map(|(_, v)| v.as_slice()),
+                env.iter()
+                    .find(|(k, _)| k == b"B")
+                    .map(|(_, v)| v.as_slice()),
                 Some(b"3".as_slice())
             );
         });
@@ -2084,7 +2120,9 @@ mod tests {
             let mut shell = test_shell();
             shell.set_var(b"NAME", b"value".to_vec()).expect("set");
             shell.mark_readonly(b"NAME");
-            let set_error = shell.set_var(b"NAME", b"new".to_vec()).expect_err("readonly");
+            let set_error = shell
+                .set_var(b"NAME", b"new".to_vec())
+                .expect_err("readonly");
             let msg = var_error_message(&set_error);
             assert_eq!(msg, b"NAME: readonly variable");
             let unset_error = shell.unset_var(b"NAME").expect_err("readonly");
@@ -2204,8 +2242,11 @@ mod tests {
             )],
             || {
                 let mut shell = test_shell();
-                let id =
-                    shell.register_background_job(b"exit 7"[..].into(), None, vec![fake_handle(1001)]);
+                let id = shell.register_background_job(
+                    b"exit 7"[..].into(),
+                    None,
+                    vec![fake_handle(1001)],
+                );
                 let status = shell.wait_for_job(id).expect("wait");
                 assert_eq!(status, 7);
                 assert_eq!(shell.last_status, 7);
@@ -2241,9 +2282,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let status = shell
-                    .source_path(b"/tmp/source-test.sh")
-                    .expect("source");
+                let status = shell.source_path(b"/tmp/source-test.sh").expect("source");
                 assert_eq!(status, 0);
                 assert_eq!(shell.get_var(b"VALUE"), Some(b"42".as_slice()));
             },
@@ -2265,7 +2304,9 @@ mod tests {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
             shell.options.syntax_check_only = true;
-            let status = shell.run_source(b"<test>", b"echo ok").expect("syntax only");
+            let status = shell
+                .run_source(b"<test>", b"echo ok")
+                .expect("syntax only");
             assert_eq!(status, 0);
             assert_eq!(shell.last_status, 0);
         });
@@ -2341,8 +2382,11 @@ mod tests {
             )],
             || {
                 let mut shell = test_shell();
-                let id =
-                    shell.register_background_job(b"exit 0"[..].into(), None, vec![fake_handle(1001)]);
+                let id = shell.register_background_job(
+                    b"exit 0"[..].into(),
+                    None,
+                    vec![fake_handle(1001)],
+                );
                 let finished = shell.reap_jobs();
                 assert_eq!(
                     finished,
@@ -2518,13 +2562,14 @@ mod tests {
     #[test]
     fn parse_options_covers_dashdash_and_unknown_flags() {
         run_trace(vec![t_stderr("meiksh: invalid option: z")], || {
-            let options =
-                parse_options(&[b"meiksh".to_vec(), b"--".to_vec(), b"arg1".to_vec(), b"arg2".to_vec()])
-                    .expect("parse");
-            assert_eq!(
-                options.positional,
-                vec![b"arg1".to_vec(), b"arg2".to_vec()]
-            );
+            let options = parse_options(&[
+                b"meiksh".to_vec(),
+                b"--".to_vec(),
+                b"arg1".to_vec(),
+                b"arg2".to_vec(),
+            ])
+            .expect("parse");
+            assert_eq!(options.positional, vec![b"arg1".to_vec(), b"arg2".to_vec()]);
 
             let error = parse_options(&[b"meiksh".to_vec(), b"-z".to_vec(), b"script.sh".to_vec()])
                 .expect_err("invalid option");
@@ -2554,7 +2599,8 @@ mod tests {
             assert!(!options.verbose);
             assert_eq!(options.script_path, Some(b"script.sh".to_vec()));
 
-            let options = parse_options(&[b"meiksh".to_vec(), b"-".to_vec()]).expect("parse lone dash");
+            let options =
+                parse_options(&[b"meiksh".to_vec(), b"-".to_vec()]).expect("parse lone dash");
             assert_eq!(options.script_path, None);
             assert!(options.positional.is_empty());
         });
@@ -2698,13 +2744,10 @@ mod tests {
                 t_stderr("meiksh: bad: Input/output error"),
             ],
             || {
-                let classified = classify_script_read_error(
-                    b"missing",
-                    sys::SysError::Errno(sys::ENOENT),
-                );
-                assert_eq!(classified.exit_status(), 127);
                 let classified =
-                    classify_script_read_error(b"bad", sys::SysError::Errno(sys::EIO));
+                    classify_script_read_error(b"missing", sys::SysError::Errno(sys::ENOENT));
+                assert_eq!(classified.exit_status(), 127);
+                let classified = classify_script_read_error(b"bad", sys::SysError::Errno(sys::EIO));
                 assert_eq!(classified.exit_status(), 128);
             },
         );
@@ -2856,8 +2899,12 @@ mod tests {
             assert_eq!(status, 0);
             assert_eq!(shell.get_var(b"TOP"), Some(b"ok".as_slice()));
 
-            shell.aliases.insert(b"chain"[..].into(), b"eval "[..].into());
-            shell.aliases.insert(b"word"[..].into(), b"VALUE=chain"[..].into());
+            shell
+                .aliases
+                .insert(b"chain"[..].into(), b"eval "[..].into());
+            shell
+                .aliases
+                .insert(b"word"[..].into(), b"VALUE=chain"[..].into());
             let status = shell
                 .execute_string(b"chain word")
                 .expect("run blank alias chain");
@@ -3331,8 +3378,11 @@ mod tests {
             )],
             || {
                 let mut shell = test_shell();
-                let id =
-                    shell.register_background_job(b"sleep"[..].into(), None, vec![fake_handle(3001)]);
+                let id = shell.register_background_job(
+                    b"sleep"[..].into(),
+                    None,
+                    vec![fake_handle(3001)],
+                );
                 assert_eq!(shell.wait_for_job_operand(id).expect("first wait"), 42);
                 assert_eq!(shell.wait_for_job_operand(id).expect("second wait"), 127);
             },
@@ -3365,14 +3415,24 @@ mod tests {
             ])
             .expect("parse -ac");
             assert!(options.allexport);
-            assert_eq!(options.command_string.as_deref(), Some(b"echo ok".as_slice()));
-            assert_eq!(options.shell_name_override.as_deref(), Some(b"name".as_slice()));
+            assert_eq!(
+                options.command_string.as_deref(),
+                Some(b"echo ok".as_slice())
+            );
+            assert_eq!(
+                options.shell_name_override.as_deref(),
+                Some(b"name".as_slice())
+            );
 
-            let options = parse_options(&[b"meiksh".to_vec(), b"-euc".to_vec(), b"echo ok".to_vec()])
-                .expect("parse -euc");
+            let options =
+                parse_options(&[b"meiksh".to_vec(), b"-euc".to_vec(), b"echo ok".to_vec()])
+                    .expect("parse -euc");
             assert!(options.errexit);
             assert!(options.nounset);
-            assert_eq!(options.command_string.as_deref(), Some(b"echo ok".as_slice()));
+            assert_eq!(
+                options.command_string.as_deref(),
+                Some(b"echo ok".as_slice())
+            );
 
             let error =
                 parse_options(&[b"meiksh".to_vec(), b"-ec".to_vec()]).expect_err("missing -c arg");
@@ -3458,9 +3518,10 @@ mod tests {
                     TrapCondition::Signal(crate::sys::SIGTERM),
                     TrapAction::Command(b"echo trapped"[..].into()),
                 );
-                shell
-                    .trap_actions
-                    .insert(TrapCondition::Exit, TrapAction::Command(b"echo bye"[..].into()));
+                shell.trap_actions.insert(
+                    TrapCondition::Exit,
+                    TrapAction::Command(b"echo bye"[..].into()),
+                );
 
                 shell.reset_traps_for_subshell().expect("reset");
 
@@ -3716,8 +3777,11 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 shell.interactive = true;
-                let id =
-                    shell.register_background_job(b"sleep 99"[..].into(), None, vec![fake_handle(2001)]);
+                let id = shell.register_background_job(
+                    b"sleep 99"[..].into(),
+                    None,
+                    vec![fake_handle(2001)],
+                );
                 let status = shell.wait_for_job(id).expect("wait stopped");
                 assert_eq!(status, 128 + 20);
                 let job = shell.jobs.iter().find(|j| j.id == id).expect("job exists");
@@ -3753,8 +3817,11 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let id =
-                    shell.register_background_job(b"exit 0"[..].into(), None, vec![fake_handle(2002)]);
+                let id = shell.register_background_job(
+                    b"exit 0"[..].into(),
+                    None,
+                    vec![fake_handle(2002)],
+                );
                 let idx = shell.jobs.iter().position(|j| j.id == id).unwrap();
                 shell.jobs[idx].saved_termios = Some(termios);
                 let status = shell.wait_for_job(id).expect("wait with termios");
@@ -4023,8 +4090,10 @@ mod tests {
             let mut shell = test_shell();
             shell.env.insert(b"A".to_vec(), b"1".to_vec());
             shell.exported.insert(b"A".to_vec());
-            let env =
-                shell.env_for_exec_utility(&[(b"A".to_vec(), b"2".to_vec()), (b"B".to_vec(), b"3".to_vec())]);
+            let env = shell.env_for_exec_utility(&[
+                (b"A".to_vec(), b"2".to_vec()),
+                (b"B".to_vec(), b"3".to_vec()),
+            ]);
             assert!(env.iter().any(|(k, v)| k == b"A" && v == b"2"));
             assert!(env.iter().any(|(k, v)| k == b"B" && v == b"3"));
         });
@@ -4210,8 +4279,11 @@ mod tests {
             )],
             || {
                 let mut shell = test_shell();
-                let id =
-                    shell.register_background_job(b"cont"[..].into(), None, vec![fake_handle(4002)]);
+                let id = shell.register_background_job(
+                    b"cont"[..].into(),
+                    None,
+                    vec![fake_handle(4002)],
+                );
                 shell.jobs[0].state = JobState::Stopped(sys::SIGTSTP);
                 let finished = shell.reap_jobs();
                 assert!(finished.is_empty());
@@ -4238,7 +4310,11 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.register_background_job(b"stopcont"[..].into(), None, vec![fake_handle(4003)]);
+                shell.register_background_job(
+                    b"stopcont"[..].into(),
+                    None,
+                    vec![fake_handle(4003)],
+                );
                 let finished = shell.reap_jobs();
                 assert!(finished.is_empty());
                 assert!(matches!(shell.jobs[0].state, JobState::Running));
@@ -4267,7 +4343,10 @@ mod tests {
                 let finished = shell.reap_jobs();
                 assert_eq!(
                     finished,
-                    vec![(1, ReapedJobState::Stopped(sys::SIGTSTP, b"stopped"[..].into()))]
+                    vec![(
+                        1,
+                        ReapedJobState::Stopped(sys::SIGTSTP, b"stopped"[..].into())
+                    )]
                 );
                 assert!(matches!(
                     shell.jobs[0].state,
@@ -4312,8 +4391,11 @@ mod tests {
             )],
             || {
                 let mut shell = test_shell();
-                let id =
-                    shell.register_background_job(b"killed"[..].into(), None, vec![fake_handle(5001)]);
+                let id = shell.register_background_job(
+                    b"killed"[..].into(),
+                    None,
+                    vec![fake_handle(5001)],
+                );
                 let status = shell.wait_for_job(id).expect("wait signaled");
                 assert_eq!(status, 128 + 9);
                 assert!(shell.jobs.is_empty());
@@ -4336,8 +4418,11 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 shell.known_pid_statuses.insert(5003, 0);
-                let id =
-                    shell.register_background_job(b"clean"[..].into(), None, vec![fake_handle(5003)]);
+                let id = shell.register_background_job(
+                    b"clean"[..].into(),
+                    None,
+                    vec![fake_handle(5003)],
+                );
                 let status = shell.wait_for_job(id).expect("wait");
                 assert_eq!(status, 42);
                 assert!(!shell.known_pid_statuses.contains_key(&5003));
@@ -4363,8 +4448,11 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 shell.owns_terminal = true;
-                let id =
-                    shell.register_background_job(b"fg"[..].into(), Some(6001), vec![fake_handle(6001)]);
+                let id = shell.register_background_job(
+                    b"fg"[..].into(),
+                    Some(6001),
+                    vec![fake_handle(6001)],
+                );
                 shell.jobs[0].state = JobState::Stopped(sys::SIGTSTP);
                 shell.continue_job(id, true).expect("continue");
                 assert!(matches!(shell.jobs[0].state, JobState::Running));
@@ -4406,7 +4494,11 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 shell.register_background_job(b"sig-job"[..].into(), None, vec![fake_handle(7001)]);
-                shell.register_background_job(b"fail-job"[..].into(), None, vec![fake_handle(7002)]);
+                shell.register_background_job(
+                    b"fail-job"[..].into(),
+                    None,
+                    vec![fake_handle(7002)],
+                );
                 shell.print_jobs();
             },
         );
@@ -4576,7 +4668,11 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.register_background_job(b"stopped-job"[..].into(), None, vec![fake_handle(7010)]);
+                shell.register_background_job(
+                    b"stopped-job"[..].into(),
+                    None,
+                    vec![fake_handle(7010)],
+                );
                 shell.print_jobs();
             },
         );
@@ -4704,5 +4800,66 @@ mod tests {
         assert_eq!(shell.history.len(), 2);
         assert_eq!(&*shell.history[0], b"second".as_slice());
         assert_eq!(&*shell.history[1], b"third".as_slice());
+    }
+
+    #[test]
+    fn export_var_error_on_readonly() {
+        run_trace(vec![t_stderr("meiksh: RO: readonly variable")], || {
+            let mut shell = test_shell();
+            shell.set_var(b"RO", b"orig".to_vec()).expect("set");
+            shell.mark_readonly(b"RO");
+            let error = shell
+                .export_var(b"RO", Some(b"new".to_vec()))
+                .expect_err("readonly export");
+            assert_eq!(error.exit_status(), 1);
+        });
+    }
+
+    #[test]
+    fn set_trap_noop_when_signal_ignored_on_entry() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let cond = TrapCondition::Signal(sys::SIGQUIT);
+            shell.ignored_on_entry.insert(cond);
+            shell
+                .set_trap(cond, Some(TrapAction::Command(b"echo trapped"[..].into())))
+                .expect("set_trap");
+            assert!(shell.trap_action(cond).is_none());
+        });
+    }
+
+    #[test]
+    fn find_job_by_prefix_and_substring() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.jobs.push(Job {
+                id: 1,
+                command: b"sleep 10"[..].into(),
+                pgid: None,
+                last_pid: None,
+                last_status: None,
+                children: Vec::new(),
+                state: JobState::Running,
+                saved_termios: None,
+            });
+            shell.jobs.push(Job {
+                id: 2,
+                command: b"echo hello world"[..].into(),
+                pgid: None,
+                last_pid: None,
+                last_status: None,
+                children: Vec::new(),
+                state: JobState::Running,
+                saved_termios: None,
+            });
+
+            assert_eq!(shell.find_job_by_prefix(b"sleep"), Some(1));
+            assert_eq!(shell.find_job_by_prefix(b"echo"), Some(2));
+            assert_eq!(shell.find_job_by_prefix(b"nonexistent"), None);
+
+            assert_eq!(shell.find_job_by_substring(b"hello"), Some(2));
+            assert_eq!(shell.find_job_by_substring(b"10"), Some(1));
+            assert_eq!(shell.find_job_by_substring(b"xyz"), None);
+        });
     }
 }

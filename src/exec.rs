@@ -15,9 +15,10 @@ use crate::sys;
 
 fn var_error_bytes(e: &VarError) -> Vec<u8> {
     match e {
-        VarError::Readonly(name) => {
-            ByteWriter::new().bytes(name).bytes(b": readonly variable").finish()
-        }
+        VarError::Readonly(name) => ByteWriter::new()
+            .bytes(name)
+            .bytes(b": readonly variable")
+            .finish(),
     }
 }
 
@@ -56,9 +57,10 @@ fn check_errexit(shell: &mut Shell, status: i32) {
 
 fn execute_list_item(shell: &mut Shell, item: &ListItem) -> Result<i32, ShellError> {
     shell.lineno = item.line;
-    shell
-        .env
-        .insert(b"LINENO".to_vec(), crate::bstr::u64_to_bytes(item.line as u64));
+    shell.env.insert(
+        b"LINENO".to_vec(),
+        crate::bstr::u64_to_bytes(item.line as u64),
+    );
     if item.asynchronous {
         let stdin_override = if !shell.options.monitor {
             Some(
@@ -499,38 +501,36 @@ fn wait_for_external_child(
     } else {
         None
     };
-    loop {
-        match shell.wait_for_child_blocking(handle.pid, !shell.in_subshell)? {
-            BlockingWaitOutcome::Exited(status) => {
-                restore_foreground(saved_foreground);
-                return Ok(status);
+    match shell.wait_for_child_blocking(handle.pid, !shell.in_subshell)? {
+        BlockingWaitOutcome::Exited(status) => {
+            restore_foreground(saved_foreground);
+            Ok(status)
+        }
+        BlockingWaitOutcome::Signaled(sig) => {
+            restore_foreground(saved_foreground);
+            Ok(128 + sig)
+        }
+        BlockingWaitOutcome::Stopped(sig) => {
+            restore_foreground(saved_foreground);
+            let desc: Box<[u8]> = command_desc.unwrap_or(b"").into();
+            let children = vec![handle.clone()];
+            let id = shell.register_background_job(desc, pgid, children);
+            let idx = shell.jobs.iter().position(|j| j.id == id).unwrap();
+            shell.jobs[idx].state = JobState::Stopped(sig);
+            if shell.interactive {
+                shell.jobs[idx].saved_termios = sys::get_terminal_attrs(sys::STDIN_FILENO).ok();
+                let msg = ByteWriter::new()
+                    .byte(b'[')
+                    .usize_val(id)
+                    .bytes(b"] Stopped (")
+                    .bytes(sys::signal_name(sig))
+                    .bytes(b")\t")
+                    .bytes(&shell.jobs[idx].command)
+                    .byte(b'\n')
+                    .finish();
+                let _ = sys::write_all_fd(sys::STDERR_FILENO, &msg);
             }
-            BlockingWaitOutcome::Signaled(sig) => {
-                restore_foreground(saved_foreground);
-                return Ok(128 + sig);
-            }
-            BlockingWaitOutcome::Stopped(sig) => {
-                restore_foreground(saved_foreground);
-                let desc: Box<[u8]> = command_desc.unwrap_or(b"").into();
-                let children = vec![handle.clone()];
-                let id = shell.register_background_job(desc, pgid, children);
-                let idx = shell.jobs.iter().position(|j| j.id == id).unwrap();
-                shell.jobs[idx].state = JobState::Stopped(sig);
-                if shell.interactive {
-                    shell.jobs[idx].saved_termios = sys::get_terminal_attrs(sys::STDIN_FILENO).ok();
-                    let msg = ByteWriter::new()
-                        .byte(b'[')
-                        .usize_val(id)
-                        .bytes(b"] Stopped (")
-                        .bytes(sys::signal_name(sig))
-                        .bytes(b")\t")
-                        .bytes(&shell.jobs[idx].command)
-                        .byte(b'\n')
-                        .finish();
-                    let _ = sys::write_all_fd(sys::STDERR_FILENO, &msg);
-                }
-                return Ok(128 + sig);
-            }
+            Ok(128 + sig)
         }
     }
 }
@@ -726,12 +726,10 @@ fn execute_for(shell: &mut Shell, for_command: &ForCommand) -> Result<i32, Shell
     let result = (|| {
         let mut last_status = 0;
         for value in values {
-            shell
-                .set_var(&for_command.name, value)
-                .map_err(|e| {
-                    let msg = var_error_bytes(&e);
-                    shell.diagnostic(1, &msg)
-                })?;
+            shell.set_var(&for_command.name, value).map_err(|e| {
+                let msg = var_error_bytes(&e);
+                shell.diagnostic(1, &msg)
+            })?;
             last_status = execute_nested_program(shell, &for_command.body)?;
             if !shell.running {
                 break;
@@ -815,12 +813,10 @@ fn apply_prefix_assignments(
     assignments: &[(Vec<u8>, Vec<u8>)],
 ) -> Result<(), ShellError> {
     for (name, value) in assignments {
-        shell
-            .set_var(name, value.clone())
-            .map_err(|e| {
-                let msg = var_error_bytes(&e);
-                shell.diagnostic(1, &msg)
-            })?;
+        shell.set_var(name, value.clone()).map_err(|e| {
+            let msg = var_error_bytes(&e);
+            shell.diagnostic(1, &msg)
+        })?;
     }
     Ok(())
 }
@@ -933,12 +929,10 @@ fn execute_simple(
             Err(error) => return Ok(shell.diagnostic_syserr(1, &error).exit_status()),
         };
         for (name, value) in &owned_assignments {
-            shell
-                .set_var(name, value.clone())
-                .map_err(|e| {
-                    let msg = var_error_bytes(&e);
-                    shell.diagnostic(1, &msg)
-                })?;
+            shell.set_var(name, value.clone()).map_err(|e| {
+                let msg = var_error_bytes(&e);
+                shell.diagnostic(1, &msg)
+            })?;
         }
         drop(guard);
         return Ok(cmd_sub_status);
@@ -1246,9 +1240,10 @@ fn expand_simple<'a>(
             ) && target != b"-"
                 && parse_i32_bytes(target).is_none()
             {
-                return Err(
-                    shell.diagnostic(1, b"redirection target must be a file descriptor or '-'" as &[u8])
-                );
+                return Err(shell.diagnostic(
+                    1,
+                    b"redirection target must be a file descriptor or '-'" as &[u8],
+                ));
             }
             (target, None)
         };
@@ -1335,9 +1330,10 @@ fn expand_redirections<'a>(
             ) && target != b"-"
                 && parse_i32_bytes(target).is_none()
             {
-                return Err(
-                    shell.diagnostic(1, b"redirection target must be a file descriptor or '-'" as &[u8])
-                );
+                return Err(shell.diagnostic(
+                    1,
+                    b"redirection target must be a file descriptor or '-'" as &[u8],
+                ));
             }
             (target, None)
         };
@@ -1432,7 +1428,9 @@ fn prepare_prepared_process(
     shell: &Shell,
     prepared: &PreparedProcess,
 ) -> Result<PreparedRedirections, ShellError> {
-    if !prepared.path_verified && !prepared.exec_path.is_empty() && prepared.exec_path.contains(&b'/')
+    if !prepared.path_verified
+        && !prepared.exec_path.is_empty()
+        && prepared.exec_path.contains(&b'/')
     {
         if sys::access_path(&prepared.exec_path, sys::F_OK).is_err() {
             let msg = ByteWriter::new()
@@ -1503,13 +1501,8 @@ fn run_prepared_process(
             child_shell.in_subshell = true;
             let _ = child_shell.reset_traps_for_subshell();
             child_shell.shell_name = prepared.argv[0].clone();
-            child_shell.positional = prepared.argv[1..]
-                .iter()
-                .map(|s| s.to_vec())
-                .collect();
-            let status = child_shell
-                .source_path(&prepared.exec_path)
-                .unwrap_or(126);
+            child_shell.positional = prepared.argv[1..].iter().map(|s| s.to_vec()).collect();
+            let status = child_shell.source_path(&prepared.exec_path).unwrap_or(126);
             sys::exit_process(status as sys::RawFd);
         }
         Err(err) if err.is_enoent() => {
@@ -1651,8 +1644,8 @@ fn prepare_redirections<R: RedirectionRef>(
                         target_fd: redirection.fd(),
                     });
                 } else {
-                    let source_fd = parse_i32_bytes(redirection.target())
-                        .expect("validated at expansion");
+                    let source_fd =
+                        parse_i32_bytes(redirection.target()).expect("validated at expansion");
                     prepared.actions.push(ChildFdAction::DupFd {
                         source_fd,
                         target_fd: redirection.fd(),
@@ -1855,8 +1848,8 @@ fn apply_shell_redirection<R: RedirectionRef>(
             if redirection.target() == b"-" {
                 close_shell_fd(redirection.fd())?;
             } else {
-                let source_fd = parse_i32_bytes(redirection.target())
-                    .expect("validated at expansion");
+                let source_fd =
+                    parse_i32_bytes(redirection.target()).expect("validated at expansion");
                 sys::duplicate_fd(source_fd, redirection.fd())?;
             }
         }
@@ -2240,6 +2233,11 @@ fn render_redirected_command_into(
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_types,
+    clippy::disallowed_macros,
+    clippy::disallowed_methods
+)]
 mod tests {
     use super::*;
     use crate::shell::ShellOptions;
@@ -2520,7 +2518,10 @@ mod tests {
                 let mut shell = test_shell();
                 shell.env.insert(b"PATH".to_vec(), Vec::new());
                 let expanded = ExpandedSimpleCommand {
-                    assignments: vec![(arena.intern_bytes(b"ASSIGN_VAR"), arena.intern_bytes(b"works"))],
+                    assignments: vec![(
+                        arena.intern_bytes(b"ASSIGN_VAR"),
+                        arena.intern_bytes(b"works"),
+                    )],
                     argv: vec![arena.intern_bytes(b"echo"), arena.intern_bytes(b"hello")],
                     redirections: Vec::new(),
                 };
@@ -2535,7 +2536,10 @@ mod tests {
                         .expect("process");
                 assert_eq!(
                     &*prepared.child_env,
-                    &[(Box::from(b"ASSIGN_VAR" as &[u8]), Box::from(b"works" as &[u8]))] as &[(Box<[u8]>, Box<[u8]>)]
+                    &[(
+                        Box::from(b"ASSIGN_VAR" as &[u8]),
+                        Box::from(b"works" as &[u8])
+                    )] as &[(Box<[u8]>, Box<[u8]>)]
                 );
                 assert_eq!(
                     &*prepared.argv,
@@ -2604,7 +2608,8 @@ mod tests {
                 let shell = test_shell();
                 let prepared = PreparedProcess {
                     exec_path: b"/tmp/script.sh".to_vec().into(),
-                    argv: vec![b"/tmp/script.sh".to_vec().into(), b"arg1".to_vec().into()].into_boxed_slice(),
+                    argv: vec![b"/tmp/script.sh".to_vec().into(), b"arg1".to_vec().into()]
+                        .into_boxed_slice(),
                     child_env: Vec::new().into_boxed_slice(),
 
                     redirections: Vec::new(),
@@ -3085,7 +3090,11 @@ mod tests {
                 body: program.clone(),
             };
             assert!(render_program(&program).windows(4).any(|w| w == b"true"));
-            assert!(render_function(&function).windows(7).any(|w| w == b"greet()"));
+            assert!(
+                render_function(&function)
+                    .windows(7)
+                    .any(|w| w == b"greet()")
+            );
             assert!(render_if(&if_command).starts_with(b"if "));
             assert!(render_loop(&loop_command).starts_with(b"while "));
 
@@ -3454,7 +3463,9 @@ mod tests {
     fn execute_if_covers_then_and_else_branches() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.env.insert(b"PATH".to_vec(), b"/usr/bin:/bin".to_vec());
+            shell
+                .env
+                .insert(b"PATH".to_vec(), b"/usr/bin:/bin".to_vec());
             shell.exported.insert(b"PATH".to_vec());
 
             let if_program =
@@ -3605,73 +3616,165 @@ mod tests {
                     TraceResult::Pid(1000),
                     vec![
                         t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
-                        t("dup2", vec![ArgMatcher::Fd(201), ArgMatcher::Fd(1)], TraceResult::Int(0)),
+                        t(
+                            "dup2",
+                            vec![ArgMatcher::Fd(201), ArgMatcher::Fd(1)],
+                            TraceResult::Int(0),
+                        ),
                         t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
-                        t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(0)], TraceResult::Int(0)),
+                        t(
+                            "setpgid",
+                            vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
+                            TraceResult::Int(0),
+                        ),
                     ],
                 ),
                 t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
-                t("setpgid", vec![ArgMatcher::Int(1000), ArgMatcher::Int(1000)], TraceResult::Int(0)),
+                t(
+                    "setpgid",
+                    vec![ArgMatcher::Int(1000), ArgMatcher::Int(1000)],
+                    TraceResult::Int(0),
+                ),
                 t("pipe", vec![], TraceResult::Fds(202, 203)),
                 t_fork(
                     TraceResult::Pid(1001),
                     vec![
-                        t("dup2", vec![ArgMatcher::Fd(200), ArgMatcher::Fd(0)], TraceResult::Int(0)),
+                        t(
+                            "dup2",
+                            vec![ArgMatcher::Fd(200), ArgMatcher::Fd(0)],
+                            TraceResult::Int(0),
+                        ),
                         t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
                         t("close", vec![ArgMatcher::Fd(202)], TraceResult::Int(0)),
-                        t("dup2", vec![ArgMatcher::Fd(203), ArgMatcher::Fd(1)], TraceResult::Int(0)),
+                        t(
+                            "dup2",
+                            vec![ArgMatcher::Fd(203), ArgMatcher::Fd(1)],
+                            TraceResult::Int(0),
+                        ),
                         t("close", vec![ArgMatcher::Fd(203)], TraceResult::Int(0)),
-                        t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)], TraceResult::Int(0)),
+                        t(
+                            "setpgid",
+                            vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)],
+                            TraceResult::Int(0),
+                        ),
                     ],
                 ),
                 t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
                 t("close", vec![ArgMatcher::Fd(203)], TraceResult::Int(0)),
-                t("setpgid", vec![ArgMatcher::Int(1001), ArgMatcher::Int(1000)], TraceResult::Int(0)),
+                t(
+                    "setpgid",
+                    vec![ArgMatcher::Int(1001), ArgMatcher::Int(1000)],
+                    TraceResult::Int(0),
+                ),
                 t("pipe", vec![], TraceResult::Fds(204, 205)),
                 t_fork(
                     TraceResult::Pid(1002),
                     vec![
-                        t("dup2", vec![ArgMatcher::Fd(202), ArgMatcher::Fd(0)], TraceResult::Int(0)),
+                        t(
+                            "dup2",
+                            vec![ArgMatcher::Fd(202), ArgMatcher::Fd(0)],
+                            TraceResult::Int(0),
+                        ),
                         t("close", vec![ArgMatcher::Fd(202)], TraceResult::Int(0)),
                         t("close", vec![ArgMatcher::Fd(204)], TraceResult::Int(0)),
-                        t("dup2", vec![ArgMatcher::Fd(205), ArgMatcher::Fd(1)], TraceResult::Int(0)),
+                        t(
+                            "dup2",
+                            vec![ArgMatcher::Fd(205), ArgMatcher::Fd(1)],
+                            TraceResult::Int(0),
+                        ),
                         t("close", vec![ArgMatcher::Fd(205)], TraceResult::Int(0)),
-                        t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)], TraceResult::Int(0)),
+                        t(
+                            "setpgid",
+                            vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)],
+                            TraceResult::Int(0),
+                        ),
                     ],
                 ),
                 t("close", vec![ArgMatcher::Fd(202)], TraceResult::Int(0)),
                 t("close", vec![ArgMatcher::Fd(205)], TraceResult::Int(0)),
-                t("setpgid", vec![ArgMatcher::Int(1002), ArgMatcher::Int(1000)], TraceResult::Int(0)),
+                t(
+                    "setpgid",
+                    vec![ArgMatcher::Int(1002), ArgMatcher::Int(1000)],
+                    TraceResult::Int(0),
+                ),
                 t("pipe", vec![], TraceResult::Fds(206, 207)),
                 t_fork(
                     TraceResult::Pid(1003),
                     vec![
-                        t("dup2", vec![ArgMatcher::Fd(204), ArgMatcher::Fd(0)], TraceResult::Int(0)),
+                        t(
+                            "dup2",
+                            vec![ArgMatcher::Fd(204), ArgMatcher::Fd(0)],
+                            TraceResult::Int(0),
+                        ),
                         t("close", vec![ArgMatcher::Fd(204)], TraceResult::Int(0)),
                         t("close", vec![ArgMatcher::Fd(206)], TraceResult::Int(0)),
-                        t("dup2", vec![ArgMatcher::Fd(207), ArgMatcher::Fd(1)], TraceResult::Int(0)),
+                        t(
+                            "dup2",
+                            vec![ArgMatcher::Fd(207), ArgMatcher::Fd(1)],
+                            TraceResult::Int(0),
+                        ),
                         t("close", vec![ArgMatcher::Fd(207)], TraceResult::Int(0)),
-                        t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)], TraceResult::Int(0)),
+                        t(
+                            "setpgid",
+                            vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)],
+                            TraceResult::Int(0),
+                        ),
                     ],
                 ),
                 t("close", vec![ArgMatcher::Fd(204)], TraceResult::Int(0)),
                 t("close", vec![ArgMatcher::Fd(207)], TraceResult::Int(0)),
-                t("setpgid", vec![ArgMatcher::Int(1003), ArgMatcher::Int(1000)], TraceResult::Int(0)),
+                t(
+                    "setpgid",
+                    vec![ArgMatcher::Int(1003), ArgMatcher::Int(1000)],
+                    TraceResult::Int(0),
+                ),
                 t_fork(
                     TraceResult::Pid(1004),
                     vec![
-                        t("dup2", vec![ArgMatcher::Fd(206), ArgMatcher::Fd(0)], TraceResult::Int(0)),
+                        t(
+                            "dup2",
+                            vec![ArgMatcher::Fd(206), ArgMatcher::Fd(0)],
+                            TraceResult::Int(0),
+                        ),
                         t("close", vec![ArgMatcher::Fd(206)], TraceResult::Int(0)),
-                        t("setpgid", vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)], TraceResult::Int(0)),
+                        t(
+                            "setpgid",
+                            vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)],
+                            TraceResult::Int(0),
+                        ),
                     ],
                 ),
                 t("close", vec![ArgMatcher::Fd(206)], TraceResult::Int(0)),
-                t("setpgid", vec![ArgMatcher::Int(1004), ArgMatcher::Int(1000)], TraceResult::Int(0)),
-                t("waitpid", vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
-                t("waitpid", vec![ArgMatcher::Int(1001), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
-                t("waitpid", vec![ArgMatcher::Int(1002), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
-                t("waitpid", vec![ArgMatcher::Int(1003), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
-                t("waitpid", vec![ArgMatcher::Int(1004), ArgMatcher::Any, ArgMatcher::Int(0)], TraceResult::Status(0)),
+                t(
+                    "setpgid",
+                    vec![ArgMatcher::Int(1004), ArgMatcher::Int(1000)],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    TraceResult::Status(0),
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(1001), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    TraceResult::Status(0),
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(1002), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    TraceResult::Status(0),
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(1003), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    TraceResult::Status(0),
+                ),
+                t(
+                    "waitpid",
+                    vec![ArgMatcher::Int(1004), ArgMatcher::Any, ArgMatcher::Int(0)],
+                    TraceResult::Status(0),
+                ),
             ],
             || {
                 let mut shell = test_shell();
@@ -3869,7 +3972,10 @@ mod tests {
             shell.env.insert(b"FOO".to_vec(), b"original".to_vec());
             shell.exported.insert(b"FOO".to_vec());
 
-            let assignments = vec![(b"FOO".to_vec(), b"temp".to_vec()), (b"BAR".to_vec(), b"new".to_vec())];
+            let assignments = vec![
+                (b"FOO".to_vec(), b"temp".to_vec()),
+                (b"BAR".to_vec(), b"new".to_vec()),
+            ];
             let saved = save_vars(&shell, &assignments);
 
             shell.set_var(b"FOO", b"temp".to_vec()).unwrap();
@@ -4442,5 +4548,1393 @@ mod tests {
                 assert_eq!(err.errno(), Some(libc::EACCES));
             },
         );
+    }
+
+    #[test]
+    fn render_and_or_with_logical_or() {
+        assert_no_syscalls(|| {
+            let rendered = render_and_or(&AndOr {
+                first: Pipeline {
+                    negated: false,
+                    timed: TimedMode::Off,
+                    commands: vec![Command::Simple(SimpleCommand {
+                        words: vec![Word {
+                            raw: b"false".to_vec().into(),
+                            line: 0,
+                        }]
+                        .into_boxed_slice(),
+                        ..SimpleCommand::default()
+                    })]
+                    .into_boxed_slice(),
+                },
+                rest: vec![(
+                    LogicalOp::Or,
+                    Pipeline {
+                        negated: false,
+                        timed: TimedMode::Off,
+                        commands: vec![Command::Simple(SimpleCommand {
+                            words: vec![Word {
+                                raw: b"true".to_vec().into(),
+                                line: 0,
+                            }]
+                            .into_boxed_slice(),
+                            ..SimpleCommand::default()
+                        })]
+                        .into_boxed_slice(),
+                    },
+                )]
+                .into_boxed_slice(),
+            });
+            assert_eq!(rendered, b"false || true");
+        });
+    }
+
+    #[test]
+    fn render_command_for_and_case() {
+        assert_no_syscalls(|| {
+            let for_cmd = Command::For(ForCommand {
+                name: b"x".to_vec().into(),
+                items: Some(
+                    vec![Word {
+                        raw: b"a".to_vec().into(),
+                        line: 0,
+                    }]
+                    .into_boxed_slice(),
+                ),
+                body: Program {
+                    items: vec![ListItem {
+                        and_or: AndOr {
+                            first: Pipeline {
+                                negated: false,
+                                timed: TimedMode::Off,
+                                commands: vec![Command::Simple(SimpleCommand {
+                                    words: vec![Word {
+                                        raw: b"echo".to_vec().into(),
+                                        line: 0,
+                                    }]
+                                    .into_boxed_slice(),
+                                    ..SimpleCommand::default()
+                                })]
+                                .into_boxed_slice(),
+                            },
+                            rest: Vec::new().into_boxed_slice(),
+                        },
+                        asynchronous: false,
+                        line: 0,
+                    }]
+                    .into_boxed_slice(),
+                },
+            });
+            let rendered = render_command(&for_cmd);
+            assert_eq!(rendered, b"for x in a\ndo\necho\ndone");
+
+            let case_cmd = Command::Case(CaseCommand {
+                word: Word {
+                    raw: b"val".to_vec().into(),
+                    line: 0,
+                },
+                arms: vec![crate::syntax::CaseArm {
+                    patterns: vec![Word {
+                        raw: b"a".to_vec().into(),
+                        line: 0,
+                    }]
+                    .into_boxed_slice(),
+                    body: Program {
+                        items: vec![ListItem {
+                            and_or: AndOr {
+                                first: Pipeline {
+                                    negated: false,
+                                    timed: TimedMode::Off,
+                                    commands: vec![Command::Simple(SimpleCommand {
+                                        words: vec![Word {
+                                            raw: b"echo".to_vec().into(),
+                                            line: 0,
+                                        }]
+                                        .into_boxed_slice(),
+                                        ..SimpleCommand::default()
+                                    })]
+                                    .into_boxed_slice(),
+                                },
+                                rest: Vec::new().into_boxed_slice(),
+                            },
+                            asynchronous: false,
+                            line: 0,
+                        }]
+                        .into_boxed_slice(),
+                    },
+                    fallthrough: false,
+                }]
+                .into_boxed_slice(),
+            });
+            let rendered = render_command(&case_cmd);
+            assert!(rendered.starts_with(b"case val in"));
+        });
+    }
+
+    #[test]
+    fn render_if_with_elif_and_else() {
+        assert_no_syscalls(|| {
+            let true_program = Program {
+                items: vec![ListItem {
+                    and_or: AndOr {
+                        first: Pipeline {
+                            negated: false,
+                            timed: TimedMode::Off,
+                            commands: vec![Command::Simple(SimpleCommand {
+                                words: vec![Word {
+                                    raw: b"true".to_vec().into(),
+                                    line: 0,
+                                }]
+                                .into_boxed_slice(),
+                                ..SimpleCommand::default()
+                            })]
+                            .into_boxed_slice(),
+                        },
+                        rest: Vec::new().into_boxed_slice(),
+                    },
+                    asynchronous: false,
+                    line: 0,
+                }]
+                .into_boxed_slice(),
+            };
+            let if_cmd = IfCommand {
+                condition: true_program.clone(),
+                then_branch: true_program.clone(),
+                elif_branches: vec![crate::syntax::ElifBranch {
+                    condition: true_program.clone(),
+                    body: true_program.clone(),
+                }]
+                .into_boxed_slice(),
+                else_branch: Some(true_program),
+            };
+            let rendered = render_if(&if_cmd);
+            let text = std::str::from_utf8(&rendered).unwrap();
+            assert!(text.contains("elif "));
+            assert!(text.contains("\nthen\n"));
+            assert!(text.contains("\nelse\n"));
+            assert!(text.ends_with("\nfi"));
+        });
+    }
+
+    #[test]
+    fn render_loop_until() {
+        assert_no_syscalls(|| {
+            let prog = Program {
+                items: vec![ListItem {
+                    and_or: AndOr {
+                        first: Pipeline {
+                            negated: false,
+                            timed: TimedMode::Off,
+                            commands: vec![Command::Simple(SimpleCommand {
+                                words: vec![Word {
+                                    raw: b"false".to_vec().into(),
+                                    line: 0,
+                                }]
+                                .into_boxed_slice(),
+                                ..SimpleCommand::default()
+                            })]
+                            .into_boxed_slice(),
+                        },
+                        rest: Vec::new().into_boxed_slice(),
+                    },
+                    asynchronous: false,
+                    line: 0,
+                }]
+                .into_boxed_slice(),
+            };
+            let loop_cmd = LoopCommand {
+                kind: LoopKind::Until,
+                condition: prog.clone(),
+                body: prog,
+            };
+            let rendered = render_loop(&loop_cmd);
+            assert!(rendered.starts_with(b"until "));
+            assert!(rendered.ends_with(b"\ndone"));
+        });
+    }
+
+    #[test]
+    fn render_for_with_items_and_without() {
+        assert_no_syscalls(|| {
+            let body = Program {
+                items: vec![ListItem {
+                    and_or: AndOr {
+                        first: Pipeline {
+                            negated: false,
+                            timed: TimedMode::Off,
+                            commands: vec![Command::Simple(SimpleCommand {
+                                words: vec![Word {
+                                    raw: b"echo".to_vec().into(),
+                                    line: 0,
+                                }]
+                                .into_boxed_slice(),
+                                ..SimpleCommand::default()
+                            })]
+                            .into_boxed_slice(),
+                        },
+                        rest: Vec::new().into_boxed_slice(),
+                    },
+                    asynchronous: false,
+                    line: 0,
+                }]
+                .into_boxed_slice(),
+            };
+
+            let with_items = ForCommand {
+                name: b"item".to_vec().into(),
+                items: Some(
+                    vec![
+                        Word {
+                            raw: b"a".to_vec().into(),
+                            line: 0,
+                        },
+                        Word {
+                            raw: b"b".to_vec().into(),
+                            line: 0,
+                        },
+                        Word {
+                            raw: b"c".to_vec().into(),
+                            line: 0,
+                        },
+                    ]
+                    .into_boxed_slice(),
+                ),
+                body: body.clone(),
+            };
+            let rendered = render_for(&with_items);
+            assert_eq!(rendered, b"for item in a b c\ndo\necho\ndone");
+
+            let without_items = ForCommand {
+                name: b"arg".to_vec().into(),
+                items: None,
+                body,
+            };
+            let rendered = render_for(&without_items);
+            assert_eq!(rendered, b"for arg\ndo\necho\ndone");
+        });
+    }
+
+    #[test]
+    fn render_case_with_fallthrough_and_multi_pattern() {
+        assert_no_syscalls(|| {
+            let body = Program {
+                items: vec![ListItem {
+                    and_or: AndOr {
+                        first: Pipeline {
+                            negated: false,
+                            timed: TimedMode::Off,
+                            commands: vec![Command::Simple(SimpleCommand {
+                                words: vec![Word {
+                                    raw: b"echo".to_vec().into(),
+                                    line: 0,
+                                }]
+                                .into_boxed_slice(),
+                                ..SimpleCommand::default()
+                            })]
+                            .into_boxed_slice(),
+                        },
+                        rest: Vec::new().into_boxed_slice(),
+                    },
+                    asynchronous: false,
+                    line: 0,
+                }]
+                .into_boxed_slice(),
+            };
+            let case_cmd = CaseCommand {
+                word: Word {
+                    raw: b"val".to_vec().into(),
+                    line: 0,
+                },
+                arms: vec![
+                    crate::syntax::CaseArm {
+                        patterns: vec![
+                            Word {
+                                raw: b"a".to_vec().into(),
+                                line: 0,
+                            },
+                            Word {
+                                raw: b"b".to_vec().into(),
+                                line: 0,
+                            },
+                        ]
+                        .into_boxed_slice(),
+                        body: body.clone(),
+                        fallthrough: true,
+                    },
+                    crate::syntax::CaseArm {
+                        patterns: vec![Word {
+                            raw: b"c".to_vec().into(),
+                            line: 0,
+                        }]
+                        .into_boxed_slice(),
+                        body,
+                        fallthrough: false,
+                    },
+                ]
+                .into_boxed_slice(),
+            };
+            let rendered = render_case(&case_cmd);
+            let text = std::str::from_utf8(&rendered).unwrap();
+            assert!(text.starts_with("case val in"));
+            assert!(text.contains("a | b)"));
+            assert!(text.contains("\n;&"));
+            assert!(text.contains("c)"));
+            assert!(text.contains("\n;;"));
+            assert!(text.ends_with("\nesac"));
+        });
+    }
+
+    #[test]
+    fn render_redirection_operators_read_clobber_append_heredoc_strip() {
+        assert_no_syscalls(|| {
+            let read_redir = Redirection {
+                fd: None,
+                kind: RedirectionKind::Read,
+                target: Word {
+                    raw: b"input.txt".to_vec().into(),
+                    line: 0,
+                },
+                here_doc: None,
+            };
+            let mut buf = Vec::new();
+            render_redirection_operator_into(&read_redir, &mut buf);
+            assert_eq!(buf, b"<input.txt");
+
+            let clobber_redir = Redirection {
+                fd: Some(1),
+                kind: RedirectionKind::ClobberWrite,
+                target: Word {
+                    raw: b"out.txt".to_vec().into(),
+                    line: 0,
+                },
+                here_doc: None,
+            };
+            buf.clear();
+            render_redirection_operator_into(&clobber_redir, &mut buf);
+            assert_eq!(buf, b"1>|out.txt");
+
+            let append_redir = Redirection {
+                fd: Some(2),
+                kind: RedirectionKind::Append,
+                target: Word {
+                    raw: b"log".to_vec().into(),
+                    line: 0,
+                },
+                here_doc: None,
+            };
+            buf.clear();
+            render_redirection_operator_into(&append_redir, &mut buf);
+            assert_eq!(buf, b"2>>log");
+
+            let heredoc_strip = Redirection {
+                fd: None,
+                kind: RedirectionKind::HereDoc,
+                target: Word {
+                    raw: b"EOF".to_vec().into(),
+                    line: 0,
+                },
+                here_doc: Some(HereDoc {
+                    delimiter: b"EOF".to_vec().into(),
+                    body: b"content\n".to_vec().into(),
+                    expand: false,
+                    strip_tabs: true,
+                    body_line: 0,
+                }),
+            };
+            buf.clear();
+            render_redirection_operator_into(&heredoc_strip, &mut buf);
+            assert_eq!(buf, b"<<-EOF");
+
+            let heredoc_no_strip = Redirection {
+                fd: None,
+                kind: RedirectionKind::HereDoc,
+                target: Word {
+                    raw: b"END".to_vec().into(),
+                    line: 0,
+                },
+                here_doc: Some(HereDoc {
+                    delimiter: b"END".to_vec().into(),
+                    body: b"stuff\n".to_vec().into(),
+                    expand: false,
+                    strip_tabs: false,
+                    body_line: 0,
+                }),
+            };
+            buf.clear();
+            render_redirection_operator_into(&heredoc_no_strip, &mut buf);
+            assert_eq!(buf, b"<<END");
+        });
+    }
+
+    #[test]
+    fn render_here_doc_body_appends_newline_when_missing() {
+        assert_no_syscalls(|| {
+            let with_newline = HereDoc {
+                delimiter: b"EOF".to_vec().into(),
+                body: b"hello\n".to_vec().into(),
+                expand: false,
+                strip_tabs: false,
+                body_line: 0,
+            };
+            assert_eq!(render_here_doc_body(&with_newline), b"hello\nEOF");
+
+            let without_newline = HereDoc {
+                delimiter: b"EOF".to_vec().into(),
+                body: b"hello".to_vec().into(),
+                expand: false,
+                strip_tabs: false,
+                body_line: 0,
+            };
+            assert_eq!(render_here_doc_body(&without_newline), b"hello\nEOF");
+        });
+    }
+
+    #[test]
+    fn render_simple_with_multiple_heredocs() {
+        assert_no_syscalls(|| {
+            let simple = SimpleCommand {
+                words: vec![Word {
+                    raw: b"cat".to_vec().into(),
+                    line: 0,
+                }]
+                .into_boxed_slice(),
+                redirections: vec![
+                    Redirection {
+                        fd: None,
+                        kind: RedirectionKind::HereDoc,
+                        target: Word {
+                            raw: b"EOF1".to_vec().into(),
+                            line: 0,
+                        },
+                        here_doc: Some(HereDoc {
+                            delimiter: b"EOF1".to_vec().into(),
+                            body: b"first\n".to_vec().into(),
+                            expand: false,
+                            strip_tabs: false,
+                            body_line: 0,
+                        }),
+                    },
+                    Redirection {
+                        fd: Some(3),
+                        kind: RedirectionKind::HereDoc,
+                        target: Word {
+                            raw: b"EOF2".to_vec().into(),
+                            line: 0,
+                        },
+                        here_doc: Some(HereDoc {
+                            delimiter: b"EOF2".to_vec().into(),
+                            body: b"second".to_vec().into(),
+                            expand: false,
+                            strip_tabs: false,
+                            body_line: 0,
+                        }),
+                    },
+                ]
+                .into_boxed_slice(),
+                ..SimpleCommand::default()
+            };
+            let rendered = render_simple(&simple);
+            let text = std::str::from_utf8(&rendered).unwrap();
+            assert!(text.starts_with("cat <<EOF1 3<<EOF2\n"));
+            assert!(text.contains("first\nEOF1\n"));
+            assert!(text.contains("second\nEOF2"));
+        });
+    }
+
+    #[test]
+    fn var_error_bytes_formats_readonly() {
+        assert_no_syscalls(|| {
+            let err = VarError::Readonly(b"HOME".to_vec().into());
+            assert_eq!(var_error_bytes(&err), b"HOME: readonly variable");
+        });
+    }
+
+    #[test]
+    fn join_boxed_bytes_various_inputs() {
+        assert_no_syscalls(|| {
+            let empty: Vec<Box<[u8]>> = vec![];
+            assert_eq!(join_boxed_bytes(&empty, b' '), b"");
+
+            let single: Vec<Box<[u8]>> = vec![b"hello".to_vec().into()];
+            assert_eq!(join_boxed_bytes(&single, b' '), b"hello");
+
+            let multi: Vec<Box<[u8]>> = vec![
+                b"a".to_vec().into(),
+                b"bb".to_vec().into(),
+                b"ccc".to_vec().into(),
+            ];
+            assert_eq!(join_boxed_bytes(&multi, b' '), b"a bb ccc");
+            assert_eq!(join_boxed_bytes(&multi, b'/'), b"a/bb/ccc");
+        });
+    }
+
+    #[test]
+    fn parse_i32_bytes_various_inputs() {
+        assert_no_syscalls(|| {
+            assert_eq!(parse_i32_bytes(b"0"), Some(0));
+            assert_eq!(parse_i32_bytes(b"42"), Some(42));
+            assert_eq!(parse_i32_bytes(b"-1"), Some(-1));
+            assert_eq!(parse_i32_bytes(b"2147483647"), Some(i32::MAX));
+            assert_eq!(parse_i32_bytes(b"-2147483648"), Some(i32::MIN));
+            assert_eq!(parse_i32_bytes(b"2147483648"), None);
+            assert_eq!(parse_i32_bytes(b""), None);
+            assert_eq!(parse_i32_bytes(b"abc"), None);
+            assert_eq!(parse_i32_bytes(b"-"), None);
+        });
+    }
+
+    #[test]
+    fn default_fd_for_redirection_covers_all_kinds() {
+        assert_no_syscalls(|| {
+            assert_eq!(default_fd_for_redirection(RedirectionKind::Read), 0);
+            assert_eq!(default_fd_for_redirection(RedirectionKind::HereDoc), 0);
+            assert_eq!(default_fd_for_redirection(RedirectionKind::ReadWrite), 0);
+            assert_eq!(default_fd_for_redirection(RedirectionKind::DupInput), 0);
+            assert_eq!(default_fd_for_redirection(RedirectionKind::Write), 1);
+            assert_eq!(default_fd_for_redirection(RedirectionKind::ClobberWrite), 1);
+            assert_eq!(default_fd_for_redirection(RedirectionKind::Append), 1);
+            assert_eq!(default_fd_for_redirection(RedirectionKind::DupOutput), 1);
+        });
+    }
+
+    #[test]
+    fn is_declaration_utility_matches_export_and_readonly() {
+        assert_no_syscalls(|| {
+            assert!(is_declaration_utility(b"export"));
+            assert!(is_declaration_utility(b"readonly"));
+            assert!(!is_declaration_utility(b"echo"));
+            assert!(!is_declaration_utility(b"command"));
+            assert!(!is_declaration_utility(b""));
+        });
+    }
+
+    #[test]
+    fn find_declaration_context_with_command_prefix() {
+        assert_no_syscalls(|| {
+            let words = |strs: &[&[u8]]| -> Vec<Word> {
+                strs.iter()
+                    .map(|s| Word {
+                        raw: s.to_vec().into(),
+                        line: 0,
+                    })
+                    .collect()
+            };
+
+            assert!(find_declaration_context(&words(&[b"export"])));
+            assert!(find_declaration_context(&words(&[b"readonly"])));
+            assert!(find_declaration_context(&words(&[b"command", b"export"])));
+            assert!(find_declaration_context(&words(&[
+                b"command", b"-v", b"export"
+            ])));
+            assert!(!find_declaration_context(&words(&[b"echo"])));
+            assert!(!find_declaration_context(&words(&[b"command"])));
+            assert!(!find_declaration_context(&words(&[])));
+        });
+    }
+
+    #[test]
+    fn has_command_substitution_dollar_paren_in_assignments() {
+        assert_no_syscalls(|| {
+            let cmd = SimpleCommand {
+                assignments: vec![Assignment {
+                    name: b"X".to_vec().into(),
+                    value: Word {
+                        raw: b"$(date)".to_vec().into(),
+                        line: 0,
+                    },
+                }]
+                .into_boxed_slice(),
+                words: vec![].into_boxed_slice(),
+                redirections: vec![].into_boxed_slice(),
+            };
+            assert!(has_command_substitution(&cmd));
+
+            let cmd_backtick_assign = SimpleCommand {
+                assignments: vec![Assignment {
+                    name: b"X".to_vec().into(),
+                    value: Word {
+                        raw: b"`date`".to_vec().into(),
+                        line: 0,
+                    },
+                }]
+                .into_boxed_slice(),
+                words: vec![].into_boxed_slice(),
+                redirections: vec![].into_boxed_slice(),
+            };
+            assert!(has_command_substitution(&cmd_backtick_assign));
+
+            let cmd_dollar_paren_word = SimpleCommand {
+                words: vec![Word {
+                    raw: b"echo $(date)".to_vec().into(),
+                    line: 0,
+                }]
+                .into_boxed_slice(),
+                ..SimpleCommand::default()
+            };
+            assert!(has_command_substitution(&cmd_dollar_paren_word));
+
+            let cmd_none = SimpleCommand {
+                assignments: vec![Assignment {
+                    name: b"X".to_vec().into(),
+                    value: Word {
+                        raw: b"plain".to_vec().into(),
+                        line: 0,
+                    },
+                }]
+                .into_boxed_slice(),
+                words: vec![Word {
+                    raw: b"echo".to_vec().into(),
+                    line: 0,
+                }]
+                .into_boxed_slice(),
+                redirections: vec![].into_boxed_slice(),
+            };
+            assert!(!has_command_substitution(&cmd_none));
+        });
+    }
+
+    #[test]
+    fn close_parent_redirection_fds_only_closes_marked() {
+        run_trace(
+            vec![t("close", vec![ArgMatcher::Fd(77)], TraceResult::Int(0))],
+            || {
+                let prepared = PreparedRedirections {
+                    actions: vec![
+                        ChildFdAction::DupRawFd {
+                            fd: 77,
+                            target_fd: 1,
+                            close_source: true,
+                        },
+                        ChildFdAction::DupRawFd {
+                            fd: 88,
+                            target_fd: 2,
+                            close_source: false,
+                        },
+                        ChildFdAction::DupFd {
+                            source_fd: 3,
+                            target_fd: 4,
+                        },
+                        ChildFdAction::CloseFd { target_fd: 5 },
+                    ],
+                };
+                close_parent_redirection_fds(&prepared);
+            },
+        );
+    }
+
+    #[test]
+    fn apply_child_fd_actions_close_ebadf_ignored() {
+        run_trace(
+            vec![t(
+                "close",
+                vec![ArgMatcher::Fd(999)],
+                TraceResult::Err(sys::EBADF),
+            )],
+            || {
+                apply_child_fd_actions(&[ChildFdAction::CloseFd { target_fd: 999 }])
+                    .expect("ebadf on close should be ignored");
+            },
+        );
+    }
+
+    #[test]
+    fn apply_child_fd_actions_close_non_ebadf_propagates() {
+        run_trace(
+            vec![t(
+                "close",
+                vec![ArgMatcher::Fd(999)],
+                TraceResult::Err(sys::EIO),
+            )],
+            || {
+                let err = apply_child_fd_actions(&[ChildFdAction::CloseFd { target_fd: 999 }])
+                    .expect_err("non-ebadf close should fail");
+                assert_eq!(err.errno(), Some(sys::EIO));
+            },
+        );
+    }
+
+    #[test]
+    fn file_needs_binary_rejection_elf_prefix_allowed() {
+        run_trace(
+            vec![
+                t(
+                    "open",
+                    vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Fd(50),
+                ),
+                t(
+                    "read",
+                    vec![ArgMatcher::Fd(50), ArgMatcher::Any],
+                    TraceResult::Bytes(b"\x7fELF\x02\x01\x01\x00".to_vec()),
+                ),
+                t("close", vec![ArgMatcher::Fd(50)], TraceResult::Int(0)),
+            ],
+            || {
+                assert!(!file_needs_binary_rejection(b"/some/elf"));
+            },
+        );
+    }
+
+    #[test]
+    fn file_needs_binary_rejection_shebang_allowed() {
+        run_trace(
+            vec![
+                t(
+                    "open",
+                    vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Fd(50),
+                ),
+                t(
+                    "read",
+                    vec![ArgMatcher::Fd(50), ArgMatcher::Any],
+                    TraceResult::Bytes(b"#!/bin/sh\necho hi\n".to_vec()),
+                ),
+                t("close", vec![ArgMatcher::Fd(50)], TraceResult::Int(0)),
+            ],
+            || {
+                assert!(!file_needs_binary_rejection(b"/some/script"));
+            },
+        );
+    }
+
+    #[test]
+    fn file_needs_binary_rejection_null_byte_triggers() {
+        run_trace(
+            vec![
+                t(
+                    "open",
+                    vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Fd(50),
+                ),
+                t(
+                    "read",
+                    vec![ArgMatcher::Fd(50), ArgMatcher::Any],
+                    TraceResult::Bytes(b"binary\x00data\n".to_vec()),
+                ),
+                t("close", vec![ArgMatcher::Fd(50)], TraceResult::Int(0)),
+            ],
+            || {
+                assert!(file_needs_binary_rejection(b"/some/binary"));
+            },
+        );
+    }
+
+    #[test]
+    fn file_needs_binary_rejection_text_without_null_ok() {
+        run_trace(
+            vec![
+                t(
+                    "open",
+                    vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Fd(50),
+                ),
+                t(
+                    "read",
+                    vec![ArgMatcher::Fd(50), ArgMatcher::Any],
+                    TraceResult::Bytes(b"just plain text\n".to_vec()),
+                ),
+                t("close", vec![ArgMatcher::Fd(50)], TraceResult::Int(0)),
+            ],
+            || {
+                assert!(!file_needs_binary_rejection(b"/some/text"));
+            },
+        );
+    }
+
+    #[test]
+    fn readonly_var_blocks_external_cmd_prefix_assignment() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Bytes(b"meiksh: line 1: X: readonly variable\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
+                shell.readonly.insert(b"X".to_vec());
+                let err = shell
+                    .execute_string(b"X=val /nonexistent/cmd")
+                    .expect_err("readonly prefix");
+                assert_ne!(err.exit_status(), 0);
+            },
+        );
+    }
+
+    #[test]
+    fn execute_and_or_negated_last_pipeline_suppresses_errexit() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.options.errexit = true;
+            let program = parse_test("true && ! false").expect("parse");
+            let status = execute_program(&mut shell, &program).expect("execute");
+            assert_eq!(status, 0);
+            assert!(shell.running);
+
+            let mut shell = test_shell();
+            shell.options.errexit = true;
+            let program = parse_test("true || ! true").expect("parse");
+            let status = execute_program(&mut shell, &program).expect("execute");
+            assert_eq!(status, 0);
+            assert!(shell.running);
+        });
+    }
+
+    #[test]
+    fn timed_pipeline_exercises_time_report() {
+        run_trace(
+            vec![
+                t(
+                    "monotonic_clock_ns",
+                    vec![],
+                    TraceResult::Int(1_000_000_000),
+                ),
+                t("times", vec![ArgMatcher::Any], TraceResult::Int(0)),
+                t("sysconf", vec![ArgMatcher::Any], TraceResult::Int(100)),
+                t(
+                    "monotonic_clock_ns",
+                    vec![],
+                    TraceResult::Int(2_000_000_000),
+                ),
+                t("times", vec![ArgMatcher::Any], TraceResult::Int(0)),
+                t("sysconf", vec![ArgMatcher::Any], TraceResult::Int(100)),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"\nreal\t0m1.000s\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"user\t0m0.000s\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"sys\t0m0.000s\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let program = parse_test("time true").expect("parse");
+                let status = execute_program(&mut shell, &program).expect("execute");
+                assert_eq!(status, 0);
+            },
+        );
+    }
+
+    #[test]
+    fn timed_pipeline_posix_mode() {
+        run_trace(
+            vec![
+                t(
+                    "monotonic_clock_ns",
+                    vec![],
+                    TraceResult::Int(1_000_000_000),
+                ),
+                t("times", vec![ArgMatcher::Any], TraceResult::Int(0)),
+                t("sysconf", vec![ArgMatcher::Any], TraceResult::Int(100)),
+                t(
+                    "monotonic_clock_ns",
+                    vec![],
+                    TraceResult::Int(2_500_000_000),
+                ),
+                t("times", vec![ArgMatcher::Any], TraceResult::Int(0)),
+                t("sysconf", vec![ArgMatcher::Any], TraceResult::Int(100)),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"real 1.50\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"user 0.00\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"sys 0.00\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let program = parse_test("time -p true").expect("parse");
+                let status = execute_program(&mut shell, &program).expect("execute");
+                assert_eq!(status, 0);
+            },
+        );
+    }
+
+    #[test]
+    fn render_pipeline_multiple_commands() {
+        assert_no_syscalls(|| {
+            let pipeline = Pipeline {
+                negated: false,
+                timed: TimedMode::Off,
+                commands: vec![
+                    Command::Simple(SimpleCommand {
+                        words: vec![Word {
+                            raw: b"cat".to_vec().into(),
+                            line: 0,
+                        }]
+                        .into_boxed_slice(),
+                        ..SimpleCommand::default()
+                    }),
+                    Command::Simple(SimpleCommand {
+                        words: vec![Word {
+                            raw: b"grep".to_vec().into(),
+                            line: 0,
+                        }]
+                        .into_boxed_slice(),
+                        ..SimpleCommand::default()
+                    }),
+                ]
+                .into_boxed_slice(),
+            };
+            let rendered = render_pipeline(&pipeline);
+            assert_eq!(rendered, b"cat | grep");
+        });
+    }
+
+    #[test]
+    fn write_xtrace_with_custom_ps4() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b">> echo hi\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.options.xtrace = true;
+                shell.env.insert(b"PS4".to_vec(), b">> ".to_vec());
+                let expanded = ExpandedSimpleCommand {
+                    assignments: vec![],
+                    argv: vec![b"echo", b"hi"],
+                    redirections: vec![],
+                };
+                write_xtrace(&mut shell, &expanded);
+            },
+        );
+    }
+
+    #[test]
+    fn write_xtrace_empty_argv_with_assignments_only() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"+ A=1 B=2 \n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.options.xtrace = true;
+                let expanded = ExpandedSimpleCommand {
+                    assignments: vec![(b"A" as &[u8], b"1" as &[u8]), (b"B", b"2")],
+                    argv: vec![],
+                    redirections: vec![],
+                };
+                write_xtrace(&mut shell, &expanded);
+            },
+        );
+    }
+
+    #[test]
+    fn render_redirected_command() {
+        assert_no_syscalls(|| {
+            let cmd = Command::Redirected(
+                Box::new(Command::Simple(SimpleCommand {
+                    words: vec![Word {
+                        raw: b"echo".to_vec().into(),
+                        line: 0,
+                    }]
+                    .into_boxed_slice(),
+                    ..SimpleCommand::default()
+                })),
+                vec![Redirection {
+                    fd: None,
+                    kind: RedirectionKind::Write,
+                    target: Word {
+                        raw: b"out.txt".to_vec().into(),
+                        line: 0,
+                    },
+                    here_doc: None,
+                }]
+                .into_boxed_slice(),
+            );
+            let rendered = render_command(&cmd);
+            assert_eq!(rendered, b"echo >out.txt");
+        });
+    }
+
+    #[test]
+    fn render_command_line_redirections_only() {
+        assert_no_syscalls(|| {
+            let simple = SimpleCommand {
+                words: vec![].into_boxed_slice(),
+                assignments: vec![].into_boxed_slice(),
+                redirections: vec![Redirection {
+                    fd: Some(2),
+                    kind: RedirectionKind::Append,
+                    target: Word {
+                        raw: b"err.log".to_vec().into(),
+                        line: 0,
+                    },
+                    here_doc: None,
+                }]
+                .into_boxed_slice(),
+            };
+            let rendered = render_simple(&simple);
+            assert_eq!(rendered, b"2>>err.log");
+        });
+    }
+
+    #[test]
+    fn check_errexit_zero_status_does_nothing() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.options.errexit = true;
+            check_errexit(&mut shell, 0);
+            assert!(shell.running);
+        });
+    }
+
+    #[test]
+    fn prepare_redirections_read_write_append_noclobber() {
+        run_trace(
+            vec![
+                t(
+                    "open",
+                    vec![
+                        ArgMatcher::Str("/tmp/r.txt".into()),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Fd(10),
+                ),
+                t(
+                    "open",
+                    vec![
+                        ArgMatcher::Str("/tmp/w.txt".into()),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Fd(11),
+                ),
+                t(
+                    "open",
+                    vec![
+                        ArgMatcher::Str("/tmp/a.txt".into()),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Fd(12),
+                ),
+                t(
+                    "open",
+                    vec![
+                        ArgMatcher::Str("/tmp/cw.txt".into()),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Fd(13),
+                ),
+            ],
+            || {
+                let prepared = prepare_redirections(
+                    &[
+                        ExpandedRedirection {
+                            fd: 0,
+                            kind: RedirectionKind::Read,
+                            target: b"/tmp/r.txt",
+                            here_doc_body: None,
+                            line: 0,
+                        },
+                        ExpandedRedirection {
+                            fd: 1,
+                            kind: RedirectionKind::Write,
+                            target: b"/tmp/w.txt",
+                            here_doc_body: None,
+                            line: 0,
+                        },
+                        ExpandedRedirection {
+                            fd: 2,
+                            kind: RedirectionKind::Append,
+                            target: b"/tmp/a.txt",
+                            here_doc_body: None,
+                            line: 0,
+                        },
+                        ExpandedRedirection {
+                            fd: 1,
+                            kind: RedirectionKind::ClobberWrite,
+                            target: b"/tmp/cw.txt",
+                            here_doc_body: None,
+                            line: 0,
+                        },
+                    ],
+                    false,
+                )
+                .expect("prepare");
+                assert_eq!(prepared.actions.len(), 4);
+            },
+        );
+    }
+
+    #[test]
+    fn prepare_redirections_dup_input_and_close() {
+        assert_no_syscalls(|| {
+            let prepared = prepare_redirections(
+                &[
+                    ExpandedRedirection {
+                        fd: 0,
+                        kind: RedirectionKind::DupInput,
+                        target: b"3",
+                        here_doc_body: None,
+                        line: 0,
+                    },
+                    ExpandedRedirection {
+                        fd: 5,
+                        kind: RedirectionKind::DupOutput,
+                        target: b"-",
+                        here_doc_body: None,
+                        line: 0,
+                    },
+                ],
+                false,
+            )
+            .expect("prepare dup");
+            assert_eq!(prepared.actions.len(), 2);
+            match &prepared.actions[0] {
+                ChildFdAction::DupFd {
+                    source_fd,
+                    target_fd,
+                } => {
+                    assert_eq!(*source_fd, 3);
+                    assert_eq!(*target_fd, 0);
+                }
+                other => panic!("expected DupFd, got {other:?}"),
+            }
+            match &prepared.actions[1] {
+                ChildFdAction::CloseFd { target_fd } => {
+                    assert_eq!(*target_fd, 5);
+                }
+                other => panic!("expected CloseFd, got {other:?}"),
+            }
+        });
+    }
+
+    #[test]
+    fn prepare_redirections_noclobber_uses_excl() {
+        run_trace(
+            vec![t(
+                "open",
+                vec![
+                    ArgMatcher::Str("/tmp/nc.txt".into()),
+                    ArgMatcher::Any,
+                    ArgMatcher::Any,
+                ],
+                TraceResult::Fd(20),
+            )],
+            || {
+                let prepared = prepare_redirections(
+                    &[ExpandedRedirection {
+                        fd: 1,
+                        kind: RedirectionKind::Write,
+                        target: b"/tmp/nc.txt",
+                        here_doc_body: None,
+                        line: 0,
+                    }],
+                    true,
+                )
+                .expect("prepare noclobber");
+                assert_eq!(prepared.actions.len(), 1);
+            },
+        );
+    }
+
+    #[test]
+    fn open_for_write_noclobber_regular_file_fails() {
+        run_trace(
+            vec![
+                t(
+                    "open",
+                    vec![
+                        ArgMatcher::Str("/exists.txt".into()),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Err(sys::EEXIST),
+                ),
+                t(
+                    "stat",
+                    vec![ArgMatcher::Str("/exists.txt".into()), ArgMatcher::Any],
+                    TraceResult::StatFile(0o644),
+                ),
+            ],
+            || {
+                let err = open_for_write_noclobber(b"/exists.txt").expect_err("should fail");
+                assert_eq!(err.errno(), Some(sys::EEXIST));
+            },
+        );
+    }
+
+    #[test]
+    fn case_fallthrough_stops_at_end() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let program = parse_test("case a in a) V=one ;& esac").expect("parse");
+            let status = execute_program(&mut shell, &program).expect("execute");
+            assert_eq!(status, 0);
+            assert_eq!(shell.get_var(b"V"), Some(b"one" as &[u8]));
+        });
+    }
+
+    #[test]
+    fn case_no_match_returns_zero() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let program = parse_test("case z in a) V=bad ;; b) V=bad ;; esac").expect("parse");
+            let status = execute_program(&mut shell, &program).expect("execute");
+            assert_eq!(status, 0);
+            assert_eq!(shell.get_var(b"V"), None);
+        });
+    }
+
+    #[test]
+    #[allow(clippy::disallowed_methods)]
+    fn for_readonly_variable_error() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Bytes(b"meiksh: line 1: item: readonly variable\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.readonly.insert(b"item".to_vec());
+                let err = shell
+                    .execute_string(b"for item in a b; do :; done")
+                    .expect_err("readonly loop var");
+                assert_ne!(err.exit_status(), 0);
+            },
+        );
+    }
+
+    #[test]
+    fn apply_prefix_assignments_readonly_error() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(sys::STDERR_FILENO),
+                    ArgMatcher::Bytes(b"meiksh: RO: readonly variable\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.readonly.insert(b"RO".to_vec());
+                let assignments = vec![(b"RO".to_vec(), b"newval".to_vec())];
+                let err = apply_prefix_assignments(&mut shell, &assignments)
+                    .expect_err("readonly should fail");
+                assert_ne!(err.exit_status(), 0);
+            },
+        );
+    }
+
+    #[test]
+    fn group_command_executes_inline() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let program = parse_test("{ X=hello; Y=world; }").expect("parse");
+            let status = execute_program(&mut shell, &program).expect("execute");
+            assert_eq!(status, 0);
+            assert_eq!(shell.get_var(b"X"), Some(b"hello" as &[u8]));
+            assert_eq!(shell.get_var(b"Y"), Some(b"world" as &[u8]));
+        });
+    }
+
+    #[test]
+    fn function_def_registers_and_calls() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let program = parse_test("myfn() { RESULT=ok; }; myfn").expect("parse");
+            let status = execute_program(&mut shell, &program).expect("execute");
+            assert_eq!(status, 0);
+            assert_eq!(shell.get_var(b"RESULT"), Some(b"ok" as &[u8]));
+            assert!(shell.functions.contains_key(&b"myfn".to_vec()));
+        });
+    }
+
+    #[test]
+    fn execute_program_stops_on_shell_not_running() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let program = parse_test("exit 5; AFTER=bad").expect("parse");
+            let status = execute_program(&mut shell, &program).expect("execute");
+            assert_eq!(status, 5);
+            assert!(!shell.running);
+            assert_eq!(shell.get_var(b"AFTER"), None);
+        });
+    }
+
+    #[test]
+    fn assignment_only_command_without_words() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let program = parse_test("X=1 Y=2").expect("parse");
+            let status = execute_program(&mut shell, &program).expect("execute");
+            assert_eq!(status, 0);
+            assert_eq!(shell.get_var(b"X"), Some(b"1" as &[u8]));
+            assert_eq!(shell.get_var(b"Y"), Some(b"2" as &[u8]));
+        });
+    }
+
+    #[test]
+    fn split_bytes_helper() {
+        assert_no_syscalls(|| {
+            let parts: Vec<&[u8]> = split_bytes(b"a:b:c", b':').collect();
+            assert_eq!(parts, vec![b"a" as &[u8], b"b", b"c"]);
+
+            let single: Vec<&[u8]> = split_bytes(b"hello", b':').collect();
+            assert_eq!(single, vec![b"hello" as &[u8]]);
+
+            let empty: Vec<&[u8]> = split_bytes(b"", b':').collect();
+            assert_eq!(empty, vec![b"" as &[u8]]);
+
+            let trailing: Vec<&[u8]> = split_bytes(b"a:", b':').collect();
+            assert_eq!(trailing, vec![b"a" as &[u8], b""]);
+        });
     }
 }

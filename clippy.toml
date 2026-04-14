@@ -10,11 +10,19 @@ disallowed-types = [
     { path = "std::process::ExitStatus", reason = "Use sys::ChildExitStatus instead" },
     { path = "std::io::Error", reason = "Use sys::SysError instead" },
     { path = "std::io::Result", reason = "Use sys::SysResult instead" },
+    { path = "std::string::String", reason = "Use Vec<u8> for POSIX byte-correct strings" },
+    { path = "std::path::PathBuf", reason = "Use Vec<u8> for paths (byte-correct on Unix)" },
+    { path = "std::path::Path", reason = "Use &[u8] for paths (byte-correct on Unix)" },
+    { path = "std::ffi::OsString", reason = "Use Vec<u8> for OS strings (byte-correct on Unix)" },
+    { path = "std::ffi::OsStr", reason = "Use &[u8] for OS strings (byte-correct on Unix)" },
 ]
 
 disallowed-macros = [
-    { path = "std::println", reason = "Use sys_println! (routes through sys::write_all_fd) instead" },
-    { path = "std::eprintln", reason = "Use sys_eprintln! (routes through sys::write_all_fd) instead" },
+    { path = "std::println", reason = "Use sys::write_all_fd(STDOUT_FILENO, ...) instead" },
+    { path = "std::eprintln", reason = "Use sys::write_all_fd(STDERR_FILENO, ...) instead" },
+    { path = "std::format", reason = "Use bstr::ByteWriter for byte-correct formatting" },
+    { path = "std::write", reason = "Use bstr::ByteWriter for byte-correct formatting" },
+    { path = "std::writeln", reason = "Use bstr::ByteWriter for byte-correct formatting" },
 ]
 
 disallowed-methods = [

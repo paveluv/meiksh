@@ -748,11 +748,7 @@ impl<'a> Parser<'a> {
                 }
             };
 
-            let trailing_backslashes = line
-                .iter()
-                .rev()
-                .take_while(|&&b| b == b'\\')
-                .count();
+            let trailing_backslashes = line.iter().rev().take_while(|&&b| b == b'\\').count();
             if expand && trailing_backslashes % 2 == 1 && has_newline {
                 continuation_buffer.extend_from_slice(&line[..line.len() - 1]);
                 continue;
@@ -1223,13 +1219,9 @@ impl<'a> Parser<'a> {
 
             if !had_quote {
                 if check_alias {
-                    if let Some((key, value)) =
-                        self.aliases.get_key_value(raw.as_slice())
-                    {
+                    if let Some((key, value)) = self.aliases.get_key_value(raw.as_slice()) {
                         if is_alias_eligible(&raw)
-                            && !self
-                                .expanding_aliases
-                                .contains(raw.as_slice())
+                            && !self.expanding_aliases.contains(raw.as_slice())
                             && self.alias_depth < 1024
                         {
                             let value: &[u8] = value;
@@ -1440,4 +1432,28 @@ pub(super) fn parse_here_doc_delimiter(raw: &[u8]) -> (Box<[u8]>, bool) {
     }
 
     (delimiter.into_boxed_slice(), expand)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_i32_bytes_empty_returns_none() {
+        assert_eq!(parse_i32_bytes(b""), None);
+    }
+
+    #[test]
+    fn parse_i32_bytes_non_digit_returns_none() {
+        assert_eq!(parse_i32_bytes(b"abc"), None);
+        assert_eq!(parse_i32_bytes(b"12x"), None);
+        assert_eq!(parse_i32_bytes(b"-1"), None);
+    }
+
+    #[test]
+    fn parse_i32_bytes_valid_numbers() {
+        assert_eq!(parse_i32_bytes(b"0"), Some(0));
+        assert_eq!(parse_i32_bytes(b"42"), Some(42));
+        assert_eq!(parse_i32_bytes(b"1000"), Some(1000));
+    }
 }

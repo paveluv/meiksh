@@ -29,7 +29,12 @@ fn diag_status(shell: &Shell, status: i32, msg: &[u8]) -> BuiltinOutcome {
     BuiltinOutcome::Status(status)
 }
 
-fn diag_status_syserr(shell: &Shell, status: i32, prefix: &[u8], e: &sys::SysError) -> BuiltinOutcome {
+fn diag_status_syserr(
+    shell: &Shell,
+    status: i32,
+    prefix: &[u8],
+    e: &sys::SysError,
+) -> BuiltinOutcome {
     let msg = ByteWriter::new()
         .bytes(prefix)
         .bytes(&e.strerror())
@@ -40,11 +45,7 @@ fn diag_status_syserr(shell: &Shell, status: i32, prefix: &[u8], e: &sys::SysErr
 
 fn parse_usize(s: &[u8]) -> Option<usize> {
     let val = bstr::parse_i64(s)?;
-    if val >= 0 {
-        Some(val as usize)
-    } else {
-        None
-    }
+    if val >= 0 { Some(val as usize) } else { None }
 }
 
 fn parse_i32(s: &[u8]) -> Option<i32> {
@@ -144,10 +145,44 @@ pub fn run(
 }
 
 const BUILTIN_NAMES: &[&[u8]] = &[
-    b".", b":", b"[", b"alias", b"bg", b"break", b"cd", b"command", b"continue", b"echo", b"eval",
-    b"exec", b"exit", b"export", b"false", b"fc", b"fg", b"getopts", b"hash", b"jobs", b"kill",
-    b"printf", b"pwd", b"read", b"readonly", b"return", b"set", b"shift", b"test", b"times",
-    b"trap", b"true", b"type", b"ulimit", b"umask", b"unalias", b"unset", b"wait",
+    b".",
+    b":",
+    b"[",
+    b"alias",
+    b"bg",
+    b"break",
+    b"cd",
+    b"command",
+    b"continue",
+    b"echo",
+    b"eval",
+    b"exec",
+    b"exit",
+    b"export",
+    b"false",
+    b"fc",
+    b"fg",
+    b"getopts",
+    b"hash",
+    b"jobs",
+    b"kill",
+    b"printf",
+    b"pwd",
+    b"read",
+    b"readonly",
+    b"return",
+    b"set",
+    b"shift",
+    b"test",
+    b"times",
+    b"trap",
+    b"true",
+    b"type",
+    b"ulimit",
+    b"umask",
+    b"unalias",
+    b"unset",
+    b"wait",
 ];
 
 pub fn is_builtin(name: &[u8]) -> bool {
@@ -301,7 +336,11 @@ fn parse_cd_target(
     Ok((target.clone(), false, physical, check_pwd))
 }
 
-fn resolve_cd_target(shell: &Shell, target: &[u8], print_new_pwd: bool) -> (Vec<u8>, Vec<u8>, bool) {
+fn resolve_cd_target(
+    shell: &Shell,
+    target: &[u8],
+    print_new_pwd: bool,
+) -> (Vec<u8>, Vec<u8>, bool) {
     if print_new_pwd || target.first() == Some(&b'/') {
         return (target.to_vec(), target.to_vec(), print_new_pwd);
     }
@@ -480,7 +519,9 @@ fn set(shell: &mut Shell, argv: &[Vec<u8>]) -> BuiltinOutcome {
                     if let Some(name) = argv.get(index + 1) {
                         if let Err(e) = shell.options.set_named_option(name, !reinput) {
                             return BuiltinOutcome::UtilityError(
-                                shell.diagnostic(2, &option_error_msg(b"set", &e)).exit_status(),
+                                shell
+                                    .diagnostic(2, &option_error_msg(b"set", &e))
+                                    .exit_status(),
                             );
                         }
                         index += 2;
@@ -519,7 +560,9 @@ fn set(shell: &mut Shell, argv: &[Vec<u8>]) -> BuiltinOutcome {
                     for &ch in &arg[1..] {
                         if let Err(e) = shell.options.set_short_option(ch, enabled) {
                             return BuiltinOutcome::UtilityError(
-                                shell.diagnostic(2, &option_error_msg(b"set", &e)).exit_status(),
+                                shell
+                                    .diagnostic(2, &option_error_msg(b"set", &e))
+                                    .exit_status(),
                             );
                         }
                     }
@@ -808,13 +851,11 @@ fn format_job_state(job: &crate::shell::Job) -> (Vec<u8>, Vec<u8>) {
         .unwrap_or_default();
     let state = match job.state {
         crate::shell::JobState::Running => b"Running".to_vec(),
-        crate::shell::JobState::Stopped(sig) => {
-            ByteWriter::new()
-                .bytes(b"Stopped (")
-                .bytes(sys::signal_name(sig))
-                .byte(b')')
-                .finish()
-        }
+        crate::shell::JobState::Stopped(sig) => ByteWriter::new()
+            .bytes(b"Stopped (")
+            .bytes(sys::signal_name(sig))
+            .byte(b')')
+            .finish(),
         crate::shell::JobState::Done(status) => {
             if status == 0 {
                 b"Done".to_vec()
@@ -855,7 +896,7 @@ fn parse_jobs_options(argv: &[Vec<u8>]) -> Result<(JobsMode, usize), Vec<u8>> {
                 return Err(ByteWriter::new()
                     .bytes(b"jobs: invalid option: ")
                     .bytes(arg)
-                    .finish())
+                    .finish());
             }
         }
         index += 1;
@@ -1113,7 +1154,8 @@ struct ReadOptions {
 }
 
 fn read(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, ShellError> {
-    sys::ensure_blocking_read_fd(sys::STDIN_FILENO).map_err(|e| shell.diagnostic(1, &e.strerror()))?;
+    sys::ensure_blocking_read_fd(sys::STDIN_FILENO)
+        .map_err(|e| shell.diagnostic(1, &e.strerror()))?;
     read_with_input(shell, argv, sys::STDIN_FILENO)
 }
 
@@ -1141,8 +1183,7 @@ fn read_with_input(
             return Ok(diag_status(shell, 2, &msg));
         }
     };
-    let values =
-        split_read_assignments(&pieces, &vars, shell.get_var(b"IFS").map(|s| s.to_vec()));
+    let values = split_read_assignments(&pieces, &vars, shell.get_var(b"IFS").map(|s| s.to_vec()));
     for (name, value) in vars.iter().zip(values) {
         if let Err(error) = shell.set_var(name, value) {
             let msg = var_error_msg(b"read", &error);
@@ -1410,7 +1451,11 @@ fn getopts_inner(
     if optind < 1 || optind > params.len() {
         getopts_set(shell, name, b"?".to_vec())?;
         let _ = shell.unset_var(b"OPTARG");
-        getopts_set(shell, b"OPTIND", bstr::u64_to_bytes((params.len() + 1) as u64))?;
+        getopts_set(
+            shell,
+            b"OPTIND",
+            bstr::u64_to_bytes((params.len() + 1) as u64),
+        )?;
         return Ok(BuiltinOutcome::Status(1));
     }
 
@@ -1474,9 +1519,10 @@ fn getopts_inner(
         } else {
             let _ = shell.unset_var(b"OPTARG");
             if next_ci < arg_bytes.len() {
-                shell
-                    .env
-                    .insert(b"_GETOPTS_CIND".to_vec(), bstr::u64_to_bytes(next_ci as u64));
+                shell.env.insert(
+                    b"_GETOPTS_CIND".to_vec(),
+                    bstr::u64_to_bytes(next_ci as u64),
+                );
             } else {
                 getopts_set(shell, b"OPTIND", bstr::u64_to_bytes((optind + 1) as u64))?;
                 shell.env.remove(b"_GETOPTS_CIND" as &[u8]);
@@ -1499,9 +1545,10 @@ fn getopts_inner(
         }
         getopts_set(shell, name, b"?".to_vec())?;
         if next_ci < arg_bytes.len() {
-            shell
-                .env
-                .insert(b"_GETOPTS_CIND".to_vec(), bstr::u64_to_bytes(next_ci as u64));
+            shell.env.insert(
+                b"_GETOPTS_CIND".to_vec(),
+                bstr::u64_to_bytes(next_ci as u64),
+            );
         } else {
             getopts_set(shell, b"OPTIND", bstr::u64_to_bytes((optind + 1) as u64))?;
             shell.env.remove(b"_GETOPTS_CIND" as &[u8]);
@@ -1630,16 +1677,20 @@ fn times(shell: &Shell) -> BuiltinOutcome {
                 .finish();
             write_stdout_line(&line1);
             let line2 = ByteWriter::new()
-                .bytes(&format_times_value(times.child_user_ticks, ticks_per_second))
+                .bytes(&format_times_value(
+                    times.child_user_ticks,
+                    ticks_per_second,
+                ))
                 .byte(b' ')
-                .bytes(&format_times_value(times.child_system_ticks, ticks_per_second))
+                .bytes(&format_times_value(
+                    times.child_system_ticks,
+                    ticks_per_second,
+                ))
                 .finish();
             write_stdout_line(&line2);
             BuiltinOutcome::Status(0)
         }
-        (Err(error), _) | (_, Err(error)) => {
-            diag_status_syserr(shell, 1, b"times: ", &error)
-        }
+        (Err(error), _) | (_, Err(error)) => diag_status_syserr(shell, 1, b"times: ", &error),
     }
 }
 
@@ -1945,9 +1996,7 @@ fn umask(shell: &Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, ShellError> 
         if symbolic_output {
             write_stdout_line(&format_umask_symbolic(current));
         } else {
-            let line = ByteWriter::new()
-                .octal_padded(current as u64, 4)
-                .finish();
+            let line = ByteWriter::new().octal_padded(current as u64, 4).finish();
             write_stdout_line(&line);
         }
         return Ok(BuiltinOutcome::Status(0));
@@ -2338,7 +2387,11 @@ fn command_usage_status(mode: CommandMode) -> i32 {
     }
 }
 
-fn command_short_description(shell: &Shell, name: &[u8], use_default_path: bool) -> Option<Vec<u8>> {
+fn command_short_description(
+    shell: &Shell,
+    name: &[u8],
+    use_default_path: bool,
+) -> Option<Vec<u8>> {
     match describe_command(shell, name, use_default_path)? {
         CommandDescription::Alias(value) => {
             let mut out = b"alias ".to_vec();
@@ -2423,10 +2476,7 @@ fn type_builtin(shell: &Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, Shell
         match command_verbose_description(shell, name, false) {
             Some(desc) => write_stdout_line(&desc),
             None => {
-                let msg = ByteWriter::new()
-                    .bytes(name)
-                    .bytes(b": not found")
-                    .finish();
+                let msg = ByteWriter::new().bytes(name).bytes(b": not found").finish();
                 shell.diagnostic(1, &msg);
                 status = 1;
             }
@@ -2586,8 +2636,8 @@ fn ulimit(shell: &Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, ShellError>
         return Ok(BuiltinOutcome::Status(0));
     }
 
-    let (soft, hard) =
-        sys::getrlimit(resource).map_err(|e| shell.diagnostic_prefixed_syserr(1, b"ulimit: ", &e))?;
+    let (soft, hard) = sys::getrlimit(resource)
+        .map_err(|e| shell.diagnostic_prefixed_syserr(1, b"ulimit: ", &e))?;
     let val = if use_hard { hard } else { soft };
     let display = format_limit(if val == sys::RLIM_INFINITY {
         val
@@ -2742,10 +2792,7 @@ fn fc(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, ShellError>
         if do_reverse {
             for idx in (lo..=hi).rev() {
                 if suppress_numbers {
-                    let line = ByteWriter::new()
-                        .byte(b'\t')
-                        .bytes(&history[idx])
-                        .finish();
+                    let line = ByteWriter::new().byte(b'\t').bytes(&history[idx]).finish();
                     write_stdout_line(&line);
                 } else {
                     let line = ByteWriter::new()
@@ -2759,10 +2806,7 @@ fn fc(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, ShellError>
         } else {
             for idx in lo..=hi {
                 if suppress_numbers {
-                    let line = ByteWriter::new()
-                        .byte(b'\t')
-                        .bytes(&history[idx])
-                        .finish();
+                    let line = ByteWriter::new().byte(b'\t').bytes(&history[idx]).finish();
                     write_stdout_line(&line);
                 } else {
                     let line = ByteWriter::new()
@@ -2876,15 +2920,7 @@ fn execute_command_utility(
         .collect();
     let argv_strs: Vec<&[u8]> = argv.iter().map(|v| v.as_slice()).collect();
 
-    match sys::spawn_child(
-        &path,
-        &argv_strs,
-        Some(&env_pairs),
-        &[],
-        None,
-        false,
-        None,
-    ) {
+    match sys::spawn_child(&path, &argv_strs, Some(&env_pairs), &[], None, false, None) {
         Ok(handle) => {
             let ws = sys::wait_pid(handle.pid, false)
                 .map_err(|e| shell.diagnostic(1, &e.strerror()))?
@@ -2979,8 +3015,21 @@ fn absolute_path(path: &[u8]) -> Option<Vec<u8>> {
 }
 
 const SPECIAL_BUILTIN_NAMES: &[&[u8]] = &[
-    b".", b":", b"break", b"continue", b"eval", b"exec", b"exit", b"export", b"readonly",
-    b"return", b"set", b"shift", b"times", b"trap", b"unset",
+    b".",
+    b":",
+    b"break",
+    b"continue",
+    b"eval",
+    b"exec",
+    b"exit",
+    b"export",
+    b"readonly",
+    b"return",
+    b"set",
+    b"shift",
+    b"times",
+    b"trap",
+    b"unset",
 ];
 
 pub fn is_special_builtin(name: &[u8]) -> bool {
@@ -3045,10 +3094,7 @@ fn test_builtin(shell: &Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, Shell
         Ok(true) => Ok(BuiltinOutcome::Status(0)),
         Ok(false) => Ok(BuiltinOutcome::Status(1)),
         Err(msg) => {
-            let full = ByteWriter::new()
-                .bytes(b"test: ")
-                .bytes(&msg)
-                .finish();
+            let full = ByteWriter::new().bytes(b"test: ").bytes(&msg).finish();
             shell.diagnostic(2, &full);
             Ok(BuiltinOutcome::Status(2))
         }
@@ -3122,7 +3168,13 @@ fn test_unary(_shell: &Shell, op: &[u8], operand: &[u8]) -> TestResult {
             .unwrap_or(false)),
         b"-t" => {
             let fd: i32 = bstr::parse_i64(operand)
-                .and_then(|v| if v >= 0 && v <= i32::MAX as i64 { Some(v as i32) } else { None })
+                .and_then(|v| {
+                    if v >= 0 && v <= i32::MAX as i64 {
+                        Some(v as i32)
+                    } else {
+                        None
+                    }
+                })
                 .ok_or_else(|| {
                     let mut msg = operand.to_vec();
                     msg.extend_from_slice(b": not a valid fd");
@@ -3260,10 +3312,7 @@ fn printf_parse_numeric_arg(shell: &Shell, arg: &[u8], had_error: &mut bool) -> 
     match printf_parse_int(arg) {
         Ok(v) => (v, true),
         Err(msg) => {
-            let full = ByteWriter::new()
-                .bytes(b"printf: ")
-                .bytes(&msg)
-                .finish();
+            let full = ByteWriter::new().bytes(b"printf: ").bytes(&msg).finish();
             shell.diagnostic(1, &full);
             *had_error = true;
             (0, false)
@@ -3633,8 +3682,12 @@ fn printf_expand_b(s: &[u8]) -> (Vec<u8>, bool) {
 }
 
 fn printf_format_string(out: &mut Vec<u8>, spec: &[u8], s: &[u8]) {
-    let spec = if spec.first() == Some(&b'%') { &spec[1..] } else { spec };
-    let left = spec.contains_byte(b'-');
+    let spec = if spec.first() == Some(&b'%') {
+        &spec[1..]
+    } else {
+        spec
+    };
+    let left = has_left_flag(spec);
     let spec_rest = trim_leading_flags(spec);
 
     let (width_str, prec_str) = if let Some(dot_pos) = spec_rest.iter().position(|&b| b == b'.') {
@@ -3662,23 +3715,43 @@ fn printf_format_string(out: &mut Vec<u8>, spec: &[u8], s: &[u8]) {
     }
 }
 
-fn trim_leading_flags(spec: &[u8]) -> &[u8] {
+fn flags_end(spec: &[u8]) -> usize {
     let mut i = 0;
     while i < spec.len() && matches!(spec[i], b'-' | b'+' | b' ' | b'0' | b'#') {
         i += 1;
     }
-    &spec[i..]
+    i
+}
+
+fn trim_leading_flags(spec: &[u8]) -> &[u8] {
+    &spec[flags_end(spec)..]
+}
+
+fn has_zero_flag(spec: &[u8]) -> bool {
+    spec[..flags_end(spec)].contains_byte(b'0')
+}
+
+fn has_left_flag(spec: &[u8]) -> bool {
+    spec[..flags_end(spec)].contains_byte(b'-')
+}
+
+fn has_alt_flag(spec: &[u8]) -> bool {
+    spec[..flags_end(spec)].contains_byte(b'#')
 }
 
 fn printf_format_signed(out: &mut Vec<u8>, spec: &[u8], val: i64) {
-    let spec = if spec.first() == Some(&b'%') { &spec[1..] } else { spec };
+    let spec = if spec.first() == Some(&b'%') {
+        &spec[1..]
+    } else {
+        spec
+    };
     let spec = if spec.ends_with(b"ld") {
         &spec[..spec.len() - 2]
     } else {
         spec
     };
-    let left = spec.contains_byte(b'-');
-    let zero_pad = spec.contains_byte(b'0') && !left;
+    let left = has_left_flag(spec);
+    let zero_pad = has_zero_flag(spec) && !left;
     let spec_rest = trim_leading_flags(spec);
 
     let width: usize = parse_usize(spec_rest).unwrap_or(0);
@@ -3710,14 +3783,18 @@ fn printf_format_signed(out: &mut Vec<u8>, spec: &[u8], val: i64) {
 }
 
 fn printf_format_unsigned(out: &mut Vec<u8>, spec: &[u8], val: u64) {
-    let spec = if spec.first() == Some(&b'%') { &spec[1..] } else { spec };
+    let spec = if spec.first() == Some(&b'%') {
+        &spec[1..]
+    } else {
+        spec
+    };
     let spec = if spec.ends_with(b"lu") {
         &spec[..spec.len() - 2]
     } else {
         spec
     };
-    let left = spec.contains_byte(b'-');
-    let zero_pad = spec.contains_byte(b'0') && !left;
+    let left = has_left_flag(spec);
+    let zero_pad = has_zero_flag(spec) && !left;
     let spec_rest = trim_leading_flags(spec);
     let width: usize = parse_usize(spec_rest).unwrap_or(0);
     let num = bstr::u64_to_bytes(val);
@@ -3733,15 +3810,19 @@ fn printf_format_unsigned(out: &mut Vec<u8>, spec: &[u8], val: u64) {
 }
 
 fn printf_format_octal(out: &mut Vec<u8>, spec: &[u8], val: u64) {
-    let spec_inner = if spec.first() == Some(&b'%') { &spec[1..] } else { spec };
+    let spec_inner = if spec.first() == Some(&b'%') {
+        &spec[1..]
+    } else {
+        spec
+    };
     let spec_inner = if spec_inner.last() == Some(&b'o') {
         &spec_inner[..spec_inner.len() - 1]
     } else {
         spec_inner
     };
-    let alt = spec_inner.contains_byte(b'#');
-    let left = spec_inner.contains_byte(b'-');
-    let zero_pad = spec_inner.contains_byte(b'0') && !left;
+    let alt = has_alt_flag(spec_inner);
+    let left = has_left_flag(spec_inner);
+    let zero_pad = has_zero_flag(spec_inner) && !left;
     let spec_rest = trim_leading_flags(spec_inner);
     let width: usize = parse_usize(spec_rest).unwrap_or(0);
     let num = if alt && val != 0 {
@@ -3768,15 +3849,19 @@ fn printf_format_octal(out: &mut Vec<u8>, spec: &[u8], val: u64) {
 
 fn printf_format_hex(out: &mut Vec<u8>, spec: &[u8], val: u64, upper: bool) {
     let suffix = if upper { b'X' } else { b'x' };
-    let spec_inner = if spec.first() == Some(&b'%') { &spec[1..] } else { spec };
+    let spec_inner = if spec.first() == Some(&b'%') {
+        &spec[1..]
+    } else {
+        spec
+    };
     let spec_inner = if spec_inner.last() == Some(&suffix) {
         &spec_inner[..spec_inner.len() - 1]
     } else {
         spec_inner
     };
-    let alt = spec_inner.contains_byte(b'#');
-    let left = spec_inner.contains_byte(b'-');
-    let zero_pad = spec_inner.contains_byte(b'0') && !left;
+    let alt = has_alt_flag(spec_inner);
+    let left = has_left_flag(spec_inner);
+    let zero_pad = has_zero_flag(spec_inner) && !left;
     let spec_rest = trim_leading_flags(spec_inner);
     let width: usize = parse_usize(spec_rest).unwrap_or(0);
     let num = if upper {
@@ -3817,7 +3902,7 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet, HashMap};
 
     use crate::sys::test_support::{
-        ArgMatcher, TraceResult, assert_no_syscalls, run_trace, t, t_fork,
+        ArgMatcher, TraceEntry, TraceResult, assert_no_syscalls, run_trace, t, t_fork,
     };
 
     fn test_shell() -> Shell {
@@ -3908,7 +3993,11 @@ mod tests {
     fn readonly_marks_variable_readonly() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            invoke(&mut shell, &[b"readonly".to_vec(), b"LOCKED=value".to_vec()]).expect("readonly");
+            invoke(
+                &mut shell,
+                &[b"readonly".to_vec(), b"LOCKED=value".to_vec()],
+            )
+            .expect("readonly");
             assert!(shell.readonly.contains(b"LOCKED" as &[u8]));
         });
     }
@@ -3938,11 +4027,12 @@ mod tests {
                 let mut shell = test_shell();
 
                 shell.positional = vec![b"a".to_vec()];
-                let outcome = invoke(&mut shell, &[b"shift".to_vec(), b"5".to_vec()]).expect("shift");
+                let outcome =
+                    invoke(&mut shell, &[b"shift".to_vec(), b"5".to_vec()]).expect("shift");
                 assert!(matches!(outcome, BuiltinOutcome::Status(1)));
 
-                let error =
-                    invoke(&mut shell, &[b"shift".to_vec(), b"bad".to_vec()]).expect_err("bad shift");
+                let error = invoke(&mut shell, &[b"shift".to_vec(), b"bad".to_vec()])
+                    .expect_err("bad shift");
                 assert_eq!(error.exit_status(), 1);
             },
         );
@@ -3989,14 +4079,17 @@ mod tests {
                 let mut shell = test_shell();
                 invoke(&mut shell, &[b"alias".to_vec(), b"ll=ls -l".to_vec()]).expect("alias");
                 invoke(&mut shell, &[b"alias".to_vec(), b"la=ls -a".to_vec()]).expect("alias");
-                assert_eq!(shell.aliases.get(b"ll" as &[u8]).map(|s| &**s), Some(b"ls -l" as &[u8]));
+                assert_eq!(
+                    shell.aliases.get(b"ll" as &[u8]).map(|s| &**s),
+                    Some(b"ls -l" as &[u8])
+                );
 
                 let outcome =
                     invoke(&mut shell, &[b"alias".to_vec(), b"ll".to_vec()]).expect("alias query");
                 assert!(matches!(outcome, BuiltinOutcome::Status(0)));
 
-                let outcome =
-                    invoke(&mut shell, &[b"alias".to_vec(), b"missing".to_vec()]).expect("missing alias");
+                let outcome = invoke(&mut shell, &[b"alias".to_vec(), b"missing".to_vec()])
+                    .expect("missing alias");
                 assert!(matches!(outcome, BuiltinOutcome::Status(1)));
 
                 invoke(&mut shell, &[b"unalias".to_vec(), b"ll".to_vec()]).expect("unalias");
@@ -4004,8 +4097,8 @@ mod tests {
                 let outcome = invoke(&mut shell, &[b"unalias".to_vec(), b"missing".to_vec()])
                     .expect("unalias missing");
                 assert!(matches!(outcome, BuiltinOutcome::Status(1)));
-                let outcome =
-                    invoke(&mut shell, &[b"unalias".to_vec(), b"-a".to_vec()]).expect("unalias all");
+                let outcome = invoke(&mut shell, &[b"unalias".to_vec(), b"-a".to_vec()])
+                    .expect("unalias all");
                 assert!(matches!(outcome, BuiltinOutcome::Status(0)));
                 assert!(shell.aliases.is_empty());
 
@@ -4040,10 +4133,15 @@ mod tests {
             assert_eq!(options.delimiter, b',');
             assert_eq!(vars, vec![b"A".to_vec(), b"B".to_vec()]);
             assert_eq!(
-                parse_read_options(&[b"read".to_vec(), b"-d".to_vec(), b"".to_vec(), b"NUL".to_vec()])
-                    .expect("read nul delim")
-                    .0
-                    .delimiter,
+                parse_read_options(&[
+                    b"read".to_vec(),
+                    b"-d".to_vec(),
+                    b"".to_vec(),
+                    b"NUL".to_vec()
+                ])
+                .expect("read nul delim")
+                .0
+                .delimiter,
                 0
             );
             assert_eq!(
@@ -4069,7 +4167,10 @@ mod tests {
                 ),
                 vec![b"alpha beta".to_vec()]
             );
-            assert_eq!(split_read_assignments(&[], &[], None), Vec::<Vec<u8>>::new());
+            assert_eq!(
+                split_read_assignments(&[], &[], None),
+                Vec::<Vec<u8>>::new()
+            );
             assert_eq!(
                 split_read_assignments(
                     &[(b"alpha beta".to_vec(), false)],
@@ -4187,7 +4288,11 @@ mod tests {
 
     #[test]
     fn fc_resolve_operand_covers_positive_negative_and_string() {
-        let h: Vec<Box<[u8]>> = vec![b"alpha".to_vec().into(), b"beta".to_vec().into(), b"gamma".to_vec().into()];
+        let h: Vec<Box<[u8]>> = vec![
+            b"alpha".to_vec().into(),
+            b"beta".to_vec().into(),
+            b"gamma".to_vec().into(),
+        ];
         assert_eq!(fc_resolve_operand(&h, b"1"), Some(0));
         assert_eq!(fc_resolve_operand(&h, b"3"), Some(2));
         assert_eq!(fc_resolve_operand(&h, b"99"), None);
@@ -4196,5 +4301,3385 @@ mod tests {
         assert_eq!(fc_resolve_operand(&h, b"al"), Some(0));
         assert_eq!(fc_resolve_operand(&h, b"be"), Some(1));
         assert_eq!(fc_resolve_operand(&h, b"zzz"), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // cd CDPATH logic
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cd_physical_mode_with_dash_e_get_cwd_fails() {
+        run_trace(
+            vec![
+                t("getcwd", vec![], TraceResult::CwdBytes(b"/home".to_vec())),
+                t(
+                    "realpath",
+                    vec![ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::RealpathBytes(b"/home".to_vec()),
+                ),
+                t(
+                    "realpath",
+                    vec![ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::RealpathBytes(b"/home".to_vec()),
+                ),
+                t(
+                    "chdir",
+                    vec![ArgMatcher::Str(b"/tmp".to_vec())],
+                    TraceResult::Int(0),
+                ),
+                t("getcwd", vec![], TraceResult::Err(libc::ENOENT)),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"PWD".to_vec(), b"/home".to_vec());
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"cd".to_vec(), b"-Pe".to_vec(), b"/tmp".to_vec()],
+                )
+                .expect("cd -Pe");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn cd_physical_mode() {
+        run_trace(
+            vec![
+                t("getcwd", vec![], TraceResult::CwdBytes(b"/home".to_vec())),
+                t(
+                    "realpath",
+                    vec![ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::RealpathBytes(b"/home".to_vec()),
+                ),
+                t(
+                    "realpath",
+                    vec![ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::RealpathBytes(b"/home".to_vec()),
+                ),
+                t(
+                    "chdir",
+                    vec![ArgMatcher::Str(b"/usr".to_vec())],
+                    TraceResult::Int(0),
+                ),
+                t("getcwd", vec![], TraceResult::CwdBytes(b"/usr".to_vec())),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"PWD".to_vec(), b"/home".to_vec());
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"cd".to_vec(), b"-P".to_vec(), b"/usr".to_vec()],
+                )
+                .expect("cd -P");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert_eq!(shell.get_var(b"PWD"), Some(b"/usr" as &[u8]));
+            },
+        );
+    }
+
+    #[test]
+    fn cd_home_not_set() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"meiksh: cd: HOME not set\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                let _ = invoke(&mut shell, &[b"cd".to_vec()]);
+            },
+        );
+    }
+
+    #[test]
+    fn cd_cdpath_match_found() {
+        run_trace(
+            vec![
+                t(
+                    "stat",
+                    vec![ArgMatcher::Str(b"/opt/subdir".to_vec()), ArgMatcher::Any],
+                    TraceResult::StatDir,
+                ),
+                t("getcwd", vec![], TraceResult::CwdBytes(b"/home".to_vec())),
+                t(
+                    "realpath",
+                    vec![ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::RealpathBytes(b"/home".to_vec()),
+                ),
+                t(
+                    "realpath",
+                    vec![ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::RealpathBytes(b"/home".to_vec()),
+                ),
+                t(
+                    "chdir",
+                    vec![ArgMatcher::Str(b"/opt/subdir".to_vec())],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(1),
+                        ArgMatcher::Bytes(b"/opt/subdir\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"PWD".to_vec(), b"/home".to_vec());
+                shell.env.insert(b"CDPATH".to_vec(), b"/opt".to_vec());
+                let outcome =
+                    invoke(&mut shell, &[b"cd".to_vec(), b"subdir".to_vec()]).expect("cd cdpath");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn export_tilde_expansion_in_value() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.env.insert(b"HOME".to_vec(), b"/home/user".to_vec());
+            invoke(&mut shell, &[b"export".to_vec(), b"FOO=~/bin".to_vec()]).expect("export tilde");
+            assert_eq!(shell.get_var(b"FOO"), Some(b"/home/user/bin" as &[u8]));
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // set -o with name
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn set_dash_o_named_option() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            invoke(
+                &mut shell,
+                &[b"set".to_vec(), b"-o".to_vec(), b"allexport".to_vec()],
+            )
+            .expect("set -o allexport");
+            assert!(shell.options.allexport);
+
+            invoke(
+                &mut shell,
+                &[b"set".to_vec(), b"+o".to_vec(), b"allexport".to_vec()],
+            )
+            .expect("set +o allexport");
+            assert!(!shell.options.allexport);
+        });
+    }
+
+    #[test]
+    fn set_dash_o_invalid_name() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"meiksh: set: invalid option: bogus\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"set".to_vec(), b"-o".to_vec(), b"bogus".to_vec()],
+                )
+                .expect("set -o bogus");
+                assert!(matches!(outcome, BuiltinOutcome::UtilityError(2)));
+            },
+        );
+    }
+
+    #[test]
+    fn set_short_option_flags() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            invoke(&mut shell, &[b"set".to_vec(), b"-x".to_vec()]).expect("set -x");
+            assert!(shell.options.xtrace);
+            invoke(&mut shell, &[b"set".to_vec(), b"+x".to_vec()]).expect("set +x");
+            assert!(!shell.options.xtrace);
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // shift out of range
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn shift_count_exceeds_positional_len() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"meiksh: shift: 5: shift count out of range\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.positional = vec![b"a".to_vec(), b"b".to_vec()];
+                let outcome =
+                    invoke(&mut shell, &[b"shift".to_vec(), b"5".to_vec()]).expect("shift 5");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // dot with non-regular file
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn dot_with_slash_path_not_regular_file() {
+        run_trace(
+            vec![
+                t(
+                    "stat",
+                    vec![ArgMatcher::Str(b"./somedir".to_vec()), ArgMatcher::Any],
+                    TraceResult::StatDir,
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(2),
+                        ArgMatcher::Bytes(b"meiksh: .: ./somedir: not found\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let _ = invoke(&mut shell, &[b".".to_vec(), b"./somedir".to_vec()]);
+            },
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // jobs actual output
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn jobs_stopped_job_output() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(1),
+                    ArgMatcher::Bytes(b"[1] + Stopped (SIGTSTP) vim\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(crate::shell::Job {
+                    id: 1,
+                    command: b"vim"[..].into(),
+                    pgid: Some(111),
+                    last_pid: Some(111),
+                    last_status: None,
+                    children: vec![],
+                    state: crate::shell::JobState::Stopped(sys::SIGTSTP),
+                    saved_termios: None,
+                });
+                invoke(&mut shell, &[b"jobs".to_vec()]).expect("jobs");
+            },
+        );
+    }
+
+    #[test]
+    fn jobs_invalid_option_error() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"meiksh: jobs: invalid option: -z\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome =
+                    invoke(&mut shell, &[b"jobs".to_vec(), b"-z".to_vec()]).expect("jobs -z");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn format_job_state_coverage() {
+        assert_no_syscalls(|| {
+            let running_job = crate::shell::Job {
+                id: 1,
+                command: b"cmd"[..].into(),
+                pgid: Some(999),
+                last_pid: Some(999),
+                last_status: None,
+                children: vec![],
+                state: crate::shell::JobState::Running,
+                saved_termios: None,
+            };
+            let (state, pid) = format_job_state(&running_job);
+            assert_eq!(state, b"Running");
+            assert_eq!(pid, b"999");
+
+            let done_job = crate::shell::Job {
+                id: 2,
+                command: b"cmd"[..].into(),
+                pgid: Some(888),
+                last_pid: Some(888),
+                last_status: None,
+                children: vec![],
+                state: crate::shell::JobState::Done(0),
+                saved_termios: None,
+            };
+            let (state, _) = format_job_state(&done_job);
+            assert_eq!(state, b"Done");
+
+            let done_fail = crate::shell::Job {
+                id: 3,
+                command: b"cmd"[..].into(),
+                pgid: Some(777),
+                last_pid: Some(777),
+                last_status: None,
+                children: vec![],
+                state: crate::shell::JobState::Done(42),
+                saved_termios: None,
+            };
+            let (state, _) = format_job_state(&done_fail);
+            assert_eq!(state, b"Done(42)");
+        });
+    }
+
+    #[test]
+    fn parse_jobs_options_coverage() {
+        assert_no_syscalls(|| {
+            let (mode, idx) = parse_jobs_options(&[b"jobs".to_vec(), b"-p".to_vec()]).expect("-p");
+            assert_eq!(mode, JobsMode::PidOnly);
+            assert_eq!(idx, 2);
+
+            let (mode, idx) = parse_jobs_options(&[b"jobs".to_vec(), b"-l".to_vec()]).expect("-l");
+            assert_eq!(mode, JobsMode::Long);
+            assert_eq!(idx, 2);
+
+            let (mode, idx) =
+                parse_jobs_options(&[b"jobs".to_vec(), b"--".to_vec(), b"%1".to_vec()])
+                    .expect("--");
+            assert_eq!(mode, JobsMode::Normal);
+            assert_eq!(idx, 2);
+
+            let err = parse_jobs_options(&[b"jobs".to_vec(), b"-z".to_vec()]);
+            assert!(err.is_err());
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // fg/bg with job control
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn fg_no_job_control_error() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"meiksh: fg: no job control\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(&mut shell, &[b"fg".to_vec()]).expect("fg");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn bg_no_job_control_error() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"meiksh: bg: no job control\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(&mut shell, &[b"bg".to_vec()]).expect("bg");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn fg_no_current_job_error() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"meiksh: fg: no current job\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.options.monitor = true;
+                let _ = invoke(&mut shell, &[b"fg".to_vec()]);
+            },
+        );
+    }
+
+    #[test]
+    fn bg_no_current_job_error() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"meiksh: bg: no current job\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.options.monitor = true;
+                let _ = invoke(&mut shell, &[b"bg".to_vec()]);
+            },
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // wait with operands
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn wait_invalid_job_id() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"meiksh: wait: invalid job id: %nosuch\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(&mut shell, &[b"wait".to_vec(), b"%nosuch".to_vec()])
+                    .expect("wait %nosuch");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn wait_invalid_pid() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"meiksh: wait: invalid process id: abc\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome =
+                    invoke(&mut shell, &[b"wait".to_vec(), b"abc".to_vec()]).expect("wait abc");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn parse_wait_operand_variants() {
+        assert_no_syscalls(|| {
+            let shell = test_shell();
+
+            let result = parse_wait_operand(b"12345", &shell);
+            assert!(result.is_ok());
+            assert!(matches!(result.unwrap(), WaitOperand::Pid(12345)));
+
+            let result = parse_wait_operand(b"abc", &shell);
+            assert!(result.is_err());
+
+            let result = parse_wait_operand(b"%nosuch", &shell);
+            assert!(result.is_err());
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // trap remaining
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn trap_set_and_reset_via_dash() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.trap_actions.insert(
+                TrapCondition::Exit,
+                TrapAction::Command(b"echo bye"[..].into()),
+            );
+            invoke(
+                &mut shell,
+                &[b"trap".to_vec(), b"-".to_vec(), b"EXIT".to_vec()],
+            )
+            .expect("trap - EXIT");
+            assert!(!shell.trap_actions.contains_key(&TrapCondition::Exit));
+        });
+    }
+
+    #[test]
+    fn trap_set_ignore() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            invoke(
+                &mut shell,
+                &[b"trap".to_vec(), b"".to_vec(), b"EXIT".to_vec()],
+            )
+            .expect("trap '' EXIT");
+            assert!(matches!(
+                shell.trap_actions.get(&TrapCondition::Exit),
+                Some(TrapAction::Ignore)
+            ));
+        });
+    }
+
+    #[test]
+    fn trap_invalid_condition_error() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"meiksh: trap: invalid condition: BOGUS\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                invoke(
+                    &mut shell,
+                    &[b"trap".to_vec(), b"echo hi".to_vec(), b"BOGUS".to_vec()],
+                )
+                .expect("trap bogus");
+            },
+        );
+    }
+
+    #[test]
+    fn trap_numeric_reset() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.trap_actions.insert(
+                TrapCondition::Exit,
+                TrapAction::Command(b"echo bye"[..].into()),
+            );
+            invoke(&mut shell, &[b"trap".to_vec(), b"0".to_vec()]).expect("trap 0");
+            assert!(!shell.trap_actions.contains_key(&TrapCondition::Exit));
+        });
+    }
+
+    #[test]
+    fn trap_dash_dash_no_args_prints() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(1),
+                    ArgMatcher::Bytes(b"trap -- 'echo bye' EXIT\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.trap_actions.insert(
+                    TrapCondition::Exit,
+                    TrapAction::Command(b"echo bye"[..].into()),
+                );
+                invoke(&mut shell, &[b"trap".to_vec(), b"--".to_vec()]).expect("trap --");
+            },
+        );
+    }
+
+    #[test]
+    fn trap_dash_p_specific_condition_prints() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(1),
+                    ArgMatcher::Bytes(b"trap -- 'echo done' EXIT\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.trap_actions.insert(
+                    TrapCondition::Exit,
+                    TrapAction::Command(b"echo done"[..].into()),
+                );
+                invoke(
+                    &mut shell,
+                    &[b"trap".to_vec(), b"-p".to_vec(), b"EXIT".to_vec()],
+                )
+                .expect("trap -p EXIT");
+            },
+        );
+    }
+
+    #[test]
+    fn parse_trap_condition_coverage() {
+        assert_no_syscalls(|| {
+            assert_eq!(parse_trap_condition(b"0"), Some(TrapCondition::Exit));
+            assert_eq!(parse_trap_condition(b"EXIT"), Some(TrapCondition::Exit));
+            assert_eq!(
+                parse_trap_condition(b"SIGHUP"),
+                Some(TrapCondition::Signal(sys::SIGHUP))
+            );
+            assert_eq!(
+                parse_trap_condition(b"HUP"),
+                Some(TrapCondition::Signal(sys::SIGHUP))
+            );
+            assert_eq!(
+                parse_trap_condition(b"1"),
+                Some(TrapCondition::Signal(sys::SIGHUP))
+            );
+            assert_eq!(
+                parse_trap_condition(b"INT"),
+                Some(TrapCondition::Signal(sys::SIGINT))
+            );
+            assert_eq!(
+                parse_trap_condition(b"QUIT"),
+                Some(TrapCondition::Signal(sys::SIGQUIT))
+            );
+            assert_eq!(
+                parse_trap_condition(b"ILL"),
+                Some(TrapCondition::Signal(sys::SIGILL))
+            );
+            assert_eq!(
+                parse_trap_condition(b"ABRT"),
+                Some(TrapCondition::Signal(sys::SIGABRT))
+            );
+            assert_eq!(
+                parse_trap_condition(b"FPE"),
+                Some(TrapCondition::Signal(sys::SIGFPE))
+            );
+            assert_eq!(
+                parse_trap_condition(b"KILL"),
+                Some(TrapCondition::Signal(sys::SIGKILL))
+            );
+            assert_eq!(
+                parse_trap_condition(b"USR1"),
+                Some(TrapCondition::Signal(sys::SIGUSR1))
+            );
+            assert_eq!(
+                parse_trap_condition(b"SEGV"),
+                Some(TrapCondition::Signal(sys::SIGSEGV))
+            );
+            assert_eq!(
+                parse_trap_condition(b"USR2"),
+                Some(TrapCondition::Signal(sys::SIGUSR2))
+            );
+            assert_eq!(
+                parse_trap_condition(b"PIPE"),
+                Some(TrapCondition::Signal(sys::SIGPIPE))
+            );
+            assert_eq!(
+                parse_trap_condition(b"ALRM"),
+                Some(TrapCondition::Signal(sys::SIGALRM))
+            );
+            assert_eq!(
+                parse_trap_condition(b"TERM"),
+                Some(TrapCondition::Signal(sys::SIGTERM))
+            );
+            assert_eq!(
+                parse_trap_condition(b"CHLD"),
+                Some(TrapCondition::Signal(sys::SIGCHLD))
+            );
+            assert_eq!(
+                parse_trap_condition(b"CONT"),
+                Some(TrapCondition::Signal(sys::SIGCONT))
+            );
+            assert_eq!(
+                parse_trap_condition(b"STOP"),
+                Some(TrapCondition::Signal(sys::SIGSTOP))
+            );
+            assert_eq!(
+                parse_trap_condition(b"TSTP"),
+                Some(TrapCondition::Signal(sys::SIGTSTP))
+            );
+            assert_eq!(
+                parse_trap_condition(b"TTIN"),
+                Some(TrapCondition::Signal(sys::SIGTTIN))
+            );
+            assert_eq!(
+                parse_trap_condition(b"TTOU"),
+                Some(TrapCondition::Signal(sys::SIGTTOU))
+            );
+            assert_eq!(
+                parse_trap_condition(b"BUS"),
+                Some(TrapCondition::Signal(sys::SIGBUS))
+            );
+            assert_eq!(
+                parse_trap_condition(b"SYS"),
+                Some(TrapCondition::Signal(sys::SIGSYS))
+            );
+            assert_eq!(
+                parse_trap_condition(b"TRAP"),
+                Some(TrapCondition::Signal(sys::SIGTRAP))
+            );
+            assert_eq!(parse_trap_condition(b"BOGUS"), None);
+        });
+    }
+
+    #[test]
+    fn format_trap_condition_coverage() {
+        assert_no_syscalls(|| {
+            assert_eq!(format_trap_condition(TrapCondition::Exit), b"EXIT");
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGHUP)),
+                b"HUP"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGINT)),
+                b"INT"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGQUIT)),
+                b"QUIT"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGILL)),
+                b"ILL"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGABRT)),
+                b"ABRT"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGFPE)),
+                b"FPE"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGKILL)),
+                b"KILL"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGUSR1)),
+                b"USR1"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGSEGV)),
+                b"SEGV"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGUSR2)),
+                b"USR2"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGPIPE)),
+                b"PIPE"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGALRM)),
+                b"ALRM"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGTERM)),
+                b"TERM"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGCHLD)),
+                b"CHLD"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGCONT)),
+                b"CONT"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGTRAP)),
+                b"TRAP"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGTSTP)),
+                b"TSTP"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGTTIN)),
+                b"TTIN"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGTTOU)),
+                b"TTOU"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGBUS)),
+                b"BUS"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGSYS)),
+                b"SYS"
+            );
+            assert_eq!(
+                format_trap_condition(TrapCondition::Signal(sys::SIGSTOP)),
+                bstr::i64_to_bytes(sys::SIGSTOP as i64)
+            );
+        });
+    }
+
+    #[test]
+    fn parse_trap_action_variants() {
+        assert_no_syscalls(|| {
+            assert!(parse_trap_action(b"-").is_none());
+            assert_eq!(parse_trap_action(b""), Some(TrapAction::Ignore));
+            assert_eq!(
+                parse_trap_action(b"echo hi"),
+                Some(TrapAction::Command(b"echo hi"[..].into()))
+            );
+        });
+    }
+
+    #[test]
+    fn is_unsigned_decimal_helper() {
+        assert_no_syscalls(|| {
+            assert!(is_unsigned_decimal(b"0"));
+            assert!(is_unsigned_decimal(b"123"));
+            assert!(!is_unsigned_decimal(b""));
+            assert!(!is_unsigned_decimal(b"abc"));
+            assert!(!is_unsigned_decimal(b"-1"));
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // execute_command_utility - running a builtin through `command`
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn command_runs_builtin() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"hello\n".to_vec())],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"command".to_vec(), b"echo".to_vec(), b"hello".to_vec()],
+                )
+                .expect("command echo");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // which_in_path - name contains /
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn which_in_path_with_slash_existing() {
+        run_trace(
+            vec![
+                t(
+                    "access",
+                    vec![
+                        ArgMatcher::Str(b"./myscript".to_vec()),
+                        ArgMatcher::Int(libc::F_OK as i64),
+                    ],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "getcwd",
+                    vec![],
+                    TraceResult::CwdBytes(b"/home/user".to_vec()),
+                ),
+            ],
+            || {
+                let shell = test_shell();
+                let result = which(b"./myscript", &shell);
+                assert_eq!(result, Some(b"/home/user/./myscript".to_vec()));
+            },
+        );
+    }
+
+    #[test]
+    fn which_in_path_with_slash_not_found() {
+        run_trace(
+            vec![t(
+                "access",
+                vec![
+                    ArgMatcher::Str(b"./nosuch".to_vec()),
+                    ArgMatcher::Int(libc::F_OK as i64),
+                ],
+                TraceResult::Err(libc::ENOENT),
+            )],
+            || {
+                let shell = test_shell();
+                let result = which(b"./nosuch", &shell);
+                assert!(result.is_none());
+            },
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // test file operators
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_string_less_than_operator() {
+        assert_no_syscalls(|| {
+            let shell = test_shell();
+            let result = test_three_args(&shell, b"abc", b"<", b"def");
+            assert_eq!(result, Ok(true));
+
+            let result = test_three_args(&shell, b"def", b"<", b"abc");
+            assert_eq!(result, Ok(false));
+        });
+    }
+
+    #[test]
+    fn test_string_greater_than_operator() {
+        assert_no_syscalls(|| {
+            let shell = test_shell();
+            let result = test_three_args(&shell, b"def", b">", b"abc");
+            assert_eq!(result, Ok(true));
+        });
+    }
+
+    #[test]
+    fn test_unknown_unary_operator() {
+        assert_no_syscalls(|| {
+            let shell = test_shell();
+            let result = test_unary(&shell, b"-Q", b"whatever");
+            assert!(result.is_err());
+            let msg = result.unwrap_err();
+            assert!(msg.starts_with(b"unknown unary operator: "));
+        });
+    }
+
+    #[test]
+    fn test_ef_same_file() {
+        run_trace(
+            vec![
+                t(
+                    "stat",
+                    vec![ArgMatcher::Str(b"/file1".to_vec()), ArgMatcher::Any],
+                    TraceResult::StatFile(0o644),
+                ),
+                t(
+                    "stat",
+                    vec![ArgMatcher::Str(b"/file2".to_vec()), ArgMatcher::Any],
+                    TraceResult::StatFile(0o644),
+                ),
+            ],
+            || {
+                let result = test_file_binary(b"/file1", b"-ef", b"/file2");
+                assert!(result.is_some());
+                let val = result.unwrap().unwrap();
+                assert!(val);
+            },
+        );
+    }
+
+    #[test]
+    fn test_ef_different_files() {
+        run_trace(
+            vec![
+                t(
+                    "stat",
+                    vec![ArgMatcher::Str(b"/a".to_vec()), ArgMatcher::Any],
+                    TraceResult::StatFile(0o644),
+                ),
+                t(
+                    "stat",
+                    vec![ArgMatcher::Str(b"/b".to_vec()), ArgMatcher::Any],
+                    TraceResult::StatFile(0o755),
+                ),
+            ],
+            || {
+                let result = test_file_binary(b"/a", b"-ef", b"/b");
+                assert!(result.is_some());
+            },
+        );
+    }
+
+    #[test]
+    fn test_nt_newer_than() {
+        run_trace(
+            vec![
+                t(
+                    "stat",
+                    vec![ArgMatcher::Str(b"/new".to_vec()), ArgMatcher::Any],
+                    TraceResult::StatFile(0o644),
+                ),
+                t(
+                    "stat",
+                    vec![ArgMatcher::Str(b"/old".to_vec()), ArgMatcher::Any],
+                    TraceResult::StatFile(0o644),
+                ),
+            ],
+            || {
+                let result = test_file_binary(b"/new", b"-nt", b"/old");
+                assert!(result.is_some());
+            },
+        );
+    }
+
+    #[test]
+    fn test_nt_first_exists_second_not() {
+        run_trace(
+            vec![
+                t(
+                    "stat",
+                    vec![ArgMatcher::Str(b"/exists".to_vec()), ArgMatcher::Any],
+                    TraceResult::StatFile(0o644),
+                ),
+                t(
+                    "stat",
+                    vec![ArgMatcher::Str(b"/gone".to_vec()), ArgMatcher::Any],
+                    TraceResult::Err(libc::ENOENT),
+                ),
+            ],
+            || {
+                let result = test_file_binary(b"/exists", b"-nt", b"/gone");
+                assert_eq!(result, Some(Ok(true)));
+            },
+        );
+    }
+
+    #[test]
+    fn test_ot_older_than() {
+        run_trace(
+            vec![
+                t(
+                    "stat",
+                    vec![ArgMatcher::Str(b"/old".to_vec()), ArgMatcher::Any],
+                    TraceResult::StatFile(0o644),
+                ),
+                t(
+                    "stat",
+                    vec![ArgMatcher::Str(b"/new".to_vec()), ArgMatcher::Any],
+                    TraceResult::StatFile(0o644),
+                ),
+            ],
+            || {
+                let result = test_file_binary(b"/old", b"-ot", b"/new");
+                assert!(result.is_some());
+            },
+        );
+    }
+
+    #[test]
+    fn test_ot_first_missing_second_exists() {
+        run_trace(
+            vec![
+                t(
+                    "stat",
+                    vec![ArgMatcher::Str(b"/gone".to_vec()), ArgMatcher::Any],
+                    TraceResult::Err(libc::ENOENT),
+                ),
+                t(
+                    "stat",
+                    vec![ArgMatcher::Str(b"/exists".to_vec()), ArgMatcher::Any],
+                    TraceResult::StatFile(0o644),
+                ),
+            ],
+            || {
+                let result = test_file_binary(b"/gone", b"-ot", b"/exists");
+                assert_eq!(result, Some(Ok(true)));
+            },
+        );
+    }
+
+    #[test]
+    fn test_socket_file_operator() {
+        run_trace(
+            vec![t(
+                "stat",
+                vec![ArgMatcher::Str(b"/sock".to_vec()), ArgMatcher::Any],
+                TraceResult::StatFile(0o644),
+            )],
+            || {
+                let shell = test_shell();
+                let result = test_unary(&shell, b"-S", b"/sock");
+                assert!(result.is_ok());
+            },
+        );
+    }
+
+    #[test]
+    fn test_unknown_binary_operator() {
+        assert_no_syscalls(|| {
+            let result = test_file_binary(b"/a", b"-zz", b"/b");
+            assert!(result.is_none());
+        });
+    }
+
+    #[test]
+    fn test_integer_binary_operators() {
+        assert_no_syscalls(|| {
+            assert_eq!(test_integer_binary(b"5", b"-eq", b"5"), Some(Ok(true)));
+            assert_eq!(test_integer_binary(b"5", b"-ne", b"3"), Some(Ok(true)));
+            assert_eq!(test_integer_binary(b"5", b"-gt", b"3"), Some(Ok(true)));
+            assert_eq!(test_integer_binary(b"5", b"-ge", b"5"), Some(Ok(true)));
+            assert_eq!(test_integer_binary(b"3", b"-lt", b"5"), Some(Ok(true)));
+            assert_eq!(test_integer_binary(b"5", b"-le", b"5"), Some(Ok(true)));
+            assert_eq!(test_integer_binary(b"5", b"=", b"5"), None);
+            assert!(test_integer_binary(b"abc", b"-eq", b"5").unwrap().is_err());
+            assert!(test_integer_binary(b"5", b"-eq", b"abc").unwrap().is_err());
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // printf remaining
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn printf_format_loop_basic() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(1),
+                    ArgMatcher::Bytes(b"hello world".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[
+                        b"printf".to_vec(),
+                        b"%s %s".to_vec(),
+                        b"hello".to_vec(),
+                        b"world".to_vec(),
+                    ],
+                )
+                .expect("printf");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn printf_literal_percent_sign() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"100%".to_vec())],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                invoke(&mut shell, &[b"printf".to_vec(), b"100%%".to_vec()]).expect("printf %%");
+            },
+        );
+    }
+
+    #[test]
+    fn printf_escape_sequences() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"a\tb\n".to_vec())],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                invoke(&mut shell, &[b"printf".to_vec(), b"a\\tb\\n".to_vec()])
+                    .expect("printf escapes");
+            },
+        );
+    }
+
+    #[test]
+    fn printf_format_signed_integer() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"42".to_vec())],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                invoke(
+                    &mut shell,
+                    &[b"printf".to_vec(), b"%d".to_vec(), b"42".to_vec()],
+                )
+                .expect("printf %d");
+            },
+        );
+    }
+
+    #[test]
+    fn printf_format_unsigned_integer() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"42".to_vec())],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                invoke(
+                    &mut shell,
+                    &[b"printf".to_vec(), b"%u".to_vec(), b"42".to_vec()],
+                )
+                .expect("printf %u");
+            },
+        );
+    }
+
+    #[test]
+    fn printf_format_octal_output() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"52".to_vec())],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                invoke(
+                    &mut shell,
+                    &[b"printf".to_vec(), b"%o".to_vec(), b"42".to_vec()],
+                )
+                .expect("printf %o");
+            },
+        );
+    }
+
+    #[test]
+    fn printf_format_hex_output() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"2a".to_vec())],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                invoke(
+                    &mut shell,
+                    &[b"printf".to_vec(), b"%x".to_vec(), b"42".to_vec()],
+                )
+                .expect("printf %x");
+            },
+        );
+    }
+
+    #[test]
+    fn printf_format_hex_upper() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"2A".to_vec())],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                invoke(
+                    &mut shell,
+                    &[b"printf".to_vec(), b"%X".to_vec(), b"42".to_vec()],
+                )
+                .expect("printf %X");
+            },
+        );
+    }
+
+    #[test]
+    fn printf_char_format() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"A".to_vec())],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                invoke(
+                    &mut shell,
+                    &[b"printf".to_vec(), b"%c".to_vec(), b"ABC".to_vec()],
+                )
+                .expect("printf %c");
+            },
+        );
+    }
+
+    #[test]
+    fn printf_b_format_with_escape() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"a\tb".to_vec())],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                invoke(
+                    &mut shell,
+                    &[b"printf".to_vec(), b"%b".to_vec(), b"a\\tb".to_vec()],
+                )
+                .expect("printf %b");
+            },
+        );
+    }
+
+    #[test]
+    fn printf_b_format_backslash_c_stops() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"hello".to_vec())],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                invoke(
+                    &mut shell,
+                    &[
+                        b"printf".to_vec(),
+                        b"%b".to_vec(),
+                        b"hello\\c world".to_vec(),
+                    ],
+                )
+                .expect("printf %b \\c");
+            },
+        );
+    }
+
+    #[test]
+    fn printf_width_padding() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"  hi".to_vec())],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                invoke(
+                    &mut shell,
+                    &[b"printf".to_vec(), b"%4s".to_vec(), b"hi".to_vec()],
+                )
+                .expect("printf %4s");
+            },
+        );
+    }
+
+    #[test]
+    fn printf_left_align_width() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"hi  ".to_vec())],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                invoke(
+                    &mut shell,
+                    &[b"printf".to_vec(), b"%-4s".to_vec(), b"hi".to_vec()],
+                )
+                .expect("printf %-4s");
+            },
+        );
+    }
+
+    #[test]
+    fn printf_precision_truncation() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"hel".to_vec())],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                invoke(
+                    &mut shell,
+                    &[b"printf".to_vec(), b"%.3s".to_vec(), b"hello".to_vec()],
+                )
+                .expect("printf %.3s");
+            },
+        );
+    }
+
+    #[test]
+    fn printf_width_and_precision_combined() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"  hel".to_vec())],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                invoke(
+                    &mut shell,
+                    &[b"printf".to_vec(), b"%5.3s".to_vec(), b"hello".to_vec()],
+                )
+                .expect("printf %5.3s");
+            },
+        );
+    }
+
+    #[test]
+    fn printf_zero_padded_integer() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"00042".to_vec())],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                invoke(
+                    &mut shell,
+                    &[b"printf".to_vec(), b"%05d".to_vec(), b"42".to_vec()],
+                )
+                .expect("printf %05d");
+            },
+        );
+    }
+
+    #[test]
+    fn printf_left_padded_integer() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"42   ".to_vec())],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                invoke(
+                    &mut shell,
+                    &[b"printf".to_vec(), b"%-5d".to_vec(), b"42".to_vec()],
+                )
+                .expect("printf %-5d");
+            },
+        );
+    }
+
+    #[test]
+    fn printf_negative_zero_padded() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"-0042".to_vec())],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                invoke(
+                    &mut shell,
+                    &[b"printf".to_vec(), b"%05d".to_vec(), b"-42".to_vec()],
+                )
+                .expect("printf %05d negative");
+            },
+        );
+    }
+
+    #[test]
+    fn printf_hex_parse() {
+        assert_no_syscalls(|| {
+            assert_eq!(printf_parse_int(b"0xFF"), Ok(255));
+            assert_eq!(printf_parse_int(b"0x10"), Ok(16));
+        });
+    }
+
+    #[test]
+    fn printf_octal_parse() {
+        assert_no_syscalls(|| {
+            assert_eq!(printf_parse_int(b"010"), Ok(8));
+            assert_eq!(printf_parse_int(b"077"), Ok(63));
+        });
+    }
+
+    #[test]
+    fn printf_char_value_parse() {
+        assert_no_syscalls(|| {
+            assert_eq!(printf_parse_int(b"'A"), Ok(65));
+            assert_eq!(printf_parse_int(b"\"B"), Ok(66));
+            assert_eq!(printf_parse_int(b"'"), Ok(0));
+        });
+    }
+
+    #[test]
+    fn printf_sign_prefix_parse() {
+        assert_no_syscalls(|| {
+            assert_eq!(printf_parse_int(b"+42"), Ok(42));
+            assert_eq!(printf_parse_int(b"-42"), Ok(-42));
+        });
+    }
+
+    #[test]
+    fn printf_invalid_number_error() {
+        assert_no_syscalls(|| {
+            let result = printf_parse_int(b"abc");
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn printf_format_escape_all_sequences() {
+        assert_no_syscalls(|| {
+            assert_eq!(printf_format_escape(b"\\", 0), (vec![b'\\'], 1));
+            assert_eq!(printf_format_escape(b"a", 0), (vec![0x07], 1));
+            assert_eq!(printf_format_escape(b"b", 0), (vec![0x08], 1));
+            assert_eq!(printf_format_escape(b"f", 0), (vec![0x0c], 1));
+            assert_eq!(printf_format_escape(b"n", 0), (vec![b'\n'], 1));
+            assert_eq!(printf_format_escape(b"r", 0), (vec![b'\r'], 1));
+            assert_eq!(printf_format_escape(b"t", 0), (vec![b'\t'], 1));
+            assert_eq!(printf_format_escape(b"v", 0), (vec![0x0b], 1));
+            assert_eq!(printf_format_escape(b"101", 0), (vec![b'A'], 3));
+            assert_eq!(printf_format_escape(b"z", 0), (vec![b'\\', b'z'], 1));
+            assert_eq!(printf_format_escape(b"", 0), (vec![b'\\'], 0));
+        });
+    }
+
+    #[test]
+    fn printf_expand_b_all_escapes() {
+        assert_no_syscalls(|| {
+            assert_eq!(printf_expand_b(b"\\\\"), (vec![b'\\'], false));
+            assert_eq!(printf_expand_b(b"\\a"), (vec![0x07], false));
+            assert_eq!(printf_expand_b(b"\\b"), (vec![0x08], false));
+            assert_eq!(printf_expand_b(b"\\f"), (vec![0x0c], false));
+            assert_eq!(printf_expand_b(b"\\n"), (vec![b'\n'], false));
+            assert_eq!(printf_expand_b(b"\\r"), (vec![b'\r'], false));
+            assert_eq!(printf_expand_b(b"\\t"), (vec![b'\t'], false));
+            assert_eq!(printf_expand_b(b"\\v"), (vec![0x0b], false));
+            assert_eq!(printf_expand_b(b"\\c rest"), (Vec::<u8>::new(), true));
+            assert_eq!(printf_expand_b(b"\\0101"), (vec![b'A'], false));
+            assert_eq!(printf_expand_b(b"\\z"), (vec![b'\\', b'z'], false));
+            assert_eq!(printf_expand_b(b"plain"), (b"plain".to_vec(), false));
+            assert_eq!(printf_expand_b(b"\\"), (vec![b'\\'], false));
+        });
+    }
+
+    #[test]
+    fn printf_format_string_right_padded() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_string(&mut out, b"%6", b"hi");
+            assert_eq!(out, b"    hi");
+        });
+    }
+
+    #[test]
+    fn printf_format_string_left_padded() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_string(&mut out, b"%-6", b"hi");
+            assert_eq!(out, b"hi    ");
+        });
+    }
+
+    #[test]
+    fn printf_format_string_with_precision() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_string(&mut out, b"%.3", b"hello");
+            assert_eq!(out, b"hel");
+        });
+    }
+
+    #[test]
+    fn printf_format_signed_right_padded() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_signed(&mut out, b"%8ld", 42);
+            assert_eq!(out, b"      42");
+        });
+    }
+
+    #[test]
+    fn printf_format_signed_zero_padded() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_signed(&mut out, b"%08ld", 42);
+            assert_eq!(out, b"00000042");
+        });
+    }
+
+    #[test]
+    fn printf_format_signed_negative_zero_padded() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_signed(&mut out, b"%08ld", -42);
+            assert_eq!(out, b"-0000042");
+        });
+    }
+
+    #[test]
+    fn printf_format_signed_left_padded() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_signed(&mut out, b"%-8ld", 42);
+            assert_eq!(out, b"42      ");
+        });
+    }
+
+    #[test]
+    fn printf_format_unsigned_right_padded() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_unsigned(&mut out, b"%8lu", 42);
+            assert_eq!(out, b"      42");
+        });
+    }
+
+    #[test]
+    fn printf_format_unsigned_zero_padded() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_unsigned(&mut out, b"%08lu", 42);
+            assert_eq!(out, b"00000042");
+        });
+    }
+
+    #[test]
+    fn printf_format_unsigned_left_padded() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_unsigned(&mut out, b"%-8lu", 42);
+            assert_eq!(out, b"42      ");
+        });
+    }
+
+    #[test]
+    fn printf_format_octal_alt_flag() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_octal(&mut out, b"%#o", 42);
+            assert_eq!(out, b"052");
+
+            let mut out = Vec::new();
+            printf_format_octal(&mut out, b"%#o", 0);
+            assert_eq!(out, b"0");
+        });
+    }
+
+    #[test]
+    fn printf_format_octal_zero_padded() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_octal(&mut out, b"%06o", 42);
+            assert_eq!(out, b"000052");
+        });
+    }
+
+    #[test]
+    fn printf_format_octal_left_padded() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_octal(&mut out, b"%-6o", 42);
+            assert_eq!(out, b"52    ");
+        });
+    }
+
+    #[test]
+    fn printf_format_hex_alt_flag() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_hex(&mut out, b"%#x", 42, false);
+            assert_eq!(out, b"0x2a");
+
+            let mut out = Vec::new();
+            printf_format_hex(&mut out, b"%#X", 42, true);
+            assert_eq!(out, b"0X2A");
+
+            let mut out = Vec::new();
+            printf_format_hex(&mut out, b"%#x", 0, false);
+            assert_eq!(out, b"0");
+        });
+    }
+
+    #[test]
+    fn printf_format_hex_zero_padded() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_hex(&mut out, b"%08x", 42, false);
+            assert_eq!(out, b"0000002a");
+        });
+    }
+
+    #[test]
+    fn printf_format_hex_left_padded() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_hex(&mut out, b"%-8x", 42, false);
+            assert_eq!(out, b"2a      ");
+        });
+    }
+
+    #[test]
+    fn printf_format_hex_alt_zero_padded() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_hex(&mut out, b"%#010x", 255, false);
+            assert_eq!(out, b"0x000000ff");
+        });
+    }
+
+    #[test]
+    fn printf_format_hex_alt_right_padded() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_hex(&mut out, b"%#10x", 255, false);
+            assert_eq!(out, b"      0xff");
+        });
+    }
+
+    #[test]
+    fn printf_format_reuse_with_multiple_args() {
+        run_trace(
+            vec![
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"a ".to_vec())],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"b ".to_vec())],
+                    TraceResult::Auto,
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                invoke(
+                    &mut shell,
+                    &[
+                        b"printf".to_vec(),
+                        b"%s ".to_vec(),
+                        b"a".to_vec(),
+                        b"b".to_vec(),
+                    ],
+                )
+                .expect("printf reuse");
+            },
+        );
+    }
+
+    #[test]
+    fn printf_check_trailing_garbage() {
+        assert_no_syscalls(|| {
+            assert!(printf_find_trailing_garbage(b"123abc").is_some());
+            assert!(printf_find_trailing_garbage(b"123").is_none());
+            assert!(printf_find_trailing_garbage(b"0xFG").is_some());
+            assert!(printf_find_trailing_garbage(b"0xFF").is_none());
+            assert!(printf_find_trailing_garbage(b"089").is_some());
+            assert!(printf_find_trailing_garbage(b"077").is_none());
+        });
+    }
+
+    #[test]
+    fn printf_missing_format_operand() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(2),
+                    ArgMatcher::Bytes(b"meiksh: printf: missing format operand\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(&mut shell, &[b"printf".to_vec()]).expect("printf no args");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn printf_unknown_conversion() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"%Q".to_vec())],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                invoke(&mut shell, &[b"printf".to_vec(), b"%Q".to_vec()]).expect("printf %Q");
+            },
+        );
+    }
+
+    #[test]
+    fn parse_hex_i64_helper() {
+        assert_no_syscalls(|| {
+            assert_eq!(parse_hex_i64(b"ff"), Some(255));
+            assert_eq!(parse_hex_i64(b"FF"), Some(255));
+            assert_eq!(parse_hex_i64(b"0"), Some(0));
+            assert_eq!(parse_hex_i64(b""), None);
+            assert_eq!(parse_hex_i64(b"zz"), None);
+        });
+    }
+
+    #[test]
+    fn parse_octal_i64_helper() {
+        assert_no_syscalls(|| {
+            assert_eq!(parse_octal_i64(b"77"), Some(63));
+            assert_eq!(parse_octal_i64(b"0"), Some(0));
+            assert_eq!(parse_octal_i64(b""), None);
+            assert_eq!(parse_octal_i64(b"89"), None);
+        });
+    }
+
+    #[test]
+    fn printf_incomplete_format_spec() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"%5".to_vec())],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                invoke(&mut shell, &[b"printf".to_vec(), b"%5".to_vec()])
+                    .expect("printf %5 incomplete");
+            },
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // resolve_job_id
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn resolve_job_id_variants() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.jobs.push(crate::shell::Job {
+                id: 1,
+                command: b"sleep"[..].into(),
+                pgid: Some(100),
+                last_pid: Some(100),
+                last_status: None,
+                children: vec![],
+                state: crate::shell::JobState::Running,
+                saved_termios: None,
+            });
+            shell.jobs.push(crate::shell::Job {
+                id: 2,
+                command: b"vim"[..].into(),
+                pgid: Some(200),
+                last_pid: Some(200),
+                last_status: None,
+                children: vec![],
+                state: crate::shell::JobState::Running,
+                saved_termios: None,
+            });
+
+            assert_eq!(resolve_job_id(&shell, Some(b"%+")), shell.current_job_id());
+            assert_eq!(resolve_job_id(&shell, Some(b"%%")), shell.current_job_id());
+            assert_eq!(resolve_job_id(&shell, Some(b"%-")), shell.previous_job_id());
+            assert_eq!(resolve_job_id(&shell, Some(b"%1")), Some(1));
+            assert_eq!(resolve_job_id(&shell, Some(b"%2")), Some(2));
+            assert_eq!(resolve_job_id(&shell, Some(b"%99")), None);
+            assert_eq!(resolve_job_id(&shell, None), None);
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // job_current_marker
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn job_current_marker_variants() {
+        assert_no_syscalls(|| {
+            assert_eq!(job_current_marker(1, Some(1), Some(2)), b'+');
+            assert_eq!(job_current_marker(2, Some(1), Some(2)), b'-');
+            assert_eq!(job_current_marker(3, Some(1), Some(2)), b' ');
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // trap_output_action and shell_quote
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn trap_output_action_variants() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell
+                .trap_actions
+                .insert(TrapCondition::Exit, TrapAction::Ignore);
+            let action = trap_output_action(&shell, TrapCondition::Exit, false, false);
+            assert_eq!(action, Some(b"''".to_vec()));
+
+            shell.trap_actions.insert(
+                TrapCondition::Exit,
+                TrapAction::Command(b"echo bye"[..].into()),
+            );
+            let action = trap_output_action(&shell, TrapCondition::Exit, false, false);
+            assert_eq!(action, Some(b"'echo bye'".to_vec()));
+
+            shell.trap_actions.remove(&TrapCondition::Exit);
+            let action = trap_output_action(&shell, TrapCondition::Exit, true, false);
+            assert_eq!(action, Some(b"-".to_vec()));
+
+            let action = trap_output_action(&shell, TrapCondition::Exit, false, true);
+            assert_eq!(action, Some(b"-".to_vec()));
+
+            let action = trap_output_action(&shell, TrapCondition::Exit, false, false);
+            assert!(action.is_none());
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Coverage batch: helper functions
+    // -----------------------------------------------------------------------
+
+    fn diag(msg: &[u8]) -> Vec<u8> {
+        let mut v = b"meiksh: ".to_vec();
+        v.extend_from_slice(msg);
+        v.push(b'\n');
+        v
+    }
+
+    fn write_stderr(msg: &[u8]) -> TraceEntry {
+        t(
+            "write",
+            vec![ArgMatcher::Fd(2), ArgMatcher::Bytes(msg.to_vec())],
+            TraceResult::Auto,
+        )
+    }
+
+    #[test]
+    fn write_stdout_coverage() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"hi".to_vec())],
+                TraceResult::Auto,
+            )],
+            || {
+                write_stdout(b"hi");
+            },
+        );
+    }
+
+    #[test]
+    fn diag_status_syserr_coverage() {
+        let msg = diag(b"open: No such file or directory");
+        run_trace(vec![write_stderr(&msg)], || {
+            let shell = test_shell();
+            let e = sys::SysError::Errno(libc::ENOENT);
+            let outcome = diag_status_syserr(&shell, 1, b"open: ", &e);
+            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+        });
+    }
+
+    #[test]
+    fn parse_i32_out_of_range() {
+        assert_no_syscalls(|| {
+            assert_eq!(parse_i32(b"2147483648"), None);
+            assert_eq!(parse_i32(b"-2147483649"), None);
+            assert_eq!(parse_i32(b"42"), Some(42));
+        });
+    }
+
+    #[test]
+    fn run_empty_argv_returns_zero() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let outcome = invoke(&mut shell, &[]).expect("empty argv");
+            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        });
+    }
+
+    #[test]
+    fn run_unknown_builtin_returns_127() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let outcome = invoke(&mut shell, &[b"nonexistent_cmd".to_vec()]).expect("unknown");
+            assert!(matches!(outcome, BuiltinOutcome::Status(127)));
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Coverage batch: cd edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cd_invalid_option() {
+        let msg = diag(b"cd: invalid option: -z");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            let _ = invoke(&mut shell, &[b"cd".to_vec(), b"-z".to_vec()]);
+        });
+    }
+
+    #[test]
+    fn cd_too_many_args() {
+        let msg = diag(b"cd: too many arguments");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            let _ = invoke(&mut shell, &[b"cd".to_vec(), b"a".to_vec(), b"b".to_vec()]);
+        });
+    }
+
+    #[test]
+    fn cd_empty_dir() {
+        let msg = diag(b"cd: empty directory");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            let _ = invoke(&mut shell, &[b"cd".to_vec(), b"".to_vec()]);
+        });
+    }
+
+    #[test]
+    fn cd_dash_dash_handling() {
+        run_trace(
+            vec![
+                t("getcwd", vec![], TraceResult::CwdBytes(b"/home".to_vec())),
+                t(
+                    "realpath",
+                    vec![ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::RealpathBytes(b"/home".to_vec()),
+                ),
+                t(
+                    "realpath",
+                    vec![ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::RealpathBytes(b"/home".to_vec()),
+                ),
+                t(
+                    "chdir",
+                    vec![ArgMatcher::Str(b"/tmp".to_vec())],
+                    TraceResult::Int(0),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"PWD".to_vec(), b"/home".to_vec());
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"cd".to_vec(), b"--".to_vec(), b"/tmp".to_vec()],
+                )
+                .expect("cd -- /tmp");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Coverage batch: pwd
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn pwd_invalid_option() {
+        let msg = diag(b"pwd: invalid option: -z");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            let outcome = invoke(&mut shell, &[b"pwd".to_vec(), b"-z".to_vec()]).expect("pwd -z");
+            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+        });
+    }
+
+    #[test]
+    fn pwd_too_many_args() {
+        let msg = diag(b"pwd: too many arguments");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            let outcome =
+                invoke(&mut shell, &[b"pwd".to_vec(), b"extra".to_vec()]).expect("pwd extra");
+            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Coverage batch: set
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn set_no_args_lists_env() {
+        run_trace(
+            vec![
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"A=1\n".to_vec())],
+                    TraceResult::Auto,
+                ),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"B=2\n".to_vec())],
+                    TraceResult::Auto,
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"A".to_vec(), b"1".to_vec());
+                shell.env.insert(b"B".to_vec(), b"2".to_vec());
+                let outcome = invoke(&mut shell, &[b"set".to_vec()]);
+                assert!(matches!(outcome, Ok(BuiltinOutcome::Status(0))));
+            },
+        );
+    }
+
+    #[test]
+    fn set_minus_o_no_name_lists_options() {
+        let options = [
+            b"allexport off\n" as &[u8],
+            b"errexit off\n",
+            b"hashall off\n",
+            b"monitor off\n",
+            b"noclobber off\n",
+            b"noglob off\n",
+            b"noexec off\n",
+            b"notify off\n",
+            b"nounset off\n",
+            b"pipefail off\n",
+            b"verbose off\n",
+            b"xtrace off\n",
+        ];
+        let trace: Vec<_> = options
+            .iter()
+            .map(|m| {
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(m.to_vec())],
+                    TraceResult::Auto,
+                )
+            })
+            .collect();
+        run_trace(trace, || {
+            let mut shell = test_shell();
+            invoke(&mut shell, &[b"set".to_vec(), b"-o".to_vec()]);
+        });
+    }
+
+    #[test]
+    fn set_plus_o_no_name_lists_reinput() {
+        let options = [
+            b"set +o allexport\n" as &[u8],
+            b"set +o errexit\n",
+            b"set +o hashall\n",
+            b"set +o monitor\n",
+            b"set +o noclobber\n",
+            b"set +o noglob\n",
+            b"set +o noexec\n",
+            b"set +o notify\n",
+            b"set +o nounset\n",
+            b"set +o pipefail\n",
+            b"set +o verbose\n",
+            b"set +o xtrace\n",
+        ];
+        let trace: Vec<_> = options
+            .iter()
+            .map(|m| {
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(m.to_vec())],
+                    TraceResult::Auto,
+                )
+            })
+            .collect();
+        run_trace(trace, || {
+            let mut shell = test_shell();
+            invoke(&mut shell, &[b"set".to_vec(), b"+o".to_vec()]);
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Coverage batch: unset error
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn unset_readonly_var_error() {
+        let msg = diag(b"unset: readonly variable: RO");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            shell.set_var(b"RO", b"val".to_vec()).unwrap();
+            shell.mark_readonly(b"RO");
+            let outcome =
+                invoke(&mut shell, &[b"unset".to_vec(), b"RO".to_vec()]).expect("unset RO");
+            assert!(matches!(outcome, BuiltinOutcome::UtilityError(1)));
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Coverage batch: exec edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn exec_nul_byte_arg_error() {
+        let msg = diag(b"exec: invalid argument");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            let _ = invoke(&mut shell, &[b"exec".to_vec(), b"foo\x00bar".to_vec()]);
+        });
+    }
+
+    #[test]
+    fn exec_not_found_error() {
+        let msg = diag(b"exec: totally_missing: not found");
+        run_trace(
+            vec![
+                t(
+                    "access",
+                    vec![ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Err(libc::ENOENT),
+                ),
+                t(
+                    "access",
+                    vec![ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Err(libc::ENOENT),
+                ),
+                write_stderr(&msg),
+            ],
+            || {
+                let mut shell = test_shell();
+                let _ = invoke(&mut shell, &[b"exec".to_vec(), b"totally_missing".to_vec()]);
+            },
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Coverage batch: return/break/continue edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn return_too_many_args() {
+        let msg = diag(b"return: too many arguments");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            shell.function_depth = 1;
+            let _ = invoke(
+                &mut shell,
+                &[b"return".to_vec(), b"0".to_vec(), b"1".to_vec()],
+            );
+        });
+    }
+
+    #[test]
+    fn continue_not_in_loop() {
+        let msg = diag(b"continue: only meaningful in a loop");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            let _ = invoke(&mut shell, &[b"continue".to_vec()]);
+        });
+    }
+
+    #[test]
+    fn break_too_many_args() {
+        let msg = diag(b"break: too many arguments");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            shell.loop_depth = 1;
+            let _ = invoke(
+                &mut shell,
+                &[b"break".to_vec(), b"1".to_vec(), b"2".to_vec()],
+            );
+        });
+    }
+
+    #[test]
+    fn break_invalid_number() {
+        let msg = diag(b"break: numeric argument required");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            shell.loop_depth = 1;
+            let _ = invoke(&mut shell, &[b"break".to_vec(), b"abc".to_vec()]);
+        });
+    }
+
+    #[test]
+    fn break_zero_level() {
+        let msg = diag(b"break: numeric argument required");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            shell.loop_depth = 1;
+            let _ = invoke(&mut shell, &[b"break".to_vec(), b"0".to_vec()]);
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Coverage batch: kill
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn kill_no_args() {
+        let msg = diag(b"kill: usage: kill [-s sigspec | -signum] pid... | -l [exit_status]");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            let outcome = invoke(&mut shell, &[b"kill".to_vec()]).expect("kill");
+            assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+        });
+    }
+
+    #[test]
+    fn kill_dash_l_lists_signals() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(1),
+                    ArgMatcher::Bytes({
+                        let names: Vec<&[u8]> = sys::all_signal_names()
+                            .iter()
+                            .map(|(n, _)| {
+                                let n = *n;
+                                if n.starts_with(b"SIG") { &n[3..] } else { n }
+                            })
+                            .collect();
+                        let mut line = bstr::join_bytes(&names, b' ');
+                        line.push(b'\n');
+                        line
+                    }),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome =
+                    invoke(&mut shell, &[b"kill".to_vec(), b"-l".to_vec()]).expect("kill -l");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn kill_dash_l_exit_code() {
+        let sig_name = sys::signal_name(9);
+        let mut expected = sig_name[3..].to_vec();
+        expected.push(b'\n');
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(expected)],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"kill".to_vec(), b"-l".to_vec(), b"9".to_vec()],
+                )
+                .expect("kill -l 9");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn kill_dash_l_exit_code_above_128() {
+        let sig_name = sys::signal_name(9);
+        let mut expected = sig_name[3..].to_vec();
+        expected.push(b'\n');
+        run_trace(
+            vec![t(
+                "write",
+                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(expected)],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"kill".to_vec(), b"-l".to_vec(), b"137".to_vec()],
+                )
+                .expect("kill -l 137");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn kill_dash_l_unknown_signal() {
+        let msg = diag(b"kill: unknown signal: 999");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[b"kill".to_vec(), b"-l".to_vec(), b"999".to_vec()],
+            )
+            .expect("kill -l 999");
+            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+        });
+    }
+
+    #[test]
+    fn kill_dash_l_invalid_exit_status() {
+        let msg = diag(b"kill: invalid exit status: abc");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[b"kill".to_vec(), b"-l".to_vec(), b"abc".to_vec()],
+            )
+            .expect("kill -l abc");
+            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+        });
+    }
+
+    #[test]
+    fn kill_dash_s_no_signal() {
+        let msg = diag(b"kill: -s requires a signal name");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            let outcome = invoke(&mut shell, &[b"kill".to_vec(), b"-s".to_vec()]).expect("kill -s");
+            assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+        });
+    }
+
+    #[test]
+    fn kill_no_pid_after_signal() {
+        let msg = diag(b"kill: no process id specified");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[b"kill".to_vec(), b"-9".to_vec(), b"--".to_vec()],
+            )
+            .expect("kill -9 --");
+            assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+        });
+    }
+
+    #[test]
+    fn kill_invalid_pid() {
+        let msg = diag(b"kill: invalid pid: abc");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            let outcome =
+                invoke(&mut shell, &[b"kill".to_vec(), b"abc".to_vec()]).expect("kill abc");
+            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+        });
+    }
+
+    #[test]
+    fn kill_job_not_found() {
+        let msg = diag(b"kill: %99: no such job");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            let outcome =
+                invoke(&mut shell, &[b"kill".to_vec(), b"%99".to_vec()]).expect("kill %99");
+            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+        });
+    }
+
+    #[test]
+    fn parse_kill_signal_numeric() {
+        assert_no_syscalls(|| {
+            let shell = test_shell();
+            assert_eq!(parse_kill_signal(&shell, b"9").unwrap(), 9);
+        });
+    }
+
+    #[test]
+    fn parse_kill_signal_sig_prefix() {
+        assert_no_syscalls(|| {
+            let shell = test_shell();
+            assert_eq!(parse_kill_signal(&shell, b"SIGTERM").unwrap(), sys::SIGTERM);
+        });
+    }
+
+    #[test]
+    fn parse_kill_signal_unknown() {
+        let msg = diag(b"kill: unknown signal: NOSUCHSIG");
+        run_trace(vec![write_stderr(&msg)], || {
+            let shell = test_shell();
+            assert!(parse_kill_signal(&shell, b"NOSUCHSIG").is_err());
+        });
+    }
+
+    #[test]
+    fn parse_kill_signal_zero() {
+        assert_no_syscalls(|| {
+            let shell = test_shell();
+            assert_eq!(parse_kill_signal(&shell, b"0").unwrap(), 0);
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Coverage batch: read options/pieces
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_read_options_invalid_returns_none() {
+        assert_no_syscalls(|| {
+            assert!(parse_read_options(&[b"read".to_vec(), b"-x".to_vec()]).is_none());
+        });
+    }
+
+    #[test]
+    fn parse_read_options_delimiter_multi_byte_none() {
+        assert_no_syscalls(|| {
+            assert!(
+                parse_read_options(&[b"read".to_vec(), b"-d".to_vec(), b"ab".to_vec()]).is_none()
+            );
+        });
+    }
+
+    #[test]
+    fn push_read_piece_merges_same_quoted() {
+        assert_no_syscalls(|| {
+            let mut pieces = vec![(b"hello".to_vec(), false)];
+            let mut current = b" world".to_vec();
+            push_read_piece(&mut pieces, &mut current, false);
+            assert_eq!(pieces.len(), 1);
+            assert_eq!(pieces[0].0, b"hello world");
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Coverage batch: canonicalize_logical_path
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn canonicalize_logical_path_removes_dots() {
+        assert_no_syscalls(|| {
+            assert_eq!(canonicalize_logical_path(b"/a/./b/../c"), b"/a/c");
+            assert_eq!(canonicalize_logical_path(b"/"), b"/");
+            assert_eq!(canonicalize_logical_path(b"/a/b/.."), b"/a");
+            assert_eq!(canonicalize_logical_path(b"/../.."), b"/");
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Coverage batch: test/[ edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_bracket_missing_closing() {
+        let msg = diag(b"[: missing ']'");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            let outcome =
+                invoke(&mut shell, &[b"[".to_vec(), b"-n".to_vec(), b"x".to_vec()]).expect("[");
+            assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+        });
+    }
+
+    #[test]
+    fn test_zero_args() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let outcome = invoke(&mut shell, &[b"test".to_vec()]).expect("test (0 args)");
+            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+        });
+    }
+
+    #[test]
+    fn test_four_args_negated() {
+        run_trace(
+            vec![t(
+                "stat",
+                vec![ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::Err(libc::ENOENT),
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[
+                        b"test".to_vec(),
+                        b"!".to_vec(),
+                        b"-e".to_vec(),
+                        b"/nonexistent_file_xyzzy".to_vec(),
+                    ],
+                )
+                .expect("test ! -e /nonexistent");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn test_four_args_invalid() {
+        let msg = diag(b"test: unknown operator: b");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[
+                    b"test".to_vec(),
+                    b"a".to_vec(),
+                    b"b".to_vec(),
+                    b"c".to_vec(),
+                ],
+            )
+            .expect("test a b c");
+            assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+        });
+    }
+
+    #[test]
+    fn test_five_args_too_many() {
+        let msg = diag(b"test: too many arguments");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[
+                    b"test".to_vec(),
+                    b"a".to_vec(),
+                    b"b".to_vec(),
+                    b"c".to_vec(),
+                    b"d".to_vec(),
+                ],
+            )
+            .expect("test a b c d");
+            assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+        });
+    }
+
+    #[test]
+    fn test_unknown_operator_error() {
+        let msg = diag(b"test: unknown operator: -zz");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[
+                    b"test".to_vec(),
+                    b"a".to_vec(),
+                    b"-zz".to_vec(),
+                    b"b".to_vec(),
+                ],
+            )
+            .expect("test a -zz b");
+            assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+        });
+    }
+
+    #[test]
+    fn test_unary_setgid() {
+        run_trace(
+            vec![t(
+                "stat",
+                vec![ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::Err(libc::ENOENT),
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"test".to_vec(), b"-g".to_vec(), b"/no".to_vec()],
+                )
+                .expect("test -g");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn test_unary_setuid() {
+        run_trace(
+            vec![t(
+                "stat",
+                vec![ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::Err(libc::ENOENT),
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"test".to_vec(), b"-u".to_vec(), b"/no".to_vec()],
+                )
+                .expect("test -u");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn test_unary_symlink() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[
+                    b"test".to_vec(),
+                    b"-h".to_vec(),
+                    b"/nonexistent_xyzzy".to_vec(),
+                ],
+            )
+            .expect("test -h");
+            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+        });
+    }
+
+    #[test]
+    fn test_unary_fifo() {
+        run_trace(
+            vec![t(
+                "stat",
+                vec![ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::Err(libc::ENOENT),
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"test".to_vec(), b"-p".to_vec(), b"/no".to_vec()],
+                )
+                .expect("test -p");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn test_unary_readable() {
+        run_trace(
+            vec![t(
+                "access",
+                vec![ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::Err(libc::ENOENT),
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"test".to_vec(), b"-r".to_vec(), b"/no".to_vec()],
+                )
+                .expect("test -r");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn test_unary_writable() {
+        run_trace(
+            vec![t(
+                "access",
+                vec![ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::Err(libc::ENOENT),
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"test".to_vec(), b"-w".to_vec(), b"/no".to_vec()],
+                )
+                .expect("test -w");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn test_unary_executable() {
+        run_trace(
+            vec![t(
+                "access",
+                vec![ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::Err(libc::ENOENT),
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"test".to_vec(), b"-x".to_vec(), b"/no".to_vec()],
+                )
+                .expect("test -x");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn test_unary_size_nonzero() {
+        run_trace(
+            vec![t(
+                "stat",
+                vec![ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::Err(libc::ENOENT),
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"test".to_vec(), b"-s".to_vec(), b"/no".to_vec()],
+                )
+                .expect("test -s");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn test_unary_socket() {
+        run_trace(
+            vec![t(
+                "stat",
+                vec![ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::Err(libc::ENOENT),
+            )],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"test".to_vec(), b"-S".to_vec(), b"/no".to_vec()],
+                )
+                .expect("test -S");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn test_unary_tty_bad_fd() {
+        run_trace(
+            vec![t("isatty", vec![ArgMatcher::Int(999)], TraceResult::Int(0))],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"test".to_vec(), b"-t".to_vec(), b"999".to_vec()],
+                )
+                .expect("test -t 999");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn test_unary_tty_invalid_fd() {
+        let msg = diag(b"test: abc: not a valid fd");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[b"test".to_vec(), b"-t".to_vec(), b"abc".to_vec()],
+            )
+            .expect("test -t abc");
+            assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+        });
+    }
+
+    #[test]
+    fn test_file_binary_nt_with_missing() {
+        run_trace(
+            vec![
+                t(
+                    "stat",
+                    vec![ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::StatFile(0o644),
+                ),
+                t(
+                    "stat",
+                    vec![ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Err(libc::ENOENT),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[
+                        b"test".to_vec(),
+                        b"/etc/passwd".to_vec(),
+                        b"-nt".to_vec(),
+                        b"/nonexistent".to_vec(),
+                    ],
+                )
+                .expect("test -nt");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn test_file_binary_ot_both_missing() {
+        run_trace(
+            vec![
+                t(
+                    "stat",
+                    vec![ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Err(libc::ENOENT),
+                ),
+                t(
+                    "stat",
+                    vec![ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Err(libc::ENOENT),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[
+                        b"test".to_vec(),
+                        b"/no1".to_vec(),
+                        b"-ot".to_vec(),
+                        b"/no2".to_vec(),
+                    ],
+                )
+                .expect("test -ot");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Coverage batch: printf edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn printf_format_parse_numeric_error() {
+        let msg = diag(b"printf: abc: invalid number");
+        run_trace(
+            vec![
+                write_stderr(&msg),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"0".to_vec())],
+                    TraceResult::Auto,
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"printf".to_vec(), b"%d".to_vec(), b"abc".to_vec()],
+                )
+                .expect("printf %d abc");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn printf_parse_int_hex() {
+        assert_no_syscalls(|| {
+            assert_eq!(printf_parse_int(b"0xff"), Ok(255));
+            assert_eq!(printf_parse_int(b"0XFF"), Ok(255));
+        });
+    }
+
+    #[test]
+    fn printf_parse_int_octal() {
+        assert_no_syscalls(|| {
+            assert_eq!(printf_parse_int(b"010"), Ok(8));
+        });
+    }
+
+    #[test]
+    fn printf_parse_int_char_literal() {
+        assert_no_syscalls(|| {
+            assert_eq!(printf_parse_int(b"'A"), Ok(65));
+            assert_eq!(printf_parse_int(b"\"B"), Ok(66));
+        });
+    }
+
+    #[test]
+    fn printf_parse_int_empty() {
+        assert_no_syscalls(|| {
+            assert_eq!(printf_parse_int(b""), Ok(0));
+        });
+    }
+
+    #[test]
+    fn printf_parse_int_negative() {
+        assert_no_syscalls(|| {
+            assert_eq!(printf_parse_int(b"-42"), Ok(-42));
+        });
+    }
+
+    #[test]
+    fn printf_parse_int_invalid_hex() {
+        assert_no_syscalls(|| {
+            assert!(printf_parse_int(b"0xZZZ").is_err());
+        });
+    }
+
+    #[test]
+    fn printf_parse_int_invalid_octal() {
+        assert_no_syscalls(|| {
+            assert!(printf_parse_int(b"08").is_err());
+        });
+    }
+
+    #[test]
+    fn printf_format_signed_negative_zero_pad() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_signed(&mut out, b"%08ld", -42);
+            assert_eq!(out, b"-0000042");
+        });
+    }
+
+    #[test]
+    fn printf_format_unsigned_zero_pad() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_unsigned(&mut out, b"%08lu", 42);
+            assert_eq!(out, b"00000042");
+        });
+    }
+
+    #[test]
+    fn printf_format_unsigned_left_pad() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_unsigned(&mut out, b"%-8lu", 42);
+            assert_eq!(out, b"42      ");
+        });
+    }
+
+    #[test]
+    fn printf_format_octal_alt_zero() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_octal(&mut out, b"%#o", 0);
+            assert_eq!(out, b"0");
+        });
+    }
+
+    #[test]
+    fn printf_format_octal_zero_pad() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_octal(&mut out, b"%08o", 255);
+            assert_eq!(out, b"00000377");
+        });
+    }
+
+    #[test]
+    fn printf_format_octal_left_pad() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_octal(&mut out, b"%-8o", 255);
+            assert_eq!(out, b"377     ");
+        });
+    }
+
+    #[test]
+    fn printf_format_hex_upper_alt() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_hex(&mut out, b"%#X", 255, true);
+            assert_eq!(out, b"0XFF");
+        });
+    }
+
+    #[test]
+    fn printf_format_hex_zero_pad() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_hex(&mut out, b"%08x", 255, false);
+            assert_eq!(out, b"000000ff");
+        });
+    }
+
+    #[test]
+    fn printf_format_hex_left_pad() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_hex(&mut out, b"%-10x", 255, false);
+            assert_eq!(out, b"ff        ");
+        });
+    }
+
+    #[test]
+    fn printf_format_string_left_flag() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_string(&mut out, b"%-10", b"abc");
+            assert_eq!(out, b"abc       ");
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Coverage batch: resolve_cd_target CDPATH
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn resolve_cd_target_cdpath_empty_prefix() {
+        run_trace(
+            vec![t(
+                "stat",
+                vec![ArgMatcher::Any, ArgMatcher::Any],
+                TraceResult::StatDir,
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"CDPATH".to_vec(), b":".to_vec());
+                let (resolved, _, print) = resolve_cd_target(&shell, b"subdir", false);
+                assert_eq!(resolved, b"./subdir");
+                assert!(!print);
+            },
+        );
+    }
+
+    #[test]
+    fn resolve_cd_target_cdpath_no_match() {
+        run_trace(
+            vec![
+                t(
+                    "stat",
+                    vec![ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Err(libc::ENOENT),
+                ),
+                t(
+                    "stat",
+                    vec![ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Err(libc::ENOENT),
+                ),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"CDPATH".to_vec(), b"/a:/b".to_vec());
+                let (resolved, _, _) = resolve_cd_target(&shell, b"nosuch", false);
+                assert_eq!(resolved, b"nosuch");
+            },
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Coverage batch: jobs operands
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_jobs_operands_invalid() {
+        assert_no_syscalls(|| {
+            let shell = test_shell();
+            let result = parse_jobs_operands(&[b"%99".to_vec()], &shell);
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn fg_no_job_control() {
+        let msg = diag(b"fg: no job control");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            let outcome = invoke(&mut shell, &[b"fg".to_vec()]).expect("fg");
+            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+        });
+    }
+
+    #[test]
+    fn bg_no_job_control() {
+        let msg = diag(b"bg: no job control");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            let outcome = invoke(&mut shell, &[b"bg".to_vec()]).expect("bg");
+            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Coverage batch: expand_assignment_tilde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn expand_assignment_tilde_no_home() {
+        assert_no_syscalls(|| {
+            let shell = test_shell();
+            assert_eq!(expand_assignment_tilde(&shell, b"~/bin"), b"~/bin");
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Coverage batch: getopts
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn getopts_too_few_args() {
+        let msg = diag(b"getopts: usage: getopts optstring name [arg ...]");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            let outcome = invoke(&mut shell, &[b"getopts".to_vec()]).expect("getopts");
+            assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Coverage batch: command -v/-V edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn command_no_utility_name() {
+        let msg = diag(b"command: utility name required");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            let outcome =
+                invoke(&mut shell, &[b"command".to_vec(), b"-v".to_vec()]).expect("command -v");
+            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Coverage batch: type edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn type_not_found() {
+        let msg = diag(b"totally_missing_cmd: not found");
+        run_trace(
+            vec![
+                t(
+                    "access",
+                    vec![ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Err(libc::ENOENT),
+                ),
+                write_stderr(&msg),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"PATH".to_vec(), b"/nonexistent".to_vec());
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"type".to_vec(), b"totally_missing_cmd".to_vec()],
+                )
+                .expect("type");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Coverage batch: hash
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn hash_no_args_empty() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let outcome = invoke(&mut shell, &[b"hash".to_vec()]).expect("hash");
+            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        });
+    }
+
+    #[test]
+    fn hash_dash_r() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell
+                .path_cache
+                .insert(b"foo"[..].into(), b"/usr/bin/foo".to_vec());
+            let outcome = invoke(&mut shell, &[b"hash".to_vec(), b"-r".to_vec()]).expect("hash -r");
+            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            assert!(shell.path_cache.is_empty());
+        });
+    }
+
+    #[test]
+    fn hash_command_not_found() {
+        let msg = diag(b"hash: totally_missing: not found");
+        run_trace(
+            vec![
+                t(
+                    "access",
+                    vec![ArgMatcher::Any, ArgMatcher::Any],
+                    TraceResult::Err(libc::ENOENT),
+                ),
+                write_stderr(&msg),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"PATH".to_vec(), b"/nonexistent".to_vec());
+                let outcome = invoke(&mut shell, &[b"hash".to_vec(), b"totally_missing".to_vec()])
+                    .expect("hash missing");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Coverage batch: alias/unalias
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn alias_define_and_lookup() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(1),
+                    ArgMatcher::Bytes(b"ll='ls -la'\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.aliases.insert(b"ll"[..].into(), b"ls -la"[..].into());
+                let outcome =
+                    invoke(&mut shell, &[b"alias".to_vec(), b"ll".to_vec()]).expect("alias ll");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn alias_no_args_lists() {
+        run_trace(
+            vec![t(
+                "write",
+                vec![
+                    ArgMatcher::Fd(1),
+                    ArgMatcher::Bytes(b"ll='ls -la'\n".to_vec()),
+                ],
+                TraceResult::Auto,
+            )],
+            || {
+                let mut shell = test_shell();
+                shell.aliases.insert(b"ll"[..].into(), b"ls -la"[..].into());
+                let outcome = invoke(&mut shell, &[b"alias".to_vec()]).expect("alias");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn alias_single_name_lookup_missing() {
+        let msg = diag(b"alias: nosuch: not found");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            let outcome =
+                invoke(&mut shell, &[b"alias".to_vec(), b"nosuch".to_vec()]).expect("alias nosuch");
+            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+        });
+    }
+
+    #[test]
+    fn unalias_dash_a() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.aliases.insert(b"ll"[..].into(), b"ls -la"[..].into());
+            let outcome =
+                invoke(&mut shell, &[b"unalias".to_vec(), b"-a".to_vec()]).expect("unalias -a");
+            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            assert!(shell.aliases.is_empty());
+        });
+    }
+
+    #[test]
+    fn unalias_missing_name() {
+        let msg = diag(b"unalias: nosuch: not found");
+        run_trace(vec![write_stderr(&msg)], || {
+            let mut shell = test_shell();
+            let outcome =
+                invoke(&mut shell, &[b"unalias".to_vec(), b"nosuch".to_vec()]).expect("unalias");
+            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+        });
     }
 }

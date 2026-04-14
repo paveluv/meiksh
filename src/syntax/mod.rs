@@ -80,6 +80,11 @@ pub fn is_name(name: &[u8]) -> bool {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_types,
+    clippy::disallowed_macros,
+    clippy::disallowed_methods
+)]
 mod tests {
     use super::token::{Token, alias_has_trailing_blank, parse_here_doc_delimiter};
     use super::*;
@@ -401,7 +406,8 @@ mod tests {
             &*ParseError {
                 message: bx(b"x"),
                 line: None,
-            }.message,
+            }
+            .message,
             b"x"
         );
         assert!(parse_test("echo \"unterminated").is_err());
@@ -435,10 +441,7 @@ mod tests {
         ));
 
         let second = session
-            .next_command(&HashMap::from([(
-                bx(b"setok"),
-                bx(b"printf ok"),
-            )]))
+            .next_command(&HashMap::from([(bx(b"setok"), bx(b"printf ok"))]))
             .expect("second cmd")
             .expect("some cmd");
         assert_eq!(second.items.len(), 1);
@@ -670,23 +673,33 @@ mod tests {
     #[test]
     fn if_empty_condition_is_parse_error() {
         let error = parse_test("if then fi").expect_err("empty if condition");
-        assert!(error.message.windows(b"expected command list after 'if'".len())
-            .any(|w| w == b"expected command list after 'if'"));
+        assert!(
+            error
+                .message
+                .windows(b"expected command list after 'if'".len())
+                .any(|w| w == b"expected command list after 'if'")
+        );
     }
 
     #[test]
     fn elif_empty_condition_is_parse_error() {
         let error =
             parse_test("if true; then true; elif then true; fi").expect_err("empty elif condition");
-        assert!(error.message.windows(b"expected command list after 'elif'".len())
-            .any(|w| w == b"expected command list after 'elif'"));
+        assert!(
+            error
+                .message
+                .windows(b"expected command list after 'elif'".len())
+                .any(|w| w == b"expected command list after 'elif'")
+        );
     }
 
     #[test]
     fn while_empty_condition_is_parse_error() {
         let error = parse_test("while do true; done").expect_err("empty while condition");
         assert!(
-            error.message.windows(b"expected command list after 'while'".len())
+            error
+                .message
+                .windows(b"expected command list after 'while'".len())
                 .any(|w| w == b"expected command list after 'while'")
         );
     }
@@ -695,7 +708,9 @@ mod tests {
     fn until_empty_condition_is_parse_error() {
         let error = parse_test("until do true; done").expect_err("empty until condition");
         assert!(
-            error.message.windows(b"expected command list after 'until'".len())
+            error
+                .message
+                .windows(b"expected command list after 'until'".len())
                 .any(|w| w == b"expected command list after 'until'")
         );
     }
@@ -1117,8 +1132,11 @@ mod tests {
         ));
 
         let err = parse_test("echo $(echo 'unterminated)").expect_err("sq in paren");
-        assert!(err.message.windows(b"unterminated".len())
-            .any(|w| w == b"unterminated"));
+        assert!(
+            err.message
+                .windows(b"unterminated".len())
+                .any(|w| w == b"unterminated")
+        );
     }
 
     #[test]
@@ -1136,7 +1154,10 @@ mod tests {
         aliases.insert(bx(b"ls"), bx(b"ls --color"));
         aliases.insert(bx(b"ll"), bx(b"ls -la"));
 
-        assert_eq!(aliases.get(&b"ls"[..]).map(|s| &**s), Some(&b"ls --color"[..]));
+        assert_eq!(
+            aliases.get(&b"ls"[..]).map(|s| &**s),
+            Some(&b"ls --color"[..])
+        );
         assert_eq!(aliases.get(&b"ll"[..]).map(|s| &**s), Some(&b"ls -la"[..]));
         assert_eq!(aliases.get(&b"xyz"[..]), None);
     }
@@ -1204,7 +1225,8 @@ mod tests {
 
     #[test]
     fn io_number_recognised_inside_alias() {
-        let aliases: HashMap<Box<[u8]>, Box<[u8]>> = alias_map(&[(b"redir", b"echo hello 2>/dev/null")]);
+        let aliases: HashMap<Box<[u8]>, Box<[u8]>> =
+            alias_map(&[(b"redir", b"echo hello 2>/dev/null")]);
         let program = parse_with_aliases_test("redir", &aliases).expect("alias with IO number");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
@@ -1951,7 +1973,11 @@ mod tests {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
         };
-        assert!(cmd.words.iter().any(|w| w.raw.windows(b"hello".len()).any(|win| win == b"hello")));
+        assert!(
+            cmd.words
+                .iter()
+                .any(|w| w.raw.windows(b"hello".len()).any(|win| win == b"hello"))
+        );
     }
 
     #[test]
@@ -1961,7 +1987,12 @@ mod tests {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
         };
-        assert!(cmd.words[1].raw.windows(b"inner".len()).any(|w| w == b"inner"));
+        assert!(
+            cmd.words[1]
+                .raw
+                .windows(b"inner".len())
+                .any(|w| w == b"inner")
+        );
     }
 
     #[test]
@@ -1993,7 +2024,12 @@ mod tests {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
         };
-        assert!(cmd.words[1].raw.windows(b"`echo inner`".len()).any(|w| w == b"`echo inner`"));
+        assert!(
+            cmd.words[1]
+                .raw
+                .windows(b"`echo inner`".len())
+                .any(|w| w == b"`echo inner`")
+        );
     }
 
     #[test]
@@ -2003,7 +2039,12 @@ mod tests {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
         };
-        assert!(cmd.words[1].raw.windows(b"$(echo inner)".len()).any(|w| w == b"$(echo inner)"));
+        assert!(
+            cmd.words[1]
+                .raw
+                .windows(b"$(echo inner)".len())
+                .any(|w| w == b"$(echo inner)")
+        );
     }
 
     #[test]
@@ -2353,7 +2394,12 @@ mod tests {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
         };
-        assert!(cmd.words[1].raw.windows(b"`echo inner`".len()).any(|w| w == b"`echo inner`"));
+        assert!(
+            cmd.words[1]
+                .raw
+                .windows(b"`echo inner`".len())
+                .any(|w| w == b"`echo inner`")
+        );
     }
 
     #[test]
@@ -2725,5 +2771,21 @@ mod tests {
     fn leading_semicolon_is_syntax_error() {
         assert!(parse(b";\n").is_err());
         assert!(parse(b"; echo hi\n").is_err());
+    }
+
+    #[test]
+    fn multiple_prefix_assignments_before_command() {
+        let program = parse_test("A=1 B=2 echo hi").unwrap();
+        let cmd = &program.items[0].and_or.first.commands[0];
+        if let Command::Simple(sc) = cmd {
+            assert_eq!(sc.assignments.len(), 2);
+            assert_eq!(&*sc.assignments[0].name, b"A");
+            assert_eq!(&*sc.assignments[0].value.raw, b"1");
+            assert_eq!(&*sc.assignments[1].name, b"B");
+            assert_eq!(&*sc.assignments[1].value.raw, b"2");
+            assert_eq!(sc.words.len(), 2);
+        } else {
+            panic!("expected simple command");
+        }
     }
 }

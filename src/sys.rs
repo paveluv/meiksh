@@ -96,7 +96,6 @@ pub enum SysError {
 
 pub type SysResult<T> = Result<T, SysError>;
 
-
 impl SysError {
     pub fn errno(&self) -> Option<c_int> {
         match self {
@@ -261,9 +260,7 @@ pub(crate) fn default_interface() -> SystemInterface {
             if ptr.is_null() {
                 None
             } else {
-                Some(crate::bstr::bytes_from_cstr(unsafe {
-                    CStr::from_ptr(ptr)
-                }))
+                Some(crate::bstr::bytes_from_cstr(unsafe { CStr::from_ptr(ptr) }))
             }
         },
         get_environ: || {
@@ -2183,6 +2180,16 @@ pub fn read_file(path: &[u8]) -> SysResult<Vec<u8>> {
     read_file_bytes(path)
 }
 
+pub fn unlink(path: &[u8]) -> SysResult<()> {
+    let c_path = to_cstring(path)?;
+    let result = unsafe { libc::unlink(c_path.as_ptr()) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(last_error())
+    }
+}
+
 pub fn open_for_redirect(
     path: &[u8],
     flags: c_int,
@@ -3420,7 +3427,10 @@ mod tests {
         run_trace(
             vec![t(
                 "setenv",
-                vec![ArgMatcher::Str(b"K".to_vec()), ArgMatcher::Str(b"V".to_vec())],
+                vec![
+                    ArgMatcher::Str(b"K".to_vec()),
+                    ArgMatcher::Str(b"V".to_vec()),
+                ],
                 TraceResult::Err(libc::ENOMEM),
             )],
             || {
@@ -3594,7 +3604,10 @@ mod tests {
             vec![
                 t(
                     "setenv",
-                    vec![ArgMatcher::Str(b"K".to_vec()), ArgMatcher::Str(b"V".to_vec())],
+                    vec![
+                        ArgMatcher::Str(b"K".to_vec()),
+                        ArgMatcher::Str(b"V".to_vec()),
+                    ],
                     TraceResult::Int(0),
                 ),
                 t(
@@ -3920,7 +3933,10 @@ mod tests {
                         t("close", vec![ArgMatcher::Fd(7)], TraceResult::Int(0)),
                         t(
                             "setenv",
-                            vec![ArgMatcher::Str(b"VAR".to_vec()), ArgMatcher::Str(b"val".to_vec())],
+                            vec![
+                                ArgMatcher::Str(b"VAR".to_vec()),
+                                ArgMatcher::Str(b"val".to_vec()),
+                            ],
                             TraceResult::Int(0),
                         ),
                         t(
@@ -3957,7 +3973,10 @@ mod tests {
             vec![
                 t(
                     "setenv",
-                    vec![ArgMatcher::Str(b"K".to_vec()), ArgMatcher::Str(b"V".to_vec())],
+                    vec![
+                        ArgMatcher::Str(b"K".to_vec()),
+                        ArgMatcher::Str(b"V".to_vec()),
+                    ],
                     TraceResult::Int(0),
                 ),
                 t(
@@ -4378,5 +4397,174 @@ mod tests {
     #[test]
     fn setrlimit_invalid_values_returns_error() {
         assert!(setrlimit(99999, 0, 0).is_err());
+    }
+
+    #[test]
+    fn file_stat_type_predicates() {
+        let base = FileStat {
+            mode: 0,
+            size: 0,
+            dev: 1,
+            ino: 100,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+        };
+
+        let blk = FileStat {
+            mode: S_IFBLK,
+            ..base.clone()
+        };
+        assert!(blk.is_block_special());
+        assert!(!blk.is_char_special());
+
+        let chr = FileStat {
+            mode: S_IFCHR,
+            ..base.clone()
+        };
+        assert!(chr.is_char_special());
+        assert!(!chr.is_fifo());
+
+        let fifo = FileStat {
+            mode: S_IFIFO,
+            ..base.clone()
+        };
+        assert!(fifo.is_fifo());
+        assert!(!fifo.is_symlink());
+
+        let lnk = FileStat {
+            mode: S_IFLNK,
+            ..base.clone()
+        };
+        assert!(lnk.is_symlink());
+        assert!(!lnk.is_socket());
+
+        let sock = FileStat {
+            mode: S_IFSOCK,
+            ..base.clone()
+        };
+        assert!(sock.is_socket());
+        assert!(!sock.is_dir());
+    }
+
+    #[test]
+    fn file_stat_setuid_setgid() {
+        let base = FileStat {
+            mode: 0,
+            size: 0,
+            dev: 1,
+            ino: 100,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+        };
+
+        let suid = FileStat {
+            mode: libc::S_ISUID,
+            ..base.clone()
+        };
+        assert!(suid.is_setuid());
+        assert!(!suid.is_setgid());
+
+        let sgid = FileStat {
+            mode: libc::S_ISGID,
+            ..base.clone()
+        };
+        assert!(sgid.is_setgid());
+        assert!(!sgid.is_setuid());
+
+        assert!(!base.is_setuid());
+        assert!(!base.is_setgid());
+    }
+
+    #[test]
+    fn file_stat_same_file_and_newer_than() {
+        let a = FileStat {
+            mode: S_IFREG,
+            size: 100,
+            dev: 1,
+            ino: 42,
+            mtime_sec: 1000,
+            mtime_nsec: 0,
+        };
+        let b = FileStat {
+            mode: S_IFREG,
+            size: 200,
+            dev: 1,
+            ino: 42,
+            mtime_sec: 900,
+            mtime_nsec: 0,
+        };
+        let c = FileStat {
+            mode: S_IFREG,
+            size: 100,
+            dev: 2,
+            ino: 42,
+            mtime_sec: 1000,
+            mtime_nsec: 500,
+        };
+
+        assert!(a.same_file(&b));
+        assert!(!a.same_file(&c));
+        assert!(a.newer_than(&b));
+        assert!(!b.newer_than(&a));
+        assert!(c.newer_than(&a));
+    }
+
+    #[test]
+    fn isatty_fd_delegates_to_interface() {
+        fn fake_isatty_yes(_fd: c_int) -> c_int {
+            1
+        }
+        fn fake_isatty_no(_fd: c_int) -> c_int {
+            0
+        }
+
+        let fake_yes = SystemInterface {
+            isatty: fake_isatty_yes,
+            ..default_interface()
+        };
+        test_support::with_test_interface(fake_yes, || {
+            assert!(isatty_fd(0));
+        });
+
+        let fake_no = SystemInterface {
+            isatty: fake_isatty_no,
+            ..default_interface()
+        };
+        test_support::with_test_interface(fake_no, || {
+            assert!(!isatty_fd(0));
+        });
+    }
+
+    #[test]
+    fn getenv_and_setenv_delegate_to_interface() {
+        use test_support::{ArgMatcher, TraceResult, run_trace, t};
+
+        run_trace(
+            vec![
+                t(
+                    "setenv",
+                    vec![
+                        ArgMatcher::Str(b"TEST_KEY".to_vec()),
+                        ArgMatcher::Str(b"test_val".to_vec()),
+                    ],
+                    TraceResult::Int(0),
+                ),
+                t(
+                    "getenv",
+                    vec![ArgMatcher::Str(b"TEST_KEY".to_vec())],
+                    TraceResult::StrVal(b"test_val".to_vec()),
+                ),
+                t(
+                    "getenv",
+                    vec![ArgMatcher::Str(b"MISSING".to_vec())],
+                    TraceResult::NullStr,
+                ),
+            ],
+            || {
+                setenv(b"TEST_KEY", b"test_val").expect("setenv");
+                assert_eq!(getenv(b"TEST_KEY"), Some(b"test_val".to_vec()));
+                assert_eq!(getenv(b"MISSING"), None);
+            },
+        );
     }
 }

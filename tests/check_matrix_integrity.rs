@@ -1,3 +1,8 @@
+#![allow(
+    clippy::disallowed_types,
+    clippy::disallowed_macros,
+    clippy::disallowed_methods
+)]
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
