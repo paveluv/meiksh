@@ -31,20 +31,19 @@ The current semantic target is POSIX Issue 8, with Issue 7 behavior still tracke
 - utility-specific progress on recent builtin fidelity work and shell-language closure, including parser-aware alias behavior, grammar-faithful `for`/`case` reserved-word handling, brace-group reserved-word parsing, linebreak-sensitive pipelines and AND-OR lists, `${parameter%word}` / `${parameter##word}`-style pattern trimming, `command -p/-v/-V`, `cd -L/-P/-e` with full POSIX 10-step algorithm (`CDPATH`, `-`, `OLDPWD`, logical path canonicalization), `.` `PATH` search for readable slashless files, `jobs -l/-p` with `+`/`-` markers, `pwd -L/-P`, `export -p`, `readonly -p`, `unalias -a`, `unset -f/-v`, `read` with `REPLY` default / `-r` / `-d` / IFS splitting, syscall-backed `times` and `umask` (full symbolic mode including `s`/`X`), `trap -p` with 18 signals / SIG prefix / ignored-on-entry tracking, `kill` with `-l`/`-s`/numeric shorthand/`%job`/`--`, and `wait` support for both `%job` and numeric pid operands
 - interactive startup via parameter-expanded `ENV`, prompt handling, simple history in `HISTFILE` or `$HOME/.sh_history`, interactive command-error reporting without exiting the prompt loop, POSIX-compliant interactive signal handling (SIGQUIT/SIGTERM ignored, SIGINT discards current line), full POSIX job control with `set -m` (shell process group setup, terminal foreground ownership, `WUNTRACED`/`wifstopped` stopped-job detection, terminal attribute save/restore via `tcgetattr`/`tcsetattr`, complete job-id grammar, `fg`/`bg` with `SIGCONT` and terminal handoff, `kill` builtin, async signal inheritance)
 
-The project does **not** yet claim full POSIX conformance. Remaining gaps are tracked in `docs/spec-matrix.md`. The largest open areas are currently:
+The project does **not** yet claim full POSIX conformance. The largest open areas are currently:
 
 - missing mirrored utility pages such as `hash`, `getopts`, `ulimit`, and `fc`
-- interactive editing (vi-mode) and command history list semantics
 
 ## Repository Layout
 
 - `src/main.rs`: CLI entry point
 - `src/shell.rs`: shell state, option parsing, top-level execution flow, and job table
-- `src/syntax.rs`: tokenizer, parser, AST, alias handling, and here-doc collection
+- `src/syntax/`: tokenizer, parser, AST, alias handling, and here-doc collection
 - `src/expand.rs`: parameter, command, arithmetic, field-splitting, and pathname expansion
 - `src/exec.rs`: command execution, pipelines, redirections, and compound-command runtime
 - `src/builtin.rs`: builtin dispatch and builtin implementations
-- `src/interactive.rs`: prompt loop, `ENV` sourcing, and history helpers
+- `src/interactive.rs`: prompt loop, `ENV` sourcing, vi-mode line editing, and history
 - `src/sys.rs`: handwritten Unix FFI and wait/fd helpers
 - `docs/`: policy, traceability, and local POSIX reference instructions
 - `tests/`: spec-oriented test suites
