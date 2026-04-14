@@ -53,25 +53,11 @@ The following rules and definitions apply to bracket expressions:
 
 ### Tests
 
-#### Test: bracket expression matches ordinary characters
-
-An ordinary character in a bracket expression list shall only match that character. `[abc]` matches any of `a`, `b`, or `c` but not other characters.
-
-```
-begin test "bracket expression matches ordinary characters"
-  script
-    case b in [abc]) echo "match b" ;; *) echo "no match" ;; esac
-    case z in [abc]) echo "match z" ;; *) echo "no match" ;; esac
-  expect
-    stdout "match b\nno match"
-    stderr ""
-    exit_code 0
-end test "bracket expression matches ordinary characters"
-```
-
 #### Test: circumflex negation in bracket expressions
 
-A non-matching list expression begins with `!` (or `^` in regex context). The matching behavior is the logical inverse of the corresponding matching list. The circumflex is only special when it occurs first in the list.
+A non-matching list expression begins with `!` (or `^` in regex context).
+The matching behavior is the logical inverse of the corresponding
+matching list, and `!` is literal when it does not appear first.
 
 ```
 begin test "circumflex negation in bracket expressions"
@@ -85,141 +71,6 @@ begin test "circumflex negation in bracket expressions"
     stderr ""
     exit_code 0
 end test "circumflex negation in bracket expressions"
-```
-
-#### Test: right-square-bracket literal when first in list
-
-The `]` character loses its special meaning and represents itself in a bracket expression if it occurs first in the list (after an initial `^` or `!`, if any). Otherwise it terminates the bracket expression.
-
-```
-begin test "right-square-bracket literal when first in list"
-  script
-    case "]" in []a]) echo "match ]" ;; *) echo "no match ]" ;; esac
-    case a in []a]) echo "match a" ;; *) echo "no match a" ;; esac
-    case "]" in [!]]) echo "no match ]" ;; *) echo "match ]" ;; esac
-    case a in [!]]) echo "match a" ;; *) echo "no match a" ;; esac
-  expect
-    stdout "match ]\nmatch a\nmatch ]\nmatch a"
-    stderr ""
-    exit_code 0
-end test "right-square-bracket literal when first in list"
-```
-
-#### Test: special chars lose meaning inside bracket expression
-
-Within a shell pattern bracket expression, the special characters `?`, `*`, and `[` shall lose their special meaning. Backslash retains its shell-quoting meaning.
-
-```
-begin test "special chars lose meaning inside bracket expression"
-  script
-    case "?" in [?]) echo "match ?" ;; *) echo "no match ?" ;; esac
-    case "*" in [*]) echo "match *" ;; *) echo "no match *" ;; esac
-    case "[" in [\[]) echo "match [" ;; *) echo "no match [" ;; esac
-    case "\\" in [\\]) echo "match \\" ;; *) echo "no match \\" ;; esac
-  expect
-    stdout "match \?\nmatch \*\nmatch \[\nmatch \\"
-    stderr ""
-    exit_code 0
-end test "special chars lose meaning inside bracket expression"
-```
-
-#### Test: character class expressions match correctly
-
-Character class expressions like `[:alpha:]`, `[:digit:]`, `[:space:]`, and `[:punct:]` shall be recognized and match the appropriate character classes in the current locale.
-
-```
-begin test "character class expressions match correctly"
-  script
-    case "A" in [[:alpha:]]) echo "match A alpha" ;; *) echo "no match A alpha" ;; esac
-    case "5" in [[:digit:]]) echo "match 5 digit" ;; *) echo "no match 5 digit" ;; esac
-    case " " in [[:space:]]) echo "match space" ;; *) echo "no match space" ;; esac
-    case "!" in [[:punct:]]) echo "match punct" ;; *) echo "no match punct" ;; esac
-  expect
-    stdout "match A alpha\nmatch 5 digit\nmatch space\nmatch punct"
-    stderr ""
-    exit_code 0
-end test "character class expressions match correctly"
-```
-
-#### Test: range expression matches character in range
-
-A range expression like `[a-c]` matches any single character whose collation value falls between the starting and ending range points.
-
-```
-begin test "range expression matches character in range"
-  script
-    case b in [a-c]) echo "match b range" ;; *) echo "no match b" ;; esac
-  expect
-    stdout "match b range"
-    stderr ""
-    exit_code 0
-end test "range expression matches character in range"
-```
-
-#### Test: hyphen literal when first or last in bracket
-
-The hyphen-minus character is treated as itself (literal) if it occurs first or last in the bracket expression list.
-
-```
-begin test "hyphen literal when first or last in bracket"
-  script
-    case "-" in [-ac]) echo "match - first" ;; *) echo "no match" ;; esac
-    case "-" in [ac-]) echo "match - last" ;; *) echo "no match" ;; esac
-  expect
-    stdout "match - first\nmatch - last"
-    stderr ""
-    exit_code 0
-end test "hyphen literal when first or last in bracket"
-```
-
-#### Test: hyphen as starting range point when first
-
-To use a hyphen-minus as the starting range point, it shall come first in the bracket expression or be specified as a collating symbol.
-
-```
-begin test "hyphen as starting range point when first"
-  script
-    case "-" in [-0]) echo "match" ;; *) echo "no match" ;; esac
-  expect
-    stdout "match"
-    stderr ""
-    exit_code 0
-end test "hyphen as starting range point when first"
-```
-
-#### Test: bracket with both ] first and - last
-
-If a bracket expression specifies both `-` and `]`, the `]` shall be placed first (after the `^`, if any) and the `-` last within the bracket expression.
-
-```
-begin test "bracket with both ] first and - last"
-  script
-    case "-" in []ac-]) echo "match ] and -" ;; *) echo "no match" ;; esac
-    case "]" in []ac-]) echo "match ] in ]ac-" ;; *) echo "no match" ;; esac
-  expect
-    stdout "match ] and -\nmatch ] in ]ac-"
-    stderr ""
-    exit_code 0
-end test "bracket with both ] first and - last"
-```
-
-#### Test: bracket expression matches single characters
-
-A bracket expression is an RE that shall match a specific set of single characters. This test verifies basic `[abc]` matching in a locale-aware context.
-
-```
-begin test "bracket expression matches single characters"
-  setenv "LC_ALL" "test_EPTY.UTF-8"
-  script
-    case "a" in
-      [abc]) echo "match";;
-      *) echo "nomatch";;
-    esac
-  expect
-    stdout "match"
-    stderr ""
-    exit_code 0
-end test "bracket expression matches single characters"
 ```
 
 #### Test: right-bracket first in bracket expression
@@ -284,17 +135,22 @@ end test "special BRE chars lose meaning in bracket expression"
 
 #### Test: special ERE chars lose meaning in bracket expression
 
-When the bracket expression appears within an ERE, special characters like `(`, `+`, `?` shall lose their special meaning within the bracket expression.
+When the bracket expression appears within an ERE, the special
+characters `.`, `(`, `*`, `+`, `?`, `{`, `|`, `$`, `[`, and `\` shall
+lose their special meaning within the bracket expression, and `^` shall
+lose its anchor meaning.
 
 ```
 begin test "special ERE chars lose meaning in bracket expression"
   setenv "LC_ALL" "test_EPTY.UTF-8"
   script
-    echo '(' | grep -E '[(+?]' >/dev/null && echo "paren_match"
-    echo '+' | grep -E '[(+?]' >/dev/null && echo "plus_match"
-    echo 'x' | grep -E '[(+?]' >/dev/null && echo "x_match" || echo "x_nomatch"
+    echo '(' | grep -E '[(]' >/dev/null && echo "paren_match"
+    echo '+' | grep -E '[+]' >/dev/null && echo "plus_match"
+    echo '^' | grep -E '[a^]' >/dev/null && echo "caret_match"
+    echo '$' | grep -E '[$]' >/dev/null && echo "dollar_match"
+    echo 'x' | grep -E '[(+^$]' >/dev/null && echo "x_match" || echo "x_nomatch"
   expect
-    stdout "paren_match\nplus_match\nx_nomatch"
+    stdout "paren_match\nplus_match\ncaret_match\ndollar_match\nx_nomatch"
     stderr ""
     exit_code 0
 end test "special ERE chars lose meaning in bracket expression"
@@ -325,44 +181,6 @@ begin test "special shell pattern chars lose meaning in bracket expression"
     stderr ""
     exit_code 0
 end test "special shell pattern chars lose meaning in bracket expression"
-```
-
-#### Test: bracket expression special sequences are recognized
-
-The character sequences `[.`, `[=`, and `[:` are special inside bracket expressions and delimit collating symbols, equivalence class expressions, and character class expressions.
-
-```
-begin test "bracket expression special sequences are recognized"
-  setenv "LC_ALL" "test_EPTY.UTF-8"
-  script
-    case "a" in
-      [[:alpha:]]) echo "class_match";;
-      *) echo "class_nomatch";;
-    esac
-  expect
-    stdout "class_match"
-    stderr ""
-    exit_code 0
-end test "bracket expression special sequences are recognized"
-```
-
-#### Test: bracket expression special sequences have matching terminators
-
-These special sequences must be followed by a valid expression and the matching terminating sequence `.]`, `=]`, or `:]`.
-
-```
-begin test "bracket expression special sequences have matching terminators"
-  setenv "LC_ALL" "test_EPTY.UTF-8"
-  script
-    case "5" in
-      [[:digit:]]) echo "match";;
-      *) echo "nomatch";;
-    esac
-  expect
-    stdout "match"
-    stderr ""
-    exit_code 0
-end test "bracket expression special sequences have matching terminators"
 ```
 
 #### Test: matching list expression
@@ -415,29 +233,6 @@ begin test "ordinary character in bracket expression"
 end test "ordinary character in bracket expression"
 ```
 
-#### Test: non-matching list with circumflex
-
-A non-matching list begins with `^` and its matching behavior is the logical inverse of the corresponding matching list.
-
-```
-begin test "non-matching list with circumflex"
-  setenv "LC_ALL" "test_EPTY.UTF-8"
-  script
-    case "x" in
-      [^abc]) echo "match";;
-      *) echo "nomatch";;
-    esac
-    case "a" in
-      [^abc]) echo "match2";;
-      *) echo "nomatch2";;
-    esac
-  expect
-    stdout "match\nnomatch2"
-    stderr ""
-    exit_code 0
-end test "non-matching list with circumflex"
-```
-
 #### Test: circumflex only special when first
 
 The circumflex has its special negation meaning only when it occurs first in the list. In other positions it is treated as a literal character.
@@ -455,25 +250,6 @@ begin test "circumflex only special when first"
     stderr ""
     exit_code 0
 end test "circumflex only special when first"
-```
-
-#### Test: multi-character collating elements notation
-
-Conforming applications shall represent multi-character collating elements as collating symbols when it is necessary to distinguish them from individual characters.
-
-```
-begin test "multi-character collating elements notation"
-  setenv "LC_ALL" "test_EPTY.UTF-8"
-  script
-    case "a" in
-      [abc]) echo "basic_match";;
-      *) echo "basic_nomatch";;
-    esac
-  expect
-    stdout "basic_match"
-    stderr ""
-    exit_code 0
-end test "multi-character collating elements notation"
 ```
 
 #### Test: collating symbol basic syntax
@@ -577,26 +353,28 @@ end test "equivalence class fallback to collating symbol"
 
 #### Test: all character classes recognized in locale
 
-All standard character classes (alpha, digit, upper, lower, space, print, punct) specified in the current locale shall be recognized.
+The standard character class expressions `alnum`, `alpha`, `blank`,
+`cntrl`, `digit`, `graph`, `lower`, `print`, `punct`, `space`, `upper`,
+and `xdigit` shall be recognized.
 
 ```
 begin test "all character classes recognized in locale"
   setenv "LC_ALL" "test_EPTY.UTF-8"
   script
-    pass=true
-    for class in alpha digit upper lower space print; do
-      case "a" in
-        [[:${class}:]]*) ;;
-      esac
-    done
-    case "A" in [[:upper:]]) echo "upper_ok";; *) echo "upper_fail"; pass=false;; esac
-    case "a" in [[:lower:]]) echo "lower_ok";; *) echo "lower_fail"; pass=false;; esac
-    case "0" in [[:digit:]]) echo "digit_ok";; *) echo "digit_fail"; pass=false;; esac
-    case " " in [[:space:]]) echo "space_ok";; *) echo "space_fail"; pass=false;; esac
-    case "a" in [[:alpha:]]) echo "alpha_ok";; *) echo "alpha_fail"; pass=false;; esac
-    case "!" in [[:punct:]]) echo "punct_ok";; *) echo "punct_fail"; pass=false;; esac
+    case "a" in [[:alnum:]]) echo "alnum_ok";; *) echo "alnum_fail";; esac
+    case "a" in [[:alpha:]]) echo "alpha_ok";; *) echo "alpha_fail";; esac
+    case " " in [[:blank:]]) echo "blank_ok";; *) echo "blank_fail";; esac
+    case "$(printf '\001')" in [[:cntrl:]]) echo "cntrl_ok";; *) echo "cntrl_fail";; esac
+    case "0" in [[:digit:]]) echo "digit_ok";; *) echo "digit_fail";; esac
+    case "!" in [[:graph:]]) echo "graph_ok";; *) echo "graph_fail";; esac
+    case "a" in [[:lower:]]) echo "lower_ok";; *) echo "lower_fail";; esac
+    case "a" in [[:print:]]) echo "print_ok";; *) echo "print_fail";; esac
+    case "!" in [[:punct:]]) echo "punct_ok";; *) echo "punct_fail";; esac
+    case " " in [[:space:]]) echo "space_ok";; *) echo "space_fail";; esac
+    case "A" in [[:upper:]]) echo "upper_ok";; *) echo "upper_fail";; esac
+    case "F" in [[:xdigit:]]) echo "xdigit_ok";; *) echo "xdigit_fail";; esac
   expect
-    stdout "upper_ok\nlower_ok\ndigit_ok\nspace_ok\nalpha_ok\npunct_ok"
+    stdout "alnum_ok\nalpha_ok\nblank_ok\ncntrl_ok\ndigit_ok\ngraph_ok\nlower_ok\nprint_ok\npunct_ok\nspace_ok\nupper_ok\nxdigit_ok"
     stderr ""
     exit_code 0
 end test "all character classes recognized in locale"
@@ -625,6 +403,27 @@ begin test "range expression in POSIX locale"
 end test "range expression in POSIX locale"
 ```
 
+#### Test: POSIX locale punctuation ranges
+
+In the POSIX locale, ranges such as `[%--]` and `[--@]` shall match the
+collating elements between the endpoints, inclusive.
+
+```
+begin test "POSIX locale punctuation ranges"
+  setenv "LC_ALL" "C"
+  script
+    case "%" in [%--]) echo "percent_match";; *) echo "percent_nomatch";; esac
+    case "+" in [%--]) echo "plus_match";; *) echo "plus_nomatch";; esac
+    case "-" in [%--]) echo "hyphen_match";; *) echo "hyphen_nomatch";; esac
+    case "-" in [--@]) echo "dash_match";; *) echo "dash_nomatch";; esac
+    case "@" in [--@]) echo "at_match";; *) echo "at_nomatch";; esac
+  expect
+    stdout "percent_match\nplus_match\nhyphen_match\ndash_match\nat_match"
+    stderr ""
+    exit_code 0
+end test "POSIX locale punctuation ranges"
+```
+
 #### Test: range expression basic syntax
 
 A range expression is expressed as a starting point and ending point separated by a hyphen-minus. `[a-c]` matches `b` but not `d`.
@@ -646,25 +445,6 @@ begin test "range expression basic syntax"
     stderr ""
     exit_code 0
 end test "range expression basic syntax"
-```
-
-#### Test: range expression endpoints are collating elements
-
-The starting and ending range points shall be collating elements or collating symbols.
-
-```
-begin test "range expression endpoints are collating elements"
-  setenv "LC_ALL" "test_EPTY.UTF-8"
-  script
-    case "m" in
-      [a-z]) echo "match";;
-      *) echo "nomatch";;
-    esac
-  expect
-    stdout "match"
-    stderr ""
-    exit_code 0
-end test "range expression endpoints are collating elements"
 ```
 
 #### Test: hyphen literal when first or last
@@ -692,18 +472,18 @@ end test "hyphen literal when first or last"
 
 #### Test: hyphen as starting range point
 
-A hyphen-minus placed first in a bracket expression can serve as a starting range point or a literal character.
+To use a hyphen-minus as the starting range point of a range expression,
+it shall come first in the bracket expression or be specified as a
+collating symbol.
 
 ```
 begin test "hyphen as starting range point"
-  setenv "LC_ALL" "test_EPTY.UTF-8"
+  setenv "LC_ALL" "C"
   script
-    case "-" in
-      [-a]) echo "match";;
-      *) echo "nomatch";;
-    esac
+    echo '-' | grep '[][.-.]-0]' >/dev/null && echo "hyphen_match"
+    echo '/' | grep '[][.-.]-0]' >/dev/null && echo "slash_match"
   expect
-    stdout "match"
+    stdout "hyphen_match\nslash_match"
     stderr ""
     exit_code 0
 end test "hyphen as starting range point"
