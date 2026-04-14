@@ -2029,6 +2029,7 @@ struct ArithmeticParser<'a, 'src, C> {
     index: usize,
     ctx: &'a mut C,
     start_line: usize,
+    skip_depth: usize,
 }
 
 fn arith_err(msg: &str) -> ExpandError {
@@ -2045,6 +2046,7 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
             index: 0,
             ctx,
             start_line,
+            skip_depth: 0,
         }
     }
 
@@ -2064,6 +2066,9 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
             self.skip_ws();
             if let Some(op) = self.try_consume_assign_op() {
                 let rhs = self.parse_assignment()?;
+                if self.skip_depth > 0 {
+                    return Ok(rhs);
+                }
                 let value = if op == "=" {
                     rhs
                 } else {
@@ -2100,12 +2105,24 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
         let cond = self.parse_logical_or()?;
         self.skip_ws();
         if self.consume('?') {
+            if cond == 0 {
+                self.skip_depth += 1;
+            }
             let then_val = self.parse_assignment()?;
+            if cond == 0 {
+                self.skip_depth -= 1;
+            }
             self.skip_ws();
             if !self.consume(':') {
                 return Err(self.error_at_current("expected ':' in ternary expression"));
             }
+            if cond != 0 {
+                self.skip_depth += 1;
+            }
             let else_val = self.parse_assignment()?;
+            if cond != 0 {
+                self.skip_depth -= 1;
+            }
             Ok(if cond != 0 { then_val } else { else_val })
         } else {
             Ok(cond)
@@ -2117,8 +2134,15 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
         loop {
             self.skip_ws();
             if self.consume_str("||") {
-                let rhs = self.parse_logical_and()?;
-                value = i64::from(value != 0 || rhs != 0);
+                if value != 0 {
+                    self.skip_depth += 1;
+                    let _ = self.parse_logical_and()?;
+                    self.skip_depth -= 1;
+                    value = 1;
+                } else {
+                    let rhs = self.parse_logical_and()?;
+                    value = i64::from(rhs != 0);
+                }
             } else {
                 break;
             }
@@ -2131,8 +2155,14 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
         loop {
             self.skip_ws();
             if self.consume_str("&&") {
-                let rhs = self.parse_bitwise_or()?;
-                value = i64::from(value != 0 && rhs != 0);
+                if value == 0 {
+                    self.skip_depth += 1;
+                    let _ = self.parse_bitwise_or()?;
+                    self.skip_depth -= 1;
+                } else {
+                    let rhs = self.parse_bitwise_or()?;
+                    value = i64::from(rhs != 0);
+                }
             } else {
                 break;
             }
@@ -5291,6 +5321,57 @@ mod tests {
             .unwrap(),
             vec!["0"]
         );
+    }
+
+    #[test]
+    fn arith_logical_and_short_circuits() {
+        let arena = StringArena::new();
+        let mut ctx = FakeContext::new();
+        ctx.env.insert("x".into(), "0".into());
+        expand_word(
+            &mut ctx,
+            &Word {
+                raw: "$((0 && (x = 5)))".into(),
+                line: 0,
+            },
+            &arena,
+        )
+        .unwrap();
+        assert_eq!(ctx.env.get("x").unwrap(), "0");
+    }
+
+    #[test]
+    fn arith_logical_or_short_circuits() {
+        let arena = StringArena::new();
+        let mut ctx = FakeContext::new();
+        ctx.env.insert("x".into(), "0".into());
+        expand_word(
+            &mut ctx,
+            &Word {
+                raw: "$((1 || (x = 5)))".into(),
+                line: 0,
+            },
+            &arena,
+        )
+        .unwrap();
+        assert_eq!(ctx.env.get("x").unwrap(), "0");
+    }
+
+    #[test]
+    fn arith_ternary_short_circuits() {
+        let arena = StringArena::new();
+        let mut ctx = FakeContext::new();
+        ctx.env.insert("x".into(), "0".into());
+        expand_word(
+            &mut ctx,
+            &Word {
+                raw: "$((1 ? 10 : (x = 99)))".into(),
+                line: 0,
+            },
+            &arena,
+        )
+        .unwrap();
+        assert_eq!(ctx.env.get("x").unwrap(), "0");
     }
 
     #[test]
