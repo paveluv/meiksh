@@ -1,20 +1,3 @@
-macro_rules! sys_println {
-    () => {
-        let _ = $crate::sys::write_all_fd($crate::sys::STDOUT_FILENO, b"\n");
-    };
-    ($($arg:tt)*) => {{
-        let msg = format!("{}\n", format_args!($($arg)*));
-        let _ = $crate::sys::write_all_fd($crate::sys::STDOUT_FILENO, msg.as_bytes());
-    }};
-}
-
-macro_rules! sys_eprintln {
-    ($($arg:tt)*) => {{
-        let msg = format!("{}\n", format_args!($($arg)*));
-        let _ = $crate::sys::write_all_fd($crate::sys::STDERR_FILENO, msg.as_bytes());
-    }};
-}
-
 use libc::{self, c_char, c_int, c_long, mode_t};
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
@@ -113,25 +96,22 @@ pub enum SysError {
 
 pub type SysResult<T> = Result<T, SysError>;
 
-impl std::fmt::Display for SysError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SysError::Errno(errno) => {
-                let msg = unsafe { CStr::from_ptr(libc::strerror(*errno)) };
-                write!(f, "{}", msg.to_string_lossy())
-            }
-            SysError::NulInPath => write!(f, "path contains null byte"),
-        }
-    }
-}
-
-impl std::error::Error for SysError {}
 
 impl SysError {
     pub fn errno(&self) -> Option<c_int> {
         match self {
             SysError::Errno(e) => Some(*e),
             _ => None,
+        }
+    }
+
+    pub fn strerror(&self) -> Vec<u8> {
+        match self {
+            SysError::Errno(errno) => {
+                let msg = unsafe { CStr::from_ptr(libc::strerror(*errno)) };
+                crate::bstr::bytes_from_cstr(msg)
+            }
+            SysError::NulInPath => b"path contains null byte".to_vec(),
         }
     }
 
@@ -193,22 +173,22 @@ pub(crate) struct SystemInterface {
     fork: fn() -> Pid,
     exit_process: fn(c_int),
     // Environment
-    setenv: fn(&str, &str) -> SysResult<()>,
-    unsetenv: fn(&str) -> SysResult<()>,
-    getenv: fn(&str) -> Option<String>,
-    get_environ: fn() -> HashMap<String, String>,
+    setenv: fn(&[u8], &[u8]) -> SysResult<()>,
+    unsetenv: fn(&[u8]) -> SysResult<()>,
+    getenv: fn(&[u8]) -> Option<Vec<u8>>,
+    get_environ: fn() -> HashMap<Vec<u8>, Vec<u8>>,
     // Terminal attributes
     tcgetattr: fn(c_int, *mut libc::termios) -> c_int,
     tcsetattr: fn(c_int, c_int, *const libc::termios) -> c_int,
     // User database
-    getpwnam: fn(&str) -> Option<String>,
+    getpwnam: fn(&[u8]) -> Option<Vec<u8>>,
     // Signal state
     pending_signal_bits: fn() -> usize,
     take_pending_signal_bits: fn() -> usize,
     monotonic_clock_ns: fn() -> u64,
     // Locale
     setup_locale: fn(),
-    classify_char: fn(&str, char) -> bool,
+    classify_byte: fn(&[u8], u8) -> bool,
 }
 
 pub(crate) fn default_interface() -> SystemInterface {
@@ -257,8 +237,8 @@ pub(crate) fn default_interface() -> SystemInterface {
             unsafe { libc::_exit(status) }
         },
         setenv: |key, value| {
-            let c_key = CString::new(key).map_err(|_| SysError::NulInPath)?;
-            let c_value = CString::new(value).map_err(|_| SysError::NulInPath)?;
+            let c_key = crate::bstr::to_cstring(key).map_err(|_| SysError::NulInPath)?;
+            let c_value = crate::bstr::to_cstring(value).map_err(|_| SysError::NulInPath)?;
             let result = unsafe { libc::setenv(c_key.as_ptr(), c_value.as_ptr(), 1) };
             if result == 0 {
                 Ok(())
@@ -267,7 +247,7 @@ pub(crate) fn default_interface() -> SystemInterface {
             }
         },
         unsetenv: |key| {
-            let c_key = CString::new(key).map_err(|_| SysError::NulInPath)?;
+            let c_key = crate::bstr::to_cstring(key).map_err(|_| SysError::NulInPath)?;
             let result = unsafe { libc::unsetenv(c_key.as_ptr()) };
             if result == 0 {
                 Ok(())
@@ -276,16 +256,14 @@ pub(crate) fn default_interface() -> SystemInterface {
             }
         },
         getenv: |key| {
-            let c_key = CString::new(key).ok()?;
+            let c_key = crate::bstr::to_cstring(key).ok()?;
             let ptr = unsafe { libc::getenv(c_key.as_ptr()) };
             if ptr.is_null() {
                 None
             } else {
-                Some(
-                    unsafe { CStr::from_ptr(ptr) }
-                        .to_string_lossy()
-                        .into_owned(),
-                )
+                Some(crate::bstr::bytes_from_cstr(unsafe {
+                    CStr::from_ptr(ptr)
+                }))
             }
         },
         get_environ: || {
@@ -296,9 +274,12 @@ pub(crate) fn default_interface() -> SystemInterface {
             unsafe {
                 let mut ptr = environ;
                 while !(*ptr).is_null() {
-                    let entry = CStr::from_ptr(*ptr).to_string_lossy();
-                    if let Some((key, value)) = entry.split_once('=') {
-                        map.insert(key.to_string(), value.to_string());
+                    let entry_cstr = CStr::from_ptr(*ptr);
+                    let entry = entry_cstr.to_bytes();
+                    if let Some(eq_pos) = entry.iter().position(|&b| b == b'=') {
+                        let key = entry[..eq_pos].to_vec();
+                        let value = entry[eq_pos + 1..].to_vec();
+                        map.insert(key, value);
                     }
                     ptr = ptr.add(1);
                 }
@@ -308,13 +289,13 @@ pub(crate) fn default_interface() -> SystemInterface {
         tcgetattr: |fd, termios_p| unsafe { libc::tcgetattr(fd, termios_p) },
         tcsetattr: |fd, action, termios_p| unsafe { libc::tcsetattr(fd, action, termios_p) },
         getpwnam: |name| {
-            let c_name = CString::new(name).ok()?;
+            let c_name = crate::bstr::to_cstring(name).ok()?;
             let pw = unsafe { libc::getpwnam(c_name.as_ptr()) };
             if pw.is_null() {
                 return None;
             }
             let dir = unsafe { CStr::from_ptr((*pw).pw_dir) };
-            Some(dir.to_string_lossy().into_owned())
+            Some(crate::bstr::bytes_from_cstr(dir))
         },
         pending_signal_bits: || PENDING_SIGNALS.load(Ordering::SeqCst),
         take_pending_signal_bits: || PENDING_SIGNALS.swap(0, Ordering::SeqCst),
@@ -327,7 +308,7 @@ pub(crate) fn default_interface() -> SystemInterface {
         setup_locale: || unsafe {
             libc::setlocale(libc::LC_ALL, b"\0".as_ptr().cast());
         },
-        classify_char: |class, ch| {
+        classify_byte: |class, byte| {
             unsafe extern "C" {
                 fn iswalnum(wc: u32) -> c_int;
                 fn iswalpha(wc: u32) -> c_int;
@@ -342,21 +323,21 @@ pub(crate) fn default_interface() -> SystemInterface {
                 fn iswupper(wc: u32) -> c_int;
                 fn iswxdigit(wc: u32) -> c_int;
             }
-            let wc = ch as u32;
+            let wc = byte as u32;
             unsafe {
                 match class {
-                    "alnum" => iswalnum(wc) != 0,
-                    "alpha" => iswalpha(wc) != 0,
-                    "blank" => iswblank(wc) != 0,
-                    "cntrl" => iswcntrl(wc) != 0,
-                    "digit" => iswdigit(wc) != 0,
-                    "graph" => iswgraph(wc) != 0,
-                    "lower" => iswlower(wc) != 0,
-                    "print" => iswprint(wc) != 0,
-                    "punct" => iswpunct(wc) != 0,
-                    "space" => iswspace(wc) != 0,
-                    "upper" => iswupper(wc) != 0,
-                    "xdigit" => iswxdigit(wc) != 0,
+                    b"alnum" => iswalnum(wc) != 0,
+                    b"alpha" => iswalpha(wc) != 0,
+                    b"blank" => iswblank(wc) != 0,
+                    b"cntrl" => iswcntrl(wc) != 0,
+                    b"digit" => iswdigit(wc) != 0,
+                    b"graph" => iswgraph(wc) != 0,
+                    b"lower" => iswlower(wc) != 0,
+                    b"print" => iswprint(wc) != 0,
+                    b"punct" => iswpunct(wc) != 0,
+                    b"space" => iswspace(wc) != 0,
+                    b"upper" => iswupper(wc) != 0,
+                    b"xdigit" => iswxdigit(wc) != 0,
                     _ => false,
                 }
             }
@@ -511,7 +492,7 @@ pub(crate) mod test_support {
     pub(crate) enum ArgMatcher {
         Any,
         Int(i64),
-        Str(String),
+        Str(Vec<u8>),
         Bytes(Vec<u8>),
         Fd(c_int),
     }
@@ -532,16 +513,16 @@ pub(crate) mod test_support {
         ContinuedStatus,
         Fds(c_int, c_int),
         Void,
-        CwdStr(String),
-        RealpathStr(String),
+        CwdBytes(Vec<u8>),
+        RealpathBytes(Vec<u8>),
         StatDir,
         StatFile(mode_t),
         StatFileSize(u64),
         StatFifo,
-        DirEntry(String),
-        Str(String),
+        DirEntryBytes(Vec<u8>),
+        StrVal(Vec<u8>),
         NullStr,
-        EnvMap(HashMap<String, String>),
+        EnvMap(HashMap<Vec<u8>, Vec<u8>>),
     }
 
     #[derive(Clone, Debug)]
@@ -862,19 +843,19 @@ pub(crate) mod test_support {
         }
     }
     fn trace_setup_locale() {}
-    fn trace_classify_char(class: &str, ch: char) -> bool {
-        ch.is_ascii_alphabetic() && class == "alpha"
-            || ch.is_ascii_alphanumeric() && class == "alnum"
-            || ch.is_ascii_digit() && class == "digit"
-            || ch.is_ascii_lowercase() && class == "lower"
-            || ch.is_ascii_uppercase() && class == "upper"
-            || (ch == ' ' || ch == '\t') && class == "blank"
-            || ch.is_ascii_whitespace() && class == "space"
-            || ch.is_ascii_hexdigit() && class == "xdigit"
-            || ch.is_ascii_punctuation() && class == "punct"
-            || ch.is_ascii_graphic() && class == "graph"
-            || (ch.is_ascii_graphic() || ch == ' ') && class == "print"
-            || ch.is_ascii_control() && class == "cntrl"
+    fn trace_classify_byte(class: &[u8], byte: u8) -> bool {
+        byte.is_ascii_alphabetic() && class == b"alpha"
+            || byte.is_ascii_alphanumeric() && class == b"alnum"
+            || byte.is_ascii_digit() && class == b"digit"
+            || byte.is_ascii_lowercase() && class == b"lower"
+            || byte.is_ascii_uppercase() && class == b"upper"
+            || (byte == b' ' || byte == b'\t') && class == b"blank"
+            || byte.is_ascii_whitespace() && class == b"space"
+            || byte.is_ascii_hexdigit() && class == b"xdigit"
+            || byte.is_ascii_punctuation() && class == b"punct"
+            || byte.is_ascii_graphic() && class == b"graph"
+            || (byte.is_ascii_graphic() || byte == b' ') && class == b"print"
+            || byte.is_ascii_control() && class == b"cntrl"
     }
     fn trace_sysconf(name: c_int) -> c_long {
         let entry = trace_dispatch("sysconf", &[ArgMatcher::Int(name as i64)]);
@@ -886,9 +867,7 @@ pub(crate) mod test_support {
         }
     }
     fn trace_execvp(file: *const c_char, _argv: *const *const c_char) -> c_int {
-        let name = unsafe { CStr::from_ptr(file) }
-            .to_string_lossy()
-            .to_string();
+        let name = crate::bstr::bytes_from_cstr(unsafe { CStr::from_ptr(file) });
         let entry = trace_dispatch("execvp", &[ArgMatcher::Str(name), ArgMatcher::Any]);
         apply_trace_result_int(&entry)
     }
@@ -897,16 +876,12 @@ pub(crate) mod test_support {
         _argv: *const *const c_char,
         _envp: *const *const c_char,
     ) -> c_int {
-        let name = unsafe { CStr::from_ptr(file) }
-            .to_string_lossy()
-            .to_string();
+        let name = crate::bstr::bytes_from_cstr(unsafe { CStr::from_ptr(file) });
         let entry = trace_dispatch("execve", &[ArgMatcher::Str(name), ArgMatcher::Any]);
         apply_trace_result_int(&entry)
     }
     fn trace_open(path: *const c_char, flags: c_int, mode: mode_t) -> c_int {
-        let p = unsafe { CStr::from_ptr(path) }
-            .to_string_lossy()
-            .to_string();
+        let p = crate::bstr::bytes_from_cstr(unsafe { CStr::from_ptr(path) });
         let entry = trace_dispatch(
             "open",
             &[
@@ -928,9 +903,7 @@ pub(crate) mod test_support {
         }
     }
     fn trace_stat(path: *const c_char, buf: *mut libc::stat) -> c_int {
-        let p = unsafe { CStr::from_ptr(path) }
-            .to_string_lossy()
-            .to_string();
+        let p = crate::bstr::bytes_from_cstr(unsafe { CStr::from_ptr(path) });
         let entry = trace_dispatch("stat", &[ArgMatcher::Str(p), ArgMatcher::Any]);
         match &entry.result {
             TraceResult::StatDir => {
@@ -1015,9 +988,7 @@ pub(crate) mod test_support {
         }
     }
     fn trace_access(path: *const c_char, mode: c_int) -> c_int {
-        let p = unsafe { CStr::from_ptr(path) }
-            .to_string_lossy()
-            .to_string();
+        let p = crate::bstr::bytes_from_cstr(unsafe { CStr::from_ptr(path) });
         let entry = trace_dispatch(
             "access",
             &[ArgMatcher::Str(p), ArgMatcher::Int(mode as i64)],
@@ -1025,24 +996,21 @@ pub(crate) mod test_support {
         apply_trace_result_int(&entry)
     }
     fn trace_chdir(path: *const c_char) -> c_int {
-        let p = unsafe { CStr::from_ptr(path) }
-            .to_string_lossy()
-            .to_string();
+        let p = crate::bstr::bytes_from_cstr(unsafe { CStr::from_ptr(path) });
         let entry = trace_dispatch("chdir", &[ArgMatcher::Str(p)]);
         apply_trace_result_int(&entry)
     }
     fn trace_getcwd(buf: *mut c_char, size: usize) -> *mut c_char {
         let entry = trace_dispatch("getcwd", &[]);
         match &entry.result {
-            TraceResult::CwdStr(s) => {
-                let bytes = s.as_bytes();
-                if bytes.len() + 1 > size {
+            TraceResult::CwdBytes(s) => {
+                if s.len() + 1 > size {
                     super::set_errno(libc::ERANGE);
                     return std::ptr::null_mut();
                 }
                 unsafe {
-                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf as *mut u8, bytes.len());
-                    *buf.add(bytes.len()) = 0;
+                    std::ptr::copy_nonoverlapping(s.as_ptr(), buf as *mut u8, s.len());
+                    *buf.add(s.len()) = 0;
                 }
                 buf
             }
@@ -1051,14 +1019,12 @@ pub(crate) mod test_support {
                 std::ptr::null_mut()
             }
             other => panic!(
-                "trace result type mismatch for 'getcwd': expected CwdStr/Err, got {other:?}"
+                "trace result type mismatch for 'getcwd': expected CwdBytes/Err, got {other:?}"
             ),
         }
     }
     fn trace_opendir(path: *const c_char) -> *mut libc::DIR {
-        let p = unsafe { CStr::from_ptr(path) }
-            .to_string_lossy()
-            .to_string();
+        let p = crate::bstr::bytes_from_cstr(unsafe { CStr::from_ptr(path) });
         let entry = trace_dispatch("opendir", &[ArgMatcher::Str(p)]);
         match &entry.result {
             TraceResult::Int(v) => *v as *mut libc::DIR,
@@ -1077,12 +1043,11 @@ pub(crate) mod test_support {
     fn trace_readdir(_dirp: *mut libc::DIR) -> *mut libc::dirent {
         let entry = trace_dispatch("readdir", &[ArgMatcher::Any]);
         match &entry.result {
-            TraceResult::DirEntry(name) => FAKE_DIRENT.with(|cell| {
+            TraceResult::DirEntryBytes(name) => FAKE_DIRENT.with(|cell| {
                 let mut d = cell.borrow_mut();
                 d.d_name = unsafe { std::mem::zeroed() };
-                let bytes = name.as_bytes();
-                let len = bytes.len().min(d.d_name.len() - 1);
-                for (i, &b) in bytes[..len].iter().enumerate() {
+                let len = name.len().min(d.d_name.len() - 1);
+                for (i, &b) in name[..len].iter().enumerate() {
                     d.d_name[i] = b as i8;
                 }
                 d.d_name[len] = 0;
@@ -1097,7 +1062,7 @@ pub(crate) mod test_support {
                 std::ptr::null_mut()
             }
             other => panic!(
-                "trace result type mismatch for 'readdir': expected DirEntry/Int(0)/Err, got {other:?}"
+                "trace result type mismatch for 'readdir': expected DirEntryBytes/Int(0)/Err, got {other:?}"
             ),
         }
     }
@@ -1106,13 +1071,11 @@ pub(crate) mod test_support {
         apply_trace_result_int(&entry)
     }
     fn trace_realpath(path: *const c_char, resolved: *mut c_char) -> *mut c_char {
-        let p = unsafe { CStr::from_ptr(path) }
-            .to_string_lossy()
-            .to_string();
+        let p = crate::bstr::bytes_from_cstr(unsafe { CStr::from_ptr(path) });
         let entry = trace_dispatch("realpath", &[ArgMatcher::Str(p), ArgMatcher::Any]);
         match &entry.result {
-            TraceResult::RealpathStr(s) => {
-                let c_result = std::ffi::CString::new(s.as_str()).unwrap();
+            TraceResult::RealpathBytes(s) => {
+                let c_result = CString::new(s.clone()).unwrap();
                 if resolved.is_null() {
                     let ptr =
                         unsafe { libc::malloc(c_result.as_bytes_with_nul().len()) } as *mut c_char;
@@ -1140,7 +1103,7 @@ pub(crate) mod test_support {
                 std::ptr::null_mut()
             }
             other => panic!(
-                "trace result type mismatch for 'realpath': expected RealpathStr/Err, got {other:?}"
+                "trace result type mismatch for 'realpath': expected RealpathBytes/Err, got {other:?}"
             ),
         }
     }
@@ -1154,12 +1117,12 @@ pub(crate) mod test_support {
         std::panic::panic_any(ChildExitPanic(status));
     }
 
-    fn trace_setenv(key: &str, value: &str) -> SysResult<()> {
+    fn trace_setenv(key: &[u8], value: &[u8]) -> SysResult<()> {
         let entry = trace_dispatch(
             "setenv",
             &[
-                ArgMatcher::Str(key.to_string()),
-                ArgMatcher::Str(value.to_string()),
+                ArgMatcher::Str(key.to_vec()),
+                ArgMatcher::Str(value.to_vec()),
             ],
         );
         match entry.result {
@@ -1169,8 +1132,8 @@ pub(crate) mod test_support {
         }
     }
 
-    fn trace_unsetenv(key: &str) -> SysResult<()> {
-        let entry = trace_dispatch("unsetenv", &[ArgMatcher::Str(key.to_string())]);
+    fn trace_unsetenv(key: &[u8]) -> SysResult<()> {
+        let entry = trace_dispatch("unsetenv", &[ArgMatcher::Str(key.to_vec())]);
         match entry.result {
             TraceResult::Int(0) => Ok(()),
             TraceResult::Err(errno) => Err(SysError::Errno(errno)),
@@ -1178,16 +1141,16 @@ pub(crate) mod test_support {
         }
     }
 
-    fn trace_getenv(key: &str) -> Option<String> {
-        let entry = trace_dispatch("getenv", &[ArgMatcher::Str(key.to_string())]);
+    fn trace_getenv(key: &[u8]) -> Option<Vec<u8>> {
+        let entry = trace_dispatch("getenv", &[ArgMatcher::Str(key.to_vec())]);
         match entry.result {
-            TraceResult::Str(s) => Some(s),
+            TraceResult::StrVal(s) => Some(s),
             TraceResult::NullStr => None,
             other => panic!("getenv trace: unexpected result {other:?}"),
         }
     }
 
-    fn trace_get_environ() -> HashMap<String, String> {
+    fn trace_get_environ() -> HashMap<Vec<u8>, Vec<u8>> {
         let entry = trace_dispatch("get_environ", &[]);
         match entry.result {
             TraceResult::EnvMap(map) => map,
@@ -1195,10 +1158,10 @@ pub(crate) mod test_support {
         }
     }
 
-    fn trace_getpwnam(name: &str) -> Option<String> {
-        let entry = trace_dispatch("getpwnam", &[ArgMatcher::Str(name.to_string())]);
+    fn trace_getpwnam(name: &[u8]) -> Option<Vec<u8>> {
+        let entry = trace_dispatch("getpwnam", &[ArgMatcher::Str(name.to_vec())]);
         match entry.result {
-            TraceResult::Str(s) => Some(s),
+            TraceResult::StrVal(s) => Some(s),
             TraceResult::NullStr => None,
             other => panic!("getpwnam trace: unexpected result {other:?}"),
         }
@@ -1263,7 +1226,7 @@ pub(crate) mod test_support {
             take_pending_signal_bits: test_take_pending_signal_bits,
             monotonic_clock_ns: trace_monotonic_clock_ns,
             setup_locale: trace_setup_locale,
-            classify_char: trace_classify_char,
+            classify_byte: trace_classify_byte,
         }
     }
 
@@ -1368,16 +1331,16 @@ pub(crate) mod test_support {
         fn panic_exit_process(_: c_int) {
             panic!("unexpected syscall 'exit_process' in pure-logic test")
         }
-        fn panic_setenv(_: &str, _: &str) -> SysResult<()> {
+        fn panic_setenv(_: &[u8], _: &[u8]) -> SysResult<()> {
             panic!("unexpected call 'setenv' in pure-logic test")
         }
-        fn panic_unsetenv(_: &str) -> SysResult<()> {
+        fn panic_unsetenv(_: &[u8]) -> SysResult<()> {
             panic!("unexpected call 'unsetenv' in pure-logic test")
         }
-        fn panic_getenv(_: &str) -> Option<String> {
+        fn panic_getenv(_: &[u8]) -> Option<Vec<u8>> {
             panic!("unexpected call 'getenv' in pure-logic test")
         }
-        fn panic_get_environ() -> HashMap<String, String> {
+        fn panic_get_environ() -> HashMap<Vec<u8>, Vec<u8>> {
             panic!("unexpected call 'get_environ' in pure-logic test")
         }
         fn panic_tcgetattr(_: c_int, _: *mut libc::termios) -> c_int {
@@ -1386,7 +1349,7 @@ pub(crate) mod test_support {
         fn panic_tcsetattr(_: c_int, _: c_int, _: *const libc::termios) -> c_int {
             panic!("unexpected syscall 'tcsetattr' in pure-logic test")
         }
-        fn panic_getpwnam(_: &str) -> Option<String> {
+        fn panic_getpwnam(_: &[u8]) -> Option<Vec<u8>> {
             panic!("unexpected call 'getpwnam' in pure-logic test")
         }
         fn panic_monotonic_clock_ns() -> u64 {
@@ -1395,20 +1358,20 @@ pub(crate) mod test_support {
         fn panic_setup_locale() {
             panic!("unexpected call 'setup_locale' in pure-logic test")
         }
-        fn ascii_classify_char(class: &str, ch: char) -> bool {
+        fn ascii_classify_byte(class: &[u8], byte: u8) -> bool {
             match class {
-                "alnum" => ch.is_ascii_alphanumeric(),
-                "alpha" => ch.is_ascii_alphabetic(),
-                "blank" => ch == ' ' || ch == '\t',
-                "cntrl" => ch.is_ascii_control(),
-                "digit" => ch.is_ascii_digit(),
-                "graph" => ch.is_ascii_graphic(),
-                "lower" => ch.is_ascii_lowercase(),
-                "print" => ch.is_ascii_graphic() || ch == ' ',
-                "punct" => ch.is_ascii_punctuation(),
-                "space" => ch.is_ascii_whitespace(),
-                "upper" => ch.is_ascii_uppercase(),
-                "xdigit" => ch.is_ascii_hexdigit(),
+                b"alnum" => byte.is_ascii_alphanumeric(),
+                b"alpha" => byte.is_ascii_alphabetic(),
+                b"blank" => byte == b' ' || byte == b'\t',
+                b"cntrl" => byte.is_ascii_control(),
+                b"digit" => byte.is_ascii_digit(),
+                b"graph" => byte.is_ascii_graphic(),
+                b"lower" => byte.is_ascii_lowercase(),
+                b"print" => byte.is_ascii_graphic() || byte == b' ',
+                b"punct" => byte.is_ascii_punctuation(),
+                b"space" => byte.is_ascii_whitespace(),
+                b"upper" => byte.is_ascii_uppercase(),
+                b"xdigit" => byte.is_ascii_hexdigit(),
                 _ => false,
             }
         }
@@ -1457,7 +1420,7 @@ pub(crate) mod test_support {
             take_pending_signal_bits: test_take_pending_signal_bits,
             monotonic_clock_ns: panic_monotonic_clock_ns,
             setup_locale: panic_setup_locale,
-            classify_char: ascii_classify_char,
+            classify_byte: ascii_classify_byte,
         }
     }
 
@@ -1645,7 +1608,7 @@ pub(crate) mod test_support {
     }
     impl IntoArgMatcher for &str {
         fn into_arg(self) -> ArgMatcher {
-            ArgMatcher::Str(self.to_string())
+            ArgMatcher::Str(self.as_bytes().to_vec())
         }
     }
     impl IntoArgMatcher for &[u8] {
@@ -1683,8 +1646,8 @@ pub fn setup_locale() {
     (sys_interface().setup_locale)()
 }
 
-pub fn classify_char(class: &str, ch: char) -> bool {
-    (sys_interface().classify_char)(class, ch)
+pub fn classify_byte(class: &[u8], byte: u8) -> bool {
+    (sys_interface().classify_byte)(class, byte)
 }
 
 pub fn is_interactive_fd(fd: c_int) -> bool {
@@ -2032,11 +1995,11 @@ impl FileStat {
     }
 }
 
-fn to_cstring(path: &str) -> SysResult<CString> {
-    CString::new(path).map_err(|_| SysError::NulInPath)
+fn to_cstring(path: &[u8]) -> SysResult<CString> {
+    crate::bstr::to_cstring(path).map_err(|_| SysError::NulInPath)
 }
 
-fn stat_raw(path: &str) -> SysResult<libc::stat> {
+fn stat_raw(path: &[u8]) -> SysResult<libc::stat> {
     let c_path = to_cstring(path)?;
     let mut buf = std::mem::MaybeUninit::<libc::stat>::zeroed();
     let result = (sys_interface().stat)(c_path.as_ptr(), buf.as_mut_ptr());
@@ -2047,7 +2010,7 @@ fn stat_raw(path: &str) -> SysResult<libc::stat> {
     }
 }
 
-pub fn open_file(path: &str, flags: c_int, mode: mode_t) -> SysResult<c_int> {
+pub fn open_file(path: &[u8], flags: c_int, mode: mode_t) -> SysResult<c_int> {
     let c_path = to_cstring(path)?;
     let result = (sys_interface().open)(c_path.as_ptr(), flags, mode);
     if result >= 0 {
@@ -2077,7 +2040,7 @@ pub fn write_all_fd(fd: c_int, mut data: &[u8]) -> SysResult<()> {
     Ok(())
 }
 
-pub fn stat_path(path: &str) -> SysResult<FileStat> {
+pub fn stat_path(path: &[u8]) -> SysResult<FileStat> {
     let raw = stat_raw(path)?;
     Ok(FileStat {
         mode: raw.st_mode,
@@ -2089,7 +2052,7 @@ pub fn stat_path(path: &str) -> SysResult<FileStat> {
     })
 }
 
-fn lstat_raw(path: &str) -> SysResult<libc::stat> {
+fn lstat_raw(path: &[u8]) -> SysResult<libc::stat> {
     let c_path = to_cstring(path)?;
     let mut buf = std::mem::MaybeUninit::<libc::stat>::zeroed();
     let result = unsafe { libc::lstat(c_path.as_ptr(), buf.as_mut_ptr()) };
@@ -2100,7 +2063,7 @@ fn lstat_raw(path: &str) -> SysResult<libc::stat> {
     }
 }
 
-pub fn lstat_path(path: &str) -> SysResult<FileStat> {
+pub fn lstat_path(path: &[u8]) -> SysResult<FileStat> {
     let raw = lstat_raw(path)?;
     Ok(FileStat {
         mode: raw.st_mode,
@@ -2112,7 +2075,7 @@ pub fn lstat_path(path: &str) -> SysResult<FileStat> {
     })
 }
 
-pub fn access_path(path: &str, mode: c_int) -> SysResult<()> {
+pub fn access_path(path: &[u8], mode: c_int) -> SysResult<()> {
     let c_path = to_cstring(path)?;
     let result = (sys_interface().access)(c_path.as_ptr(), mode);
     if result == 0 {
@@ -2126,21 +2089,21 @@ pub fn isatty_fd(fd: c_int) -> bool {
     (sys_interface().isatty)(fd) != 0
 }
 
-pub fn file_exists(path: &str) -> bool {
+pub fn file_exists(path: &[u8]) -> bool {
     access_path(path, F_OK).is_ok()
 }
 
-pub fn is_directory(path: &str) -> bool {
+pub fn is_directory(path: &[u8]) -> bool {
     stat_path(path).map(|s| s.is_dir()).unwrap_or(false)
 }
 
-pub fn is_regular_file(path: &str) -> bool {
+pub fn is_regular_file(path: &[u8]) -> bool {
     stat_path(path)
         .map(|s| s.is_regular_file())
         .unwrap_or(false)
 }
 
-pub fn change_dir(path: &str) -> SysResult<()> {
+pub fn change_dir(path: &[u8]) -> SysResult<()> {
     let c_path = to_cstring(path)?;
     let result = (sys_interface().chdir)(c_path.as_ptr());
     if result == 0 {
@@ -2150,18 +2113,18 @@ pub fn change_dir(path: &str) -> SysResult<()> {
     }
 }
 
-pub fn get_cwd() -> SysResult<String> {
+pub fn get_cwd() -> SysResult<Vec<u8>> {
     let mut buf = vec![0u8; 4096];
     let result = (sys_interface().getcwd)(buf.as_mut_ptr().cast(), buf.len());
     if result.is_null() {
         Err(last_error())
     } else {
         let cstr = unsafe { CStr::from_ptr(result) };
-        Ok(cstr.to_string_lossy().into_owned())
+        Ok(crate::bstr::bytes_from_cstr(cstr))
     }
 }
 
-pub fn read_dir_entries(path: &str) -> SysResult<Vec<String>> {
+pub fn read_dir_entries(path: &[u8]) -> SysResult<Vec<Vec<u8>>> {
     let c_path = to_cstring(path)?;
     let dirp = (sys_interface().opendir)(c_path.as_ptr());
     if dirp.is_null() {
@@ -2181,29 +2144,27 @@ pub fn read_dir_entries(path: &str) -> SysResult<Vec<String>> {
             return Err(errno);
         }
         let name = unsafe { CStr::from_ptr((*ent).d_name.as_ptr()) };
-        let name = name.to_string_lossy().into_owned();
-        if name != "." && name != ".." {
+        let name = crate::bstr::bytes_from_cstr(name);
+        if name != b"." && name != b".." {
             entries.push(name);
         }
     }
     Ok(entries)
 }
 
-pub fn canonicalize(path: &str) -> SysResult<String> {
+pub fn canonicalize(path: &[u8]) -> SysResult<Vec<u8>> {
     let c_path = to_cstring(path)?;
     let result = (sys_interface().realpath)(c_path.as_ptr(), std::ptr::null_mut());
     if result.is_null() {
         Err(last_error())
     } else {
-        let s = unsafe { CStr::from_ptr(result) }
-            .to_string_lossy()
-            .into_owned();
+        let s = crate::bstr::bytes_from_cstr(unsafe { CStr::from_ptr(result) });
         unsafe { libc::free(result.cast()) };
         Ok(s)
     }
 }
 
-pub fn read_file_bytes(path: &str) -> SysResult<Vec<u8>> {
+pub fn read_file_bytes(path: &[u8]) -> SysResult<Vec<u8>> {
     let fd = open_file(path, O_RDONLY | O_CLOEXEC, 0)?;
     let mut contents = Vec::new();
     let mut buf = [0u8; 8192];
@@ -2218,13 +2179,12 @@ pub fn read_file_bytes(path: &str) -> SysResult<Vec<u8>> {
     Ok(contents)
 }
 
-pub fn read_file(path: &str) -> SysResult<String> {
-    let contents = read_file_bytes(path)?;
-    Ok(String::from_utf8_lossy(&contents).into_owned())
+pub fn read_file(path: &[u8]) -> SysResult<Vec<u8>> {
+    read_file_bytes(path)
 }
 
 pub fn open_for_redirect(
-    path: &str,
+    path: &[u8],
     flags: c_int,
     mode: mode_t,
     noclobber: bool,
@@ -2320,9 +2280,9 @@ fn flush_coverage() {
 }
 
 pub fn spawn_child(
-    program: &str,
-    argv: &[&str],
-    env_vars: Option<&[(&str, &str)]>,
+    program: &[u8],
+    argv: &[&[u8]],
+    env_vars: Option<&[(&[u8], &[u8])]>,
     redirections: &[(c_int, c_int)],
     stdin_fd: Option<c_int>,
     pipe_stdout: bool,
@@ -2337,7 +2297,6 @@ pub fn spawn_child(
 
     let pid = fork_process()?;
     if pid == 0 {
-        // Child process
         if let Some(pgid) = process_group {
             let _ = set_process_group(0, pgid);
         }
@@ -2359,7 +2318,7 @@ pub fn spawn_child(
         for &(key, value) in env_vars.unwrap_or(&[]) {
             let _ = env_set_var(key, value);
         }
-        let argv_owned: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+        let argv_owned: Vec<Vec<u8>> = argv.iter().map(|s| s.to_vec()).collect();
         let _ = exec_replace(program, &argv_owned);
         exit_process(127);
     }
@@ -2458,32 +2417,11 @@ pub fn clock_ticks_per_second() -> SysResult<u64> {
     }
 }
 
-/// Execute a program, replacing the current process image.
-/// `file` is the pathname to exec (passed to `execvp`).
-/// `argv` is the full argument vector: `argv[0]` is the command name
-/// as typed by the user, `argv[1..]` are the remaining arguments.
-pub fn string_to_bytes(s: &str) -> Vec<u8> {
-    if s.is_ascii() {
-        return s.as_bytes().to_vec();
-    }
-    s.chars()
-        .flat_map(|ch| {
-            if (ch as u32) < 256 {
-                vec![ch as u8]
-            } else {
-                let mut buf = [0u8; 4];
-                ch.encode_utf8(&mut buf);
-                buf[..ch.len_utf8()].to_vec()
-            }
-        })
-        .collect()
-}
-
-pub fn exec_replace<S: AsRef<str>>(file: &str, argv: &[S]) -> SysResult<()> {
-    let c_file = CString::new(string_to_bytes(file)).map_err(|_| SysError::NulInPath)?;
+pub fn exec_replace<S: AsRef<[u8]>>(file: &[u8], argv: &[S]) -> SysResult<()> {
+    let c_file = crate::bstr::to_cstring(file).map_err(|_| SysError::NulInPath)?;
     let mut owned = Vec::with_capacity(argv.len());
     for arg in argv {
-        owned.push(CString::new(string_to_bytes(arg.as_ref())).map_err(|_| SysError::NulInPath)?);
+        owned.push(crate::bstr::to_cstring(arg.as_ref()).map_err(|_| SysError::NulInPath)?);
     }
 
     let mut pointers: Vec<*const c_char> = owned.iter().map(|arg| arg.as_ptr()).collect();
@@ -2499,24 +2437,25 @@ pub fn exec_replace<S: AsRef<str>>(file: &str, argv: &[S]) -> SysResult<()> {
     }
 }
 
-/// Replace the current process, using an explicit environment (as with `execve`).
 pub fn exec_replace_with_env(
-    file: &str,
-    argv: &[String],
-    env: &[(String, String)],
+    file: &[u8],
+    argv: &[Vec<u8>],
+    env: &[(Vec<u8>, Vec<u8>)],
 ) -> SysResult<()> {
-    let c_file = CString::new(string_to_bytes(file)).map_err(|_| SysError::NulInPath)?;
+    let c_file = crate::bstr::to_cstring(file).map_err(|_| SysError::NulInPath)?;
     let mut argv_owned = Vec::with_capacity(argv.len());
     for arg in argv {
-        argv_owned.push(CString::new(string_to_bytes(arg)).map_err(|_| SysError::NulInPath)?);
+        argv_owned.push(crate::bstr::to_cstring(arg).map_err(|_| SysError::NulInPath)?);
     }
     let mut argp: Vec<*const c_char> = argv_owned.iter().map(|a| a.as_ptr()).collect();
     argp.push(std::ptr::null());
 
     let mut env_owned = Vec::with_capacity(env.len());
     for (k, v) in env {
-        let pair = format!("{k}={v}");
-        env_owned.push(CString::new(string_to_bytes(&pair)).map_err(|_| SysError::NulInPath)?);
+        let mut pair = k.clone();
+        pair.push(b'=');
+        pair.extend_from_slice(v);
+        env_owned.push(crate::bstr::to_cstring(&pair).map_err(|_| SysError::NulInPath)?);
     }
     let mut envp: Vec<*const c_char> = env_owned.iter().map(|e| e.as_ptr()).collect();
     envp.push(std::ptr::null());
@@ -2541,66 +2480,68 @@ pub fn decode_wait_status(status: c_int) -> i32 {
     }
 }
 
-pub fn format_signal_exit(status: c_int) -> Option<String> {
+pub fn format_signal_exit(status: c_int) -> Option<Vec<u8>> {
     if wifsignaled(status) {
-        Some(format!("terminated by signal {}", wtermsig(status)))
+        let mut buf = b"terminated by signal ".to_vec();
+        crate::bstr::push_i64(&mut buf, wtermsig(status) as i64);
+        Some(buf)
     } else {
         None
     }
 }
 
-pub fn signal_name(sig: c_int) -> &'static str {
+pub fn signal_name(sig: c_int) -> &'static [u8] {
     match sig {
-        SIGHUP => "SIGHUP",
-        SIGINT => "SIGINT",
-        SIGQUIT => "SIGQUIT",
-        SIGILL => "SIGILL",
-        SIGABRT => "SIGABRT",
-        SIGFPE => "SIGFPE",
-        SIGKILL => "SIGKILL",
-        SIGBUS => "SIGBUS",
-        SIGUSR1 => "SIGUSR1",
-        SIGSEGV => "SIGSEGV",
-        SIGUSR2 => "SIGUSR2",
-        SIGPIPE => "SIGPIPE",
-        SIGALRM => "SIGALRM",
-        SIGTERM => "SIGTERM",
-        SIGCHLD => "SIGCHLD",
-        SIGSTOP => "SIGSTOP",
-        SIGCONT => "SIGCONT",
-        SIGTRAP => "SIGTRAP",
-        SIGTSTP => "SIGTSTP",
-        SIGTTIN => "SIGTTIN",
-        SIGTTOU => "SIGTTOU",
-        SIGSYS => "SIGSYS",
-        _ => "UNKNOWN",
+        SIGHUP => b"SIGHUP",
+        SIGINT => b"SIGINT",
+        SIGQUIT => b"SIGQUIT",
+        SIGILL => b"SIGILL",
+        SIGABRT => b"SIGABRT",
+        SIGFPE => b"SIGFPE",
+        SIGKILL => b"SIGKILL",
+        SIGBUS => b"SIGBUS",
+        SIGUSR1 => b"SIGUSR1",
+        SIGSEGV => b"SIGSEGV",
+        SIGUSR2 => b"SIGUSR2",
+        SIGPIPE => b"SIGPIPE",
+        SIGALRM => b"SIGALRM",
+        SIGTERM => b"SIGTERM",
+        SIGCHLD => b"SIGCHLD",
+        SIGSTOP => b"SIGSTOP",
+        SIGCONT => b"SIGCONT",
+        SIGTRAP => b"SIGTRAP",
+        SIGTSTP => b"SIGTSTP",
+        SIGTTIN => b"SIGTTIN",
+        SIGTTOU => b"SIGTTOU",
+        SIGSYS => b"SIGSYS",
+        _ => b"UNKNOWN",
     }
 }
 
-pub fn all_signal_names() -> &'static [(&'static str, c_int)] {
+pub fn all_signal_names() -> &'static [(&'static [u8], c_int)] {
     &[
-        ("HUP", SIGHUP),
-        ("INT", SIGINT),
-        ("QUIT", SIGQUIT),
-        ("ILL", SIGILL),
-        ("ABRT", SIGABRT),
-        ("FPE", SIGFPE),
-        ("KILL", SIGKILL),
-        ("BUS", SIGBUS),
-        ("USR1", SIGUSR1),
-        ("SEGV", SIGSEGV),
-        ("USR2", SIGUSR2),
-        ("PIPE", SIGPIPE),
-        ("ALRM", SIGALRM),
-        ("TERM", SIGTERM),
-        ("CHLD", SIGCHLD),
-        ("STOP", SIGSTOP),
-        ("CONT", SIGCONT),
-        ("TRAP", SIGTRAP),
-        ("TSTP", SIGTSTP),
-        ("TTIN", SIGTTIN),
-        ("TTOU", SIGTTOU),
-        ("SYS", SIGSYS),
+        (b"HUP", SIGHUP),
+        (b"INT", SIGINT),
+        (b"QUIT", SIGQUIT),
+        (b"ILL", SIGILL),
+        (b"ABRT", SIGABRT),
+        (b"FPE", SIGFPE),
+        (b"KILL", SIGKILL),
+        (b"BUS", SIGBUS),
+        (b"USR1", SIGUSR1),
+        (b"SEGV", SIGSEGV),
+        (b"USR2", SIGUSR2),
+        (b"PIPE", SIGPIPE),
+        (b"ALRM", SIGALRM),
+        (b"TERM", SIGTERM),
+        (b"CHLD", SIGCHLD),
+        (b"STOP", SIGSTOP),
+        (b"CONT", SIGCONT),
+        (b"TRAP", SIGTRAP),
+        (b"TSTP", SIGTSTP),
+        (b"TTIN", SIGTTIN),
+        (b"TTOU", SIGTTOU),
+        (b"SYS", SIGSYS),
     ]
 }
 
@@ -2659,39 +2600,42 @@ pub fn wstopsig(status: c_int) -> i32 {
     (status >> 8) & 0xff
 }
 
-pub fn shell_name_from_args(args: &[String]) -> &str {
-    args.first().map(String::as_str).unwrap_or("meiksh")
+pub fn shell_name_from_args(args: &[Vec<u8>]) -> &[u8] {
+    args.first().map(|s| s.as_slice()).unwrap_or(b"meiksh")
 }
 
-pub fn cstr_lossy(bytes: &[u8]) -> String {
-    CStr::from_bytes_until_nul(bytes)
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| String::from_utf8_lossy(bytes).into_owned())
-}
-
-pub fn env_set_var(key: &str, value: &str) -> SysResult<()> {
+pub fn env_set_var(key: &[u8], value: &[u8]) -> SysResult<()> {
     (sys_interface().setenv)(key, value)
 }
 
-pub fn env_unset_var(key: &str) -> SysResult<()> {
+pub fn env_unset_var(key: &[u8]) -> SysResult<()> {
     (sys_interface().unsetenv)(key)
 }
 
-pub fn env_var(key: &str) -> Option<String> {
+pub fn env_var(key: &[u8]) -> Option<Vec<u8>> {
     (sys_interface().getenv)(key)
 }
 
-pub fn env_vars() -> HashMap<String, String> {
+pub fn env_vars() -> HashMap<Vec<u8>, Vec<u8>> {
     (sys_interface().get_environ)()
 }
 
-pub fn home_dir_for_user(name: &str) -> Option<String> {
+pub fn home_dir_for_user(name: &[u8]) -> Option<Vec<u8>> {
     (sys_interface().getpwnam)(name)
 }
 
 #[allow(clippy::disallowed_methods)]
-pub fn env_args_os() -> Vec<std::ffi::OsString> {
-    std::env::args_os().collect()
+pub fn env_args_os() -> Vec<Vec<u8>> {
+    use std::os::unix::ffi::OsStringExt;
+    std::env::args_os().map(|s| s.into_vec()).collect()
+}
+
+pub fn getenv(name: &[u8]) -> Option<Vec<u8>> {
+    (sys_interface().getenv)(name)
+}
+
+pub fn setenv(name: &[u8], value: &[u8]) -> SysResult<()> {
+    (sys_interface().setenv)(name, value)
 }
 
 #[cfg(test)]
@@ -2729,7 +2673,7 @@ mod tests {
         assert_eq!(decode_wait_status(7 << 8), 7);
         assert_eq!(
             format_signal_exit(9),
-            Some("terminated by signal 9".to_string())
+            Some(b"terminated by signal 9".to_vec())
         );
         assert_eq!(format_signal_exit(0), None);
     }
@@ -2737,16 +2681,10 @@ mod tests {
     #[test]
     fn shell_name_from_args_returns_first_arg_or_default() {
         assert_eq!(
-            shell_name_from_args(&["meiksh".to_string(), "-c".to_string()]),
-            "meiksh"
+            shell_name_from_args(&[b"meiksh".to_vec(), b"-c".to_vec()]),
+            b"meiksh"
         );
-        assert_eq!(shell_name_from_args(&[]), "meiksh");
-    }
-
-    #[test]
-    fn cstr_lossy_handles_nul_terminated_and_plain_bytes() {
-        assert_eq!(cstr_lossy(b"abc\0rest"), "abc".to_string());
-        assert_eq!(cstr_lossy(b"plain-bytes"), "plain-bytes".to_string());
+        assert_eq!(shell_name_from_args(&[]), b"meiksh");
     }
 
     #[test]
@@ -2824,13 +2762,13 @@ mod tests {
 
     #[test]
     fn exec_replace_rejects_nul_in_program_and_args() {
-        let err = exec_replace::<String>("bad\0program", &[]).unwrap_err();
+        let err = exec_replace::<Vec<u8>>(b"bad\0program", &[]).unwrap_err();
         assert_eq!(err, SysError::NulInPath);
         assert!(err.errno().is_none());
         assert!(!err.is_enoent());
-        assert!(format!("{err}").contains("null"));
+        assert!(err.strerror().windows(4).any(|w| w == b"null"));
 
-        let err = exec_replace("ok", &["bad\0arg".to_string()]).unwrap_err();
+        let err = exec_replace(b"ok", &[b"bad\0arg".to_vec()]).unwrap_err();
         assert_eq!(err, SysError::NulInPath);
     }
 
@@ -2842,7 +2780,8 @@ mod tests {
         assert!(!errno_err.is_ebadf());
         assert!(!errno_err.is_enoexec());
         assert!(!errno_err.is_eintr());
-        assert!(!format!("{errno_err}").is_empty());
+        assert!(!errno_err.strerror().is_empty());
+        assert!(!errno_err.strerror().is_empty());
 
         let ebadf = SysError::Errno(libc::EBADF);
         assert!(ebadf.is_ebadf());
@@ -3095,7 +3034,7 @@ mod tests {
         };
 
         test_support::with_test_interface(fake, || {
-            assert!(exec_replace("echo", &["hello".to_string(), "world".to_string()]).is_ok());
+            assert!(exec_replace(b"echo", &[b"hello".to_vec(), b"world".to_vec()]).is_ok());
         });
     }
 
@@ -3345,7 +3284,7 @@ mod tests {
         };
 
         test_support::with_test_interface(fake, || {
-            assert!(exec_replace("echo", &["hi".to_string()]).is_err());
+            assert!(exec_replace(b"echo", &[b"hi".to_vec()]).is_err());
         });
     }
 
@@ -3358,7 +3297,6 @@ mod tests {
     fn ensure_blocking_read_fd_clears_nonblocking_for_tty() {
         use test_support::{ArgMatcher, TraceResult, run_trace, t};
 
-        // TTY path: isatty→1, fcntl F_GETFL→O_NONBLOCK|2, fcntl F_SETFL→0
         run_trace(
             vec![
                 t(
@@ -3395,7 +3333,6 @@ mod tests {
     fn ensure_blocking_read_fd_clears_nonblocking_for_fifo() {
         use test_support::{ArgMatcher, TraceResult, run_trace, t};
 
-        // FIFO path: isatty→0, fstat→S_IFIFO, fcntl F_GETFL→O_NONBLOCK|2, fcntl F_SETFL→0
         run_trace(
             vec![
                 t("isatty", vec![ArgMatcher::Fd(42)], TraceResult::Int(0)),
@@ -3464,13 +3401,13 @@ mod tests {
             vec![t(
                 "setenv",
                 vec![
-                    ArgMatcher::Str("MY_KEY".into()),
-                    ArgMatcher::Str("my_val".into()),
+                    ArgMatcher::Str(b"MY_KEY".to_vec()),
+                    ArgMatcher::Str(b"my_val".to_vec()),
                 ],
                 TraceResult::Int(0),
             )],
             || {
-                let result = (sys_interface().setenv)("MY_KEY", "my_val");
+                let result = (sys_interface().setenv)(b"MY_KEY", b"my_val");
                 assert!(result.is_ok());
             },
         );
@@ -3483,11 +3420,11 @@ mod tests {
         run_trace(
             vec![t(
                 "setenv",
-                vec![ArgMatcher::Str("K".into()), ArgMatcher::Str("V".into())],
+                vec![ArgMatcher::Str(b"K".to_vec()), ArgMatcher::Str(b"V".to_vec())],
                 TraceResult::Err(libc::ENOMEM),
             )],
             || {
-                let result = (sys_interface().setenv)("K", "V");
+                let result = (sys_interface().setenv)(b"K", b"V");
                 assert!(result.is_err());
             },
         );
@@ -3500,11 +3437,11 @@ mod tests {
         run_trace(
             vec![t(
                 "unsetenv",
-                vec![ArgMatcher::Str("MY_KEY".into())],
+                vec![ArgMatcher::Str(b"MY_KEY".to_vec())],
                 TraceResult::Int(0),
             )],
             || {
-                let result = (sys_interface().unsetenv)("MY_KEY");
+                let result = (sys_interface().unsetenv)(b"MY_KEY");
                 assert!(result.is_ok());
             },
         );
@@ -3517,11 +3454,11 @@ mod tests {
         run_trace(
             vec![t(
                 "unsetenv",
-                vec![ArgMatcher::Str("K".into())],
+                vec![ArgMatcher::Str(b"K".to_vec())],
                 TraceResult::Err(libc::EINVAL),
             )],
             || {
-                let result = (sys_interface().unsetenv)("K");
+                let result = (sys_interface().unsetenv)(b"K");
                 assert!(result.is_err());
             },
         );
@@ -3534,12 +3471,12 @@ mod tests {
         run_trace(
             vec![t(
                 "getenv",
-                vec![ArgMatcher::Str("HOME".into())],
-                TraceResult::Str("/home/user".into()),
+                vec![ArgMatcher::Str(b"HOME".to_vec())],
+                TraceResult::StrVal(b"/home/user".to_vec()),
             )],
             || {
-                let val = (sys_interface().getenv)("HOME");
-                assert_eq!(val, Some("/home/user".to_string()));
+                let val = (sys_interface().getenv)(b"HOME");
+                assert_eq!(val, Some(b"/home/user".to_vec()));
             },
         );
     }
@@ -3551,11 +3488,11 @@ mod tests {
         run_trace(
             vec![t(
                 "getenv",
-                vec![ArgMatcher::Str("MISSING".into())],
+                vec![ArgMatcher::Str(b"MISSING".to_vec())],
                 TraceResult::NullStr,
             )],
             || {
-                let val = (sys_interface().getenv)("MISSING");
+                let val = (sys_interface().getenv)(b"MISSING");
                 assert_eq!(val, None);
             },
         );
@@ -3566,8 +3503,8 @@ mod tests {
         use test_support::{TraceResult, run_trace, t};
 
         let mut expected = HashMap::new();
-        expected.insert("HOME".to_string(), "/home/user".to_string());
-        expected.insert("PATH".to_string(), "/usr/bin".to_string());
+        expected.insert(b"HOME".to_vec(), b"/home/user".to_vec());
+        expected.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
 
         run_trace(
             vec![t(
@@ -3578,8 +3515,8 @@ mod tests {
             || {
                 let map = (sys_interface().get_environ)();
                 assert_eq!(map.len(), 2);
-                assert_eq!(map.get("HOME"), Some(&"/home/user".to_string()));
-                assert_eq!(map.get("PATH"), Some(&"/usr/bin".to_string()));
+                assert_eq!(map.get(b"HOME".as_ref()), Some(&b"/home/user".to_vec()));
+                assert_eq!(map.get(b"PATH".as_ref()), Some(&b"/usr/bin".to_vec()));
             },
         );
     }
@@ -3587,10 +3524,10 @@ mod tests {
     #[test]
     fn default_env_functions_roundtrip() {
         let iface = default_interface();
-        let key = "MEIKSH_TEST_ROUNDTRIP_878c2a";
+        let key = b"MEIKSH_TEST_ROUNDTRIP_878c2a";
 
-        (iface.setenv)(key, "hello").expect("setenv");
-        assert_eq!((iface.getenv)(key), Some("hello".to_string()));
+        (iface.setenv)(key, b"hello").expect("setenv");
+        assert_eq!((iface.getenv)(key), Some(b"hello".to_vec()));
 
         (iface.unsetenv)(key).expect("unsetenv");
         assert_eq!((iface.getenv)(key), None);
@@ -3599,13 +3536,13 @@ mod tests {
     #[test]
     fn default_setenv_rejects_key_with_equals() {
         let iface = default_interface();
-        assert!((iface.setenv)("BAD=KEY", "val").is_err());
+        assert!((iface.setenv)(b"BAD=KEY", b"val").is_err());
     }
 
     #[test]
     fn default_unsetenv_rejects_key_with_equals() {
         let iface = default_interface();
-        assert!((iface.unsetenv)("BAD=KEY").is_err());
+        assert!((iface.unsetenv)(b"BAD=KEY").is_err());
     }
 
     #[test]
@@ -3645,7 +3582,7 @@ mod tests {
                 t("closedir", vec![ArgMatcher::Any], TraceResult::Int(0)),
             ],
             || {
-                assert!(read_dir_entries("/tmp").is_err());
+                assert!(read_dir_entries(b"/tmp").is_err());
             },
         );
     }
@@ -3657,47 +3594,47 @@ mod tests {
             vec![
                 t(
                     "setenv",
-                    vec![ArgMatcher::Str("K".into()), ArgMatcher::Str("V".into())],
+                    vec![ArgMatcher::Str(b"K".to_vec()), ArgMatcher::Str(b"V".to_vec())],
                     TraceResult::Int(0),
                 ),
                 t(
                     "unsetenv",
-                    vec![ArgMatcher::Str("K".into())],
+                    vec![ArgMatcher::Str(b"K".to_vec())],
                     TraceResult::Int(0),
                 ),
             ],
             || {
-                env_set_var("K", "V").expect("setenv ok");
-                env_unset_var("K").expect("unsetenv ok");
+                env_set_var(b"K", b"V").expect("setenv ok");
+                env_unset_var(b"K").expect("unsetenv ok");
             },
         );
     }
 
     #[test]
     fn signal_name_covers_all_branches() {
-        assert_eq!(signal_name(SIGHUP), "SIGHUP");
-        assert_eq!(signal_name(SIGINT), "SIGINT");
-        assert_eq!(signal_name(SIGQUIT), "SIGQUIT");
-        assert_eq!(signal_name(SIGILL), "SIGILL");
-        assert_eq!(signal_name(SIGABRT), "SIGABRT");
-        assert_eq!(signal_name(SIGFPE), "SIGFPE");
-        assert_eq!(signal_name(SIGKILL), "SIGKILL");
-        assert_eq!(signal_name(SIGBUS), "SIGBUS");
-        assert_eq!(signal_name(SIGUSR1), "SIGUSR1");
-        assert_eq!(signal_name(SIGSEGV), "SIGSEGV");
-        assert_eq!(signal_name(SIGUSR2), "SIGUSR2");
-        assert_eq!(signal_name(SIGPIPE), "SIGPIPE");
-        assert_eq!(signal_name(SIGALRM), "SIGALRM");
-        assert_eq!(signal_name(SIGTERM), "SIGTERM");
-        assert_eq!(signal_name(SIGCHLD), "SIGCHLD");
-        assert_eq!(signal_name(SIGSTOP), "SIGSTOP");
-        assert_eq!(signal_name(SIGCONT), "SIGCONT");
-        assert_eq!(signal_name(SIGTRAP), "SIGTRAP");
-        assert_eq!(signal_name(SIGTSTP), "SIGTSTP");
-        assert_eq!(signal_name(SIGTTIN), "SIGTTIN");
-        assert_eq!(signal_name(SIGTTOU), "SIGTTOU");
-        assert_eq!(signal_name(SIGSYS), "SIGSYS");
-        assert_eq!(signal_name(999), "UNKNOWN");
+        assert_eq!(signal_name(SIGHUP), b"SIGHUP");
+        assert_eq!(signal_name(SIGINT), b"SIGINT");
+        assert_eq!(signal_name(SIGQUIT), b"SIGQUIT");
+        assert_eq!(signal_name(SIGILL), b"SIGILL");
+        assert_eq!(signal_name(SIGABRT), b"SIGABRT");
+        assert_eq!(signal_name(SIGFPE), b"SIGFPE");
+        assert_eq!(signal_name(SIGKILL), b"SIGKILL");
+        assert_eq!(signal_name(SIGBUS), b"SIGBUS");
+        assert_eq!(signal_name(SIGUSR1), b"SIGUSR1");
+        assert_eq!(signal_name(SIGSEGV), b"SIGSEGV");
+        assert_eq!(signal_name(SIGUSR2), b"SIGUSR2");
+        assert_eq!(signal_name(SIGPIPE), b"SIGPIPE");
+        assert_eq!(signal_name(SIGALRM), b"SIGALRM");
+        assert_eq!(signal_name(SIGTERM), b"SIGTERM");
+        assert_eq!(signal_name(SIGCHLD), b"SIGCHLD");
+        assert_eq!(signal_name(SIGSTOP), b"SIGSTOP");
+        assert_eq!(signal_name(SIGCONT), b"SIGCONT");
+        assert_eq!(signal_name(SIGTRAP), b"SIGTRAP");
+        assert_eq!(signal_name(SIGTSTP), b"SIGTSTP");
+        assert_eq!(signal_name(SIGTTIN), b"SIGTTIN");
+        assert_eq!(signal_name(SIGTTOU), b"SIGTTOU");
+        assert_eq!(signal_name(SIGSYS), b"SIGSYS");
+        assert_eq!(signal_name(999), b"UNKNOWN");
     }
 
     #[test]
@@ -3834,7 +3771,7 @@ mod tests {
             ..default_interface()
         };
         test_support::with_test_interface(fake, || {
-            assert!(change_dir("/nonexistent").is_err());
+            assert!(change_dir(b"/nonexistent").is_err());
         });
     }
 
@@ -3848,7 +3785,7 @@ mod tests {
             ..default_interface()
         };
         test_support::with_test_interface(fake, || {
-            assert!(canonicalize("/nonexistent").is_err());
+            assert!(canonicalize(b"/nonexistent").is_err());
         });
     }
 
@@ -3866,7 +3803,7 @@ mod tests {
             ..default_interface()
         };
         test_support::with_test_interface(fake, || {
-            let fd = open_for_redirect("/tmp/out", O_WRONLY | O_TRUNC | O_CREAT, 0o666, true)
+            let fd = open_for_redirect(b"/tmp/out", O_WRONLY | O_TRUNC | O_CREAT, 0o666, true)
                 .expect("open");
             assert_eq!(fd, 5);
             let flags = CAPTURED_FLAGS.load(Ordering::SeqCst);
@@ -3874,7 +3811,7 @@ mod tests {
             assert!(flags & O_EXCL != 0);
             assert!(flags & O_CREAT != 0);
 
-            let fd = open_for_redirect("/tmp/out", O_WRONLY | O_TRUNC | O_CREAT, 0o666, false)
+            let fd = open_for_redirect(b"/tmp/out", O_WRONLY | O_TRUNC | O_CREAT, 0o666, false)
                 .expect("open");
             assert_eq!(fd, 5);
             let flags = CAPTURED_FLAGS.load(Ordering::SeqCst);
@@ -3983,7 +3920,7 @@ mod tests {
                         t("close", vec![ArgMatcher::Fd(7)], TraceResult::Int(0)),
                         t(
                             "setenv",
-                            vec![ArgMatcher::Str("VAR".into()), ArgMatcher::Str("val".into())],
+                            vec![ArgMatcher::Str(b"VAR".to_vec()), ArgMatcher::Str(b"val".to_vec())],
                             TraceResult::Int(0),
                         ),
                         t(
@@ -3998,9 +3935,9 @@ mod tests {
             ],
             || {
                 let handle = spawn_child(
-                    "echo",
-                    &["echo", "hello"],
-                    Some(&[("VAR", "val")]),
+                    b"echo",
+                    &[b"echo" as &[u8], b"hello"],
+                    Some(&[(b"VAR" as &[u8], b"val" as &[u8])]),
                     &[(7, 2)],
                     Some(5),
                     true,
@@ -4020,30 +3957,30 @@ mod tests {
             vec![
                 t(
                     "setenv",
-                    vec![ArgMatcher::Str("K".into()), ArgMatcher::Str("V".into())],
+                    vec![ArgMatcher::Str(b"K".to_vec()), ArgMatcher::Str(b"V".to_vec())],
                     TraceResult::Int(0),
                 ),
                 t(
                     "getenv",
-                    vec![ArgMatcher::Str("K".into())],
-                    TraceResult::Str("V".into()),
+                    vec![ArgMatcher::Str(b"K".to_vec())],
+                    TraceResult::StrVal(b"V".to_vec()),
                 ),
                 t(
                     "unsetenv",
-                    vec![ArgMatcher::Str("K".into())],
+                    vec![ArgMatcher::Str(b"K".to_vec())],
                     TraceResult::Int(0),
                 ),
                 t(
                     "getenv",
-                    vec![ArgMatcher::Str("K".into())],
+                    vec![ArgMatcher::Str(b"K".to_vec())],
                     TraceResult::NullStr,
                 ),
             ],
             || {
-                env_set_var("K", "V").expect("setenv");
-                assert_eq!(env_var("K"), Some("V".into()));
-                env_unset_var("K").expect("unsetenv");
-                assert_eq!(env_var("K"), None);
+                env_set_var(b"K", b"V").expect("setenv");
+                assert_eq!(env_var(b"K"), Some(b"V".to_vec()));
+                env_unset_var(b"K").expect("unsetenv");
+                assert_eq!(env_var(b"K"), None);
             },
         );
     }
@@ -4057,56 +3994,38 @@ mod tests {
     }
 
     #[test]
-    fn default_interface_classify_char_ascii() {
+    fn default_interface_classify_byte_ascii() {
         test_support::with_test_interface(default_interface(), || {
             setup_locale();
-            assert!(classify_char("alpha", 'a'));
-            assert!(classify_char("alpha", 'Z'));
-            assert!(!classify_char("alpha", '5'));
-            assert!(classify_char("alnum", '9'));
-            assert!(!classify_char("alnum", '!'));
-            assert!(classify_char("blank", ' '));
-            assert!(classify_char("blank", '\t'));
-            assert!(!classify_char("blank", 'a'));
-            assert!(classify_char("cntrl", '\x01'));
-            assert!(!classify_char("cntrl", 'a'));
-            assert!(classify_char("digit", '0'));
-            assert!(!classify_char("digit", 'x'));
-            assert!(classify_char("graph", '!'));
-            assert!(!classify_char("graph", ' '));
-            assert!(classify_char("lower", 'a'));
-            assert!(!classify_char("lower", 'A'));
-            assert!(classify_char("print", ' '));
-            assert!(classify_char("print", 'a'));
-            assert!(!classify_char("print", '\x01'));
-            assert!(classify_char("punct", '.'));
-            assert!(!classify_char("punct", 'a'));
-            assert!(classify_char("space", '\n'));
-            assert!(!classify_char("space", 'a'));
-            assert!(classify_char("upper", 'A'));
-            assert!(!classify_char("upper", 'a'));
-            assert!(classify_char("xdigit", 'f'));
-            assert!(!classify_char("xdigit", 'g'));
-            assert!(!classify_char("bogus", 'a'));
+            assert!(classify_byte(b"alpha", b'a'));
+            assert!(classify_byte(b"alpha", b'Z'));
+            assert!(!classify_byte(b"alpha", b'5'));
+            assert!(classify_byte(b"alnum", b'9'));
+            assert!(!classify_byte(b"alnum", b'!'));
+            assert!(classify_byte(b"blank", b' '));
+            assert!(classify_byte(b"blank", b'\t'));
+            assert!(!classify_byte(b"blank", b'a'));
+            assert!(classify_byte(b"cntrl", 0x01));
+            assert!(!classify_byte(b"cntrl", b'a'));
+            assert!(classify_byte(b"digit", b'0'));
+            assert!(!classify_byte(b"digit", b'x'));
+            assert!(classify_byte(b"graph", b'!'));
+            assert!(!classify_byte(b"graph", b' '));
+            assert!(classify_byte(b"lower", b'a'));
+            assert!(!classify_byte(b"lower", b'A'));
+            assert!(classify_byte(b"print", b' '));
+            assert!(classify_byte(b"print", b'a'));
+            assert!(!classify_byte(b"print", 0x01));
+            assert!(classify_byte(b"punct", b'.'));
+            assert!(!classify_byte(b"punct", b'a'));
+            assert!(classify_byte(b"space", b'\n'));
+            assert!(!classify_byte(b"space", b'a'));
+            assert!(classify_byte(b"upper", b'A'));
+            assert!(!classify_byte(b"upper", b'a'));
+            assert!(classify_byte(b"xdigit", b'f'));
+            assert!(!classify_byte(b"xdigit", b'g'));
+            assert!(!classify_byte(b"bogus", b'a'));
         });
-    }
-
-    #[test]
-    fn string_to_bytes_ascii_fast_path() {
-        assert_eq!(string_to_bytes("hello"), b"hello");
-    }
-
-    #[test]
-    fn string_to_bytes_latin1_codepoints() {
-        let s: String = [0xe9u8 as char, 0xff as char].iter().collect();
-        assert_eq!(string_to_bytes(&s), vec![0xe9, 0xff]);
-    }
-
-    #[test]
-    fn string_to_bytes_non_latin1_codepoints() {
-        let s = "\u{1F600}";
-        let expected = s.as_bytes().to_vec();
-        assert_eq!(string_to_bytes(s), expected);
     }
 
     #[test]
@@ -4177,9 +4096,9 @@ mod tests {
         );
         assert!(catch_unwind(AssertUnwindSafe(|| (tbl.fork)())).is_err());
         assert!(catch_unwind(AssertUnwindSafe(|| (tbl.exit_process)(0))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.setenv)("k", "v"))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.unsetenv)("k"))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.getenv)("k"))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.setenv)(b"k", b"v"))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.unsetenv)(b"k"))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.getenv)(b"k"))).is_err());
         assert!(catch_unwind(AssertUnwindSafe(|| (tbl.get_environ)())).is_err());
         assert!(
             catch_unwind(AssertUnwindSafe(|| (tbl.tcgetattr)(
@@ -4191,7 +4110,7 @@ mod tests {
         assert!(
             catch_unwind(AssertUnwindSafe(|| (tbl.tcsetattr)(0, 0, std::ptr::null()))).is_err()
         );
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.getpwnam)("nobody"))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.getpwnam)(b"nobody"))).is_err());
         assert!(catch_unwind(AssertUnwindSafe(|| (tbl.monotonic_clock_ns)())).is_err());
         assert!(catch_unwind(AssertUnwindSafe(|| (tbl.setup_locale)())).is_err());
     }
@@ -4226,9 +4145,9 @@ mod tests {
                 ),
             ],
             || {
-                let s = stat_path("/fifo").expect("stat fifo");
+                let s = stat_path(b"/fifo").expect("stat fifo");
                 assert!((s.mode & libc::S_IFMT) == libc::S_IFIFO);
-                let _ = stat_path("/plain");
+                let _ = stat_path(b"/plain");
             },
         );
     }
@@ -4267,7 +4186,7 @@ mod tests {
                 test_support::TraceResult::Int(0),
             )],
             || {
-                assert!(read_dir_entries("/tmp").is_err());
+                assert!(read_dir_entries(b"/tmp").is_err());
             },
         );
     }
@@ -4279,7 +4198,7 @@ mod tests {
                 test_support::t(
                     "realpath",
                     vec![test_support::ArgMatcher::Any, test_support::ArgMatcher::Any],
-                    test_support::TraceResult::RealpathStr("/resolved".into()),
+                    test_support::TraceResult::RealpathBytes(b"/resolved".to_vec()),
                 ),
                 test_support::t(
                     "realpath",
@@ -4288,8 +4207,8 @@ mod tests {
                 ),
             ],
             || {
-                assert_eq!(canonicalize("/foo").expect("resolve"), "/resolved");
-                assert!(canonicalize("/bad").is_err());
+                assert_eq!(canonicalize(b"/foo").expect("resolve"), b"/resolved");
+                assert!(canonicalize(b"/bad").is_err());
             },
         );
     }
@@ -4348,11 +4267,11 @@ mod tests {
         test_support::run_trace(
             vec![test_support::t(
                 "getpwnam",
-                vec![test_support::ArgMatcher::Str("nobody".into())],
+                vec![test_support::ArgMatcher::Str(b"nobody".to_vec())],
                 test_support::TraceResult::NullStr,
             )],
             || {
-                assert!(home_dir_for_user("nobody").is_none());
+                assert!(home_dir_for_user(b"nobody").is_none());
             },
         );
     }
@@ -4436,7 +4355,7 @@ mod tests {
                 test_support::TraceResult::Err(ENOENT),
             )],
             || {
-                let result = exec_replace_with_env("/nonexistent", &["test".into()], &[]);
+                let result = exec_replace_with_env(b"/nonexistent", &[b"test".to_vec()], &[]);
                 assert!(result.is_err());
             },
         );
@@ -4446,7 +4365,7 @@ mod tests {
     fn exec_replace_with_env_real_execve_error() {
         test_support::with_test_interface(default_interface(), || {
             let result =
-                exec_replace_with_env("/nonexistent_path_no_exist", &["no_exist".into()], &[]);
+                exec_replace_with_env(b"/nonexistent_path_no_exist", &[b"no_exist".to_vec()], &[]);
             assert!(result.is_err());
         });
     }

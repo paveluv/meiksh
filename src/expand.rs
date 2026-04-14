@@ -1,56 +1,28 @@
 use std::borrow::Cow;
-use std::fmt;
-use std::path::{Path, PathBuf};
 
-use crate::arena::StringArena;
+use crate::arena::ByteArena;
+use crate::bstr;
 use crate::syntax::Word;
 use crate::sys;
 
 #[derive(Debug)]
 pub struct ExpandError {
-    pub message: Box<str>,
-}
-
-impl fmt::Display for ExpandError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for ExpandError {}
-
-fn char_at(s: &str, i: usize) -> char {
-    s.as_bytes().get(i).map_or('\0', |&b| {
-        if b < 0x80 {
-            b as char
-        } else {
-            s[i..].chars().next().unwrap_or('\0')
-        }
-    })
-}
-
-fn char_len(s: &str, i: usize) -> usize {
-    let b = s.as_bytes()[i];
-    if b < 0x80 {
-        1
-    } else {
-        s[i..].chars().next().map_or(1, |c| c.len_utf8())
-    }
+    pub message: Box<[u8]>,
 }
 
 pub trait Context {
-    fn env_var(&self, name: &str) -> Option<Cow<'_, str>>;
-    fn special_param(&self, name: char) -> Option<Cow<'_, str>>;
-    fn positional_param(&self, index: usize) -> Option<Cow<'_, str>>;
-    fn positional_params(&self) -> &[String];
-    fn set_var(&mut self, name: &str, value: String) -> Result<(), ExpandError>;
+    fn env_var(&self, name: &[u8]) -> Option<Cow<'_, [u8]>>;
+    fn special_param(&self, name: u8) -> Option<Cow<'_, [u8]>>;
+    fn positional_param(&self, index: usize) -> Option<Cow<'_, [u8]>>;
+    fn positional_params(&self) -> &[Vec<u8>];
+    fn set_var(&mut self, name: &[u8], value: Vec<u8>) -> Result<(), ExpandError>;
     fn nounset_enabled(&self) -> bool;
     fn pathname_expansion_enabled(&self) -> bool {
         true
     }
-    fn shell_name(&self) -> &str;
-    fn command_substitute(&mut self, command: &str) -> Result<String, ExpandError>;
-    fn home_dir_for_user(&self, name: &str) -> Option<Cow<'_, str>>;
+    fn shell_name(&self) -> &[u8];
+    fn command_substitute(&mut self, command: &[u8]) -> Result<Vec<u8>, ExpandError>;
+    fn home_dir_for_user(&self, name: &[u8]) -> Option<Cow<'_, [u8]>>;
     fn set_lineno(&mut self, _line: usize) {}
     fn inc_lineno(&mut self) {}
     fn lineno(&self) -> usize {
@@ -67,22 +39,22 @@ enum QuoteState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Segment {
-    Text(String, QuoteState),
+    Text(Vec<u8>, QuoteState),
     AtBreak,
     AtEmpty,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 enum Expansion {
-    One(String),
-    AtFields(Vec<String>),
+    One(Vec<u8>),
+    AtFields(Vec<Vec<u8>>),
 }
 
 pub fn expand_words<'a, C: Context>(
     ctx: &mut C,
     words: &[Word],
-    arena: &'a StringArena,
-) -> Result<Vec<&'a str>, ExpandError> {
+    arena: &'a ByteArena,
+) -> Result<Vec<&'a [u8]>, ExpandError> {
     let mut result = Vec::new();
     for word in words {
         result.extend(expand_word(ctx, word, arena)?);
@@ -93,8 +65,8 @@ pub fn expand_words<'a, C: Context>(
 pub fn expand_word_as_declaration_assignment<'a, C: Context>(
     ctx: &mut C,
     word: &Word,
-    arena: &'a StringArena,
-) -> Result<&'a str, ExpandError> {
+    arena: &'a ByteArena,
+) -> Result<&'a [u8], ExpandError> {
     ctx.set_lineno(word.line);
     let value_raw = word_assignment_value(&word.raw).unwrap_or(&word.raw);
     let name = &word.raw[..word.raw.len() - value_raw.len()];
@@ -103,25 +75,27 @@ pub fn expand_word_as_declaration_assignment<'a, C: Context>(
         line: word.line,
     };
     let expanded_value = expand_word_text_assignment(ctx, &value_word, true, arena)?;
-    Ok(arena.intern(format!("{name}{expanded_value}")))
+    let mut combined = Vec::with_capacity(name.len() + expanded_value.len());
+    combined.extend_from_slice(name);
+    combined.extend_from_slice(expanded_value);
+    Ok(arena.intern_vec(combined))
 }
 
-pub fn word_is_assignment(raw: &str) -> bool {
+pub fn word_is_assignment(raw: &[u8]) -> bool {
     word_assignment_value(raw).is_some()
 }
 
-fn word_assignment_value(raw: &str) -> Option<&str> {
-    let bytes = raw.as_bytes();
-    if bytes.is_empty() {
+fn word_assignment_value(raw: &[u8]) -> Option<&[u8]> {
+    if raw.is_empty() {
         return None;
     }
-    let first = bytes[0];
+    let first = raw[0];
     if !(first == b'_' || first.is_ascii_alphabetic()) {
         return None;
     }
     let mut i = 1;
-    while i < bytes.len() {
-        let b = bytes[i];
+    while i < raw.len() {
+        let b = raw[i];
         if b == b'=' {
             return Some(&raw[i + 1..]);
         }
@@ -136,19 +110,19 @@ fn word_assignment_value(raw: &str) -> Option<&str> {
 pub fn expand_word<'a, C: Context>(
     ctx: &mut C,
     word: &Word,
-    arena: &'a StringArena,
-) -> Result<Vec<&'a str>, ExpandError> {
+    arena: &'a ByteArena,
+) -> Result<Vec<&'a [u8]>, ExpandError> {
     ctx.set_lineno(word.line);
     let expanded = expand_raw(ctx, &word.raw)?;
 
     if expanded.has_at_expansion {
         let fields = expand_word_with_at_fields(&expanded, expanded.had_quoted_null_outside_at)?;
-        return Ok(fields.into_iter().map(|s| arena.intern(s)).collect());
+        return Ok(fields.into_iter().map(|s| arena.intern_vec(s)).collect());
     }
 
     if expanded.segments.is_empty() {
         if expanded.had_quoted_content {
-            return Ok(vec![arena.intern(String::new())]);
+            return Ok(vec![arena.intern_vec(Vec::new())]);
         }
         return Ok(Vec::new());
     }
@@ -158,12 +132,12 @@ pub fn expand_word<'a, C: Context>(
         .iter()
         .any(|seg| matches!(seg, Segment::Text(_, QuoteState::Expanded)));
 
-    let ifs_cow = ctx.env_var("IFS").unwrap_or(Cow::Borrowed(" \t\n"));
+    let ifs_cow = ctx.env_var(b"IFS").unwrap_or(Cow::Borrowed(b" \t\n"));
     let fields = if has_expanded {
         split_fields_from_segments(&expanded.segments, &ifs_cow)
     } else {
         let has_glob = expanded.segments.iter().any(|seg| {
-            matches!(seg, Segment::Text(text, QuoteState::Literal) if text.chars().any(is_glob_char))
+            matches!(seg, Segment::Text(text, QuoteState::Literal) if text.iter().any(|&b| is_glob_byte(b)))
         });
         vec![Field {
             text: flatten_segments(&expanded.segments),
@@ -179,14 +153,14 @@ pub fn expand_word<'a, C: Context>(
         if field.has_unquoted_glob && ctx.pathname_expansion_enabled() {
             let matches = expand_pathname(&field.text);
             if matches.is_empty() {
-                result.push(arena.intern(field.text));
+                result.push(arena.intern_vec(field.text));
             } else {
                 for m in matches {
-                    result.push(arena.intern(m));
+                    result.push(arena.intern_vec(m));
                 }
             }
         } else {
-            result.push(arena.intern(field.text));
+            result.push(arena.intern_vec(field.text));
         }
     }
     Ok(result)
@@ -195,13 +169,13 @@ pub fn expand_word<'a, C: Context>(
 pub fn expand_redirect_word<'a, C: Context>(
     ctx: &mut C,
     word: &Word,
-    arena: &'a StringArena,
-) -> Result<&'a str, ExpandError> {
+    arena: &'a ByteArena,
+) -> Result<&'a [u8], ExpandError> {
     ctx.set_lineno(word.line);
     let expanded = expand_raw(ctx, &word.raw)?;
 
     if expanded.segments.is_empty() {
-        return Ok(arena.intern(String::new()));
+        return Ok(arena.intern_vec(Vec::new()));
     }
 
     let has_expanded = expanded
@@ -209,7 +183,7 @@ pub fn expand_redirect_word<'a, C: Context>(
         .iter()
         .any(|seg| matches!(seg, Segment::Text(_, QuoteState::Expanded)));
 
-    let ifs_cow = ctx.env_var("IFS").unwrap_or(Cow::Borrowed(" \t\n"));
+    let ifs_cow = ctx.env_var(b"IFS").unwrap_or(Cow::Borrowed(b" \t\n"));
     let fields = if has_expanded {
         split_fields_from_segments(&expanded.segments, &ifs_cow)
     } else {
@@ -219,19 +193,18 @@ pub fn expand_redirect_word<'a, C: Context>(
         }]
     };
 
-    Ok(arena.intern(
-        fields
-            .into_iter()
-            .map(|f| f.text)
-            .collect::<Vec<_>>()
-            .join(" "),
+    Ok(arena.intern_vec(
+        bstr::join_bstrings(
+            &fields.into_iter().map(|f| f.text).collect::<Vec<_>>(),
+            b" ",
+        ),
     ))
 }
 
 fn expand_word_with_at_fields(
     expanded: &ExpandedWord,
     had_quoted_null_outside_at: bool,
-) -> Result<Vec<String>, ExpandError> {
+) -> Result<Vec<Vec<u8>>, ExpandError> {
     let has_at_empty = expanded
         .segments
         .iter()
@@ -242,10 +215,10 @@ fn expand_word_with_at_fields(
         .any(|s| matches!(s, Segment::AtBreak));
 
     if has_at_empty && !has_at_break {
-        let mut text = String::new();
+        let mut text = Vec::new();
         for seg in &expanded.segments {
             if let Segment::Text(t, _) = seg {
-                text.push_str(t);
+                text.extend_from_slice(t);
             }
         }
         if !text.is_empty() || had_quoted_null_outside_at {
@@ -259,11 +232,11 @@ fn expand_word_with_at_fields(
     }
 
     let mut fields = Vec::new();
-    let mut current = String::new();
+    let mut current = Vec::new();
 
     for seg in &expanded.segments {
         if let Segment::Text(text, _) = seg {
-            current.push_str(text);
+            current.extend_from_slice(text);
         } else if matches!(seg, Segment::AtBreak) {
             fields.push(std::mem::take(&mut current));
         }
@@ -276,8 +249,8 @@ fn expand_word_with_at_fields(
 pub fn expand_word_text<'a, C: Context>(
     ctx: &mut C,
     word: &Word,
-    arena: &'a StringArena,
-) -> Result<&'a str, ExpandError> {
+    arena: &'a ByteArena,
+) -> Result<&'a [u8], ExpandError> {
     ctx.set_lineno(word.line);
     expand_word_text_assignment(ctx, word, false, arena)
 }
@@ -285,18 +258,18 @@ pub fn expand_word_text<'a, C: Context>(
 pub fn expand_word_pattern<'a, C: Context>(
     ctx: &mut C,
     word: &Word,
-    arena: &'a StringArena,
-) -> Result<&'a str, ExpandError> {
+    arena: &'a ByteArena,
+) -> Result<&'a [u8], ExpandError> {
     ctx.set_lineno(word.line);
     let expanded = expand_raw(ctx, &word.raw)?;
-    Ok(arena.intern(render_pattern_from_segments(&expanded.segments)))
+    Ok(arena.intern_vec(render_pattern_from_segments(&expanded.segments)))
 }
 
 pub fn expand_assignment_value<'a, C: Context>(
     ctx: &mut C,
     word: &Word,
-    arena: &'a StringArena,
-) -> Result<&'a str, ExpandError> {
+    arena: &'a ByteArena,
+) -> Result<&'a [u8], ExpandError> {
     ctx.set_lineno(word.line);
     expand_word_text_assignment(ctx, word, true, arena)
 }
@@ -305,91 +278,88 @@ fn expand_word_text_assignment<'a, C: Context>(
     ctx: &mut C,
     word: &Word,
     assignment_rhs: bool,
-    arena: &'a StringArena,
-) -> Result<&'a str, ExpandError> {
+    arena: &'a ByteArena,
+) -> Result<&'a [u8], ExpandError> {
     if !assignment_rhs {
         let expanded = expand_raw(ctx, &word.raw)?;
-        return Ok(arena.intern(flatten_segments(&expanded.segments)));
+        return Ok(arena.intern_vec(flatten_segments(&expanded.segments)));
     }
     let raw = &word.raw;
-    let mut result = String::new();
+    let mut result = Vec::new();
     let mut first = true;
     for part in split_on_unquoted_colons(raw) {
         if !first {
-            result.push(':');
+            result.push(b':');
         }
         first = false;
         let expanded = expand_raw(ctx, &part)?;
-        result.push_str(&flatten_segments(&expanded.segments));
+        result.extend_from_slice(&flatten_segments(&expanded.segments));
     }
-    Ok(arena.intern(result))
+    Ok(arena.intern_vec(result))
 }
 
-fn split_on_unquoted_colons(raw: &str) -> Vec<String> {
+fn split_on_unquoted_colons(raw: &[u8]) -> Vec<Vec<u8>> {
     let mut parts = Vec::new();
-    let mut current = String::new();
+    let mut current = Vec::new();
     let mut i = 0;
     let mut brace_depth = 0usize;
     let mut paren_depth = 0usize;
     while i < raw.len() {
-        match raw.as_bytes()[i] {
+        match raw[i] {
             b'\'' if brace_depth == 0 && paren_depth == 0 => {
-                current.push('\'');
+                current.push(b'\'');
                 i += 1;
-                while i < raw.len() && raw.as_bytes()[i] != b'\'' {
-                    let clen = char_len(raw, i);
-                    current.push_str(&raw[i..i + clen]);
-                    i += clen;
+                while i < raw.len() && raw[i] != b'\'' {
+                    current.push(raw[i]);
+                    i += 1;
                 }
                 if i < raw.len() {
-                    current.push('\'');
+                    current.push(b'\'');
                     i += 1;
                 }
             }
             b'"' if brace_depth == 0 && paren_depth == 0 => {
-                current.push('"');
+                current.push(b'"');
                 i += 1;
-                while i < raw.len() && raw.as_bytes()[i] != b'"' {
-                    if raw.as_bytes()[i] == b'\\' && i + 1 < raw.len() {
-                        current.push('\\');
+                while i < raw.len() && raw[i] != b'"' {
+                    if raw[i] == b'\\' && i + 1 < raw.len() {
+                        current.push(b'\\');
                         i += 1;
                     }
-                    let clen = char_len(raw, i);
-                    current.push_str(&raw[i..i + clen]);
-                    i += clen;
+                    current.push(raw[i]);
+                    i += 1;
                 }
                 if i < raw.len() {
-                    current.push('"');
+                    current.push(b'"');
                     i += 1;
                 }
             }
             b'\\' => {
-                current.push('\\');
+                current.push(b'\\');
                 i += 1;
                 if i < raw.len() {
-                    let clen = char_len(raw, i);
-                    current.push_str(&raw[i..i + clen]);
-                    i += clen;
+                    current.push(raw[i]);
+                    i += 1;
                 }
             }
-            b'$' if i + 1 < raw.len() && raw.as_bytes()[i + 1] == b'{' => {
-                current.push_str("${");
+            b'$' if i + 1 < raw.len() && raw[i + 1] == b'{' => {
+                current.extend_from_slice(b"${");
                 brace_depth += 1;
                 i += 2;
             }
             b'}' if brace_depth > 0 => {
                 brace_depth -= 1;
-                current.push('}');
+                current.push(b'}');
                 i += 1;
             }
-            b'$' if i + 1 < raw.len() && raw.as_bytes()[i + 1] == b'(' => {
-                current.push_str("$(");
+            b'$' if i + 1 < raw.len() && raw[i + 1] == b'(' => {
+                current.extend_from_slice(b"$(");
                 paren_depth += 1;
                 i += 2;
             }
             b')' if paren_depth > 0 => {
                 paren_depth -= 1;
-                current.push(')');
+                current.push(b')');
                 i += 1;
             }
             b':' if brace_depth == 0 && paren_depth == 0 => {
@@ -397,9 +367,8 @@ fn split_on_unquoted_colons(raw: &str) -> Vec<String> {
                 i += 1;
             }
             _ => {
-                let clen = char_len(raw, i);
-                current.push_str(&raw[i..i + clen]);
-                i += clen;
+                current.push(raw[i]);
+                i += 1;
             }
         }
     }
@@ -409,35 +378,34 @@ fn split_on_unquoted_colons(raw: &str) -> Vec<String> {
 
 pub fn expand_parameter_text<'a, C: Context>(
     ctx: &mut C,
-    raw: &str,
-    arena: &'a StringArena,
-) -> Result<&'a str, ExpandError> {
-    Ok(arena.intern(expand_parameter_text_owned(ctx, raw)?))
+    raw: &[u8],
+    arena: &'a ByteArena,
+) -> Result<&'a [u8], ExpandError> {
+    Ok(arena.intern_vec(expand_parameter_text_owned(ctx, raw)?))
 }
 
-fn expand_parameter_text_owned<C: Context>(ctx: &mut C, raw: &str) -> Result<String, ExpandError> {
-    let mut result = String::new();
+fn expand_parameter_text_owned<C: Context>(ctx: &mut C, raw: &[u8]) -> Result<Vec<u8>, ExpandError> {
+    let mut result = Vec::new();
     let mut index = 0usize;
 
     while index < raw.len() {
-        if raw.as_bytes()[index] == b'$' {
+        if raw[index] == b'$' {
             let (value, consumed) = expand_parameter_dollar(ctx, &raw[index..])?;
-            result.push_str(&value);
+            result.extend_from_slice(&value);
             index += consumed;
         } else {
-            let clen = char_len(raw, index);
-            result.push_str(&raw[index..index + clen]);
-            index += clen;
+            result.push(raw[index]);
+            index += 1;
         }
     }
 
     Ok(result)
 }
 
-fn flatten_expansion(expansion: Expansion) -> String {
+fn flatten_expansion(expansion: Expansion) -> Vec<u8> {
     match expansion {
         Expansion::One(s) => s,
-        Expansion::AtFields(fields) => fields.join(" "),
+        Expansion::AtFields(fields) => bstr::join_bstrings(&fields, b" "),
     }
 }
 
@@ -470,7 +438,7 @@ fn apply_expansion(
     }
 }
 
-fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, ExpandError> {
+fn expand_raw<C: Context>(ctx: &mut C, raw: &[u8]) -> Result<ExpandedWord, ExpandError> {
     let mut index = 0usize;
     let mut segments = Vec::new();
     let mut had_quoted_content = false;
@@ -478,50 +446,50 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
     let mut has_at_expansion = false;
 
     while index < raw.len() {
-        match raw.as_bytes()[index] {
+        match raw[index] {
             b'\'' => {
                 had_quoted_content = true;
                 had_quoted_null_outside_at = true;
                 index += 1;
                 let start = index;
-                while index < raw.len() && raw.as_bytes()[index] != b'\'' {
-                    if raw.as_bytes()[index] == b'\n' {
+                while index < raw.len() && raw[index] != b'\'' {
+                    if raw[index] == b'\n' {
                         ctx.inc_lineno();
                     }
-                    index += char_len(raw, index);
+                    index += 1;
                 }
                 if index >= raw.len() {
                     return Err(ExpandError {
-                        message: "unterminated single quote".into(),
+                        message: b"unterminated single quote".as_ref().into(),
                     });
                 }
-                push_segment_str(&mut segments, &raw[start..index], QuoteState::Quoted);
+                push_segment_slice(&mut segments, &raw[start..index], QuoteState::Quoted);
                 index += 1;
             }
             b'"' => {
                 had_quoted_content = true;
                 index += 1;
-                let mut buffer = String::new();
+                let mut buffer = Vec::new();
                 let at_before = has_at_expansion;
-                while index < raw.len() && raw.as_bytes()[index] != b'"' {
-                    match raw.as_bytes()[index] {
+                while index < raw.len() && raw[index] != b'"' {
+                    match raw[index] {
                         b'\\' => {
                             if index + 1 < raw.len() {
-                                let next = raw.as_bytes()[index + 1] as char;
-                                if matches!(next, '$' | '`' | '"' | '\\' | '\n' | '}') {
+                                let next = raw[index + 1];
+                                if matches!(next, b'$' | b'`' | b'"' | b'\\' | b'\n' | b'}') {
                                     index += 1;
-                                    if next == '\n' {
+                                    if next == b'\n' {
                                         ctx.inc_lineno();
                                     } else {
                                         buffer.push(next);
                                     }
                                     index += 1;
                                 } else {
-                                    buffer.push('\\');
+                                    buffer.push(b'\\');
                                     index += 1;
                                 }
                             } else {
-                                buffer.push('\\');
+                                buffer.push(b'\\');
                                 index += 1;
                             }
                         }
@@ -548,24 +516,23 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
                             index += 1;
                             let command = scan_backtick_command(raw, &mut index, true)?;
                             let output = ctx.command_substitute(&command)?;
-                            let trimmed = output.trim_end_matches('\n').to_string();
+                            let trimmed = trim_trailing_newlines(&output).to_vec();
                             push_segment(&mut segments, trimmed, QuoteState::Quoted);
                         }
                         b'\n' => {
                             ctx.inc_lineno();
-                            buffer.push('\n');
+                            buffer.push(b'\n');
                             index += 1;
                         }
                         _ => {
-                            let clen = char_len(raw, index);
-                            buffer.push_str(&raw[index..index + clen]);
-                            index += clen;
+                            buffer.push(raw[index]);
+                            index += 1;
                         }
                     }
                 }
                 if index >= raw.len() {
                     return Err(ExpandError {
-                        message: "unterminated double quote".into(),
+                        message: b"unterminated double quote".as_ref().into(),
                     });
                 }
                 if !buffer.is_empty() {
@@ -580,16 +547,15 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
                 had_quoted_null_outside_at = true;
                 index += 1;
                 if index < raw.len() {
-                    if raw.as_bytes()[index] == b'\n' {
+                    if raw[index] == b'\n' {
                         ctx.inc_lineno();
                     }
-                    let clen = char_len(raw, index);
-                    push_segment_str(&mut segments, &raw[index..index + clen], QuoteState::Quoted);
-                    index += clen;
+                    push_segment_slice(&mut segments, &raw[index..index + 1], QuoteState::Quoted);
+                    index += 1;
                 }
             }
             b'$' => {
-                let dollar_single_quotes = raw.as_bytes().get(index + 1) == Some(&b'\'');
+                let dollar_single_quotes = raw.get(index + 1) == Some(&b'\'');
                 if dollar_single_quotes {
                     had_quoted_content = true;
                 }
@@ -606,59 +572,57 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
                 index += 1;
                 let command = scan_backtick_command(raw, &mut index, false)?;
                 let output = ctx.command_substitute(&command)?;
-                let trimmed = output.trim_end_matches('\n').to_string();
+                let trimmed = trim_trailing_newlines(&output).to_vec();
                 push_segment(&mut segments, trimmed, QuoteState::Expanded);
             }
             b'~' if index == 0 => {
                 index += 1;
-                let mut user = String::new();
+                let mut user = Vec::new();
                 let at_start = index;
-                while index < raw.len() && raw.as_bytes()[index] != b'/' {
-                    let b = raw.as_bytes()[index];
+                while index < raw.len() && raw[index] != b'/' {
+                    let b = raw[index];
                     if b == b'\'' || b == b'"' || b == b'\\' || b == b'$' || b == b'`' {
                         break;
                     }
-                    let clen = char_len(raw, index);
-                    user.push_str(&raw[index..index + clen]);
-                    index += clen;
+                    user.push(raw[index]);
+                    index += 1;
                 }
                 let broke_on_non_login =
-                    index == at_start && index < raw.len() && raw.as_bytes()[index] != b'/';
+                    index == at_start && index < raw.len() && raw[index] != b'/';
                 if broke_on_non_login {
-                    push_segment_str(&mut segments, "~", QuoteState::Literal);
+                    push_segment_slice(&mut segments, b"~", QuoteState::Literal);
                 } else if user.is_empty() {
-                    match ctx.env_var("HOME") {
+                    match ctx.env_var(b"HOME") {
                         Some(home) if !home.is_empty() => {
                             push_segment(&mut segments, home.into_owned(), QuoteState::Quoted);
                         }
                         Some(_) => {
-                            segments.push(Segment::Text(String::new(), QuoteState::Quoted));
+                            segments.push(Segment::Text(Vec::new(), QuoteState::Quoted));
                         }
                         None => {
-                            push_segment_str(&mut segments, "~", QuoteState::Literal);
+                            push_segment_slice(&mut segments, b"~", QuoteState::Literal);
                         }
                     }
                 } else if let Some(dir) = ctx.home_dir_for_user(&user) {
                     push_segment(&mut segments, dir.into_owned(), QuoteState::Quoted);
                 } else {
-                    let mut literal = String::from('~');
-                    literal.push_str(&user);
+                    let mut literal = vec![b'~'];
+                    literal.extend_from_slice(&user);
                     push_segment(&mut segments, literal, QuoteState::Literal);
                 }
             }
             b'\n' => {
                 ctx.inc_lineno();
-                push_segment_str(&mut segments, "\n", QuoteState::Literal);
+                push_segment_slice(&mut segments, b"\n", QuoteState::Literal);
                 index += 1;
             }
             _ => {
-                let clen = char_len(raw, index);
-                push_segment_str(
+                push_segment_slice(
                     &mut segments,
-                    &raw[index..index + clen],
+                    &raw[index..index + 1],
                     QuoteState::Literal,
                 );
-                index += clen;
+                index += 1;
             }
         }
     }
@@ -671,24 +635,32 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &str) -> Result<ExpandedWord, Expand
     })
 }
 
+fn trim_trailing_newlines(s: &[u8]) -> &[u8] {
+    let mut end = s.len();
+    while end > 0 && s[end - 1] == b'\n' {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 fn scan_backtick_command(
-    source: &str,
+    source: &[u8],
     index: &mut usize,
     in_double_quotes: bool,
-) -> Result<String, ExpandError> {
-    let mut command = String::new();
+) -> Result<Vec<u8>, ExpandError> {
+    let mut command = Vec::new();
     while *index < source.len() {
-        let ch = source.as_bytes()[*index];
+        let ch = source[*index];
         if ch == b'`' {
             *index += 1;
             return Ok(command);
         }
         if ch == b'\\' && *index + 1 < source.len() {
-            let next = source.as_bytes()[*index + 1] as char;
+            let next = source[*index + 1];
             let special = if in_double_quotes {
-                matches!(next, '$' | '`' | '\\' | '"' | '\n')
+                matches!(next, b'$' | b'`' | b'\\' | b'"' | b'\n')
             } else {
-                matches!(next, '$' | '`' | '\\')
+                matches!(next, b'$' | b'`' | b'\\')
             };
             if special {
                 command.push(next);
@@ -696,35 +668,35 @@ fn scan_backtick_command(
                 continue;
             }
         }
-        command.push(ch as char);
+        command.push(ch);
         *index += 1;
     }
     Err(ExpandError {
-        message: "unterminated backquote".into(),
+        message: b"unterminated backquote".as_ref().into(),
     })
 }
 
 pub fn expand_here_document<'a, C: Context>(
     ctx: &mut C,
-    text: &str,
+    text: &[u8],
     body_line: usize,
-    arena: &'a StringArena,
-) -> Result<&'a str, ExpandError> {
+    arena: &'a ByteArena,
+) -> Result<&'a [u8], ExpandError> {
     ctx.set_lineno(body_line);
-    let mut result = String::new();
+    let mut result = Vec::new();
     let mut index = 0usize;
 
     while index < text.len() {
-        match text.as_bytes()[index] {
+        match text[index] {
             b'\\' => {
                 index += 1;
                 if index >= text.len() {
-                    result.push('\\');
+                    result.push(b'\\');
                     break;
                 }
-                match text.as_bytes()[index] {
+                match text[index] {
                     b'$' | b'\\' => {
-                        result.push(text.as_bytes()[index] as char);
+                        result.push(text[index]);
                         index += 1;
                     }
                     b'\n' => {
@@ -732,134 +704,132 @@ pub fn expand_here_document<'a, C: Context>(
                         index += 1;
                     }
                     _ => {
-                        result.push('\\');
-                        let clen = char_len(text, index);
-                        result.push_str(&text[index..index + clen]);
-                        index += clen;
+                        result.push(b'\\');
+                        result.push(text[index]);
+                        index += 1;
                     }
                 }
             }
             b'\n' => {
                 ctx.inc_lineno();
-                result.push('\n');
+                result.push(b'\n');
                 index += 1;
             }
             b'$' => {
                 let (expansion, consumed) = expand_dollar(ctx, &text[index..], false)?;
-                result.push_str(&flatten_expansion(expansion));
+                result.extend_from_slice(&flatten_expansion(expansion));
                 index += consumed;
             }
             b'`' => {
                 index += 1;
                 let command = scan_backtick_command(text, &mut index, true)?;
                 let output = ctx.command_substitute(&command)?;
-                result.push_str(output.trim_end_matches('\n'));
+                result.extend_from_slice(trim_trailing_newlines(&output));
             }
             _ => {
-                let clen = char_len(text, index);
-                result.push_str(&text[index..index + clen]);
-                index += clen;
+                result.push(text[index]);
+                index += 1;
             }
         }
     }
 
-    Ok(arena.intern(result))
+    Ok(arena.intern_vec(result))
 }
 
 fn expand_dollar<C: Context>(
     ctx: &mut C,
-    source: &str,
+    source: &[u8],
     quoted: bool,
 ) -> Result<(Expansion, usize), ExpandError> {
     if source.len() < 2 {
-        return Ok((Expansion::One("$".to_string()), 1));
+        return Ok((Expansion::One(b"$".to_vec()), 1));
     }
 
-    let c1 = source.as_bytes()[1] as char;
+    let c1 = source[1];
     match c1 {
-        '\'' if !quoted => {
+        b'\'' if !quoted => {
             let (s, n) = parse_dollar_single_quoted(source)?;
             Ok((Expansion::One(s), n))
         }
-        '{' => {
+        b'{' => {
             let end = scan_to_closing_brace(source, 2)?;
             let expr = &source[2..end];
             let expansion = expand_braced_parameter(ctx, expr, quoted)?;
             Ok((expansion, end + 1))
         }
-        '(' => {
-            if source.as_bytes().get(2) == Some(&b'(') {
+        b'(' => {
+            if source.get(2) == Some(&b'(') {
                 let mut index = 3usize;
                 let mut depth = 1usize;
                 while index < source.len() {
-                    let ch = source.as_bytes()[index] as char;
-                    if ch == '(' {
+                    let ch = source[index];
+                    if ch == b'(' {
                         depth += 1;
-                    } else if ch == ')' {
-                        if depth == 1 && source.as_bytes().get(index + 1) == Some(&b')') {
-                            let expression = source[3..index].to_string();
+                    } else if ch == b')' {
+                        if depth == 1 && source.get(index + 1) == Some(&b')') {
+                            let expression = source[3..index].to_vec();
                             let saved_line = ctx.lineno();
                             let pre_expanded = expand_arithmetic_expression(ctx, &expression)?;
                             ctx.set_lineno(saved_line);
                             let value = eval_arithmetic(ctx, &pre_expanded)?;
-                            return Ok((Expansion::One(value.to_string()), index + 2));
+                            return Ok((Expansion::One(bstr::i64_to_bytes(value)), index + 2));
                         }
                         depth = depth.saturating_sub(1);
                     }
                     index += 1;
                 }
                 Err(ExpandError {
-                    message: "unterminated arithmetic expansion".into(),
+                    message: b"unterminated arithmetic expansion".as_ref().into(),
                 })
             } else {
                 let mut index = 2usize;
                 let mut depth = 1usize;
                 while index < source.len() {
-                    let ch = source.as_bytes()[index] as char;
-                    if ch == '(' {
+                    let ch = source[index];
+                    if ch == b'(' {
                         depth += 1;
-                    } else if ch == ')' {
+                    } else if ch == b')' {
                         depth -= 1;
                         if depth == 0 {
-                            let command = source[2..index].to_string();
+                            let command = source[2..index].to_vec();
                             let output = ctx.command_substitute(&command)?;
-                            let trimmed = output.trim_end_matches('\n').to_string();
+                            let trimmed = trim_trailing_newlines(&output).to_vec();
                             return Ok((Expansion::One(trimmed), index + 1));
                         }
                     }
                     index += 1;
                 }
                 Err(ExpandError {
-                    message: "unterminated command substitution".into(),
+                    message: b"unterminated command substitution".as_ref().into(),
                 })
             }
         }
-        '@' => {
+        b'@' => {
             if quoted {
                 let params = ctx.positional_params().to_vec();
                 Ok((Expansion::AtFields(params), 2))
             } else {
-                let joined = Cow::Owned(ctx.positional_params().join(" "));
-                let value = require_set_parameter(ctx, "@", Some(joined))?;
+                let joined = Cow::Owned(bstr::join_bstrings(ctx.positional_params(), b" "));
+                let value = require_set_parameter(ctx, b"@", Some(joined))?;
                 Ok((Expansion::One(value), 2))
             }
         }
-        '*' => {
-            let ifs = ctx.env_var("IFS");
+        b'*' => {
+            let ifs = ctx.env_var(b"IFS");
             let sep = match ifs.as_deref() {
-                None => " ".to_string(),
-                Some("") => String::new(),
-                Some(s) => s.chars().next().unwrap().to_string(),
+                None => b" ".to_vec(),
+                Some(b"") => Vec::new(),
+                Some(s) => vec![s[0]],
             };
-            let value = ctx.positional_params().join(&sep);
+            let value = bstr::join_bstrings(ctx.positional_params(), &sep);
             Ok((Expansion::One(value), 2))
         }
-        '?' | '$' | '!' | '#' | '-' | '0' => {
-            let ch_str = &source[1..2];
-            let value = if c1 == '0' {
-                require_set_parameter(ctx, "0", Some(Cow::Borrowed(ctx.shell_name())))?
+        b'?' | b'$' | b'!' | b'#' | b'-' | b'0' => {
+            let ch_name = &source[1..2];
+            let value = if c1 == b'0' {
+                require_set_parameter(ctx, b"0", Some(Cow::Borrowed(ctx.shell_name())))?
             } else {
-                require_set_parameter(ctx, ch_str, ctx.special_param(c1))?
+                require_set_parameter(ctx, ch_name, ctx.special_param(c1))?
             };
             Ok((Expansion::One(value), 2))
         }
@@ -867,15 +837,15 @@ fn expand_dollar<C: Context>(
             Expansion::One(require_set_parameter(
                 ctx,
                 &source[1..2],
-                ctx.positional_param(next.to_digit(10).unwrap_or_default() as usize),
+                ctx.positional_param((next - b'0') as usize),
             )?),
             2,
         )),
-        next if next == '_' || next.is_ascii_alphabetic() => {
+        next if next == b'_' || next.is_ascii_alphabetic() => {
             let mut index = 1usize;
             while index < source.len() {
-                let b = source.as_bytes()[index];
-                if b == b'_' || (b as char).is_ascii_alphanumeric() {
+                let b = source[index];
+                if b == b'_' || b.is_ascii_alphanumeric() {
                     index += 1;
                 } else {
                     break;
@@ -887,45 +857,45 @@ fn expand_dollar<C: Context>(
                 index,
             ))
         }
-        _ => Ok((Expansion::One("$".to_string()), 1)),
+        _ => Ok((Expansion::One(b"$".to_vec()), 1)),
     }
 }
 
 fn expand_parameter_dollar<C: Context>(
     ctx: &mut C,
-    source: &str,
-) -> Result<(String, usize), ExpandError> {
+    source: &[u8],
+) -> Result<(Vec<u8>, usize), ExpandError> {
     if source.len() < 2 {
-        return Ok(("$".to_string(), 1));
+        return Ok((b"$".to_vec(), 1));
     }
 
-    let c1 = source.as_bytes()[1] as char;
+    let c1 = source[1];
     match c1 {
-        '\'' => parse_dollar_single_quoted(source),
-        '{' => {
+        b'\'' => parse_dollar_single_quoted(source),
+        b'{' => {
             let end = scan_to_closing_brace(source, 2)?;
             let expr = &source[2..end];
             let value = expand_braced_parameter_text(ctx, expr)?;
             Ok((value, end + 1))
         }
-        '?' | '$' | '!' | '#' | '*' | '@' | '-' | '0' => {
-            let ch_str = &source[1..2];
-            let value = if c1 == '0' {
-                require_set_parameter(ctx, "0", Some(Cow::Borrowed(ctx.shell_name())))?
+        b'?' | b'$' | b'!' | b'#' | b'*' | b'@' | b'-' | b'0' => {
+            let ch_name = &source[1..2];
+            let value = if c1 == b'0' {
+                require_set_parameter(ctx, b"0", Some(Cow::Borrowed(ctx.shell_name())))?
             } else {
-                require_set_parameter(ctx, ch_str, ctx.special_param(c1))?
+                require_set_parameter(ctx, ch_name, ctx.special_param(c1))?
             };
             Ok((value, 2))
         }
         next if next.is_ascii_digit() => {
-            let value = ctx.positional_param(next.to_digit(10).unwrap_or_default() as usize);
+            let value = ctx.positional_param((next - b'0') as usize);
             Ok((require_set_parameter(ctx, &source[1..2], value)?, 2))
         }
-        next if next == '_' || next.is_ascii_alphabetic() => {
+        next if next == b'_' || next.is_ascii_alphabetic() => {
             let mut index = 1usize;
             while index < source.len() {
-                let b = source.as_bytes()[index];
-                if b == b'_' || (b as char).is_ascii_alphanumeric() {
+                let b = source[index];
+                if b == b'_' || b.is_ascii_alphanumeric() {
                     index += 1;
                 } else {
                     break;
@@ -937,72 +907,72 @@ fn expand_parameter_dollar<C: Context>(
                 index,
             ))
         }
-        _ => Ok(("$".to_string(), 1)),
+        _ => Ok((b"$".to_vec(), 1)),
     }
 }
 
-fn parse_dollar_single_quoted(source: &str) -> Result<(String, usize), ExpandError> {
+fn parse_dollar_single_quoted(source: &[u8]) -> Result<(Vec<u8>, usize), ExpandError> {
     let mut index = 2usize;
-    let mut result = String::new();
+    let mut result = Vec::new();
     while index < source.len() {
-        match source.as_bytes()[index] {
+        match source[index] {
             b'\'' => return Ok((result, index + 1)),
             b'\\' => {
                 index += 1;
                 if index >= source.len() {
                     return Err(ExpandError {
-                        message: "unterminated dollar-single-quotes".into(),
+                        message: b"unterminated dollar-single-quotes".as_ref().into(),
                     });
                 }
-                let ch = source.as_bytes()[index] as char;
+                let ch = source[index];
                 match ch {
-                    '"' => result.push('"'),
-                    '\'' => result.push('\''),
-                    '\\' => result.push('\\'),
-                    'a' => result.push('\u{0007}'),
-                    'b' => result.push('\u{0008}'),
-                    'e' => result.push('\u{001b}'),
-                    'f' => result.push('\u{000c}'),
-                    'n' => result.push('\n'),
-                    'r' => result.push('\r'),
-                    't' => result.push('\t'),
-                    'v' => result.push('\u{000b}'),
-                    'c' => {
+                    b'"' => result.push(b'"'),
+                    b'\'' => result.push(b'\''),
+                    b'\\' => result.push(b'\\'),
+                    b'a' => result.push(0x07),
+                    b'b' => result.push(0x08),
+                    b'e' => result.push(0x1b),
+                    b'f' => result.push(0x0c),
+                    b'n' => result.push(b'\n'),
+                    b'r' => result.push(b'\r'),
+                    b't' => result.push(b'\t'),
+                    b'v' => result.push(0x0b),
+                    b'c' => {
                         index += 1;
                         if index >= source.len() {
                             return Err(ExpandError {
-                                message: "unterminated dollar-single-quotes".into(),
+                                message: b"unterminated dollar-single-quotes".as_ref().into(),
                             });
                         }
-                        if source.as_bytes()[index] == b'\\' && index + 1 < source.len() {
+                        if source[index] == b'\\' && index + 1 < source.len() {
                             index += 1;
-                            result.push(control_escape(source.as_bytes()[index] as char));
+                            result.push(control_escape(source[index]));
                         } else {
-                            result.push(control_escape(source.as_bytes()[index] as char));
+                            result.push(control_escape(source[index]));
                         }
                     }
-                    'x' => {
+                    b'x' => {
                         let (value, consumed) =
                             parse_variable_base_escape(&source[(index + 1)..], 16, 2);
                         if consumed == 0 {
-                            result.push('x');
+                            result.push(b'x');
                         } else {
-                            result.push(char::from(value));
+                            result.push(value);
                             index += consumed;
                         }
                     }
-                    '0'..='7' => {
-                        let mut digits = String::from(ch);
+                    b'0'..=b'7' => {
+                        let mut digits = vec![ch];
                         let mut consumed = 0usize;
                         while consumed < 2
                             && index + 1 + consumed < source.len()
-                            && matches!(source.as_bytes()[index + 1 + consumed], b'0'..=b'7')
+                            && matches!(source[index + 1 + consumed], b'0'..=b'7')
                         {
-                            digits.push(source.as_bytes()[index + 1 + consumed] as char);
+                            digits.push(source[index + 1 + consumed]);
                             consumed += 1;
                         }
-                        let value = u8::from_str_radix(&digits, 8).unwrap_or_default();
-                        result.push(char::from(value));
+                        let value = parse_octal_digits(&digits);
+                        result.push(value);
                         index += consumed;
                     }
                     other => result.push(other),
@@ -1010,28 +980,35 @@ fn parse_dollar_single_quoted(source: &str) -> Result<(String, usize), ExpandErr
                 index += 1;
             }
             _ => {
-                let clen = char_len(source, index);
-                result.push_str(&source[index..index + clen]);
-                index += clen;
+                result.push(source[index]);
+                index += 1;
             }
         }
     }
     Err(ExpandError {
-        message: "unterminated dollar-single-quotes".into(),
+        message: b"unterminated dollar-single-quotes".as_ref().into(),
     })
 }
 
-fn scan_to_closing_brace(source: &str, start: usize) -> Result<usize, ExpandError> {
+fn parse_octal_digits(digits: &[u8]) -> u8 {
+    let mut val: u8 = 0;
+    for &d in digits {
+        val = val.wrapping_mul(8).wrapping_add(d - b'0');
+    }
+    val
+}
+
+fn scan_to_closing_brace(source: &[u8], start: usize) -> Result<usize, ExpandError> {
     let mut index = start;
     while index < source.len() {
-        match source.as_bytes()[index] {
+        match source[index] {
             b'}' => return Ok(index),
             b'\\' => {
                 index += 2;
             }
             b'\'' => {
                 index += 1;
-                while index < source.len() && source.as_bytes()[index] != b'\'' {
+                while index < source.len() && source[index] != b'\'' {
                     index += 1;
                 }
                 if index < source.len() {
@@ -1040,8 +1017,8 @@ fn scan_to_closing_brace(source: &str, start: usize) -> Result<usize, ExpandErro
             }
             b'"' => {
                 index += 1;
-                while index < source.len() && source.as_bytes()[index] != b'"' {
-                    if source.as_bytes()[index] == b'\\' {
+                while index < source.len() && source[index] != b'"' {
+                    if source[index] == b'\\' {
                         index += 1;
                     }
                     index += 1;
@@ -1050,20 +1027,20 @@ fn scan_to_closing_brace(source: &str, start: usize) -> Result<usize, ExpandErro
                     index += 1;
                 }
             }
-            b'$' if source.as_bytes().get(index + 1) == Some(&b'{') => {
+            b'$' if source.get(index + 1) == Some(&b'{') => {
                 index += 2;
                 let inner = scan_to_closing_brace(source, index)?;
                 index = inner + 1;
             }
-            b'$' if source.as_bytes().get(index + 1) == Some(&b'(') => {
-                if source.as_bytes().get(index + 2) == Some(&b'(') {
+            b'$' if source.get(index + 1) == Some(&b'(') => {
+                if source.get(index + 2) == Some(&b'(') {
                     index += 3;
                     let mut depth = 1usize;
                     while index < source.len() {
-                        if source.as_bytes()[index] == b'(' {
+                        if source[index] == b'(' {
                             depth += 1;
-                        } else if source.as_bytes()[index] == b')' {
-                            if depth == 1 && source.as_bytes().get(index + 1) == Some(&b')') {
+                        } else if source[index] == b')' {
+                            if depth == 1 && source.get(index + 1) == Some(&b')') {
                                 index += 2;
                                 break;
                             }
@@ -1075,9 +1052,9 @@ fn scan_to_closing_brace(source: &str, start: usize) -> Result<usize, ExpandErro
                     index += 2;
                     let mut depth = 1usize;
                     while index < source.len() {
-                        if source.as_bytes()[index] == b'(' {
+                        if source[index] == b'(' {
                             depth += 1;
-                        } else if source.as_bytes()[index] == b')' {
+                        } else if source[index] == b')' {
                             depth -= 1;
                             if depth == 0 {
                                 index += 1;
@@ -1090,8 +1067,8 @@ fn scan_to_closing_brace(source: &str, start: usize) -> Result<usize, ExpandErro
             }
             b'`' => {
                 index += 1;
-                while index < source.len() && source.as_bytes()[index] != b'`' {
-                    if source.as_bytes()[index] == b'\\' {
+                while index < source.len() && source[index] != b'`' {
+                    if source[index] == b'\\' {
                         index += 1;
                     }
                     index += 1;
@@ -1106,50 +1083,72 @@ fn scan_to_closing_brace(source: &str, start: usize) -> Result<usize, ExpandErro
         }
     }
     Err(ExpandError {
-        message: "unterminated parameter expansion".into(),
+        message: b"unterminated parameter expansion".as_ref().into(),
     })
 }
 
-fn control_escape(ch: char) -> char {
+fn control_escape(ch: u8) -> u8 {
     match ch {
-        '\\' => '\u{001c}',
-        '?' => '\u{007f}',
-        other => char::from((other as u8) & 0x1f),
+        b'\\' => 0x1c,
+        b'?' => 0x7f,
+        other => other & 0x1f,
     }
 }
 
-fn parse_variable_base_escape(source: &str, base: u32, max_digits: usize) -> (u8, usize) {
+fn parse_variable_base_escape(source: &[u8], base: u32, max_digits: usize) -> (u8, usize) {
     let mut consumed = 0usize;
     while consumed < max_digits
         && consumed < source.len()
-        && (source.as_bytes()[consumed] as char).is_digit(base)
+        && is_digit_for_base(source[consumed], base)
     {
         consumed += 1;
     }
     if consumed == 0 {
         return (0, 0);
     }
-    (
-        u8::from_str_radix(&source[..consumed], base).unwrap_or_default(),
-        consumed,
-    )
+    let mut val: u8 = 0;
+    for &b in &source[..consumed] {
+        let digit = if b >= b'a' {
+            b - b'a' + 10
+        } else if b >= b'A' {
+            b - b'A' + 10
+        } else {
+            b - b'0'
+        };
+        val = val.wrapping_mul(base as u8).wrapping_add(digit);
+    }
+    (val, consumed)
+}
+
+fn is_digit_for_base(b: u8, base: u32) -> bool {
+    let digit = if b.is_ascii_digit() {
+        (b - b'0') as u32
+    } else if b.is_ascii_lowercase() {
+        (b - b'a') as u32 + 10
+    } else if b.is_ascii_uppercase() {
+        (b - b'A') as u32 + 10
+    } else {
+        return false;
+    };
+    digit < base
 }
 
 fn expand_braced_parameter<C: Context>(
     ctx: &mut C,
-    expr: &str,
+    expr: &[u8],
     quoted: bool,
 ) -> Result<Expansion, ExpandError> {
-    if expr == "#" {
+    if expr == b"#" {
         return Ok(Expansion::One(
-            lookup_param(ctx, "#")
+            lookup_param(ctx, b"#")
                 .map(|c| c.into_owned())
                 .unwrap_or_default(),
         ));
     }
-    if let Some(name) = expr.strip_prefix('#') {
+    if expr.first() == Some(&b'#') && expr.len() > 1 {
+        let name = &expr[1..];
         let value = require_set_parameter(ctx, name, lookup_param(ctx, name))?;
-        return Ok(Expansion::One(value.chars().count().to_string()));
+        return Ok(Expansion::One(bstr::u64_to_bytes(value.len() as u64)));
     }
 
     let (name, op, word) = parse_parameter_expression(expr)?;
@@ -1157,123 +1156,121 @@ fn expand_braced_parameter<C: Context>(
     let is_set = value.is_some();
     let is_null = value.as_deref().map(|s| s.is_empty()).unwrap_or(true);
 
-    match op {
-        None => Ok(Expansion::One(require_set_parameter(ctx, name, value)?)),
-        Some(":-") => {
-            if !is_set || is_null {
-                expand_parameter_word_as_expansion(ctx, word.unwrap_or_default(), quoted)
-            } else {
-                Ok(Expansion::One(
-                    value.map(|c| c.into_owned()).unwrap_or_default(),
-                ))
-            }
+    let value_owned = || value.as_ref().map(|c| c.clone().into_owned()).unwrap_or_default();
+    if op.is_none() {
+        return Ok(Expansion::One(require_set_parameter(ctx, name, value)?));
+    }
+    let op_bytes = op.unwrap();
+    let w = word.unwrap_or(b"");
+    if op_bytes == b":-" {
+        if !is_set || is_null {
+            expand_parameter_word_as_expansion(ctx, w, quoted)
+        } else {
+            Ok(Expansion::One(value_owned()))
         }
-        Some("-") => {
-            if !is_set {
-                expand_parameter_word_as_expansion(ctx, word.unwrap_or_default(), quoted)
-            } else {
-                Ok(Expansion::One(
-                    value.map(|c| c.into_owned()).unwrap_or_default(),
-                ))
-            }
+    } else if op_bytes == b"-" {
+        if !is_set {
+            expand_parameter_word_as_expansion(ctx, w, quoted)
+        } else {
+            Ok(Expansion::One(value_owned()))
         }
-        Some(":=") => {
-            if !is_set || is_null {
-                let val = assign_parameter(ctx, name, word.unwrap_or_default(), quoted)?;
-                Ok(Expansion::One(val))
-            } else {
-                Ok(Expansion::One(
-                    value.map(|c| c.into_owned()).unwrap_or_default(),
-                ))
-            }
+    } else if op_bytes == b":=" {
+        if !is_set || is_null {
+            let val = assign_parameter(ctx, name, w, quoted)?;
+            Ok(Expansion::One(val))
+        } else {
+            Ok(Expansion::One(value_owned()))
         }
-        Some("=") => {
-            if !is_set {
-                let val = assign_parameter(ctx, name, word.unwrap_or_default(), quoted)?;
-                Ok(Expansion::One(val))
-            } else {
-                Ok(Expansion::One(
-                    value.map(|c| c.into_owned()).unwrap_or_default(),
-                ))
-            }
+    } else if op_bytes == b"=" {
+        if !is_set {
+            let val = assign_parameter(ctx, name, w, quoted)?;
+            Ok(Expansion::One(val))
+        } else {
+            Ok(Expansion::One(value_owned()))
         }
-        Some(":?") => {
-            if !is_set || is_null {
-                let default_msg = format!("{name}: parameter null or not set");
-                let raw = match word {
-                    Some(w) if !w.is_empty() => w,
-                    _ => &default_msg,
-                };
-                let message = expand_parameter_word(ctx, raw, quoted)?;
-                Err(ExpandError {
-                    message: message.into(),
-                })
-            } else {
-                Ok(Expansion::One(
-                    value.map(|c| c.into_owned()).unwrap_or_default(),
-                ))
-            }
-        }
-        Some("?") => {
-            if !is_set {
-                let default_msg = format!("{name}: parameter not set");
-                let raw = match word {
-                    Some(w) if !w.is_empty() => w,
-                    _ => &default_msg,
-                };
-                let message = expand_parameter_word(ctx, raw, quoted)?;
-                Err(ExpandError {
-                    message: message.into(),
-                })
-            } else {
-                Ok(Expansion::One(
-                    value.map(|c| c.into_owned()).unwrap_or_default(),
-                ))
-            }
-        }
-        Some(":+") => {
-            if is_set && !is_null {
-                expand_parameter_word_as_expansion(ctx, word.unwrap_or_default(), quoted)
-            } else {
-                Ok(Expansion::One(String::new()))
-            }
-        }
-        Some("+") => {
-            if is_set {
-                expand_parameter_word_as_expansion(ctx, word.unwrap_or_default(), quoted)
-            } else {
-                Ok(Expansion::One(String::new()))
-            }
-        }
-        Some("%" | "%%" | "#" | "##") => {
-            let val = require_set_parameter(ctx, name, value)?;
-            let pat = expand_parameter_pattern_word(ctx, word.unwrap_or_default())?;
-            let mode = match op.unwrap() {
-                "%" => PatternRemoval::SmallestSuffix,
-                "%%" => PatternRemoval::LargestSuffix,
-                "#" => PatternRemoval::SmallestPrefix,
-                _ => PatternRemoval::LargestPrefix,
+    } else if op_bytes == b":?" {
+        if !is_set || is_null {
+            let default_msg = {
+                let mut m = Vec::new();
+                m.extend_from_slice(name);
+                m.extend_from_slice(b": parameter null or not set");
+                m
             };
-            Ok(Expansion::One(remove_parameter_pattern(val, &pat, mode)?))
+            let raw = match word {
+                Some(w2) if !w2.is_empty() => w2,
+                _ => &default_msg,
+            };
+            let message = expand_parameter_word(ctx, raw, quoted)?;
+            Err(ExpandError {
+                message: message.into(),
+            })
+        } else {
+            Ok(Expansion::One(value_owned()))
         }
-        Some(_) => Err(ExpandError {
-            message: "unsupported parameter expansion".into(),
-        }),
+    } else if op_bytes == b"?" {
+        if !is_set {
+            let default_msg = {
+                let mut m = Vec::new();
+                m.extend_from_slice(name);
+                m.extend_from_slice(b": parameter not set");
+                m
+            };
+            let raw = match word {
+                Some(w2) if !w2.is_empty() => w2,
+                _ => &default_msg,
+            };
+            let message = expand_parameter_word(ctx, raw, quoted)?;
+            Err(ExpandError {
+                message: message.into(),
+            })
+        } else {
+            Ok(Expansion::One(value_owned()))
+        }
+    } else if op_bytes == b":+" {
+        if is_set && !is_null {
+            expand_parameter_word_as_expansion(ctx, w, quoted)
+        } else {
+            Ok(Expansion::One(Vec::new()))
+        }
+    } else if op_bytes == b"+" {
+        if is_set {
+            expand_parameter_word_as_expansion(ctx, w, quoted)
+        } else {
+            Ok(Expansion::One(Vec::new()))
+        }
+    } else if op_bytes == b"%" || op_bytes == b"%%" || op_bytes == b"#" || op_bytes == b"##" {
+        let val = require_set_parameter(ctx, name, value)?;
+        let pat = expand_parameter_pattern_word(ctx, w)?;
+        let mode = if op_bytes == b"%" {
+            PatternRemoval::SmallestSuffix
+        } else if op_bytes == b"%%" {
+            PatternRemoval::LargestSuffix
+        } else if op_bytes == b"#" {
+            PatternRemoval::SmallestPrefix
+        } else {
+            PatternRemoval::LargestPrefix
+        };
+        Ok(Expansion::One(remove_parameter_pattern(val, &pat, mode)?))
+    } else {
+        Err(ExpandError {
+            message: b"unsupported parameter expansion".as_ref().into(),
+        })
     }
 }
 
 fn expand_braced_parameter_text<C: Context>(
     ctx: &mut C,
-    expr: &str,
-) -> Result<String, ExpandError> {
-    if expr == "#" {
-        return Ok(lookup_param(ctx, "#")
+    expr: &[u8],
+) -> Result<Vec<u8>, ExpandError> {
+    if expr == b"#" {
+        return Ok(lookup_param(ctx, b"#")
             .map(|c| c.into_owned())
             .unwrap_or_default());
     }
-    if let Some(name) = expr.strip_prefix('#') {
+    if expr.first() == Some(&b'#') && expr.len() > 1 {
+        let name = &expr[1..];
         let value = require_set_parameter(ctx, name, lookup_param(ctx, name))?;
-        return Ok(value.chars().count().to_string());
+        return Ok(bstr::u64_to_bytes(value.len() as u64));
     }
 
     let (name, op, word) = parse_parameter_expression(expr)?;
@@ -1281,106 +1278,110 @@ fn expand_braced_parameter_text<C: Context>(
     let is_set = value.is_some();
     let is_null = value.as_deref().map(|s| s.is_empty()).unwrap_or(true);
 
-    match op {
-        None => require_set_parameter(ctx, name, value),
-        Some(":-") => {
-            if !is_set || is_null {
-                expand_parameter_text_owned(ctx, word.unwrap_or_default())
-            } else {
-                Ok(value.map(|c| c.into_owned()).unwrap_or_default())
-            }
+    let value_owned = || value.as_ref().map(|c| c.clone().into_owned()).unwrap_or_default();
+    if op.is_none() {
+        return require_set_parameter(ctx, name, value);
+    }
+    let op_bytes = op.unwrap();
+    let w = word.unwrap_or(b"");
+    if op_bytes == b":-" {
+        if !is_set || is_null {
+            expand_parameter_text_owned(ctx, w)
+        } else {
+            Ok(value_owned())
         }
-        Some("-") => {
-            if !is_set {
-                expand_parameter_text_owned(ctx, word.unwrap_or_default())
-            } else {
-                Ok(value.map(|c| c.into_owned()).unwrap_or_default())
-            }
+    } else if op_bytes == b"-" {
+        if !is_set {
+            expand_parameter_text_owned(ctx, w)
+        } else {
+            Ok(value_owned())
         }
-        Some(":=") => {
-            if !is_set || is_null {
-                assign_parameter_text(ctx, name, word.unwrap_or_default())
-            } else {
-                Ok(value.map(|c| c.into_owned()).unwrap_or_default())
-            }
+    } else if op_bytes == b":=" {
+        if !is_set || is_null {
+            assign_parameter_text(ctx, name, w)
+        } else {
+            Ok(value_owned())
         }
-        Some("=") => {
-            if !is_set {
-                assign_parameter_text(ctx, name, word.unwrap_or_default())
-            } else {
-                Ok(value.map(|c| c.into_owned()).unwrap_or_default())
-            }
+    } else if op_bytes == b"=" {
+        if !is_set {
+            assign_parameter_text(ctx, name, w)
+        } else {
+            Ok(value_owned())
         }
-        Some(":?") => {
-            if !is_set || is_null {
-                let message =
-                    expand_parameter_error_text(ctx, name, word, "parameter null or not set")?;
-                Err(ExpandError {
-                    message: message.into(),
-                })
-            } else {
-                Ok(value.map(|c| c.into_owned()).unwrap_or_default())
-            }
+    } else if op_bytes == b":?" {
+        if !is_set || is_null {
+            let message =
+                expand_parameter_error_text(ctx, name, word, b"parameter null or not set")?;
+            Err(ExpandError {
+                message: message.into(),
+            })
+        } else {
+            Ok(value_owned())
         }
-        Some("?") => {
-            if !is_set {
-                let message = expand_parameter_error_text(ctx, name, word, "parameter not set")?;
-                Err(ExpandError {
-                    message: message.into(),
-                })
-            } else {
-                Ok(value.map(|c| c.into_owned()).unwrap_or_default())
-            }
+    } else if op_bytes == b"?" {
+        if !is_set {
+            let message = expand_parameter_error_text(ctx, name, word, b"parameter not set")?;
+            Err(ExpandError {
+                message: message.into(),
+            })
+        } else {
+            Ok(value_owned())
         }
-        Some(":+") => {
-            if is_set && !is_null {
-                expand_parameter_text_owned(ctx, word.unwrap_or_default())
-            } else {
-                Ok(String::new())
-            }
+    } else if op_bytes == b":+" {
+        if is_set && !is_null {
+            expand_parameter_text_owned(ctx, w)
+        } else {
+            Ok(Vec::new())
         }
-        Some("+") => {
-            if is_set {
-                expand_parameter_text_owned(ctx, word.unwrap_or_default())
-            } else {
-                Ok(String::new())
-            }
+    } else if op_bytes == b"+" {
+        if is_set {
+            expand_parameter_text_owned(ctx, w)
+        } else {
+            Ok(Vec::new())
         }
-        Some("%") => remove_parameter_pattern(
+    } else if op_bytes == b"%" {
+        remove_parameter_pattern(
             require_set_parameter(ctx, name, value)?,
-            &expand_parameter_text_owned(ctx, word.unwrap_or_default())?,
+            &expand_parameter_text_owned(ctx, w)?,
             PatternRemoval::SmallestSuffix,
-        ),
-        Some("%%") => remove_parameter_pattern(
+        )
+    } else if op_bytes == b"%%" {
+        remove_parameter_pattern(
             require_set_parameter(ctx, name, value)?,
-            &expand_parameter_text_owned(ctx, word.unwrap_or_default())?,
+            &expand_parameter_text_owned(ctx, w)?,
             PatternRemoval::LargestSuffix,
-        ),
-        Some("#") => remove_parameter_pattern(
+        )
+    } else if op_bytes == b"#" {
+        remove_parameter_pattern(
             require_set_parameter(ctx, name, value)?,
-            &expand_parameter_text_owned(ctx, word.unwrap_or_default())?,
+            &expand_parameter_text_owned(ctx, w)?,
             PatternRemoval::SmallestPrefix,
-        ),
-        Some("##") => remove_parameter_pattern(
+        )
+    } else if op_bytes == b"##" {
+        remove_parameter_pattern(
             require_set_parameter(ctx, name, value)?,
-            &expand_parameter_text_owned(ctx, word.unwrap_or_default())?,
+            &expand_parameter_text_owned(ctx, w)?,
             PatternRemoval::LargestPrefix,
-        ),
-        Some(_) => Err(ExpandError {
-            message: "unsupported parameter expansion".into(),
-        }),
+        )
+    } else {
+        Err(ExpandError {
+            message: b"unsupported parameter expansion".as_ref().into(),
+        })
     }
 }
 
 fn assign_parameter<C: Context>(
     ctx: &mut C,
-    name: &str,
-    raw_word: &str,
+    name: &[u8],
+    raw_word: &[u8],
     quoted: bool,
-) -> Result<String, ExpandError> {
+) -> Result<Vec<u8>, ExpandError> {
     if !is_name(name) {
+        let mut msg = Vec::new();
+        msg.extend_from_slice(name);
+        msg.extend_from_slice(b": cannot assign in parameter expansion");
         return Err(ExpandError {
-            message: format!("{name}: cannot assign in parameter expansion").into(),
+            message: msg.into(),
         });
     }
     let value = expand_parameter_word(ctx, raw_word, quoted)?;
@@ -1390,12 +1391,15 @@ fn assign_parameter<C: Context>(
 
 fn assign_parameter_text<C: Context>(
     ctx: &mut C,
-    name: &str,
-    raw_word: &str,
-) -> Result<String, ExpandError> {
+    name: &[u8],
+    raw_word: &[u8],
+) -> Result<Vec<u8>, ExpandError> {
     if !is_name(name) {
+        let mut msg = Vec::new();
+        msg.extend_from_slice(name);
+        msg.extend_from_slice(b": cannot assign in parameter expansion");
         return Err(ExpandError {
-            message: format!("{name}: cannot assign in parameter expansion").into(),
+            message: msg.into(),
         });
     }
     let value = expand_parameter_text_owned(ctx, raw_word)?;
@@ -1405,15 +1409,19 @@ fn assign_parameter_text<C: Context>(
 
 fn expand_parameter_error_text<C: Context>(
     ctx: &mut C,
-    name: &str,
-    word: Option<&str>,
-    default_message: &str,
-) -> Result<String, ExpandError> {
+    name: &[u8],
+    word: Option<&[u8]>,
+    default_message: &[u8],
+) -> Result<Vec<u8>, ExpandError> {
     let owned;
     let raw = match word {
         Some(w) if !w.is_empty() => w,
         _ => {
-            owned = format!("{name}: {default_message}");
+            let mut m = Vec::new();
+            m.extend_from_slice(name);
+            m.extend_from_slice(b": ");
+            m.extend_from_slice(default_message);
+            owned = m;
             &owned
         }
     };
@@ -1422,16 +1430,16 @@ fn expand_parameter_error_text<C: Context>(
 
 fn expand_parameter_word<C: Context>(
     ctx: &mut C,
-    raw: &str,
+    raw: &[u8],
     _quoted: bool,
-) -> Result<String, ExpandError> {
+) -> Result<Vec<u8>, ExpandError> {
     let expanded = expand_raw(ctx, raw)?;
     Ok(flatten_segments(&expanded.segments))
 }
 
 fn expand_parameter_word_as_expansion<C: Context>(
     ctx: &mut C,
-    raw: &str,
+    raw: &[u8],
     _quoted: bool,
 ) -> Result<Expansion, ExpandError> {
     let expanded = expand_raw(ctx, raw)?;
@@ -1441,10 +1449,10 @@ fn expand_parameter_word_as_expansion<C: Context>(
         .any(|s| matches!(s, Segment::AtBreak | Segment::AtEmpty));
     if has_at {
         let mut fields = Vec::new();
-        let mut current = String::new();
+        let mut current = Vec::new();
         for seg in &expanded.segments {
             match seg {
-                Segment::Text(s, _) => current.push_str(s),
+                Segment::Text(s, _) => current.extend_from_slice(s),
                 Segment::AtBreak => {
                     fields.push(std::mem::take(&mut current));
                 }
@@ -1460,24 +1468,24 @@ fn expand_parameter_word_as_expansion<C: Context>(
 
 fn expand_parameter_pattern_word<C: Context>(
     ctx: &mut C,
-    raw: &str,
-) -> Result<String, ExpandError> {
+    raw: &[u8],
+) -> Result<Vec<u8>, ExpandError> {
     let expanded = expand_raw(ctx, raw)?;
     Ok(render_pattern_from_segments(&expanded.segments))
 }
 
 fn parse_parameter_expression(
-    expr: &str,
-) -> Result<(&str, Option<&str>, Option<&str>), ExpandError> {
+    expr: &[u8],
+) -> Result<(&[u8], Option<&[u8]>, Option<&[u8]>), ExpandError> {
     if expr.is_empty() {
         return Err(ExpandError {
-            message: "empty parameter expansion".into(),
+            message: b"empty parameter expansion".as_ref().into(),
         });
     }
     let mut index = 0usize;
-    let b0 = expr.as_bytes()[0];
-    let name: &str = if b0.is_ascii_digit() {
-        while index < expr.len() && expr.as_bytes()[index].is_ascii_digit() {
+    let b0 = expr[0];
+    let name: &[u8] = if b0.is_ascii_digit() {
+        while index < expr.len() && expr[index].is_ascii_digit() {
             index += 1;
         }
         &expr[..index]
@@ -1486,14 +1494,14 @@ fn parse_parameter_expression(
         &expr[..index]
     } else if b0 == b'_' || b0.is_ascii_alphabetic() {
         while index < expr.len()
-            && (expr.as_bytes()[index] == b'_' || expr.as_bytes()[index].is_ascii_alphanumeric())
+            && (expr[index] == b'_' || expr[index].is_ascii_alphanumeric())
         {
             index += 1;
         }
         &expr[..index]
     } else {
         return Err(ExpandError {
-            message: "invalid parameter expansion".into(),
+            message: b"invalid parameter expansion".as_ref().into(),
         });
     };
 
@@ -1502,41 +1510,44 @@ fn parse_parameter_expression(
     }
 
     let rest = &expr[index..];
-    let bytes = rest.as_bytes();
-    let (op, word) = match bytes[0] {
-        b':' if bytes.len() > 1 => match bytes[1] {
-            b'-' => (":-", &rest[2..]),
-            b'=' => (":=", &rest[2..]),
-            b'?' => (":?", &rest[2..]),
-            b'+' => (":+", &rest[2..]),
+    let (op, word): (&[u8], &[u8]) = match rest[0] {
+        b':' if rest.len() > 1 => match rest[1] {
+            b'-' => (b":-", &rest[2..]),
+            b'=' => (b":=", &rest[2..]),
+            b'?' => (b":?", &rest[2..]),
+            b'+' => (b":+", &rest[2..]),
             _ => (&rest[..1], &rest[1..]),
         },
-        b'%' if bytes.len() > 1 && bytes[1] == b'%' => ("%%", &rest[2..]),
-        b'#' if bytes.len() > 1 && bytes[1] == b'#' => ("##", &rest[2..]),
-        b'-' => ("-", &rest[1..]),
-        b'=' => ("=", &rest[1..]),
-        b'?' => ("?", &rest[1..]),
-        b'+' => ("+", &rest[1..]),
-        b'%' => ("%", &rest[1..]),
-        b'#' => ("#", &rest[1..]),
+        b'%' if rest.len() > 1 && rest[1] == b'%' => (b"%%", &rest[2..]),
+        b'#' if rest.len() > 1 && rest[1] == b'#' => (b"##", &rest[2..]),
+        b'-' => (b"-", &rest[1..]),
+        b'=' => (b"=", &rest[1..]),
+        b'?' => (b"?", &rest[1..]),
+        b'+' => (b"+", &rest[1..]),
+        b'%' => (b"%", &rest[1..]),
+        b'#' => (b"#", &rest[1..]),
         _ => (&rest[..1], &rest[1..]),
     };
     Ok((name, Some(op), Some(word)))
 }
 
-fn lookup_param<'a, C: Context>(ctx: &'a C, name: &str) -> Option<Cow<'a, str>> {
-    if name == "0" {
+fn lookup_param<'a, C: Context>(ctx: &'a C, name: &[u8]) -> Option<Cow<'a, [u8]>> {
+    if name == b"0" {
         return Some(Cow::Borrowed(ctx.shell_name()));
     }
-    if !name.is_empty() && name.as_bytes().iter().all(|b| b.is_ascii_digit()) {
-        return name
-            .parse::<usize>()
-            .ok()
+    if !name.is_empty() && name.iter().all(|b| b.is_ascii_digit()) {
+        return bstr::parse_i64(name)
+            .and_then(|n| {
+                if n >= 0 {
+                    Some(n as usize)
+                } else {
+                    None
+                }
+            })
             .and_then(|index| ctx.positional_param(index));
     }
-    let mut chars = name.chars();
-    if let (Some(ch), None) = (chars.next(), chars.next()) {
-        if let Some(value) = ctx.special_param(ch) {
+    if name.len() == 1 {
+        if let Some(value) = ctx.special_param(name[0]) {
             return Some(value);
         }
     }
@@ -1545,12 +1556,15 @@ fn lookup_param<'a, C: Context>(ctx: &'a C, name: &str) -> Option<Cow<'a, str>> 
 
 fn require_set_parameter<C: Context>(
     ctx: &C,
-    name: &str,
-    value: Option<Cow<'_, str>>,
-) -> Result<String, ExpandError> {
-    if value.is_none() && ctx.nounset_enabled() && name != "@" && name != "*" {
+    name: &[u8],
+    value: Option<Cow<'_, [u8]>>,
+) -> Result<Vec<u8>, ExpandError> {
+    if value.is_none() && ctx.nounset_enabled() && name != b"@" && name != b"*" {
+        let mut msg = Vec::new();
+        msg.extend_from_slice(name);
+        msg.extend_from_slice(b": parameter not set");
         return Err(ExpandError {
-            message: format!("{name}: parameter not set").into(),
+            message: msg.into(),
         });
     }
     Ok(value.map(|c| c.into_owned()).unwrap_or_default())
@@ -1566,52 +1580,54 @@ struct ExpandedWord {
 
 #[derive(Debug, PartialEq, Eq)]
 struct Field {
-    text: String,
+    text: Vec<u8>,
     has_unquoted_glob: bool,
 }
 
-fn segment_chars(segments: &[Segment]) -> impl Iterator<Item = (char, QuoteState)> + '_ {
+fn segment_bytes(segments: &[Segment]) -> impl Iterator<Item = (u8, QuoteState)> + '_ {
     segments
         .iter()
         .flat_map(|seg| match seg {
             Segment::Text(text, state) => {
                 let s = *state;
-                Some(text.chars().map(move |ch| (ch, s)))
+                Some(text.iter().map(move |&b| (b, s)))
             }
             _ => None,
         })
         .flatten()
 }
 
-fn split_fields_from_segments(segments: &[Segment], ifs: &str) -> Vec<Field> {
+fn split_fields_from_segments(segments: &[Segment], ifs: &[u8]) -> Vec<Field> {
     if ifs.is_empty() {
         return vec![Field {
             text: flatten_segments(segments),
             has_unquoted_glob: segments.iter().any(|seg| {
-                matches!(seg, Segment::Text(text, state) if *state != QuoteState::Quoted && text.chars().any(is_glob_char))
+                matches!(seg, Segment::Text(text, state) if *state != QuoteState::Quoted && text.iter().any(|&b| is_glob_byte(b)))
             }),
         }];
     }
 
-    let ifs_ws: Vec<char> = ifs
-        .chars()
-        .filter(|ch| matches!(ch, ' ' | '\t' | '\n'))
+    let ifs_ws: Vec<u8> = ifs
+        .iter()
+        .copied()
+        .filter(|b| b.is_ascii_whitespace())
         .collect();
-    let ifs_other: Vec<char> = ifs
-        .chars()
-        .filter(|ch| !matches!(ch, ' ' | '\t' | '\n'))
+    let ifs_other: Vec<u8> = ifs
+        .iter()
+        .copied()
+        .filter(|b| !b.is_ascii_whitespace())
         .collect();
-    let chars: Vec<(char, QuoteState)> = segment_chars(segments).collect();
+    let chars: Vec<(u8, QuoteState)> = segment_bytes(segments).collect();
 
     let mut fields = Vec::new();
-    let mut current = String::new();
+    let mut current = Vec::new();
     let mut current_glob = false;
     let mut index = 0usize;
 
     while index < chars.len() {
-        let (ch, state) = chars[index];
+        let (b, state) = chars[index];
         let splittable = state == QuoteState::Expanded;
-        if splittable && ifs_other.contains(&ch) {
+        if splittable && ifs_other.contains(&b) {
             fields.push(Field {
                 text: std::mem::take(&mut current),
                 has_unquoted_glob: current_glob,
@@ -1626,7 +1642,7 @@ fn split_fields_from_segments(segments: &[Segment], ifs: &str) -> Vec<Field> {
             }
             continue;
         }
-        if splittable && ifs_ws.contains(&ch) {
+        if splittable && ifs_ws.contains(&b) {
             if !current.is_empty() {
                 fields.push(Field {
                     text: std::mem::take(&mut current),
@@ -1642,8 +1658,8 @@ fn split_fields_from_segments(segments: &[Segment], ifs: &str) -> Vec<Field> {
             }
             continue;
         }
-        current_glob |= state != QuoteState::Quoted && is_glob_char(ch);
-        current.push(ch);
+        current_glob |= state != QuoteState::Quoted && is_glob_byte(b);
+        current.push(b);
         index += 1;
     }
 
@@ -1657,61 +1673,61 @@ fn split_fields_from_segments(segments: &[Segment], ifs: &str) -> Vec<Field> {
     fields
 }
 
-fn push_segment(segments: &mut Vec<Segment>, text: String, state: QuoteState) {
+fn push_segment(segments: &mut Vec<Segment>, text: Vec<u8>, state: QuoteState) {
     if text.is_empty() {
         return;
     }
     if let Some(Segment::Text(last, last_state)) = segments.last_mut() {
         if *last_state == state {
-            last.push_str(&text);
+            last.extend_from_slice(&text);
             return;
         }
     }
     segments.push(Segment::Text(text, state));
 }
 
-fn push_segment_str(segments: &mut Vec<Segment>, text: &str, state: QuoteState) {
+fn push_segment_slice(segments: &mut Vec<Segment>, text: &[u8], state: QuoteState) {
     if text.is_empty() {
         return;
     }
     if let Some(Segment::Text(last, last_state)) = segments.last_mut() {
         if *last_state == state {
-            last.push_str(text);
+            last.extend_from_slice(text);
             return;
         }
     }
-    segments.push(Segment::Text(text.to_string(), state));
+    segments.push(Segment::Text(text.to_vec(), state));
 }
 
-fn flatten_segments(segments: &[Segment]) -> String {
-    let mut result = String::new();
+fn flatten_segments(segments: &[Segment]) -> Vec<u8> {
+    let mut result = Vec::new();
     for seg in segments {
         if let Segment::Text(part, _) = seg {
-            result.push_str(part);
+            result.extend_from_slice(part);
         }
     }
     result
 }
 
-fn render_pattern_from_segments(segments: &[Segment]) -> String {
-    let mut pattern = String::new();
+fn render_pattern_from_segments(segments: &[Segment]) -> Vec<u8> {
+    let mut pattern = Vec::new();
     for seg in segments {
         if let Segment::Text(text, state) = seg {
             if *state == QuoteState::Quoted {
-                for ch in text.chars() {
-                    pattern.push('\\');
-                    pattern.push(ch);
+                for &b in text.iter() {
+                    pattern.push(b'\\');
+                    pattern.push(b);
                 }
             } else {
-                pattern.push_str(text);
+                pattern.extend_from_slice(text);
             }
         }
     }
     pattern
 }
 
-fn is_glob_char(ch: char) -> bool {
-    matches!(ch, '*' | '?' | '[')
+fn is_glob_byte(b: u8) -> bool {
+    matches!(b, b'*' | b'?' | b'[')
 }
 
 #[derive(Clone, Copy)]
@@ -1723,46 +1739,37 @@ enum PatternRemoval {
 }
 
 fn remove_parameter_pattern(
-    value: String,
-    pattern: &str,
+    value: Vec<u8>,
+    pattern: &[u8],
     mode: PatternRemoval,
-) -> Result<String, ExpandError> {
-    let boundaries: Vec<usize> = {
-        let mut v = Vec::new();
-        let mut i = 0;
-        while i < value.len() {
-            v.push(i);
-            i += char_len(&value, i);
-        }
-        v.push(value.len());
-        v
-    };
+) -> Result<Vec<u8>, ExpandError> {
+    let boundaries: Vec<usize> = (0..=value.len()).collect();
     match mode {
         PatternRemoval::SmallestPrefix => {
             for &end in &boundaries {
                 if pattern_matches(&value[..end], pattern) {
-                    return Ok(value[end..].to_string());
+                    return Ok(value[end..].to_vec());
                 }
             }
         }
         PatternRemoval::LargestPrefix => {
             for &end in boundaries.iter().rev() {
                 if pattern_matches(&value[..end], pattern) {
-                    return Ok(value[end..].to_string());
+                    return Ok(value[end..].to_vec());
                 }
             }
         }
         PatternRemoval::SmallestSuffix => {
             for &start in boundaries.iter().rev() {
                 if pattern_matches(&value[start..], pattern) {
-                    return Ok(value[..start].to_string());
+                    return Ok(value[..start].to_vec());
                 }
             }
         }
         PatternRemoval::LargestSuffix => {
             for &start in &boundaries {
                 if pattern_matches(&value[start..], pattern) {
-                    return Ok(value[..start].to_string());
+                    return Ok(value[..start].to_vec());
                 }
             }
         }
@@ -1770,20 +1777,16 @@ fn remove_parameter_pattern(
     Ok(value)
 }
 
-fn expand_pathname(pattern: &str) -> Vec<String> {
-    if !pattern.chars().any(is_glob_char) {
-        return vec![pattern.to_string()];
+fn expand_pathname(pattern: &[u8]) -> Vec<Vec<u8>> {
+    if !pattern.iter().any(|&b| is_glob_byte(b)) {
+        return vec![pattern.to_vec()];
     }
-    let absolute = pattern.starts_with('/');
-    let segments: Vec<&str> = pattern
-        .split('/')
+    let absolute = pattern.first() == Some(&b'/');
+    let segments: Vec<&[u8]> = pattern
+        .split(|&b| b == b'/')
         .filter(|segment| !segment.is_empty())
         .collect();
-    let base = if absolute {
-        PathBuf::from("/")
-    } else {
-        PathBuf::from(".")
-    };
+    let base: Vec<u8> = if absolute { b"/".to_vec() } else { b".".to_vec() };
     let mut matches = Vec::new();
     expand_path_segments(&base, &segments, 0, absolute, &mut matches);
     matches.sort();
@@ -1791,20 +1794,24 @@ fn expand_pathname(pattern: &str) -> Vec<String> {
 }
 
 fn expand_path_segments(
-    base: &Path,
-    segments: &[&str],
+    base: &[u8],
+    segments: &[&[u8]],
     index: usize,
     absolute: bool,
-    matches: &mut Vec<String>,
+    matches: &mut Vec<Vec<u8>>,
 ) {
     if index == segments.len() {
         let text = if absolute {
-            base.display().to_string()
+            base.to_vec()
         } else {
-            base.strip_prefix(".").unwrap_or(base).display().to_string()
+            if base.starts_with(b"./") && base.len() > 2 {
+                base[2..].to_vec()
+            } else {
+                base.to_vec()
+            }
         };
         matches.push(if text.is_empty() {
-            ".".to_string()
+            b".".to_vec()
         } else {
             text
         });
@@ -1812,40 +1819,50 @@ fn expand_path_segments(
     }
 
     let segment = segments[index];
-    if !segment.chars().any(is_glob_char) {
-        let next = base.join(segment);
-        if sys::file_exists(&next.display().to_string()) {
+
+    if !segment.iter().any(|&b| is_glob_byte(b)) {
+        let next = path_join(base, segment);
+        if sys::file_exists(&next) {
             expand_path_segments(&next, segments, index + 1, absolute, matches);
         }
         return;
     }
 
-    let Ok(mut names) = sys::read_dir_entries(&base.display().to_string()) else {
+    let Ok(mut names) = sys::read_dir_entries(base) else {
         return;
     };
     names.sort();
     for name in names {
-        if name.starts_with('.') && !segment.starts_with('.') {
+        if name.starts_with(b".") && !segment.starts_with(b".") {
             continue;
         }
         if pattern_matches(&name, segment) {
-            expand_path_segments(&base.join(&name), segments, index + 1, absolute, matches);
+            let next = path_join(base, &name);
+            expand_path_segments(&next, segments, index + 1, absolute, matches);
         }
     }
 }
 
-pub fn pattern_matches(text: &str, pattern: &str) -> bool {
+fn path_join(base: &[u8], name: &[u8]) -> Vec<u8> {
+    let mut result = base.to_vec();
+    if !result.is_empty() && *result.last().unwrap() != b'/' {
+        result.push(b'/');
+    }
+    result.extend_from_slice(name);
+    result
+}
+
+pub fn pattern_matches(text: &[u8], pattern: &[u8]) -> bool {
     pattern_matches_inner(text, 0, pattern, 0)
 }
 
-fn pattern_matches_inner(text: &str, ti: usize, pattern: &str, pi: usize) -> bool {
+fn pattern_matches_inner(text: &[u8], ti: usize, pattern: &[u8], pi: usize) -> bool {
     if pi == pattern.len() {
         return ti == text.len();
     }
-    let pc = char_at(pattern, pi);
-    let pclen = char_len(pattern, pi);
+    let pc = pattern[pi];
     match pc {
-        '*' => {
+        b'*' => {
             let mut pos = ti;
             loop {
                 if pattern_matches_inner(text, pos, pattern, pi + 1) {
@@ -1854,16 +1871,16 @@ fn pattern_matches_inner(text: &str, ti: usize, pattern: &str, pi: usize) -> boo
                 if pos == text.len() {
                     break;
                 }
-                pos += char_len(text, pos);
+                pos += 1;
             }
             false
         }
-        '?' => {
-            ti < text.len() && pattern_matches_inner(text, ti + char_len(text, ti), pattern, pi + 1)
+        b'?' => {
+            ti < text.len() && pattern_matches_inner(text, ti + 1, pattern, pi + 1)
         }
-        '[' => {
+        b'[' => {
             let tc = if ti < text.len() {
-                Some(char_at(text, ti))
+                Some(text[ti])
             } else {
                 None
             };
@@ -1871,35 +1888,34 @@ fn pattern_matches_inner(text: &str, ti: usize, pattern: &str, pi: usize) -> boo
                 Some((matched, next_pi)) => {
                     matched
                         && ti < text.len()
-                        && pattern_matches_inner(text, ti + char_len(text, ti), pattern, next_pi)
+                        && pattern_matches_inner(text, ti + 1, pattern, next_pi)
                 }
                 None => {
                     ti < text.len()
-                        && char_at(text, ti) == '['
-                        && pattern_matches_inner(text, ti + char_len(text, ti), pattern, pi + 1)
+                        && text[ti] == b'['
+                        && pattern_matches_inner(text, ti + 1, pattern, pi + 1)
                 }
             }
         }
-        '\\' if pi + pclen < pattern.len() => {
-            let escaped = char_at(pattern, pi + pclen);
-            let eclen = char_len(pattern, pi + pclen);
+        b'\\' if pi + 1 < pattern.len() => {
+            let escaped = pattern[pi + 1];
             ti < text.len()
-                && char_at(text, ti) == escaped
-                && pattern_matches_inner(text, ti + char_len(text, ti), pattern, pi + pclen + eclen)
+                && text[ti] == escaped
+                && pattern_matches_inner(text, ti + 1, pattern, pi + 2)
         }
         ch => {
             ti < text.len()
-                && char_at(text, ti) == ch
-                && pattern_matches_inner(text, ti + char_len(text, ti), pattern, pi + pclen)
+                && text[ti] == ch
+                && pattern_matches_inner(text, ti + 1, pattern, pi + 1)
         }
     }
 }
 
-fn match_charclass(class: &str, ch: char) -> bool {
-    crate::sys::classify_char(class, ch)
+fn match_charclass(class: &[u8], ch: u8) -> bool {
+    crate::sys::classify_byte(class, ch)
 }
 
-fn match_bracket(current: Option<char>, pattern: &str, start: usize) -> Option<(bool, usize)> {
+fn match_bracket(current: Option<u8>, pattern: &[u8], start: usize) -> Option<(bool, usize)> {
     let current = current?;
     let mut index = start + 1;
     if index >= pattern.len() {
@@ -1907,7 +1923,7 @@ fn match_bracket(current: Option<char>, pattern: &str, start: usize) -> Option<(
     }
 
     let mut negate = false;
-    if index < pattern.len() && matches!(pattern.as_bytes()[index], b'!' | b'^') {
+    if index < pattern.len() && matches!(pattern[index], b'!' | b'^') {
         negate = true;
         index += 1;
     }
@@ -1916,8 +1932,8 @@ fn match_bracket(current: Option<char>, pattern: &str, start: usize) -> Option<(
     let mut saw_closer = false;
     let mut first_elem = true;
     while index < pattern.len() {
-        let pc = char_at(pattern, index);
-        if pc == ']' && !first_elem {
+        let pc = pattern[index];
+        if pc == b']' && !first_elem {
             saw_closer = true;
             index += 1;
             break;
@@ -1925,43 +1941,41 @@ fn match_bracket(current: Option<char>, pattern: &str, start: usize) -> Option<(
 
         first_elem = false;
 
-        if pc == '[' && index + 1 < pattern.len() && pattern.as_bytes()[index + 1] == b':' {
+        if pc == b'[' && index + 1 < pattern.len() && pattern[index + 1] == b':' {
             let class_start = index + 2;
             let mut found_end = None;
             let mut ci = class_start;
             while ci + 1 < pattern.len() {
-                if pattern.as_bytes()[ci] == b':' && pattern.as_bytes()[ci + 1] == b']' {
+                if pattern[ci] == b':' && pattern[ci + 1] == b']' {
                     found_end = Some(ci);
                     break;
                 }
                 ci += 1;
             }
             if let Some(end) = found_end {
-                let class_name = pattern[class_start..end].to_string();
-                matched |= match_charclass(&class_name, current);
+                let class_name = &pattern[class_start..end];
+                matched |= match_charclass(class_name, current);
                 index = end + 2;
                 continue;
             }
         }
 
-        let first = if pc == '\\' && index + 1 < pattern.len() {
+        let first = if pc == b'\\' && index + 1 < pattern.len() {
             index += 1;
-            char_at(pattern, index)
+            pattern[index]
         } else {
             pc
         };
-        let first_clen = char_len(pattern, index);
-        if index + first_clen + 1 < pattern.len()
-            && pattern.as_bytes()[index + first_clen] == b'-'
-            && char_at(pattern, index + first_clen + 1) != ']'
+        if index + 2 < pattern.len()
+            && pattern[index + 1] == b'-'
+            && pattern[index + 2] != b']'
         {
-            let last = char_at(pattern, index + first_clen + 1);
-            let last_clen = char_len(pattern, index + first_clen + 1);
+            let last = pattern[index + 2];
             matched |= first <= current && current <= last;
-            index += first_clen + 1 + last_clen;
+            index += 3;
         } else {
             matched |= current == first;
-            index += first_clen;
+            index += 1;
         }
     }
 
@@ -1972,74 +1986,78 @@ fn match_bracket(current: Option<char>, pattern: &str, start: usize) -> Option<(
     }
 }
 
-fn is_name(name: &str) -> bool {
-    let mut chars = name.chars();
-    matches!(chars.next(), Some('_' | 'a'..='z' | 'A'..='Z'))
-        && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+fn is_name(name: &[u8]) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    let first = name[0];
+    if !first.is_ascii_alphabetic() && first != b'_' {
+        return false;
+    }
+    name[1..].iter().all(|&b| b == b'_' || b.is_ascii_alphanumeric())
 }
 
 fn expand_arithmetic_expression<C: Context>(
     ctx: &mut C,
-    expression: &str,
-) -> Result<String, ExpandError> {
-    let mut result = String::new();
+    expression: &[u8],
+) -> Result<Vec<u8>, ExpandError> {
+    let mut result = Vec::new();
     let mut i = 0;
     while i < expression.len() {
-        if expression.as_bytes()[i] == b'$' {
+        if expression[i] == b'$' {
             let (expansion, consumed) = expand_dollar(ctx, &expression[i..], true)?;
             match expansion {
-                Expansion::One(s) => result.push_str(&s),
+                Expansion::One(s) => result.extend_from_slice(&s),
                 Expansion::AtFields(fields) => {
-                    result.push_str(&fields.join(" "));
+                    result.extend_from_slice(&bstr::join_bstrings(&fields, b" "));
                 }
             }
             i += consumed;
-        } else if expression.as_bytes()[i] == b'`' {
+        } else if expression[i] == b'`' {
             i += 1;
             let command = scan_backtick_command(expression, &mut i, true)?;
             let output = ctx.command_substitute(&command)?;
-            result.push_str(output.trim_end_matches('\n'));
-        } else if expression.as_bytes()[i] == b'\n' {
+            result.extend_from_slice(trim_trailing_newlines(&output));
+        } else if expression[i] == b'\n' {
             ctx.inc_lineno();
-            result.push('\n');
+            result.push(b'\n');
             i += 1;
         } else {
-            let clen = char_len(expression, i);
-            result.push_str(&expression[i..i + clen]);
-            i += clen;
+            result.push(expression[i]);
+            i += 1;
         }
     }
     Ok(result)
 }
 
-fn eval_arithmetic<C: Context>(ctx: &mut C, expression: &str) -> Result<i64, ExpandError> {
+fn eval_arithmetic<C: Context>(ctx: &mut C, expression: &[u8]) -> Result<i64, ExpandError> {
     let mut parser = ArithmeticParser::new(ctx, expression);
     let value = parser.parse_assignment()?;
     parser.skip_ws();
     if !parser.is_eof() {
         return Err(ExpandError {
-            message: "unexpected trailing arithmetic tokens".into(),
+            message: b"unexpected trailing arithmetic tokens".as_ref().into(),
         });
     }
     Ok(value)
 }
 
 struct ArithmeticParser<'a, 'src, C> {
-    source: &'src str,
+    source: &'src [u8],
     index: usize,
     ctx: &'a mut C,
     start_line: usize,
     skip_depth: usize,
 }
 
-fn arith_err(msg: &str) -> ExpandError {
+fn arith_err(msg: &[u8]) -> ExpandError {
     ExpandError {
         message: msg.into(),
     }
 }
 
 impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
-    fn new(ctx: &'a mut C, raw: &'src str) -> Self {
+    fn new(ctx: &'a mut C, raw: &'src [u8]) -> Self {
         let start_line = ctx.lineno();
         Self {
             source: raw,
@@ -2050,10 +2068,10 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
         }
     }
 
-    fn error_at_current(&mut self, msg: &str) -> ExpandError {
+    fn error_at_current(&mut self, msg: &[u8]) -> ExpandError {
         let newlines = self.source[..self.index.min(self.source.len())]
-            .bytes()
-            .filter(|&b| b == b'\n')
+            .iter()
+            .filter(|&&b| b == b'\n')
             .count();
         self.ctx.set_lineno(self.start_line + newlines);
         arith_err(msg)
@@ -2069,14 +2087,14 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
                 if self.skip_depth > 0 {
                     return Ok(rhs);
                 }
-                let value = if op == "=" {
+                let value = if op == b"=" {
                     rhs
                 } else {
                     let lhs = self.resolve_var(&name)?;
                     apply_compound_assign(&op, lhs, rhs)?
                 };
                 self.ctx
-                    .set_var(&name, value.to_string())
+                    .set_var(&name, bstr::i64_to_bytes(value))
                     .map_err(|e| ExpandError { message: e.message })?;
                 return Ok(value);
             }
@@ -2085,17 +2103,17 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
         self.parse_ternary()
     }
 
-    fn try_consume_assign_op(&mut self) -> Option<String> {
+    fn try_consume_assign_op(&mut self) -> Option<Vec<u8>> {
         let remaining = &self.source[self.index..];
         for op in &[
-            "<<=", ">>=", "&=", "^=", "|=", "*=", "/=", "%=", "+=", "-=", "=",
+            b"<<=".as_ref(), b">>=", b"&=", b"^=", b"|=", b"*=", b"/=", b"%=", b"+=", b"-=", b"=",
         ] {
             if remaining.starts_with(op) {
-                if *op == "=" && remaining.starts_with("==") {
+                if *op == b"=" && remaining.starts_with(b"==") {
                     return None;
                 }
                 self.index += op.len();
-                return Some(op.to_string());
+                return Some(op.to_vec());
             }
         }
         None
@@ -2104,7 +2122,7 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
     fn parse_ternary(&mut self) -> Result<i64, ExpandError> {
         let cond = self.parse_logical_or()?;
         self.skip_ws();
-        if self.consume('?') {
+        if self.consume(b'?') {
             if cond == 0 {
                 self.skip_depth += 1;
             }
@@ -2113,8 +2131,8 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
                 self.skip_depth -= 1;
             }
             self.skip_ws();
-            if !self.consume(':') {
-                return Err(self.error_at_current("expected ':' in ternary expression"));
+            if !self.consume(b':') {
+                return Err(self.error_at_current(b"expected ':' in ternary expression"));
             }
             if cond != 0 {
                 self.skip_depth += 1;
@@ -2133,7 +2151,7 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
         let mut value = self.parse_logical_and()?;
         loop {
             self.skip_ws();
-            if self.consume_str("||") {
+            if self.consume_bytes(b"||") {
                 if value != 0 {
                     self.skip_depth += 1;
                     let _ = self.parse_logical_and()?;
@@ -2154,7 +2172,7 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
         let mut value = self.parse_bitwise_or()?;
         loop {
             self.skip_ws();
-            if self.consume_str("&&") {
+            if self.consume_bytes(b"&&") {
                 if value == 0 {
                     self.skip_depth += 1;
                     let _ = self.parse_bitwise_or()?;
@@ -2174,9 +2192,9 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
         let mut value = self.parse_bitwise_xor()?;
         loop {
             self.skip_ws();
-            if self.peek() == Some('|')
-                && self.peek_at(1) != Some('|')
-                && self.peek_at(1) != Some('=')
+            if self.peek() == Some(b'|')
+                && self.peek_at(1) != Some(b'|')
+                && self.peek_at(1) != Some(b'=')
             {
                 self.index += 1;
                 value |= self.parse_bitwise_xor()?;
@@ -2191,7 +2209,7 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
         let mut value = self.parse_bitwise_and()?;
         loop {
             self.skip_ws();
-            if self.peek() == Some('^') && self.peek_at(1) != Some('=') {
+            if self.peek() == Some(b'^') && self.peek_at(1) != Some(b'=') {
                 self.index += 1;
                 value ^= self.parse_bitwise_and()?;
             } else {
@@ -2205,9 +2223,9 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
         let mut value = self.parse_equality()?;
         loop {
             self.skip_ws();
-            if self.peek() == Some('&')
-                && self.peek_at(1) != Some('&')
-                && self.peek_at(1) != Some('=')
+            if self.peek() == Some(b'&')
+                && self.peek_at(1) != Some(b'&')
+                && self.peek_at(1) != Some(b'=')
             {
                 self.index += 1;
                 value &= self.parse_equality()?;
@@ -2222,9 +2240,9 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
         let mut value = self.parse_relational()?;
         loop {
             self.skip_ws();
-            if self.consume_str("==") {
+            if self.consume_bytes(b"==") {
                 value = i64::from(value == self.parse_relational()?);
-            } else if self.consume_str("!=") {
+            } else if self.consume_bytes(b"!=") {
                 value = i64::from(value != self.parse_relational()?);
             } else {
                 break;
@@ -2237,14 +2255,14 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
         let mut value = self.parse_shift()?;
         loop {
             self.skip_ws();
-            if self.consume_str("<=") {
+            if self.consume_bytes(b"<=") {
                 value = i64::from(value <= self.parse_shift()?);
-            } else if self.consume_str(">=") {
+            } else if self.consume_bytes(b">=") {
                 value = i64::from(value >= self.parse_shift()?);
-            } else if self.peek() == Some('<') && self.peek_at(1) != Some('<') {
+            } else if self.peek() == Some(b'<') && self.peek_at(1) != Some(b'<') {
                 self.index += 1;
                 value = i64::from(value < self.parse_shift()?);
-            } else if self.peek() == Some('>') && self.peek_at(1) != Some('>') {
+            } else if self.peek() == Some(b'>') && self.peek_at(1) != Some(b'>') {
                 self.index += 1;
                 value = i64::from(value > self.parse_shift()?);
             } else {
@@ -2258,16 +2276,16 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
         let mut value = self.parse_additive()?;
         loop {
             self.skip_ws();
-            if self.peek() == Some('<')
-                && self.peek_at(1) == Some('<')
-                && self.peek_at(2) != Some('=')
+            if self.peek() == Some(b'<')
+                && self.peek_at(1) == Some(b'<')
+                && self.peek_at(2) != Some(b'=')
             {
                 self.index += 2;
                 let rhs = self.parse_additive()?;
                 value = value.wrapping_shl(rhs as u32);
-            } else if self.peek() == Some('>')
-                && self.peek_at(1) == Some('>')
-                && self.peek_at(2) != Some('=')
+            } else if self.peek() == Some(b'>')
+                && self.peek_at(1) == Some(b'>')
+                && self.peek_at(2) != Some(b'=')
             {
                 self.index += 2;
                 let rhs = self.parse_additive()?;
@@ -2283,10 +2301,10 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
         let mut value = self.parse_multiplicative()?;
         loop {
             self.skip_ws();
-            if self.peek() == Some('+') && self.peek_at(1) != Some('=') {
+            if self.peek() == Some(b'+') && self.peek_at(1) != Some(b'=') {
                 self.index += 1;
                 value = value.wrapping_add(self.parse_multiplicative()?);
-            } else if self.peek() == Some('-') && self.peek_at(1) != Some('=') {
+            } else if self.peek() == Some(b'-') && self.peek_at(1) != Some(b'=') {
                 self.index += 1;
                 value = value.wrapping_sub(self.parse_multiplicative()?);
             } else {
@@ -2300,21 +2318,21 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
         let mut value = self.parse_unary()?;
         loop {
             self.skip_ws();
-            if self.peek() == Some('*') && self.peek_at(1) != Some('=') {
+            if self.peek() == Some(b'*') && self.peek_at(1) != Some(b'=') {
                 self.index += 1;
                 value = value.wrapping_mul(self.parse_unary()?);
-            } else if self.peek() == Some('/') && self.peek_at(1) != Some('=') {
+            } else if self.peek() == Some(b'/') && self.peek_at(1) != Some(b'=') {
                 self.index += 1;
                 let rhs = self.parse_unary()?;
                 if rhs == 0 {
-                    return Err(self.error_at_current("division by zero"));
+                    return Err(self.error_at_current(b"division by zero"));
                 }
                 value /= rhs;
-            } else if self.peek() == Some('%') && self.peek_at(1) != Some('=') {
+            } else if self.peek() == Some(b'%') && self.peek_at(1) != Some(b'=') {
                 self.index += 1;
                 let rhs = self.parse_unary()?;
                 if rhs == 0 {
-                    return Err(self.error_at_current("division by zero"));
+                    return Err(self.error_at_current(b"division by zero"));
                 }
                 value %= rhs;
             } else {
@@ -2326,16 +2344,16 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
 
     fn parse_unary(&mut self) -> Result<i64, ExpandError> {
         self.skip_ws();
-        if self.consume('+') {
+        if self.consume(b'+') {
             return self.parse_unary();
         }
-        if self.consume('-') {
+        if self.consume(b'-') {
             return Ok(self.parse_unary()?.wrapping_neg());
         }
-        if self.consume('~') {
+        if self.consume(b'~') {
             return Ok(!self.parse_unary()?);
         }
-        if self.peek() == Some('!') && self.peek_at(1) != Some('=') {
+        if self.peek() == Some(b'!') && self.peek_at(1) != Some(b'=') {
             self.index += 1;
             return Ok(i64::from(self.parse_unary()? == 0));
         }
@@ -2344,11 +2362,11 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
 
     fn parse_primary(&mut self) -> Result<i64, ExpandError> {
         self.skip_ws();
-        if self.consume('(') {
+        if self.consume(b'(') {
             let value = self.parse_assignment()?;
             self.skip_ws();
-            if !self.consume(')') {
-                return Err(self.error_at_current("missing ')'"));
+            if !self.consume(b')') {
+                return Err(self.error_at_current(b"missing ')'"));
             }
             return Ok(value);
         }
@@ -2363,102 +2381,108 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
     fn parse_number(&mut self) -> Result<i64, ExpandError> {
         self.skip_ws();
         let start = self.index;
-        if self.peek() == Some('0') {
+        if self.peek() == Some(b'0') {
             self.index += 1;
-            if self.peek() == Some('x') || self.peek() == Some('X') {
+            if self.peek() == Some(b'x') || self.peek() == Some(b'X') {
                 self.index += 1;
                 let hex_start = self.index;
                 while self.index < self.source.len()
-                    && self.source.as_bytes()[self.index].is_ascii_hexdigit()
+                    && self.source[self.index].is_ascii_hexdigit()
                 {
                     self.index += 1;
                 }
                 if self.index == hex_start {
-                    return Err(self.error_at_current("invalid hex constant"));
+                    return Err(self.error_at_current(b"invalid hex constant"));
                 }
-                let hex_result = i64::from_str_radix(&self.source[hex_start..self.index], 16);
-                return hex_result.map_err(|_| self.error_at_current("invalid hex constant"));
+                return bstr::parse_hex_i64(&self.source[hex_start..self.index])
+                    .ok_or_else(|| self.error_at_current(b"invalid hex constant"));
             }
             if self.peek().map_or(false, |c| c.is_ascii_digit()) {
                 while self.index < self.source.len()
-                    && self.source.as_bytes()[self.index].is_ascii_digit()
+                    && self.source[self.index].is_ascii_digit()
                 {
                     self.index += 1;
                 }
-                let oct_result = i64::from_str_radix(&self.source[start + 1..self.index], 8);
-                return oct_result.map_err(|_| self.error_at_current("invalid octal constant"));
+                return bstr::parse_octal_i64(&self.source[start + 1..self.index])
+                    .ok_or_else(|| self.error_at_current(b"invalid octal constant"));
             }
             return Ok(0);
         }
 
-        while self.index < self.source.len() && self.source.as_bytes()[self.index].is_ascii_digit()
+        while self.index < self.source.len() && self.source[self.index].is_ascii_digit()
         {
             self.index += 1;
         }
         if start == self.index {
-            return Err(self.error_at_current("expected arithmetic operand"));
+            return Err(self.error_at_current(b"expected arithmetic operand"));
         }
-        let int_result = self.source[start..self.index].parse::<i64>();
-        int_result.map_err(|_| self.error_at_current("invalid arithmetic operand"))
+        bstr::parse_i64(&self.source[start..self.index])
+            .ok_or_else(|| self.error_at_current(b"invalid arithmetic operand"))
     }
 
-    fn try_scan_name(&mut self) -> Option<String> {
+    fn try_scan_name(&mut self) -> Option<Vec<u8>> {
         self.skip_ws();
         let start = self.index;
         if self.index < self.source.len() {
-            let b = self.source.as_bytes()[self.index];
+            let b = self.source[self.index];
             if b.is_ascii_alphabetic() || b == b'_' {
                 self.index += 1;
                 while self.index < self.source.len() {
-                    let b2 = self.source.as_bytes()[self.index];
+                    let b2 = self.source[self.index];
                     if b2.is_ascii_alphanumeric() || b2 == b'_' {
                         self.index += 1;
                     } else {
                         break;
                     }
                 }
-                return Some(self.source[start..self.index].to_string());
+                return Some(self.source[start..self.index].to_vec());
             }
         }
         None
     }
 
-    fn resolve_var(&mut self, name: &str) -> Result<i64, ExpandError> {
+    fn resolve_var(&mut self, name: &[u8]) -> Result<i64, ExpandError> {
         let val_opt = self.ctx.env_var(name);
         if val_opt.is_none() && self.ctx.nounset_enabled() {
-            return Err(self.error_at_current(&format!("{name}: parameter not set")));
+            let mut msg = Vec::new();
+            msg.extend_from_slice(name);
+            msg.extend_from_slice(b": parameter not set");
+            return Err(self.error_at_current(&msg));
         }
-        let val_str = val_opt.unwrap_or_default();
-        if val_str.is_empty() {
+        let val_bytes = val_opt.unwrap_or_default();
+        if val_bytes.is_empty() {
             return Ok(0);
         }
-        let trimmed = val_str.trim().to_string();
-        let err_msg = format!("invalid variable value for '{name}'");
-        if trimmed.starts_with("0x") || trimmed.starts_with("0X") {
-            let r = i64::from_str_radix(&trimmed[2..], 16);
-            r.map_err(|_| self.error_at_current(&err_msg))
-        } else if trimmed.starts_with('0')
+        let trimmed = trim_ascii_whitespace(&val_bytes).to_vec();
+        let mut err_msg = Vec::new();
+        err_msg.extend_from_slice(b"invalid variable value for '");
+        err_msg.extend_from_slice(name);
+        err_msg.push(b'\'');
+        if trimmed.starts_with(b"0x") || trimmed.starts_with(b"0X") {
+            bstr::parse_hex_i64(&trimmed[2..])
+                .ok_or_else(|| self.error_at_current(&err_msg))
+        } else if trimmed.starts_with(b"0")
             && trimmed.len() > 1
-            && trimmed[1..].chars().all(|c| c.is_ascii_digit())
+            && trimmed[1..].iter().all(|b| b.is_ascii_digit())
         {
-            let r = i64::from_str_radix(&trimmed[1..], 8);
-            r.map_err(|_| self.error_at_current(&err_msg))
+            bstr::parse_octal_i64(&trimmed[1..])
+                .ok_or_else(|| self.error_at_current(&err_msg))
         } else {
-            let r = trimmed.parse::<i64>();
-            r.map_err(|_| self.error_at_current(&err_msg))
+            bstr::parse_i64(&trimmed)
+                .ok_or_else(|| self.error_at_current(&err_msg))
         }
     }
 
     fn skip_ws(&mut self) {
         while self.index < self.source.len()
-            && self.source.as_bytes()[self.index].is_ascii_whitespace()
+            && self.source[self.index].is_ascii_whitespace()
         {
             self.index += 1;
         }
     }
 
-    fn consume(&mut self, ch: char) -> bool {
-        if self.source.as_bytes().get(self.index) == Some(&(ch as u8)) {
+    fn consume(&mut self, ch: u8) -> bool {
+        if self.source.get(self.index) == Some(&ch) {
             self.index += 1;
             true
         } else {
@@ -2466,7 +2490,7 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
         }
     }
 
-    fn consume_str(&mut self, s: &str) -> bool {
+    fn consume_bytes(&mut self, s: &[u8]) -> bool {
         if self.source[self.index..].starts_with(s) {
             self.index += s.len();
             true
@@ -2475,15 +2499,12 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
         }
     }
 
-    fn peek(&self) -> Option<char> {
-        self.source.as_bytes().get(self.index).map(|&b| b as char)
+    fn peek(&self) -> Option<u8> {
+        self.source.get(self.index).copied()
     }
 
-    fn peek_at(&self, offset: usize) -> Option<char> {
-        self.source
-            .as_bytes()
-            .get(self.index + offset)
-            .map(|&b| b as char)
+    fn peek_at(&self, offset: usize) -> Option<u8> {
+        self.source.get(self.index + offset).copied()
     }
 
     fn is_eof(&self) -> bool {
@@ -2491,29 +2512,46 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
     }
 }
 
-fn apply_compound_assign(op: &str, lhs: i64, rhs: i64) -> Result<i64, ExpandError> {
+fn trim_ascii_whitespace(s: &[u8]) -> &[u8] {
+    let start = s
+        .iter()
+        .position(|b| !b.is_ascii_whitespace())
+        .unwrap_or(s.len());
+    let end = s
+        .iter()
+        .rposition(|b| !b.is_ascii_whitespace())
+        .map_or(start, |p| p + 1);
+    &s[start..end]
+}
+
+fn apply_compound_assign(op: &[u8], lhs: i64, rhs: i64) -> Result<i64, ExpandError> {
     match op {
-        "+=" => Ok(lhs.wrapping_add(rhs)),
-        "-=" => Ok(lhs.wrapping_sub(rhs)),
-        "*=" => Ok(lhs.wrapping_mul(rhs)),
-        "/=" => {
+        b"+=" => Ok(lhs.wrapping_add(rhs)),
+        b"-=" => Ok(lhs.wrapping_sub(rhs)),
+        b"*=" => Ok(lhs.wrapping_mul(rhs)),
+        b"/=" => {
             if rhs == 0 {
-                return Err(arith_err("division by zero"));
+                return Err(arith_err(b"division by zero"));
             }
             Ok(lhs / rhs)
         }
-        "%=" => {
+        b"%=" => {
             if rhs == 0 {
-                return Err(arith_err("division by zero"));
+                return Err(arith_err(b"division by zero"));
             }
             Ok(lhs % rhs)
         }
-        "<<=" => Ok(lhs.wrapping_shl(rhs as u32)),
-        ">>=" => Ok(lhs.wrapping_shr(rhs as u32)),
-        "&=" => Ok(lhs & rhs),
-        "^=" => Ok(lhs ^ rhs),
-        "|=" => Ok(lhs | rhs),
-        _ => Err(arith_err(&format!("unknown assignment operator '{op}'"))),
+        b"<<=" => Ok(lhs.wrapping_shl(rhs as u32)),
+        b">>=" => Ok(lhs.wrapping_shr(rhs as u32)),
+        b"&=" => Ok(lhs & rhs),
+        b"^=" => Ok(lhs ^ rhs),
+        b"|=" => Ok(lhs | rhs),
+        _ => {
+            let mut msg = b"unknown assignment operator '".to_vec();
+            msg.extend_from_slice(op);
+            msg.push(b'\'');
+            Err(arith_err(&msg))
+        }
     }
 }
 
@@ -2524,8 +2562,8 @@ mod tests {
     use std::collections::HashMap;
 
     struct FakeContext {
-        env: HashMap<String, String>,
-        positional: Vec<String>,
+        env: HashMap<Vec<u8>, Vec<u8>>,
+        positional: Vec<Vec<u8>>,
         pathname_expansion_enabled: bool,
         nounset_enabled: bool,
     }
@@ -2533,16 +2571,16 @@ mod tests {
     impl FakeContext {
         fn new() -> Self {
             let mut env = HashMap::new();
-            env.insert("HOME".into(), "/tmp/home".into());
-            env.insert("USER".into(), "meiksh".into());
-            env.insert("IFS".into(), " \t\n,".into());
-            env.insert("WORDS".into(), "one,two three".into());
-            env.insert("DELIMS".into(), ",,,".into());
-            env.insert("EMPTY".into(), String::new());
-            env.insert("X".into(), "fallback".into());
+            env.insert(b"HOME".to_vec(), b"/tmp/home".to_vec());
+            env.insert(b"USER".to_vec(), b"meiksh".to_vec());
+            env.insert(b"IFS".to_vec(), b" \t\n,".to_vec());
+            env.insert(b"WORDS".to_vec(), b"one,two three".to_vec());
+            env.insert(b"DELIMS".to_vec(), b",,,".to_vec());
+            env.insert(b"EMPTY".to_vec(), Vec::new());
+            env.insert(b"X".to_vec(), b"fallback".to_vec());
             Self {
                 env,
-                positional: vec!["alpha".into(), "beta".into()],
+                positional: vec![b"alpha".to_vec(), b"beta".to_vec()],
                 pathname_expansion_enabled: true,
                 nounset_enabled: false,
             }
@@ -2550,36 +2588,36 @@ mod tests {
     }
 
     impl Context for FakeContext {
-        fn env_var(&self, name: &str) -> Option<Cow<'_, str>> {
-            self.env.get(name).map(|v| Cow::Borrowed(v.as_str()))
+        fn env_var(&self, name: &[u8]) -> Option<Cow<'_, [u8]>> {
+            self.env.get(name).map(|v| Cow::Borrowed(v.as_slice()))
         }
 
-        fn special_param(&self, name: char) -> Option<Cow<'_, str>> {
+        fn special_param(&self, name: u8) -> Option<Cow<'_, [u8]>> {
             match name {
-                '?' => Some(Cow::Owned("0".to_string())),
-                '#' => Some(Cow::Owned(self.positional.len().to_string())),
-                '-' => Some(Cow::Owned("aC".to_string())),
-                '*' | '@' => Some(Cow::Owned(self.positional.join(" "))),
+                b'?' => Some(Cow::Owned(b"0".to_vec())),
+                b'#' => Some(Cow::Owned(bstr::u64_to_bytes(self.positional.len() as u64))),
+                b'-' => Some(Cow::Owned(b"aC".to_vec())),
+                b'*' | b'@' => Some(Cow::Owned(bstr::join_bstrings(&self.positional, b" "))),
                 _ => None,
             }
         }
 
-        fn positional_param(&self, index: usize) -> Option<Cow<'_, str>> {
+        fn positional_param(&self, index: usize) -> Option<Cow<'_, [u8]>> {
             if index == 0 {
-                Some(Cow::Owned("meiksh".to_string()))
+                Some(Cow::Owned(b"meiksh".to_vec()))
             } else {
                 self.positional
                     .get(index - 1)
-                    .map(|v| Cow::Borrowed(v.as_str()))
+                    .map(|v| Cow::Borrowed(v.as_slice()))
             }
         }
 
-        fn positional_params(&self) -> &[String] {
+        fn positional_params(&self) -> &[Vec<u8>] {
             &self.positional
         }
 
-        fn set_var(&mut self, name: &str, value: String) -> Result<(), ExpandError> {
-            self.env.insert(name.to_string(), value);
+        fn set_var(&mut self, name: &[u8], value: Vec<u8>) -> Result<(), ExpandError> {
+            self.env.insert(name.to_vec(), value);
             Ok(())
         }
 
@@ -2591,70 +2629,73 @@ mod tests {
             self.nounset_enabled
         }
 
-        fn shell_name(&self) -> &str {
-            "meiksh"
+        fn shell_name(&self) -> &[u8] {
+            b"meiksh"
         }
 
-        fn command_substitute(&mut self, command: &str) -> Result<String, ExpandError> {
-            Ok(format!("{command}\n"))
+        fn command_substitute(&mut self, command: &[u8]) -> Result<Vec<u8>, ExpandError> {
+            let mut out = command.to_vec();
+            out.push(b'\n');
+            Ok(out)
         }
 
-        fn home_dir_for_user(&self, name: &str) -> Option<Cow<'_, str>> {
-            match name {
-                "testuser" => Some(Cow::Owned("/home/testuser".to_string())),
-                _ => None,
+        fn home_dir_for_user(&self, name: &[u8]) -> Option<Cow<'_, [u8]>> {
+            if name == b"testuser" {
+                Some(Cow::Owned(b"/home/testuser".to_vec()))
+            } else {
+                None
             }
         }
     }
 
     #[test]
     fn expands_home_and_params() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "~/$USER".into(),
+                raw: b"~/$USER".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect("expand");
-        assert_eq!(fields, vec!["/tmp/home/meiksh".to_string()]);
+        assert_eq!(fields, vec![b"/tmp/home/meiksh".as_ref()]);
     }
 
     #[test]
     fn expands_arithmetic_expressions() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$((1 + 2 * 3))".into(),
+                    raw: b"$((1 + 2 * 3))".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("expand"),
-            vec!["7".to_string()]
+            vec![b"7".as_ref()]
         );
     }
 
     #[test]
     fn expands_command_substitution() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_words(
                 &mut ctx,
                 &[
                     Word {
-                        raw: "$WORDS".into(),
+                        raw: b"$WORDS".as_ref().into(),
                         line: 0
                     },
                     Word {
-                        raw: "$(printf hi)".into(),
+                        raw: b"$(printf hi)".as_ref().into(),
                         line: 0
                     },
                 ],
@@ -2662,126 +2703,133 @@ mod tests {
             )
             .expect("expand"),
             vec![
-                "one".to_string(),
-                "two".to_string(),
-                "three".to_string(),
-                "printf".to_string(),
-                "hi".to_string(),
+                b"one".as_ref(),
+                b"two".as_ref(),
+                b"three".as_ref(),
+                b"printf".as_ref(),
+                b"hi".as_ref(),
             ]
         );
     }
 
     #[test]
     fn preserves_quoted_and_escaped_characters() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"$0 $1\"".into(),
+                    raw: b"\"$0 $1\"".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("expand"),
-            vec!["meiksh alpha".to_string()]
+            vec![b"meiksh alpha".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\\$HOME".into(),
+                    raw: b"\\$HOME".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("expand"),
-            vec!["$HOME".to_string()]
+            vec![b"$HOME".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "a\\ b".into(),
+                    raw: b"a\\ b".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("expand"),
-            vec!["a b".to_string()]
+            vec![b"a b".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "'literal text'".into(),
+                    raw: b"'literal text'".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("expand"),
-            vec!["literal text".to_string()]
+            vec![b"literal text".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"cost:\\$USER\"".into(),
+                    raw: b"\"cost:\\$USER\"".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("expand"),
-            vec!["cost:$USER".to_string()]
+            vec![b"cost:$USER".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$'a b'".into(),
+                    raw: b"$'a b'".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("expand"),
-            vec!["a b".to_string()]
+            vec![b"a b".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$'line\\nnext'".into(),
+                    raw: b"$'line\\nnext'".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("expand"),
-            vec!["line\nnext".to_string()]
+            vec![b"line\nnext".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"$'a b'\"".into(),
+                    raw: b"\"$'a b'\"".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("expand"),
-            vec!["$'a b'".to_string()]
+            vec![b"$'a b'".as_ref()]
         );
         assert_eq!(
-            expand_parameter_text(&mut ctx, "$'tab\\tstop'", &arena).expect("parameter text"),
-            "tab\tstop".to_string()
+            expand_parameter_text(&mut ctx, b"$'tab\\tstop'", &arena).expect("parameter text"),
+            b"tab\tstop".as_ref()
         );
     }
 
     #[test]
     fn rejects_unterminated_quotes_and_expansions() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        for raw in ["'oops", "\"oops", "${USER", "$(echo", "$((1 + 2)", "$'oops"] {
+        for raw in [
+            b"'oops".as_ref(),
+            b"\"oops",
+            b"${USER",
+            b"$(echo",
+            b"$((1 + 2)",
+            b"$'oops",
+        ] {
             let error = expand_word(
                 &mut ctx,
                 &Word {
@@ -2797,43 +2845,58 @@ mod tests {
 
     #[test]
     fn dollar_single_quote_helpers_cover_escape_matrix() {
-        let input = "$'\\\"\\'\\\\\\a\\b\\e\\f\\n\\r\\t\\v\\cA\\c\\\\\\x41\\101Z'";
+        let input = b"$'\\\"\\'\\\\\\a\\b\\e\\f\\n\\r\\t\\v\\cA\\c\\\\\\x41\\101Z'";
         let (value, consumed) = parse_dollar_single_quoted(input).expect("parse");
         assert_eq!(consumed, input.len());
-        assert_eq!(
-            value,
-            format!(
-                "\"'\\{}\u{0008}\u{001b}\u{000c}\n\r\t\u{000b}\u{0001}\u{001c}AAZ",
-                '\u{0007}'
-            )
-        );
+        let mut expected = Vec::new();
+        expected.push(b'"');
+        expected.push(b'\'');
+        expected.push(b'\\');
+        expected.push(0x07); // \a
+        expected.push(0x08); // \b
+        expected.push(0x1b); // \e
+        expected.push(0x0c); // \f
+        expected.push(b'\n');
+        expected.push(b'\r');
+        expected.push(b'\t');
+        expected.push(0x0b); // \v
+        expected.push(0x01); // \cA
+        expected.push(0x1c); // \c\\
+        expected.push(b'A');  // \x41
+        expected.push(b'A');  // \101
+        expected.push(b'Z');
+        assert_eq!(value, expected);
 
-        assert!(parse_dollar_single_quoted("$'\\").is_err());
+        assert!(parse_dollar_single_quoted(b"$'\\").is_err());
 
-        assert!(parse_dollar_single_quoted("$'\\c").is_err());
+        assert!(parse_dollar_single_quoted(b"$'\\c").is_err());
 
-        let (value, _) = parse_dollar_single_quoted("$'\\xZ'").expect("parse no hex");
-        assert_eq!(value, "xZ");
+        let (value, _) = parse_dollar_single_quoted(b"$'\\xZ'").expect("parse no hex");
+        assert_eq!(value, b"xZ");
 
-        let (value, _) = parse_dollar_single_quoted("$'\\x41'").expect("parse hex");
-        assert_eq!(value, "A");
+        let (value, _) = parse_dollar_single_quoted(b"$'\\x41'").expect("parse hex");
+        assert_eq!(value, b"A");
 
-        let (value, _) = parse_dollar_single_quoted("$'\\z'").expect("parse unspecified");
-        assert_eq!(value, "z");
+        let (value, _) = parse_dollar_single_quoted(b"$'\\z'").expect("parse unspecified");
+        assert_eq!(value, b"z");
 
-        assert_eq!(control_escape('\\'), '\u{001c}');
-        assert_eq!(control_escape('?'), '\u{007f}');
-        assert_eq!(control_escape('A'), '\u{0001}');
-        assert_eq!(parse_variable_base_escape("412", 16, 2), (0x41, 2));
-        assert_eq!(parse_variable_base_escape("1017", 8, 3), (0o101, 3));
-        assert_eq!(parse_variable_base_escape("Z", 16, 2), (0, 0));
+        assert_eq!(control_escape(b'\\'), 0x1c);
+        assert_eq!(control_escape(b'?'), 0x7f);
+        assert_eq!(control_escape(b'A'), 0x01);
+        assert_eq!(parse_variable_base_escape(b"412", 16, 2), (0x41, 2));
+        assert_eq!(parse_variable_base_escape(b"1017", 8, 3), (0o101, 3));
+        assert_eq!(parse_variable_base_escape(b"Z", 16, 2), (0, 0));
     }
 
     #[test]
     fn rejects_bad_arithmetic() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        for raw in ["$((1 / 0))", "$((1 + ))", "$((1 1))"] {
+        for raw in [
+            b"$((1 / 0))".as_ref(),
+            b"$((1 + ))",
+            b"$((1 1))",
+        ] {
             let error = expand_word(
                 &mut ctx,
                 &Word {
@@ -2849,206 +2912,206 @@ mod tests {
 
     #[test]
     fn supports_parameter_operators_and_positionals() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.positional = vec![
-            "a".into(),
-            "b".into(),
-            "c".into(),
-            "d".into(),
-            "e".into(),
-            "f".into(),
-            "g".into(),
-            "h".into(),
-            "i".into(),
-            "j".into(),
+            b"a".to_vec(),
+            b"b".to_vec(),
+            b"c".to_vec(),
+            b"d".to_vec(),
+            b"e".to_vec(),
+            b"f".to_vec(),
+            b"g".to_vec(),
+            b"h".to_vec(),
+            b"i".to_vec(),
+            b"j".to_vec(),
         ];
 
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${10}".into(),
+                    raw: b"${10}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("expand"),
-            vec!["j".to_string()]
+            vec![b"j".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$10".into(),
+                    raw: b"$10".as_ref().into(),
                     line: 0
                 },
                 &arena
             )
             .expect("expand"),
-            vec!["a0".to_string()]
+            vec![b"a0".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${#10}".into(),
+                    raw: b"${#10}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("expand"),
-            vec!["1".to_string()]
+            vec![b"1".as_ref()]
         );
-        ctx.env.insert("IFS".into(), ":".into());
+        ctx.env.insert(b"IFS".to_vec(), b":".to_vec());
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$*".into(),
+                    raw: b"$*".as_ref().into(),
                     line: 0
                 },
                 &arena
             )
             .expect("expand"),
             vec![
-                "a".to_string(),
-                "b".to_string(),
-                "c".to_string(),
-                "d".to_string(),
-                "e".to_string(),
-                "f".to_string(),
-                "g".to_string(),
-                "h".to_string(),
-                "i".to_string(),
-                "j".to_string()
+                b"a".as_ref(),
+                b"b".as_ref(),
+                b"c".as_ref(),
+                b"d".as_ref(),
+                b"e".as_ref(),
+                b"f".as_ref(),
+                b"g".as_ref(),
+                b"h".as_ref(),
+                b"i".as_ref(),
+                b"j".as_ref()
             ]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"$*\"".into(),
+                    raw: b"\"$*\"".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("expand"),
-            vec!["a:b:c:d:e:f:g:h:i:j".to_string()]
+            vec![b"a:b:c:d:e:f:g:h:i:j".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${UNSET-word}".into(),
+                    raw: b"${UNSET-word}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("expand"),
-            vec!["word".to_string()]
+            vec![b"word".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${UNSET:-word}".into(),
+                    raw: b"${UNSET:-word}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("expand"),
-            vec!["word".to_string()]
+            vec![b"word".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${EMPTY-word}".into(),
+                    raw: b"${EMPTY-word}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("expand"),
-            Vec::<String>::new()
+            Vec::<&[u8]>::new()
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${EMPTY:-word}".into(),
+                    raw: b"${EMPTY:-word}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("expand"),
-            vec!["word".to_string()]
+            vec![b"word".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${USER:+alt}".into(),
+                    raw: b"${USER:+alt}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("expand"),
-            vec!["alt".to_string()]
+            vec![b"alt".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${UNSET+alt}".into(),
+                    raw: b"${UNSET+alt}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("expand"),
-            Vec::<String>::new()
+            Vec::<&[u8]>::new()
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${NEW:=value}".into(),
+                    raw: b"${NEW:=value}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("expand"),
-            vec!["value".to_string()]
+            vec![b"value".as_ref()]
         );
-        assert_eq!(ctx.env.get("NEW").map(String::as_str), Some("value"));
+        assert_eq!(ctx.env.get(b"NEW".as_ref()).map(|v| v.as_slice()), Some(b"value".as_ref()));
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${#}".into(),
+                    raw: b"${#}".as_ref().into(),
                     line: 0
                 },
                 &arena
             )
             .expect("expand"),
-            vec!["10".to_string()]
+            vec![b"10".as_ref()]
         );
 
         let error = expand_word(
             &mut ctx,
             &Word {
-                raw: "${UNSET:?boom}".into(),
+                raw: b"${UNSET:?boom}".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect_err("unset error");
-        assert_eq!(&*error.message, "boom");
+        assert_eq!(&*error.message, b"boom".as_ref());
 
         let error = expand_word(
             &mut ctx,
             &Word {
-                raw: "${UNSET:?$'unterminated}".into(),
+                raw: b"${UNSET:?$'unterminated}".as_ref().into(),
                 line: 0,
             },
             &arena,
@@ -3059,7 +3122,7 @@ mod tests {
         let error = expand_word(
             &mut ctx,
             &Word {
-                raw: "${MISSING?$'unterminated}".into(),
+                raw: b"${MISSING?$'unterminated}".as_ref().into(),
                 line: 0,
             },
             &arena,
@@ -3070,97 +3133,97 @@ mod tests {
 
     #[test]
     fn performs_field_splitting_more_like_posix() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$WORDS".into(),
+                    raw: b"$WORDS".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("expand"),
-            vec!["one".to_string(), "two".to_string(), "three".to_string()]
+            vec![b"one".as_ref(), b"two".as_ref(), b"three".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$DELIMS".into(),
+                    raw: b"$DELIMS".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("expand"),
-            vec![String::new(), String::new(), String::new()]
+            vec![b"".as_ref() as &[u8], b"", b""]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$EMPTY".into(),
+                    raw: b"$EMPTY".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("expand"),
-            Vec::<String>::new()
+            Vec::<&[u8]>::new()
         );
-        assert!(split_fields_from_segments(&[], " \t\n").is_empty());
+        assert!(split_fields_from_segments(&[], b" \t\n").is_empty());
     }
 
     #[test]
     fn expands_text_without_field_splitting_or_pathname_expansion() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.env.insert("WORDS".into(), "one two".into());
+        ctx.env.insert(b"WORDS".to_vec(), b"one two".to_vec());
         assert_eq!(
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "$WORDS".into(),
+                    raw: b"$WORDS".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("expand"),
-            "one two"
+            b"one two"
         );
         assert_eq!(
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "*".into(),
+                    raw: b"*".as_ref().into(),
                     line: 0
                 },
                 &arena
             )
             .expect("expand"),
-            "*"
+            b"*"
         );
     }
 
     #[test]
     fn performs_pathname_expansion() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let dir_entries = || {
             vec![
                 t(
                     "readdir",
                     vec![ArgMatcher::Any],
-                    TraceResult::DirEntry("a.txt".into()),
+                    TraceResult::DirEntryBytes(b"a.txt".to_vec()),
                 ),
                 t(
                     "readdir",
                     vec![ArgMatcher::Any],
-                    TraceResult::DirEntry("b.txt".into()),
+                    TraceResult::DirEntryBytes(b"b.txt".to_vec()),
                 ),
                 t(
                     "readdir",
                     vec![ArgMatcher::Any],
-                    TraceResult::DirEntry(".hidden.txt".into()),
+                    TraceResult::DirEntryBytes(b".hidden.txt".to_vec()),
                 ),
                 t("readdir", vec![ArgMatcher::Any], TraceResult::Int(0)),
             ]
@@ -3197,59 +3260,59 @@ mod tests {
                 expand_word(
                     &mut ctx,
                     &Word {
-                        raw: "/testdir/*.txt".into(),
+                        raw: b"/testdir/*.txt".as_ref().into(),
                         line: 0
                     },
                     &arena,
                 )
                 .expect("glob"),
-                vec!["/testdir/a.txt".to_string(), "/testdir/b.txt".to_string()]
+                vec![b"/testdir/a.txt".as_ref(), b"/testdir/b.txt".as_ref()]
             );
             assert_eq!(
                 expand_word(
                     &mut ctx,
                     &Word {
-                        raw: "\\*.txt".into(),
+                        raw: b"\\*.txt".as_ref().into(),
                         line: 0
                     },
                     &arena,
                 )
                 .expect("escaped glob"),
-                vec!["*.txt".to_string()]
+                vec![b"*.txt".as_ref()]
             );
             assert_eq!(
                 expand_word(
                     &mut ctx,
                     &Word {
-                        raw: "/testdir/.*.txt".into(),
+                        raw: b"/testdir/.*.txt".as_ref().into(),
                         line: 0
                     },
                     &arena,
                 )
                 .expect("hidden glob"),
-                vec!["/testdir/.hidden.txt".to_string()]
+                vec![b"/testdir/.hidden.txt".as_ref()]
             );
         });
     }
 
     #[test]
     fn can_disable_pathname_expansion_via_context() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
             ctx.pathname_expansion_enabled = false;
-            let pattern = "/testdir/*.txt";
+            let pattern = b"/testdir/*.txt";
             assert_eq!(
                 expand_word(
                     &mut ctx,
                     &Word {
-                        raw: pattern.into(),
+                        raw: pattern.as_ref().into(),
                         line: 0
                     },
                     &arena,
                 )
                 .expect("noglob"),
-                vec![pattern]
+                vec![pattern.as_ref()]
             );
         });
     }
@@ -3257,119 +3320,119 @@ mod tests {
     #[test]
     fn helper_paths_cover_remaining_branches() {
         let ctx = FakeContext::new();
-        assert_eq!(lookup_param(&ctx, "?").as_deref(), Some("0"));
-        assert_eq!(lookup_param(&ctx, "0").as_deref(), Some("meiksh"));
-        assert_eq!(lookup_param(&ctx, "X").as_deref(), Some("fallback"));
-        assert_eq!(lookup_param(&ctx, "99"), None);
+        assert_eq!(lookup_param(&ctx, b"?").as_deref(), Some(b"0".as_ref()));
+        assert_eq!(lookup_param(&ctx, b"0").as_deref(), Some(b"meiksh".as_ref()));
+        assert_eq!(lookup_param(&ctx, b"X").as_deref(), Some(b"fallback".as_ref()));
+        assert_eq!(lookup_param(&ctx, b"99"), None);
         assert_eq!(
             ctx.positional_params(),
-            &["alpha".to_string(), "beta".to_string()][..]
+            &[b"alpha".to_vec(), b"beta".to_vec()][..]
         );
-        assert_eq!(ctx.positional_param(0).as_deref(), Some("meiksh"));
+        assert_eq!(ctx.positional_param(0).as_deref(), Some(b"meiksh".as_ref()));
 
         let mut segs = Vec::new();
-        push_segment(&mut segs, "a".into(), QuoteState::Expanded);
-        push_segment(&mut segs, String::new(), QuoteState::Expanded);
-        push_segment(&mut segs, "b".into(), QuoteState::Expanded);
-        push_segment(&mut segs, "c".into(), QuoteState::Quoted);
+        push_segment(&mut segs, b"a".to_vec(), QuoteState::Expanded);
+        push_segment(&mut segs, Vec::new(), QuoteState::Expanded);
+        push_segment(&mut segs, b"b".to_vec(), QuoteState::Expanded);
+        push_segment(&mut segs, b"c".to_vec(), QuoteState::Quoted);
         assert_eq!(
             segs,
             vec![
-                Segment::Text("ab".to_string(), QuoteState::Expanded),
-                Segment::Text("c".to_string(), QuoteState::Quoted)
+                Segment::Text(b"ab".to_vec(), QuoteState::Expanded),
+                Segment::Text(b"c".to_vec(), QuoteState::Quoted)
             ]
         );
 
-        assert_eq!(flatten_segments(&segs), "abc".to_string());
-        assert!(pattern_matches("beta", "b*"));
-        assert!(!pattern_matches("beta", "a*"));
+        assert_eq!(flatten_segments(&segs), b"abc".to_vec());
+        assert!(pattern_matches(b"beta", b"b*"));
+        assert!(!pattern_matches(b"beta", b"a*"));
         let mut ctx2 = FakeContext::new();
-        assert_eq!(eval_arithmetic(&mut ctx2, "42").expect("direct eval"), 42);
-        assert!(eval_arithmetic(&mut ctx2, "(1 + 2").is_err());
+        assert_eq!(eval_arithmetic(&mut ctx2, b"42").expect("direct eval"), 42);
+        assert!(eval_arithmetic(&mut ctx2, b"(1 + 2").is_err());
 
         let arith_bt =
-            expand_arithmetic_expression(&mut ctx2, "`printf 5`").expect("backtick in arith");
-        assert_eq!(arith_bt, "printf 5");
+            expand_arithmetic_expression(&mut ctx2, b"`printf 5`").expect("backtick in arith");
+        assert_eq!(arith_bt, b"printf 5");
 
-        let mut parser = ArithmeticParser::new(&mut ctx2, "9");
+        let mut parser = ArithmeticParser::new(&mut ctx2, b"9");
         parser.index = 99;
         assert!(parser.is_eof());
     }
 
     #[test]
     fn nounset_option_rejects_plain_unset_parameter_expansions() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.nounset_enabled = true;
 
         let error = expand_word(
             &mut ctx,
             &Word {
-                raw: "$UNSET".into(),
+                raw: b"$UNSET".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect_err("nounset variable");
-        assert_eq!(&*error.message, "UNSET: parameter not set");
+        assert_eq!(&*error.message, b"UNSET: parameter not set".as_ref());
 
         let error = expand_word(
             &mut ctx,
             &Word {
-                raw: "${UNSET}".into(),
+                raw: b"${UNSET}".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect_err("nounset braced");
-        assert_eq!(&*error.message, "UNSET: parameter not set");
+        assert_eq!(&*error.message, b"UNSET: parameter not set".as_ref());
 
         let error = expand_word(
             &mut ctx,
             &Word {
-                raw: "$9".into(),
+                raw: b"$9".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect_err("nounset positional");
-        assert_eq!(&*error.message, "9: parameter not set");
+        assert_eq!(&*error.message, b"9: parameter not set".as_ref());
 
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${UNSET-word}".into(),
+                    raw: b"${UNSET-word}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("default still works"),
-            vec!["word".to_string()]
+            vec![b"word".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"$*\"".into(),
+                    raw: b"\"$*\"".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("star exempt"),
-            vec!["alpha beta".to_string()]
+            vec![b"alpha beta".as_ref()]
         );
     }
 
     struct DefaultPathContext {
-        env: HashMap<String, String>,
+        env: HashMap<Vec<u8>, Vec<u8>>,
         nounset_enabled: bool,
     }
 
     impl DefaultPathContext {
         fn new() -> Self {
             let mut env = HashMap::new();
-            env.insert("HOME".into(), "/tmp/home".into());
+            env.insert(b"HOME".to_vec(), b"/tmp/home".to_vec());
             Self {
                 env,
                 nounset_enabled: false,
@@ -3378,28 +3441,28 @@ mod tests {
     }
 
     impl Context for DefaultPathContext {
-        fn env_var(&self, name: &str) -> Option<Cow<'_, str>> {
-            self.env.get(name).map(|v| Cow::Borrowed(v.as_str()))
+        fn env_var(&self, name: &[u8]) -> Option<Cow<'_, [u8]>> {
+            self.env.get(name).map(|v| Cow::Borrowed(v.as_slice()))
         }
 
-        fn special_param(&self, _name: char) -> Option<Cow<'_, str>> {
+        fn special_param(&self, _name: u8) -> Option<Cow<'_, [u8]>> {
             None
         }
 
-        fn positional_param(&self, index: usize) -> Option<Cow<'_, str>> {
+        fn positional_param(&self, index: usize) -> Option<Cow<'_, [u8]>> {
             if index == 0 {
-                Some(Cow::Owned("meiksh".to_string()))
+                Some(Cow::Owned(b"meiksh".to_vec()))
             } else {
                 None
             }
         }
 
-        fn positional_params(&self) -> &[String] {
+        fn positional_params(&self) -> &[Vec<u8>] {
             &[]
         }
 
-        fn set_var(&mut self, name: &str, value: String) -> Result<(), ExpandError> {
-            self.env.insert(name.to_string(), value);
+        fn set_var(&mut self, name: &[u8], value: Vec<u8>) -> Result<(), ExpandError> {
+            self.env.insert(name.to_vec(), value);
             Ok(())
         }
 
@@ -3407,20 +3470,22 @@ mod tests {
             self.nounset_enabled
         }
 
-        fn shell_name(&self) -> &str {
-            "meiksh"
+        fn shell_name(&self) -> &[u8] {
+            b"meiksh"
         }
 
-        fn command_substitute(&mut self, command: &str) -> Result<String, ExpandError> {
-            Ok(format!("{command}\n"))
+        fn command_substitute(&mut self, command: &[u8]) -> Result<Vec<u8>, ExpandError> {
+            let mut out = command.to_vec();
+            out.push(b'\n');
+            Ok(out)
         }
 
-        fn home_dir_for_user(&self, _name: &str) -> Option<Cow<'_, str>> {
+        fn home_dir_for_user(&self, _name: &[u8]) -> Option<Cow<'_, [u8]>> {
             None
         }
     }
 
-    fn expect_one(result: Result<(Expansion, usize), ExpandError>) -> (String, usize) {
+    fn expect_one(result: Result<(Expansion, usize), ExpandError>) -> (Vec<u8>, usize) {
         let (expansion, consumed) = result.expect("expansion");
         let Expansion::One(s) = expansion else {
             panic!("expected One, got AtFields")
@@ -3432,142 +3497,142 @@ mod tests {
     fn direct_expand_dollar_covers_fallbacks_and_nesting() {
         let mut ctx = FakeContext::new();
         assert_eq!(
-            expect_one(expand_dollar(&mut ctx, "$", false)),
-            ("$".to_string(), 1)
+            expect_one(expand_dollar(&mut ctx, b"$", false)),
+            (b"$".to_vec(), 1)
         );
         assert_eq!(
-            expect_one(expand_dollar(&mut ctx, "$-", false)),
-            ("aC".to_string(), 2)
+            expect_one(expand_dollar(&mut ctx, b"$-", false)),
+            (b"aC".to_vec(), 2)
         );
         assert_eq!(
-            expect_one(expand_dollar(&mut ctx, "$$", false)),
-            ("".to_string(), 2)
+            expect_one(expand_dollar(&mut ctx, b"$$", false)),
+            (b"".to_vec(), 2)
         );
 
-        let (at_expansion, at_consumed) = expand_dollar(&mut ctx, "$@", true).expect("quoted at");
+        let (at_expansion, at_consumed) = expand_dollar(&mut ctx, b"$@", true).expect("quoted at");
         assert_eq!(at_consumed, 2);
         let Expansion::AtFields(fields) = at_expansion else {
             panic!("expected AtFields for quoted $@")
         };
-        assert_eq!(fields, vec!["alpha".to_string(), "beta".to_string()]);
+        assert_eq!(fields, vec![b"alpha".to_vec(), b"beta".to_vec()]);
 
-        let arithmetic_input = "$((1 + (2 * 3)))";
+        let arithmetic_input = b"$((1 + (2 * 3)))";
         assert_eq!(
             expect_one(expand_dollar(&mut ctx, arithmetic_input, false)),
-            ("7".to_string(), arithmetic_input.len())
+            (b"7".to_vec(), arithmetic_input.len())
         );
 
-        let command_input = "$(printf (hi))";
+        let command_input = b"$(printf (hi))";
         assert_eq!(
             expect_one(expand_dollar(&mut ctx, command_input, false)),
-            ("printf (hi)".to_string(), command_input.len())
+            (b"printf (hi)".to_vec(), command_input.len())
         );
     }
 
     #[test]
     fn parameter_text_expansion_avoids_command_substitution() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.env.insert("HOME".into(), "/tmp/home".into());
-        ctx.env.insert("EMPTY".into(), String::new());
+        ctx.env.insert(b"HOME".to_vec(), b"/tmp/home".to_vec());
+        ctx.env.insert(b"EMPTY".to_vec(), Vec::new());
 
         assert_eq!(
-            expand_parameter_text(&mut ctx, "${HOME:-/fallback}/.shrc", &arena)
+            expand_parameter_text(&mut ctx, b"${HOME:-/fallback}/.shrc", &arena)
                 .expect("parameter text"),
-            "/tmp/home/.shrc"
+            b"/tmp/home/.shrc"
         );
         assert_eq!(
-            expand_parameter_text(&mut ctx, "${EMPTY:-$HOME}/nested", &arena)
+            expand_parameter_text(&mut ctx, b"${EMPTY:-$HOME}/nested", &arena)
                 .expect("nested default"),
-            "/tmp/home/nested"
+            b"/tmp/home/nested"
         );
         assert_eq!(
-            expand_parameter_text(&mut ctx, "$(printf nope)${HOME}", &arena)
+            expand_parameter_text(&mut ctx, b"$(printf nope)${HOME}", &arena)
                 .expect("literal command"),
-            "$(printf nope)/tmp/home"
+            b"$(printf nope)/tmp/home"
         );
     }
 
     #[test]
     fn parameter_text_dollar_helpers_are_split_out() {
         let mut ctx = FakeContext::new();
-        ctx.env.insert("HOME".into(), "/tmp/home".into());
+        ctx.env.insert(b"HOME".to_vec(), b"/tmp/home".to_vec());
         assert_eq!(
-            expand_parameter_dollar(&mut ctx, "$").expect("single"),
-            ("$".to_string(), 1)
+            expand_parameter_dollar(&mut ctx, b"$").expect("single"),
+            (b"$".to_vec(), 1)
         );
-        assert!(expand_parameter_dollar(&mut ctx, "${HOME").is_err());
+        assert!(expand_parameter_dollar(&mut ctx, b"${HOME").is_err());
         assert_eq!(
-            expand_parameter_dollar(&mut ctx, "$0").expect("zero"),
-            ("meiksh".to_string(), 2)
-        );
-        assert_eq!(
-            expand_parameter_dollar(&mut ctx, "$?").expect("special"),
-            ("0".to_string(), 2)
+            expand_parameter_dollar(&mut ctx, b"$0").expect("zero"),
+            (b"meiksh".to_vec(), 2)
         );
         assert_eq!(
-            expand_parameter_dollar(&mut ctx, "$1").expect("positional"),
-            ("alpha".to_string(), 2)
+            expand_parameter_dollar(&mut ctx, b"$?").expect("special"),
+            (b"0".to_vec(), 2)
         );
         assert_eq!(
-            expand_parameter_dollar(&mut ctx, "$HOME").expect("name"),
-            ("/tmp/home".to_string(), 5)
+            expand_parameter_dollar(&mut ctx, b"$1").expect("positional"),
+            (b"alpha".to_vec(), 2)
         );
         assert_eq!(
-            expand_parameter_dollar(&mut ctx, "$HOME+rest").expect("name stops at +"),
-            ("/tmp/home".to_string(), 5)
+            expand_parameter_dollar(&mut ctx, b"$HOME").expect("name"),
+            (b"/tmp/home".to_vec(), 5)
         );
         assert_eq!(
-            expand_parameter_dollar(&mut ctx, "$-").expect("dash"),
-            ("aC".to_string(), 2)
+            expand_parameter_dollar(&mut ctx, b"$HOME+rest").expect("name stops at +"),
+            (b"/tmp/home".to_vec(), 5)
+        );
+        assert_eq!(
+            expand_parameter_dollar(&mut ctx, b"$-").expect("dash"),
+            (b"aC".to_vec(), 2)
         );
     }
 
     #[test]
     fn parameter_text_assignment_paths_are_split_out() {
         let mut ctx = FakeContext::new();
-        ctx.env.insert("HOME".into(), "/tmp/home".into());
+        ctx.env.insert(b"HOME".to_vec(), b"/tmp/home".to_vec());
         assert_eq!(
-            expand_braced_parameter_text(&mut ctx, "#").expect("hash"),
-            "2"
+            expand_braced_parameter_text(&mut ctx, b"#").expect("hash"),
+            b"2"
         );
         assert_eq!(
-            expand_braced_parameter_text(&mut ctx, "#HOME").expect("length"),
-            "9"
+            expand_braced_parameter_text(&mut ctx, b"#HOME").expect("length"),
+            b"9"
         );
         assert_eq!(
-            expand_braced_parameter_text(&mut ctx, "HOME-word").expect("dash set"),
-            "/tmp/home"
+            expand_braced_parameter_text(&mut ctx, b"HOME-word").expect("dash set"),
+            b"/tmp/home"
         );
         assert_eq!(
-            expand_braced_parameter_text(&mut ctx, "UNSET-word").expect("dash unset"),
-            "word"
+            expand_braced_parameter_text(&mut ctx, b"UNSET-word").expect("dash unset"),
+            b"word"
         );
         assert_eq!(
-            expand_braced_parameter_text(&mut ctx, "HOME:=value").expect("colon assign set"),
-            "/tmp/home"
+            expand_braced_parameter_text(&mut ctx, b"HOME:=value").expect("colon assign set"),
+            b"/tmp/home"
         );
         assert_eq!(
-            expand_braced_parameter_text(&mut ctx, "UNSET:=value").expect("assign unset"),
-            "value"
+            expand_braced_parameter_text(&mut ctx, b"UNSET:=value").expect("assign unset"),
+            b"value"
         );
-        assert_eq!(ctx.env.get("UNSET").map(String::as_str), Some("value"));
+        assert_eq!(ctx.env.get(b"UNSET".as_ref()).map(|v| v.as_slice()), Some(b"value".as_ref()));
         assert_eq!(
-            expand_braced_parameter_text(&mut ctx, "MISSING3=value").expect("assign equals unset"),
-            "value"
+            expand_braced_parameter_text(&mut ctx, b"MISSING3=value").expect("assign equals unset"),
+            b"value"
         );
-        assert_eq!(ctx.env.get("MISSING3").map(String::as_str), Some("value"));
+        assert_eq!(ctx.env.get(b"MISSING3".as_ref()).map(|v| v.as_slice()), Some(b"value".as_ref()));
         assert_eq!(
-            expand_braced_parameter_text(&mut ctx, "HOME=value").expect("assign set"),
-            "/tmp/home"
+            expand_braced_parameter_text(&mut ctx, b"HOME=value").expect("assign set"),
+            b"/tmp/home"
         );
-        assert!(assign_parameter_text(&mut ctx, "1", "value").is_err());
+        assert!(assign_parameter_text(&mut ctx, b"1", b"value").is_err());
 
-        let err = expand_braced_parameter_text(&mut ctx, "MISSING4?").expect_err("? no word");
-        assert_eq!(&*err.message, "MISSING4: parameter not set");
+        let err = expand_braced_parameter_text(&mut ctx, b"MISSING4?").expect_err("? no word");
+        assert_eq!(&*err.message, b"MISSING4: parameter not set".as_ref());
         let text =
-            expand_parameter_error_text(&mut ctx, "X", Some(""), "my default").expect("empty word");
-        assert_eq!(text, "X: my default");
+            expand_parameter_error_text(&mut ctx, b"X", Some(b""), b"my default").expect("empty word");
+        assert_eq!(text, b"X: my default");
     }
 
     #[test]
@@ -3575,48 +3640,48 @@ mod tests {
         let mut ctx = DefaultPathContext::new();
         ctx.nounset_enabled = true;
 
-        let error = expand_braced_parameter_text(&mut ctx, "#UNSET").expect_err("nounset length");
-        assert_eq!(&*error.message, "UNSET: parameter not set");
+        let error = expand_braced_parameter_text(&mut ctx, b"#UNSET").expect_err("nounset length");
+        assert_eq!(&*error.message, b"UNSET: parameter not set".as_ref());
 
         let error =
-            expand_braced_parameter_text(&mut ctx, "UNSET%.*").expect_err("nounset pattern");
-        assert_eq!(&*error.message, "UNSET: parameter not set");
+            expand_braced_parameter_text(&mut ctx, b"UNSET%.*").expect_err("nounset pattern");
+        assert_eq!(&*error.message, b"UNSET: parameter not set".as_ref());
     }
 
     #[test]
     fn parameter_text_question_operator_paths_are_split_out() {
         let mut ctx = FakeContext::new();
-        ctx.env.insert("HOME".into(), "/tmp/home".into());
-        ctx.env.insert("EMPTY".into(), String::new());
+        ctx.env.insert(b"HOME".to_vec(), b"/tmp/home".to_vec());
+        ctx.env.insert(b"EMPTY".to_vec(), Vec::new());
         assert_eq!(
-            expand_braced_parameter_text(&mut ctx, "HOME:?boom").expect("colon question set"),
-            "/tmp/home"
+            expand_braced_parameter_text(&mut ctx, b"HOME:?boom").expect("colon question set"),
+            b"/tmp/home"
         );
         assert_eq!(
-            expand_braced_parameter_text(&mut ctx, "HOME?boom").expect("question set"),
-            "/tmp/home"
+            expand_braced_parameter_text(&mut ctx, b"HOME?boom").expect("question set"),
+            b"/tmp/home"
         );
-        let colon_question = expand_braced_parameter_text(&mut ctx, "EMPTY:?boom")
+        let colon_question = expand_braced_parameter_text(&mut ctx, b"EMPTY:?boom")
             .expect_err("colon question unset");
-        assert_eq!(&*colon_question.message, "boom");
+        assert_eq!(&*colon_question.message, b"boom".as_ref());
         let question =
-            expand_braced_parameter_text(&mut ctx, "MISSING?boom").expect_err("question unset");
-        assert_eq!(&*question.message, "boom");
+            expand_braced_parameter_text(&mut ctx, b"MISSING?boom").expect_err("question unset");
+        assert_eq!(&*question.message, b"boom".as_ref());
         let colon_default =
-            expand_braced_parameter_text(&mut ctx, "EMPTY:?").expect_err("colon default");
-        assert_eq!(&*colon_default.message, "EMPTY: parameter null or not set");
+            expand_braced_parameter_text(&mut ctx, b"EMPTY:?").expect_err("colon default");
+        assert_eq!(&*colon_default.message, b"EMPTY: parameter null or not set".as_ref());
         let question_default =
-            expand_braced_parameter_text(&mut ctx, "MISSING?").expect_err("question default");
-        assert_eq!(&*question_default.message, "MISSING: parameter not set");
+            expand_braced_parameter_text(&mut ctx, b"MISSING?").expect_err("question default");
+        assert_eq!(&*question_default.message, b"MISSING: parameter not set".as_ref());
     }
 
     #[test]
     fn parameter_text_question_propagates_word_expansion_error() {
         let mut ctx = FakeContext::new();
-        let err = expand_braced_parameter_text(&mut ctx, "MISSING:?$'unterminated")
+        let err = expand_braced_parameter_text(&mut ctx, b"MISSING:?$'unterminated")
             .expect_err("colon-question text expansion error");
         assert!(!err.message.is_empty());
-        let err = expand_braced_parameter_text(&mut ctx, "MISSING?$'unterminated")
+        let err = expand_braced_parameter_text(&mut ctx, b"MISSING?$'unterminated")
             .expect_err("plain-question text expansion error");
         assert!(!err.message.is_empty());
     }
@@ -3624,41 +3689,41 @@ mod tests {
     #[test]
     fn parameter_text_plus_and_pattern_paths_are_split_out() {
         let mut ctx = FakeContext::new();
-        ctx.env.insert("HOME".into(), "/tmp/home".into());
-        ctx.env.insert("DOTTED".into(), "alpha.beta".into());
+        ctx.env.insert(b"HOME".to_vec(), b"/tmp/home".to_vec());
+        ctx.env.insert(b"DOTTED".to_vec(), b"alpha.beta".to_vec());
         assert_eq!(
-            expand_braced_parameter_text(&mut ctx, "HOME:+alt").expect("colon plus"),
-            "alt"
+            expand_braced_parameter_text(&mut ctx, b"HOME:+alt").expect("colon plus"),
+            b"alt"
         );
         assert_eq!(
-            expand_braced_parameter_text(&mut ctx, "MISSING2:+alt").expect("colon plus unset"),
-            ""
+            expand_braced_parameter_text(&mut ctx, b"MISSING2:+alt").expect("colon plus unset"),
+            b""
         );
         assert_eq!(
-            expand_braced_parameter_text(&mut ctx, "HOME+alt").expect("plus set"),
-            "alt"
+            expand_braced_parameter_text(&mut ctx, b"HOME+alt").expect("plus set"),
+            b"alt"
         );
         assert_eq!(
-            expand_braced_parameter_text(&mut ctx, "MISSING2+alt").expect("plus unset"),
-            ""
+            expand_braced_parameter_text(&mut ctx, b"MISSING2+alt").expect("plus unset"),
+            b""
         );
         assert_eq!(
-            expand_braced_parameter_text(&mut ctx, "DOTTED%.*").expect("suffix"),
-            "alpha"
+            expand_braced_parameter_text(&mut ctx, b"DOTTED%.*").expect("suffix"),
+            b"alpha"
         );
         assert_eq!(
-            expand_braced_parameter_text(&mut ctx, "DOTTED%%.*").expect("largest suffix"),
-            "alpha"
+            expand_braced_parameter_text(&mut ctx, b"DOTTED%%.*").expect("largest suffix"),
+            b"alpha"
         );
         assert_eq!(
-            expand_braced_parameter_text(&mut ctx, "DOTTED#*.").expect("prefix"),
-            "beta"
+            expand_braced_parameter_text(&mut ctx, b"DOTTED#*.").expect("prefix"),
+            b"beta"
         );
         assert_eq!(
-            expand_braced_parameter_text(&mut ctx, "DOTTED##*.").expect("largest prefix"),
-            "beta"
+            expand_braced_parameter_text(&mut ctx, b"DOTTED##*.").expect("largest prefix"),
+            b"beta"
         );
-        assert!(expand_braced_parameter_text(&mut ctx, "HOME::word").is_err());
+        assert!(expand_braced_parameter_text(&mut ctx, b"HOME::word").is_err());
     }
 
     #[test]
@@ -3666,57 +3731,53 @@ mod tests {
         let mut ctx = FakeContext::new();
 
         assert_eq!(
-            expand_braced_parameter(&mut ctx, "USER:-word", false).expect("default set"),
-            Expansion::One("meiksh".into())
+            expand_braced_parameter(&mut ctx, b"USER:-word", false).expect("default set"),
+            Expansion::One(b"meiksh".to_vec())
         );
         assert_eq!(
-            expand_braced_parameter(&mut ctx, "USER:=word", false).expect("assign set"),
-            Expansion::One("meiksh".into())
+            expand_braced_parameter(&mut ctx, b"USER:=word", false).expect("assign set"),
+            Expansion::One(b"meiksh".to_vec())
         );
         assert_eq!(
-            expand_braced_parameter(&mut ctx, "MISSING=value", false).expect("assign unset"),
-            Expansion::One("value".into())
+            expand_braced_parameter(&mut ctx, b"MISSING=value", false).expect("assign unset"),
+            Expansion::One(b"value".to_vec())
         );
-        assert_eq!(ctx.env.get("MISSING").map(String::as_str), Some("value"));
+        assert_eq!(ctx.env.get(b"MISSING".as_ref()).map(|v| v.as_slice()), Some(b"value".as_ref()));
         assert_eq!(
-            expand_braced_parameter(&mut ctx, "USER=value", false).expect("assign set"),
-            Expansion::One("meiksh".into())
+            expand_braced_parameter(&mut ctx, b"USER=value", false).expect("assign set"),
+            Expansion::One(b"meiksh".to_vec())
         );
         assert_eq!(
-            expand_braced_parameter(&mut ctx, "USER?boom", false).expect("question set"),
-            Expansion::One("meiksh".into())
+            expand_braced_parameter(&mut ctx, b"USER?boom", false).expect("question set"),
+            Expansion::One(b"meiksh".to_vec())
         );
         let error =
-            expand_braced_parameter(&mut ctx, "UNSET?boom", false).expect_err("question unset");
-        assert_eq!(&*error.message, "boom");
+            expand_braced_parameter(&mut ctx, b"UNSET?boom", false).expect_err("question unset");
+        assert_eq!(&*error.message, b"boom".as_ref());
         assert_eq!(
-            expand_braced_parameter(&mut ctx, "USER:?boom", false).expect("colon question set"),
-            Expansion::One("meiksh".into())
+            expand_braced_parameter(&mut ctx, b"USER:?boom", false).expect("colon question set"),
+            Expansion::One(b"meiksh".to_vec())
         );
 
-        let error = assign_parameter(&mut ctx, "1", "value", false).expect_err("invalid assign");
-        assert_eq!(&*error.message, "1: cannot assign in parameter expansion");
+        let error = assign_parameter(&mut ctx, b"1", b"value", false).expect_err("invalid assign");
+        assert_eq!(&*error.message, b"1: cannot assign in parameter expansion".as_ref());
 
-        let parsed = parse_parameter_expression("@").expect("special name");
-        assert_eq!(parsed, ("@", None, None));
+        let parsed = parse_parameter_expression(b"@").expect("special name");
+        assert_eq!(parsed, (b"@".as_ref(), None, None));
 
-        let error = parse_parameter_expression("").expect_err("empty expr");
-        assert_eq!(&*error.message, "empty parameter expansion");
+        let error = parse_parameter_expression(b"").expect_err("empty expr");
+        assert_eq!(&*error.message, b"empty parameter expansion".as_ref());
 
-        let error = parse_parameter_expression("%oops").expect_err("invalid expr");
-        assert_eq!(&*error.message, "invalid parameter expansion");
-        assert_eq!(
-            parse_parameter_expression("USER%%tail").expect("largest suffix"),
-            ("USER", Some("%%"), Some("tail"))
-        );
-        assert_eq!(
-            parse_parameter_expression("USER/tail").expect("unknown operator"),
-            ("USER", Some("/"), Some("tail"))
-        );
+        let error = parse_parameter_expression(b"%oops").expect_err("invalid expr");
+        assert_eq!(&*error.message, b"invalid parameter expansion".as_ref());
+        let parsed = parse_parameter_expression(b"USER%%tail").expect("largest suffix");
+        assert_eq!(parsed, (b"USER".as_ref(), Some(b"%%".as_ref()), Some(b"tail".as_ref())));
+        let parsed = parse_parameter_expression(b"USER/tail").expect("unknown operator");
+        assert_eq!(parsed, (b"USER".as_ref(), Some(b"/".as_ref()), Some(b"tail".as_ref())));
 
         let error =
-            expand_braced_parameter(&mut ctx, "USER/tail", false).expect_err("unsupported expr");
-        assert_eq!(&*error.message, "unsupported parameter expansion");
+            expand_braced_parameter(&mut ctx, b"USER/tail", false).expect_err("unsupported expr");
+        assert_eq!(&*error.message, b"unsupported parameter expansion".as_ref());
     }
 
     #[test]
@@ -3728,11 +3789,11 @@ mod tests {
                 TraceResult::Err(crate::sys::ENOENT),
             )],
             || {
-                let segs = vec![Segment::Text("*.txt".to_string(), QuoteState::Expanded)];
+                let segs = vec![Segment::Text(b"*.txt".to_vec(), QuoteState::Expanded)];
                 assert_eq!(
-                    split_fields_from_segments(&segs, ""),
+                    split_fields_from_segments(&segs, b""),
                     vec![Field {
-                        text: "*.txt".to_string(),
+                        text: b"*.txt".to_vec(),
                         has_unquoted_glob: true,
                     }]
                 );
@@ -3740,29 +3801,29 @@ mod tests {
                 assert_eq!(
                     split_fields_from_segments(
                         &[Segment::Text(
-                            "alpha,  beta".to_string(),
+                            b"alpha,  beta".to_vec(),
                             QuoteState::Expanded
                         )],
-                        " ,"
+                        b" ,"
                     ),
                     vec![
                         Field {
-                            text: "alpha".to_string(),
+                            text: b"alpha".to_vec(),
                             has_unquoted_glob: false,
                         },
                         Field {
-                            text: "beta".to_string(),
+                            text: b"beta".to_vec(),
                             has_unquoted_glob: false,
                         },
                     ]
                 );
 
-                assert_eq!(expand_pathname("plain.txt"), vec!["plain.txt".to_string()]);
+                assert_eq!(expand_pathname(b"plain.txt"), vec![b"plain.txt".to_vec()]);
 
                 let mut matches = Vec::new();
                 expand_path_segments(
-                    Path::new("/definitely/not/a/real/dir"),
-                    &["*.txt"],
+                    b"/definitely/not/a/real/dir",
+                    &[b"*.txt".as_ref()],
                     0,
                     false,
                     &mut matches,
@@ -3770,72 +3831,72 @@ mod tests {
                 assert!(matches.is_empty());
 
                 let mut matches = Vec::new();
-                expand_path_segments(Path::new("."), &[], 0, false, &mut matches);
-                assert_eq!(matches, vec![".".to_string()]);
+                expand_path_segments(b".", &[], 0, false, &mut matches);
+                assert_eq!(matches, vec![b".".to_vec()]);
 
-                assert!(pattern_matches("x", "?"));
-                assert!(pattern_matches("[", "["));
-                assert!(pattern_matches("]", r"\]"));
-                assert!(pattern_matches("b", "[a-c]"));
-                assert!(pattern_matches("d", "[!a-c]"));
+                assert!(pattern_matches(b"x", b"?"));
+                assert!(pattern_matches(b"[", b"["));
+                assert!(pattern_matches(b"]", b"\\]"));
+                assert!(pattern_matches(b"b", b"[a-c]"));
+                assert!(pattern_matches(b"d", b"[!a-c]"));
 
-                assert!(pattern_matches("a", "[[:alpha:]]"));
-                assert!(pattern_matches("Z", "[[:alpha:]]"));
-                assert!(!pattern_matches("5", "[[:alpha:]]"));
-                assert!(pattern_matches("3", "[[:alnum:]]"));
-                assert!(pattern_matches("z", "[[:alnum:]]"));
-                assert!(!pattern_matches("!", "[[:alnum:]]"));
-                assert!(pattern_matches(" ", "[[:blank:]]"));
-                assert!(pattern_matches("\t", "[[:blank:]]"));
-                assert!(!pattern_matches("a", "[[:blank:]]"));
-                assert!(pattern_matches("\x01", "[[:cntrl:]]"));
-                assert!(!pattern_matches("a", "[[:cntrl:]]"));
-                assert!(pattern_matches("9", "[[:digit:]]"));
-                assert!(!pattern_matches("a", "[[:digit:]]"));
-                assert!(pattern_matches("!", "[[:graph:]]"));
-                assert!(!pattern_matches(" ", "[[:graph:]]"));
-                assert!(pattern_matches("a", "[[:lower:]]"));
-                assert!(!pattern_matches("A", "[[:lower:]]"));
-                assert!(pattern_matches(" ", "[[:print:]]"));
-                assert!(pattern_matches("a", "[[:print:]]"));
-                assert!(!pattern_matches("\x01", "[[:print:]]"));
-                assert!(pattern_matches(".", "[[:punct:]]"));
-                assert!(!pattern_matches("a", "[[:punct:]]"));
-                assert!(pattern_matches("\n", "[[:space:]]"));
-                assert!(!pattern_matches("a", "[[:space:]]"));
-                assert!(pattern_matches("A", "[[:upper:]]"));
-                assert!(!pattern_matches("a", "[[:upper:]]"));
-                assert!(pattern_matches("f", "[[:xdigit:]]"));
-                assert!(pattern_matches("F", "[[:xdigit:]]"));
-                assert!(!pattern_matches("g", "[[:xdigit:]]"));
-                assert!(!pattern_matches("a", "[[:bogus:]]"));
-                assert!(pattern_matches("x", "[[:x]"));
-                assert!(!pattern_matches("", "[a-z]"));
+                assert!(pattern_matches(b"a", b"[[:alpha:]]"));
+                assert!(pattern_matches(b"Z", b"[[:alpha:]]"));
+                assert!(!pattern_matches(b"5", b"[[:alpha:]]"));
+                assert!(pattern_matches(b"3", b"[[:alnum:]]"));
+                assert!(pattern_matches(b"z", b"[[:alnum:]]"));
+                assert!(!pattern_matches(b"!", b"[[:alnum:]]"));
+                assert!(pattern_matches(b" ", b"[[:blank:]]"));
+                assert!(pattern_matches(b"\t", b"[[:blank:]]"));
+                assert!(!pattern_matches(b"a", b"[[:blank:]]"));
+                assert!(pattern_matches(b"\x01", b"[[:cntrl:]]"));
+                assert!(!pattern_matches(b"a", b"[[:cntrl:]]"));
+                assert!(pattern_matches(b"9", b"[[:digit:]]"));
+                assert!(!pattern_matches(b"a", b"[[:digit:]]"));
+                assert!(pattern_matches(b"!", b"[[:graph:]]"));
+                assert!(!pattern_matches(b" ", b"[[:graph:]]"));
+                assert!(pattern_matches(b"a", b"[[:lower:]]"));
+                assert!(!pattern_matches(b"A", b"[[:lower:]]"));
+                assert!(pattern_matches(b" ", b"[[:print:]]"));
+                assert!(pattern_matches(b"a", b"[[:print:]]"));
+                assert!(!pattern_matches(b"\x01", b"[[:print:]]"));
+                assert!(pattern_matches(b".", b"[[:punct:]]"));
+                assert!(!pattern_matches(b"a", b"[[:punct:]]"));
+                assert!(pattern_matches(b"\n", b"[[:space:]]"));
+                assert!(!pattern_matches(b"a", b"[[:space:]]"));
+                assert!(pattern_matches(b"A", b"[[:upper:]]"));
+                assert!(!pattern_matches(b"a", b"[[:upper:]]"));
+                assert!(pattern_matches(b"f", b"[[:xdigit:]]"));
+                assert!(pattern_matches(b"F", b"[[:xdigit:]]"));
+                assert!(!pattern_matches(b"g", b"[[:xdigit:]]"));
+                assert!(!pattern_matches(b"a", b"[[:bogus:]]"));
+                assert!(pattern_matches(b"x", b"[[:x]"));
+                assert!(!pattern_matches(b"", b"[a-z]"));
 
-                assert_eq!(match_bracket(None, "[a]", 0), None);
-                assert_eq!(match_bracket(Some('a'), "[", 0), None);
-                assert_eq!(match_bracket(Some(']'), "[\\]]", 0), Some((true, 4)));
+                assert_eq!(match_bracket(None, b"[a]", 0), None);
+                assert_eq!(match_bracket(Some(b'a'), b"[", 0), None);
+                assert_eq!(match_bracket(Some(b']'), b"[\\]]", 0), Some((true, 4)));
                 assert_eq!(
                     render_pattern_from_segments(&[Segment::Text(
-                        "*".to_string(),
+                        b"*".to_vec(),
                         QuoteState::Quoted
                     )]),
-                    "\\*".to_string()
+                    b"\\*".to_vec()
                 );
                 assert_eq!(
                     render_pattern_from_segments(&[Segment::Text(
-                        "ab".to_string(),
+                        b"ab".to_vec(),
                         QuoteState::Literal
                     )]),
-                    "ab".to_string()
+                    b"ab".to_vec()
                 );
                 assert_eq!(
                     render_pattern_from_segments(&[
-                        Segment::Text("x".to_string(), QuoteState::Literal),
+                        Segment::Text(b"x".to_vec(), QuoteState::Literal),
                         Segment::AtBreak,
-                        Segment::Text("y".to_string(), QuoteState::Expanded),
+                        Segment::Text(b"y".to_vec(), QuoteState::Expanded),
                     ]),
-                    "xy".to_string()
+                    b"xy".to_vec()
                 );
             },
         );
@@ -3843,195 +3904,195 @@ mod tests {
 
     #[test]
     fn supports_pattern_removal_parameter_expansions() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.env.insert("PATHNAME".into(), "src/bin/main.rs".into());
-        ctx.env.insert("DOTTED".into(), "alpha.beta.gamma".into());
+        ctx.env.insert(b"PATHNAME".to_vec(), b"src/bin/main.rs".to_vec());
+        ctx.env.insert(b"DOTTED".to_vec(), b"alpha.beta.gamma".to_vec());
 
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${PATHNAME#*/}".into(),
+                    raw: b"${PATHNAME#*/}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("small prefix"),
-            vec!["bin/main.rs".to_string()]
+            vec![b"bin/main.rs".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${PATHNAME##*/}".into(),
+                    raw: b"${PATHNAME##*/}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("large prefix"),
-            vec!["main.rs".to_string()]
+            vec![b"main.rs".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${PATHNAME%/*}".into(),
+                    raw: b"${PATHNAME%/*}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("small suffix"),
-            vec!["src/bin".to_string()]
+            vec![b"src/bin".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${PATHNAME%%/*}".into(),
+                    raw: b"${PATHNAME%%/*}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("large suffix"),
-            vec!["src".to_string()]
+            vec![b"src".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${PATHNAME#\"src/\"}".into(),
+                    raw: b"${PATHNAME#\"src/\"}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("quoted pattern"),
-            vec!["bin/main.rs".to_string()]
+            vec![b"bin/main.rs".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${DOTTED#*.}".into(),
+                    raw: b"${DOTTED#*.}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("wildcard prefix"),
-            vec!["beta.gamma".to_string()]
+            vec![b"beta.gamma".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${DOTTED##*.}".into(),
+                    raw: b"${DOTTED##*.}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("largest wildcard prefix"),
-            vec!["gamma".to_string()]
+            vec![b"gamma".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${DOTTED%.*}".into(),
+                    raw: b"${DOTTED%.*}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("wildcard suffix"),
-            vec!["alpha.beta".to_string()]
+            vec![b"alpha.beta".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${DOTTED%%.*}".into(),
+                    raw: b"${DOTTED%%.*}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("largest wildcard suffix"),
-            vec!["alpha".to_string()]
+            vec![b"alpha".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${DOTTED#\"*.\"}".into(),
+                    raw: b"${DOTTED#\"*.\"}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("quoted wildcard"),
-            vec!["alpha.beta.gamma".to_string()]
+            vec![b"alpha.beta.gamma".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${DOTTED%}".into(),
+                    raw: b"${DOTTED%}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("empty suffix pattern"),
-            vec!["alpha.beta.gamma".to_string()]
+            vec![b"alpha.beta.gamma".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "${MISSING%%*.}".into(),
+                    raw: b"${MISSING%%*.}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("unset value"),
-            Vec::<String>::new()
+            Vec::<&[u8]>::new()
         );
     }
 
     #[test]
     fn arithmetic_parser_covers_more_operators() {
         let mut ctx = FakeContext::new();
-        assert_eq!(eval_arithmetic(&mut ctx, "9 - 2 - 1").expect("subtract"), 6);
-        assert_eq!(eval_arithmetic(&mut ctx, "8 / 2").expect("divide"), 4);
-        assert_eq!(eval_arithmetic(&mut ctx, "9 % 4").expect("modulo"), 1);
-        assert_eq!(eval_arithmetic(&mut ctx, "(1 + 2)").expect("parens"), 3);
-        assert_eq!(eval_arithmetic(&mut ctx, "-5").expect("negation"), -5);
+        assert_eq!(eval_arithmetic(&mut ctx, b"9 - 2 - 1").expect("subtract"), 6);
+        assert_eq!(eval_arithmetic(&mut ctx, b"8 / 2").expect("divide"), 4);
+        assert_eq!(eval_arithmetic(&mut ctx, b"9 % 4").expect("modulo"), 1);
+        assert_eq!(eval_arithmetic(&mut ctx, b"(1 + 2)").expect("parens"), 3);
+        assert_eq!(eval_arithmetic(&mut ctx, b"-5").expect("negation"), -5);
 
-        let error = eval_arithmetic(&mut ctx, "5 % 0").expect_err("mod zero");
-        assert_eq!(&*error.message, "division by zero");
+        let error = eval_arithmetic(&mut ctx, b"5 % 0").expect_err("mod zero");
+        assert_eq!(&*error.message, b"division by zero".as_ref());
 
-        let error = eval_arithmetic(&mut ctx, "999999999999999999999999999999999999999")
+        let error = eval_arithmetic(&mut ctx, b"999999999999999999999999999999999999999")
             .expect_err("overflow");
-        assert_eq!(&*error.message, "invalid arithmetic operand");
+        assert_eq!(&*error.message, b"invalid arithmetic operand".as_ref());
     }
 
     #[test]
     fn default_pathname_context_trait_impl() {
         let mut ctx = DefaultPathContext::new();
-        assert_eq!(ctx.special_param('?'), None);
-        assert_eq!(ctx.positional_param(0).as_deref(), Some("meiksh"));
+        assert_eq!(ctx.special_param(b'?'), None);
+        assert_eq!(ctx.positional_param(0).as_deref(), Some(b"meiksh".as_ref()));
         assert_eq!(ctx.positional_param(1), None);
         assert!(ctx.positional_params().is_empty());
-        assert!(ctx.home_dir_for_user("nobody").is_none());
+        assert!(ctx.home_dir_for_user(b"nobody").is_none());
         assert!(!ctx.nounset_enabled());
-        ctx.set_var("NAME", "value".to_string()).expect("set var");
-        assert_eq!(ctx.env_var("NAME").as_deref(), Some("value"));
-        assert_eq!(ctx.shell_name(), "meiksh");
+        ctx.set_var(b"NAME", b"value".to_vec()).expect("set var");
+        assert_eq!(ctx.env_var(b"NAME").as_deref(), Some(b"value".as_ref()));
+        assert_eq!(ctx.shell_name(), b"meiksh");
         assert_eq!(
-            ctx.command_substitute("printf ok").expect("substitute"),
-            "printf ok\n"
+            ctx.command_substitute(b"printf ok").expect("substitute"),
+            b"printf ok\n"
         );
     }
 
     #[test]
     fn unmatched_glob_returns_pattern_literally() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         run_trace(
             vec![t(
                 "opendir",
@@ -4044,13 +4105,13 @@ mod tests {
                     expand_word(
                         &mut ctx,
                         &Word {
-                            raw: "*.definitely-no-match".into(),
+                            raw: b"*.definitely-no-match".as_ref().into(),
                             line: 0
                         },
                         &arena,
                     )
                     .expect("unmatched glob"),
-                    vec!["*.definitely-no-match".to_string()]
+                    vec![b"*.definitely-no-match".as_ref()]
                 );
             },
         );
@@ -4058,67 +4119,67 @@ mod tests {
 
     #[test]
     fn bracket_helpers_cover_missing_closer() {
-        assert_eq!(match_bracket(Some('a'), "[a", 0), None);
+        assert_eq!(match_bracket(Some(b'a'), b"[a", 0), None);
     }
 
     #[test]
     fn expands_here_documents_without_field_splitting() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let expanded = expand_here_document(
             &mut ctx,
-            "hello $USER\n$(printf hi)\n$((1 + 2))\n",
+            b"hello $USER\n$(printf hi)\n$((1 + 2))\n",
             0,
             &arena,
         )
         .expect("expand heredoc");
-        assert_eq!(expanded, "hello meiksh\nprintf hi\n3\n");
+        assert_eq!(expanded, b"hello meiksh\nprintf hi\n3\n");
 
-        let escaped = expand_here_document(&mut ctx, "\\$USER\nline\\\ncontinued\n", 0, &arena)
+        let escaped = expand_here_document(&mut ctx, b"\\$USER\nline\\\ncontinued\n", 0, &arena)
             .expect("expand heredoc");
-        assert_eq!(escaped, "$USER\nlinecontinued\n");
+        assert_eq!(escaped, b"$USER\nlinecontinued\n");
 
-        let trailing = expand_here_document(&mut ctx, "keep\\", 0, &arena).expect("expand heredoc");
-        assert_eq!(trailing, "keep\\");
+        let trailing = expand_here_document(&mut ctx, b"keep\\", 0, &arena).expect("expand heredoc");
+        assert_eq!(trailing, b"keep\\");
 
-        let literal = expand_here_document(&mut ctx, "\\x", 0, &arena).expect("expand heredoc");
-        assert_eq!(literal, "\\x");
+        let literal = expand_here_document(&mut ctx, b"\\x", 0, &arena).expect("expand heredoc");
+        assert_eq!(literal, b"\\x");
 
-        let double_backslash = expand_here_document(&mut ctx, "a\\\\b\n", 0, &arena)
+        let double_backslash = expand_here_document(&mut ctx, b"a\\\\b\n", 0, &arena)
             .expect("expand heredoc double backslash");
-        assert_eq!(double_backslash, "a\\b\n");
+        assert_eq!(double_backslash, b"a\\b\n");
     }
 
     #[test]
     fn quoted_at_produces_separate_fields() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.positional = vec!["a".into(), "b".into(), "c".into()];
+        ctx.positional = vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()];
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"$@\"".into(),
+                    raw: b"\"$@\"".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("quoted at 3"),
-            vec!["a", "b", "c"]
+            vec![b"a".as_ref(), b"b", b"c"]
         );
 
-        ctx.positional = vec!["one".into()];
+        ctx.positional = vec![b"one".to_vec()];
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"$@\"".into(),
+                    raw: b"\"$@\"".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("quoted at 1"),
-            vec!["one"]
+            vec![b"one".as_ref()]
         );
 
         ctx.positional = Vec::new();
@@ -4126,46 +4187,46 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"$@\"".into(),
+                    raw: b"\"$@\"".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("quoted at 0"),
-            Vec::<String>::new()
+            Vec::<&[u8]>::new()
         );
     }
 
     #[test]
     fn quoted_at_with_prefix_and_suffix() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.positional = vec!["a".into(), "b".into()];
+        ctx.positional = vec![b"a".to_vec(), b"b".to_vec()];
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"pre$@suf\"".into(),
+                    raw: b"\"pre$@suf\"".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("prefix suffix"),
-            vec!["prea", "bsuf"]
+            vec![b"prea".as_ref(), b"bsuf"]
         );
 
-        ctx.positional = vec!["only".into()];
+        ctx.positional = vec![b"only".to_vec()];
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"[$@]\"".into(),
+                    raw: b"\"[$@]\"".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("brackets one"),
-            vec!["[only]"]
+            vec![b"[only]".as_ref()]
         );
 
         ctx.positional = Vec::new();
@@ -4173,51 +4234,51 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"pre$@suf\"".into(),
+                    raw: b"\"pre$@suf\"".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("prefix empty"),
-            vec!["presuf"]
+            vec![b"presuf".as_ref()]
         );
     }
 
     #[test]
     fn quoted_at_at_produces_merged_fields() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.positional = vec!["a".into(), "b".into()];
+        ctx.positional = vec![b"a".to_vec(), b"b".to_vec()];
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"$@$@\"".into(),
+                    raw: b"\"$@$@\"".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("at at"),
-            vec!["a", "ba", "b"]
+            vec![b"a".as_ref(), b"ba", b"b"]
         );
     }
 
     #[test]
     fn unquoted_at_undergoes_field_splitting() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.positional = vec!["a b".into(), "c".into()];
+        ctx.positional = vec![b"a b".to_vec(), b"c".to_vec()];
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$@".into(),
+                    raw: b"$@".as_ref().into(),
                     line: 0
                 },
                 &arena
             )
             .expect("unquoted at"),
-            vec!["a", "b", "c"]
+            vec![b"a".as_ref(), b"b", b"c"]
         );
 
         ctx.positional = Vec::new();
@@ -4225,313 +4286,313 @@ mod tests {
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$@".into(),
+                    raw: b"$@".as_ref().into(),
                     line: 0
                 },
                 &arena
             )
             .expect("unquoted at empty"),
-            Vec::<String>::new()
+            Vec::<&[u8]>::new()
         );
     }
 
     #[test]
     fn quoted_star_joins_with_ifs() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.positional = vec!["a".into(), "b".into(), "c".into()];
-        ctx.env.insert("IFS".into(), ":".into());
+        ctx.positional = vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()];
+        ctx.env.insert(b"IFS".to_vec(), b":".to_vec());
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"$*\"".into(),
+                    raw: b"\"$*\"".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("star colon"),
-            vec!["a:b:c"]
+            vec![b"a:b:c".as_ref()]
         );
 
-        ctx.env.insert("IFS".into(), String::new());
+        ctx.env.insert(b"IFS".to_vec(), Vec::new());
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"$*\"".into(),
+                    raw: b"\"$*\"".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("star empty ifs"),
-            vec!["abc"]
+            vec![b"abc".as_ref()]
         );
 
-        ctx.env.remove("IFS");
+        ctx.env.remove(b"IFS".as_ref());
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"$*\"".into(),
+                    raw: b"\"$*\"".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("star unset ifs"),
-            vec!["a b c"]
+            vec![b"a b c".as_ref()]
         );
     }
 
     #[test]
     fn backtick_command_substitution_in_expander() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "`echo hello`".into(),
+                    raw: b"`echo hello`".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("backtick"),
-            vec!["echo", "hello"]
+            vec![b"echo".as_ref(), b"hello"]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"`echo hello`\"".into(),
+                    raw: b"\"`echo hello`\"".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("quoted bt"),
-            vec!["echo hello"]
+            vec![b"echo hello".as_ref()]
         );
     }
 
     #[test]
     fn backtick_backslash_escapes() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "`echo \\$USER`".into(),
+                    raw: b"`echo \\$USER`".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("escaped dollar"),
-            "echo $USER"
+            b"echo $USER"
         );
         assert_eq!(
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "\"`echo \\$USER`\"".into(),
+                    raw: b"\"`echo \\$USER`\"".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("escaped dollar dq"),
-            "echo $USER"
+            b"echo $USER"
         );
     }
 
     #[test]
     fn brace_scanning_respects_quotes_and_nesting() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.env.insert("VAR".into(), String::new());
+        ctx.env.insert(b"VAR".to_vec(), Vec::new());
 
         assert_eq!(
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${VAR:-\"a}b\"}".into(),
+                    raw: b"${VAR:-\"a}b\"}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("quoted brace in default"),
-            "a}b"
+            b"a}b"
         );
 
         assert_eq!(
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${VAR:-$(echo ok)}".into(),
+                    raw: b"${VAR:-$(echo ok)}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("command sub in brace"),
-            "echo ok"
+            b"echo ok"
         );
 
         assert_eq!(
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${VAR:-$((1+2))}".into(),
+                    raw: b"${VAR:-$((1+2))}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("arith in brace"),
-            "3"
+            b"3"
         );
 
-        ctx.env.insert("INNER".into(), "val".into());
+        ctx.env.insert(b"INNER".to_vec(), b"val".to_vec());
         assert_eq!(
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${VAR:-${INNER}}".into(),
+                    raw: b"${VAR:-${INNER}}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("nested brace"),
-            "val"
+            b"val"
         );
 
         assert_eq!(
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${VAR:-`echo hi`}".into(),
+                    raw: b"${VAR:-`echo hi`}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("backtick in brace"),
-            "echo hi"
+            b"echo hi"
         );
 
         assert_eq!(
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${VAR:-'a}b'}".into(),
+                    raw: b"${VAR:-'a}b'}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("single quote in brace"),
-            "a}b"
+            b"a}b"
         );
 
         assert_eq!(
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${VAR:-\\}}".into(),
+                    raw: b"${VAR:-\\}}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("escaped brace"),
-            "}"
+            b"}"
         );
     }
 
     #[test]
     fn here_document_expands_at_sign() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.positional = vec!["x".into(), "y".into()];
-        let result = expand_here_document(&mut ctx, "$@\n", 0, &arena).expect("heredoc at");
-        assert_eq!(result, "x y\n");
+        ctx.positional = vec![b"x".to_vec(), b"y".to_vec()];
+        let result = expand_here_document(&mut ctx, b"$@\n", 0, &arena).expect("heredoc at");
+        assert_eq!(result, b"x y\n");
     }
 
     #[test]
     fn error_parameter_expansion_operators() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let error = expand_word(
             &mut ctx,
             &Word {
-                raw: "${UNSET:?custom error}".into(),
+                raw: b"${UNSET:?custom error}".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect_err("colon question");
-        assert_eq!(&*error.message, "custom error");
+        assert_eq!(&*error.message, b"custom error".as_ref());
 
         let error = expand_word(
             &mut ctx,
             &Word {
-                raw: "${UNSET?also error}".into(),
+                raw: b"${UNSET?also error}".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect_err("question");
-        assert_eq!(&*error.message, "also error");
+        assert_eq!(&*error.message, b"also error".as_ref());
     }
 
     #[test]
-    fn segment_chars_skips_at_break() {
+    fn segment_bytes_skips_at_break() {
         let segs = vec![
-            Segment::Text("a".into(), QuoteState::Expanded),
+            Segment::Text(b"a".to_vec(), QuoteState::Expanded),
             Segment::AtBreak,
-            Segment::Text("b".into(), QuoteState::Quoted),
+            Segment::Text(b"b".to_vec(), QuoteState::Quoted),
         ];
-        let chars: Vec<_> = segment_chars(&segs).collect();
+        let chars: Vec<_> = segment_bytes(&segs).collect();
         assert_eq!(
             chars,
-            vec![('a', QuoteState::Expanded), ('b', QuoteState::Quoted)]
+            vec![(b'a', QuoteState::Expanded), (b'b', QuoteState::Quoted)]
         );
     }
 
     #[test]
     fn scan_to_closing_brace_error_on_unterminated() {
-        let err = scan_to_closing_brace("${var", 2).expect_err("unterminated");
-        assert_eq!(&*err.message, "unterminated parameter expansion");
+        let err = scan_to_closing_brace(b"${var", 2).expect_err("unterminated");
+        assert_eq!(&*err.message, b"unterminated parameter expansion".as_ref());
     }
 
     #[test]
     fn expand_word_empty_quoted_at_with_other_quoted() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.positional = Vec::new();
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"\"\"$@\"".into(),
+                    raw: b"\"\"\"$@\"".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("empty at dq"),
-            vec!["".to_string()]
+            vec![b"".as_ref()]
         );
     }
 
     #[test]
     fn backtick_inside_double_quotes_with_buffer() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"hello `echo world`\"".into(),
+                    raw: b"\"hello `echo world`\"".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("bt dq buffer"),
-            vec!["hello echo world"]
+            vec![b"hello echo world".as_ref()]
         );
     }
 
@@ -4539,168 +4600,168 @@ mod tests {
     fn scan_backtick_command_unterminated() {
         let mut index = 1usize;
         let err =
-            scan_backtick_command("`unterminated", &mut index, false).expect_err("unterminated");
-        assert_eq!(&*err.message, "unterminated backquote");
+            scan_backtick_command(b"`unterminated", &mut index, false).expect_err("unterminated");
+        assert_eq!(&*err.message, b"unterminated backquote".as_ref());
     }
 
     #[test]
     fn scan_backtick_command_escape_outside_dq() {
         let mut index = 1usize;
-        let result = scan_backtick_command("`echo \\\\ok`", &mut index, false).expect("bt escape");
-        assert_eq!(result, "echo \\ok");
+        let result = scan_backtick_command(b"`echo \\\\ok`", &mut index, false).expect("bt escape");
+        assert_eq!(result, b"echo \\ok");
     }
 
     #[test]
     fn here_document_with_at_expansion() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.positional = vec!["a".into(), "b".into()];
-        let result = expand_here_document(&mut ctx, "args: $@\n", 0, &arena).expect("heredoc @");
-        assert_eq!(result, "args: a b\n");
+        ctx.positional = vec![b"a".to_vec(), b"b".to_vec()];
+        let result = expand_here_document(&mut ctx, b"args: $@\n", 0, &arena).expect("heredoc @");
+        assert_eq!(result, b"args: a b\n");
     }
 
     #[test]
     fn brace_scanning_handles_complex_nesting() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.env.insert("VAR".into(), String::new());
+        ctx.env.insert(b"VAR".to_vec(), Vec::new());
 
         assert_eq!(
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${VAR:-$((2+3))}".into(),
+                    raw: b"${VAR:-$((2+3))}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("arith in brace scan"),
-            "5"
+            b"5"
         );
 
         assert_eq!(
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${VAR:-$(echo deep)}".into(),
+                    raw: b"${VAR:-$(echo deep)}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("cmd sub in brace scan"),
-            "echo deep"
+            b"echo deep"
         );
 
         assert_eq!(
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${VAR:-`echo bt`}".into(),
+                    raw: b"${VAR:-`echo bt`}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("backtick in brace scan"),
-            "echo bt"
+            b"echo bt"
         );
 
         assert_eq!(
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${VAR:-\"inside\"}".into(),
+                    raw: b"${VAR:-\"inside\"}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("dq in brace scan with escape"),
-            "inside"
+            b"inside"
         );
     }
 
     #[test]
     fn error_parameter_expansion_with_null_or_not_set() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.env.insert("EMPTY".into(), String::new());
+        ctx.env.insert(b"EMPTY".to_vec(), Vec::new());
 
         let err = expand_word(
             &mut ctx,
             &Word {
-                raw: "${EMPTY:?null or unset}".into(),
+                raw: b"${EMPTY:?null or unset}".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect_err("colon question null");
-        assert_eq!(&*err.message, "null or unset");
+        assert_eq!(&*err.message, b"null or unset".as_ref());
 
         let ok = expand_word(
             &mut ctx,
             &Word {
-                raw: "\"${EMPTY?not an error}\"".into(),
+                raw: b"\"${EMPTY?not an error}\"".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect("question set but empty");
-        assert_eq!(ok, vec![String::new()]);
+        assert_eq!(ok, vec![b"".as_ref()]);
 
         let err = expand_word(
             &mut ctx,
             &Word {
-                raw: "${NOEXIST?custom msg}".into(),
+                raw: b"${NOEXIST?custom msg}".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect_err("question unset");
-        assert_eq!(&*err.message, "custom msg");
+        assert_eq!(&*err.message, b"custom msg".as_ref());
     }
 
     #[test]
     fn field_splitting_empty_result_returns_empty_vec() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.env.insert("WS".into(), "   ".into());
+        ctx.env.insert(b"WS".to_vec(), b"   ".to_vec());
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "$WS".into(),
+                    raw: b"$WS".as_ref().into(),
                     line: 0
                 },
                 &arena
             )
             .expect("whitespace only"),
-            Vec::<String>::new()
+            Vec::<&[u8]>::new()
         );
     }
 
     #[test]
     fn at_break_with_glob_in_at_fields() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.pathname_expansion_enabled = false;
-        ctx.positional = vec!["*.txt".into(), "b".into()];
+        ctx.positional = vec![b"*.txt".to_vec(), b"b".to_vec()];
         let result = expand_word(
             &mut ctx,
             &Word {
-                raw: "\"$@\"".into(),
+                raw: b"\"$@\"".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect("at with glob-like");
-        assert_eq!(result, vec!["*.txt", "b"]);
+        assert_eq!(result, vec![b"*.txt".as_ref(), b"b"]);
     }
 
     #[test]
     fn flatten_expansion_covers_at_fields() {
-        assert_eq!(flatten_expansion(Expansion::One("hello".into())), "hello");
+        assert_eq!(flatten_expansion(Expansion::One(b"hello".to_vec())), b"hello");
         assert_eq!(
-            flatten_expansion(Expansion::AtFields(vec!["a".into(), "b".into()])),
-            "a b"
+            flatten_expansion(Expansion::AtFields(vec![b"a".to_vec(), b"b".to_vec()])),
+            b"a b"
         );
     }
 
@@ -4708,1045 +4769,553 @@ mod tests {
     fn scan_backtick_non_special_escape_in_dquote() {
         let mut index = 1usize;
         let result =
-            scan_backtick_command("`echo \\x`", &mut index, true).expect("non-special escape");
-        assert_eq!(result, "echo \\x");
+            scan_backtick_command(b"`echo \\x`", &mut index, true).expect("non-special escape");
+        assert_eq!(result, b"echo \\x");
     }
 
     #[test]
     fn at_empty_combined_with_at_break() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.positional = vec!["x".into()];
+        ctx.positional = vec![b"x".to_vec()];
         let result = expand_word(
             &mut ctx,
             &Word {
-                raw: "\"$@\"".into(),
+                raw: b"\"$@\"".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect("at one param");
-        assert_eq!(result, vec!["x"]);
+        assert_eq!(result, vec![b"x".as_ref()]);
 
         ctx.positional = Vec::new();
         let result2 = expand_word(
             &mut ctx,
             &Word {
-                raw: "\"$@\"".into(),
+                raw: b"\"$@\"".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect("at empty");
-        assert_eq!(result2, Vec::<String>::new());
+        assert_eq!(result2, Vec::<&[u8]>::new());
     }
 
     #[test]
     fn brace_scanning_with_arith_and_cmd_sub_and_backtick() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.env.insert("V".into(), String::new());
+        ctx.env.insert(b"V".to_vec(), Vec::new());
 
         assert_eq!(
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${V:-$((1+(2*3)))}".into(),
+                    raw: b"${V:-$((1+(2*3)))}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("nested arith in scan"),
-            "7"
+            b"7"
         );
 
         assert_eq!(
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${V:-$(echo (hi))}".into(),
+                    raw: b"${V:-$(echo (hi))}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("nested cmd sub in scan"),
-            "echo (hi)"
+            b"echo (hi)"
         );
 
         assert_eq!(
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${V:-`echo \\\\x`}".into(),
+                    raw: b"${V:-`echo \\\\x`}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("bt escape in scan"),
-            "echo \\x"
+            b"echo \\x"
         );
 
         assert_eq!(
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${V:-\"q\\}x\"}".into(),
+                    raw: b"${V:-\"q\\}x\"}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("dq escape in scan"),
-            "q}x"
+            b"q}x"
         );
     }
 
     #[test]
     fn colon_question_error_with_null_value() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.env.insert("NULL".into(), String::new());
+        ctx.env.insert(b"NULL".to_vec(), Vec::new());
         let err = expand_word(
             &mut ctx,
             &Word {
-                raw: "${NULL:?is null}".into(),
+                raw: b"${NULL:?is null}".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect_err(":? with null");
-        assert_eq!(&*err.message, "is null");
+        assert_eq!(&*err.message, b"is null".as_ref());
 
         ctx.nounset_enabled = true;
         let err = expand_word(
             &mut ctx,
             &Word {
-                raw: "${NULL:?$NOVAR}".into(),
+                raw: b"${NULL:?$NOVAR}".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect_err(":? nounset propagation");
-        assert_eq!(&*err.message, "NOVAR: parameter not set");
+        assert_eq!(&*err.message, b"NOVAR: parameter not set".as_ref());
 
         let err = expand_word(
             &mut ctx,
             &Word {
-                raw: "${NOEXIST?$NOVAR}".into(),
+                raw: b"${NOEXIST?$NOVAR}".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect_err("? nounset propagation");
-        assert_eq!(&*err.message, "NOVAR: parameter not set");
+        assert_eq!(&*err.message, b"NOVAR: parameter not set".as_ref());
     }
 
     #[test]
     fn question_error_with_unset_default_message() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let err = expand_word(
             &mut ctx,
             &Word {
-                raw: "${NOVAR?}".into(),
+                raw: b"${NOVAR?}".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect_err("? with unset");
-        assert_eq!(&*err.message, "NOVAR: parameter not set");
+        assert_eq!(&*err.message, b"NOVAR: parameter not set".as_ref());
 
-        ctx.env.insert("SET".into(), "val".into());
+        ctx.env.insert(b"SET".to_vec(), b"val".to_vec());
         assert_eq!(
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${SET:?no error}".into(),
+                    raw: b"${SET:?no error}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect(":? success"),
-            "val"
+            b"val"
         );
         assert_eq!(
             expand_word_text(
                 &mut ctx,
                 &Word {
-                    raw: "${SET?no error}".into(),
+                    raw: b"${SET?no error}".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("? success"),
-            "val"
+            b"val"
         );
 
         let err_colon = expand_word(
             &mut ctx,
             &Word {
-                raw: "${NOVAR:?}".into(),
+                raw: b"${NOVAR:?}".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect_err(":? with unset");
-        assert_eq!(&*err_colon.message, "NOVAR: parameter null or not set");
+        assert_eq!(&*err_colon.message, b"NOVAR: parameter null or not set".as_ref());
     }
 
     #[test]
     fn dquote_backslash_preserves_literal_for_non_special_chars() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: r#""\a\b\c""#.into(),
+                raw: b"\"\\a\\b\\c\"".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect("dquote bs");
-        assert_eq!(fields, vec![r"\a\b\c"]);
+        assert_eq!(fields, vec![b"\\a\\b\\c".as_ref()]);
     }
 
     #[test]
     fn dquote_backslash_escapes_special_chars() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: r#""\$""#.into(),
+                    raw: b"\"\\$\"".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("escape $"),
-            vec!["$"]
+            vec![b"$".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: r#""\\""#.into(),
+                    raw: b"\"\\\\\"".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("escape bs"),
-            vec!["\\"]
+            vec![b"\\".as_ref()]
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: r#""\"""#.into(),
+                    raw: b"\"\\\"\"".as_ref().into(),
                     line: 0
                 },
                 &arena,
             )
             .expect("escape dq"),
-            vec!["\""],
+            vec![b"\"".as_ref()],
         );
         assert_eq!(
             expand_word(
                 &mut ctx,
                 &Word {
-                    raw: "\"\\`\"".into(),
+                    raw: b"\"\\`\"".as_ref().into(),
                     line: 0,
                 },
                 &arena,
             )
             .expect("escape bt"),
-            vec!["`"]
+            vec![b"`".as_ref()]
         );
     }
 
     #[test]
     fn dquote_backslash_newline_is_line_continuation() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "\"ab\\\ncd\"".into(),
+                raw: b"\"ab\\\ncd\"".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect("line continuation");
-        assert_eq!(fields, vec!["abcd"]);
+        assert_eq!(fields, vec![b"abcd".as_ref()]);
     }
 
     #[test]
     fn tilde_user_expansion() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "~testuser/bin".into(),
+                raw: b"~testuser/bin".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect("tilde user");
-        assert_eq!(fields, vec!["/home/testuser/bin"]);
+        assert_eq!(fields, vec![b"/home/testuser/bin".as_ref()]);
     }
 
     #[test]
     fn tilde_unknown_user_preserved() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "~nosuchuser/dir".into(),
+                raw: b"~nosuchuser/dir".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect("tilde unknown");
-        assert_eq!(fields, vec!["~nosuchuser/dir"]);
+        assert_eq!(fields, vec![b"~nosuchuser/dir".as_ref()]);
     }
 
     #[test]
     fn tilde_user_without_slash() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "~testuser".into(),
+                raw: b"~testuser".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect("tilde user no slash");
-        assert_eq!(fields, vec!["/home/testuser"]);
+        assert_eq!(fields, vec![b"/home/testuser".as_ref()]);
     }
 
     #[test]
     fn tilde_after_colon_in_assignment() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let result = expand_assignment_value(
             &mut ctx,
             &Word {
-                raw: "~/bin:~testuser/lib".into(),
+                raw: b"~/bin:~testuser/lib".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect("tilde colon");
-        assert_eq!(result, "/tmp/home/bin:/home/testuser/lib");
+        assert_eq!(result, b"/tmp/home/bin:/home/testuser/lib");
     }
 
     #[test]
     fn arith_variable_reference() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.env.insert("count".into(), "7".into());
+        ctx.env.insert(b"count".to_vec(), b"7".to_vec());
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "$((count + 3))".into(),
+                raw: b"$((count + 3))".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect("arith var");
-        assert_eq!(fields, vec!["10"]);
+        assert_eq!(fields, vec![b"10".as_ref()]);
     }
 
     #[test]
     fn arith_dollar_variable_reference() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.env.insert("n".into(), "5".into());
+        ctx.env.insert(b"n".to_vec(), b"5".to_vec());
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "$(($n * 2))".into(),
+                raw: b"$(($n * 2))".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect("arith $var");
-        assert_eq!(fields, vec!["10"]);
+        assert_eq!(fields, vec![b"10".as_ref()]);
     }
 
     #[test]
     fn arith_comparison_operators() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((3 < 5))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["1"]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((5 < 3))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["0"]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((3 <= 3))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["1"]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((5 > 3))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["1"]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((3 >= 5))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["0"]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((3 == 3))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["1"]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((3 != 5))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["1"]
-        );
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((3 < 5))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"1".as_ref()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((5 < 3))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"0".as_ref()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((3 <= 3))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"1".as_ref()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((5 > 3))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"1".as_ref()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((3 >= 5))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"0".as_ref()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((3 == 3))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"1".as_ref()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((3 != 5))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"1".as_ref()]);
     }
 
     #[test]
     fn arith_bitwise_operators() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((6 & 3))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["2"]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((6 | 3))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["7"]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((6 ^ 3))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["5"]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((~0))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["-1"]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((1 << 4))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["16"]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((16 >> 2))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["4"]
-        );
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((6 & 3))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"2".as_ref()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((6 | 3))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"7".as_ref()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((6 ^ 3))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"5".as_ref()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((~0))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"-1".as_ref()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((1 << 4))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"16".as_ref()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((16 >> 2))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"4".as_ref()]);
     }
 
     #[test]
     fn arith_logical_operators() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((1 && 1))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["1"]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((1 && 0))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["0"]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((0 || 1))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["1"]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((0 || 0))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["0"]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((!0))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["1"]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((!5))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["0"]
-        );
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((1 && 1))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"1".as_ref()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((1 && 0))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"0".as_ref()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((0 || 1))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"1".as_ref()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((0 || 0))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"0".as_ref()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((!0))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"1".as_ref()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((!5))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"0".as_ref()]);
     }
 
     #[test]
     fn arith_logical_and_short_circuits() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.env.insert("x".into(), "0".into());
-        expand_word(
-            &mut ctx,
-            &Word {
-                raw: "$((0 && (x = 5)))".into(),
-                line: 0,
-            },
-            &arena,
-        )
-        .unwrap();
-        assert_eq!(ctx.env.get("x").unwrap(), "0");
+        ctx.env.insert(b"x".to_vec(), b"0".to_vec());
+        expand_word(&mut ctx, &Word { raw: b"$((0 && (x = 5)))".as_ref().into(), line: 0 }, &arena).unwrap();
+        assert_eq!(ctx.env.get(b"x".as_ref()).unwrap(), b"0");
     }
 
     #[test]
     fn arith_logical_or_short_circuits() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.env.insert("x".into(), "0".into());
-        expand_word(
-            &mut ctx,
-            &Word {
-                raw: "$((1 || (x = 5)))".into(),
-                line: 0,
-            },
-            &arena,
-        )
-        .unwrap();
-        assert_eq!(ctx.env.get("x").unwrap(), "0");
+        ctx.env.insert(b"x".to_vec(), b"0".to_vec());
+        expand_word(&mut ctx, &Word { raw: b"$((1 || (x = 5)))".as_ref().into(), line: 0 }, &arena).unwrap();
+        assert_eq!(ctx.env.get(b"x".as_ref()).unwrap(), b"0");
     }
 
     #[test]
     fn arith_ternary_short_circuits() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.env.insert("x".into(), "0".into());
-        expand_word(
-            &mut ctx,
-            &Word {
-                raw: "$((1 ? 10 : (x = 99)))".into(),
-                line: 0,
-            },
-            &arena,
-        )
-        .unwrap();
-        assert_eq!(ctx.env.get("x").unwrap(), "0");
+        ctx.env.insert(b"x".to_vec(), b"0".to_vec());
+        expand_word(&mut ctx, &Word { raw: b"$((1 ? 10 : (x = 99)))".as_ref().into(), line: 0 }, &arena).unwrap();
+        assert_eq!(ctx.env.get(b"x".as_ref()).unwrap(), b"0");
     }
 
     #[test]
     fn arith_ternary_operator() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((1 ? 10 : 20))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["10"]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((0 ? 10 : 20))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["20"]
-        );
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((1 ? 10 : 20))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"10".as_ref()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((0 ? 10 : 20))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"20".as_ref()]);
     }
 
     #[test]
     fn arith_assignment_operators() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.env.insert("x".into(), "10".into());
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((x = 5))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["5"]
-        );
-        assert_eq!(ctx.env.get("x").unwrap(), "5");
+        ctx.env.insert(b"x".to_vec(), b"10".to_vec());
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((x = 5))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"5".as_ref()]);
+        assert_eq!(ctx.env.get(b"x".as_ref()).unwrap(), b"5");
 
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((x += 3))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["8"]
-        );
-        assert_eq!(ctx.env.get("x").unwrap(), "8");
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((x += 3))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"8".as_ref()]);
+        assert_eq!(ctx.env.get(b"x".as_ref()).unwrap(), b"8");
 
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((x -= 2))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["6"]
-        );
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((x -= 2))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"6".as_ref()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((x *= 3))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"18".as_ref()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((x /= 6))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"3".as_ref()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((x %= 2))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"1".as_ref()]);
 
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((x *= 3))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["18"]
-        );
+        ctx.env.insert(b"x".to_vec(), b"4".to_vec());
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((x <<= 2))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"16".as_ref()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((x >>= 1))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"8".as_ref()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((x &= 3))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"0".as_ref()]);
 
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((x /= 6))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["3"]
-        );
-
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((x %= 2))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["1"]
-        );
-
-        ctx.env.insert("x".into(), "4".into());
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((x <<= 2))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["16"]
-        );
-
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((x >>= 1))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["8"]
-        );
-
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((x &= 3))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["0"]
-        );
-
-        ctx.env.insert("x".into(), "5".into());
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((x |= 2))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["7"]
-        );
-
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((x ^= 3))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["4"]
-        );
+        ctx.env.insert(b"x".to_vec(), b"5".to_vec());
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((x |= 2))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"7".as_ref()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((x ^= 3))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"4".as_ref()]);
     }
 
     #[test]
     fn arith_hex_and_octal_constants() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((0xff))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["255"]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((0X1A))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["26"]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((010))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["8"]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((0))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["0"]
-        );
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((0xff))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"255".as_ref()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((0X1A))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"26".as_ref()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((010))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"8".as_ref()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((0))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"0".as_ref()]);
     }
 
     #[test]
     fn arith_unary_plus() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((+5))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["5"]
-        );
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((+5))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"5".as_ref()]);
     }
 
     #[test]
     fn arith_unset_variable_is_zero() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((nosuch))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["0"]
-        );
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((nosuch))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"0".as_ref()]);
     }
 
     #[test]
     fn arith_nested_parens_and_precedence() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((2 + 3 * 4))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["14"]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$(((2 + 3) * 4))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["20"]
-        );
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((2 + 3 * 4))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"14".as_ref()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$(((2 + 3) * 4))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"20".as_ref()]);
     }
 
     #[test]
     fn arith_variable_in_hex_value() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.env.insert("h".into(), "0xff".into());
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((h))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["255"]
-        );
+        ctx.env.insert(b"h".to_vec(), b"0xff".to_vec());
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((h))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"255".as_ref()]);
     }
 
     #[test]
     fn arith_variable_in_octal_value() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.env.insert("o".into(), "010".into());
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((o))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["8"]
-        );
+        ctx.env.insert(b"o".to_vec(), b"010".to_vec());
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((o))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"8".as_ref()]);
     }
 
     #[test]
     fn split_colons_handles_quotes_and_backslash() {
-        let parts = split_on_unquoted_colons("'b:c':d");
-        assert_eq!(parts, vec!["'b:c'", "d"]);
+        let parts = split_on_unquoted_colons(b"'b:c':d");
+        assert_eq!(parts, vec![b"'b:c'".to_vec(), b"d".to_vec()]);
 
-        let parts = split_on_unquoted_colons(r#""b:c":d"#);
-        assert_eq!(parts, vec![r#""b:c""#, "d"]);
+        let parts = split_on_unquoted_colons(b"\"b:c\":d");
+        assert_eq!(parts, vec![b"\"b:c\"".to_vec(), b"d".to_vec()]);
 
-        let parts = split_on_unquoted_colons(r"a\:b:c");
-        assert_eq!(parts, vec![r"a\:b", "c"]);
+        let parts = split_on_unquoted_colons(b"a\\:b:c");
+        assert_eq!(parts, vec![b"a\\:b".to_vec(), b"c".to_vec()]);
 
-        let parts = split_on_unquoted_colons(r#""a\"b":c"#);
-        assert_eq!(parts, vec![r#""a\"b""#, "c"]);
+        let parts = split_on_unquoted_colons(b"\"a\\\"b\":c");
+        assert_eq!(parts, vec![b"\"a\\\"b\"".to_vec(), b"c".to_vec()]);
 
-        let parts = split_on_unquoted_colons("${x:-a:b}:c");
-        assert_eq!(parts, vec!["${x:-a:b}", "c"]);
+        let parts = split_on_unquoted_colons(b"${x:-a:b}:c");
+        assert_eq!(parts, vec![b"${x:-a:b}".to_vec(), b"c".to_vec()]);
 
-        let parts = split_on_unquoted_colons("$(echo a:b):c");
-        assert_eq!(parts, vec!["$(echo a:b)", "c"]);
+        let parts = split_on_unquoted_colons(b"$(echo a:b):c");
+        assert_eq!(parts, vec![b"$(echo a:b)".to_vec(), b"c".to_vec()]);
 
-        let parts = split_on_unquoted_colons("${a:-${b:-x:y}}:z");
-        assert_eq!(parts, vec!["${a:-${b:-x:y}}", "z"]);
+        let parts = split_on_unquoted_colons(b"${a:-${b:-x:y}}:z");
+        assert_eq!(parts, vec![b"${a:-${b:-x:y}}".to_vec(), b"z".to_vec()]);
     }
 
     #[test]
     fn dquote_trailing_backslash_is_literal() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: r#""abc\"#.into(),
+                raw: b"\"abc\\".as_ref().into(),
                 line: 0,
             },
             &arena,
@@ -5756,206 +5325,141 @@ mod tests {
 
     #[test]
     fn tilde_with_quoted_char_breaks_tilde_prefix() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "~'user'".into(),
+                raw: b"~'user'".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect("tilde quoted");
-        assert_eq!(fields, vec!["~user"]);
+        assert_eq!(fields, vec![b"~user".as_ref()]);
     }
 
     #[test]
     fn arith_backtick_in_expression() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "$((`7` + 3))".into(),
+                raw: b"$((`7` + 3))".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect("arith backtick");
-        assert_eq!(fields, vec!["10"]);
+        assert_eq!(fields, vec![b"10".as_ref()]);
     }
 
     #[test]
     fn arith_not_equal_via_parse_unary() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((3 != 3))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["0"]
-        );
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((3 != 3))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"0".as_ref()]);
     }
 
     #[test]
     fn arith_compound_assign_div_by_zero() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.env.insert("x".into(), "5".into());
-        let err = expand_word(
-            &mut ctx,
-            &Word {
-                raw: "$((x /= 0))".into(),
-                line: 0,
-            },
-            &arena,
-        )
-        .unwrap_err();
-        assert_eq!(&*err.message, "division by zero");
+        ctx.env.insert(b"x".to_vec(), b"5".to_vec());
+        let err = expand_word(&mut ctx, &Word { raw: b"$((x /= 0))".as_ref().into(), line: 0 }, &arena).unwrap_err();
+        assert_eq!(&*err.message, b"division by zero".as_ref());
 
-        ctx.env.insert("x".into(), "5".into());
-        let err = expand_word(
-            &mut ctx,
-            &Word {
-                raw: "$((x %= 0))".into(),
-                line: 0,
-            },
-            &arena,
-        )
-        .unwrap_err();
-        assert_eq!(&*err.message, "division by zero");
+        ctx.env.insert(b"x".to_vec(), b"5".to_vec());
+        let err = expand_word(&mut ctx, &Word { raw: b"$((x %= 0))".as_ref().into(), line: 0 }, &arena).unwrap_err();
+        assert_eq!(&*err.message, b"division by zero".as_ref());
     }
 
     #[test]
     fn tilde_colon_assignment_with_quotes() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let result = expand_assignment_value(
             &mut ctx,
             &Word {
-                raw: "~/a:'literal:colon'".into(),
+                raw: b"~/a:'literal:colon'".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect("colon assign with quotes");
-        assert_eq!(result, "/tmp/home/a:literal:colon");
+        assert_eq!(result, b"/tmp/home/a:literal:colon");
     }
 
     #[test]
     fn arith_equality_not_confused_with_assignment() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.env.insert("x".into(), "5".into());
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((x == 5))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["1"]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: "$((x == 3))".into(),
-                    line: 0
-                },
-                &arena,
-            )
-            .unwrap(),
-            vec!["0"]
-        );
+        ctx.env.insert(b"x".to_vec(), b"5".to_vec());
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((x == 5))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"1".as_ref()]);
+        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((x == 3))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"0".as_ref()]);
     }
 
     #[test]
     fn arith_ternary_missing_colon_error() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        let err = expand_word(
-            &mut ctx,
-            &Word {
-                raw: "$((1 ? 2 3))".into(),
-                line: 0,
-            },
-            &arena,
-        )
-        .unwrap_err();
-        assert!(err.message.contains("':'"));
+        let err = expand_word(&mut ctx, &Word { raw: b"$((1 ? 2 3))".as_ref().into(), line: 0 }, &arena).unwrap_err();
+        assert!(err.message.windows(3).any(|w| w == b"':'"));
     }
 
     #[test]
     fn arith_invalid_hex_constant() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        let err = expand_word(
-            &mut ctx,
-            &Word {
-                raw: "$((0x))".into(),
-                line: 0,
-            },
-            &arena,
-        )
-        .unwrap_err();
-        assert!(err.message.contains("hex"));
+        let err = expand_word(&mut ctx, &Word { raw: b"$((0x))".as_ref().into(), line: 0 }, &arena).unwrap_err();
+        assert!(err.message.windows(3).any(|w| w == b"hex"));
     }
 
     #[test]
     fn arith_at_fields_in_expression() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.positional = vec!["3".into()];
+        ctx.positional = vec![b"3".to_vec()];
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "$(($@ + 2))".into(),
+                raw: b"$(($@ + 2))".as_ref().into(),
                 line: 0,
             },
             &arena,
         )
         .expect("at fields arith");
-        assert_eq!(fields, vec!["5"]);
+        assert_eq!(fields, vec![b"5".as_ref()]);
     }
 
     #[test]
     fn apply_compound_assign_unknown_op_returns_error() {
-        let err = apply_compound_assign("??=", 1, 2).unwrap_err();
-        assert!(err.message.contains("unknown"));
+        let err = apply_compound_assign(b"??=", 1, 2).unwrap_err();
+        assert!(err.message.windows(7).any(|w| w == b"unknown"));
     }
 
     #[test]
     fn expand_braced_parameter_pattern_removal_operators() {
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
-            ctx.env.insert("FILE".into(), "archive.tar.gz".into());
+            ctx.env.insert(b"FILE".to_vec(), b"archive.tar.gz".to_vec());
 
             assert_eq!(
-                expand_braced_parameter(&mut ctx, "FILE%.*", false).unwrap(),
-                Expansion::One("archive.tar".into())
+                expand_braced_parameter(&mut ctx, b"FILE%.*", false).unwrap(),
+                Expansion::One(b"archive.tar".to_vec())
             );
             assert_eq!(
-                expand_braced_parameter(&mut ctx, "FILE%%.*", false).unwrap(),
-                Expansion::One("archive".into())
+                expand_braced_parameter(&mut ctx, b"FILE%%.*", false).unwrap(),
+                Expansion::One(b"archive".to_vec())
             );
             assert_eq!(
-                expand_braced_parameter(&mut ctx, "FILE#*.", false).unwrap(),
-                Expansion::One("tar.gz".into())
+                expand_braced_parameter(&mut ctx, b"FILE#*.", false).unwrap(),
+                Expansion::One(b"tar.gz".to_vec())
             );
             assert_eq!(
-                expand_braced_parameter(&mut ctx, "FILE##*.", false).unwrap(),
-                Expansion::One("gz".into())
+                expand_braced_parameter(&mut ctx, b"FILE##*.", false).unwrap(),
+                Expansion::One(b"gz".to_vec())
             );
         });
     }
@@ -5963,7 +5467,7 @@ mod tests {
     #[test]
     fn scan_to_closing_brace_skips_backslash() {
         assert_no_syscalls(|| {
-            let pos = scan_to_closing_brace("a\\}b}", 0).unwrap();
+            let pos = scan_to_closing_brace(b"a\\}b}", 0).unwrap();
             assert_eq!(pos, 4);
         });
     }
@@ -5972,15 +5476,15 @@ mod tests {
     fn expand_parameter_word_as_expansion_with_at_fields() {
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
-            ctx.positional = vec!["x".into(), "y".into()];
-            let result = expand_parameter_word_as_expansion(&mut ctx, "\"$@\"", false).unwrap();
-            assert_eq!(result, Expansion::AtFields(vec!["x".into(), "y".into()]));
+            ctx.positional = vec![b"x".to_vec(), b"y".to_vec()];
+            let result = expand_parameter_word_as_expansion(&mut ctx, b"\"$@\"", false).unwrap();
+            assert_eq!(result, Expansion::AtFields(vec![b"x".to_vec(), b"y".to_vec()]));
         });
     }
 
     #[test]
     fn expand_word_quoted_null_adjacent_to_empty_at() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
             ctx.positional = Vec::new();
@@ -5988,227 +5492,219 @@ mod tests {
                 expand_word(
                     &mut ctx,
                     &Word {
-                        raw: "''\"$@\"".into(),
+                        raw: b"''\"$@\"".as_ref().into(),
                         line: 0
                     },
                     &arena,
                 )
                 .unwrap(),
-                vec!["".to_string()]
+                vec![b"".as_ref()]
             );
         });
     }
 
     #[test]
     fn redirect_word_no_pathname_expansion() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
             let result = expand_redirect_word(
                 &mut ctx,
                 &Word {
-                    raw: "file_*.txt".into(),
+                    raw: b"file_*.txt".as_ref().into(),
                     line: 0,
                 },
                 &arena,
             )
             .expect("redirect word");
-            assert_eq!(result, "file_*.txt");
+            assert_eq!(result, b"file_*.txt");
         });
     }
 
     #[test]
     fn redirect_word_empty_expansion() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
             let result = expand_redirect_word(
                 &mut ctx,
                 &Word {
-                    raw: "$UNSET_VAR".into(),
+                    raw: b"$UNSET_VAR".as_ref().into(),
                     line: 0,
                 },
                 &arena,
             )
             .expect("redirect word empty");
-            assert_eq!(result, "");
+            assert_eq!(result, b"");
         });
     }
 
     #[test]
     fn redirect_word_with_expanded_field_splitting() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
-            ctx.env.insert("V".into(), "a b".into());
+            ctx.env.insert(b"V".to_vec(), b"a b".to_vec());
             let result = expand_redirect_word(
                 &mut ctx,
                 &Word {
-                    raw: "$V".into(),
+                    raw: b"$V".as_ref().into(),
                     line: 0,
                 },
                 &arena,
             )
             .expect("redirect word split");
-            assert_eq!(result, "a b");
+            assert_eq!(result, b"a b");
         });
     }
 
     #[test]
     fn here_doc_backtick_substitution() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
-            let result = expand_here_document(&mut ctx, "`echo ok`\n", 0, &arena)
+            let result = expand_here_document(&mut ctx, b"`echo ok`\n", 0, &arena)
                 .expect("here doc backtick");
-            assert_eq!(result, "echo ok\n");
+            assert_eq!(result, b"echo ok\n");
         });
     }
 
     #[test]
-    fn char_at_and_char_len_handle_multibyte() {
-        assert_eq!(char_at("café", 3), 'é');
-        assert_eq!(char_len("café", 3), 2);
-        assert_eq!(char_at("日本", 0), '日');
-        assert_eq!(char_len("日本", 0), 3);
-    }
-
-    #[test]
     fn word_is_assignment_rejects_empty_and_non_identifier_prefix() {
-        assert!(!word_is_assignment(""));
-        assert!(!word_is_assignment("a-b=c"));
+        assert!(!word_is_assignment(b""));
+        assert!(!word_is_assignment(b"a-b=c"));
     }
 
     #[test]
     fn fake_context_special_param_star_and_at() {
         let ctx = FakeContext::new();
-        assert_eq!(ctx.special_param('*').as_deref(), Some("alpha beta"));
-        assert_eq!(ctx.special_param('@').as_deref(), Some("alpha beta"));
+        assert_eq!(ctx.special_param(b'*').as_deref(), Some(b"alpha beta".as_ref()));
+        assert_eq!(ctx.special_param(b'@').as_deref(), Some(b"alpha beta".as_ref()));
     }
 
     #[test]
     fn newline_inside_single_quote_increments_lineno() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "'hello\nworld'".into(),
+                raw: b"'hello\nworld'".as_ref().into(),
                 line: 1,
             },
             &arena,
         )
         .expect("single quote newline");
-        assert_eq!(fields, vec!["hello\nworld"]);
+        assert_eq!(fields, vec![b"hello\nworld".as_ref()]);
     }
 
     #[test]
     fn newline_inside_double_quote_increments_lineno() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "\"hello\nworld\"".into(),
+                raw: b"\"hello\nworld\"".as_ref().into(),
                 line: 1,
             },
             &arena,
         )
         .expect("double quote newline");
-        assert_eq!(fields, vec!["hello\nworld"]);
+        assert_eq!(fields, vec![b"hello\nworld".as_ref()]);
     }
 
     #[test]
     fn backslash_newline_inside_double_quote() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "\"a\\\nb\"".into(),
+                raw: b"\"a\\\nb\"".as_ref().into(),
                 line: 1,
             },
             &arena,
         )
         .expect("backslash newline in dquote");
-        assert_eq!(fields, vec!["ab"]);
+        assert_eq!(fields, vec![b"ab".as_ref()]);
     }
 
     #[test]
     fn backslash_escape_in_unquoted_context() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "\\a\\b".into(),
+                raw: b"\\a\\b".as_ref().into(),
                 line: 1,
             },
             &arena,
         )
         .expect("backslash escape");
-        assert_eq!(fields, vec!["ab"]);
+        assert_eq!(fields, vec![b"ab".as_ref()]);
     }
 
     #[test]
     fn backslash_newline_in_unquoted_context() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "a\\\nb".into(),
+                raw: b"a\\\nb".as_ref().into(),
                 line: 1,
             },
             &arena,
         )
         .expect("backslash newline unquoted");
         assert_eq!(fields.len(), 1);
-        assert!(fields[0].contains('\n'));
+        assert!(fields[0].contains(&b'\n'));
     }
 
     #[test]
     fn trailing_backslash_in_unquoted_context() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "a\\".into(),
+                raw: b"a\\".as_ref().into(),
                 line: 1,
             },
             &arena,
         )
         .expect("trailing backslash");
-        assert_eq!(fields, vec!["a"]);
+        assert_eq!(fields, vec![b"a".as_ref()]);
     }
 
     #[test]
     fn bare_newline_in_unquoted_context() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
             &Word {
-                raw: "hello\nworld".into(),
+                raw: b"hello\nworld".as_ref().into(),
                 line: 1,
             },
             &arena,
         )
         .expect("bare newline");
         assert_eq!(fields.len(), 1);
-        assert!(fields[0].contains('\n'));
+        assert!(fields[0].contains(&b'\n'));
     }
 
     #[test]
     fn arithmetic_nounset_rejects_unset_variable() {
-        let arena = StringArena::new();
+        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.nounset_enabled = true;
         let result = expand_word(
             &mut ctx,
             &Word {
-                raw: "$((nosuch_var))".into(),
+                raw: b"$((nosuch_var))".as_ref().into(),
                 line: 0,
             },
             &arena,

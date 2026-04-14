@@ -2,46 +2,37 @@ mod ast;
 mod token;
 
 use std::collections::HashMap;
-use std::fmt;
 
 pub use ast::*;
 use token::{Parser, SavedAliasState};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParseError {
-    pub message: Box<str>,
+    pub message: Box<[u8]>,
     pub line: Option<usize>,
 }
 
-impl fmt::Display for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for ParseError {}
-
-pub fn parse(source: &str) -> Result<Program, ParseError> {
+pub fn parse(source: &[u8]) -> Result<Program, ParseError> {
     parse_with_aliases(source, &HashMap::new())
 }
 
 pub fn parse_with_aliases(
-    source: &str,
-    aliases: &HashMap<Box<str>, Box<str>>,
+    source: &[u8],
+    aliases: &HashMap<Box<[u8]>, Box<[u8]>>,
 ) -> Result<Program, ParseError> {
     let mut parser = Parser::new(source, aliases);
     parser.parse_program_until(|_| false, false, false)
 }
 
 pub struct ParseSession<'src> {
-    source: &'src str,
+    source: &'src [u8],
     pos: usize,
     line: usize,
     saved_alias: Option<SavedAliasState>,
 }
 
 impl<'src> ParseSession<'src> {
-    pub fn new(source: &'src str) -> Result<Self, ParseError> {
+    pub fn new(source: &'src [u8]) -> Result<Self, ParseError> {
         Ok(Self {
             source,
             pos: 0,
@@ -52,7 +43,7 @@ impl<'src> ParseSession<'src> {
 
     pub fn next_command(
         &mut self,
-        aliases: &HashMap<Box<str>, Box<str>>,
+        aliases: &HashMap<Box<[u8]>, Box<[u8]>>,
     ) -> Result<Option<Program>, ParseError> {
         let mut parser = Parser::new_at(self.source, self.pos, self.line, aliases);
 
@@ -78,11 +69,10 @@ impl<'src> ParseSession<'src> {
     }
 }
 
-pub fn is_name(name: &str) -> bool {
-    let bytes = name.as_bytes();
-    !bytes.is_empty()
-        && token::BYTE_CLASS[bytes[0] as usize] & token::BC_NAME_START != 0
-        && bytes[1..]
+pub fn is_name(name: &[u8]) -> bool {
+    !name.is_empty()
+        && token::BYTE_CLASS[name[0] as usize] & token::BC_NAME_START != 0
+        && name[1..]
             .iter()
             .fold(0xFFu8, |acc, &b| acc & token::BYTE_CLASS[b as usize])
             & token::BC_NAME_CONT
@@ -94,15 +84,23 @@ mod tests {
     use super::token::{Token, alias_has_trailing_blank, parse_here_doc_delimiter};
     use super::*;
 
+    fn bx(s: &[u8]) -> Box<[u8]> {
+        s.to_vec().into_boxed_slice()
+    }
+
+    fn alias_map(pairs: &[(&[u8], &[u8])]) -> HashMap<Box<[u8]>, Box<[u8]>> {
+        pairs.iter().map(|(k, v)| (bx(k), bx(v))).collect()
+    }
+
     fn parse_test(source: &str) -> Result<Program, ParseError> {
-        parse(source)
+        parse(source.as_bytes())
     }
 
     fn parse_with_aliases_test(
         source: &str,
-        aliases: &HashMap<Box<str>, Box<str>>,
+        aliases: &HashMap<Box<[u8]>, Box<[u8]>>,
     ) -> Result<Program, ParseError> {
-        parse_with_aliases(source, aliases)
+        parse_with_aliases(source.as_bytes(), aliases)
     }
 
     #[test]
@@ -117,7 +115,7 @@ mod tests {
         let program = parse_test("FOO=bar echo \"$FOO\"").expect("parse");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if cmd.assignments.len() == 1 && &*cmd.words[0].raw == "echo"
+            Command::Simple(cmd) if cmd.assignments.len() == 1 && &*cmd.words[0].raw == b"echo"
         ));
     }
 
@@ -141,7 +139,7 @@ mod tests {
         let program = parse_test("echo 'ok'").expect("parse");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if cmd.words.len() == 2 && &*cmd.words[1].raw == "'ok'"
+            Command::Simple(cmd) if cmd.words.len() == 2 && &*cmd.words[1].raw == b"'ok'"
         ));
     }
 
@@ -162,8 +160,8 @@ mod tests {
             Command::Simple(cmd)
                 if cmd.redirections.len() == 1
                     && cmd.redirections[0].kind == RedirectionKind::HereDoc
-                    && &*cmd.redirections[0].target.raw == "EOF"
-                    && cmd.redirections[0].here_doc.as_ref().map(|doc| &*doc.body) == Some("hello $USER\n")
+                    && &*cmd.redirections[0].target.raw == b"EOF"
+                    && cmd.redirections[0].here_doc.as_ref().map(|doc| &*doc.body) == Some(&b"hello $USER\n"[..])
                     && cmd.redirections[0].here_doc.as_ref().map(|doc| doc.expand) == Some(true)
         ));
 
@@ -171,7 +169,7 @@ mod tests {
         assert!(matches!(
             &quoted.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
-                if cmd.redirections[0].here_doc.as_ref().map(|doc| &*doc.delimiter) == Some("EOF")
+                if cmd.redirections[0].here_doc.as_ref().map(|doc| &*doc.delimiter) == Some(&b"EOF"[..])
                     && cmd.redirections[0].here_doc.as_ref().map(|doc| doc.expand) == Some(false)
         ));
 
@@ -179,7 +177,7 @@ mod tests {
         assert!(matches!(
             &tab_stripped.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
-                if cmd.redirections[0].here_doc.as_ref().map(|doc| &*doc.body) == Some("one\n")
+                if cmd.redirections[0].here_doc.as_ref().map(|doc| &*doc.body) == Some(&b"one\n"[..])
                     && cmd.redirections[0].here_doc.as_ref().map(|doc| doc.strip_tabs) == Some(true)
         ));
     }
@@ -214,20 +212,20 @@ mod tests {
                 if matches!(inner.as_ref(), Command::Group(_))
                     && redirections.len() == 1
                     && redirections[0].kind == RedirectionKind::Write
-                    && &*redirections[0].target.raw == "out"
+                    && &*redirections[0].target.raw == b"out"
         ));
 
         let not_a_group = parse_test("{echo hi; }").expect("parse brace word");
         assert!(matches!(
             &not_a_group.items[0].and_or.first.commands[0],
-            Command::Simple(simple) if &*simple.words[0].raw == "{echo"
+            Command::Simple(simple) if &*simple.words[0].raw == b"{echo"
         ));
 
         let closer_literal = parse_test("echo }").expect("parse literal closer");
         assert!(matches!(
             &closer_literal.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|word| &*word.raw).collect::<Vec<_>>() == vec!["echo", "}"]
+                if simple.words.iter().map(|word| &*word.raw).collect::<Vec<_>>() == vec![&b"echo"[..], &b"}"[..]]
         ));
     }
 
@@ -236,7 +234,7 @@ mod tests {
         let program = parse_test("greet() { echo hi; }").expect("parse");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::FunctionDef(function) if &*function.name == "greet"
+            Command::FunctionDef(function) if &*function.name == b"greet"
         ));
         assert!(parse_test("if() { echo hi; }").is_err());
     }
@@ -257,24 +255,24 @@ mod tests {
     #[test]
     fn rejects_invalid_empty_command() {
         let error = parse_test("| wc").expect_err("parse should fail");
-        assert_eq!(&*error.message, "expected command");
+        assert_eq!(&*error.message, b"expected command");
 
         let error = parse_test("echo hi | ! cat").expect_err("bang after pipe should fail");
-        assert_eq!(&*error.message, "expected command");
+        assert_eq!(&*error.message, b"expected command");
     }
 
     #[test]
     fn rejects_unterminated_quotes() {
         let error = parse_test("echo 'unterminated").expect_err("parse should fail");
-        assert_eq!(&*error.message, "unterminated single quote");
+        assert_eq!(&*error.message, b"unterminated single quote");
     }
 
     #[test]
     fn rejects_unterminated_dollar_single_quote() {
         let error = parse_test("echo $'unterminated").expect_err("parse should fail");
-        assert_eq!(&*error.message, "unterminated dollar-single-quotes");
+        assert_eq!(&*error.message, b"unterminated dollar-single-quotes");
         let error = parse_test(r"echo $'backslash at end\").expect_err("parse should fail");
-        assert_eq!(&*error.message, "unterminated dollar-single-quotes");
+        assert_eq!(&*error.message, b"unterminated dollar-single-quotes");
     }
 
     #[test]
@@ -322,13 +320,13 @@ mod tests {
         assert!(matches!(
             &explicit.items[0].and_or.first.commands[0],
             Command::For(for_command)
-                if &*for_command.name == "item" && for_command.items.as_ref().map(|s| s.len()) == Some(3)
+                if &*for_command.name == b"item" && for_command.items.as_ref().map(|s| s.len()) == Some(3)
         ));
 
         let positional = parse_test("for item; do echo $item; done").expect("parse");
         assert!(matches!(
             &positional.items[0].and_or.first.commands[0],
-            Command::For(for_command) if &*for_command.name == "item" && for_command.items.is_none()
+            Command::For(for_command) if &*for_command.name == b"item" && for_command.items.is_none()
         ));
 
         let linebreak_before_in =
@@ -336,9 +334,9 @@ mod tests {
         assert!(matches!(
             &linebreak_before_in.items[0].and_or.first.commands[0],
             Command::For(for_command)
-                if &*for_command.name == "item"
+                if &*for_command.name == b"item"
                     && for_command.items.as_ref().map(|items| items.iter().map(|word| &*word.raw).collect::<Vec<_>>())
-                        == Some(vec!["a", "b"])
+                        == Some(vec![&b"a"[..], &b"b"[..]])
         ));
 
         let reserved_words_as_items = parse_test("for item in do done; do echo $item; done")
@@ -347,7 +345,7 @@ mod tests {
             &reserved_words_as_items.items[0].and_or.first.commands[0],
             Command::For(for_command)
                 if for_command.items.as_ref().map(|items| items.iter().map(|word| &*word.raw).collect::<Vec<_>>())
-                    == Some(vec!["do", "done"])
+                    == Some(vec![&b"do"[..], &b"done"[..]])
         ));
     }
 
@@ -358,7 +356,7 @@ mod tests {
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Case(case_command)
-                if &*case_command.word.raw == "$name"
+                if &*case_command.word.raw == b"$name"
                     && case_command.arms.len() == 2
                     && case_command.arms[0].patterns.len() == 2
         ));
@@ -400,14 +398,11 @@ mod tests {
     #[test]
     fn parser_covers_misc_error_and_token_paths() {
         assert_eq!(
-            format!(
-                "{}",
-                ParseError {
-                    message: "x".into(),
-                    line: None,
-                }
-            ),
-            "x"
+            &*ParseError {
+                message: bx(b"x"),
+                line: None,
+            }.message,
+            b"x"
         );
         assert!(parse_test("echo \"unterminated").is_err());
         assert!(parse_test("cat <").is_err());
@@ -428,7 +423,7 @@ mod tests {
 
     #[test]
     fn parse_session_uses_updated_aliases_between_commands() {
-        let mut session = ParseSession::new("alias setok='printf ok'\nsetok\n").expect("session");
+        let mut session = ParseSession::new(b"alias setok='printf ok'\nsetok\n").expect("session");
         let first = session
             .next_command(&HashMap::new())
             .expect("first cmd")
@@ -441,8 +436,8 @@ mod tests {
 
         let second = session
             .next_command(&HashMap::from([(
-                Box::from("setok"),
-                Box::from("printf ok"),
+                bx(b"setok"),
+                bx(b"printf ok"),
             )]))
             .expect("second cmd")
             .expect("some cmd");
@@ -450,7 +445,7 @@ mod tests {
         assert!(matches!(
             &second.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|word| &*word.raw).collect::<Vec<_>>() == vec!["printf", "ok"]
+                if simple.words.iter().map(|word| &*word.raw).collect::<Vec<_>>() == vec![&b"printf"[..], &b"ok"[..]]
         ));
 
         assert!(
@@ -463,17 +458,15 @@ mod tests {
 
     #[test]
     fn alias_expansion_in_simple_commands() {
-        let mut aliases = HashMap::new();
-        aliases.insert("say".into(), "printf hi".into());
+        let aliases = alias_map(&[(b"say", b"printf hi")]);
         let program = parse_with_aliases_test("say", &aliases).expect("parse alias");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|word| &*word.raw).collect::<Vec<_>>() == vec!["printf", "hi"]
+                if simple.words.iter().map(|word| &*word.raw).collect::<Vec<_>>() == vec![&b"printf"[..], &b"hi"[..]]
         ));
 
-        let mut aliases = HashMap::new();
-        aliases.insert("cond".into(), "if".into());
+        let aliases = alias_map(&[(b"cond", b"if")]);
         let program = parse_with_aliases_test("cond true; then echo ok; fi", &aliases)
             .expect("parse reserved alias");
         assert!(matches!(
@@ -488,14 +481,14 @@ mod tests {
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|word| &*word.raw).collect::<Vec<_>>() == vec!["echo", "!"]
+                if simple.words.iter().map(|word| &*word.raw).collect::<Vec<_>>() == vec![&b"echo"[..], &b"!"[..]]
         ));
 
         let program = parse_test("!true").expect("parse bang word");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|word| &*word.raw).collect::<Vec<_>>() == vec!["!true"]
+                if simple.words.iter().map(|word| &*word.raw).collect::<Vec<_>>() == vec![&b"!true"[..]]
         ));
 
         let program = parse_test("! true").expect("parse negation");
@@ -504,41 +497,37 @@ mod tests {
 
     #[test]
     fn trailing_blank_aliases_expand_next_simple_command_word() {
-        let mut aliases = HashMap::new();
-        aliases.insert("say".into(), "printf %s ".into());
-        aliases.insert("word".into(), "ok".into());
+        let aliases = alias_map(&[(b"say", b"printf %s "), (b"word", b"ok")]);
         let program = parse_with_aliases_test("say word", &aliases).expect("parse chained alias");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|word| &*word.raw).collect::<Vec<_>>() == vec!["printf", "%s", "ok"]
+                if simple.words.iter().map(|word| &*word.raw).collect::<Vec<_>>() == vec![&b"printf"[..], &b"%s"[..], &b"ok"[..]]
         ));
     }
 
     #[test]
     fn self_referential_aliases_do_not_loop_indefinitely() {
-        let mut aliases = HashMap::new();
-        aliases.insert("loop".into(), "loop ".into());
+        let aliases = alias_map(&[(b"loop", b"loop ")]);
         let program = parse_with_aliases_test("loop ok", &aliases).expect("self alias");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|word| &*word.raw).collect::<Vec<_>>() == vec!["loop", "ok"]
+                if simple.words.iter().map(|word| &*word.raw).collect::<Vec<_>>() == vec![&b"loop"[..], &b"ok"[..]]
         ));
-        assert!(alias_has_trailing_blank("value "));
-        assert!(!alias_has_trailing_blank("value"));
+        assert!(alias_has_trailing_blank(b"value "));
+        assert!(!alias_has_trailing_blank(b"value"));
     }
 
     #[test]
     fn alias_expansion_after_assignment_and_redirection() {
-        let mut aliases = HashMap::new();
-        aliases.insert("foo".into(), "echo aliased".into());
+        let aliases = alias_map(&[(b"foo", b"echo aliased")]);
         let program =
             parse_with_aliases_test("VAR=value foo", &aliases).expect("alias after assignment");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|w| &*w.raw).collect::<Vec<_>>() == vec!["echo", "aliased"]
+                if simple.words.iter().map(|w| &*w.raw).collect::<Vec<_>>() == vec![&b"echo"[..], &b"aliased"[..]]
                     && simple.assignments.len() == 1
         ));
 
@@ -547,19 +536,18 @@ mod tests {
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(simple)
-                if simple.words.iter().map(|w| &*w.raw).collect::<Vec<_>>() == vec!["echo", "aliased"]
+                if simple.words.iter().map(|w| &*w.raw).collect::<Vec<_>>() == vec![&b"echo"[..], &b"aliased"[..]]
                     && simple.redirections.len() == 1
         ));
     }
 
     #[test]
     fn lparen_after_simple_command_is_syntax_error() {
-        let mut aliases = HashMap::new();
-        aliases.insert("foo".into(), "echo aliased".into());
+        let aliases = alias_map(&[(b"foo", b"echo aliased")]);
         let err = parse_with_aliases_test("foo () { true; }", &aliases).unwrap_err();
         assert!(
-            err.message.contains("("),
-            "error should mention '(': {}",
+            err.message.iter().any(|&b| b == b'('),
+            "error should mention '(': {:?}",
             err.message
         );
     }
@@ -570,7 +558,7 @@ mod tests {
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
-                if cmd.words.len() == 2 && &*cmd.words[1].raw == "$(cmd arg)"
+                if cmd.words.len() == 2 && &*cmd.words[1].raw == b"$(cmd arg)"
         ));
     }
 
@@ -580,18 +568,18 @@ mod tests {
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
-                if cmd.words.len() == 2 && &*cmd.words[1].raw == "$((1 + 2))"
+                if cmd.words.len() == 2 && &*cmd.words[1].raw == b"$((1 + 2))"
         ));
 
         let nested = parse_test("echo $((1 + (2 * 3)))").expect("parse nested arith");
         assert!(matches!(
             &nested.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
-                if &*cmd.words[1].raw == "$((1 + (2 * 3)))"
+                if &*cmd.words[1].raw == b"$((1 + (2 * 3)))"
         ));
 
         let error = parse_test("echo $((1 + 2").expect_err("unterminated arith");
-        assert_eq!(&*error.message, "unterminated arithmetic expansion");
+        assert_eq!(&*error.message, b"unterminated arithmetic expansion");
     }
 
     #[test]
@@ -600,13 +588,13 @@ mod tests {
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
-                if cmd.words.len() == 2 && &*cmd.words[1].raw == "${VAR:-default}"
+                if cmd.words.len() == 2 && &*cmd.words[1].raw == b"${VAR:-default}"
         ));
 
         let nested = parse_test("echo ${VAR:-${INNER}}").expect("parse nested brace");
         assert!(matches!(
             &nested.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if &*cmd.words[1].raw == "${VAR:-${INNER}}"
+            Command::Simple(cmd) if &*cmd.words[1].raw == b"${VAR:-${INNER}}"
         ));
     }
 
@@ -616,11 +604,11 @@ mod tests {
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd)
-                if cmd.words.len() == 2 && &*cmd.words[1].raw == "`cmd arg`"
+                if cmd.words.len() == 2 && &*cmd.words[1].raw == b"`cmd arg`"
         ));
 
         let error = parse_test("echo `unterminated").expect_err("unterminated backtick");
-        assert_eq!(&*error.message, "unterminated backquote");
+        assert_eq!(&*error.message, b"unterminated backquote");
     }
 
     #[test]
@@ -628,26 +616,26 @@ mod tests {
         let program = parse_test("echo ${VAR:-'a}b'}").expect("parse brace sq");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if &*cmd.words[1].raw == "${VAR:-'a}b'}"
+            Command::Simple(cmd) if &*cmd.words[1].raw == b"${VAR:-'a}b'}"
         ));
 
         let program = parse_test("echo ${VAR:-\"a}b\"}").expect("parse brace dq");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if &*cmd.words[1].raw == "${VAR:-\"a}b\"}"
+            Command::Simple(cmd) if &*cmd.words[1].raw == b"${VAR:-\"a}b\"}"
         ));
 
         let program = parse_test("echo ${VAR:-\\}}").expect("parse brace escaped");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if &*cmd.words[1].raw == "${VAR:-\\}}"
+            Command::Simple(cmd) if &*cmd.words[1].raw == b"${VAR:-\\}}"
         ));
 
         let error = parse_test("echo ${VAR:-unclosed").expect_err("unterminated brace body");
-        assert_eq!(&*error.message, "unterminated parameter expansion");
+        assert_eq!(&*error.message, b"unterminated parameter expansion");
 
         let error = parse_test("echo $(unclosed").expect_err("unterminated paren body");
-        assert_eq!(&*error.message, "unterminated command substitution");
+        assert_eq!(&*error.message, b"unterminated command substitution");
     }
 
     #[test]
@@ -675,30 +663,31 @@ mod tests {
         let program = parse_test("echo hel\\\nlo").expect("parse continuation");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if cmd.words.len() == 2 && &*cmd.words[1].raw == "hello"
+            Command::Simple(cmd) if cmd.words.len() == 2 && &*cmd.words[1].raw == b"hello"
         ));
     }
 
     #[test]
     fn if_empty_condition_is_parse_error() {
         let error = parse_test("if then fi").expect_err("empty if condition");
-        assert!(error.message.contains("expected command list after 'if'"));
+        assert!(error.message.windows(b"expected command list after 'if'".len())
+            .any(|w| w == b"expected command list after 'if'"));
     }
 
     #[test]
     fn elif_empty_condition_is_parse_error() {
         let error =
             parse_test("if true; then true; elif then true; fi").expect_err("empty elif condition");
-        assert!(error.message.contains("expected command list after 'elif'"));
+        assert!(error.message.windows(b"expected command list after 'elif'".len())
+            .any(|w| w == b"expected command list after 'elif'"));
     }
 
     #[test]
     fn while_empty_condition_is_parse_error() {
         let error = parse_test("while do true; done").expect_err("empty while condition");
         assert!(
-            error
-                .message
-                .contains("expected command list after 'while'")
+            error.message.windows(b"expected command list after 'while'".len())
+                .any(|w| w == b"expected command list after 'while'")
         );
     }
 
@@ -706,9 +695,8 @@ mod tests {
     fn until_empty_condition_is_parse_error() {
         let error = parse_test("until do true; done").expect_err("empty until condition");
         assert!(
-            error
-                .message
-                .contains("expected command list after 'until'")
+            error.message.windows(b"expected command list after 'until'".len())
+                .any(|w| w == b"expected command list after 'until'")
         );
     }
 
@@ -719,7 +707,7 @@ mod tests {
         assert_eq!(pipeline.timed, TimedMode::Default);
         assert!(!pipeline.negated);
         assert!(
-            matches!(&pipeline.commands[0], Command::Simple(cmd) if &*cmd.words[0].raw == "echo")
+            matches!(&pipeline.commands[0], Command::Simple(cmd) if &*cmd.words[0].raw == b"echo")
         );
     }
 
@@ -729,7 +717,7 @@ mod tests {
         let pipeline = &program.items[0].and_or.first;
         assert_eq!(pipeline.timed, TimedMode::Posix);
         assert!(
-            matches!(&pipeline.commands[0], Command::Simple(cmd) if &*cmd.words[0].raw == "echo")
+            matches!(&pipeline.commands[0], Command::Simple(cmd) if &*cmd.words[0].raw == b"echo")
         );
     }
 
@@ -738,7 +726,7 @@ mod tests {
         let program = parse_test("function foo { echo hi; }").expect("parse function keyword");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::FunctionDef(fd) if &*fd.name == "foo"
+            Command::FunctionDef(fd) if &*fd.name == b"foo"
         ));
     }
 
@@ -748,29 +736,29 @@ mod tests {
             parse_test("function foo() { echo hi; }").expect("parse function keyword parens");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::FunctionDef(fd) if &*fd.name == "foo"
+            Command::FunctionDef(fd) if &*fd.name == b"foo"
         ));
     }
 
     #[test]
     fn function_keyword_invalid_name() {
         let error = parse_test("function 123").expect_err("bad function name");
-        assert_eq!(&*error.message, "expected function name");
+        assert_eq!(&*error.message, b"expected function name");
     }
 
     #[test]
     fn clone_covers_all_command_variants() {
         let simple = Command::Simple(SimpleCommand {
             assignments: vec![Assignment {
-                name: "X".into(),
+                name: bx(b"X"),
                 value: Word {
-                    raw: "1".into(),
+                    raw: bx(b"1"),
                     line: 0,
                 },
             }]
             .into_boxed_slice(),
             words: vec![Word {
-                raw: "echo".into(),
+                raw: bx(b"echo"),
                 line: 0,
             }]
             .into_boxed_slice(),
@@ -778,7 +766,7 @@ mod tests {
                 fd: Some(2),
                 kind: RedirectionKind::Write,
                 target: Word {
-                    raw: "err".into(),
+                    raw: bx(b"err"),
                     line: 0,
                 },
                 here_doc: None,
@@ -786,7 +774,7 @@ mod tests {
             .into_boxed_slice(),
         });
         let s = simple.clone();
-        assert!(matches!(&s, Command::Simple(sc) if &*sc.words[0].raw == "echo"));
+        assert!(matches!(&s, Command::Simple(sc) if &*sc.words[0].raw == b"echo"));
 
         let subshell = Command::Subshell(Program {
             items: vec![ListItem {
@@ -811,10 +799,10 @@ mod tests {
         assert!(matches!(group.clone(), Command::Group(_)));
 
         let func = Command::FunctionDef(FunctionDef {
-            name: "f".into(),
+            name: bx(b"f"),
             body: Box::new(s.clone()),
         });
-        assert!(matches!(&func, Command::FunctionDef(fd) if &*fd.name == "f"));
+        assert!(matches!(&func, Command::FunctionDef(fd) if &*fd.name == b"f"));
 
         let if_cmd = Command::If(IfCommand {
             condition: Program {
@@ -850,10 +838,10 @@ mod tests {
         assert!(matches!(loop_cmd, Command::Loop(_)));
 
         let for_cmd = Command::For(ForCommand {
-            name: "i".into(),
+            name: bx(b"i"),
             items: Some(
                 vec![Word {
-                    raw: "a".into(),
+                    raw: bx(b"a"),
                     line: 0,
                 }]
                 .into_boxed_slice(),
@@ -862,16 +850,16 @@ mod tests {
                 items: vec![].into_boxed_slice(),
             },
         });
-        assert!(matches!(&for_cmd, Command::For(fc) if &*fc.name == "i"));
+        assert!(matches!(&for_cmd, Command::For(fc) if &*fc.name == b"i"));
 
         let case_cmd = Command::Case(CaseCommand {
             word: Word {
-                raw: "x".into(),
+                raw: bx(b"x"),
                 line: 0,
             },
             arms: vec![CaseArm {
                 patterns: vec![Word {
-                    raw: "*".into(),
+                    raw: bx(b"*"),
                     line: 0,
                 }]
                 .into_boxed_slice(),
@@ -890,12 +878,12 @@ mod tests {
                 fd: None,
                 kind: RedirectionKind::Write,
                 target: Word {
-                    raw: "out".into(),
+                    raw: bx(b"out"),
                     line: 0,
                 },
                 here_doc: Some(HereDoc {
-                    delimiter: "EOF".into(),
-                    body: "test\n".into(),
+                    delimiter: bx(b"EOF"),
+                    body: bx(b"test\n"),
                     expand: true,
                     strip_tabs: false,
                     body_line: 0,
@@ -908,8 +896,7 @@ mod tests {
 
     #[test]
     fn alias_expansion_produces_non_word_tokens() {
-        let mut aliases = HashMap::new();
-        aliases.insert("both".into(), "echo a; echo b".into());
+        let aliases = alias_map(&[(b"both", b"echo a; echo b")]);
         let program =
             parse_with_aliases_test("both", &aliases).expect("parse alias with semicolon");
         assert_eq!(program.items.len(), 2);
@@ -917,11 +904,10 @@ mod tests {
 
     #[test]
     fn alias_expansion_interns_reserved_word_tokens() {
-        let mut aliases = HashMap::new();
-        aliases.insert(
-            "myif".into(),
-            "if true; then echo ok; elif false; then echo no; else echo fb; fi".into(),
-        );
+        let aliases = alias_map(&[(
+            b"myif",
+            b"if true; then echo ok; elif false; then echo no; else echo fb; fi",
+        )]);
         let program =
             parse_with_aliases_test("myif", &aliases).expect("alias if/then/elif/else/fi");
         assert!(matches!(
@@ -929,56 +915,49 @@ mod tests {
             Command::If(_)
         ));
 
-        let mut aliases = HashMap::new();
-        aliases.insert("mywhile".into(), "while false; do echo loop; done".into());
+        let aliases = alias_map(&[(b"mywhile", b"while false; do echo loop; done")]);
         let program = parse_with_aliases_test("mywhile", &aliases).expect("alias while/do/done");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Loop(_)
         ));
 
-        let mut aliases = HashMap::new();
-        aliases.insert("myuntil".into(), "until true; do echo u; done".into());
+        let aliases = alias_map(&[(b"myuntil", b"until true; do echo u; done")]);
         let program = parse_with_aliases_test("myuntil", &aliases).expect("alias until");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Loop(_)
         ));
 
-        let mut aliases = HashMap::new();
-        aliases.insert("myfor".into(), "for x in a b; do echo $x; done".into());
+        let aliases = alias_map(&[(b"myfor", b"for x in a b; do echo $x; done")]);
         let program = parse_with_aliases_test("myfor", &aliases).expect("alias for/in");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::For(_)
         ));
 
-        let mut aliases = HashMap::new();
-        aliases.insert("mycase".into(), "case x in a) echo a;; esac".into());
+        let aliases = alias_map(&[(b"mycase", b"case x in a) echo a;; esac")]);
         let program = parse_with_aliases_test("mycase", &aliases).expect("alias case/esac");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Case(_)
         ));
 
-        let mut aliases = HashMap::new();
-        aliases.insert("myfn".into(), "function myfunc { echo hi; }".into());
+        let aliases = alias_map(&[(b"myfn", b"function myfunc { echo hi; }")]);
         let program = parse_with_aliases_test("myfn", &aliases).expect("alias function/{/}");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::FunctionDef(_)
         ));
 
-        let mut aliases = HashMap::new();
-        aliases.insert("myneg".into(), "! true".into());
+        let aliases = alias_map(&[(b"myneg", b"! true")]);
         let program = parse_with_aliases_test("myneg", &aliases).expect("alias bang");
         assert!(program.items[0].and_or.first.negated);
     }
 
     #[test]
     fn alias_not_expanded_in_reserved_word_position() {
-        let mut aliases = HashMap::new();
-        aliases.insert("bla".into(), "in".into());
+        let aliases = alias_map(&[(b"bla", b"in")]);
         let result = parse_with_aliases_test("for i bla a b c; do echo $i; done", &aliases);
         assert!(
             result.is_err(),
@@ -988,15 +967,11 @@ mod tests {
 
     #[test]
     fn alias_shadows_keyword_at_command_position() {
-        // POSIX 2024 §2.3.1: "it is unspecified whether the TOKEN is subject
-        // to alias substitution" when it would also be a reserved word.
-        // We choose alias-first (like bash/zsh).
-        let mut aliases = HashMap::new();
-        aliases.insert("if".into(), "hello".into());
+        let aliases = alias_map(&[(b"if", b"hello")]);
         let program = parse_with_aliases_test("if", &aliases).expect("parse");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::Simple(s) if s.words.iter().map(|w| &*w.raw).collect::<Vec<_>>() == vec!["hello"]
+            Command::Simple(s) if s.words.iter().map(|w| &*w.raw).collect::<Vec<_>>() == vec![&b"hello"[..]]
         ));
     }
 
@@ -1005,13 +980,13 @@ mod tests {
         let program = parse_test("ec\\\nho ok").expect("continuation in command");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if &*cmd.words[0].raw == "echo" && &*cmd.words[1].raw == "ok"
+            Command::Simple(cmd) if &*cmd.words[0].raw == b"echo" && &*cmd.words[1].raw == b"ok"
         ));
 
         let program = parse_test("echo a\\\nb\\\nc").expect("multiple continuations");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if &*cmd.words[1].raw == "abc"
+            Command::Simple(cmd) if &*cmd.words[1].raw == b"abc"
         ));
     }
 
@@ -1020,7 +995,7 @@ mod tests {
         let program = parse_test("a\\\n#b").expect("continuation before hash");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if &*cmd.words[0].raw == "a#b"
+            Command::Simple(cmd) if &*cmd.words[0].raw == b"a#b"
         ));
     }
 
@@ -1035,7 +1010,7 @@ mod tests {
         let program = parse_test("echo \"ab\\\ncd\"").expect("dquote continuation");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if &*cmd.words[1].raw == "\"ab\\\ncd\""
+            Command::Simple(cmd) if &*cmd.words[1].raw == b"\"ab\\\ncd\""
         ));
     }
 
@@ -1044,7 +1019,7 @@ mod tests {
         let program = parse_test("echo 'ab\\\ncd'").expect("squote continuation");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if &*cmd.words[1].raw == "'ab\\\ncd'"
+            Command::Simple(cmd) if &*cmd.words[1].raw == b"'ab\\\ncd'"
         ));
     }
 
@@ -1053,7 +1028,7 @@ mod tests {
         let program = parse_test("echo `ab\\\ncd`").expect("backtick continuation");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if &*cmd.words[1].raw == "`ab\\\ncd`"
+            Command::Simple(cmd) if &*cmd.words[1].raw == b"`ab\\\ncd`"
         ));
     }
 
@@ -1062,7 +1037,7 @@ mod tests {
         let program = parse_test("echo $'ab\\\ncd'").expect("dollar-squote continuation");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if &*cmd.words[1].raw == "$'ab\\\ncd'"
+            Command::Simple(cmd) if &*cmd.words[1].raw == b"$'ab\\\ncd'"
         ));
     }
 
@@ -1071,7 +1046,7 @@ mod tests {
         let program = parse_test("echo $(ab\\\ncd)").expect("cmdsub continuation");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if &*cmd.words[1].raw == "$(ab\\\ncd)"
+            Command::Simple(cmd) if &*cmd.words[1].raw == b"$(ab\\\ncd)"
         ));
     }
 
@@ -1080,35 +1055,35 @@ mod tests {
         let program = parse_test("echo hel\\\nlo\"wor\\\nld\"").expect("mixed continuation");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if &*cmd.words[1].raw == "hello\"wor\\\nld\""
+            Command::Simple(cmd) if &*cmd.words[1].raw == b"hello\"wor\\\nld\""
         ));
     }
 
     #[test]
     fn heredoc_delimiter_helpers() {
-        assert_eq!(parse_here_doc_delimiter("\"EOF\""), ("EOF".into(), false));
-        assert_eq!(parse_here_doc_delimiter("\\EOF"), ("EOF".into(), false));
+        assert_eq!(parse_here_doc_delimiter(b"\"EOF\""), (bx(b"EOF"), false));
+        assert_eq!(parse_here_doc_delimiter(b"\\EOF"), (bx(b"EOF"), false));
     }
 
     #[test]
     fn heredoc_delimiter_backslash_inside_double_quotes() {
         assert_eq!(
-            parse_here_doc_delimiter("\"ab\\\"cd\""),
-            ("ab\"cd".into(), false)
+            parse_here_doc_delimiter(b"\"ab\\\"cd\""),
+            (bx(b"ab\"cd"), false)
         );
         assert_eq!(
-            parse_here_doc_delimiter("\"a\\\\b\""),
-            ("a\\b".into(), false)
+            parse_here_doc_delimiter(b"\"a\\\\b\""),
+            (bx(b"a\\b"), false)
         );
-        assert_eq!(parse_here_doc_delimiter("\"a\\$b\""), ("a$b".into(), false));
+        assert_eq!(parse_here_doc_delimiter(b"\"a\\$b\""), (bx(b"a$b"), false));
     }
 
     #[test]
     fn heredoc_delimiter_dollar_single_quote() {
-        assert_eq!(parse_here_doc_delimiter("$'EOF'"), ("EOF".into(), false));
+        assert_eq!(parse_here_doc_delimiter(b"$'EOF'"), (bx(b"EOF"), false));
         assert_eq!(
-            parse_here_doc_delimiter("$'ab\\'cd'"),
-            ("ab'cd".into(), false)
+            parse_here_doc_delimiter(b"$'ab\\'cd'"),
+            (bx(b"ab'cd"), false)
         );
     }
 
@@ -1142,34 +1117,34 @@ mod tests {
         ));
 
         let err = parse_test("echo $(echo 'unterminated)").expect_err("sq in paren");
-        assert!(err.message.contains("unterminated"));
+        assert!(err.message.windows(b"unterminated".len())
+            .any(|w| w == b"unterminated"));
     }
 
     #[test]
     fn is_name_basic() {
-        assert!(is_name("FOO"));
-        assert!(is_name("_bar"));
-        assert!(is_name("a1"));
-        assert!(!is_name(""));
-        assert!(!is_name("1abc"));
+        assert!(is_name(b"FOO"));
+        assert!(is_name(b"_bar"));
+        assert!(is_name(b"a1"));
+        assert!(!is_name(b""));
+        assert!(!is_name(b"1abc"));
     }
 
     #[test]
     fn aliases_basic() {
-        let mut aliases: HashMap<Box<str>, Box<str>> = HashMap::new();
-        aliases.insert("ls".into(), "ls --color".into());
-        aliases.insert("ll".into(), "ls -la".into());
+        let mut aliases: HashMap<Box<[u8]>, Box<[u8]>> = HashMap::new();
+        aliases.insert(bx(b"ls"), bx(b"ls --color"));
+        aliases.insert(bx(b"ll"), bx(b"ls -la"));
 
-        assert_eq!(aliases.get("ls").map(|s| &**s), Some("ls --color"));
-        assert_eq!(aliases.get("ll").map(|s| &**s), Some("ls -la"));
-        assert_eq!(aliases.get("xyz"), None);
+        assert_eq!(aliases.get(&b"ls"[..]).map(|s| &**s), Some(&b"ls --color"[..]));
+        assert_eq!(aliases.get(&b"ll"[..]).map(|s| &**s), Some(&b"ls -la"[..]));
+        assert_eq!(aliases.get(&b"xyz"[..]), None);
     }
 
     #[test]
     fn multi_line_alias_produces_separate_commands() {
-        let mut aliases: HashMap<Box<str>, Box<str>> = HashMap::new();
-        aliases.insert("both".into(), "echo a\necho b".into());
-        let mut session = ParseSession::new("both\necho c").unwrap();
+        let aliases: HashMap<Box<[u8]>, Box<[u8]>> = alias_map(&[(b"both", b"echo a\necho b")]);
+        let mut session = ParseSession::new(b"both\necho c").unwrap();
 
         let first = session
             .next_command(&aliases)
@@ -1178,7 +1153,7 @@ mod tests {
         assert_eq!(first.items.len(), 1);
         assert!(matches!(
             &first.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if cmd.words.iter().map(|w| &*w.raw).collect::<Vec<_>>() == ["echo", "a"]
+            Command::Simple(cmd) if cmd.words.iter().map(|w| &*w.raw).collect::<Vec<_>>() == [&b"echo"[..], &b"a"[..]]
         ));
 
         let second = session
@@ -1188,7 +1163,7 @@ mod tests {
         assert_eq!(second.items.len(), 1);
         assert!(matches!(
             &second.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if cmd.words.iter().map(|w| &*w.raw).collect::<Vec<_>>() == ["echo", "b"]
+            Command::Simple(cmd) if cmd.words.iter().map(|w| &*w.raw).collect::<Vec<_>>() == [&b"echo"[..], &b"b"[..]]
         ));
 
         let third = session
@@ -1198,7 +1173,7 @@ mod tests {
         assert_eq!(third.items.len(), 1);
         assert!(matches!(
             &third.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if cmd.words.iter().map(|w| &*w.raw).collect::<Vec<_>>() == ["echo", "c"]
+            Command::Simple(cmd) if cmd.words.iter().map(|w| &*w.raw).collect::<Vec<_>>() == [&b"echo"[..], &b"c"[..]]
         ));
 
         assert!(session.next_command(&aliases).expect("eof").is_none());
@@ -1207,40 +1182,39 @@ mod tests {
     #[test]
     fn heredoc_delimiter_backslash_preserves_non_special_in_dquotes() {
         assert_eq!(
-            parse_here_doc_delimiter("\"E\\OF\""),
-            ("E\\OF".into(), false)
+            parse_here_doc_delimiter(b"\"E\\OF\""),
+            (bx(b"E\\OF"), false)
         );
         assert_eq!(
-            parse_here_doc_delimiter("\"a\\nb\""),
-            ("a\\nb".into(), false)
+            parse_here_doc_delimiter(b"\"a\\nb\""),
+            (bx(b"a\\nb"), false)
         );
 
-        assert_eq!(parse_here_doc_delimiter("\"a\\$b\""), ("a$b".into(), false));
+        assert_eq!(parse_here_doc_delimiter(b"\"a\\$b\""), (bx(b"a$b"), false));
         assert_eq!(
-            parse_here_doc_delimiter("\"a\\\\b\""),
-            ("a\\b".into(), false)
+            parse_here_doc_delimiter(b"\"a\\\\b\""),
+            (bx(b"a\\b"), false)
         );
         assert_eq!(
-            parse_here_doc_delimiter("\"a\\\"b\""),
-            ("a\"b".into(), false)
+            parse_here_doc_delimiter(b"\"a\\\"b\""),
+            (bx(b"a\"b"), false)
         );
-        assert_eq!(parse_here_doc_delimiter("\"a\\`b\""), ("a`b".into(), false));
+        assert_eq!(parse_here_doc_delimiter(b"\"a\\`b\""), (bx(b"a`b"), false));
     }
 
     #[test]
     fn io_number_recognised_inside_alias() {
-        let mut aliases: HashMap<Box<str>, Box<str>> = HashMap::new();
-        aliases.insert("redir".into(), "echo hello 2>/dev/null".into());
+        let aliases: HashMap<Box<[u8]>, Box<[u8]>> = alias_map(&[(b"redir", b"echo hello 2>/dev/null")]);
         let program = parse_with_aliases_test("redir", &aliases).expect("alias with IO number");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
             Command::Simple(cmd) if {
-                let has_echo = cmd.words.iter().any(|w| &*w.raw == "echo");
+                let has_echo = cmd.words.iter().any(|w| &*w.raw == b"echo");
                 let has_redir_fd2 = cmd.redirections.iter().any(|r|
                     r.fd == Some(2) && r.kind == RedirectionKind::Write
                 );
 
-                let no_word_2 = !cmd.words.iter().any(|w| &*w.raw == "2");
+                let no_word_2 = !cmd.words.iter().any(|w| &*w.raw == b"2");
                 has_echo && has_redir_fd2 && no_word_2
             }
         ));
@@ -1259,12 +1233,11 @@ mod tests {
 
     #[test]
     fn backslash_newline_continuation_in_alias() {
-        let mut aliases: HashMap<Box<str>, Box<str>> = HashMap::new();
-        aliases.insert("foo".into(), "echo hell\\\no".into());
+        let aliases: HashMap<Box<[u8]>, Box<[u8]>> = alias_map(&[(b"foo", b"echo hell\\\no")]);
         let program = parse_with_aliases_test("foo", &aliases).expect("alias with continuation");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::Simple(cmd) if cmd.words.iter().map(|w| &*w.raw).collect::<Vec<_>>() == ["echo", "hello"]
+            Command::Simple(cmd) if cmd.words.iter().map(|w| &*w.raw).collect::<Vec<_>>() == [&b"echo"[..], &b"hello"[..]]
         ));
     }
 
@@ -1277,7 +1250,7 @@ mod tests {
             _ => panic!("expected simple command"),
         };
         let doc = cmd.redirections[0].here_doc.as_ref().expect("heredoc body");
-        assert_eq!(&*doc.body, "EO\\\nF\nreal body\n");
+        assert_eq!(&*doc.body, b"EO\\\nF\nreal body\n");
         assert!(!doc.expand);
     }
 
@@ -1293,24 +1266,22 @@ mod tests {
 
     #[test]
     fn heredoc_body_inside_alias_expansion() {
-        let aliases: HashMap<Box<str>, Box<str>> = [("x".into(), "cat <<EOF\nhello\nEOF".into())]
-            .into_iter()
-            .collect();
+        let aliases: HashMap<Box<[u8]>, Box<[u8]>> = alias_map(&[(b"x", b"cat <<EOF\nhello\nEOF")]);
         let program = parse_with_aliases_test("x\n", &aliases).expect("heredoc inside alias");
         let cmd = match &program.items[0].and_or.first.commands[0] {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
         };
         assert_eq!(cmd.words.len(), 1, "word count");
-        assert_eq!(&*cmd.words[0].raw, "cat");
+        assert_eq!(&*cmd.words[0].raw, b"cat");
         assert_eq!(cmd.redirections.len(), 1, "redirection count");
         assert_eq!(cmd.redirections[0].kind, RedirectionKind::HereDoc);
         let doc = cmd.redirections[0]
             .here_doc
             .as_ref()
             .expect("heredoc body should be present");
-        assert_eq!(&*doc.body, "hello\n");
-        assert_eq!(&*doc.delimiter, "EOF");
+        assert_eq!(&*doc.body, b"hello\n");
+        assert_eq!(&*doc.delimiter, b"EOF");
         assert!(doc.expand);
     }
 
@@ -1387,17 +1358,15 @@ mod tests {
 
     #[test]
     fn continuation_splits_alias_name() {
-        let aliases: HashMap<Box<str>, Box<str>> = [("foo".into(), "echo aliased".into())]
-            .into_iter()
-            .collect();
+        let aliases: HashMap<Box<[u8]>, Box<[u8]>> = alias_map(&[(b"foo", b"echo aliased")]);
         let program =
             parse_with_aliases_test("fo\\\no\n", &aliases).expect("alias split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
         };
-        assert_eq!(&*cmd.words[0].raw, "echo");
-        assert_eq!(&*cmd.words[1].raw, "aliased");
+        assert_eq!(&*cmd.words[0].raw, b"echo");
+        assert_eq!(&*cmd.words[1].raw, b"aliased");
     }
 
     #[test]
@@ -1407,7 +1376,7 @@ mod tests {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
         };
-        assert_eq!(&*cmd.words[1].raw, "hello");
+        assert_eq!(&*cmd.words[1].raw, b"hello");
     }
 
     #[test]
@@ -1446,7 +1415,7 @@ mod tests {
         assert_eq!(cmd.redirections.len(), 1);
         assert_eq!(cmd.redirections[0].kind, RedirectionKind::HereDoc);
         let doc = cmd.redirections[0].here_doc.as_ref().expect("heredoc body");
-        assert_eq!(&*doc.body, "hello\n");
+        assert_eq!(&*doc.body, b"hello\n");
     }
 
     #[test]
@@ -1636,8 +1605,8 @@ mod tests {
             other => panic!("expected simple command, got {other:?}"),
         };
         let doc = cmd.redirections[0].here_doc.as_ref().expect("heredoc body");
-        assert_eq!(&*doc.delimiter, "EOF");
-        assert_eq!(&*doc.body, "hello\n");
+        assert_eq!(&*doc.delimiter, b"EOF");
+        assert_eq!(&*doc.body, b"hello\n");
     }
 
     #[test]
@@ -1649,7 +1618,7 @@ mod tests {
             other => panic!("expected simple command, got {other:?}"),
         };
         assert_eq!(cmd.assignments.len(), 1);
-        assert_eq!(&*cmd.assignments[0].name, "x");
+        assert_eq!(&*cmd.assignments[0].name, b"x");
     }
 
     #[test]
@@ -1692,7 +1661,7 @@ mod tests {
             other => panic!("expected simple command, got {other:?}"),
         };
         assert_eq!(cmd.words.len(), 2);
-        assert!(cmd.words[1].raw.starts_with("$(("));
+        assert!(cmd.words[1].raw.starts_with(b"$(("));
     }
 
     #[test]
@@ -1713,7 +1682,7 @@ mod tests {
             other => panic!("expected simple command, got {other:?}"),
         };
         assert_eq!(cmd.words.len(), 2);
-        assert_eq!(&*cmd.words[1].raw, "${x}");
+        assert_eq!(&*cmd.words[1].raw, b"${x}");
     }
 
     #[test]
@@ -1724,7 +1693,7 @@ mod tests {
             other => panic!("expected simple command, got {other:?}"),
         };
         assert_eq!(cmd.words.len(), 2);
-        assert!(cmd.words[1].raw.starts_with("$(("));
+        assert!(cmd.words[1].raw.starts_with(b"$(("));
     }
 
     #[test]
@@ -1846,7 +1815,7 @@ mod tests {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
         };
-        assert_eq!(&*cmd.words[1].raw, "arg");
+        assert_eq!(&*cmd.words[1].raw, b"arg");
     }
 
     #[test]
@@ -1950,7 +1919,7 @@ mod tests {
             other => panic!("expected simple command, got {other:?}"),
         };
         let body = &cmd.redirections[0].here_doc.as_ref().unwrap().body;
-        assert_eq!(&**body, "linecontinued\n");
+        assert_eq!(&**body, b"linecontinued\n");
     }
 
     #[test]
@@ -1962,13 +1931,12 @@ mod tests {
             other => panic!("expected simple command, got {other:?}"),
         };
         let body = &cmd.redirections[0].here_doc.as_ref().unwrap().body;
-        assert_eq!(&**body, "\\$val\n\\\\\n");
+        assert_eq!(&**body, b"\\$val\n\\\\\n");
     }
 
     #[test]
     fn reclassify_queued_alias_on_heredoc_line() {
-        let mut aliases = HashMap::new();
-        aliases.insert("myalias".into(), "echo hello".into());
+        let aliases = alias_map(&[(b"myalias", b"echo hello")]);
         let program = parse_with_aliases_test("cat <<EOF | myalias\nbody\nEOF\n", &aliases)
             .expect("alias on heredoc line");
         let pipeline = &program.items[0].and_or.first;
@@ -1977,14 +1945,13 @@ mod tests {
 
     #[test]
     fn single_quote_in_alias_expansion() {
-        let mut aliases = HashMap::new();
-        aliases.insert("sq".into(), "echo 'hello world'".into());
+        let aliases = alias_map(&[(b"sq", b"echo 'hello world'")]);
         let program = parse_with_aliases_test("sq", &aliases).expect("alias with single quote");
         let cmd = match &program.items[0].and_or.first.commands[0] {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
         };
-        assert!(cmd.words.iter().any(|w| w.raw.contains("hello")));
+        assert!(cmd.words.iter().any(|w| w.raw.windows(b"hello".len()).any(|win| win == b"hello")));
     }
 
     #[test]
@@ -1994,7 +1961,7 @@ mod tests {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
         };
-        assert!(cmd.words[1].raw.contains("inner"));
+        assert!(cmd.words[1].raw.windows(b"inner".len()).any(|w| w == b"inner"));
     }
 
     #[test]
@@ -2005,7 +1972,7 @@ mod tests {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
         };
-        assert!(cmd.words[1].raw.contains("ok"));
+        assert!(cmd.words[1].raw.windows(b"ok".len()).any(|w| w == b"ok"));
     }
 
     #[test]
@@ -2016,7 +1983,7 @@ mod tests {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
         };
-        assert!(cmd.words[1].raw.contains("\\n"));
+        assert!(cmd.words[1].raw.windows(b"\\n".len()).any(|w| w == b"\\n"));
     }
 
     #[test]
@@ -2026,7 +1993,7 @@ mod tests {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
         };
-        assert!(cmd.words[1].raw.contains("`echo inner`"));
+        assert!(cmd.words[1].raw.windows(b"`echo inner`".len()).any(|w| w == b"`echo inner`"));
     }
 
     #[test]
@@ -2036,7 +2003,7 @@ mod tests {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
         };
-        assert!(cmd.words[1].raw.contains("$(echo inner)"));
+        assert!(cmd.words[1].raw.windows(b"$(echo inner)".len()).any(|w| w == b"$(echo inner)"));
     }
 
     #[test]
@@ -2046,7 +2013,7 @@ mod tests {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
         };
-        assert!(cmd.words.iter().any(|w| *w.raw == *"\\"));
+        assert!(cmd.words.iter().any(|w| &*w.raw == b"\\"));
     }
 
     #[test]
@@ -2056,21 +2023,21 @@ mod tests {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
         };
-        assert_eq!(&*cmd.words[0].raw, "echo");
+        assert_eq!(&*cmd.words[0].raw, b"echo");
     }
 
     #[test]
     fn error_expected_close_brace() {
         let result = parse_test("{ echo ok");
         assert!(result.is_err());
-        assert!(result.unwrap_err().message.contains("}"));
+        assert!(result.unwrap_err().message.contains(&b'}'));
     }
 
     #[test]
     fn error_expected_close_paren_subshell() {
         let result = parse_test("(echo ok");
         assert!(result.is_err());
-        assert!(result.unwrap_err().message.contains(")"));
+        assert!(result.unwrap_err().message.contains(&b')'));
     }
 
     #[test]
@@ -2084,7 +2051,7 @@ mod tests {
         let program = parse_test("myfn() { echo hi; }").expect("function def");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::FunctionDef(f) if &*f.name == "myfn"
+            Command::FunctionDef(f) if &*f.name == b"myfn"
         ));
     }
 
@@ -2101,45 +2068,43 @@ mod tests {
 
     #[test]
     fn heredoc_delimiter_parse_dollar_single_quote() {
-        let (delim, expand) = parse_here_doc_delimiter("$'EOF'");
-        assert_eq!(&*delim, "EOF");
+        let (delim, expand) = parse_here_doc_delimiter(b"$'EOF'");
+        assert_eq!(&*delim, b"EOF");
         assert!(!expand);
     }
 
     #[test]
     fn heredoc_delimiter_parse_double_quoted() {
-        let (delim, expand) = parse_here_doc_delimiter("\"EOF\"");
-        assert_eq!(&*delim, "EOF");
+        let (delim, expand) = parse_here_doc_delimiter(b"\"EOF\"");
+        assert_eq!(&*delim, b"EOF");
         assert!(!expand);
     }
 
     #[test]
     fn heredoc_delimiter_parse_backslash_escape() {
-        let (delim, expand) = parse_here_doc_delimiter("E\\OF");
-        assert_eq!(&*delim, "EOF");
+        let (delim, expand) = parse_here_doc_delimiter(b"E\\OF");
+        assert_eq!(&*delim, b"EOF");
         assert!(!expand);
     }
 
     #[test]
     fn heredoc_delimiter_double_quote_with_backslash() {
-        let (delim, expand) = parse_here_doc_delimiter("\"E\\$OF\"");
-        assert_eq!(&*delim, "E$OF");
+        let (delim, expand) = parse_here_doc_delimiter(b"\"E\\$OF\"");
+        assert_eq!(&*delim, b"E$OF");
         assert!(!expand);
     }
 
     #[test]
     fn heredoc_delimiter_dollar_single_quote_with_escape() {
-        let (delim, expand) = parse_here_doc_delimiter("$'E\\'OF'");
-        assert_eq!(&*delim, "E'OF");
+        let (delim, expand) = parse_here_doc_delimiter(b"$'E\\'OF'");
+        assert_eq!(&*delim, b"E'OF");
         assert!(!expand);
     }
 
     #[test]
     fn parse_session_saves_alias_state() {
-        let source = "ls\nls\n";
-        let mut session = ParseSession::new(source).unwrap();
-        let mut aliases = HashMap::new();
-        aliases.insert("ls".into(), "ls --color ".into());
+        let mut session = ParseSession::new(b"ls\nls\n").unwrap();
+        let aliases = alias_map(&[(b"ls", b"ls --color ")]);
         let r1 = session.next_command(&aliases).unwrap();
         assert!(r1.is_some());
         let r2 = session.next_command(&aliases).unwrap();
@@ -2192,7 +2157,7 @@ mod tests {
         let program = parse_test("function myfn { echo hi; }").expect("function keyword def");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::FunctionDef(f) if &*f.name == "myfn"
+            Command::FunctionDef(f) if &*f.name == b"myfn"
         ));
     }
 
@@ -2202,7 +2167,7 @@ mod tests {
             parse_test("function myfn() { echo hi; }").expect("function keyword with parens");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::FunctionDef(f) if &*f.name == "myfn"
+            Command::FunctionDef(f) if &*f.name == b"myfn"
         ));
     }
 
@@ -2218,8 +2183,7 @@ mod tests {
 
     #[test]
     fn parse_session_current_line() {
-        let source = "echo hello\necho world\n";
-        let session = ParseSession::new(source).unwrap();
+        let session = ParseSession::new(b"echo hello\necho world\n").unwrap();
         assert_eq!(session.current_line(), 1);
     }
 
@@ -2271,8 +2235,7 @@ mod tests {
 
     #[test]
     fn reclassify_queued_alias_with_trailing_blank() {
-        let mut aliases = HashMap::new();
-        aliases.insert("ll".into(), "ls -l ".into());
+        let aliases = alias_map(&[(b"ll", b"ls -l ")]);
         let program = parse_with_aliases_test("cat <<EOF | ll foo\nbody\nEOF\n", &aliases)
             .expect("alias with trailing blank on heredoc line");
         let pipeline = &program.items[0].and_or.first;
@@ -2287,7 +2250,7 @@ mod tests {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
         };
-        assert!(cmd.words[1].raw.contains("\\t"));
+        assert!(cmd.words[1].raw.windows(b"\\t".len()).any(|w| w == b"\\t"));
     }
 
     #[test]
@@ -2323,7 +2286,7 @@ mod tests {
     #[test]
     fn split_assignment_non_name_returns_none() {
         use super::ast::split_assignment;
-        assert!(split_assignment("123=val").is_none());
+        assert!(split_assignment(b"123=val").is_none());
     }
 
     #[test]
@@ -2380,7 +2343,7 @@ mod tests {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
         };
-        assert!(cmd.words[1].raw.contains("\\b"));
+        assert!(cmd.words[1].raw.windows(b"\\b".len()).any(|w| w == b"\\b"));
     }
 
     #[test]
@@ -2390,49 +2353,47 @@ mod tests {
             Command::Simple(cmd) => cmd,
             other => panic!("expected simple command, got {other:?}"),
         };
-        assert!(cmd.words[1].raw.contains("`echo inner`"));
+        assert!(cmd.words[1].raw.windows(b"`echo inner`".len()).any(|w| w == b"`echo inner`"));
     }
 
     #[test]
     fn display_name_for_keywords_and_word() {
         use super::token::Token;
-        assert_eq!(&*Token::If.display_name(), "if");
-        assert_eq!(&*Token::Then.display_name(), "then");
-        assert_eq!(&*Token::Else.display_name(), "else");
-        assert_eq!(&*Token::Elif.display_name(), "elif");
-        assert_eq!(&*Token::Fi.display_name(), "fi");
-        assert_eq!(&*Token::Do.display_name(), "do");
-        assert_eq!(&*Token::Done.display_name(), "done");
-        assert_eq!(&*Token::Case.display_name(), "case");
-        assert_eq!(&*Token::Esac.display_name(), "esac");
-        assert_eq!(&*Token::In.display_name(), "in");
-        assert_eq!(&*Token::While.display_name(), "while");
-        assert_eq!(&*Token::Until.display_name(), "until");
-        assert_eq!(&*Token::For.display_name(), "for");
-        assert_eq!(&*Token::Function.display_name(), "function");
-        assert_eq!(&*Token::Bang.display_name(), "!");
-        assert_eq!(&*Token::LBrace.display_name(), "{");
-        assert_eq!(&*Token::RBrace.display_name(), "}");
-        assert_eq!(&*Token::Word("foo".into()).display_name(), "word");
+        assert_eq!(&*Token::If.display_name(), b"if");
+        assert_eq!(&*Token::Then.display_name(), b"then");
+        assert_eq!(&*Token::Else.display_name(), b"else");
+        assert_eq!(&*Token::Elif.display_name(), b"elif");
+        assert_eq!(&*Token::Fi.display_name(), b"fi");
+        assert_eq!(&*Token::Do.display_name(), b"do");
+        assert_eq!(&*Token::Done.display_name(), b"done");
+        assert_eq!(&*Token::Case.display_name(), b"case");
+        assert_eq!(&*Token::Esac.display_name(), b"esac");
+        assert_eq!(&*Token::In.display_name(), b"in");
+        assert_eq!(&*Token::While.display_name(), b"while");
+        assert_eq!(&*Token::Until.display_name(), b"until");
+        assert_eq!(&*Token::For.display_name(), b"for");
+        assert_eq!(&*Token::Function.display_name(), b"function");
+        assert_eq!(&*Token::Bang.display_name(), b"!");
+        assert_eq!(&*Token::LBrace.display_name(), b"{");
+        assert_eq!(&*Token::RBrace.display_name(), b"}");
+        assert_eq!(&*Token::Word(bx(b"foo")).display_name(), b"word");
     }
 
     #[test]
     fn token_into_word_some_and_none() {
-        assert_eq!(Token::Word("hi".into()).into_word(), Some(Box::from("hi")));
+        assert_eq!(Token::Word(bx(b"hi")).into_word(), Some(bx(b"hi")));
         assert_eq!(Token::Eof.into_word(), None);
         assert_eq!(Token::Semi.into_word(), None);
     }
 
     #[test]
     fn nested_alias_pop_exhausted_layers_break() {
-        let mut aliases = HashMap::new();
-        aliases.insert(Box::from("outer"), Box::from("inner rest"));
-        aliases.insert(Box::from("inner"), Box::from("echo"));
+        let aliases = alias_map(&[(b"outer", b"inner rest"), (b"inner", b"echo")]);
         let program =
             parse_with_aliases_test("outer\n", &aliases).expect("nested alias should parse");
         if let Command::Simple(cmd) = &program.items[0].and_or.first.commands[0] {
-            assert_eq!(&*cmd.words[0].raw, "echo");
-            assert_eq!(&*cmd.words[1].raw, "rest");
+            assert_eq!(&*cmd.words[0].raw, b"echo");
+            assert_eq!(&*cmd.words[1].raw, b"rest");
         } else {
             panic!("expected simple command");
         }
@@ -2450,8 +2411,7 @@ mod tests {
 
     #[test]
     fn unterminated_single_quote_in_alias_layer() {
-        let mut aliases = HashMap::new();
-        aliases.insert(Box::from("bad"), Box::from("echo 'unterminated"));
+        let aliases = alias_map(&[(b"bad", b"echo 'unterminated")]);
         let result = parse_with_aliases_test("bad\n", &aliases);
         assert!(result.is_err());
     }
@@ -2542,7 +2502,7 @@ mod tests {
     #[test]
     fn next_complete_command_eof() {
         let aliases = HashMap::new();
-        let mut session = ParseSession::new("echo hi").expect("session");
+        let mut session = ParseSession::new(b"echo hi").expect("session");
         let cmd = session.next_command(&aliases).expect("first cmd");
         assert!(cmd.is_some());
         let cmd2 = session.next_command(&aliases).expect("eof");
@@ -2552,16 +2512,14 @@ mod tests {
     #[test]
     fn next_complete_command_empty_line_returns_none() {
         let aliases = HashMap::new();
-        let mut session = ParseSession::new("\n").expect("session");
+        let mut session = ParseSession::new(b"\n").expect("session");
         let cmd = session.next_command(&aliases).expect("newline only");
         assert!(cmd.is_none());
     }
 
     #[test]
     fn reclassify_queued_token_trailing_blank_alias_on_heredoc_line() {
-        let mut aliases = HashMap::new();
-        aliases.insert(Box::from("mycmd"), Box::from("echo "));
-        aliases.insert(Box::from("myarg"), Box::from("hello"));
+        let aliases = alias_map(&[(b"mycmd", b"echo "), (b"myarg", b"hello")]);
         let program =
             parse_with_aliases_test("cat <<EOF mycmd myarg\nbody\nEOF\n", &aliases).expect("parse");
         assert_eq!(program.items.len(), 1);
@@ -2609,8 +2567,7 @@ mod tests {
 
     #[test]
     fn reclassify_trailing_blank_alias_on_heredoc_line() {
-        let mut aliases = HashMap::new();
-        aliases.insert(Box::from("myalias"), Box::from("echo "));
+        let aliases = alias_map(&[(b"myalias", b"echo ")]);
         let program = parse_with_aliases_test("cat <<EOF myalias world\nbody\nEOF\n", &aliases)
             .expect("parse");
         assert_eq!(program.items.len(), 1);
@@ -2624,13 +2581,11 @@ mod tests {
 
     #[test]
     fn alias_trailing_blank_triggers_reclassify_on_heredoc_line() {
-        let mut aliases = HashMap::new();
-        aliases.insert(Box::from("A"), Box::from("cat "));
-        aliases.insert(Box::from("B"), Box::from("extra"));
+        let aliases = alias_map(&[(b"A", b"cat "), (b"B", b"extra")]);
         let program = parse_with_aliases_test("A <<EOF B\nhello\nEOF\n", &aliases).expect("parse");
         if let Command::Simple(cmd) = &program.items[0].and_or.first.commands[0] {
-            assert_eq!(&*cmd.words[0].raw, "cat");
-            assert_eq!(&*cmd.words[1].raw, "extra");
+            assert_eq!(&*cmd.words[0].raw, b"cat");
+            assert_eq!(&*cmd.words[1].raw, b"extra");
             assert_eq!(cmd.redirections.len(), 1);
         } else {
             panic!("expected simple command");
@@ -2647,7 +2602,7 @@ mod tests {
         let src = "cat <<EOF 99999999999>out\nhello\nEOF\n";
         let program = parse_test(src).expect("parse");
         if let Command::Simple(cmd) = &program.items[0].and_or.first.commands[0] {
-            assert_eq!(&*cmd.words[1].raw, "99999999999");
+            assert_eq!(&*cmd.words[1].raw, b"99999999999");
             assert_eq!(cmd.redirections.len(), 2);
         } else {
             panic!("expected simple command");
@@ -2656,22 +2611,19 @@ mod tests {
 
     #[test]
     fn alias_expanding_to_blanks_produces_eof_in_produce_word() {
-        let mut aliases = HashMap::new();
-        aliases.insert(Box::from("A"), Box::from("   "));
+        let aliases = alias_map(&[(b"A", b"   ")]);
         let program = parse_with_aliases_test("A ; echo done\n", &aliases).expect("parse");
         assert!(program.items.is_empty());
     }
 
     #[test]
     fn alias_ineligible_word_on_heredoc_line_skips_expansion() {
-        let mut aliases = HashMap::new();
-        aliases.insert(Box::from("A"), Box::from("cat "));
-        aliases.insert(Box::from("'B'"), Box::from("extra"));
+        let aliases = alias_map(&[(b"A", b"cat "), (b"'B'", b"extra")]);
         let program =
             parse_with_aliases_test("A <<EOF 'B'\nhello\nEOF\n", &aliases).expect("parse");
         if let Command::Simple(cmd) = &program.items[0].and_or.first.commands[0] {
-            assert_eq!(&*cmd.words[0].raw, "cat");
-            assert_eq!(&*cmd.words[1].raw, "'B'");
+            assert_eq!(&*cmd.words[0].raw, b"cat");
+            assert_eq!(&*cmd.words[1].raw, b"'B'");
         } else {
             panic!("expected simple command");
         }
@@ -2684,8 +2636,7 @@ mod tests {
 
     #[test]
     fn trailing_semicolon_is_valid() {
-        let source = "true;\n";
-        let mut session = ParseSession::new(source).unwrap();
+        let mut session = ParseSession::new(b"true;\n").unwrap();
         let aliases = HashMap::new();
         let p = session.next_command(&aliases).unwrap().expect("first cmd");
         assert_eq!(p.items.len(), 1);
@@ -2694,8 +2645,7 @@ mod tests {
 
     #[test]
     fn semicolon_then_newline_then_command() {
-        let source = "echo a;\necho b\n";
-        let mut session = ParseSession::new(source).unwrap();
+        let mut session = ParseSession::new(b"echo a;\necho b\n").unwrap();
         let aliases = HashMap::new();
         let p1 = session.next_command(&aliases).unwrap().expect("first cmd");
         assert_eq!(p1.items.len(), 1);
@@ -2705,8 +2655,7 @@ mod tests {
 
     #[test]
     fn comment_after_semicolon_is_ignored() {
-        let source = "echo a;#comment\necho b\n";
-        let mut session = ParseSession::new(source).unwrap();
+        let mut session = ParseSession::new(b"echo a;#comment\necho b\n").unwrap();
         let aliases = HashMap::new();
         let p1 = session.next_command(&aliases).unwrap().expect("first cmd");
         assert_eq!(p1.items.len(), 1);
@@ -2719,7 +2668,7 @@ mod tests {
         let program = parse_test("case if in if) echo ok;; esac").expect("parse");
         assert_eq!(program.items.len(), 1);
         if let Command::Case(case) = &program.items[0].and_or.first.commands[0] {
-            assert_eq!(&*case.arms[0].patterns[0].raw, "if");
+            assert_eq!(&*case.arms[0].patterns[0].raw, b"if");
         } else {
             panic!("expected case command");
         }
@@ -2731,19 +2680,18 @@ mod tests {
         assert_eq!(program.items.len(), 1);
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::FunctionDef(f) if &*f.name == "foo"
+            Command::FunctionDef(f) if &*f.name == b"foo"
         ));
     }
 
     #[test]
     fn self_referential_alias_does_not_loop() {
-        let mut aliases = HashMap::new();
-        aliases.insert(Box::from("a"), Box::from("a"));
+        let aliases = alias_map(&[(b"a", b"a")]);
         let program =
             parse_with_aliases_test("a\n", &aliases).expect("self-referential alias should parse");
         assert_eq!(program.items.len(), 1);
         if let Command::Simple(cmd) = &program.items[0].and_or.first.commands[0] {
-            assert_eq!(&*cmd.words[0].raw, "a");
+            assert_eq!(&*cmd.words[0].raw, b"a");
         } else {
             panic!("expected simple command");
         }
@@ -2751,31 +2699,31 @@ mod tests {
 
     #[test]
     fn empty_subshell_is_syntax_error() {
-        assert!(parse("( )\n").is_err());
+        assert!(parse(b"( )\n").is_err());
     }
 
     #[test]
     fn empty_brace_group_is_syntax_error() {
-        assert!(parse("{ }\n").is_err());
+        assert!(parse(b"{ }\n").is_err());
     }
 
     #[test]
     fn empty_do_group_is_syntax_error() {
-        assert!(parse("for i in a; do done\n").is_err());
-        assert!(parse("while true; do done\n").is_err());
-        assert!(parse("until true; do done\n").is_err());
+        assert!(parse(b"for i in a; do done\n").is_err());
+        assert!(parse(b"while true; do done\n").is_err());
+        assert!(parse(b"until true; do done\n").is_err());
     }
 
     #[test]
     fn empty_then_clause_is_syntax_error() {
-        assert!(parse("if true; then fi\n").is_err());
-        assert!(parse("if true; then true; elif true; then fi\n").is_err());
-        assert!(parse("if true; then true; else fi\n").is_err());
+        assert!(parse(b"if true; then fi\n").is_err());
+        assert!(parse(b"if true; then true; elif true; then fi\n").is_err());
+        assert!(parse(b"if true; then true; else fi\n").is_err());
     }
 
     #[test]
     fn leading_semicolon_is_syntax_error() {
-        assert!(parse(";\n").is_err());
-        assert!(parse("; echo hi\n").is_err());
+        assert!(parse(b";\n").is_err());
+        assert!(parse(b"; echo hi\n").is_err());
     }
 }

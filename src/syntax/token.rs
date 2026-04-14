@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use super::ParseError;
 
 struct AliasLayer<'a> {
-    text: Cow<'a, str>,
+    text: Cow<'a, [u8]>,
     pos: usize,
     trailing_blank: bool,
 }
@@ -74,18 +74,17 @@ fn is_quote(b: u8) -> bool {
     BYTE_CLASS[b as usize] & BC_QUOTE != 0
 }
 
-pub(super) fn alias_has_trailing_blank(s: &str) -> bool {
-    s.as_bytes()
-        .last()
+pub(super) fn alias_has_trailing_blank(s: &[u8]) -> bool {
+    s.last()
         .map_or(false, |&b| BYTE_CLASS[b as usize] & BC_BLANK != 0)
 }
 
-fn is_alias_eligible(word: &str) -> bool {
-    !word.is_empty() && !word.bytes().any(|b| is_quote(b))
+fn is_alias_eligible(word: &[u8]) -> bool {
+    !word.is_empty() && !word.iter().any(|&b| is_quote(b))
 }
 
 struct HereDocInfo {
-    delimiter: Box<str>,
+    delimiter: Box<[u8]>,
     strip_tabs: bool,
     expand: bool,
 }
@@ -95,9 +94,23 @@ enum HereDocLineItem {
     HereDocRef(usize),
 }
 
+fn parse_i32_bytes(b: &[u8]) -> Option<i32> {
+    if b.is_empty() {
+        return None;
+    }
+    let mut result: i32 = 0;
+    for &d in b {
+        if !d.is_ascii_digit() {
+            return None;
+        }
+        result = result.checked_mul(10)?.checked_add((d - b'0') as i32)?;
+    }
+    Some(result)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Token {
-    Word(Box<str>),
+    Word(Box<[u8]>),
     IoNumber(i32),
 
     Pipe,
@@ -120,8 +133,8 @@ pub(super) enum Token {
     HereDoc {
         strip_tabs: bool,
         expand: bool,
-        delimiter: Box<str>,
-        body: Box<str>,
+        delimiter: Box<[u8]>,
+        body: Box<[u8]>,
         body_line: usize,
     },
 
@@ -148,29 +161,29 @@ pub(super) enum Token {
 }
 
 impl Token {
-    pub(super) fn keyword_name(&self) -> Option<&'static str> {
+    pub(super) fn keyword_name(&self) -> Option<&'static [u8]> {
         match self {
-            Token::If => Some("if"),
-            Token::Then => Some("then"),
-            Token::Else => Some("else"),
-            Token::Elif => Some("elif"),
-            Token::Fi => Some("fi"),
-            Token::Do => Some("do"),
-            Token::Done => Some("done"),
-            Token::Case => Some("case"),
-            Token::Esac => Some("esac"),
-            Token::In => Some("in"),
-            Token::While => Some("while"),
-            Token::Until => Some("until"),
-            Token::For => Some("for"),
-            Token::Function => Some("function"),
+            Token::If => Some(b"if"),
+            Token::Then => Some(b"then"),
+            Token::Else => Some(b"else"),
+            Token::Elif => Some(b"elif"),
+            Token::Fi => Some(b"fi"),
+            Token::Do => Some(b"do"),
+            Token::Done => Some(b"done"),
+            Token::Case => Some(b"case"),
+            Token::Esac => Some(b"esac"),
+            Token::In => Some(b"in"),
+            Token::While => Some(b"while"),
+            Token::Until => Some(b"until"),
+            Token::For => Some(b"for"),
+            Token::Function => Some(b"function"),
             _ => None,
         }
     }
 }
 
 impl Token {
-    pub(super) fn into_word(self) -> Option<Box<str>> {
+    pub(super) fn into_word(self) -> Option<Box<[u8]>> {
         if let Token::Word(w) = self {
             Some(w)
         } else {
@@ -180,37 +193,38 @@ impl Token {
 }
 
 impl Token {
-    pub(super) fn display_name(&self) -> Box<str> {
+    pub(super) fn display_name(&self) -> Box<[u8]> {
         self.keyword_name()
             .unwrap_or(match self {
-                Token::Bang => "!",
-                Token::LBrace => "{",
-                Token::RBrace => "}",
-                _ => "word",
+                Token::Bang => b"!",
+                Token::LBrace => b"{",
+                Token::RBrace => b"}",
+                _ => b"word",
             })
-            .into()
+            .to_vec()
+            .into_boxed_slice()
     }
 }
 
-fn word_to_keyword_token(w: &str) -> Option<Token> {
+fn word_to_keyword_token(w: &[u8]) -> Option<Token> {
     match w {
-        "if" => Some(Token::If),
-        "then" => Some(Token::Then),
-        "else" => Some(Token::Else),
-        "elif" => Some(Token::Elif),
-        "fi" => Some(Token::Fi),
-        "do" => Some(Token::Do),
-        "done" => Some(Token::Done),
-        "case" => Some(Token::Case),
-        "esac" => Some(Token::Esac),
-        "in" => Some(Token::In),
-        "while" => Some(Token::While),
-        "until" => Some(Token::Until),
-        "for" => Some(Token::For),
-        "function" => Some(Token::Function),
-        "!" => Some(Token::Bang),
-        "{" => Some(Token::LBrace),
-        "}" => Some(Token::RBrace),
+        b"if" => Some(Token::If),
+        b"then" => Some(Token::Then),
+        b"else" => Some(Token::Else),
+        b"elif" => Some(Token::Elif),
+        b"fi" => Some(Token::Fi),
+        b"do" => Some(Token::Do),
+        b"done" => Some(Token::Done),
+        b"case" => Some(Token::Case),
+        b"esac" => Some(Token::Esac),
+        b"in" => Some(Token::In),
+        b"while" => Some(Token::While),
+        b"until" => Some(Token::Until),
+        b"for" => Some(Token::For),
+        b"function" => Some(Token::Function),
+        b"!" => Some(Token::Bang),
+        b"{" => Some(Token::LBrace),
+        b"}" => Some(Token::RBrace),
         _ => None,
     }
 }
@@ -218,10 +232,10 @@ fn word_to_keyword_token(w: &str) -> Option<Token> {
 pub struct Parser<'a> {
     pub(super) line: usize,
     cached_byte: Option<u8>,
-    pub(super) aliases: &'a HashMap<Box<str>, Box<str>>,
+    pub(super) aliases: &'a HashMap<Box<[u8]>, Box<[u8]>>,
     alias_stack: Vec<AliasLayer<'a>>,
     alias_depth: usize,
-    expanding_aliases: HashSet<Cow<'a, str>>,
+    expanding_aliases: HashSet<Cow<'a, [u8]>>,
     alias_trailing_blank_pending: bool,
     pushed_back_byte: Option<u8>,
     cached_token: Option<Token>,
@@ -231,17 +245,17 @@ pub struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    pub(super) fn new(source: &'a str, aliases: &'a HashMap<Box<str>, Box<str>>) -> Self {
+    pub(super) fn new(source: &'a [u8], aliases: &'a HashMap<Box<[u8]>, Box<[u8]>>) -> Self {
         Self::new_at(source, 0, 1, aliases)
     }
 
     pub(super) fn new_at(
-        source: &'a str,
+        source: &'a [u8],
         pos: usize,
         line: usize,
-        aliases: &'a HashMap<Box<str>, Box<str>>,
+        aliases: &'a HashMap<Box<[u8]>, Box<[u8]>>,
     ) -> Self {
-        let cached_byte = source.as_bytes().get(pos).copied();
+        let cached_byte = source.get(pos).copied();
         Self {
             line,
             cached_byte,
@@ -312,12 +326,12 @@ impl<'a> Parser<'a> {
 
     fn sync_cached_byte(&mut self) {
         let layer = self.alias_stack.last().unwrap();
-        self.cached_byte = layer.text.as_bytes().get(layer.pos).copied();
+        self.cached_byte = layer.text.get(layer.pos).copied();
     }
 
-    pub(super) fn error(&self, message: impl Into<Box<str>>) -> ParseError {
+    pub(super) fn error(&self, message: &[u8]) -> ParseError {
         ParseError {
-            message: message.into(),
+            message: message.to_vec().into_boxed_slice(),
             line: Some(self.line),
         }
     }
@@ -357,7 +371,7 @@ impl<'a> Parser<'a> {
         }
         let at_source = self.alias_stack.len() == 1;
         let layer = self.alias_stack.last_mut().unwrap();
-        let bytes = layer.text.as_bytes();
+        let bytes = &*layer.text;
         if at_source {
             if bytes[layer.pos] == b'\n' {
                 self.line += 1;
@@ -411,17 +425,17 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn consume_single_quote(&mut self, raw: &mut String) -> Result<(), ParseError> {
+    fn consume_single_quote(&mut self, raw: &mut Vec<u8>) -> Result<(), ParseError> {
         if self.pushed_back_byte.is_none() && self.alias_stack.len() == 1 {
             let layer = &mut self.alias_stack[0];
-            let bytes = layer.text.as_bytes();
+            let bytes = &*layer.text;
             let start = layer.pos;
             let mut pos = start;
             while pos < bytes.len() {
                 let c = bytes[pos];
                 if c == b'\'' {
                     pos += 1;
-                    raw.push_str(&layer.text[start..pos]);
+                    raw.extend_from_slice(&bytes[start..pos]);
                     layer.pos = pos;
                     self.cached_byte = bytes.get(pos).copied();
                     return Ok(());
@@ -433,67 +447,67 @@ impl<'a> Parser<'a> {
             }
             layer.pos = pos;
             self.cached_byte = None;
-            return Err(self.error("unterminated single quote"));
+            return Err(self.error(b"unterminated single quote"));
         }
         loop {
             match self.peek_byte() {
-                None => return Err(self.error("unterminated single quote")),
+                None => return Err(self.error(b"unterminated single quote")),
                 Some(b'\'') => {
-                    raw.push('\'');
+                    raw.push(b'\'');
                     self.advance_byte();
                     return Ok(());
                 }
                 Some(b) => {
-                    raw.push(b as char);
+                    raw.push(b);
                     self.advance_byte();
                 }
             }
         }
     }
 
-    fn consume_double_quote(&mut self, raw: &mut String) -> Result<(), ParseError> {
+    fn consume_double_quote(&mut self, raw: &mut Vec<u8>) -> Result<(), ParseError> {
         loop {
             match self.peek_byte() {
-                None => return Err(self.error("unterminated double quote")),
+                None => return Err(self.error(b"unterminated double quote")),
                 Some(b'"') => {
-                    raw.push('"');
+                    raw.push(b'"');
                     self.advance_byte();
                     return Ok(());
                 }
                 Some(b'\\') => {
-                    raw.push('\\');
+                    raw.push(b'\\');
                     self.advance_byte();
                     if let Some(b) = self.peek_byte() {
-                        raw.push(b as char);
+                        raw.push(b);
                         self.advance_byte();
                     }
                 }
                 Some(b'$') => {
-                    raw.push('$');
+                    raw.push(b'$');
                     self.advance_byte();
                     self.consume_dollar_construct(raw)?;
                 }
                 Some(b'`') => {
-                    raw.push('`');
+                    raw.push(b'`');
                     self.advance_byte();
                     self.consume_backtick_inner(raw)?;
                 }
                 Some(b) => {
-                    raw.push(b as char);
+                    raw.push(b);
                     self.advance_byte();
                 }
             }
         }
     }
 
-    fn consume_dollar_construct(&mut self, raw: &mut String) -> Result<(), ParseError> {
+    fn consume_dollar_construct(&mut self, raw: &mut Vec<u8>) -> Result<(), ParseError> {
         match self.peek_byte() {
             Some(b'(') => {
-                raw.push('(');
+                raw.push(b'(');
                 self.advance_byte();
                 self.skip_continuations();
                 if self.peek_byte() == Some(b'(') {
-                    raw.push('(');
+                    raw.push(b'(');
                     self.advance_byte();
                     self.consume_arithmetic_body(raw)
                 } else {
@@ -501,7 +515,7 @@ impl<'a> Parser<'a> {
                 }
             }
             Some(b'{') => {
-                raw.push('{');
+                raw.push(b'{');
                 self.advance_byte();
                 self.consume_brace_body(raw)
             }
@@ -509,29 +523,29 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn consume_arithmetic_body(&mut self, raw: &mut String) -> Result<(), ParseError> {
+    fn consume_arithmetic_body(&mut self, raw: &mut Vec<u8>) -> Result<(), ParseError> {
         let mut depth = 1usize;
         loop {
             match self.peek_byte() {
-                None => return Err(self.error("unterminated arithmetic expansion")),
+                None => return Err(self.error(b"unterminated arithmetic expansion")),
                 Some(b'(') => {
                     depth += 1;
-                    raw.push('(');
+                    raw.push(b'(');
                     self.advance_byte();
                 }
                 Some(b')') => {
                     if depth == 1 {
-                        raw.push(')');
+                        raw.push(b')');
                         self.advance_byte();
                         self.skip_continuations();
                         if self.peek_byte() == Some(b')') {
-                            raw.push(')');
+                            raw.push(b')');
                             self.advance_byte();
                             return Ok(());
                         }
                     } else {
                         depth -= 1;
-                        raw.push(')');
+                        raw.push(b')');
                         self.advance_byte();
                     }
                 }
@@ -539,55 +553,55 @@ impl<'a> Parser<'a> {
                     self.consume_quoted_element(raw)?;
                 }
                 Some(b) => {
-                    raw.push(b as char);
+                    raw.push(b);
                     self.advance_byte();
                 }
             }
         }
     }
 
-    fn consume_dollar_single_quote(&mut self, raw: &mut String) -> Result<(), ParseError> {
-        raw.push('\'');
+    fn consume_dollar_single_quote(&mut self, raw: &mut Vec<u8>) -> Result<(), ParseError> {
+        raw.push(b'\'');
         self.advance_byte();
         loop {
             match self.peek_byte() {
-                None => return Err(self.error("unterminated dollar-single-quotes")),
+                None => return Err(self.error(b"unterminated dollar-single-quotes")),
                 Some(b'\'') => {
-                    raw.push('\'');
+                    raw.push(b'\'');
                     self.advance_byte();
                     return Ok(());
                 }
                 Some(b'\\') => {
-                    raw.push('\\');
+                    raw.push(b'\\');
                     self.advance_byte();
                     if let Some(b) = self.peek_byte() {
-                        raw.push(b as char);
+                        raw.push(b);
                         self.advance_byte();
                     }
                 }
                 Some(b) => {
-                    raw.push(b as char);
+                    raw.push(b);
                     self.advance_byte();
                 }
             }
         }
     }
 
-    fn consume_paren_body(&mut self, raw: &mut String) -> Result<(), ParseError> {
+    fn consume_paren_body(&mut self, raw: &mut Vec<u8>) -> Result<(), ParseError> {
         let mut depth = 1usize;
         let mut at_command_start = true;
         loop {
             match self.peek_byte() {
-                None => return Err(self.error("unterminated command substitution")),
+                None => return Err(self.error(b"unterminated command substitution")),
                 Some(b'(') => {
                     depth += 1;
                     at_command_start = true;
-                    raw.push('(');
+                    raw.push(b'(');
                     self.advance_byte();
                 }
                 Some(b')') => {
                     depth -= 1;
-                    raw.push(')');
+                    raw.push(b')');
                     self.advance_byte();
                     if depth == 0 {
                         return Ok(());
@@ -599,20 +613,20 @@ impl<'a> Parser<'a> {
                         if b == b'\n' {
                             break;
                         }
-                        raw.push(b as char);
+                        raw.push(b);
                         self.advance_byte();
                     }
                 }
                 Some(b'\\') => {
-                    raw.push('\\');
+                    raw.push(b'\\');
                     self.advance_byte();
                     if self.peek_byte() == Some(b'\n') {
-                        raw.push('\n');
+                        raw.push(b'\n');
                         self.advance_byte();
                     } else {
                         at_command_start = false;
                         if let Some(b) = self.peek_byte() {
-                            raw.push(b as char);
+                            raw.push(b);
                             self.advance_byte();
                         }
                     }
@@ -623,24 +637,24 @@ impl<'a> Parser<'a> {
                 }
                 Some(b) if is_word_break(b) => {
                     at_command_start = true;
-                    raw.push(b as char);
+                    raw.push(b);
                     self.advance_byte();
                 }
                 Some(b) => {
                     at_command_start = false;
-                    raw.push(b as char);
+                    raw.push(b);
                     self.advance_byte();
                 }
             }
         }
     }
 
-    fn consume_brace_body(&mut self, raw: &mut String) -> Result<(), ParseError> {
+    fn consume_brace_body(&mut self, raw: &mut Vec<u8>) -> Result<(), ParseError> {
         loop {
             match self.peek_byte() {
-                None => return Err(self.error("unterminated parameter expansion")),
+                None => return Err(self.error(b"unterminated parameter expansion")),
                 Some(b'}') => {
-                    raw.push('}');
+                    raw.push(b'}');
                     self.advance_byte();
                     return Ok(());
                 }
@@ -648,62 +662,62 @@ impl<'a> Parser<'a> {
                     self.consume_quoted_element(raw)?;
                 }
                 Some(b) => {
-                    raw.push(b as char);
+                    raw.push(b);
                     self.advance_byte();
                 }
             }
         }
     }
 
-    fn consume_backtick_inner(&mut self, raw: &mut String) -> Result<(), ParseError> {
+    fn consume_backtick_inner(&mut self, raw: &mut Vec<u8>) -> Result<(), ParseError> {
         loop {
             match self.peek_byte() {
-                None => return Err(self.error("unterminated backquote")),
+                None => return Err(self.error(b"unterminated backquote")),
                 Some(b'`') => {
-                    raw.push('`');
+                    raw.push(b'`');
                     self.advance_byte();
                     return Ok(());
                 }
                 Some(b'\\') => {
-                    raw.push('\\');
+                    raw.push(b'\\');
                     self.advance_byte();
                     if let Some(b) = self.peek_byte() {
-                        raw.push(b as char);
+                        raw.push(b);
                         self.advance_byte();
                     }
                 }
                 Some(b) => {
-                    raw.push(b as char);
+                    raw.push(b);
                     self.advance_byte();
                 }
             }
         }
     }
 
-    fn consume_quoted_element(&mut self, raw: &mut String) -> Result<(), ParseError> {
+    fn consume_quoted_element(&mut self, raw: &mut Vec<u8>) -> Result<(), ParseError> {
         let b = self.peek_byte().unwrap();
         if b == b'\'' {
-            raw.push('\'');
+            raw.push(b'\'');
             self.advance_byte();
             self.consume_single_quote(raw)
         } else if b == b'"' {
-            raw.push('"');
+            raw.push(b'"');
             self.advance_byte();
             self.consume_double_quote(raw)
         } else if b == b'\\' {
-            raw.push('\\');
+            raw.push(b'\\');
             self.advance_byte();
             if let Some(c) = self.peek_byte() {
-                raw.push(c as char);
+                raw.push(c);
                 self.advance_byte();
             }
             Ok(())
         } else if b == b'$' {
-            raw.push('$');
+            raw.push(b'$');
             self.advance_byte();
             self.consume_dollar_construct(raw)
         } else {
-            raw.push('`');
+            raw.push(b'`');
             self.advance_byte();
             self.consume_backtick_inner(raw)
         }
@@ -711,13 +725,13 @@ impl<'a> Parser<'a> {
 
     fn read_here_doc_body(
         &mut self,
-        delimiter: &str,
+        delimiter: &[u8],
         strip_tabs: bool,
         expand: bool,
-    ) -> Result<String, ParseError> {
-        let mut body = String::new();
-        let mut continuation_buffer = String::new();
-        let mut line = String::with_capacity(80);
+    ) -> Result<Vec<u8>, ParseError> {
+        let mut body = Vec::new();
+        let mut continuation_buffer = Vec::new();
+        let mut line = Vec::with_capacity(80);
         loop {
             line.clear();
             let has_newline = loop {
@@ -727,7 +741,7 @@ impl<'a> Parser<'a> {
                         break true;
                     }
                     Some(b) => {
-                        line.push(b as char);
+                        line.push(b);
                         self.advance_byte();
                     }
                     None => break false,
@@ -735,41 +749,41 @@ impl<'a> Parser<'a> {
             };
 
             let trailing_backslashes = line
-                .as_bytes()
                 .iter()
                 .rev()
                 .take_while(|&&b| b == b'\\')
                 .count();
             if expand && trailing_backslashes % 2 == 1 && has_newline {
-                continuation_buffer.push_str(&line[..line.len() - 1]);
+                continuation_buffer.extend_from_slice(&line[..line.len() - 1]);
                 continue;
             }
 
             let logical_line = if !continuation_buffer.is_empty() {
-                continuation_buffer.push_str(&line);
+                continuation_buffer.extend_from_slice(&line);
                 &continuation_buffer
             } else {
                 &line
             };
             let stripped = if strip_tabs {
-                logical_line.trim_start_matches('\t')
+                let skip = logical_line.iter().take_while(|&&b| b == b'\t').count();
+                &logical_line[skip..]
             } else {
-                logical_line
+                logical_line.as_slice()
             };
             if stripped == delimiter {
                 return Ok(body);
             }
 
             if !has_newline {
-                body.push_str(stripped);
+                body.extend_from_slice(stripped);
                 return Err(ParseError {
-                    message: "unterminated here-document".into(),
+                    message: b"unterminated here-document".to_vec().into_boxed_slice(),
                     line: Some(self.line),
                 });
             }
 
-            body.push_str(stripped);
-            body.push('\n');
+            body.extend_from_slice(stripped);
+            body.push(b'\n');
             continuation_buffer.clear();
         }
     }
@@ -835,7 +849,7 @@ impl<'a> Parser<'a> {
                         && !self.expanding_aliases.contains(&*w)
                         && self.alias_depth < 1024
                     {
-                        let value: &str = value;
+                        let value: &[u8] = value;
                         let trailing_blank = alias_has_trailing_blank(value);
                         self.expanding_aliases.insert(Cow::Borrowed(&**key));
                         self.alias_stack.push(AliasLayer {
@@ -962,10 +976,10 @@ impl<'a> Parser<'a> {
 
     fn produce_heredoc_token(&mut self, first_strip_tabs: bool) -> Result<Token, ParseError> {
         self.skip_blanks();
-        let mut first_raw = String::new();
+        let mut first_raw = Vec::new();
         self.scan_raw_word(&mut first_raw)?;
         if first_raw.is_empty() {
-            return Err(self.error("expected heredoc delimiter"));
+            return Err(self.error(b"expected heredoc delimiter"));
         }
         let (first_delimiter, first_expand) = parse_here_doc_delimiter(&first_raw);
 
@@ -995,10 +1009,10 @@ impl<'a> Parser<'a> {
                                 false
                             };
                             self.skip_blanks();
-                            let mut delimiter_raw = String::new();
+                            let mut delimiter_raw = Vec::new();
                             self.scan_raw_word(&mut delimiter_raw)?;
                             if delimiter_raw.is_empty() {
-                                return Err(self.error("expected heredoc delimiter"));
+                                return Err(self.error(b"expected heredoc delimiter"));
                             }
                             let (delimiter, expand) = parse_here_doc_delimiter(&delimiter_raw);
                             let idx = heredoc_entries.len();
@@ -1083,10 +1097,10 @@ impl<'a> Parser<'a> {
                     queued_items.push(HereDocLineItem::Token(Token::RParen));
                 }
                 Some(b) if b.is_ascii_digit() => {
-                    let mut digits = String::new();
+                    let mut digits = Vec::new();
                     while let Some(b) = self.peek_byte() {
                         if b.is_ascii_digit() {
-                            digits.push(b as char);
+                            digits.push(b);
                             self.advance_byte();
                         } else {
                             break;
@@ -1094,7 +1108,7 @@ impl<'a> Parser<'a> {
                     }
                     self.skip_continuations();
                     if matches!(self.peek_byte(), Some(b'<' | b'>')) {
-                        if let Ok(fd) = digits.parse::<i32>() {
+                        if let Some(fd) = parse_i32_bytes(&digits) {
                             queued_items.push(HereDocLineItem::Token(Token::IoNumber(fd)));
                             continue;
                         }
@@ -1102,14 +1116,16 @@ impl<'a> Parser<'a> {
                     let mut raw = digits;
                     self.scan_raw_word(&mut raw)?;
                     if !raw.is_empty() {
-                        queued_items.push(HereDocLineItem::Token(Token::Word(raw.into())));
+                        queued_items
+                            .push(HereDocLineItem::Token(Token::Word(raw.into_boxed_slice())));
                     }
                 }
                 _ => {
-                    let mut raw = String::new();
+                    let mut raw = Vec::new();
                     self.scan_raw_word(&mut raw)?;
                     if !raw.is_empty() {
-                        queued_items.push(HereDocLineItem::Token(Token::Word(raw.into())));
+                        queued_items
+                            .push(HereDocLineItem::Token(Token::Word(raw.into_boxed_slice())));
                     }
                 }
             }
@@ -1119,12 +1135,12 @@ impl<'a> Parser<'a> {
             self.advance_byte();
         }
 
-        let mut bodies: Vec<(Box<str>, usize)> = Vec::new();
+        let mut bodies: Vec<(Box<[u8]>, usize)> = Vec::new();
         for entry in &heredoc_entries {
             let body_line = self.line;
-            let body: Box<str> = self
+            let body: Box<[u8]> = self
                 .read_here_doc_body(&entry.delimiter, entry.strip_tabs, entry.expand)?
-                .into();
+                .into_boxed_slice();
             bodies.push((body, body_line));
         }
 
@@ -1158,10 +1174,10 @@ impl<'a> Parser<'a> {
     }
 
     fn produce_io_number_or_word(&mut self) -> Result<Token, ParseError> {
-        let mut digits = String::new();
+        let mut digits = Vec::new();
         while let Some(b) = self.peek_byte() {
             if b.is_ascii_digit() {
-                digits.push(b as char);
+                digits.push(b);
                 self.advance_byte();
             } else {
                 break;
@@ -1169,7 +1185,7 @@ impl<'a> Parser<'a> {
         }
         self.skip_continuations();
         if matches!(self.peek_byte(), Some(b'<' | b'>')) {
-            if let Ok(fd) = digits.parse::<i32>() {
+            if let Some(fd) = parse_i32_bytes(&digits) {
                 return Ok(Token::IoNumber(fd));
             }
         }
@@ -1178,10 +1194,10 @@ impl<'a> Parser<'a> {
 
     #[inline(always)]
     fn produce_word_token(&mut self) -> Result<Token, ParseError> {
-        self.produce_word(String::new())
+        self.produce_word(Vec::new())
     }
 
-    fn produce_word(&mut self, prefix: String) -> Result<Token, ParseError> {
+    fn produce_word(&mut self, prefix: Vec<u8>) -> Result<Token, ParseError> {
         let check_keyword = self.keyword_mode;
         let check_alias = self.alias_mode || self.alias_trailing_blank_pending;
         if !self.alias_trailing_blank_pending && self.alias_stack.len() == 1 {
@@ -1207,12 +1223,16 @@ impl<'a> Parser<'a> {
 
             if !had_quote {
                 if check_alias {
-                    if let Some((key, value)) = self.aliases.get_key_value(raw.as_str()) {
+                    if let Some((key, value)) =
+                        self.aliases.get_key_value(raw.as_slice())
+                    {
                         if is_alias_eligible(&raw)
-                            && !self.expanding_aliases.contains(raw.as_str())
+                            && !self
+                                .expanding_aliases
+                                .contains(raw.as_slice())
                             && self.alias_depth < 1024
                         {
-                            let value: &str = value;
+                            let value: &[u8] = value;
                             let trailing_blank = alias_has_trailing_blank(value);
                             self.expanding_aliases.insert(Cow::Borrowed(&**key));
                             raw.clear();
@@ -1235,11 +1255,11 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            return Ok(Token::Word(raw.into()));
+            return Ok(Token::Word(raw.into_boxed_slice()));
         }
     }
 
-    fn scan_raw_word(&mut self, raw: &mut String) -> Result<bool, ParseError> {
+    fn scan_raw_word(&mut self, raw: &mut Vec<u8>) -> Result<bool, ParseError> {
         let mut had_quote = false;
         loop {
             match self.peek_byte() {
@@ -1261,31 +1281,31 @@ impl<'a> Parser<'a> {
                             }
                         }
                         Some(b) => {
-                            raw.push('\\');
-                            raw.push(b as char);
+                            raw.push(b'\\');
+                            raw.push(b);
                             self.advance_byte();
                             had_quote = true;
                         }
                         None => {
-                            raw.push('\\');
+                            raw.push(b'\\');
                             had_quote = true;
                         }
                     }
                 }
                 Some(b'\'') => {
                     had_quote = true;
-                    raw.push('\'');
+                    raw.push(b'\'');
                     self.advance_byte();
                     self.consume_single_quote(raw)?;
                 }
                 Some(b'"') => {
                     had_quote = true;
-                    raw.push('"');
+                    raw.push(b'"');
                     self.advance_byte();
                     self.consume_double_quote(raw)?;
                 }
                 Some(b'$') => {
-                    raw.push('$');
+                    raw.push(b'$');
                     self.advance_byte();
                     self.skip_continuations();
                     match self.peek_byte() {
@@ -1299,7 +1319,7 @@ impl<'a> Parser<'a> {
                     }
                 }
                 Some(b'`') => {
-                    raw.push('`');
+                    raw.push(b'`');
                     self.advance_byte();
                     had_quote = true;
                     self.consume_backtick_inner(raw)?;
@@ -1307,7 +1327,7 @@ impl<'a> Parser<'a> {
                 Some(b) => {
                     if self.pushed_back_byte.is_none() && self.alias_stack.len() == 1 {
                         let layer = &mut self.alias_stack[0];
-                        let bytes = layer.text.as_bytes();
+                        let bytes = &*layer.text;
                         let start = layer.pos;
                         let mut pos = start + 1;
                         while pos < bytes.len() {
@@ -1316,11 +1336,11 @@ impl<'a> Parser<'a> {
                             }
                             pos += 1;
                         }
-                        raw.push_str(&layer.text[start..pos]);
+                        raw.extend_from_slice(&bytes[start..pos]);
                         layer.pos = pos;
                         self.cached_byte = bytes.get(pos).copied();
                     } else {
-                        raw.push(b as char);
+                        raw.push(b);
                         self.advance_byte();
                     }
                 }
@@ -1333,73 +1353,72 @@ impl<'a> Parser<'a> {
 pub(super) struct SavedAliasState {
     layers: Vec<AliasLayer<'static>>,
     depth: usize,
-    expanding_aliases: HashSet<String>,
+    expanding_aliases: HashSet<Vec<u8>>,
     trailing_blank_pending: bool,
 }
 
-pub(super) fn parse_here_doc_delimiter(raw: &str) -> (Box<str>, bool) {
-    let mut delimiter = String::new();
+pub(super) fn parse_here_doc_delimiter(raw: &[u8]) -> (Box<[u8]>, bool) {
+    let mut delimiter = Vec::new();
     let mut index = 0usize;
     let mut expand = true;
-    let bytes = raw.as_bytes();
 
-    while index < bytes.len() {
-        match bytes[index] {
+    while index < raw.len() {
+        match raw[index] {
             b'\'' => {
                 expand = false;
                 index += 1;
-                while index < bytes.len() {
-                    if bytes[index] == b'\'' {
+                while index < raw.len() {
+                    if raw[index] == b'\'' {
                         index += 1;
                         break;
                     }
-                    delimiter.push(bytes[index] as char);
+                    delimiter.push(raw[index]);
                     index += 1;
                 }
             }
             b'"' => {
                 expand = false;
                 index += 1;
-                while index < bytes.len() {
-                    match bytes[index] {
+                while index < raw.len() {
+                    match raw[index] {
                         b'"' => {
                             index += 1;
                             break;
                         }
-                        b'\\' if index + 1 < bytes.len() => {
-                            let next = bytes[index + 1];
+                        b'\\' if index + 1 < raw.len() => {
+                            let next = raw[index + 1];
                             if matches!(next, b'$' | b'`' | b'"' | b'\\' | b'\n') {
                                 index += 1;
-                                delimiter.push(bytes[index] as char);
+                                delimiter.push(raw[index]);
                                 index += 1;
                             } else {
-                                delimiter.push(b'\\' as char);
+                                delimiter.push(b'\\');
                                 index += 1;
                             }
                         }
                         ch => {
-                            delimiter.push(ch as char);
+                            delimiter.push(ch);
                             index += 1;
                         }
                     }
                 }
             }
-            b'$' if index + 1 < bytes.len() && bytes[index + 1] == b'\'' => {
+            b'$' if index + 1 < raw.len() && raw[index + 1] == b'\'' => {
                 expand = false;
                 index += 2;
-                while index < bytes.len() {
-                    match bytes[index] {
+                while index < raw.len() {
+                    match raw[index] {
                         b'\'' => {
                             index += 1;
                             break;
                         }
-                        b'\\' if index + 1 < bytes.len() => {
+                        b'\\' if index + 1 < raw.len() => {
                             index += 1;
-                            delimiter.push(bytes[index] as char);
+                            delimiter.push(raw[index]);
                             index += 1;
                         }
                         ch => {
-                            delimiter.push(ch as char);
+                            delimiter.push(ch);
                             index += 1;
                         }
                     }
@@ -1408,17 +1427,17 @@ pub(super) fn parse_here_doc_delimiter(raw: &str) -> (Box<str>, bool) {
             b'\\' => {
                 expand = false;
                 index += 1;
-                if index < bytes.len() {
-                    delimiter.push(bytes[index] as char);
+                if index < raw.len() {
+                    delimiter.push(raw[index]);
                     index += 1;
                 }
             }
             ch => {
-                delimiter.push(ch as char);
+                delimiter.push(ch);
                 index += 1;
             }
         }
     }
 
-    (delimiter.into_boxed_str(), expand)
+    (delimiter.into_boxed_slice(), expand)
 }
