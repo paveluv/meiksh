@@ -701,7 +701,7 @@ The ENV environment variable, when and only when an interactive shell is invoked
 ```
 begin test "ENV file processed for interactive shell"
   script
-    _env_file=_test_env.sh
+    _env_file=$(pwd)/_test_env.sh
     echo 'ENV_LOADED=yes' > $_env_file
     ENV=$_env_file
     export ENV
@@ -847,8 +847,6 @@ When MAIL is set, the shell shall inform the user if the file named by the varia
 begin interactive test "MAIL notification on file creation"
   spawn -i
   expect "$ "
-  send "bind 'set enable-bracketed-paste off'"
-  expect "$ "
   send "MAILCHECK=1"
   expect "$ "
   send "MAIL=$HOME/mbox1"
@@ -898,8 +896,6 @@ If MAILCHECK is set to zero, the shell shall check for mail before issuing each 
 begin interactive test "MAILCHECK=0 checks at every prompt"
   spawn -i
   expect "$ "
-  send "bind 'set enable-bracketed-paste off'"
-  expect "$ "
   send "MAILCHECK=0"
   expect "$ "
   send "touch $HOME/mbox3"
@@ -922,8 +918,6 @@ MAILPATH provides a colon-separated list of pathnames. Each pathname can be foll
 ```
 begin interactive test "MAILPATH with custom message"
   spawn -i
-  expect "$ "
-  send "bind 'set enable-bracketed-paste off'"
   expect "$ "
   send "MAILCHECK=0"
   expect "$ "
@@ -1040,12 +1034,12 @@ The continuation prompt (PS2) in an interactive shell, displayed when a command 
 ```
 begin test "PS2 prompt text is emitted to stderr stream"
   script
-    $SHELL -i > ps2_stdout.txt 2> ps2_stderr.txt <<'EOF'
+    $SHELL -i > ps2_stdout.txt 2> ps2_stderr.txt <<'OUTER'
     PS2='cont> '
-    : \
-
+    echo 'hello
+    world'
     exit
-    EOF
+    OUTER
     grep -q 'cont> ' ps2_stderr.txt && echo stderr_ok || echo stderr_missing
     grep -q 'cont> ' ps2_stdout.txt && echo stdout_leak || echo stdout_clean
     rm -f ps2_stdout.txt ps2_stderr.txt
