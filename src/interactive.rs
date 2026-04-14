@@ -1,17 +1,22 @@
-use std::path::PathBuf;
-
-use crate::arena::StringArena;
+use crate::arena::ByteArena;
+use crate::bstr::{self, BStrExt, ByteWriter};
 use crate::expand;
 use crate::shell::{Shell, ShellError};
 use crate::sys;
 
+fn remove_file_bytes(path: &[u8]) {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    let _ = std::fs::remove_file(OsStr::from_bytes(path));
+}
+
 pub fn run(shell: &mut Shell) -> Result<i32, ShellError> {
-    sys::ensure_blocking_read_fd(sys::STDIN_FILENO).map_err(|e| shell.diagnostic(1, &e))?;
+    sys::ensure_blocking_read_fd(sys::STDIN_FILENO).map_err(|e| shell.diagnostic_syserr(1, &e))?;
     run_loop(shell)
 }
 
 fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
-    let mut accumulated = String::new();
+    let mut accumulated = Vec::<u8>::new();
     let mut sigchld_installed = false;
     loop {
         if shell.options.notify && !sigchld_installed {
@@ -27,19 +32,45 @@ fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
             let msg = match state {
                 ReapedJobState::Done(status, cmd) => {
                     if status == 0 {
-                        format!("[{id}] Done\t{cmd}\n")
+                        ByteWriter::new()
+                            .byte(b'[')
+                            .usize_val(id)
+                            .bytes(b"] Done\t")
+                            .bytes(&cmd)
+                            .byte(b'\n')
+                            .finish()
                     } else {
-                        format!("[{id}] Done({status})\t{cmd}\n")
+                        ByteWriter::new()
+                            .byte(b'[')
+                            .usize_val(id)
+                            .bytes(b"] Done(")
+                            .i32_val(status)
+                            .bytes(b")\t")
+                            .bytes(&cmd)
+                            .byte(b'\n')
+                            .finish()
                     }
                 }
-                ReapedJobState::Signaled(sig, cmd) => {
-                    format!("[{id}] Terminated ({})\t{cmd}\n", sys::signal_name(sig))
-                }
-                ReapedJobState::Stopped(sig, cmd) => {
-                    format!("[{id}] Stopped ({})\t{cmd}\n", sys::signal_name(sig))
-                }
+                ReapedJobState::Signaled(sig, cmd) => ByteWriter::new()
+                    .byte(b'[')
+                    .usize_val(id)
+                    .bytes(b"] Terminated (")
+                    .bytes(sys::signal_name(sig))
+                    .bytes(b")\t")
+                    .bytes(&cmd)
+                    .byte(b'\n')
+                    .finish(),
+                ReapedJobState::Stopped(sig, cmd) => ByteWriter::new()
+                    .byte(b'[')
+                    .usize_val(id)
+                    .bytes(b"] Stopped (")
+                    .bytes(sys::signal_name(sig))
+                    .bytes(b")\t")
+                    .bytes(&cmd)
+                    .byte(b'\n')
+                    .finish(),
             };
-            let _ = sys::write_all_fd(sys::STDERR_FILENO, msg.as_bytes());
+            let _ = sys::write_all_fd(sys::STDERR_FILENO, &msg);
         }
 
         shell.run_pending_traps()?;
@@ -50,33 +81,35 @@ fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
         check_mail(shell);
 
         let prompt_str = if accumulated.is_empty() {
-            expand_prompt(shell, "PS1", "$ ")
+            expand_prompt(shell, b"PS1", b"$ ")
         } else {
-            expand_prompt(shell, "PS2", "> ")
+            expand_prompt(shell, b"PS2", b"> ")
         };
-        write_prompt(&prompt_str).map_err(|e| shell.diagnostic(1, &e))?;
+        write_prompt(&prompt_str).map_err(|e| shell.diagnostic_syserr(1, &e))?;
 
         let line = match if shell.options.vi_mode {
             vi::read_line(shell, &prompt_str)
         } else {
             read_line()
         }
-        .map_err(|e| shell.diagnostic(1, &e))?
+        .map_err(|e| shell.diagnostic_syserr(1, &e))?
         {
             Some(line) => line,
             None => {
                 if !accumulated.is_empty() {
-                    let msg = format!("meiksh: unexpected EOF while looking for matching token\n");
-                    let _ = sys::write_all_fd(sys::STDERR_FILENO, msg.as_bytes());
+                    let _ = sys::write_all_fd(
+                        sys::STDERR_FILENO,
+                        b"meiksh: unexpected EOF while looking for matching token\n",
+                    );
                     accumulated.clear();
                 }
                 break;
             }
         };
-        if accumulated.is_empty() && line.trim().is_empty() {
+        if accumulated.is_empty() && line.trim_ascii_ws().is_empty() {
             continue;
         }
-        accumulated.push_str(&line);
+        accumulated.extend_from_slice(&line);
 
         match crate::syntax::parse_with_aliases(&accumulated, &shell.aliases) {
             Ok(_) => {}
@@ -87,8 +120,20 @@ fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
         }
 
         let source = std::mem::take(&mut accumulated);
-        append_history(shell, source.trim_end())?;
-        let trimmed = source.trim();
+        let trimmed_end = {
+            let mut end = source.len();
+            while end > 0
+                && (source[end - 1] == b' '
+                    || source[end - 1] == b'\t'
+                    || source[end - 1] == b'\n'
+                    || source[end - 1] == b'\r')
+            {
+                end -= 1;
+            }
+            &source[..end]
+        };
+        append_history(shell, trimmed_end)?;
+        let trimmed = source.trim_ascii_ws();
         if !command_is_fc(trimmed) {
             shell.add_history(trimmed);
         }
@@ -107,9 +152,9 @@ fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
     Ok(shell.last_status)
 }
 
-fn write_prompt(prompt_str: &str) -> sys::SysResult<()> {
+fn write_prompt(prompt_str: &[u8]) -> sys::SysResult<()> {
     loop {
-        match sys::write_all_fd(sys::STDERR_FILENO, prompt_str.as_bytes()) {
+        match sys::write_all_fd(sys::STDERR_FILENO, prompt_str) {
             Ok(()) => return Ok(()),
             Err(e) if e.is_eintr() => continue,
             Err(e) => return Err(e),
@@ -117,65 +162,69 @@ fn write_prompt(prompt_str: &str) -> sys::SysResult<()> {
     }
 }
 
-fn read_line() -> sys::SysResult<Option<String>> {
-    let mut line = String::new();
+fn read_line() -> sys::SysResult<Option<Vec<u8>>> {
+    let mut line = Vec::<u8>::new();
     let mut byte = [0u8; 1];
     loop {
         match sys::read_fd(sys::STDIN_FILENO, &mut byte) {
             Ok(0) => return Ok(if line.is_empty() { None } else { Some(line) }),
             Ok(_) => {
-                line.push(byte[0] as char);
+                line.push(byte[0]);
                 if byte[0] == b'\n' {
                     return Ok(Some(line));
                 }
             }
             Err(e) if e.is_eintr() => {
                 let _ = sys::write_all_fd(sys::STDERR_FILENO, b"\n");
-                return Ok(Some(String::new()));
+                return Ok(Some(Vec::new()));
             }
             Err(e) => return Err(e),
         }
     }
 }
 
-fn expand_prompt(shell: &mut Shell, var: &str, default: &str) -> String {
-    let raw = shell.get_var(var).unwrap_or(default).to_string();
+fn expand_prompt(shell: &mut Shell, var: &[u8], default: &[u8]) -> Vec<u8> {
+    let raw = shell.get_var(var).unwrap_or(default).to_vec();
     let histnum = shell.history_number();
-    let arena = StringArena::new();
+    let arena = ByteArena::new();
     let expanded = expand::expand_parameter_text(shell, &raw, &arena).unwrap_or(&raw);
     expand_prompt_exclamation(expanded, histnum)
 }
 
-fn expand_prompt_exclamation(s: &str, histnum: usize) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(ch) = chars.next() {
-        if ch == '!' {
-            match chars.next() {
-                Some('!') => result.push('!'),
-                Some(other) => {
-                    result.push_str(&histnum.to_string());
-                    result.push(other);
-                }
-                None => result.push_str(&histnum.to_string()),
+fn expand_prompt_exclamation(s: &[u8], histnum: usize) -> Vec<u8> {
+    let mut result = Vec::with_capacity(s.len());
+    let mut i = 0;
+    while i < s.len() {
+        if s[i] == b'!' {
+            i += 1;
+            if i < s.len() && s[i] == b'!' {
+                result.push(b'!');
+                i += 1;
+            } else if i < s.len() {
+                bstr::push_u64(&mut result, histnum as u64);
+                result.push(s[i]);
+                i += 1;
+            } else {
+                bstr::push_u64(&mut result, histnum as u64);
             }
         } else {
-            result.push(ch);
+            result.push(s[i]);
+            i += 1;
         }
     }
     result
 }
 
 pub(crate) fn check_mail(shell: &mut Shell) {
-    let has_mail = shell.get_var("MAIL").is_some();
-    let has_mailpath = shell.get_var("MAILPATH").is_some();
+    let has_mail = shell.get_var(b"MAIL").is_some();
+    let has_mailpath = shell.get_var(b"MAILPATH").is_some();
     if !has_mail && !has_mailpath {
         return;
     }
 
     let check_interval: u64 = shell
-        .get_var("MAILCHECK")
-        .and_then(|v| v.parse().ok())
+        .get_var(b"MAILCHECK")
+        .and_then(|v| bstr::parse_i64(v).map(|n| n as u64))
         .unwrap_or(600);
     let now = sys::monotonic_clock_ns() / 1_000_000_000;
     if shell.mail_last_check != 0 && now.saturating_sub(shell.mail_last_check) < check_interval {
@@ -183,16 +232,22 @@ pub(crate) fn check_mail(shell: &mut Shell) {
     }
     shell.mail_last_check = now;
 
-    let entries: Vec<(String, Option<String>)> =
-        if let Some(mp) = shell.get_var("MAILPATH").map(|s| s.to_string()) {
-            mp.split(':')
-                .map(|entry| match entry.find('%') {
-                    Some(pos) => (entry[..pos].to_string(), Some(entry[pos + 1..].to_string())),
-                    None => (entry.to_string(), None),
-                })
-                .collect()
+    let entries: Vec<(Vec<u8>, Option<Vec<u8>>)> =
+        if let Some(mp) = shell.get_var(b"MAILPATH").map(|s| s.to_vec()) {
+            let mut result = Vec::new();
+            for entry in mp.split(|&b| b == b':') {
+                match entry.iter().position(|&b| b == b'%') {
+                    Some(pos) => {
+                        result.push((entry[..pos].to_vec(), Some(entry[pos + 1..].to_vec())));
+                    }
+                    None => {
+                        result.push((entry.to_vec(), None));
+                    }
+                }
+            }
+            result
         } else {
-            let m = shell.get_var("MAIL").unwrap().to_string();
+            let m = shell.get_var(b"MAIL").unwrap().to_vec();
             vec![(m, None)]
         };
 
@@ -201,36 +256,40 @@ pub(crate) fn check_mail(shell: &mut Shell) {
             continue;
         }
         let size = sys::stat_path(&path).map(|st| st.size).unwrap_or(0);
-        let prev = shell.mail_sizes.get(path.as_str()).copied().unwrap_or(0);
+        let prev = shell.mail_sizes.get(path.as_slice()).copied().unwrap_or(0);
         if size > prev {
-            let msg = custom_msg.unwrap_or_else(|| "you have mail".to_string());
-            let _ = sys::write_all_fd(sys::STDERR_FILENO, msg.as_bytes());
+            let msg = custom_msg.unwrap_or_else(|| b"you have mail".to_vec());
+            let _ = sys::write_all_fd(sys::STDERR_FILENO, &msg);
             let _ = sys::write_all_fd(sys::STDERR_FILENO, b"\n");
         }
         shell.mail_sizes.insert(path.into(), size);
     }
 }
 
-pub(crate) fn command_is_fc(line: &str) -> bool {
+pub(crate) fn command_is_fc(line: &[u8]) -> bool {
     let mut rest = line;
     loop {
-        rest = rest.trim_start();
+        while !rest.is_empty() && rest[0].is_ascii_whitespace() {
+            rest = &rest[1..];
+        }
         if rest.is_empty() {
             return false;
         }
-        if let Some(eq_pos) = rest.find('=') {
+        if let Some(eq_pos) = rest.iter().position(|&b| b == b'=') {
             let before_eq = &rest[..eq_pos];
             if !before_eq.is_empty()
-                && !before_eq.contains(|c: char| c.is_whitespace())
-                && before_eq.chars().all(|c| c.is_alphanumeric() || c == '_')
+                && !before_eq.iter().any(|b| b.is_ascii_whitespace())
+                && before_eq
+                    .iter()
+                    .all(|b| b.is_ascii_alphanumeric() || *b == b'_')
             {
                 let after_eq = &rest[eq_pos + 1..];
-                let skip = if after_eq.starts_with('\'') {
-                    after_eq[1..].find('\'').map(|i| i + 2)
-                } else if after_eq.starts_with('"') {
-                    after_eq[1..].find('"').map(|i| i + 2)
+                let skip = if !after_eq.is_empty() && after_eq[0] == b'\'' {
+                    after_eq[1..].iter().position(|&b| b == b'\'').map(|i| i + 2)
+                } else if !after_eq.is_empty() && after_eq[0] == b'"' {
+                    after_eq[1..].iter().position(|&b| b == b'"').map(|i| i + 2)
                 } else {
-                    after_eq.find(char::is_whitespace)
+                    after_eq.iter().position(|b| b.is_ascii_whitespace())
                 };
                 match skip {
                     Some(n) => {
@@ -241,7 +300,9 @@ pub(crate) fn command_is_fc(line: &str) -> bool {
                 }
             }
         }
-        return rest == "fc" || rest.starts_with("fc ") || rest.starts_with("fc\t");
+        return rest == b"fc"
+            || (rest.len() > 3 && &rest[..3] == b"fc " )
+            || (rest.len() > 3 && &rest[..3] == b"fc\t");
     }
 }
 
@@ -249,50 +310,52 @@ pub fn load_env_file(shell: &mut Shell) -> Result<(), ShellError> {
     if !sys::has_same_real_and_effective_ids() {
         return Ok(());
     }
-    let env_value = shell.get_var("ENV").map(|s| s.to_string());
-    let arena = StringArena::new();
+    let env_value = shell.get_var(b"ENV").map(|s| s.to_vec());
+    let arena = ByteArena::new();
     let env_file = env_value
-        .map(|value| expand::expand_parameter_text(shell, &value, &arena).map(|s| s.to_string()))
+        .map(|value| expand::expand_parameter_text(shell, &value, &arena).map(|s| s.to_vec()))
         .transpose()
-        .map_err(|e| shell.expand_to_err(e))?
-        .map(PathBuf::from);
+        .map_err(|e| shell.expand_to_err(e))?;
     if let Some(path) = env_file {
-        if path.is_absolute() && sys::file_exists(&path.display().to_string()) {
+        let is_absolute = !path.is_empty() && path[0] == b'/';
+        if is_absolute && sys::file_exists(&path) {
             let _ = shell.source_path(&path)?;
         }
     }
     Ok(())
 }
 
-fn append_history(shell: &Shell, line: &str) -> Result<(), ShellError> {
+fn append_history(shell: &Shell, line: &[u8]) -> Result<(), ShellError> {
     let history = history_path(shell);
     let fd = match sys::open_file(
-        &history.display().to_string(),
+        &history,
         sys::O_WRONLY | sys::O_CREAT | sys::O_APPEND,
         0o644,
     ) {
         Ok(fd) => fd,
         Err(_) => return Ok(()),
     };
-    let mut entry = line.to_string();
-    if !entry.ends_with('\n') {
-        entry.push('\n');
+    let mut entry = line.to_vec();
+    if entry.is_empty() || entry[entry.len() - 1] != b'\n' {
+        entry.push(b'\n');
     }
-    let _ = sys::write_all_fd(fd, entry.as_bytes());
-    sys::close_fd(fd).map_err(|e| shell.diagnostic(1, &e))?;
+    let _ = sys::write_all_fd(fd, &entry);
+    sys::close_fd(fd).map_err(|e| shell.diagnostic_syserr(1, &e))?;
     Ok(())
 }
 
-fn history_path(shell: &Shell) -> PathBuf {
+fn history_path(shell: &Shell) -> Vec<u8> {
     shell
-        .get_var("HISTFILE")
-        .map(PathBuf::from)
+        .get_var(b"HISTFILE")
+        .map(|s| s.to_vec())
         .or_else(|| {
-            shell
-                .get_var("HOME")
-                .map(|home| PathBuf::from(home).join(".sh_history"))
+            shell.get_var(b"HOME").map(|home| {
+                let mut path = home.to_vec();
+                path.extend_from_slice(b"/.sh_history");
+                path
+            })
         })
-        .unwrap_or_else(|| PathBuf::from(".sh_history"))
+        .unwrap_or_else(|| b".sh_history".to_vec())
 }
 
 #[cfg(test)]
@@ -321,7 +384,7 @@ mod tests {
     fn test_shell() -> Shell {
         Shell {
             options: ShellOptions::default(),
-            shell_name: "meiksh".into(),
+            shell_name: b"meiksh"[..].into(),
             env: HashMap::new(),
             exported: BTreeSet::new(),
             readonly: BTreeSet::new(),
@@ -359,9 +422,9 @@ mod tests {
     fn prompt_prefers_ps1() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            assert_eq!(expand_prompt(&mut shell, "PS1", "$ "), "$ ");
-            shell.env.insert("PS1".into(), "custom> ".into());
-            assert_eq!(expand_prompt(&mut shell, "PS1", "$ "), "custom> ");
+            assert_eq!(expand_prompt(&mut shell, b"PS1", b"$ "), b"$ ");
+            shell.env.insert(b"PS1".to_vec(), b"custom> ".to_vec());
+            assert_eq!(expand_prompt(&mut shell, b"PS1", b"$ "), b"custom> ");
         });
     }
 
@@ -389,8 +452,8 @@ mod tests {
                 let mut shell = test_shell();
                 shell
                     .env
-                    .insert("HISTFILE".into(), "/tmp/history.txt".into());
-                append_history(&shell, "echo hi\n").expect("append history");
+                    .insert(b"HISTFILE".to_vec(), b"/tmp/history.txt".to_vec());
+                append_history(&shell, b"echo hi\n").expect("append history");
             },
         );
     }
@@ -399,7 +462,7 @@ mod tests {
     fn load_env_file_ignores_relative_path() {
         run_trace(vec![], || {
             let mut shell = test_shell();
-            shell.env.insert("ENV".into(), "relative.sh".into());
+            shell.env.insert(b"ENV".to_vec(), b"relative.sh".to_vec());
             load_env_file(&mut shell).expect("relative ignored");
         });
     }
@@ -419,7 +482,7 @@ mod tests {
                 let mut shell = test_shell();
                 shell
                     .env
-                    .insert("ENV".into(), "/tmp/meiksh-missing-env.sh".into());
+                    .insert(b"ENV".to_vec(), b"/tmp/meiksh-missing-env.sh".to_vec());
                 load_env_file(&mut shell).expect("missing ignored");
             },
         );
@@ -457,9 +520,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert("ENV".into(), "/tmp/env.sh".into());
+                shell.env.insert(b"ENV".to_vec(), b"/tmp/env.sh".to_vec());
                 load_env_file(&mut shell).expect("source env file");
-                assert_eq!(shell.get_var("FROM_ENV_FILE"), Some("1"));
+                assert_eq!(shell.get_var(b"FROM_ENV_FILE"), Some(b"1".as_ref()));
             },
         );
     }
@@ -499,10 +562,15 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert("HOME".into(), "/home/user".into());
-                shell.env.insert("ENV".into(), "${HOME}/env.sh".into());
+                shell.env.insert(b"HOME".to_vec(), b"/home/user".to_vec());
+                shell
+                    .env
+                    .insert(b"ENV".to_vec(), b"${HOME}/env.sh".to_vec());
                 load_env_file(&mut shell).expect("expanded env file");
-                assert_eq!(shell.get_var("FROM_EXPANDED_ENV"), Some("1"));
+                assert_eq!(
+                    shell.get_var(b"FROM_EXPANDED_ENV"),
+                    Some(b"1".as_ref())
+                );
             },
         );
     }
@@ -511,12 +579,14 @@ mod tests {
     fn load_env_file_respects_identity_guard() {
         run_trace(vec![], || {
             let mut shell = test_shell();
-            shell.env.insert("HOME".into(), "/home/user".into());
-            shell.env.insert("ENV".into(), "${HOME}/env.sh".into());
+            shell.env.insert(b"HOME".to_vec(), b"/home/user".to_vec());
+            shell
+                .env
+                .insert(b"ENV".to_vec(), b"${HOME}/env.sh".to_vec());
             sys::test_support::with_process_ids_for_test((1, 2, 3, 3), || {
                 load_env_file(&mut shell).expect("guarded env file");
             });
-            assert_eq!(shell.get_var("FROM_EXPANDED_ENV"), None);
+            assert_eq!(shell.get_var(b"FROM_EXPANDED_ENV"), None);
         });
     }
 
@@ -560,7 +630,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert("ENV".into(), "/tmp/bad.sh".into());
+                shell.env.insert(b"ENV".to_vec(), b"/tmp/bad.sh".to_vec());
                 let error = load_env_file(&mut shell).expect_err("invalid env file");
                 assert_ne!(error.exit_status(), 0);
             },
@@ -605,19 +675,16 @@ mod tests {
     fn run_loop_covers_reaped_jobs_blank_lines_and_exit() {
         run_trace(
             vec![
-                // reap_jobs for 4001 (called explicitly before run_loop)
                 t(
                     "waitpid",
                     vec![ArgMatcher::Int(4001), ArgMatcher::Any, ArgMatcher::Any],
                     TraceResult::Status(0),
                 ),
-                // reap_jobs for 4002 (called at top of run_loop)
                 t(
                     "waitpid",
                     vec![ArgMatcher::Int(4002), ArgMatcher::Any, ArgMatcher::Any],
                     TraceResult::Status(0),
                 ),
-                // reap notification written to stderr
                 t(
                     "write",
                     vec![
@@ -626,7 +693,6 @@ mod tests {
                     ],
                     TraceResult::Auto,
                 ),
-                // first prompt
                 t(
                     "write",
                     vec![
@@ -635,14 +701,11 @@ mod tests {
                     ],
                     TraceResult::Auto,
                 ),
-                // read blank line
                 t(
                     "read",
                     vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
                     TraceResult::Bytes(b"\n".to_vec()),
                 ),
-                // second iteration: reap_jobs returns nothing
-                // second prompt (after blank line)
                 t(
                     "write",
                     vec![
@@ -651,7 +714,6 @@ mod tests {
                     ],
                     TraceResult::Auto,
                 ),
-                // read "exit 5\n" byte by byte
                 t(
                     "read",
                     vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
@@ -687,7 +749,6 @@ mod tests {
                     vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
                     TraceResult::Bytes(b"\n".to_vec()),
                 ),
-                // append to history
                 t(
                     "open",
                     vec![
@@ -708,21 +769,21 @@ mod tests {
                 let mut shell = test_shell();
                 shell
                     .env
-                    .insert("HISTFILE".into(), "/tmp/history.txt".into());
-                shell.env.insert("PS1".into(), "test$ ".into());
+                    .insert(b"HISTFILE".to_vec(), b"/tmp/history.txt".to_vec());
+                shell.env.insert(b"PS1".to_vec(), b"test$ ".to_vec());
 
                 let handle = sys::ChildHandle {
                     pid: 4001,
                     stdout_fd: None,
                 };
-                shell.register_background_job("done".into(), None, vec![handle]);
+                shell.register_background_job(b"done"[..].into(), None, vec![handle]);
                 shell.reap_jobs();
 
                 let handle = sys::ChildHandle {
                     pid: 4002,
                     stdout_fd: None,
                 };
-                shell.register_background_job("done".into(), None, vec![handle]);
+                shell.register_background_job(b"done"[..].into(), None, vec![handle]);
 
                 let status = run_loop(&mut shell).expect("run loop");
 
@@ -805,7 +866,7 @@ mod tests {
             let mut shell = test_shell();
             shell
                 .env
-                .insert("HISTFILE".into(), "/tmp/bad-history.txt".into());
+                .insert(b"HISTFILE".to_vec(), b"/tmp/bad-history.txt".to_vec());
             let status = run_loop(&mut shell).expect("parse handled");
             assert_eq!(status, 0);
         });
@@ -827,8 +888,8 @@ mod tests {
                 let mut shell = test_shell();
                 shell
                     .env
-                    .insert("HISTFILE".into(), "/tmp/history-dir".into());
-                append_history(&shell, "echo hi\n").expect("should silently succeed");
+                    .insert(b"HISTFILE".to_vec(), b"/tmp/history-dir".to_vec());
+                append_history(&shell, b"echo hi\n").expect("should silently succeed");
             },
         );
     }
@@ -868,7 +929,7 @@ mod tests {
             ],
             || {
                 let result = read_line().expect("should not fail on EINTR");
-                assert_eq!(result, Some(String::new()));
+                assert_eq!(result, Some(Vec::new()));
             },
         );
     }
@@ -945,8 +1006,8 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert("HOME".into(), "/home/user".into());
-                append_history(&shell, "echo default\n").expect("default history");
+                shell.env.insert(b"HOME".to_vec(), b"/home/user".to_vec());
+                append_history(&shell, b"echo default\n").expect("default history");
             },
         );
     }
@@ -955,25 +1016,21 @@ mod tests {
     fn run_loop_prints_stopped_and_running_reap_notifications() {
         run_trace(
             vec![
-                // reap_jobs: job 4010 is stopped
                 t(
                     "waitpid",
                     vec![ArgMatcher::Int(4010), ArgMatcher::Any, ArgMatcher::Any],
                     TraceResult::StoppedSig(sys::SIGTSTP),
                 ),
-                // reap_jobs: check if 4010 was subsequently continued
                 t(
                     "waitpid",
                     vec![ArgMatcher::Int(4010), ArgMatcher::Any, ArgMatcher::Any],
                     TraceResult::Pid(0),
                 ),
-                // reap_jobs: job 4011 is still running
                 t(
                     "waitpid",
                     vec![ArgMatcher::Int(4011), ArgMatcher::Any, ArgMatcher::Any],
                     TraceResult::Pid(0),
                 ),
-                // Stopped notification written to stderr
                 t(
                     "write",
                     vec![
@@ -982,7 +1039,6 @@ mod tests {
                     ],
                     TraceResult::Auto,
                 ),
-                // prompt
                 t(
                     "write",
                     vec![
@@ -991,7 +1047,6 @@ mod tests {
                     ],
                     TraceResult::Auto,
                 ),
-                // read EOF
                 t(
                     "read",
                     vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
@@ -1004,12 +1059,16 @@ mod tests {
                     pid: 4010,
                     stdout_fd: None,
                 };
-                shell.register_background_job("vim".into(), None, vec![handle_stopped]);
+                shell.register_background_job(b"vim"[..].into(), None, vec![handle_stopped]);
                 let handle_running = sys::ChildHandle {
                     pid: 4011,
                     stdout_fd: None,
                 };
-                shell.register_background_job("sleep 999".into(), None, vec![handle_running]);
+                shell.register_background_job(
+                    b"sleep 999"[..].into(),
+                    None,
+                    vec![handle_running],
+                );
                 let status = run_loop(&mut shell).expect("run loop");
                 assert_eq!(status, 0);
             },
@@ -1020,13 +1079,11 @@ mod tests {
     fn run_loop_fires_trap_on_sigint_at_prompt() {
         run_trace(
             vec![
-                // set_trap installs signal handler
                 t(
                     "signal",
                     vec![ArgMatcher::Int(sys::SIGINT as i64), ArgMatcher::Any],
                     TraceResult::Int(0),
                 ),
-                // first iteration: no pending traps, prompt
                 t(
                     "write",
                     vec![
@@ -1035,13 +1092,11 @@ mod tests {
                     ],
                     TraceResult::Auto,
                 ),
-                // read interrupted by SIGINT
                 t(
                     "read",
                     vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
                     TraceResult::Interrupt(sys::SIGINT),
                 ),
-                // read_line writes newline to stderr on EINTR
                 t(
                     "write",
                     vec![
@@ -1050,8 +1105,6 @@ mod tests {
                     ],
                     TraceResult::Auto,
                 ),
-                // second iteration: run_pending_traps drains SIGINT, runs "TRAPPED=yes" (no syscalls)
-                // then prompt again
                 t(
                     "write",
                     vec![
@@ -1060,7 +1113,6 @@ mod tests {
                     ],
                     TraceResult::Auto,
                 ),
-                // read EOF
                 t(
                     "read",
                     vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
@@ -1072,12 +1124,12 @@ mod tests {
                 shell
                     .set_trap(
                         TrapCondition::Signal(sys::SIGINT),
-                        Some(TrapAction::Command("TRAPPED=yes".into())),
+                        Some(TrapAction::Command(b"TRAPPED=yes"[..].into())),
                     )
                     .expect("trap");
                 let status = run_loop(&mut shell).expect("trap at prompt");
                 assert_eq!(status, 0);
-                assert_eq!(shell.get_var("TRAPPED"), Some("yes"));
+                assert_eq!(shell.get_var(b"TRAPPED"), Some(b"yes".as_ref()));
             },
         );
     }
@@ -1086,13 +1138,11 @@ mod tests {
     fn run_loop_exit_trap_on_sigint_stops_shell() {
         run_trace(
             vec![
-                // set_trap installs signal handler
                 t(
                     "signal",
                     vec![ArgMatcher::Int(sys::SIGINT as i64), ArgMatcher::Any],
                     TraceResult::Int(0),
                 ),
-                // first iteration: prompt
                 t(
                     "write",
                     vec![
@@ -1101,13 +1151,11 @@ mod tests {
                     ],
                     TraceResult::Auto,
                 ),
-                // read interrupted by SIGINT
                 t(
                     "read",
                     vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
                     TraceResult::Interrupt(sys::SIGINT),
                 ),
-                // read_line writes newline to stderr
                 t(
                     "write",
                     vec![
@@ -1116,14 +1164,13 @@ mod tests {
                     ],
                     TraceResult::Auto,
                 ),
-                // second iteration: run_pending_traps runs "exit 42", shell.running = false → break
             ],
             || {
                 let mut shell = test_shell();
                 shell
                     .set_trap(
                         TrapCondition::Signal(sys::SIGINT),
-                        Some(TrapAction::Command("exit 42".into())),
+                        Some(TrapAction::Command(b"exit 42"[..].into())),
                     )
                     .expect("trap");
                 let status = run_loop(&mut shell).expect("exit trap at prompt");
@@ -1137,7 +1184,6 @@ mod tests {
     fn run_loop_retries_prompt_write_on_eintr() {
         run_trace(
             vec![
-                // prompt write fails with EINTR
                 t(
                     "write",
                     vec![
@@ -1146,7 +1192,6 @@ mod tests {
                     ],
                     TraceResult::Err(sys::EINTR),
                 ),
-                // retry succeeds
                 t(
                     "write",
                     vec![
@@ -1155,7 +1200,6 @@ mod tests {
                     ],
                     TraceResult::Auto,
                 ),
-                // read EOF
                 t(
                     "read",
                     vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
@@ -1202,7 +1246,6 @@ mod tests {
     #[test]
     fn run_loop_command_not_found_sets_status_127_and_continues() {
         let mut trace = vec![
-            // prompt
             t(
                 "write",
                 vec![
@@ -1212,10 +1255,8 @@ mod tests {
                 TraceResult::Auto,
             ),
         ];
-        // read "gibberish\n"
         trace.extend(read_line_trace(b"gibberish\n"));
         trace.extend([
-            // history: open, write, close
             t(
                 "open",
                 vec![
@@ -1234,7 +1275,6 @@ mod tests {
                 TraceResult::Auto,
             ),
             t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
-            // resolve_command_path: stat "/usr/bin/gibberish" → not found
             t(
                 "stat",
                 vec![
@@ -1243,7 +1283,6 @@ mod tests {
                 ],
                 TraceResult::Err(sys::ENOENT),
             ),
-            // "not found" diagnostic written to stderr (no fork!)
             t(
                 "write",
                 vec![
@@ -1252,7 +1291,6 @@ mod tests {
                 ],
                 TraceResult::Auto,
             ),
-            // shell continues: second prompt
             t(
                 "write",
                 vec![
@@ -1261,7 +1299,6 @@ mod tests {
                 ],
                 TraceResult::Auto,
             ),
-            // read EOF
             t(
                 "read",
                 vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
@@ -1271,8 +1308,10 @@ mod tests {
 
         run_trace(trace, || {
             let mut shell = test_shell();
-            shell.env.insert("PATH".into(), "/usr/bin".into());
-            shell.env.insert("HISTFILE".into(), "/tmp/hist".into());
+            shell.env.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
+            shell
+                .env
+                .insert(b"HISTFILE".to_vec(), b"/tmp/hist".to_vec());
             let status = run_loop(&mut shell).expect("command not found handled");
             assert_eq!(
                 status, 127,
@@ -1284,10 +1323,10 @@ mod tests {
     #[test]
     fn expand_prompt_exclamation_covers_all_branches() {
         assert_no_syscalls(|| {
-            assert_eq!(expand_prompt_exclamation("!!", 42), "!");
-            assert_eq!(expand_prompt_exclamation("!x", 42), "42x");
-            assert_eq!(expand_prompt_exclamation("!", 42), "42");
-            assert_eq!(expand_prompt_exclamation("no bang", 42), "no bang");
+            assert_eq!(expand_prompt_exclamation(b"!!", 42), b"!");
+            assert_eq!(expand_prompt_exclamation(b"!x", 42), b"42x");
+            assert_eq!(expand_prompt_exclamation(b"!", 42), b"42");
+            assert_eq!(expand_prompt_exclamation(b"no bang", 42), b"no bang");
         });
     }
 
@@ -1341,7 +1380,9 @@ mod tests {
 
         run_trace(trace, || {
             let mut shell = test_shell();
-            shell.env.insert("HISTFILE".into(), "/tmp/hist".into());
+            shell
+                .env
+                .insert(b"HISTFILE".to_vec(), b"/tmp/hist".to_vec());
             let _ = run_loop(&mut shell);
         });
     }
@@ -1402,7 +1443,9 @@ mod tests {
         run_trace(trace, || {
             let mut shell = test_shell();
             shell.options.notify = true;
-            shell.env.insert("HISTFILE".into(), "/tmp/hist".into());
+            shell
+                .env
+                .insert(b"HISTFILE".to_vec(), b"/tmp/hist".to_vec());
             let _ = run_loop(&mut shell);
         });
     }
@@ -1454,7 +1497,7 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 shell.register_background_job(
-                    "killed".into(),
+                    b"killed"[..].into(),
                     None,
                     vec![sys::ChildHandle {
                         pid: 6001,
@@ -1462,7 +1505,7 @@ mod tests {
                     }],
                 );
                 shell.register_background_job(
-                    "failed".into(),
+                    b"failed"[..].into(),
                     None,
                     vec![sys::ChildHandle {
                         pid: 6002,
@@ -1478,7 +1521,6 @@ mod tests {
     fn run_loop_vi_mode_exits_on_eof() {
         run_trace(
             vec![
-                // prompt write to stderr
                 t(
                     "write",
                     vec![
@@ -1487,29 +1529,23 @@ mod tests {
                     ],
                     TraceResult::Auto,
                 ),
-                // vi::read_line: tcgetattr
                 t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                // vi::read_line: tcsetattr (raw mode)
                 t(
                     "tcsetattr",
                     vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
                     TraceResult::Int(0),
                 ),
-                // vi::read_line: tcgetattr (for erase_char)
                 t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                // read returns EOF
                 t(
                     "read",
                     vec![ArgMatcher::Fd(0), ArgMatcher::Any],
                     TraceResult::Bytes(vec![]),
                 ),
-                // write \r\n on EOF
                 t(
                     "write",
                     vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
                     TraceResult::Auto,
                 ),
-                // restore terminal
                 t(
                     "tcsetattr",
                     vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
@@ -1534,7 +1570,7 @@ mod tests {
             actions.iter().any(|a| matches!(a, ViAction::Return(_)))
         }
 
-        fn get_return(actions: &[ViAction]) -> Option<Option<String>> {
+        fn get_return(actions: &[ViAction]) -> Option<Option<Vec<u8>>> {
             actions.iter().find_map(|a| match a {
                 ViAction::Return(s) => Some(s.clone()),
                 _ => None,
@@ -1545,7 +1581,7 @@ mod tests {
             actions.iter().any(|a| matches!(a, ViAction::Bell))
         }
 
-        fn feed_bytes(state: &mut ViState, bytes: &[u8], history: &[Box<str>]) -> Vec<ViAction> {
+        fn feed_bytes(state: &mut ViState, bytes: &[u8], history: &[Box<[u8]>]) -> Vec<ViAction> {
             let mut all = Vec::new();
             for &b in bytes {
                 all.extend(state.process_byte(b, history));
@@ -1729,7 +1765,7 @@ mod tests {
             std::fs::write(dir.join("aaa_1"), "").unwrap();
             std::fs::write(dir.join("aaa_2"), "").unwrap();
             let pat = format!("{}/aaa_*", dir.display());
-            let result = glob_expand(&pat);
+            let result = glob_expand(pat.as_bytes());
             assert!(result.is_ok());
             let files = result.unwrap();
             assert_eq!(files.len(), 2);
@@ -1738,24 +1774,24 @@ mod tests {
 
         #[test]
         fn glob_expand_no_match_returns_err() {
-            let result = glob_expand("/nonexistent_path_xyz/no_*_match");
+            let result = glob_expand(b"/nonexistent_path_xyz/no_*_match");
             assert!(result.is_err());
         }
 
         #[test]
         fn command_is_fc_tests() {
             assert_no_syscalls(|| {
-                assert!(command_is_fc("fc"));
-                assert!(command_is_fc("fc -l"));
-                assert!(command_is_fc("fc\t-l"));
-                assert!(command_is_fc("FCEDIT=true fc -e true"));
-                assert!(command_is_fc("A=1 B=2 fc"));
-                assert!(command_is_fc("X='val' fc -s"));
-                assert!(command_is_fc("X=\"val\" fc -s"));
-                assert!(!command_is_fc("echo fc"));
-                assert!(!command_is_fc(""));
-                assert!(!command_is_fc("echo hello"));
-                assert!(!command_is_fc("FCEDIT=true"));
+                assert!(command_is_fc(b"fc"));
+                assert!(command_is_fc(b"fc -l"));
+                assert!(command_is_fc(b"fc\t-l"));
+                assert!(command_is_fc(b"FCEDIT=true fc -e true"));
+                assert!(command_is_fc(b"A=1 B=2 fc"));
+                assert!(command_is_fc(b"X='val' fc -s"));
+                assert!(command_is_fc(b"X=\"val\" fc -s"));
+                assert!(!command_is_fc(b"echo fc"));
+                assert!(!command_is_fc(b""));
+                assert!(!command_is_fc(b"echo hello"));
+                assert!(!command_is_fc(b"FCEDIT=true"));
             });
         }
 
@@ -1763,10 +1799,13 @@ mod tests {
         fn vi_insert_mode_enter_returns_line() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 let actions = feed_bytes(&mut state, b"abc\n", &history);
                 assert!(has_return(&actions));
-                assert_eq!(get_return(&actions), Some(Some("abc\n".into())));
+                assert_eq!(
+                    get_return(&actions),
+                    Some(Some(b"abc\n".to_vec()))
+                );
             });
         }
 
@@ -1774,7 +1813,7 @@ mod tests {
         fn vi_insert_mode_eof_returns_none() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 let actions = state.process_byte(0x04, &history);
                 assert!(has_return(&actions));
                 assert_eq!(get_return(&actions), Some(None));
@@ -1785,7 +1824,7 @@ mod tests {
         fn vi_insert_mode_backspace_erases() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abc", &history);
                 assert_eq!(state.line, b"abc");
                 state.process_byte(0x7f, &history);
@@ -1798,10 +1837,10 @@ mod tests {
         fn vi_insert_mode_ctrl_c_returns_empty() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abc", &history);
                 let actions = state.process_byte(0x03, &history);
-                assert_eq!(get_return(&actions), Some(Some(String::new())));
+                assert_eq!(get_return(&actions), Some(Some(Vec::new())));
             });
         }
 
@@ -1809,7 +1848,7 @@ mod tests {
         fn vi_insert_mode_ctrl_w_deletes_word() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"hello world", &history);
                 state.process_byte(0x17, &history);
                 assert_eq!(state.line, b"hello ");
@@ -1820,7 +1859,7 @@ mod tests {
         fn vi_insert_mode_ctrl_v_inserts_literal() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 state.process_byte(0x16, &history);
                 state.process_byte(0x03, &history);
                 assert_eq!(state.line, vec![0x03]);
@@ -1831,7 +1870,7 @@ mod tests {
         fn vi_esc_to_command_mode() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abc", &history);
                 state.process_byte(0x1b, &history);
                 assert!(!state.insert_mode);
@@ -1843,7 +1882,7 @@ mod tests {
         fn vi_command_h_l_motion() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abcde", &history);
                 state.process_byte(0x1b, &history);
                 assert_eq!(state.cursor, 4);
@@ -1860,7 +1899,7 @@ mod tests {
         fn vi_command_0_dollar() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abcde", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -1874,7 +1913,7 @@ mod tests {
         fn vi_command_caret() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"  hello", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'^', &history);
@@ -1886,7 +1925,7 @@ mod tests {
         fn vi_command_w_b_motion() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"echo hello world", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -1903,7 +1942,7 @@ mod tests {
         fn vi_command_W_B_motion() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"a.b c.d", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -1918,7 +1957,7 @@ mod tests {
         fn vi_command_e_E_motion() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"ab cd", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -1938,7 +1977,7 @@ mod tests {
         fn vi_command_pipe() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abcde", &history);
                 state.process_byte(0x1b, &history);
                 feed_bytes(&mut state, b"3|", &history);
@@ -1950,7 +1989,7 @@ mod tests {
         fn vi_command_find_f_F_t_T() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abcba", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -1971,7 +2010,7 @@ mod tests {
         fn vi_command_semicolon_comma_repeat_find() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"ababa", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -1988,7 +2027,7 @@ mod tests {
         fn vi_command_x_delete() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abc", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -2001,7 +2040,7 @@ mod tests {
         fn vi_command_X_delete_before() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abc", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'X', &history);
@@ -2014,7 +2053,7 @@ mod tests {
         fn vi_command_r_replace() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"hello", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -2027,7 +2066,7 @@ mod tests {
         fn vi_command_r_with_count() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abcd", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -2040,7 +2079,7 @@ mod tests {
         fn vi_command_R_replace_mode() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abcdef", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -2053,7 +2092,7 @@ mod tests {
         fn vi_command_R_enter_returns() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"ab", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -2067,7 +2106,7 @@ mod tests {
         fn vi_command_tilde_toggle_case() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"aB", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -2082,7 +2121,7 @@ mod tests {
         fn vi_command_d_with_motion() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"hello world", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -2096,7 +2135,7 @@ mod tests {
         fn vi_command_dd_clears_line() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"hello", &history);
                 state.process_byte(0x1b, &history);
                 feed_bytes(&mut state, b"dd", &history);
@@ -2108,7 +2147,7 @@ mod tests {
         fn vi_command_D_delete_to_end() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"hello world", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -2122,7 +2161,7 @@ mod tests {
         fn vi_command_c_change() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"hello world", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -2136,7 +2175,7 @@ mod tests {
         fn vi_command_cc_clears_line() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"hello", &history);
                 state.process_byte(0x1b, &history);
                 feed_bytes(&mut state, b"cc", &history);
@@ -2149,7 +2188,7 @@ mod tests {
         fn vi_command_C_change_to_end() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"hello world", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -2164,7 +2203,7 @@ mod tests {
         fn vi_command_S_substitute_line() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"hello", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'S', &history);
@@ -2177,7 +2216,7 @@ mod tests {
         fn vi_command_y_yank() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"hello world", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -2191,7 +2230,7 @@ mod tests {
         fn vi_command_yy_yanks_line() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"hello", &history);
                 state.process_byte(0x1b, &history);
                 feed_bytes(&mut state, b"yy", &history);
@@ -2203,7 +2242,7 @@ mod tests {
         fn vi_command_Y_yank_to_end() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"hello world", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -2217,7 +2256,7 @@ mod tests {
         fn vi_command_p_P_put() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abc", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'x', &history);
@@ -2238,7 +2277,7 @@ mod tests {
         fn vi_command_u_undo() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"hello", &history);
                 state.process_byte(0x1b, &history);
                 state.edit_line = state.line.clone();
@@ -2253,7 +2292,7 @@ mod tests {
         fn vi_command_dot_repeat() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abcde", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -2268,7 +2307,7 @@ mod tests {
         fn vi_command_a_A_i_I_enter_insert() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"ab", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -2295,7 +2334,8 @@ mod tests {
         #[test]
         fn vi_command_history_k_j() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec!["cmd1".into(), "cmd2".into()];
+                let history: Vec<Box<[u8]>> =
+                    vec![b"cmd1"[..].into(), b"cmd2"[..].into()];
                 let mut state = ViState::new(0x7f, history.len());
                 feed_bytes(&mut state, b"current", &history);
                 state.process_byte(0x1b, &history);
@@ -2318,7 +2358,8 @@ mod tests {
         #[test]
         fn vi_command_G_goes_to_oldest() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec!["oldest".into(), "newest".into()];
+                let history: Vec<Box<[u8]>> =
+                    vec![b"oldest"[..].into(), b"newest"[..].into()];
                 let mut state = ViState::new(0x7f, history.len());
                 feed_bytes(&mut state, b"cur", &history);
                 state.process_byte(0x1b, &history);
@@ -2331,13 +2372,13 @@ mod tests {
         fn vi_command_hash_comments_out() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"echo hello", &history);
                 state.process_byte(0x1b, &history);
                 let actions = state.process_byte(b'#', &history);
                 assert!(has_return(&actions));
                 let ret = get_return(&actions).unwrap().unwrap();
-                assert!(ret.starts_with("#echo hello"));
+                assert!(ret.starts_with(b"#echo hello"));
             });
         }
 
@@ -2345,11 +2386,11 @@ mod tests {
         fn vi_command_sigint_in_command_mode() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"partial", &history);
                 state.process_byte(0x1b, &history);
                 let actions = state.process_byte(0x03, &history);
-                assert_eq!(get_return(&actions), Some(Some(String::new())));
+                assert_eq!(get_return(&actions), Some(Some(Vec::new())));
             });
         }
 
@@ -2357,19 +2398,22 @@ mod tests {
         fn vi_command_enter_in_command_mode() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"cmd", &history);
                 state.process_byte(0x1b, &history);
                 let actions = state.process_byte(b'\n', &history);
                 assert!(has_return(&actions));
-                assert_eq!(get_return(&actions), Some(Some("cmd\n".into())));
+                assert_eq!(
+                    get_return(&actions),
+                    Some(Some(b"cmd\n".to_vec()))
+                );
             });
         }
 
         #[test]
         fn vi_command_U_undoes_all() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec!["baseline".into()];
+                let history: Vec<Box<[u8]>> = vec![b"baseline"[..].into()];
                 let mut state = ViState::new(0x7f, history.len());
                 feed_bytes(&mut state, b"cur", &history);
                 state.process_byte(0x1b, &history);
@@ -2386,7 +2430,7 @@ mod tests {
         #[test]
         fn vi_command_minus_navigates_history() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec!["hist1".into()];
+                let history: Vec<Box<[u8]>> = vec![b"hist1"[..].into()];
                 let mut state = ViState::new(0x7f, history.len());
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'-', &history);
@@ -2397,7 +2441,8 @@ mod tests {
         #[test]
         fn vi_command_plus_navigates_forward() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec!["h1".into(), "h2".into()];
+                let history: Vec<Box<[u8]>> =
+                    vec![b"h1"[..].into(), b"h2"[..].into()];
                 let mut state = ViState::new(0x7f, history.len());
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'k', &history);
@@ -2409,7 +2454,8 @@ mod tests {
         #[test]
         fn vi_command_search_backward() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec!["alpha".into(), "beta".into()];
+                let history: Vec<Box<[u8]>> =
+                    vec![b"alpha"[..].into(), b"beta"[..].into()];
                 let mut state = ViState::new(0x7f, history.len());
                 state.process_byte(0x1b, &history);
                 feed_bytes(&mut state, b"/alp\n", &history);
@@ -2420,7 +2466,8 @@ mod tests {
         #[test]
         fn vi_command_search_forward() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec!["alpha".into(), "beta".into()];
+                let history: Vec<Box<[u8]>> =
+                    vec![b"alpha"[..].into(), b"beta"[..].into()];
                 let mut state = ViState::new(0x7f, history.len());
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'k', &history);
@@ -2433,7 +2480,11 @@ mod tests {
         #[test]
         fn vi_command_n_N_repeat_search() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec!["alpha1".into(), "beta".into(), "alpha2".into()];
+                let history: Vec<Box<[u8]>> = vec![
+                    b"alpha1"[..].into(),
+                    b"beta"[..].into(),
+                    b"alpha2"[..].into(),
+                ];
                 let mut state = ViState::new(0x7f, history.len());
                 state.process_byte(0x1b, &history);
                 feed_bytes(&mut state, b"/alpha\n", &history);
@@ -2448,7 +2499,7 @@ mod tests {
         #[test]
         fn vi_command_search_not_found_bells() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec!["alpha".into()];
+                let history: Vec<Box<[u8]>> = vec![b"alpha"[..].into()];
                 let mut state = ViState::new(0x7f, history.len());
                 state.process_byte(0x1b, &history);
                 let actions = feed_bytes(&mut state, b"/zzz\n", &history);
@@ -2459,7 +2510,7 @@ mod tests {
         #[test]
         fn vi_command_search_backspace() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec!["alpha".into()];
+                let history: Vec<Box<[u8]>> = vec![b"alpha"[..].into()];
                 let mut state = ViState::new(0x7f, history.len());
                 state.process_byte(0x1b, &history);
                 feed_bytes(&mut state, b"/alphx\x7fa\n", &history);
@@ -2471,7 +2522,7 @@ mod tests {
         fn vi_command_d_with_invalid_motion_bells() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"hello", &history);
                 state.process_byte(0x1b, &history);
                 let actions = feed_bytes(&mut state, b"dz", &history);
@@ -2483,7 +2534,7 @@ mod tests {
         fn vi_command_unknown_bells() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"x", &history);
                 state.process_byte(0x1b, &history);
                 let actions = state.process_byte(b'Z', &history);
@@ -2495,7 +2546,7 @@ mod tests {
         fn vi_command_count_prefix() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abcde", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -2507,7 +2558,8 @@ mod tests {
         #[test]
         fn vi_command_numbered_G() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec!["h0".into(), "h1".into(), "h2".into()];
+                let history: Vec<Box<[u8]>> =
+                    vec![b"h0"[..].into(), b"h1"[..].into(), b"h2"[..].into()];
                 let mut state = ViState::new(0x7f, history.len());
                 state.process_byte(0x1b, &history);
                 feed_bytes(&mut state, b"2G", &history);
@@ -2540,7 +2592,7 @@ mod tests {
                 ],
                 || {
                     let mut state = ViState::new(0x7f, 0);
-                    let history: Vec<Box<str>> = vec![];
+                    let history: Vec<Box<[u8]>> = vec![];
                     state.line = b"hello".to_vec();
                     state.cursor = 4;
                     state.insert_mode = false;
@@ -2558,7 +2610,7 @@ mod tests {
         fn vi_h_at_beginning_bells() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"a", &history);
                 state.process_byte(0x1b, &history);
                 let actions = state.process_byte(b'h', &history);
@@ -2570,7 +2622,7 @@ mod tests {
         fn vi_l_at_end_bells() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"a", &history);
                 state.process_byte(0x1b, &history);
                 let actions = state.process_byte(b'l', &history);
@@ -2582,7 +2634,7 @@ mod tests {
         fn vi_w_at_end_no_move() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abc", &history);
                 state.process_byte(0x1b, &history);
                 let before = state.cursor;
@@ -2595,7 +2647,7 @@ mod tests {
         fn vi_b_at_start_bells() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abc", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -2608,7 +2660,7 @@ mod tests {
         fn vi_W_at_end_no_move() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abc", &history);
                 state.process_byte(0x1b, &history);
                 let before = state.cursor;
@@ -2621,7 +2673,7 @@ mod tests {
         fn vi_B_at_start_bells() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abc", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -2634,7 +2686,7 @@ mod tests {
         fn vi_find_not_found_bells() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abc", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -2647,7 +2699,7 @@ mod tests {
         fn vi_X_at_start_bells() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"a", &history);
                 state.process_byte(0x1b, &history);
                 let actions = state.process_byte(b'X', &history);
@@ -2658,7 +2710,7 @@ mod tests {
         #[test]
         fn vi_j_with_no_history_bells() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 let mut state = ViState::new(0x7f, 0);
                 state.process_byte(0x1b, &history);
                 let actions = state.process_byte(b'j', &history);
@@ -2669,7 +2721,7 @@ mod tests {
         #[test]
         fn vi_k_with_no_history_bells() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 let mut state = ViState::new(0x7f, 0);
                 state.process_byte(0x1b, &history);
                 let actions = state.process_byte(b'k', &history);
@@ -2681,7 +2733,7 @@ mod tests {
         fn vi_insert_not_at_end_redraws() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"ac", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -2697,7 +2749,7 @@ mod tests {
         fn vi_tilde_count_overflow() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"aB", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -2745,7 +2797,7 @@ mod tests {
                 ],
                 || {
                     let mut shell = super::test_shell();
-                    let _ = shell.set_var("MAIL", "/tmp/test_mail".into());
+                    let _ = shell.set_var(b"MAIL", b"/tmp/test_mail".to_vec());
                     check_mail(&mut shell);
                 },
             );
@@ -2784,7 +2836,10 @@ mod tests {
                 ],
                 || {
                     let mut shell = super::test_shell();
-                    let _ = shell.set_var("MAILPATH", "/tmp/box1%New mail!:/tmp/box2".into());
+                    let _ = shell.set_var(
+                        b"MAILPATH",
+                        b"/tmp/box1%New mail!:/tmp/box2".to_vec(),
+                    );
                     check_mail(&mut shell);
                 },
             );
@@ -2808,7 +2863,7 @@ mod tests {
                 ],
                 || {
                     let mut shell = super::test_shell();
-                    let _ = shell.set_var("MAILPATH", ":/tmp/box".into());
+                    let _ = shell.set_var(b"MAILPATH", b":/tmp/box".to_vec());
                     check_mail(&mut shell);
                 },
             );
@@ -2837,7 +2892,7 @@ mod tests {
                 ],
                 || {
                     let mut shell = super::test_shell();
-                    let _ = shell.set_var("MAIL", "/tmp/mbox".into());
+                    let _ = shell.set_var(b"MAIL", b"/tmp/mbox".to_vec());
                     check_mail(&mut shell);
                     check_mail(&mut shell);
                 },
@@ -2872,7 +2927,11 @@ mod tests {
         #[test]
         fn vi_count_digits_continuation() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec!["one".into(), "two".into(), "three".into()];
+                let history: Vec<Box<[u8]>> = vec![
+                    b"one"[..].into(),
+                    b"two"[..].into(),
+                    b"three"[..].into(),
+                ];
                 let mut state = ViState::new(0x7f, history.len());
                 feed_bytes(&mut state, b"text", &history);
                 state.process_byte(0x1b, &history);
@@ -2887,7 +2946,7 @@ mod tests {
         fn vi_replace_with_count() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abcdef", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -2902,7 +2961,7 @@ mod tests {
         fn vi_replace_mode_esc_adjusts_cursor() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abc", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'R', &history);
@@ -2919,7 +2978,7 @@ mod tests {
         fn vi_replace_mode_past_end() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"ab", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'R', &history);
@@ -2934,7 +2993,7 @@ mod tests {
         fn vi_count_zero_normalization() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abc", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'i', &history);
@@ -2946,7 +3005,7 @@ mod tests {
         fn vi_semicolon_bell_on_not_found() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abcdef", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -2962,7 +3021,7 @@ mod tests {
         fn vi_comma_reverses_find_direction() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abcba", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -2980,7 +3039,7 @@ mod tests {
         fn vi_comma_bell_when_not_found() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abcdef", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'$', &history);
@@ -2996,7 +3055,7 @@ mod tests {
         fn vi_D_on_empty_line() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 state.process_byte(0x1b, &history);
                 let _actions = state.process_byte(b'D', &history);
                 assert!(state.line.is_empty());
@@ -3007,7 +3066,7 @@ mod tests {
         fn vi_p_empty_yank_buf() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abc", &history);
                 state.process_byte(0x1b, &history);
                 let actions = state.process_byte(b'p', &history);
@@ -3020,7 +3079,7 @@ mod tests {
         fn vi_P_empty_yank_buf() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abc", &history);
                 state.process_byte(0x1b, &history);
                 let actions = state.process_byte(b'P', &history);
@@ -3033,7 +3092,7 @@ mod tests {
         fn vi_U_without_history_clears_line() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"some text", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'U', &history);
@@ -3046,7 +3105,7 @@ mod tests {
         fn vi_dot_with_explicit_count() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abcdef", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'x', &history);
@@ -3060,7 +3119,7 @@ mod tests {
         fn vi_dot_no_last_cmd() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abc", &history);
                 state.process_byte(0x1b, &history);
                 let _actions = state.process_byte(b'.', &history);
@@ -3071,7 +3130,7 @@ mod tests {
         #[test]
         fn vi_k_with_empty_history_line() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec!["".into()];
+                let history: Vec<Box<[u8]>> = vec![b""[..].into()];
                 let mut state = ViState::new(0x7f, history.len());
                 feed_bytes(&mut state, b"cur", &history);
                 state.process_byte(0x1b, &history);
@@ -3084,7 +3143,11 @@ mod tests {
         #[test]
         fn vi_G_with_explicit_count() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec!["first".into(), "second".into(), "third".into()];
+                let history: Vec<Box<[u8]>> = vec![
+                    b"first"[..].into(),
+                    b"second"[..].into(),
+                    b"third"[..].into(),
+                ];
                 let mut state = ViState::new(0x7f, history.len());
                 feed_bytes(&mut state, b"cur", &history);
                 state.process_byte(0x1b, &history);
@@ -3097,7 +3160,11 @@ mod tests {
         #[test]
         fn vi_G_default_goes_to_oldest() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec!["first".into(), "second".into(), "third".into()];
+                let history: Vec<Box<[u8]>> = vec![
+                    b"first"[..].into(),
+                    b"second"[..].into(),
+                    b"third"[..].into(),
+                ];
                 let mut state = ViState::new(0x7f, history.len());
                 feed_bytes(&mut state, b"cur", &history);
                 state.process_byte(0x1b, &history);
@@ -3110,7 +3177,7 @@ mod tests {
         #[test]
         fn vi_G_with_empty_history_line() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec!["".into()];
+                let history: Vec<Box<[u8]>> = vec![b""[..].into()];
                 let mut state = ViState::new(0x7f, history.len());
                 feed_bytes(&mut state, b"x", &history);
                 state.process_byte(0x1b, &history);
@@ -3123,7 +3190,8 @@ mod tests {
         #[test]
         fn vi_search_forward_break_and_edit_line() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec!["alpha".into(), "beta".into()];
+                let history: Vec<Box<[u8]>> =
+                    vec![b"alpha"[..].into(), b"beta"[..].into()];
                 let mut state = ViState::new(0x7f, history.len());
                 feed_bytes(&mut state, b"cur", &history);
                 state.process_byte(0x1b, &history);
@@ -3139,7 +3207,7 @@ mod tests {
         #[test]
         fn vi_search_backward_not_found_bells() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec!["alpha".into()];
+                let history: Vec<Box<[u8]>> = vec![b"alpha"[..].into()];
                 let mut state = ViState::new(0x7f, history.len());
                 feed_bytes(&mut state, b"cur", &history);
                 state.process_byte(0x1b, &history);
@@ -3215,14 +3283,13 @@ mod tests {
 
                 let pattern = format!("{}/", dir.display());
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 state.line = pattern.as_bytes().to_vec();
                 state.cursor = state.line.len().saturating_sub(1);
                 state.insert_mode = false;
                 state.process_byte(b'*', &history);
-                let line_str = String::from_utf8_lossy(&state.line).to_string();
-                assert!(line_str.contains("aaa.txt"));
-                assert!(line_str.contains("bbb.txt"));
+                assert!(state.line.windows(b"aaa.txt".len()).any(|w| w == b"aaa.txt"));
+                assert!(state.line.windows(b"bbb.txt".len()).any(|w| w == b"bbb.txt"));
                 let _ = std::fs::remove_dir_all(&dir);
             });
         }
@@ -3239,19 +3306,18 @@ mod tests {
             run_trace(
                 vec![t(
                     "stat",
-                    vec![ArgMatcher::Str(expected.clone()), ArgMatcher::Any],
+                    vec![ArgMatcher::Str(expected.as_bytes().to_vec()), ArgMatcher::Any],
                     TraceResult::StatFile(0o644),
                 )],
                 || {
                     let prefix = format!("{}/unique_fi", dir.display());
                     let mut state = ViState::new(0x7f, 0);
-                    let history: Vec<Box<str>> = vec![];
+                    let history: Vec<Box<[u8]>> = vec![];
                     state.line = prefix.as_bytes().to_vec();
                     state.cursor = state.line.len().saturating_sub(1);
                     state.insert_mode = false;
                     state.process_byte(b'\\', &history);
-                    let line_str = String::from_utf8_lossy(&state.line).to_string();
-                    assert!(line_str.contains("unique_file.txt"));
+                    assert!(state.line.windows(b"unique_file.txt".len()).any(|w| w == b"unique_file.txt"));
                 },
             );
             let _ = std::fs::remove_dir_all(&dir);
@@ -3268,19 +3334,18 @@ mod tests {
             run_trace(
                 vec![t(
                     "stat",
-                    vec![ArgMatcher::Str(expected.clone()), ArgMatcher::Any],
+                    vec![ArgMatcher::Str(expected.as_bytes().to_vec()), ArgMatcher::Any],
                     TraceResult::StatDir,
                 )],
                 || {
                     let prefix = format!("{}/subdir_on", dir.display());
                     let mut state = ViState::new(0x7f, 0);
-                    let history: Vec<Box<str>> = vec![];
+                    let history: Vec<Box<[u8]>> = vec![];
                     state.line = prefix.as_bytes().to_vec();
                     state.cursor = state.line.len().saturating_sub(1);
                     state.insert_mode = false;
                     state.process_byte(b'\\', &history);
-                    let line_str = String::from_utf8_lossy(&state.line).to_string();
-                    assert!(line_str.ends_with('/'));
+                    assert_eq!(state.line.last(), Some(&b'/'));
                 },
             );
             let _ = std::fs::remove_dir_all(&dir);
@@ -3297,7 +3362,7 @@ mod tests {
 
                 let prefix = format!("{}/ab", dir.display());
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 state.line = prefix.as_bytes().to_vec();
                 state.cursor = state.line.len().saturating_sub(1);
                 state.insert_mode = false;
@@ -3310,7 +3375,7 @@ mod tests {
         #[test]
         fn glob_expand_error_returns_err() {
             assert_no_syscalls(|| {
-                assert!(glob_expand("\0invalid").is_err());
+                assert!(glob_expand(b"\0invalid").is_err());
             });
         }
 
@@ -3318,7 +3383,7 @@ mod tests {
         fn vi_r_replace_at_end_of_line() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"a", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'3', &history);
@@ -3332,7 +3397,7 @@ mod tests {
         fn vi_w_empty_line_truly_stuck() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 state.insert_mode = false;
                 let actions = state.process_byte(b'w', &history);
                 assert!(has_bell(&actions));
@@ -3343,7 +3408,7 @@ mod tests {
         fn vi_W_empty_line_truly_stuck() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 state.insert_mode = false;
                 let actions = state.process_byte(b'W', &history);
                 assert!(has_bell(&actions));
@@ -3354,7 +3419,7 @@ mod tests {
         fn vi_comma_with_t_and_T_directions() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abcba", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -3378,7 +3443,7 @@ mod tests {
         fn vi_tilde_at_end_break() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"a", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'~', &history);
@@ -3390,7 +3455,7 @@ mod tests {
         fn vi_D_on_empty() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 state.insert_mode = false;
                 state.process_byte(b'D', &history);
                 assert!(state.line.is_empty());
@@ -3401,7 +3466,7 @@ mod tests {
         fn vi_p_P_empty_yank_no_redraw() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"x", &history);
                 state.process_byte(0x1b, &history);
                 let a1 = state.process_byte(b'p', &history);
@@ -3421,13 +3486,12 @@ mod tests {
 
                 let pattern = format!("{}/*.txt", dir.display());
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 state.line = pattern.as_bytes().to_vec();
                 state.cursor = state.line.len().saturating_sub(1);
                 state.insert_mode = false;
                 state.process_byte(b'*', &history);
-                let line_str = String::from_utf8_lossy(&state.line).to_string();
-                assert!(line_str.contains("file1.txt"));
+                assert!(state.line.windows(b"file1.txt".len()).any(|w| w == b"file1.txt"));
                 let _ = std::fs::remove_dir_all(&dir);
             });
         }
@@ -3435,7 +3499,7 @@ mod tests {
         #[test]
         fn vi_search_forward_idx_break() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec!["aaa".into()];
+                let history: Vec<Box<[u8]>> = vec![b"aaa"[..].into()];
                 let mut state = ViState::new(0x7f, history.len());
                 feed_bytes(&mut state, b"x", &history);
                 state.process_byte(0x1b, &history);
@@ -3451,7 +3515,7 @@ mod tests {
         #[test]
         fn vi_search_backward_not_found() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec!["aaa".into()];
+                let history: Vec<Box<[u8]>> = vec![b"aaa"[..].into()];
                 let mut state = ViState::new(0x7f, history.len());
                 feed_bytes(&mut state, b"x", &history);
                 state.process_byte(0x1b, &history);
@@ -3504,7 +3568,7 @@ mod tests {
         fn vi_semicolon_with_last_find_on_end() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"a", &history);
                 state.process_byte(0x1b, &history);
                 state.last_find = Some((b'f', b'z'));
@@ -3519,7 +3583,7 @@ mod tests {
         fn vi_semicolon_no_last_find() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abc", &history);
                 state.process_byte(0x1b, &history);
                 let actions = state.process_byte(b';', &history);
@@ -3531,7 +3595,7 @@ mod tests {
         fn vi_comma_reverse_find() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abcabc", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'0', &history);
@@ -3548,7 +3612,7 @@ mod tests {
         fn vi_comma_no_last_find() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abc", &history);
                 state.process_byte(0x1b, &history);
                 let actions = state.process_byte(b',', &history);
@@ -3560,7 +3624,7 @@ mod tests {
         fn vi_comma_with_invalid_last_find_cmd() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abc", &history);
                 state.process_byte(0x1b, &history);
                 state.last_find = Some((b'z', b'a'));
@@ -3573,7 +3637,7 @@ mod tests {
         fn vi_replace_char_past_end() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 state.process_byte(0x1b, &history);
                 feed_bytes(&mut state, b"rZ", &history);
                 assert_eq!(state.line, b"");
@@ -3584,7 +3648,7 @@ mod tests {
         fn vi_tilde_on_empty_line() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'~', &history);
                 assert!(state.line.is_empty());
@@ -3595,7 +3659,7 @@ mod tests {
         fn vi_x_past_end() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'x', &history);
                 assert!(state.line.is_empty());
@@ -3605,7 +3669,11 @@ mod tests {
         #[test]
         fn vi_G_with_count() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec!["first".into(), "second".into(), "third".into()];
+                let history: Vec<Box<[u8]>> = vec![
+                    b"first"[..].into(),
+                    b"second"[..].into(),
+                    b"third"[..].into(),
+                ];
                 let mut state = ViState::new(0x7f, history.len());
                 feed_bytes(&mut state, b"current", &history);
                 state.process_byte(0x1b, &history);
@@ -3619,7 +3687,7 @@ mod tests {
         #[allow(non_snake_case)]
         fn vi_G_with_count_no_history() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 let mut state = ViState::new(0x7f, history.len());
                 feed_bytes(&mut state, b"text", &history);
                 state.process_byte(0x1b, &history);
@@ -3632,7 +3700,7 @@ mod tests {
         #[test]
         fn vi_G_without_count_no_history() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 let mut state = ViState::new(0x7f, history.len());
                 feed_bytes(&mut state, b"text", &history);
                 state.process_byte(0x1b, &history);
@@ -3644,7 +3712,8 @@ mod tests {
         #[test]
         fn vi_G_without_count_with_history() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec!["oldest".into(), "newest".into()];
+                let history: Vec<Box<[u8]>> =
+                    vec![b"oldest"[..].into(), b"newest"[..].into()];
                 let mut state = ViState::new(0x7f, history.len());
                 feed_bytes(&mut state, b"text", &history);
                 state.process_byte(0x1b, &history);
@@ -3656,8 +3725,11 @@ mod tests {
         #[test]
         fn vi_search_forward_finds_match() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> =
-                    vec!["echo hello".into(), "ls -la".into(), "echo world".into()];
+                let history: Vec<Box<[u8]>> = vec![
+                    b"echo hello"[..].into(),
+                    b"ls -la"[..].into(),
+                    b"echo world"[..].into(),
+                ];
                 let mut state = ViState::new(0x7f, history.len());
                 feed_bytes(&mut state, b"x", &history);
                 state.process_byte(0x1b, &history);
@@ -3668,14 +3740,15 @@ mod tests {
                 state.process_byte(b'\r', &history);
                 assert!(state.hist_index.is_some());
                 let idx = state.hist_index.unwrap();
-                assert!(history[idx].contains("echo"));
+                assert!(history[idx].windows(4).any(|w| w == b"echo"));
             });
         }
 
         #[test]
         fn vi_search_forward_not_found() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec!["aaa".into(), "bbb".into()];
+                let history: Vec<Box<[u8]>> =
+                    vec![b"aaa"[..].into(), b"bbb"[..].into()];
                 let mut state = ViState::new(0x7f, history.len());
                 feed_bytes(&mut state, b"x", &history);
                 state.process_byte(0x1b, &history);
@@ -3691,7 +3764,8 @@ mod tests {
         #[test]
         fn vi_search_forward_idx_wraps() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec!["alpha".into(), "beta".into()];
+                let history: Vec<Box<[u8]>> =
+                    vec![b"alpha"[..].into(), b"beta"[..].into()];
                 let mut state = ViState::new(0x7f, history.len());
                 feed_bytes(&mut state, b"x", &history);
                 state.process_byte(0x1b, &history);
@@ -3708,8 +3782,11 @@ mod tests {
         #[test]
         fn vi_search_backward_finds_match() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> =
-                    vec!["echo hello".into(), "ls -la".into(), "echo world".into()];
+                let history: Vec<Box<[u8]>> = vec![
+                    b"echo hello"[..].into(),
+                    b"ls -la"[..].into(),
+                    b"echo world"[..].into(),
+                ];
                 let mut state = ViState::new(0x7f, history.len());
                 feed_bytes(&mut state, b"x", &history);
                 state.process_byte(0x1b, &history);
@@ -3720,14 +3797,14 @@ mod tests {
                 state.process_byte(b'\r', &history);
                 assert!(state.hist_index.is_some());
                 let idx = state.hist_index.unwrap();
-                assert!(history[idx].contains("echo"));
+                assert!(history[idx].windows(4).any(|w| w == b"echo"));
             });
         }
 
         #[test]
         fn vi_search_default_direction_noop() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec!["aaa".into()];
+                let history: Vec<Box<[u8]>> = vec![b"aaa"[..].into()];
                 let mut state = ViState::new(0x7f, history.len());
                 feed_bytes(&mut state, b"x", &history);
                 state.process_byte(0x1b, &history);
@@ -3808,7 +3885,7 @@ mod tests {
         #[test]
         fn glob_expand_null_byte_returns_err() {
             assert_no_syscalls(|| {
-                let result = glob_expand("foo\0bar");
+                let result = glob_expand(b"foo\0bar");
                 assert!(result.is_err());
             });
         }
@@ -3816,7 +3893,7 @@ mod tests {
         #[test]
         fn vi_process_motion_unknown_op_noop() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 let mut state = ViState::new(0x7f, history.len());
                 feed_bytes(&mut state, b"abc", &history);
                 state.process_byte(0x1b, &history);
@@ -3830,7 +3907,7 @@ mod tests {
         #[test]
         fn glob_expand_nomatch_returns_err() {
             assert_no_syscalls(|| {
-                let result = glob_expand("/nonexistent_dir_xyz_42/*.qqq");
+                let result = glob_expand(b"/nonexistent_dir_xyz_42/*.qqq");
                 assert!(result.is_err());
             });
         }
@@ -3839,7 +3916,7 @@ mod tests {
         fn vi_star_glob_nomatch_leaves_line() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 let word = b"/no_such_dir_xyzzy/";
                 state.line = word.to_vec();
                 state.cursor = state.line.len().saturating_sub(1);
@@ -3850,10 +3927,10 @@ mod tests {
         }
 
         #[test]
-        #[test]
         fn vi_search_forward_from_oldest_wraps() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> = vec!["alpha".into(), "beta".into()];
+                let history: Vec<Box<[u8]>> =
+                    vec![b"alpha"[..].into(), b"beta"[..].into()];
                 let mut state = ViState::new(0x7f, history.len());
                 feed_bytes(&mut state, b"x", &history);
                 state.process_byte(0x1b, &history);
@@ -3872,8 +3949,11 @@ mod tests {
         #[test]
         fn vi_search_forward_edit_line_save() {
             assert_no_syscalls(|| {
-                let history: Vec<Box<str>> =
-                    vec!["found".into(), "skip".into(), "also_skip".into()];
+                let history: Vec<Box<[u8]>> = vec![
+                    b"found"[..].into(),
+                    b"skip"[..].into(),
+                    b"also_skip"[..].into(),
+                ];
                 let mut state = ViState::new(0x7f, history.len());
                 feed_bytes(&mut state, b"original", &history);
                 state.process_byte(0x1b, &history);
@@ -3891,7 +3971,7 @@ mod tests {
         fn vi_backslash_glob_nomatch_no_change() {
             assert_no_syscalls(|| {
                 let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<str>> = vec![];
+                let history: Vec<Box<[u8]>> = vec![];
                 let word = b"/no_such_dir_xyzzy/nomatch";
                 state.line = word.to_vec();
                 state.cursor = state.line.len().saturating_sub(1);
@@ -3942,8 +4022,8 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell, "").unwrap();
-                assert_eq!(result, Some("h\n".to_string()));
+                let result = vi::read_line(&mut shell, b"").unwrap();
+                assert_eq!(result, Some(b"h\n".to_vec()));
             },
         );
     }
@@ -3978,7 +4058,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell, "").unwrap();
+                let result = vi::read_line(&mut shell, b"").unwrap();
                 assert_eq!(result, None);
             },
         );
@@ -3990,62 +4070,22 @@ mod tests {
         run_trace(
             vec![
                 t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
                 t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'a']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(vec![b'a'])],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![0x1b]),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x1b[D".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'Q']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x07".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'\r']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'a'])),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(vec![b'a'])], TraceResult::Auto),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![0x1b])),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x1b[D".to_vec())], TraceResult::Auto),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'Q'])),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x07".to_vec())], TraceResult::Auto),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'\r'])),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())], TraceResult::Auto),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell, "").unwrap();
-                assert_eq!(result, Some("a\n".to_string()));
+                let result = vi::read_line(&mut shell, b"").unwrap();
+                assert_eq!(result, Some(b"a\n".to_vec()));
             },
         );
     }
@@ -4056,72 +4096,24 @@ mod tests {
         run_trace(
             vec![
                 t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
                 t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'a']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(vec![b'a'])],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'b']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(vec![b'b'])],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![0x1b]),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x1b[D".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'h']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x1b[1D".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'\r']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'a'])),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(vec![b'a'])], TraceResult::Auto),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'b'])),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(vec![b'b'])], TraceResult::Auto),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![0x1b])),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x1b[D".to_vec())], TraceResult::Auto),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'h'])),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x1b[1D".to_vec())], TraceResult::Auto),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'\r'])),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())], TraceResult::Auto),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell, "").unwrap();
-                assert_eq!(result, Some("ab\n".to_string()));
+                let result = vi::read_line(&mut shell, b"").unwrap();
+                assert_eq!(result, Some(b"ab\n".to_vec()));
             },
         );
     }
@@ -4132,47 +4124,19 @@ mod tests {
         run_trace(
             vec![
                 t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
                 t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'x']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(vec![b'x'])],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![]),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'\n']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'x'])),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(vec![b'x'])], TraceResult::Auto),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![])),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'\n'])),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())], TraceResult::Auto),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell, "").unwrap();
-                assert_eq!(result, Some("x\n".to_string()));
+                let result = vi::read_line(&mut shell, b"").unwrap();
+                assert_eq!(result, Some(b"x\n".to_vec()));
             },
         );
     }
@@ -4183,36 +4147,16 @@ mod tests {
         run_trace(
             vec![
                 t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "tcgetattr",
-                    vec![ArgMatcher::Fd(0)],
-                    TraceResult::Err(libc::EINVAL),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'\n']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
+                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Err(libc::EINVAL)),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'\n'])),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())], TraceResult::Auto),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell, "").unwrap();
-                assert_eq!(result, Some("\n".to_string()));
+                let result = vi::read_line(&mut shell, b"").unwrap();
+                assert_eq!(result, Some(b"\n".to_vec()));
             },
         );
     }
@@ -4222,20 +4166,12 @@ mod tests {
         use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
         run_trace(
             vec![
-                t(
-                    "tcgetattr",
-                    vec![ArgMatcher::Fd(0)],
-                    TraceResult::Err(libc::ENOTTY),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![]),
-                ),
+                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Err(libc::ENOTTY)),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![])),
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell, "").unwrap();
+                let result = vi::read_line(&mut shell, b"").unwrap();
                 assert_eq!(result, None);
             },
         );
@@ -4247,85 +4183,25 @@ mod tests {
         run_trace(
             vec![
                 t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
                 t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                // type 'a'
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'a']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(vec![b'a'])],
-                    TraceResult::Auto,
-                ),
-                // type 'b'
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'b']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(vec![b'b'])],
-                    TraceResult::Auto,
-                ),
-                // ESC
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![0x1b]),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x1b[D".to_vec())],
-                    TraceResult::Auto,
-                ),
-                // 'b' (word backward) triggers Redraw
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'b']),
-                ),
-                // redraw: \r\x1b[K (clear line)
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\x1b[K".to_vec())],
-                    TraceResult::Auto,
-                ),
-                // redraw: line content + cursor back
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"ab\x1b[2D".to_vec())],
-                    TraceResult::Auto,
-                ),
-                // enter
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'\r']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                // restore terminal
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'a'])),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(vec![b'a'])], TraceResult::Auto),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'b'])),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(vec![b'b'])], TraceResult::Auto),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![0x1b])),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x1b[D".to_vec())], TraceResult::Auto),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'b'])),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\x1b[K".to_vec())], TraceResult::Auto),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"ab\x1b[2D".to_vec())], TraceResult::Auto),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'\r'])),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())], TraceResult::Auto),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell, "").unwrap();
-                assert_eq!(result, Some("ab\n".to_string()));
+                let result = vi::read_line(&mut shell, b"").unwrap();
+                assert_eq!(result, Some(b"ab\n".to_vec()));
             },
         );
     }
@@ -4336,26 +4212,14 @@ mod tests {
         run_trace(
             vec![
                 t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
                 t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Err(libc::EIO),
-                ),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Err(libc::EIO)),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell, "");
+                let result = vi::read_line(&mut shell, b"");
                 assert!(result.is_err());
             },
         );
@@ -4367,72 +4231,23 @@ mod tests {
         run_trace(
             vec![
                 t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
                 t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                // type 'a'
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'a']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(vec![b'a'])],
-                    TraceResult::Auto,
-                ),
-                // ESC
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![0x1b]),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x1b[D".to_vec())],
-                    TraceResult::Auto,
-                ),
-                // '2' (count digit) triggers ReadByte — no write expected
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'2']),
-                ),
-                // 'l' on 1-char line with count=2 → Bell
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'l']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x07".to_vec())],
-                    TraceResult::Auto,
-                ),
-                // enter
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'\r']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'a'])),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(vec![b'a'])], TraceResult::Auto),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![0x1b])),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x1b[D".to_vec())], TraceResult::Auto),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'2'])),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'l'])),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x07".to_vec())], TraceResult::Auto),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'\r'])),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())], TraceResult::Auto),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell, "").unwrap();
-                assert_eq!(result, Some("a\n".to_string()));
+                let result = vi::read_line(&mut shell, b"").unwrap();
+                assert_eq!(result, Some(b"a\n".to_vec()));
             },
         );
     }
@@ -4443,45 +4258,18 @@ mod tests {
         run_trace(
             vec![
                 t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
                 t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                // ESC (already in insert mode, switches to command)
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![0x1b]),
-                ),
-                // 'i' switches back to insert, triggers SetInsertMode
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'i']),
-                ),
-                // enter
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'\r']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![0x1b])),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'i'])),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'\r'])),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())], TraceResult::Auto),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell, "").unwrap();
-                assert_eq!(result, Some("\n".to_string()));
+                let result = vi::read_line(&mut shell, b"").unwrap();
+                assert_eq!(result, Some(b"\n".to_vec()));
             },
         );
     }
@@ -4492,85 +4280,25 @@ mod tests {
         run_trace(
             vec![
                 t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
                 t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                // type 'a'
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'a']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(vec![b'a'])],
-                    TraceResult::Auto,
-                ),
-                // ESC
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![0x1b]),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x1b[D".to_vec())],
-                    TraceResult::Auto,
-                ),
-                // 'f' triggers NeedFindTarget — no write
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'f']),
-                ),
-                // target char 'z' — not found, bell + redraw
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'z']),
-                ),
-                // bell
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x07".to_vec())],
-                    TraceResult::Auto,
-                ),
-                // redraw: \r\x1b[K (clear line)
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\x1b[K".to_vec())],
-                    TraceResult::Auto,
-                ),
-                // redraw: line content + cursor back
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"a\x1b[1D".to_vec())],
-                    TraceResult::Auto,
-                ),
-                // enter
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'\r']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'a'])),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(vec![b'a'])], TraceResult::Auto),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![0x1b])),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x1b[D".to_vec())], TraceResult::Auto),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'f'])),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'z'])),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x07".to_vec())], TraceResult::Auto),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\x1b[K".to_vec())], TraceResult::Auto),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"a\x1b[1D".to_vec())], TraceResult::Auto),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'\r'])),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())], TraceResult::Auto),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell, "").unwrap();
-                assert_eq!(result, Some("a\n".to_string()));
+                let result = vi::read_line(&mut shell, b"").unwrap();
+                assert_eq!(result, Some(b"a\n".to_vec()));
             },
         );
     }
@@ -4581,88 +4309,28 @@ mod tests {
         run_trace(
             vec![
                 t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
                 t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                // ESC
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![0x1b]),
-                ),
-                // 'v' command
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'v']),
-                ),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![0x1b])),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'v'])),
                 t("getpid", vec![], TraceResult::Int(42)),
-                t(
-                    "open",
-                    vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Int(10),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(10), ArgMatcher::Bytes(b"\n".to_vec())],
-                    TraceResult::Auto,
-                ),
+                t("open", vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any], TraceResult::Int(10)),
+                t("write", vec![ArgMatcher::Fd(10), ArgMatcher::Bytes(b"\n".to_vec())], TraceResult::Auto),
                 t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
-                // RunEditor: restore terminal
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                // re-enter raw mode
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
-                // read_file fails: open returns error
-                t(
-                    "open",
-                    vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Err(libc::ENOENT),
-                ),
-                // redraw: \r\x1b[K (empty line, empty prompt)
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\x1b[K".to_vec())],
-                    TraceResult::Auto,
-                ),
-                // next read → enter to exit
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'\r']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                // restore terminal
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())], TraceResult::Auto),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
+                t("open", vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any], TraceResult::Err(libc::ENOENT)),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\x1b[K".to_vec())], TraceResult::Auto),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'\r'])),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())], TraceResult::Auto),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
             ],
             || {
                 let mut shell = test_shell();
-                let _ = shell.set_var("EDITOR", ":".into());
-                let result = vi::read_line(&mut shell, "").unwrap();
-                assert_eq!(result, Some("\n".to_string()));
+                let _ = shell.set_var(b"EDITOR", b":".to_vec());
+                let result = vi::read_line(&mut shell, b"").unwrap();
+                assert_eq!(result, Some(b"\n".to_vec()));
             },
         );
     }
@@ -4673,94 +4341,31 @@ mod tests {
         run_trace(
             vec![
                 t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
                 t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![0x1b]),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'v']),
-                ),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![0x1b])),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'v'])),
                 t("getpid", vec![], TraceResult::Int(42)),
-                t(
-                    "open",
-                    vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Int(10),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(10), ArgMatcher::Bytes(b"\n".to_vec())],
-                    TraceResult::Auto,
-                ),
+                t("open", vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any], TraceResult::Int(10)),
+                t("write", vec![ArgMatcher::Fd(10), ArgMatcher::Bytes(b"\n".to_vec())], TraceResult::Auto),
                 t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
-                // read_file succeeds with whitespace-only content
-                t(
-                    "open",
-                    vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Int(11),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(11), ArgMatcher::Any],
-                    TraceResult::Bytes(b"\n".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(11), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())], TraceResult::Auto),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
+                t("open", vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any], TraceResult::Int(11)),
+                t("read", vec![ArgMatcher::Fd(11), ArgMatcher::Any], TraceResult::Bytes(b"\n".to_vec())),
+                t("read", vec![ArgMatcher::Fd(11), ArgMatcher::Any], TraceResult::Int(0)),
                 t("close", vec![ArgMatcher::Fd(11)], TraceResult::Int(0)),
-                // trimmed is empty → falls through, remove_file + redraw
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\x1b[K".to_vec())],
-                    TraceResult::Auto,
-                ),
-                // enter to exit
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'\r']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\x1b[K".to_vec())], TraceResult::Auto),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'\r'])),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())], TraceResult::Auto),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
             ],
             || {
                 let mut shell = test_shell();
-                let _ = shell.set_var("EDITOR", ":".into());
-                let result = vi::read_line(&mut shell, "").unwrap();
-                assert_eq!(result, Some("\n".to_string()));
+                let _ = shell.set_var(b"EDITOR", b":".to_vec());
+                let result = vi::read_line(&mut shell, b"").unwrap();
+                assert_eq!(result, Some(b"\n".to_vec()));
             },
         );
     }
@@ -4770,99 +4375,38 @@ mod tests {
         use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
         run_trace(
             vec![
-                // raw mode setup
                 t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
                 t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                // ESC
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![0x1b]),
-                ),
-                // 'v' command
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'v']),
-                ),
-                // process_byte: v creates temp file (empty line → only \n written)
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![0x1b])),
+                t("read", vec![ArgMatcher::Fd(0), ArgMatcher::Any], TraceResult::Bytes(vec![b'v'])),
                 t("getpid", vec![], TraceResult::Int(42)),
-                t(
-                    "open",
-                    vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Int(10),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(10), ArgMatcher::Bytes(b"\n".to_vec())],
-                    TraceResult::Auto,
-                ),
+                t("open", vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any], TraceResult::Int(10)),
+                t("write", vec![ArgMatcher::Fd(10), ArgMatcher::Bytes(b"\n".to_vec())], TraceResult::Auto),
                 t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
-                // RunEditor handling: restore terminal
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
-                // write \r\n
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                // execute_string(": /tmp/meiksh_vi_edit_42") - no traced syscalls
-                // re-enter raw mode
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
-                // read_file: open, read content, read EOF, close
-                t(
-                    "open",
-                    vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Int(11),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(11), ArgMatcher::Any],
-                    TraceResult::Bytes(b"edited\n".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(11), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())], TraceResult::Auto),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
+                t("open", vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any], TraceResult::Int(11)),
+                t("read", vec![ArgMatcher::Fd(11), ArgMatcher::Any], TraceResult::Bytes(b"edited\n".to_vec())),
+                t("read", vec![ArgMatcher::Fd(11), ArgMatcher::Any], TraceResult::Int(0)),
                 t("close", vec![ArgMatcher::Fd(11)], TraceResult::Int(0)),
-                // content is non-empty: write \r\n and return
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                // Drop: restore terminal
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+                t("write", vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())], TraceResult::Auto),
+                t("tcsetattr", vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)], TraceResult::Int(0)),
             ],
             || {
                 let mut shell = test_shell();
-                let _ = shell.set_var("EDITOR", ":".into());
-                let result = vi::read_line(&mut shell, "").unwrap();
-                assert_eq!(result, Some("edited\n".to_string()));
+                let _ = shell.set_var(b"EDITOR", b":".to_vec());
+                let result = vi::read_line(&mut shell, b"").unwrap();
+                assert_eq!(result, Some(b"edited\n".to_vec()));
             },
         );
     }
 }
 
+
 pub(crate) mod vi {
+    use crate::bstr::{self, ByteWriter};
     use crate::shell::Shell;
     use crate::sys;
 
@@ -4912,7 +4456,9 @@ pub(crate) mod vi {
         buf.extend_from_slice(line);
         let cursor_back = line.len().saturating_sub(cursor);
         if cursor_back > 0 {
-            buf.extend_from_slice(format!("\x1b[{}D", cursor_back).as_bytes());
+            buf.extend_from_slice(b"\x1b[");
+            bstr::push_u64(&mut buf, cursor_back as u64);
+            buf.push(b'D');
         }
         write_bytes(&buf);
     }
@@ -5037,10 +4583,10 @@ pub(crate) mod vi {
     pub(crate) enum ViAction {
         Redraw,
         Bell,
-        Return(Option<String>),
+        Return(Option<Vec<u8>>),
         ReadByte,
         WriteBytes(Vec<u8>),
-        RunEditor { editor: String, tmp_path: String },
+        RunEditor { editor: Vec<u8>, tmp_path: Vec<u8> },
         NeedSearchByte,
         NeedFindTarget,
         NeedReplaceChar,
@@ -5097,7 +4643,7 @@ pub(crate) mod vi {
             }
         }
 
-        pub(crate) fn process_byte(&mut self, byte: u8, history: &[Box<str>]) -> Vec<ViAction> {
+        pub(crate) fn process_byte(&mut self, byte: u8, history: &[Box<[u8]>]) -> Vec<ViAction> {
             let mut actions = Vec::new();
 
             match &self.pending {
@@ -5159,10 +4705,11 @@ pub(crate) mod vi {
                     }
                     b'\r' | b'\n' => {
                         self.pending = PendingInput::None;
-                        let s = String::from_utf8_lossy(&self.line).into_owned();
+                        let mut s = self.line.clone();
+                        s.push(b'\n');
                         return vec![
                             ViAction::WriteBytes(b"\r\n".to_vec()),
-                            ViAction::Return(Some(s + "\n")),
+                            ViAction::Return(Some(s)),
                         ];
                     }
                     b => {
@@ -5227,9 +4774,10 @@ pub(crate) mod vi {
                         }
                     }
                     b'\n' | b'\r' => {
-                        let s = String::from_utf8_lossy(&self.line).into_owned();
+                        let mut s = self.line.clone();
+                        s.push(b'\n');
                         actions.push(ViAction::WriteBytes(b"\r\n".to_vec()));
-                        actions.push(ViAction::Return(Some(s + "\n")));
+                        actions.push(ViAction::Return(Some(s)));
                     }
                     0x16 => {
                         self.pending = PendingInput::LiteralChar;
@@ -5245,7 +4793,7 @@ pub(crate) mod vi {
                     }
                     0x03 => {
                         actions.push(ViAction::WriteBytes(b"\r\n".to_vec()));
-                        actions.push(ViAction::Return(Some(String::new())));
+                        actions.push(ViAction::Return(Some(Vec::new())));
                     }
                     0x04 => {
                         if self.line.is_empty() {
@@ -5288,7 +4836,7 @@ pub(crate) mod vi {
             ch: u8,
             count: usize,
             first_byte: u8,
-            history: &[Box<str>],
+            history: &[Box<[u8]>],
         ) -> Vec<ViAction> {
             let mut actions = Vec::new();
 
@@ -5321,7 +4869,12 @@ pub(crate) mod vi {
                     let n = count.min(self.cursor);
                     self.cursor -= n;
                     if n > 0 {
-                        actions.push(ViAction::WriteBytes(format!("\x1b[{}D", n).into_bytes()));
+                        let esc = ByteWriter::new()
+                            .bytes(b"\x1b[")
+                            .usize_val(n)
+                            .byte(b'D')
+                            .finish();
+                        actions.push(ViAction::WriteBytes(esc));
                     } else {
                         actions.push(ViAction::Bell);
                     }
@@ -5331,7 +4884,12 @@ pub(crate) mod vi {
                     let n = count.min(max.saturating_sub(self.cursor));
                     self.cursor += n;
                     if n > 0 {
-                        actions.push(ViAction::WriteBytes(format!("\x1b[{}C", n).into_bytes()));
+                        let esc = ByteWriter::new()
+                            .bytes(b"\x1b[")
+                            .usize_val(n)
+                            .byte(b'C')
+                            .finish();
+                        actions.push(ViAction::WriteBytes(esc));
                     } else {
                         actions.push(ViAction::Bell);
                     }
@@ -5400,15 +4958,13 @@ pub(crate) mod vi {
                 }
                 b'e' => {
                     for _ in 0..count {
-                        let next = word_end(&self.line, self.cursor);
-                        self.cursor = next;
+                        self.cursor = word_end(&self.line, self.cursor);
                     }
                     actions.push(ViAction::Redraw);
                 }
                 b'E' => {
                     for _ in 0..count {
-                        let next = bigword_end(&self.line, self.cursor);
-                        self.cursor = next;
+                        self.cursor = bigword_end(&self.line, self.cursor);
                     }
                     actions.push(ViAction::Redraw);
                 }
@@ -5585,7 +5141,7 @@ pub(crate) mod vi {
                 b'U' => {
                     if let Some(idx) = self.hist_index {
                         if idx < self.hist_len {
-                            self.line = history[idx].as_bytes().to_vec();
+                            self.line = history[idx].to_vec();
                         }
                     } else {
                         self.line.clear();
@@ -5635,7 +5191,7 @@ pub(crate) mod vi {
                     };
                     if let Some(idx) = target {
                         self.hist_index = Some(idx);
-                        self.line = history[idx].as_bytes().to_vec();
+                        self.line = history[idx].to_vec();
                         self.cursor = self.line.len().saturating_sub(1);
                         if self.line.is_empty() {
                             self.cursor = 0;
@@ -5650,7 +5206,7 @@ pub(crate) mod vi {
                     if let Some(idx) = self.hist_index {
                         if idx + 1 < hist_len {
                             self.hist_index = Some(idx + 1);
-                            self.line = history[idx + 1].as_bytes().to_vec();
+                            self.line = history[idx + 1].to_vec();
                         } else {
                             self.hist_index = None;
                             self.line = self.edit_line.clone();
@@ -5667,20 +5223,21 @@ pub(crate) mod vi {
                 b'G' => {
                     let hist_len = self.hist_len;
                     if first_byte.is_ascii_digit() && first_byte != b'0' {
-                        let target = count.saturating_sub(1).min(hist_len.saturating_sub(1));
+                        let target =
+                            count.saturating_sub(1).min(hist_len.saturating_sub(1));
                         if target < hist_len {
                             if self.hist_index.is_none() {
                                 self.edit_line = self.line.clone();
                             }
                             self.hist_index = Some(target);
-                            self.line = history[target].as_bytes().to_vec();
+                            self.line = history[target].to_vec();
                         }
                     } else if hist_len > 0 {
                         if self.hist_index.is_none() {
                             self.edit_line = self.line.clone();
                         }
                         self.hist_index = Some(0);
-                        self.line = history[0].as_bytes().to_vec();
+                        self.line = history[0].to_vec();
                     }
                     self.cursor = self.line.len().saturating_sub(1);
                     if self.line.is_empty() {
@@ -5714,21 +5271,25 @@ pub(crate) mod vi {
                 }
                 b'#' => {
                     self.line.insert(0, b'#');
-                    let s = String::from_utf8_lossy(&self.line).into_owned();
+                    let mut s = self.line.clone();
+                    s.push(b'\n');
                     actions.push(ViAction::WriteBytes(b"\r\n".to_vec()));
-                    actions.push(ViAction::Return(Some(s + "\n")));
+                    actions.push(ViAction::Return(Some(s)));
                 }
                 b'v' => {
-                    let tmp = format!("/tmp/meiksh_vi_edit_{}", sys::current_pid());
-                    if let Ok(fd) =
-                        sys::open_file(&tmp, sys::O_WRONLY | sys::O_CREAT | sys::O_TRUNC, 0o600)
-                    {
+                    let mut tmp = b"/tmp/meiksh_vi_edit_".to_vec();
+                    bstr::push_u64(&mut tmp, sys::current_pid() as u64);
+                    if let Ok(fd) = sys::open_file(
+                        &tmp,
+                        sys::O_WRONLY | sys::O_CREAT | sys::O_TRUNC,
+                        0o600,
+                    ) {
                         let _ = sys::write_all_fd(fd, &self.line);
                         let _ = sys::write_all_fd(fd, b"\n");
                         let _ = sys::close_fd(fd);
                     }
                     actions.push(ViAction::RunEditor {
-                        editor: String::new(),
+                        editor: Vec::new(),
                         tmp_path: tmp,
                     });
                 }
@@ -5747,18 +5308,28 @@ pub(crate) mod vi {
                         }
                         p
                     };
-                    let raw =
-                        String::from_utf8_lossy(&self.line[word_start..word_end_pos]).to_string();
-                    let pattern = if raw.contains('*') || raw.contains('?') || raw.contains('[') {
-                        raw.clone()
+                    let raw = &self.line[word_start..word_end_pos];
+                    let pattern = if raw.contains(&b'*')
+                        || raw.contains(&b'?')
+                        || raw.contains(&b'[')
+                    {
+                        raw.to_vec()
                     } else {
-                        format!("{raw}*")
+                        let mut p = raw.to_vec();
+                        p.push(b'*');
+                        p
                     };
                     if let Ok(expanded) = glob_expand(&pattern) {
-                        let replacement = expanded.join(" ");
+                        let mut replacement = Vec::new();
+                        for (i, entry) in expanded.iter().enumerate() {
+                            if i > 0 {
+                                replacement.push(b' ');
+                            }
+                            replacement.extend_from_slice(entry);
+                        }
                         self.line.drain(word_start..word_end_pos);
-                        for (i, b) in replacement.bytes().enumerate() {
-                            self.line.insert(word_start + i, b);
+                        for (i, b) in replacement.iter().enumerate() {
+                            self.line.insert(word_start + i, *b);
                         }
                         self.cursor = word_start + replacement.len();
                         if self.cursor > 0 {
@@ -5782,9 +5353,10 @@ pub(crate) mod vi {
                         }
                         p
                     };
-                    let prefix =
-                        String::from_utf8_lossy(&self.line[word_start..word_end_pos]).to_string();
-                    if let Ok(matches) = glob_expand(&format!("{prefix}*")) {
+                    let prefix = self.line[word_start..word_end_pos].to_vec();
+                    let mut glob_pat = prefix.clone();
+                    glob_pat.push(b'*');
+                    if let Ok(matches) = glob_expand(&glob_pat) {
                         if matches.len() == 1 {
                             let replacement = &matches[0];
                             let is_dir = sys::stat_path(replacement)
@@ -5792,11 +5364,11 @@ pub(crate) mod vi {
                                 .unwrap_or(false);
                             let mut rep = replacement.clone();
                             if is_dir {
-                                rep.push('/');
+                                rep.push(b'/');
                             }
                             self.line.drain(word_start..word_end_pos);
-                            for (i, b) in rep.bytes().enumerate() {
-                                self.line.insert(word_start + i, b);
+                            for (i, b) in rep.iter().enumerate() {
+                                self.line.insert(word_start + i, *b);
                             }
                             self.cursor = word_start + rep.len();
                             if self.cursor > 0 && !is_dir {
@@ -5810,12 +5382,13 @@ pub(crate) mod vi {
                 }
                 0x03 => {
                     actions.push(ViAction::WriteBytes(b"\r\n".to_vec()));
-                    actions.push(ViAction::Return(Some(String::new())));
+                    actions.push(ViAction::Return(Some(Vec::new())));
                 }
                 b'\r' | b'\n' => {
-                    let s = String::from_utf8_lossy(&self.line).into_owned();
+                    let mut s = self.line.clone();
+                    s.push(b'\n');
                     actions.push(ViAction::WriteBytes(b"\r\n".to_vec()));
-                    actions.push(ViAction::Return(Some(s + "\n")));
+                    actions.push(ViAction::Return(Some(s)));
                 }
                 _ => {
                     actions.push(ViAction::Bell);
@@ -5839,7 +5412,8 @@ pub(crate) mod vi {
                         self.cursor = 0;
                         self.last_cmd = Some((b'd', count, Some(b'd')));
                     } else {
-                        let (start, end) = resolve_motion(&self.line, self.cursor, motion, count);
+                        let (start, end) =
+                            resolve_motion(&self.line, self.cursor, motion, count);
                         if start != end {
                             self.yank_buf = self.line[start..end].to_vec();
                             self.line.drain(start..end);
@@ -5858,7 +5432,8 @@ pub(crate) mod vi {
                         self.cursor = 0;
                         self.last_cmd = Some((b'c', count, Some(b'c')));
                     } else {
-                        let (start, end) = resolve_motion(&self.line, self.cursor, motion, count);
+                        let (start, end) =
+                            resolve_motion(&self.line, self.cursor, motion, count);
                         if start != end {
                             self.yank_buf = self.line[start..end].to_vec();
                             self.line.drain(start..end);
@@ -5874,7 +5449,8 @@ pub(crate) mod vi {
                     if motion == b'y' {
                         self.yank_buf = self.line.clone();
                     } else {
-                        let (start, end) = resolve_motion(&self.line, self.cursor, motion, count);
+                        let (start, end) =
+                            resolve_motion(&self.line, self.cursor, motion, count);
                         if start != end {
                             self.yank_buf = self.line[start..end].to_vec();
                         }
@@ -5888,10 +5464,10 @@ pub(crate) mod vi {
         pub(crate) fn do_search(
             &mut self,
             direction: u8,
-            history: &[Box<str>],
+            history: &[Box<[u8]>],
             actions: &mut Vec<ViAction>,
         ) {
-            let pat = String::from_utf8_lossy(&self.search_buf).to_string();
+            let pat = &self.search_buf;
             let hist_len = self.hist_len;
             match direction {
                 b'/' => {
@@ -5905,9 +5481,12 @@ pub(crate) mod vi {
                         if idx >= hist_len {
                             break;
                         }
-                        if history[idx].contains(&pat) {
+                        if history[idx]
+                            .windows(pat.len())
+                            .any(|w| w == pat.as_slice())
+                        {
                             self.hist_index = Some(idx);
-                            self.line = history[idx].as_bytes().to_vec();
+                            self.line = history[idx].to_vec();
                             self.cursor = self.line.len().saturating_sub(1);
                             found = true;
                             break;
@@ -5919,12 +5498,18 @@ pub(crate) mod vi {
                     }
                 }
                 b'?' => {
-                    let start = self.hist_index.map(|i| (i + 1).min(hist_len)).unwrap_or(0);
+                    let start = self
+                        .hist_index
+                        .map(|i| (i + 1).min(hist_len))
+                        .unwrap_or(0);
                     let mut found = false;
                     for idx in start..hist_len {
-                        if history[idx].contains(&pat) {
+                        if history[idx]
+                            .windows(pat.len())
+                            .any(|w| w == pat.as_slice())
+                        {
                             self.hist_index = Some(idx);
-                            self.line = history[idx].as_bytes().to_vec();
+                            self.line = history[idx].to_vec();
                             self.cursor = self.line.len().saturating_sub(1);
                             found = true;
                             break;
@@ -5939,7 +5524,7 @@ pub(crate) mod vi {
         }
     }
 
-    pub fn read_line(shell: &mut Shell, prompt: &str) -> sys::SysResult<Option<String>> {
+    pub fn read_line(shell: &mut Shell, prompt: &[u8]) -> sys::SysResult<Option<Vec<u8>>> {
         let _raw = match RawMode::enter() {
             Ok(r) => r,
             Err(_) => return super::read_line(),
@@ -5972,7 +5557,7 @@ pub(crate) mod vi {
             for action in actions {
                 match action {
                     ViAction::Redraw => {
-                        redraw(&state.line, state.cursor, prompt.as_bytes());
+                        redraw(&state.line, state.cursor, prompt);
                     }
                     ViAction::Bell => {
                         bell();
@@ -5986,30 +5571,44 @@ pub(crate) mod vi {
                     }
                     ViAction::RunEditor { tmp_path, .. } => {
                         let editor = shell
-                            .get_var("VISUAL")
-                            .or_else(|| shell.get_var("EDITOR"))
-                            .unwrap_or("vi")
-                            .to_string();
+                            .get_var(b"VISUAL")
+                            .or_else(|| shell.get_var(b"EDITOR"))
+                            .unwrap_or(b"vi")
+                            .to_vec();
                         let _ = sys::set_terminal_attrs(sys::STDIN_FILENO, &_raw.saved);
                         write_bytes(b"\r\n");
-                        let edit_cmd = format!("{editor} {tmp_path}");
+                        let mut edit_cmd = editor;
+                        edit_cmd.push(b' ');
+                        edit_cmd.extend_from_slice(&tmp_path);
                         let _ = shell.execute_string(&edit_cmd);
                         let mut raw_restored = _raw.saved;
-                        raw_restored.c_lflag &= !(libc::ICANON | libc::ECHO | libc::ISIG);
+                        raw_restored.c_lflag &=
+                            !(libc::ICANON | libc::ECHO | libc::ISIG);
                         raw_restored.c_cc[libc::VMIN] = 1;
                         raw_restored.c_cc[libc::VTIME] = 0;
-                        let _ = sys::set_terminal_attrs(sys::STDIN_FILENO, &raw_restored);
+                        let _ =
+                            sys::set_terminal_attrs(sys::STDIN_FILENO, &raw_restored);
                         if let Ok(content) = sys::read_file(&tmp_path) {
-                            let trimmed = content.trim_end();
+                            let mut end = content.len();
+                            while end > 0
+                                && (content[end - 1] == b' '
+                                    || content[end - 1] == b'\t'
+                                    || content[end - 1] == b'\n'
+                                    || content[end - 1] == b'\r')
+                            {
+                                end -= 1;
+                            }
+                            let trimmed = &content[..end];
                             if !trimmed.is_empty() {
-                                let _ = std::fs::remove_file(&tmp_path);
+                                super::remove_file_bytes(&tmp_path);
                                 write_bytes(b"\r\n");
-                                let s = trimmed.to_string() + "\n";
+                                let mut s = trimmed.to_vec();
+                                s.push(b'\n');
                                 return Ok(Some(s));
                             }
                         }
-                        let _ = std::fs::remove_file(&tmp_path);
-                        redraw(&state.line, state.cursor, prompt.as_bytes());
+                        super::remove_file_bytes(&tmp_path);
+                        redraw(&state.line, state.cursor, prompt);
                     }
                     ViAction::NeedSearchByte
                     | ViAction::NeedFindTarget
@@ -6023,7 +5622,12 @@ pub(crate) mod vi {
         }
     }
 
-    pub(crate) fn do_find(line: &[u8], cursor: usize, cmd: u8, target: u8) -> Option<usize> {
+    pub(crate) fn do_find(
+        line: &[u8],
+        cursor: usize,
+        cmd: u8,
+        target: u8,
+    ) -> Option<usize> {
         match cmd {
             b'f' => {
                 for i in (cursor + 1)..line.len() {
@@ -6110,9 +5714,7 @@ pub(crate) mod vi {
                 }
                 p + 1
             }
-            b'h' => {
-                return (cursor.saturating_sub(count), cursor);
-            }
+            b'h' => return (cursor.saturating_sub(count), cursor),
             b'l' | b' ' => {
                 let end = (cursor + count).min(line.len());
                 return (cursor, end);
@@ -6206,8 +5808,8 @@ pub(crate) mod vi {
         }
     }
 
-    pub(crate) fn glob_expand(pattern: &str) -> Result<Vec<String>, ()> {
-        let c_pattern = std::ffi::CString::new(pattern).map_err(|_| ())?;
+    pub(crate) fn glob_expand(pattern: &[u8]) -> Result<Vec<Vec<u8>>, ()> {
+        let c_pattern = std::ffi::CString::new(pattern.to_vec()).map_err(|_| ())?;
         let mut glob_buf: libc::glob_t = unsafe { std::mem::zeroed() };
         let ret = unsafe {
             libc::glob(
@@ -6224,7 +5826,7 @@ pub(crate) mod vi {
         let mut results = Vec::new();
         for i in 0..glob_buf.gl_pathc {
             let path = unsafe { std::ffi::CStr::from_ptr(*glob_buf.gl_pathv.add(i)) };
-            results.push(path.to_string_lossy().into_owned());
+            results.push(path.to_bytes().to_vec());
         }
         unsafe { libc::globfree(&mut glob_buf) };
         Ok(results)

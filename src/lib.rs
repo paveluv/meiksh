@@ -5,6 +5,7 @@
 #[macro_use]
 pub mod sys;
 pub mod arena;
+pub mod bstr;
 pub mod builtin;
 pub mod exec;
 pub mod expand;
@@ -171,7 +172,7 @@ macro_rules! syscall_test {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
             syscall_test!(@args $($args)*),
-            $crate::sys::test_support::TraceResult::CwdStr($s.to_string()),
+            $crate::sys::test_support::TraceResult::CwdBytes($s.as_bytes().to_vec()),
         ));
         syscall_test!(@parse_entries $trace; $($rest)*);
     };
@@ -179,14 +180,14 @@ macro_rules! syscall_test {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
             syscall_test!(@args $($args)*),
-            $crate::sys::test_support::TraceResult::CwdStr($s.to_string()),
+            $crate::sys::test_support::TraceResult::CwdBytes($s.as_bytes().to_vec()),
         ));
     };
     (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); realpath($s:expr), $($rest:tt)*) => {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
             syscall_test!(@args $($args)*),
-            $crate::sys::test_support::TraceResult::RealpathStr($s.to_string()),
+            $crate::sys::test_support::TraceResult::RealpathBytes($s.as_bytes().to_vec()),
         ));
         syscall_test!(@parse_entries $trace; $($rest)*);
     };
@@ -194,7 +195,7 @@ macro_rules! syscall_test {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
             syscall_test!(@args $($args)*),
-            $crate::sys::test_support::TraceResult::RealpathStr($s.to_string()),
+            $crate::sys::test_support::TraceResult::RealpathBytes($s.as_bytes().to_vec()),
         ));
     };
     (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); stat_dir, $($rest:tt)*) => {

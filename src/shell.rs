@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::{Path, PathBuf};
 
+use crate::bstr::{self, ByteWriter};
 use crate::builtin::{self, BuiltinOutcome};
 use crate::exec;
 use crate::expand::{self, ExpandError};
@@ -19,7 +19,7 @@ pub fn run_from_env() -> i32 {
 #[derive(Clone, Debug, Default)]
 pub struct ShellOptions {
     pub allexport: bool,
-    pub command_string: Option<Box<str>>,
+    pub command_string: Option<Box<[u8]>>,
     pub errexit: bool,
     pub syntax_check_only: bool,
     pub force_interactive: bool,
@@ -32,52 +32,52 @@ pub struct ShellOptions {
     pub pipefail: bool,
     pub verbose: bool,
     pub xtrace: bool,
-    pub script_path: Option<PathBuf>,
-    pub shell_name_override: Option<Box<str>>,
-    pub positional: Vec<String>,
+    pub script_path: Option<Vec<u8>>,
+    pub shell_name_override: Option<Box<[u8]>>,
+    pub positional: Vec<Vec<u8>>,
     pub vi_mode: bool,
 }
 
-const REPORTABLE_OPTION_NAMES: [(&str, char); 11] = [
-    ("allexport", 'a'),
-    ("errexit", 'e'),
-    ("hashall", 'h'),
-    ("monitor", 'm'),
-    ("noclobber", 'C'),
-    ("noglob", 'f'),
-    ("noexec", 'n'),
-    ("notify", 'b'),
-    ("nounset", 'u'),
-    ("verbose", 'v'),
-    ("xtrace", 'x'),
+const REPORTABLE_OPTION_NAMES: [(&[u8], u8); 11] = [
+    (b"allexport", b'a'),
+    (b"errexit", b'e'),
+    (b"hashall", b'h'),
+    (b"monitor", b'm'),
+    (b"noclobber", b'C'),
+    (b"noglob", b'f'),
+    (b"noexec", b'n'),
+    (b"notify", b'b'),
+    (b"nounset", b'u'),
+    (b"verbose", b'v'),
+    (b"xtrace", b'x'),
 ];
 
 impl ShellOptions {
-    pub fn set_short_option(&mut self, ch: char, enabled: bool) -> Result<(), OptionError> {
+    pub fn set_short_option(&mut self, ch: u8, enabled: bool) -> Result<(), OptionError> {
         match ch {
-            'a' => self.allexport = enabled,
-            'b' => self.notify = enabled,
-            'C' => self.noclobber = enabled,
-            'e' => self.errexit = enabled,
-            'f' => self.noglob = enabled,
-            'h' => self.hashall = enabled,
-            'i' => self.force_interactive = enabled,
-            'm' => self.monitor = enabled,
-            'n' => self.syntax_check_only = enabled,
-            'u' => self.nounset = enabled,
-            'v' => self.verbose = enabled,
-            'x' => self.xtrace = enabled,
+            b'a' => self.allexport = enabled,
+            b'b' => self.notify = enabled,
+            b'C' => self.noclobber = enabled,
+            b'e' => self.errexit = enabled,
+            b'f' => self.noglob = enabled,
+            b'h' => self.hashall = enabled,
+            b'i' => self.force_interactive = enabled,
+            b'm' => self.monitor = enabled,
+            b'n' => self.syntax_check_only = enabled,
+            b'u' => self.nounset = enabled,
+            b'v' => self.verbose = enabled,
+            b'x' => self.xtrace = enabled,
             _ => return Err(OptionError::InvalidShort(ch)),
         }
         Ok(())
     }
 
-    pub fn set_named_option(&mut self, name: &str, enabled: bool) -> Result<(), OptionError> {
-        if name == "pipefail" {
+    pub fn set_named_option(&mut self, name: &[u8], enabled: bool) -> Result<(), OptionError> {
+        if name == b"pipefail" {
             self.pipefail = enabled;
             return Ok(());
         }
-        if name == "vi" {
+        if name == b"vi" {
             self.vi_mode = enabled;
             return Ok(());
         }
@@ -90,20 +90,20 @@ impl ShellOptions {
         self.set_short_option(*letter, enabled)
     }
 
-    pub fn reportable_options(&self) -> [(&'static str, bool); 12] {
+    pub fn reportable_options(&self) -> [(&'static [u8], bool); 12] {
         [
-            ("allexport", self.allexport),
-            ("errexit", self.errexit),
-            ("hashall", self.hashall),
-            ("monitor", self.monitor),
-            ("noclobber", self.noclobber),
-            ("noglob", self.noglob),
-            ("noexec", self.syntax_check_only),
-            ("notify", self.notify),
-            ("nounset", self.nounset),
-            ("pipefail", self.pipefail),
-            ("verbose", self.verbose),
-            ("xtrace", self.xtrace),
+            (b"allexport" as &[u8], self.allexport),
+            (b"errexit", self.errexit),
+            (b"hashall", self.hashall),
+            (b"monitor", self.monitor),
+            (b"noclobber", self.noclobber),
+            (b"noglob", self.noglob),
+            (b"noexec", self.syntax_check_only),
+            (b"notify", self.notify),
+            (b"nounset", self.nounset),
+            (b"pipefail", self.pipefail),
+            (b"verbose", self.verbose),
+            (b"xtrace", self.xtrace),
         ]
     }
 }
@@ -118,55 +118,36 @@ impl ShellError {
         let ShellError::Status(s) = self;
         *s
     }
-}
 
-impl std::fmt::Display for ShellError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let ShellError::Status(s) = self;
-        write!(f, "exit status {s}")
+    pub fn message_bytes(&self) -> Vec<u8> {
+        crate::bstr::ByteWriter::new()
+            .bytes(b"exit status ")
+            .i64_val(self.exit_status() as i64)
+            .finish()
     }
 }
-
-impl std::error::Error for ShellError {}
 
 #[derive(Debug)]
 pub enum VarError {
-    Readonly(Box<str>),
-}
-
-impl std::fmt::Display for VarError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            VarError::Readonly(name) => write!(f, "{name}: readonly variable"),
-        }
-    }
+    Readonly(Box<[u8]>),
 }
 
 #[derive(Debug)]
 pub enum OptionError {
-    InvalidShort(char),
-    InvalidName(Box<str>),
-}
-
-impl std::fmt::Display for OptionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            OptionError::InvalidShort(ch) => write!(f, "invalid option: {ch}"),
-            OptionError::InvalidName(name) => write!(f, "invalid option name: {name}"),
-        }
-    }
+    InvalidShort(u8),
+    InvalidName(Box<[u8]>),
 }
 
 #[derive(Clone)]
 pub struct Shell {
     pub options: ShellOptions,
-    pub shell_name: Box<str>,
-    pub env: HashMap<String, String>,
-    pub exported: BTreeSet<String>,
-    pub readonly: BTreeSet<String>,
-    pub aliases: HashMap<Box<str>, Box<str>>,
-    pub functions: HashMap<String, crate::syntax::Command>,
-    pub positional: Vec<String>,
+    pub shell_name: Box<[u8]>,
+    pub env: HashMap<Vec<u8>, Vec<u8>>,
+    pub exported: BTreeSet<Vec<u8>>,
+    pub readonly: BTreeSet<Vec<u8>>,
+    pub aliases: HashMap<Box<[u8]>, Box<[u8]>>,
+    pub functions: HashMap<Vec<u8>, crate::syntax::Command>,
+    pub positional: Vec<Vec<u8>>,
     pub last_status: i32,
     pub last_background: Option<sys::Pid>,
     pub running: bool,
@@ -188,10 +169,10 @@ pub struct Shell {
     pub(crate) wait_was_interrupted: bool,
     pub(crate) pid: sys::Pid,
     pub(crate) lineno: usize,
-    pub path_cache: HashMap<Box<str>, PathBuf>,
-    pub history: Vec<Box<str>>,
+    pub path_cache: HashMap<Box<[u8]>, Vec<u8>>,
+    pub history: Vec<Box<[u8]>>,
     pub(crate) mail_last_check: u64,
-    pub(crate) mail_sizes: HashMap<Box<str>, u64>,
+    pub(crate) mail_sizes: HashMap<Box<[u8]>, u64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -203,15 +184,15 @@ pub enum JobState {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReapedJobState {
-    Stopped(i32, Box<str>),
-    Done(i32, Box<str>),
-    Signaled(i32, Box<str>),
+    Stopped(i32, Box<[u8]>),
+    Done(i32, Box<[u8]>),
+    Signaled(i32, Box<[u8]>),
 }
 
 #[derive(Clone, Debug)]
 pub struct Job {
     pub id: usize,
-    pub command: Box<str>,
+    pub command: Box<[u8]>,
     pub pgid: Option<sys::Pid>,
     pub last_pid: Option<sys::Pid>,
     pub last_status: Option<i32>,
@@ -229,7 +210,7 @@ pub enum TrapCondition {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TrapAction {
     Ignore,
-    Command(Box<str>),
+    Command(Box<[u8]>),
 }
 
 pub enum FlowSignal {
@@ -286,22 +267,51 @@ pub enum PendingControl {
 }
 
 impl Shell {
-    fn diagnostic_at(&self, line: usize, status: i32, msg: impl std::fmt::Display) -> ShellError {
+    fn diagnostic_at(&self, line: usize, status: i32, msg: &[u8]) -> ShellError {
         if line > 0 && !self.interactive {
-            sys_eprintln!("meiksh: line {}: {}", line, msg);
+            let out = ByteWriter::new()
+                .bytes(b"meiksh: line ")
+                .usize_val(line)
+                .bytes(b": ")
+                .bytes(msg)
+                .byte(b'\n')
+                .finish();
+            let _ = sys::write_all_fd(sys::STDERR_FILENO, &out);
         } else {
-            sys_eprintln!("meiksh: {}", msg);
+            let out = ByteWriter::new()
+                .bytes(b"meiksh: ")
+                .bytes(msg)
+                .byte(b'\n')
+                .finish();
+            let _ = sys::write_all_fd(sys::STDERR_FILENO, &out);
         }
         ShellError::Status(status)
     }
 
-    pub fn diagnostic(&self, status: i32, msg: impl std::fmt::Display) -> ShellError {
+    pub fn diagnostic(&self, status: i32, msg: &[u8]) -> ShellError {
         self.diagnostic_at(self.lineno, status, msg)
+    }
+
+    pub fn diagnostic_syserr(&self, status: i32, e: &sys::SysError) -> ShellError {
+        self.diagnostic_at(self.lineno, status, &e.strerror())
+    }
+
+    pub fn diagnostic_prefixed_syserr(
+        &self,
+        status: i32,
+        prefix: &[u8],
+        e: &sys::SysError,
+    ) -> ShellError {
+        let msg = ByteWriter::new()
+            .bytes(prefix)
+            .bytes(&e.strerror())
+            .finish();
+        self.diagnostic_at(self.lineno, status, &msg)
     }
 
     pub fn expand_to_err(&self, e: crate::expand::ExpandError) -> ShellError {
         if !e.message.is_empty() {
-            self.diagnostic(1, &e);
+            self.diagnostic(1, &e.message);
         }
         ShellError::Status(1)
     }
@@ -312,17 +322,13 @@ impl Shell {
 
     pub fn from_env() -> Result<Self, ShellError> {
         sys::setup_locale();
-        let raw_args = sys::env_args_os();
-        let args: Vec<String> = raw_args
-            .iter()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect();
+        let args = sys::env_args_os();
         let options = parse_options(&args)?;
-        let shell_name: Box<str> = options
+        let shell_name: Box<[u8]> = options
             .shell_name_override
             .clone()
-            .unwrap_or_else(|| sys::shell_name_from_args(&args).to_string().into());
-        let raw_env: HashMap<String, String> = sys::env_vars();
+            .unwrap_or_else(|| shell_name_from_args(&args).into());
+        let raw_env = sys::env_vars();
         let mut env = HashMap::new();
         let mut exported = BTreeSet::new();
         for (key, value) in &raw_env {
@@ -340,11 +346,11 @@ impl Shell {
             .iter()
             .map(|&cond| (cond, TrapAction::Ignore))
             .collect();
-        env.insert("IFS".into(), " \t\n".into());
-        env.insert("PPID".into(), sys::parent_pid().to_string());
-        env.insert("OPTIND".into(), "1".into());
-        if !env.contains_key("MAILCHECK") {
-            env.insert("MAILCHECK".into(), "600".into());
+        env.insert(b"IFS".to_vec(), b" \t\n".to_vec());
+        env.insert(b"PPID".to_vec(), bstr::i64_to_bytes(sys::parent_pid() as i64));
+        env.insert(b"OPTIND".to_vec(), b"1".to_vec());
+        if !env.contains_key(&b"MAILCHECK".to_vec()) {
+            env.insert(b"MAILCHECK".to_vec(), b"600".to_vec());
         }
         Self::init_pwd(&mut env);
         Ok(Self {
@@ -383,15 +389,15 @@ impl Shell {
         })
     }
 
-    fn init_pwd(env: &mut HashMap<String, String>) {
+    fn init_pwd(env: &mut HashMap<Vec<u8>, Vec<u8>>) {
         let Ok(cwd) = sys::get_cwd() else { return };
-        let valid = env.get("PWD").is_some_and(|p| {
-            p.starts_with('/')
-                && !p.split('/').any(|c| c == "." || c == "..")
-                && std::path::Path::new(p) == std::path::Path::new(&cwd)
+        let valid = env.get(b"PWD".as_slice()).is_some_and(|p| {
+            p.starts_with(b"/")
+                && !p.split(|&b| b == b'/').any(|c| c == b"." || c == b"..")
+                && p == &cwd
         });
         if !valid {
-            env.insert("PWD".into(), cwd);
+            env.insert(b"PWD".to_vec(), cwd);
         }
     }
 
@@ -408,12 +414,12 @@ impl Shell {
     #[cfg(test)]
     #[allow(dead_code)]
     pub(crate) fn from_args(args: &[&str]) -> Result<Self, ShellError> {
-        let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        let args: Vec<Vec<u8>> = args.iter().map(|s| s.as_bytes().to_vec()).collect();
         let options = parse_options(&args)?;
-        let shell_name: Box<str> = options
+        let shell_name: Box<[u8]> = options
             .shell_name_override
             .clone()
-            .unwrap_or_else(|| sys::shell_name_from_args(&args).to_string().into());
+            .unwrap_or_else(|| shell_name_from_args(&args).into());
         Ok(Self {
             positional: options.positional.clone(),
             interactive: options.force_interactive,
@@ -464,10 +470,10 @@ impl Shell {
             interactive::load_env_file(self)?;
         }
         let result = if let Some(command) = self.options.command_string.clone() {
-            self.run_source("<command>", &command)
+            self.run_source(b"<command>", &command)
         } else if let Some(script) = self.options.script_path.clone() {
             let (resolved, contents) = self.load_script_source(&script)?;
-            self.run_source(resolved.to_string_lossy().as_ref(), &contents)
+            self.run_source(&resolved, &contents)
         } else if self.interactive {
             interactive::run(self)
         } else {
@@ -480,13 +486,13 @@ impl Shell {
     }
 
     fn setup_interactive_signals(&self) -> Result<(), ShellError> {
-        sys::ignore_signal(sys::SIGQUIT).map_err(|e| self.diagnostic(1, &e))?;
-        sys::ignore_signal(sys::SIGTERM).map_err(|e| self.diagnostic(1, &e))?;
-        sys::install_shell_signal_handler(sys::SIGINT).map_err(|e| self.diagnostic(1, &e))?;
+        sys::ignore_signal(sys::SIGQUIT).map_err(|e| self.diagnostic_syserr(1, &e))?;
+        sys::ignore_signal(sys::SIGTERM).map_err(|e| self.diagnostic_syserr(1, &e))?;
+        sys::install_shell_signal_handler(sys::SIGINT).map_err(|e| self.diagnostic_syserr(1, &e))?;
         if self.options.monitor {
-            sys::ignore_signal(sys::SIGTSTP).map_err(|e| self.diagnostic(1, &e))?;
-            sys::ignore_signal(sys::SIGTTIN).map_err(|e| self.diagnostic(1, &e))?;
-            sys::ignore_signal(sys::SIGTTOU).map_err(|e| self.diagnostic(1, &e))?;
+            sys::ignore_signal(sys::SIGTSTP).map_err(|e| self.diagnostic_syserr(1, &e))?;
+            sys::ignore_signal(sys::SIGTTIN).map_err(|e| self.diagnostic_syserr(1, &e))?;
+            sys::ignore_signal(sys::SIGTTOU).map_err(|e| self.diagnostic_syserr(1, &e))?;
         }
         Ok(())
     }
@@ -502,11 +508,11 @@ impl Shell {
         self.interactive
     }
 
-    pub fn run_source(&mut self, _name: &str, source: &str) -> Result<i32, ShellError> {
+    pub fn run_source(&mut self, _name: &[u8], source: &[u8]) -> Result<i32, ShellError> {
         self.run_source_buffer(source)
     }
 
-    fn run_source_buffer(&mut self, source: &str) -> Result<i32, ShellError> {
+    fn run_source_buffer(&mut self, source: &[u8]) -> Result<i32, ShellError> {
         if self.options.syntax_check_only {
             let _ = syntax::parse_with_aliases(source, &self.aliases)
                 .map_err(|e| self.parse_to_err(e))?;
@@ -521,14 +527,14 @@ impl Shell {
         Ok(status)
     }
 
-    pub fn execute_string(&mut self, source: &str) -> Result<i32, ShellError> {
+    pub fn execute_string(&mut self, source: &[u8]) -> Result<i32, ShellError> {
         self.execute_source_incrementally(source)
     }
 
     fn run_standard_input(&mut self) -> Result<i32, ShellError> {
-        sys::ensure_blocking_read_fd(sys::STDIN_FILENO).map_err(|e| self.diagnostic(1, &e))?;
+        sys::ensure_blocking_read_fd(sys::STDIN_FILENO).map_err(|e| self.diagnostic_syserr(1, &e))?;
         let mut status = 0;
-        let mut source = String::new();
+        let mut source = Vec::new();
         let mut line_bytes = Vec::new();
         let mut byte = [0u8; 1];
 
@@ -537,24 +543,22 @@ impl Shell {
                 match sys::read_fd(sys::STDIN_FILENO, &mut byte) {
                     Ok(n) => break n,
                     Err(e) if e.is_eintr() => continue,
-                    Err(e) => return Err(self.diagnostic(1, &e)),
+                    Err(e) => return Err(self.diagnostic_syserr(1, &e)),
                 }
             };
             if count == 0 {
                 if !line_bytes.is_empty() {
-                    let chunk = decode_stdin_chunk(std::mem::take(&mut line_bytes))
-                        .map_err(|e| self.diagnostic(1, &e))?;
+                    let chunk = std::mem::take(&mut line_bytes);
                     self.echo_verbose_input(&chunk);
-                    source.push_str(&chunk);
+                    source.extend_from_slice(&chunk);
                 }
                 break;
             }
             line_bytes.push(byte[0]);
             if byte[0] == b'\n' {
-                let chunk = decode_stdin_chunk(std::mem::take(&mut line_bytes))
-                    .map_err(|e| self.diagnostic(1, &e))?;
+                let chunk = std::mem::take(&mut line_bytes);
                 self.echo_verbose_input(&chunk);
-                source.push_str(&chunk);
+                source.extend_from_slice(&chunk);
                 self.apply_stdin_fragment(&mut source, false, &mut status)?;
                 if !self.running || self.has_pending_control() {
                     return Ok(status);
@@ -568,7 +572,7 @@ impl Shell {
 
     fn apply_stdin_fragment(
         &mut self,
-        source: &mut String,
+        source: &mut Vec<u8>,
         eof: bool,
         status: &mut i32,
     ) -> Result<(), ShellError> {
@@ -578,7 +582,7 @@ impl Shell {
         Ok(())
     }
 
-    fn execute_source_incrementally(&mut self, source: &str) -> Result<i32, ShellError> {
+    fn execute_source_incrementally(&mut self, source: &[u8]) -> Result<i32, ShellError> {
         let saved_lineno = self.lineno;
         let mut session = syntax::ParseSession::new(source).map_err(|e| self.parse_to_err(e))?;
         let mut status = 0;
@@ -617,7 +621,7 @@ impl Shell {
 
     fn maybe_run_stdin_source(
         &mut self,
-        source: &mut String,
+        source: &mut Vec<u8>,
         eof: bool,
     ) -> Result<Option<i32>, ShellError> {
         if source.is_empty() {
@@ -633,15 +637,15 @@ impl Shell {
         }
     }
 
-    fn echo_verbose_input(&self, source: &str) {
+    fn echo_verbose_input(&self, source: &[u8]) {
         if self.options.verbose && !source.is_empty() {
-            eprint!("{source}");
+            let _ = sys::write_all_fd(sys::STDERR_FILENO, source);
         }
     }
 
-    pub fn capture_output(&mut self, source: &str) -> Result<String, ShellError> {
-        let (read_fd, write_fd) = sys::create_pipe().map_err(|e| self.diagnostic(1, &e))?;
-        let pid = sys::fork_process().map_err(|e| self.diagnostic(1, &e))?;
+    pub fn capture_output(&mut self, source: &[u8]) -> Result<Vec<u8>, ShellError> {
+        let (read_fd, write_fd) = sys::create_pipe().map_err(|e| self.diagnostic_syserr(1, &e))?;
+        let pid = sys::fork_process().map_err(|e| self.diagnostic_syserr(1, &e))?;
         if pid == 0 {
             let _ = sys::close_fd(read_fd);
             let _ = sys::duplicate_fd(write_fd, sys::STDOUT_FILENO);
@@ -655,30 +659,26 @@ impl Shell {
             let status = child_shell.run_exit_trap(status).unwrap_or(status);
             sys::exit_process(status as sys::RawFd);
         }
-        sys::close_fd(write_fd).map_err(|e| self.diagnostic(1, &e))?;
+        sys::close_fd(write_fd).map_err(|e| self.diagnostic_syserr(1, &e))?;
         let mut output = Vec::new();
         let mut buf = [0u8; 4096];
         loop {
-            let n = sys::read_fd(read_fd, &mut buf).map_err(|e| self.diagnostic(1, &e))?;
+            let n = sys::read_fd(read_fd, &mut buf).map_err(|e| self.diagnostic_syserr(1, &e))?;
             if n == 0 {
                 break;
             }
             output.extend_from_slice(&buf[..n]);
         }
-        sys::close_fd(read_fd).map_err(|e| self.diagnostic(1, &e))?;
+        sys::close_fd(read_fd).map_err(|e| self.diagnostic_syserr(1, &e))?;
         let ws = sys::wait_pid(pid, false)
-            .map_err(|e| self.diagnostic(1, &e))?
+            .map_err(|e| self.diagnostic_syserr(1, &e))?
             .expect("child status");
         let status = sys::decode_wait_status(ws.status);
         self.last_status = status;
-        let text = match String::from_utf8(output) {
-            Ok(s) => s,
-            Err(e) => e.into_bytes().iter().map(|&b| b as char).collect(),
-        };
-        Ok(text)
+        Ok(output)
     }
 
-    pub fn env_for_child(&self) -> Vec<(String, String)> {
+    pub fn env_for_child(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
         self.exported
             .iter()
             .filter_map(|name| {
@@ -689,12 +689,10 @@ impl Shell {
             .collect()
     }
 
-    /// Environment for [`exec`](crate::builtin) with a utility: exported variables from the
-    /// shell plus prefix assignments for this command (even when not exported).
     pub fn env_for_exec_utility(
         &self,
-        cmd_assignments: &[(String, String)],
-    ) -> Vec<(String, String)> {
+        cmd_assignments: &[(Vec<u8>, Vec<u8>)],
+    ) -> Vec<(Vec<u8>, Vec<u8>)> {
         let mut env = self.env_for_child();
         for (k, v) in cmd_assignments {
             if let Some(pos) = env.iter().position(|(name, _)| name == k) {
@@ -706,8 +704,8 @@ impl Shell {
         env
     }
 
-    pub fn get_var(&self, name: &str) -> Option<&str> {
-        self.env.get(name).map(String::as_str)
+    pub fn get_var(&self, name: &[u8]) -> Option<&[u8]> {
+        self.env.get(name).map(Vec::as_slice)
     }
 
     pub fn input_is_incomplete(&self, error: &crate::syntax::ParseError) -> bool {
@@ -718,14 +716,19 @@ impl Shell {
         self.history.len() + 1
     }
 
-    pub fn add_history(&mut self, line: &str) {
-        let trimmed = line.trim_end();
+    pub fn add_history(&mut self, line: &[u8]) {
+        let mut end = line.len();
+        while end > 0 && (line[end - 1] == b' ' || line[end - 1] == b'\t' || line[end - 1] == b'\n' || line[end - 1] == b'\r') {
+            end -= 1;
+        }
+        let trimmed = &line[..end];
         if trimmed.is_empty() {
             return;
         }
         let histsize = self
-            .get_var("HISTSIZE")
-            .and_then(|v| v.parse::<usize>().ok())
+            .get_var(b"HISTSIZE")
+            .and_then(bstr::parse_i64)
+            .and_then(|v| if v >= 0 { Some(v as usize) } else { None })
             .unwrap_or(128);
         if self.history.len() >= histsize && histsize > 0 {
             self.history.remove(0);
@@ -733,40 +736,42 @@ impl Shell {
         self.history.push(trimmed.into());
     }
 
-    pub fn set_var(&mut self, name: &str, value: String) -> Result<(), VarError> {
+    pub fn set_var(&mut self, name: &[u8], value: Vec<u8>) -> Result<(), VarError> {
         if self.readonly.contains(name) {
             return Err(VarError::Readonly(name.into()));
         }
-        if name == "PATH" {
+        if name == b"PATH" {
             self.path_cache.clear();
         }
         if let Some(existing) = self.env.get_mut(name) {
             *existing = value;
         } else {
-            self.env.insert(name.to_string(), value);
+            self.env.insert(name.to_vec(), value);
         }
         if self.options.allexport && !self.exported.contains(name) {
-            self.exported.insert(name.to_string());
+            self.exported.insert(name.to_vec());
         }
         Ok(())
     }
 
-    pub fn export_var(&mut self, name: &str, value: Option<String>) -> Result<(), ShellError> {
+    pub fn export_var(&mut self, name: &[u8], value: Option<Vec<u8>>) -> Result<(), ShellError> {
         if let Some(value) = value {
-            self.set_var(name, value)
-                .map_err(|e| self.diagnostic(1, &e))?;
+            self.set_var(name, value).map_err(|e| {
+                let msg = var_error_message(&e);
+                self.diagnostic(1, &msg)
+            })?;
         }
         if !self.exported.contains(name) {
-            self.exported.insert(name.to_string());
+            self.exported.insert(name.to_vec());
         }
         Ok(())
     }
 
-    pub fn mark_readonly(&mut self, name: &str) {
-        self.readonly.insert(name.to_string());
+    pub fn mark_readonly(&mut self, name: &[u8]) {
+        self.readonly.insert(name.to_vec());
     }
 
-    pub fn unset_var(&mut self, name: &str) -> Result<(), VarError> {
+    pub fn unset_var(&mut self, name: &[u8]) -> Result<(), VarError> {
         if self.readonly.contains(name) {
             return Err(VarError::Readonly(name.into()));
         }
@@ -775,13 +780,13 @@ impl Shell {
         Ok(())
     }
 
-    pub fn set_positional(&mut self, values: Vec<String>) {
+    pub fn set_positional(&mut self, values: Vec<Vec<u8>>) {
         self.positional = values;
     }
 
     pub fn register_background_job(
         &mut self,
-        command: Box<str>,
+        command: Box<[u8]>,
         pgid: Option<sys::Pid>,
         children: Vec<sys::ChildHandle>,
     ) -> usize {
@@ -883,7 +888,14 @@ impl Shell {
             .jobs
             .iter()
             .position(|job| job.id == id)
-            .ok_or_else(|| self.diagnostic(1, format_args!("job {id}: not found")))?;
+            .ok_or_else(|| {
+                let msg = ByteWriter::new()
+                    .bytes(b"job ")
+                    .usize_val(id)
+                    .bytes(b": not found")
+                    .finish();
+                self.diagnostic(1, &msg)
+            })?;
         let pgid = self.jobs[index].pgid;
         if let Some(ref termios) = self.jobs[index].saved_termios {
             let _ = sys::set_terminal_attrs(sys::STDIN_FILENO, termios);
@@ -952,12 +964,16 @@ impl Shell {
                     if self.interactive {
                         self.jobs[idx].saved_termios =
                             sys::get_terminal_attrs(sys::STDIN_FILENO).ok();
-                        let msg = format!(
-                            "\n[{id}] Stopped ({})\t{}\n",
-                            sys::signal_name(sig),
-                            self.jobs[idx].command
-                        );
-                        let _ = sys::write_all_fd(sys::STDERR_FILENO, msg.as_bytes());
+                        let msg = ByteWriter::new()
+                            .bytes(b"\n[")
+                            .usize_val(id)
+                            .bytes(b"] Stopped (")
+                            .bytes(sys::signal_name(sig))
+                            .bytes(b")\t")
+                            .bytes(&self.jobs[idx].command)
+                            .byte(b'\n')
+                            .finish();
+                        let _ = sys::write_all_fd(sys::STDERR_FILENO, &msg);
                     }
                     self.last_status = 128 + sig;
                     return Ok(128 + sig);
@@ -986,43 +1002,57 @@ impl Shell {
             .jobs
             .iter()
             .position(|job| job.id == id)
-            .ok_or_else(|| self.diagnostic(1, format_args!("job {id}: not found")))?;
+            .ok_or_else(|| {
+                let msg = ByteWriter::new()
+                    .bytes(b"job ")
+                    .usize_val(id)
+                    .bytes(b": not found")
+                    .finish();
+                self.diagnostic(1, &msg)
+            })?;
         self.jobs[idx].state = JobState::Running;
         if let Some(pgid) = self.jobs[idx].pgid {
             if foreground && self.owns_terminal {
                 let _ = sys::set_foreground_pgrp(sys::STDIN_FILENO, pgid);
             }
-            sys::send_signal(-pgid, sys::SIGCONT).map_err(|e| self.diagnostic(1, &e))?;
+            sys::send_signal(-pgid, sys::SIGCONT).map_err(|e| self.diagnostic_syserr(1, &e))?;
         } else {
             let pids: Vec<sys::Pid> = self.jobs[idx].children.iter().map(|c| c.pid).collect();
             for pid in pids {
-                sys::send_signal(pid, sys::SIGCONT).map_err(|e| self.diagnostic(1, &e))?;
+                sys::send_signal(pid, sys::SIGCONT).map_err(|e| self.diagnostic_syserr(1, &e))?;
             }
         }
         Ok(())
     }
 
-    pub fn source_path(&mut self, path: &Path) -> Result<i32, ShellError> {
+    pub fn source_path(&mut self, path: &[u8]) -> Result<i32, ShellError> {
         let contents =
-            sys::read_file(&path.display().to_string()).map_err(|e| self.diagnostic(1, &e))?;
+            sys::read_file(path).map_err(|e| self.diagnostic_syserr(1, &e))?;
         self.source_depth += 1;
         let result = self.execute_string(&contents);
         self.source_depth -= 1;
         result
     }
 
-    fn load_script_source(&self, script: &Path) -> Result<(PathBuf, String), ShellError> {
+    fn load_script_source(&self, script: &[u8]) -> Result<(Vec<u8>, Vec<u8>), ShellError> {
         let resolved = resolve_script_path(self, script)
-            .ok_or_else(|| self.diagnostic(127, format_args!("{}: not found", script.display())))?;
-        let bytes = sys::read_file_bytes(&resolved.display().to_string())
+            .ok_or_else(|| {
+                let msg = ByteWriter::new()
+                    .bytes(script)
+                    .bytes(b": not found")
+                    .finish();
+                self.diagnostic(127, &msg)
+            })?;
+        let bytes = sys::read_file_bytes(&resolved)
             .map_err(|error| classify_script_read_error(&resolved, error))?;
         if script_prefix_cannot_be_shell_input(&bytes) {
-            return Err(
-                self.diagnostic(126, format_args!("{}: cannot execute", resolved.display()))
-            );
+            let msg = ByteWriter::new()
+                .bytes(&resolved)
+                .bytes(b": cannot execute")
+                .finish();
+            return Err(self.diagnostic(126, &msg));
         }
-        let contents = String::from_utf8_lossy(&bytes).into_owned();
-        Ok((resolved, contents))
+        Ok((resolved, bytes))
     }
 
     pub fn print_jobs(&mut self) {
@@ -1031,39 +1061,54 @@ impl Shell {
             match state {
                 ReapedJobState::Done(status, cmd) => {
                     if status == 0 {
-                        sys_println!("[{id}] Done\t{cmd}");
+                        let msg = ByteWriter::new()
+                            .bytes(b"[").usize_val(id).bytes(b"] Done\t")
+                            .bytes(&cmd).byte(b'\n').finish();
+                        let _ = sys::write_all_fd(sys::STDOUT_FILENO, &msg);
                     } else {
-                        sys_println!("[{id}] Done({status})\t{cmd}");
+                        let msg = ByteWriter::new()
+                            .bytes(b"[").usize_val(id).bytes(b"] Done(")
+                            .i32_val(status).bytes(b")\t")
+                            .bytes(&cmd).byte(b'\n').finish();
+                        let _ = sys::write_all_fd(sys::STDOUT_FILENO, &msg);
                     }
                 }
                 ReapedJobState::Signaled(sig, cmd) => {
-                    sys_println!("[{id}] Terminated ({})\t{cmd}", sys::signal_name(sig));
+                    let msg = ByteWriter::new()
+                        .bytes(b"[").usize_val(id).bytes(b"] Terminated (")
+                        .bytes(sys::signal_name(sig)).bytes(b")\t")
+                        .bytes(&cmd).byte(b'\n').finish();
+                    let _ = sys::write_all_fd(sys::STDOUT_FILENO, &msg);
                 }
                 ReapedJobState::Stopped(..) => {}
             }
         }
         for job in &self.jobs {
             if let JobState::Stopped(sig) = job.state {
-                sys_println!(
-                    "[{}] Stopped ({}) {}",
-                    job.id,
-                    sys::signal_name(sig),
-                    job.command
-                );
+                let msg = ByteWriter::new()
+                    .bytes(b"[").usize_val(job.id).bytes(b"] Stopped (")
+                    .bytes(sys::signal_name(sig)).bytes(b") ")
+                    .bytes(&job.command).byte(b'\n').finish();
+                let _ = sys::write_all_fd(sys::STDOUT_FILENO, &msg);
             } else {
-                sys_println!("[{}] Running {}", job.id, job.command);
+                let msg = ByteWriter::new()
+                    .bytes(b"[").usize_val(job.id).bytes(b"] Running ")
+                    .bytes(&job.command).byte(b'\n').finish();
+                let _ = sys::write_all_fd(sys::STDOUT_FILENO, &msg);
             }
         }
     }
 
     pub fn run_builtin(
         &mut self,
-        argv: &[String],
-        assignments: &[(String, String)],
+        argv: &[Vec<u8>],
+        assignments: &[(Vec<u8>, Vec<u8>)],
     ) -> Result<FlowSignal, ShellError> {
         for (name, value) in assignments {
-            self.set_var(name, value.clone())
-                .map_err(|e| self.diagnostic(1, &e))?;
+            self.set_var(name, value.clone()).map_err(|e| {
+                let msg = var_error_message(&e);
+                self.diagnostic(1, &msg)
+            })?;
         }
         match builtin::run(self, argv, assignments)? {
             BuiltinOutcome::Status(status) => Ok(FlowSignal::Continue(status)),
@@ -1104,12 +1149,12 @@ impl Shell {
         if let TrapCondition::Signal(signal) = condition {
             match action.as_ref() {
                 Some(TrapAction::Ignore) => {
-                    sys::ignore_signal(signal).map_err(|e| self.diagnostic(1, &e))?
+                    sys::ignore_signal(signal).map_err(|e| self.diagnostic_syserr(1, &e))?
                 }
                 Some(TrapAction::Command(_)) => {
-                    sys::install_shell_signal_handler(signal).map_err(|e| self.diagnostic(1, &e))?
+                    sys::install_shell_signal_handler(signal).map_err(|e| self.diagnostic_syserr(1, &e))?
                 }
-                None => sys::default_signal_action(signal).map_err(|e| self.diagnostic(1, &e))?,
+                None => sys::default_signal_action(signal).map_err(|e| self.diagnostic_syserr(1, &e))?,
             }
         }
         match action {
@@ -1137,7 +1182,7 @@ impl Shell {
             .collect();
         for cond in to_reset {
             if let TrapCondition::Signal(signal) = cond {
-                sys::default_signal_action(signal).map_err(|e| self.diagnostic(1, &e))?;
+                sys::default_signal_action(signal).map_err(|e| self.diagnostic_syserr(1, &e))?;
             }
             self.trap_actions.remove(&cond);
         }
@@ -1189,10 +1234,12 @@ impl Shell {
         let (job_index, child_index) = match self.find_job_child(pid) {
             Some(position) => position,
             None => {
-                self.diagnostic(
-                    1,
-                    format_args!("wait: pid {pid} is not a child of this shell"),
-                );
+                let msg = ByteWriter::new()
+                    .bytes(b"wait: pid ")
+                    .i64_val(pid as i64)
+                    .bytes(b" is not a child of this shell")
+                    .finish();
+                self.diagnostic(1, &msg);
                 return Ok(127);
             }
         };
@@ -1251,7 +1298,7 @@ impl Shell {
 
     fn execute_trap_action(
         &mut self,
-        action: &str,
+        action: &[u8],
         preserved_status: i32,
     ) -> Result<i32, ShellError> {
         let saved_lineno = self.lineno;
@@ -1353,7 +1400,7 @@ impl Shell {
                     self.run_pending_traps()?;
                     continue;
                 }
-                Err(error) => return Err(self.diagnostic(1, &error)),
+                Err(error) => return Err(self.diagnostic_syserr(1, &error)),
             }
         }
     }
@@ -1379,7 +1426,7 @@ impl Shell {
                     return Ok(ChildWaitResult::Interrupted(128 + signal));
                 }
                 Err(error) if sys::interrupted(&error) => continue,
-                Err(error) => return Err(self.diagnostic(1, &error)),
+                Err(error) => return Err(self.diagnostic_syserr(1, &error)),
             }
         }
     }
@@ -1442,17 +1489,21 @@ impl Shell {
             .map(|j| j.id)
     }
 
-    pub fn find_job_by_prefix(&self, prefix: &str) -> Option<usize> {
+    pub fn find_job_by_prefix(&self, prefix: &[u8]) -> Option<usize> {
         self.jobs
             .iter()
             .find(|j| j.command.starts_with(prefix))
             .map(|j| j.id)
     }
 
-    pub fn find_job_by_substring(&self, substring: &str) -> Option<usize> {
+    pub fn find_job_by_substring(&self, substring: &[u8]) -> Option<usize> {
         self.jobs
             .iter()
-            .find(|j| j.command.contains(substring))
+            .find(|j| {
+                j.command
+                    .windows(substring.len())
+                    .any(|w| w == substring)
+            })
             .map(|j| j.id)
     }
 
@@ -1483,46 +1534,52 @@ impl Shell {
 }
 
 impl expand::Context for Shell {
-    fn env_var(&self, name: &str) -> Option<Cow<'_, str>> {
-        self.env.get(name).map(|v| Cow::Borrowed(v.as_str()))
+    fn env_var(&self, name: &[u8]) -> Option<Cow<'_, [u8]>> {
+        self.env.get(name).map(|v| Cow::Borrowed(v.as_slice()))
     }
 
-    fn special_param(&self, name: char) -> Option<Cow<'_, str>> {
+    fn special_param(&self, name: u8) -> Option<Cow<'_, [u8]>> {
         match name {
-            '?' => Some(Cow::Owned(self.last_status.to_string())),
-            '$' => Some(Cow::Owned(self.pid.to_string())),
-            '!' => self.last_background.map(|pid| Cow::Owned(pid.to_string())),
-            '#' => Some(Cow::Owned(self.positional.len().to_string())),
-            '-' => Some(Cow::Owned(self.active_option_flags())),
-            '*' | '@' => Some(Cow::Owned(self.positional.join(" "))),
-            '0' => Some(Cow::Borrowed(&self.shell_name)),
+            b'?' => Some(Cow::Owned(bstr::i64_to_bytes(self.last_status as i64))),
+            b'$' => Some(Cow::Owned(bstr::i64_to_bytes(self.pid as i64))),
+            b'!' => self
+                .last_background
+                .map(|pid| Cow::Owned(bstr::i64_to_bytes(pid as i64))),
+            b'#' => Some(Cow::Owned(bstr::u64_to_bytes(self.positional.len() as u64))),
+            b'-' => Some(Cow::Owned(self.active_option_flags())),
+            b'*' | b'@' => Some(Cow::Owned(bstr::join_bstrings(&self.positional, b" "))),
+            b'0' => Some(Cow::Borrowed(&self.shell_name)),
             digit if digit.is_ascii_digit() => {
-                let index = digit.to_digit(10)? as usize;
+                let index = (digit - b'0') as usize;
+                if index == 0 {
+                    return None;
+                }
                 self.positional
                     .get(index.saturating_sub(1))
-                    .map(|v| Cow::Borrowed(v.as_str()))
+                    .map(|v| Cow::Borrowed(v.as_slice()))
             }
             _ => None,
         }
     }
 
-    fn positional_param(&self, index: usize) -> Option<Cow<'_, str>> {
+    fn positional_param(&self, index: usize) -> Option<Cow<'_, [u8]>> {
         if index == 0 {
             Some(Cow::Borrowed(&self.shell_name))
         } else {
             self.positional
                 .get(index - 1)
-                .map(|v| Cow::Borrowed(v.as_str()))
+                .map(|v| Cow::Borrowed(v.as_slice()))
         }
     }
 
-    fn positional_params(&self) -> &[String] {
+    fn positional_params(&self) -> &[Vec<u8>] {
         &self.positional
     }
 
-    fn set_var(&mut self, name: &str, value: String) -> Result<(), ExpandError> {
-        self.set_var(name, value).map_err(|e| ExpandError {
-            message: e.to_string().into(),
+    fn set_var(&mut self, name: &[u8], value: Vec<u8>) -> Result<(), ExpandError> {
+        self.set_var(name, value).map_err(|e| {
+            let msg = var_error_message(&e);
+            ExpandError { message: msg.into() }
         })
     }
 
@@ -1534,16 +1591,18 @@ impl expand::Context for Shell {
         self.options.nounset
     }
 
-    fn shell_name(&self) -> &str {
+    fn shell_name(&self) -> &[u8] {
         &self.shell_name
     }
 
-    fn command_substitute(&mut self, command: &str) -> Result<String, ExpandError> {
+    fn command_substitute(&mut self, command: &[u8]) -> Result<Vec<u8>, ExpandError> {
         self.capture_output(command)
-            .map_err(|_| ExpandError { message: "".into() })
+            .map_err(|_| ExpandError {
+                message: Vec::new().into(),
+            })
     }
 
-    fn home_dir_for_user(&self, name: &str) -> Option<Cow<'_, str>> {
+    fn home_dir_for_user(&self, name: &[u8]) -> Option<Cow<'_, [u8]>> {
         sys::home_dir_for_user(name).map(Cow::Owned)
     }
 
@@ -1558,14 +1617,18 @@ impl expand::Context for Shell {
     }
 }
 
-fn parse_options(args: &[String]) -> Result<ShellOptions, ShellError> {
+fn shell_name_from_args(args: &[Vec<u8>]) -> Vec<u8> {
+    args.first().cloned().unwrap_or_else(|| b"meiksh".to_vec())
+}
+
+fn parse_options(args: &[Vec<u8>]) -> Result<ShellOptions, ShellError> {
     let mut options = ShellOptions::default();
     let mut index = 1usize;
 
     while let Some(arg) = args.get(index) {
-        if arg == "-c" {
+        if arg == b"-c" {
             let command = args.get(index + 1).ok_or_else(|| {
-                sys_eprintln!("meiksh: {}", "-c requires an argument");
+                let _ = sys::write_all_fd(sys::STDERR_FILENO, b"meiksh: -c requires an argument\n");
                 ShellError::Status(2)
             })?;
             options.command_string = Some(command.clone().into());
@@ -1573,53 +1636,74 @@ fn parse_options(args: &[String]) -> Result<ShellOptions, ShellError> {
             options.positional = args.iter().skip(index + 3).cloned().collect();
             return Ok(options);
         }
-        if arg == "-o" || arg == "+o" {
-            let enabled = arg == "-o";
+        if arg == b"-o" || arg == b"+o" {
+            let enabled = arg == b"-o";
             let name = args.get(index + 1).ok_or_else(|| {
-                sys_eprintln!("meiksh: {}", format_args!("{arg} requires an argument"));
+                let out = ByteWriter::new()
+                    .bytes(b"meiksh: ")
+                    .bytes(arg)
+                    .bytes(b" requires an argument\n")
+                    .finish();
+                let _ = sys::write_all_fd(sys::STDERR_FILENO, &out);
                 ShellError::Status(2)
             })?;
             options.set_named_option(name, enabled).map_err(|e| {
-                sys_eprintln!("meiksh: {}", e);
+                let msg = option_error_message(&e);
+                let out = ByteWriter::new()
+                    .bytes(b"meiksh: ")
+                    .bytes(&msg)
+                    .byte(b'\n')
+                    .finish();
+                let _ = sys::write_all_fd(sys::STDERR_FILENO, &out);
                 ShellError::Status(2)
             })?;
             index += 2;
             continue;
         }
-        if arg == "-i" {
+        if arg == b"-i" {
             options.force_interactive = true;
             index += 1;
             continue;
         }
-        if arg == "-s" {
+        if arg == b"-s" {
             options.positional = args.iter().skip(index + 1).cloned().collect();
             return Ok(options);
         }
-        if arg == "-" {
+        if arg == b"-" {
             index += 1;
             continue;
         }
-        if arg == "--" {
+        if arg == b"--" {
             index += 1;
             break;
         }
-        if (arg.starts_with('-') || arg.starts_with('+')) && arg != "-" && arg != "+" {
-            let enabled = arg.starts_with('-');
+        if !arg.is_empty()
+            && (arg[0] == b'-' || arg[0] == b'+')
+            && arg != b"-"
+            && arg != b"+"
+        {
+            let enabled = arg[0] == b'-';
             let mut read_stdin = false;
             let mut saw_c = false;
-            for ch in arg[1..].chars() {
+            for &ch in &arg[1..] {
                 match ch {
-                    'c' if enabled => saw_c = true,
-                    's' if enabled => read_stdin = true,
+                    b'c' if enabled => saw_c = true,
+                    b's' if enabled => read_stdin = true,
                     _ => options.set_short_option(ch, enabled).map_err(|e| {
-                        sys_eprintln!("meiksh: {}", e);
+                        let msg = option_error_message(&e);
+                        let out = ByteWriter::new()
+                            .bytes(b"meiksh: ")
+                            .bytes(&msg)
+                            .byte(b'\n')
+                            .finish();
+                        let _ = sys::write_all_fd(sys::STDERR_FILENO, &out);
                         ShellError::Status(2)
                     })?,
                 }
             }
             if saw_c {
                 let command = args.get(index + 1).ok_or_else(|| {
-                    sys_eprintln!("meiksh: {}", "-c requires an argument");
+                    let _ = sys::write_all_fd(sys::STDERR_FILENO, b"meiksh: -c requires an argument\n");
                     ShellError::Status(2)
                 })?;
                 options.command_string = Some(command.clone().into());
@@ -1634,7 +1718,7 @@ fn parse_options(args: &[String]) -> Result<ShellOptions, ShellError> {
             index += 1;
             continue;
         }
-        options.script_path = Some(PathBuf::from(arg));
+        options.script_path = Some(arg.clone());
         options.shell_name_override = Some(arg.clone().into());
         options.positional = args.iter().skip(index + 1).cloned().collect();
         return Ok(options);
@@ -1647,80 +1731,106 @@ fn parse_options(args: &[String]) -> Result<ShellOptions, ShellError> {
     Ok(options)
 }
 
+fn var_error_message(e: &VarError) -> Vec<u8> {
+    match e {
+        VarError::Readonly(name) => {
+            ByteWriter::new()
+                .bytes(name)
+                .bytes(b": readonly variable")
+                .finish()
+        }
+    }
+}
+
+fn option_error_message(e: &OptionError) -> Vec<u8> {
+    match e {
+        OptionError::InvalidShort(ch) => {
+            ByteWriter::new()
+                .bytes(b"invalid option: ")
+                .byte(*ch)
+                .finish()
+        }
+        OptionError::InvalidName(name) => {
+            ByteWriter::new()
+                .bytes(b"invalid option name: ")
+                .bytes(name)
+                .finish()
+        }
+    }
+}
+
 impl Shell {
-    fn active_option_flags(&self) -> String {
-        let mut flags = String::new();
+    fn active_option_flags(&self) -> Vec<u8> {
+        let mut flags = Vec::new();
         if self.options.allexport {
-            flags.push('a');
+            flags.push(b'a');
         }
         if self.options.notify {
-            flags.push('b');
+            flags.push(b'b');
         }
         if self.options.noclobber {
-            flags.push('C');
+            flags.push(b'C');
         }
         if self.options.errexit {
-            flags.push('e');
+            flags.push(b'e');
         }
         if self.options.noglob {
-            flags.push('f');
+            flags.push(b'f');
         }
         if self.options.hashall {
-            flags.push('h');
+            flags.push(b'h');
         }
         if self.is_interactive() {
-            flags.push('i');
+            flags.push(b'i');
         }
         if self.options.monitor {
-            flags.push('m');
+            flags.push(b'm');
         }
         if self.options.syntax_check_only {
-            flags.push('n');
+            flags.push(b'n');
         }
         if self.options.nounset {
-            flags.push('u');
+            flags.push(b'u');
         }
         if self.options.verbose {
-            flags.push('v');
+            flags.push(b'v');
         }
         if self.options.xtrace {
-            flags.push('x');
+            flags.push(b'x');
         }
         if self.options.command_string.is_some() {
-            flags.push('c');
+            flags.push(b'c');
         } else if self.options.script_path.is_none() {
-            flags.push('s');
+            flags.push(b's');
         }
         flags
     }
+
 }
 
-fn resolve_script_path(shell: &Shell, script: &Path) -> Option<PathBuf> {
-    if script.is_absolute() || script.to_string_lossy().contains('/') {
-        return Some(script.to_path_buf());
+fn resolve_script_path(shell: &Shell, script: &[u8]) -> Option<Vec<u8>> {
+    if script.contains(&b'/') {
+        return Some(script.to_vec());
     }
 
-    let cwd_path = PathBuf::from(script);
-    if sys::file_exists(&cwd_path.display().to_string()) {
-        return Some(cwd_path);
+    if sys::file_exists(script) {
+        return Some(script.to_vec());
     }
 
-    search_script_path(shell, script.to_str()?)
+    search_script_path(shell, script)
 }
 
-fn search_script_path(shell: &Shell, name: &str) -> Option<PathBuf> {
-    let path_env = shell
-        .get_var("PATH")
-        .map(|s| s.to_string())
-        .or_else(|| sys::env_var("PATH"))
+fn search_script_path(shell: &Shell, name: &[u8]) -> Option<Vec<u8>> {
+    let path_env_bytes = shell
+        .get_var(b"PATH")
+        .map(|s| s.to_vec())
+        .or_else(|| sys::env_var(b"PATH"))
         .unwrap_or_default();
-    for dir in path_env.split(':') {
-        let base = if dir.is_empty() {
-            PathBuf::from(".")
-        } else {
-            PathBuf::from(dir)
-        };
-        let candidate = base.join(name);
+    for dir in path_env_bytes.split(|&b| b == b':') {
+        let base = if dir.is_empty() { b".".as_slice() } else { dir };
+        let mut candidate = base.to_vec();
+        candidate.push(b'/');
+        candidate.extend_from_slice(name);
         if executable_regular_file(&candidate) {
             return Some(candidate);
         }
@@ -1728,48 +1838,56 @@ fn search_script_path(shell: &Shell, name: &str) -> Option<PathBuf> {
     None
 }
 
-fn executable_regular_file(path: &Path) -> bool {
-    sys::stat_path(&path.display().to_string())
+fn executable_regular_file(path: &[u8]) -> bool {
+    sys::stat_path(path)
         .map(|stat| stat.is_regular_file() && stat.is_executable())
         .unwrap_or(false)
-}
-
-fn decode_stdin_chunk(bytes: Vec<u8>) -> sys::SysResult<String> {
-    String::from_utf8(bytes).map_err(|_| sys::SysError::Errno(sys::EILSEQ))
 }
 
 fn stdin_parse_error_requires_more_input(error: &syntax::ParseError) -> bool {
     matches!(
         &*error.message,
-        "unterminated single quote"
-            | "unterminated double quote"
-            | "unterminated here-document"
-            | "expected command"
-            | "expected for loop variable name"
-            | "expected for loop word list"
-            | "expected case word"
-            | "expected 'in'"
-            | "expected case pattern"
-            | "expected ';;' or 'esac'"
-            | "expected redirection target"
-            | "missing here-document body"
-            | "unexpected end of tokens"
-            | "expected 'then'"
-            | "expected 'fi'"
-            | "expected 'do'"
-            | "expected 'done'"
-            | "expected 'esac'"
-            | "expected ')' to close subshell"
-            | "expected '}'"
+        b"unterminated single quote"
+            | b"unterminated double quote"
+            | b"unterminated here-document"
+            | b"expected command"
+            | b"expected for loop variable name"
+            | b"expected for loop word list"
+            | b"expected case word"
+            | b"expected 'in'"
+            | b"expected case pattern"
+            | b"expected ';;' or 'esac'"
+            | b"expected redirection target"
+            | b"missing here-document body"
+            | b"unexpected end of tokens"
+            | b"expected 'then'"
+            | b"expected 'fi'"
+            | b"expected 'do'"
+            | b"expected 'done'"
+            | b"expected 'esac'"
+            | b"expected ')' to close subshell"
+            | b"expected '}'"
     )
 }
 
-fn classify_script_read_error(path: &Path, error: sys::SysError) -> ShellError {
+fn classify_script_read_error(path: &[u8], error: sys::SysError) -> ShellError {
     if error.is_enoent() {
-        sys_eprintln!("meiksh: {}", format_args!("{}: not found", path.display()));
+        let msg = ByteWriter::new()
+            .bytes(b"meiksh: ")
+            .bytes(path)
+            .bytes(b": not found\n")
+            .finish();
+        let _ = sys::write_all_fd(sys::STDERR_FILENO, &msg);
         ShellError::Status(127)
     } else {
-        sys_eprintln!("meiksh: {}", format_args!("{}: {}", path.display(), error));
+        let msg = ByteWriter::new()
+            .bytes(b"meiksh: ")
+            .bytes(path)
+            .bytes(b": ")
+            .bytes(&error.strerror())
+            .byte(b'\n')
+            .finish();
+        let _ = sys::write_all_fd(sys::STDERR_FILENO, &msg);
         ShellError::Status(128)
     }
 }
@@ -1812,7 +1930,7 @@ mod tests {
     fn test_shell() -> Shell {
         Shell {
             options: ShellOptions::default(),
-            shell_name: "meiksh".into(),
+            shell_name: b"meiksh"[..].into(),
             env: HashMap::new(),
             exported: BTreeSet::new(),
             readonly: BTreeSet::new(),
@@ -1856,80 +1974,80 @@ mod tests {
             ],
             || {
                 let options = parse_options(&[
-                    "meiksh".into(),
-                    "-c".into(),
-                    "echo ok".into(),
-                    "name".into(),
-                    "arg".into(),
+                    b"meiksh".to_vec(),
+                    b"-c".to_vec(),
+                    b"echo ok".to_vec(),
+                    b"name".to_vec(),
+                    b"arg".to_vec(),
                 ])
                 .expect("parse");
-                assert_eq!(options.command_string.as_deref(), Some("echo ok"));
-                assert_eq!(options.shell_name_override.as_deref(), Some("name"));
-                assert_eq!(options.positional, vec!["arg".to_string()]);
+                assert_eq!(options.command_string.as_deref(), Some(b"echo ok".as_slice()));
+                assert_eq!(options.shell_name_override.as_deref(), Some(b"name".as_slice()));
+                assert_eq!(options.positional, vec![b"arg".to_vec()]);
 
                 let options = parse_options(&[
-                    "meiksh".into(),
-                    "-n".into(),
-                    "-i".into(),
-                    "-f".into(),
-                    "script.sh".into(),
-                    "a".into(),
+                    b"meiksh".to_vec(),
+                    b"-n".to_vec(),
+                    b"-i".to_vec(),
+                    b"-f".to_vec(),
+                    b"script.sh".to_vec(),
+                    b"a".to_vec(),
                 ])
                 .expect("parse");
                 assert!(options.syntax_check_only);
                 assert!(options.force_interactive);
                 assert!(options.noglob);
-                assert_eq!(options.script_path, Some(PathBuf::from("script.sh")));
-                assert_eq!(options.positional, vec!["a".to_string()]);
+                assert_eq!(options.script_path, Some(b"script.sh".to_vec()));
+                assert_eq!(options.positional, vec![b"a".to_vec()]);
 
                 let options =
-                    parse_options(&["meiksh".into(), "-s".into(), "arg1".into(), "arg2".into()])
+                    parse_options(&[b"meiksh".to_vec(), b"-s".to_vec(), b"arg1".to_vec(), b"arg2".to_vec()])
                         .expect("parse -s");
                 assert_eq!(options.script_path, None);
                 assert_eq!(
                     options.positional,
-                    vec!["arg1".to_string(), "arg2".to_string()]
+                    vec![b"arg1".to_vec(), b"arg2".to_vec()]
                 );
 
-                let options = parse_options(&["meiksh".into(), "-is".into(), "arg".into()])
+                let options = parse_options(&[b"meiksh".to_vec(), b"-is".to_vec(), b"arg".to_vec()])
                     .expect("parse -is");
                 assert!(options.force_interactive);
-                assert_eq!(options.positional, vec!["arg".to_string()]);
+                assert_eq!(options.positional, vec![b"arg".to_vec()]);
 
                 let options = parse_options(&[
-                    "meiksh".into(),
-                    "-a".into(),
-                    "-u".into(),
-                    "-o".into(),
-                    "noglob".into(),
-                    "-v".into(),
-                    "script.sh".into(),
+                    b"meiksh".to_vec(),
+                    b"-a".to_vec(),
+                    b"-u".to_vec(),
+                    b"-o".to_vec(),
+                    b"noglob".to_vec(),
+                    b"-v".to_vec(),
+                    b"script.sh".to_vec(),
                 ])
                 .expect("parse -a -u -o noglob -v");
                 assert!(options.allexport);
                 assert!(options.nounset);
                 assert!(options.noglob);
                 assert!(options.verbose);
-                assert_eq!(options.script_path, Some(PathBuf::from("script.sh")));
+                assert_eq!(options.script_path, Some(b"script.sh".to_vec()));
 
                 let error =
-                    parse_options(&["meiksh".into(), "-c".into()]).expect_err("missing arg");
+                    parse_options(&[b"meiksh".to_vec(), b"-c".to_vec()]).expect_err("missing arg");
                 assert_eq!(error.exit_status(), 2);
 
                 let error =
-                    parse_options(&["meiksh".into(), "-o".into()]).expect_err("missing -o arg");
+                    parse_options(&[b"meiksh".to_vec(), b"-o".to_vec()]).expect_err("missing -o arg");
                 assert_eq!(error.exit_status(), 2);
 
                 let options = parse_options(&[
-                    "meiksh".into(),
-                    "-o".into(),
-                    "pipefail".into(),
-                    "s.sh".into(),
+                    b"meiksh".to_vec(),
+                    b"-o".to_vec(),
+                    b"pipefail".to_vec(),
+                    b"s.sh".to_vec(),
                 ])
                 .expect("parse -o pipefail");
                 assert!(options.pipefail);
 
-                let error = parse_options(&["meiksh".into(), "-o".into(), "bogus".into()])
+                let error = parse_options(&[b"meiksh".to_vec(), b"-o".to_vec(), b"bogus".to_vec()])
                     .expect_err("bad -o name");
                 assert_eq!(error.exit_status(), 2);
             },
@@ -1940,22 +2058,22 @@ mod tests {
     fn env_for_child_filters_exported_values() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.env.insert("A".into(), "1".into());
-            shell.env.insert("B".into(), "2".into());
-            shell.exported.insert("A".into());
+            shell.env.insert(b"A".to_vec(), b"1".to_vec());
+            shell.env.insert(b"B".to_vec(), b"2".to_vec());
+            shell.exported.insert(b"A".to_vec());
             let env = shell.env_for_child();
             assert_eq!(
-                env.iter().find(|(k, _)| k == "A").map(|(_, v)| v.as_str()),
-                Some("1")
+                env.iter().find(|(k, _)| k == b"A").map(|(_, v)| v.as_slice()),
+                Some(b"1".as_slice())
             );
-            assert!(!env.iter().any(|(k, _)| k == "B"));
+            assert!(!env.iter().any(|(k, _)| k == b"B"));
 
             shell.options.allexport = true;
-            shell.set_var("B", "3".into()).expect("allexport set");
+            shell.set_var(b"B", b"3".to_vec()).expect("allexport set");
             let env = shell.env_for_child();
             assert_eq!(
-                env.iter().find(|(k, _)| k == "B").map(|(_, v)| v.as_str()),
-                Some("3")
+                env.iter().find(|(k, _)| k == b"B").map(|(_, v)| v.as_slice()),
+                Some(b"3".as_slice())
             );
         });
     }
@@ -1964,12 +2082,14 @@ mod tests {
     fn readonly_variables_reject_mutation_and_unset() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.set_var("NAME", "value".into()).expect("set");
-            shell.mark_readonly("NAME");
-            let set_error = shell.set_var("NAME", "new".into()).expect_err("readonly");
-            assert_eq!(set_error.to_string(), "NAME: readonly variable");
-            let unset_error = shell.unset_var("NAME").expect_err("readonly");
-            assert_eq!(unset_error.to_string(), "NAME: readonly variable");
+            shell.set_var(b"NAME", b"value".to_vec()).expect("set");
+            shell.mark_readonly(b"NAME");
+            let set_error = shell.set_var(b"NAME", b"new".to_vec()).expect_err("readonly");
+            let msg = var_error_message(&set_error);
+            assert_eq!(msg, b"NAME: readonly variable");
+            let unset_error = shell.unset_var(b"NAME").expect_err("readonly");
+            let msg = var_error_message(&unset_error);
+            assert_eq!(msg, b"NAME: readonly variable");
         });
     }
 
@@ -1978,50 +2098,50 @@ mod tests {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
             shell.pid = 12345;
-            shell.positional = vec!["first".into(), "second".into()];
+            shell.positional = vec![b"first".to_vec(), b"second".to_vec()];
             shell.last_status = 17;
             shell.last_background = Some(42);
             shell.options.allexport = true;
             shell.options.noclobber = true;
-            shell.options.command_string = Some("printf ok".into());
+            shell.options.command_string = Some(b"printf ok"[..].into());
             assert_eq!(
-                expand::Context::special_param(&shell, '?').as_deref(),
-                Some("17")
+                expand::Context::special_param(&shell, b'?').as_deref(),
+                Some(b"17".as_slice())
             );
             assert_eq!(
-                expand::Context::special_param(&shell, '$').as_deref(),
-                Some("12345")
+                expand::Context::special_param(&shell, b'$').as_deref(),
+                Some(b"12345".as_slice())
             );
             assert_eq!(
-                expand::Context::special_param(&shell, '#').as_deref(),
-                Some("2")
+                expand::Context::special_param(&shell, b'#').as_deref(),
+                Some(b"2".as_slice())
             );
             assert_eq!(
-                expand::Context::special_param(&shell, '!').as_deref(),
-                Some("42")
+                expand::Context::special_param(&shell, b'!').as_deref(),
+                Some(b"42".as_slice())
             );
             assert_eq!(
-                expand::Context::special_param(&shell, '-').as_deref(),
-                Some("aCc")
+                expand::Context::special_param(&shell, b'-').as_deref(),
+                Some(b"aCc".as_slice())
             );
             assert_eq!(
-                expand::Context::special_param(&shell, '*').as_deref(),
-                Some("first second")
+                expand::Context::special_param(&shell, b'*').as_deref(),
+                Some(b"first second".as_slice())
             );
             assert_eq!(
-                expand::Context::special_param(&shell, '@').as_deref(),
-                Some("first second")
+                expand::Context::special_param(&shell, b'@').as_deref(),
+                Some(b"first second".as_slice())
             );
             assert_eq!(
-                expand::Context::special_param(&shell, '1').as_deref(),
-                Some("first")
+                expand::Context::special_param(&shell, b'1').as_deref(),
+                Some(b"first".as_slice())
             );
             assert_eq!(
-                expand::Context::special_param(&shell, '0').as_deref(),
-                Some("meiksh")
+                expand::Context::special_param(&shell, b'0').as_deref(),
+                Some(b"meiksh".as_slice())
             );
-            assert_eq!(expand::Context::special_param(&shell, '9'), None);
-            assert_eq!(expand::Context::special_param(&shell, 'x'), None);
+            assert_eq!(expand::Context::special_param(&shell, b'9'), None);
+            assert_eq!(expand::Context::special_param(&shell, b'x'), None);
         });
     }
 
@@ -2030,7 +2150,7 @@ mod tests {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
             shell.interactive = true;
-            assert!(shell.active_option_flags().contains('i'));
+            assert!(shell.active_option_flags().contains(&b'i'));
         });
     }
 
@@ -2038,7 +2158,7 @@ mod tests {
     fn dollar_hyphen_excludes_i_when_not_interactive() {
         assert_no_syscalls(|| {
             let shell = test_shell();
-            assert!(!shell.active_option_flags().contains('i'));
+            assert!(!shell.active_option_flags().contains(&b'i'));
         });
     }
 
@@ -2085,7 +2205,7 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 let id =
-                    shell.register_background_job("exit 7".into(), None, vec![fake_handle(1001)]);
+                    shell.register_background_job(b"exit 7"[..].into(), None, vec![fake_handle(1001)]);
                 let status = shell.wait_for_job(id).expect("wait");
                 assert_eq!(status, 7);
                 assert_eq!(shell.last_status, 7);
@@ -2122,10 +2242,10 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 let status = shell
-                    .source_path(Path::new("/tmp/source-test.sh"))
+                    .source_path(b"/tmp/source-test.sh")
                     .expect("source");
                 assert_eq!(status, 0);
-                assert_eq!(shell.get_var("VALUE"), Some("42"));
+                assert_eq!(shell.get_var(b"VALUE"), Some(b"42".as_slice()));
             },
         );
     }
@@ -2134,9 +2254,9 @@ mod tests {
     fn export_without_value_marks_variable_exported() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.env.insert("NAME".into(), "value".into());
-            shell.export_var("NAME", None).expect("export");
-            assert!(shell.exported.contains("NAME"));
+            shell.env.insert(b"NAME".to_vec(), b"value".to_vec());
+            shell.export_var(b"NAME", None).expect("export");
+            assert!(shell.exported.contains(b"NAME".as_slice()));
         });
     }
 
@@ -2145,7 +2265,7 @@ mod tests {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
             shell.options.syntax_check_only = true;
-            let status = shell.run_source("<test>", "echo ok").expect("syntax only");
+            let status = shell.run_source(b"<test>", b"echo ok").expect("syntax only");
             assert_eq!(status, 0);
             assert_eq!(shell.last_status, 0);
         });
@@ -2161,11 +2281,11 @@ mod tests {
             )],
             || {
                 let mut shell = test_shell();
-                shell.register_background_job("exit 0".into(), None, vec![fake_handle(1001)]);
+                shell.register_background_job(b"exit 0"[..].into(), None, vec![fake_handle(1001)]);
                 let finished = shell.reap_jobs();
                 assert_eq!(
                     finished,
-                    vec![(1, ReapedJobState::Done(0, "exit 0".into()))]
+                    vec![(1, ReapedJobState::Done(0, b"exit 0"[..].into()))]
                 );
                 assert!(shell.jobs.is_empty());
             },
@@ -2179,22 +2299,22 @@ mod tests {
 
             let flow = shell
                 .run_builtin(
-                    &["export".into(), "FLOW=1".into()],
-                    &[("ASSIGN".into(), "2".into())],
+                    &[b"export".to_vec(), b"FLOW=1".to_vec()],
+                    &[(b"ASSIGN".to_vec(), b"2".to_vec())],
                 )
                 .expect("builtin");
             assert!(matches!(flow, FlowSignal::Continue(0)));
-            assert_eq!(shell.get_var("ASSIGN"), Some("2"));
-            assert_eq!(shell.get_var("FLOW"), Some("1"));
+            assert_eq!(shell.get_var(b"ASSIGN"), Some(b"2".as_slice()));
+            assert_eq!(shell.get_var(b"FLOW"), Some(b"1".as_slice()));
 
             let flow = shell
-                .run_builtin(&["exit".into(), "9".into()], &[])
+                .run_builtin(&[b"exit".to_vec(), b"9".to_vec()], &[])
                 .expect("exit builtin");
             assert!(matches!(flow, FlowSignal::Exit(9)));
 
             shell.function_depth = 1;
             let flow = shell
-                .run_builtin(&["return".into(), "4".into()], &[])
+                .run_builtin(&[b"return".to_vec(), b"4".to_vec()], &[])
                 .expect("return builtin");
             assert!(matches!(flow, FlowSignal::Continue(4)));
             assert_eq!(shell.pending_control, Some(PendingControl::Return(4)));
@@ -2203,7 +2323,7 @@ mod tests {
 
             shell.loop_depth = 2;
             let flow = shell
-                .run_builtin(&["break".into(), "5".into()], &[])
+                .run_builtin(&[b"break".to_vec(), b"5".to_vec()], &[])
                 .expect("break builtin");
             assert!(matches!(flow, FlowSignal::Continue(0)));
             assert_eq!(shell.pending_control, Some(PendingControl::Break(2)));
@@ -2222,11 +2342,11 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 let id =
-                    shell.register_background_job("exit 0".into(), None, vec![fake_handle(1001)]);
+                    shell.register_background_job(b"exit 0"[..].into(), None, vec![fake_handle(1001)]);
                 let finished = shell.reap_jobs();
                 assert_eq!(
                     finished,
-                    vec![(id, ReapedJobState::Done(1, "exit 0".into()))]
+                    vec![(id, ReapedJobState::Done(1, b"exit 0"[..].into()))]
                 );
                 assert!(shell.jobs.is_empty());
             },
@@ -2276,7 +2396,7 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 let error = shell
-                    .source_path(Path::new("/definitely/missing-meiksh-script"))
+                    .source_path(b"/definitely/missing-meiksh-script")
                     .expect_err("missing source");
                 assert_ne!(error.exit_status(), 0);
             },
@@ -2292,12 +2412,12 @@ mod tests {
             ],
             || {
                 let shell = test_shell();
-                let parse_err = syntax::parse("echo 'unterminated").expect_err("parse");
+                let parse_err = syntax::parse(b"echo 'unterminated").expect_err("parse");
                 let shell_err = shell.parse_to_err(parse_err);
                 assert_eq!(shell_err.exit_status(), 2);
 
                 let expand_err = shell.expand_to_err(ExpandError {
-                    message: "expand".into(),
+                    message: (*b"expand").into(),
                 });
                 assert_eq!(expand_err.exit_status(), 1);
             },
@@ -2308,17 +2428,17 @@ mod tests {
     fn context_trait_methods_work() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            assert_eq!(expand::Context::shell_name(&shell), "meiksh");
+            assert_eq!(expand::Context::shell_name(&shell), b"meiksh");
             assert_eq!(
                 expand::Context::positional_param(&shell, 0).as_deref(),
-                Some("meiksh")
+                Some(b"meiksh".as_slice())
             );
-            expand::Context::set_var(&mut shell, "CTX_SET", "7".into()).expect("ctx set");
-            assert_eq!(shell.get_var("CTX_SET"), Some("7"));
-            shell.mark_readonly("CTX_SET");
-            let error = expand::Context::set_var(&mut shell, "CTX_SET", "8".into())
+            expand::Context::set_var(&mut shell, b"CTX_SET", b"7".to_vec()).expect("ctx set");
+            assert_eq!(shell.get_var(b"CTX_SET"), Some(b"7".as_slice()));
+            shell.mark_readonly(b"CTX_SET");
+            let error = expand::Context::set_var(&mut shell, b"CTX_SET", b"8".to_vec())
                 .expect_err("readonly ctx set");
-            assert_eq!(&*error.message, "CTX_SET: readonly variable");
+            assert_eq!(&*error.message, b"CTX_SET: readonly variable".as_slice());
         });
     }
 
@@ -2358,8 +2478,8 @@ mod tests {
     fn capture_output_success() {
         run_trace(capture_forked_trace(0, 1000), || {
             let mut shell = test_shell();
-            let output = shell.capture_output("true").expect("capture");
-            assert_eq!(output, "");
+            let output = shell.capture_output(b"true").expect("capture");
+            assert_eq!(output, b"");
         });
     }
 
@@ -2367,8 +2487,8 @@ mod tests {
     fn capture_output_sets_last_status_on_nonzero_exit() {
         run_trace(capture_forked_trace(1, 1000), || {
             let mut shell = test_shell();
-            let output = shell.capture_output("false").expect("capture ok");
-            assert_eq!(output, "");
+            let output = shell.capture_output(b"false").expect("capture ok");
+            assert_eq!(output, b"");
             assert_eq!(shell.last_status, 1);
         });
     }
@@ -2378,8 +2498,8 @@ mod tests {
         run_trace(capture_forked_trace(0, 1000), || {
             let mut shell = test_shell();
             let substituted =
-                expand::Context::command_substitute(&mut shell, "true").expect("subst");
-            assert_eq!(substituted, "");
+                expand::Context::command_substitute(&mut shell, b"true").expect("subst");
+            assert_eq!(substituted, b"");
             assert_eq!(shell.last_status, 0);
         });
     }
@@ -2389,8 +2509,8 @@ mod tests {
         run_trace(capture_forked_trace(1, 1000), || {
             let mut shell = test_shell();
             let output =
-                expand::Context::command_substitute(&mut shell, "false").expect("subst ok");
-            assert_eq!(output, "");
+                expand::Context::command_substitute(&mut shell, b"false").expect("subst ok");
+            assert_eq!(output, b"");
             assert_eq!(shell.last_status, 1);
         });
     }
@@ -2399,42 +2519,42 @@ mod tests {
     fn parse_options_covers_dashdash_and_unknown_flags() {
         run_trace(vec![t_stderr("meiksh: invalid option: z")], || {
             let options =
-                parse_options(&["meiksh".into(), "--".into(), "arg1".into(), "arg2".into()])
+                parse_options(&[b"meiksh".to_vec(), b"--".to_vec(), b"arg1".to_vec(), b"arg2".to_vec()])
                     .expect("parse");
             assert_eq!(
                 options.positional,
-                vec!["arg1".to_string(), "arg2".to_string()]
+                vec![b"arg1".to_vec(), b"arg2".to_vec()]
             );
 
-            let error = parse_options(&["meiksh".into(), "-z".into(), "script.sh".into()])
+            let error = parse_options(&[b"meiksh".to_vec(), b"-z".to_vec(), b"script.sh".to_vec()])
                 .expect_err("invalid option");
             assert_eq!(error.exit_status(), 2);
 
             let options = parse_options(&[
-                "meiksh".into(),
-                "-fC".into(),
-                "+f".into(),
-                "script.sh".into(),
+                b"meiksh".to_vec(),
+                b"-fC".to_vec(),
+                b"+f".to_vec(),
+                b"script.sh".to_vec(),
             ])
             .expect("parse");
             assert!(!options.noglob);
             assert!(options.noclobber);
-            assert_eq!(options.script_path, Some(PathBuf::from("script.sh")));
+            assert_eq!(options.script_path, Some(b"script.sh".to_vec()));
 
             let options = parse_options(&[
-                "meiksh".into(),
-                "-inuv".into(),
-                "+nuv".into(),
-                "script.sh".into(),
+                b"meiksh".to_vec(),
+                b"-inuv".to_vec(),
+                b"+nuv".to_vec(),
+                b"script.sh".to_vec(),
             ])
             .expect("parse");
             assert!(options.force_interactive);
             assert!(!options.syntax_check_only);
             assert!(!options.nounset);
             assert!(!options.verbose);
-            assert_eq!(options.script_path, Some(PathBuf::from("script.sh")));
+            assert_eq!(options.script_path, Some(b"script.sh".to_vec()));
 
-            let options = parse_options(&["meiksh".into(), "-".into()]).expect("parse lone dash");
+            let options = parse_options(&[b"meiksh".to_vec(), b"-".to_vec()]).expect("parse lone dash");
             assert_eq!(options.script_path, None);
             assert!(options.positional.is_empty());
         });
@@ -2467,10 +2587,10 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.options.script_path = Some(PathBuf::from("/tmp/run-test.sh"));
+                shell.options.script_path = Some(b"/tmp/run-test.sh".to_vec());
                 let status = shell.run().expect("run");
                 assert_eq!(status, 0);
-                assert_eq!(shell.get_var("VALUE"), Some("77"));
+                assert_eq!(shell.get_var(b"VALUE"), Some(b"77".as_slice()));
             },
         );
     }
@@ -2479,8 +2599,8 @@ mod tests {
     fn capture_output_sets_last_status_127() {
         run_trace(capture_forked_trace(127, 1000), || {
             let mut shell = test_shell();
-            let output = shell.capture_output("exit 127").expect("capture ok");
-            assert_eq!(output, "");
+            let output = shell.capture_output(b"exit 127").expect("capture ok");
+            assert_eq!(output, b"");
             assert_eq!(shell.last_status, 127);
         });
     }
@@ -2489,7 +2609,7 @@ mod tests {
     fn shell_error_status_helpers_work() {
         run_trace(vec![t_stderr("meiksh: missing script")], || {
             let shell = test_shell();
-            let error = shell.diagnostic(127, "missing script");
+            let error = shell.diagnostic(127, b"missing script");
             assert_eq!(error.exit_status(), 127);
 
             let silent = ShellError::Status(42);
@@ -2501,18 +2621,22 @@ mod tests {
     fn stdin_parse_error_requires_more_input_for_open_constructs() {
         assert_no_syscalls(|| {
             for source in [
-                "if true\n",
-                "for item in a b\n",
-                "cat <<EOF\nhello\n",
-                "echo \"unterminated",
-                "printf ok |\n",
+                &b"if true\n"[..],
+                b"for item in a b\n",
+                b"cat <<EOF\nhello\n",
+                b"echo \"unterminated",
+                b"printf ok |\n",
             ] {
                 let error = syntax::parse(source).expect_err("incomplete parse");
-                assert!(stdin_parse_error_requires_more_input(&error), "{source}");
+                assert!(
+                    stdin_parse_error_requires_more_input(&error),
+                    "expected more input for: {:?}",
+                    source,
+                );
             }
 
             let program =
-                syntax::parse("999999999999999999999999999999999999999999999999999999999999<in")
+                syntax::parse(b"999999999999999999999999999999999999999999999999999999999999<in")
                     .expect("overflowing number is a word, not an io_number");
             assert_eq!(program.items.len(), 1);
         });
@@ -2528,10 +2652,10 @@ mod tests {
             )],
             || {
                 let mut shell = test_shell();
-                shell.env.insert("PATH".into(), "/search-path".into());
+                shell.env.insert(b"PATH".to_vec(), b"/search-path".to_vec());
                 assert_eq!(
-                    resolve_script_path(&shell, Path::new("cwd-script")),
-                    Some(PathBuf::from("cwd-script"))
+                    resolve_script_path(&shell, b"cwd-script"),
+                    Some(b"cwd-script".to_vec())
                 );
             },
         );
@@ -2557,10 +2681,10 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert("PATH".into(), "/search-path".into());
+                shell.env.insert(b"PATH".to_vec(), b"/search-path".to_vec());
                 assert_eq!(
-                    resolve_script_path(&shell, Path::new("path-script")),
-                    Some(PathBuf::from("/search-path/path-script"))
+                    resolve_script_path(&shell, b"path-script"),
+                    Some(b"/search-path/path-script".to_vec())
                 );
             },
         );
@@ -2575,12 +2699,12 @@ mod tests {
             ],
             || {
                 let classified = classify_script_read_error(
-                    Path::new("missing"),
+                    b"missing",
                     sys::SysError::Errno(sys::ENOENT),
                 );
                 assert_eq!(classified.exit_status(), 127);
                 let classified =
-                    classify_script_read_error(Path::new("bad"), sys::SysError::Errno(sys::EIO));
+                    classify_script_read_error(b"bad", sys::SysError::Errno(sys::EIO));
                 assert_eq!(classified.exit_status(), 128);
             },
         );
@@ -2600,10 +2724,10 @@ mod tests {
     fn shell_run_executes_command_string() {
         run_trace(vec![], || {
             let mut shell = test_shell();
-            shell.options.command_string = Some("VALUE=13".into());
+            shell.options.command_string = Some(b"VALUE=13"[..].into());
             let status = shell.run().expect("run command string");
             assert_eq!(status, 0);
-            assert_eq!(shell.get_var("VALUE"), Some("13"));
+            assert_eq!(shell.get_var(b"VALUE"), Some(b"13".as_slice()));
         });
     }
 
@@ -2624,7 +2748,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let error = shell.capture_output("true").expect_err("fork error");
+                let error = shell.capture_output(b"true").expect_err("fork error");
                 assert_ne!(error.exit_status(), 0);
             },
         );
@@ -2655,9 +2779,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.register_background_job("done".into(), None, vec![fake_handle(1001)]);
+                shell.register_background_job(b"done"[..].into(), None, vec![fake_handle(1001)]);
                 shell.reap_jobs();
-                shell.register_background_job("sleep".into(), None, vec![fake_handle(1002)]);
+                shell.register_background_job(b"sleep"[..].into(), None, vec![fake_handle(1002)]);
                 shell.print_jobs();
                 assert!(shell.jobs.is_empty());
             },
@@ -2693,7 +2817,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.register_background_job("sleep".into(), None, vec![fake_handle(1003)]);
+                shell.register_background_job(b"sleep"[..].into(), None, vec![fake_handle(1003)]);
                 shell.print_jobs();
                 if let Some(id) = shell.jobs.first().map(|job| job.id) {
                     let _ = shell.wait_for_job(id);
@@ -2707,38 +2831,38 @@ mod tests {
         run_trace(vec![], || {
             let mut shell = test_shell();
             shell
-                .execute_string("alias setok='export VALUE=ok'")
+                .execute_string(b"alias setok='export VALUE=ok'")
                 .expect("define alias");
-            let status = shell.execute_string("setok").expect("run alias");
+            let status = shell.execute_string(b"setok").expect("run alias");
             assert_eq!(status, 0);
-            assert_eq!(shell.get_var("VALUE"), Some("ok"));
+            assert_eq!(shell.get_var(b"VALUE"), Some(b"ok".as_slice()));
 
             let status = shell
-                .execute_string("alias same='export SAME=1'\nsame")
+                .execute_string(b"alias same='export SAME=1'\nsame")
                 .expect("run same-source alias");
             assert_eq!(status, 0);
-            assert_eq!(shell.get_var("SAME"), Some("1"));
+            assert_eq!(shell.get_var(b"SAME"), Some(b"1".as_slice()));
 
-            shell.aliases.insert("cond".into(), "if".into());
+            shell.aliases.insert(b"cond"[..].into(), b"if"[..].into());
             let status = shell
-                .execute_string("cond true; then export BRANCH=hit; fi")
+                .execute_string(b"cond true; then export BRANCH=hit; fi")
                 .expect("run reserved-word alias");
             assert_eq!(status, 0);
-            assert_eq!(shell.get_var("BRANCH"), Some("hit"));
+            assert_eq!(shell.get_var(b"BRANCH"), Some(b"hit".as_slice()));
 
             let status = shell
-                .execute_string("alias cond2='if'\ncond2 true; then export TOP=ok; fi")
+                .execute_string(b"alias cond2='if'\ncond2 true; then export TOP=ok; fi")
                 .expect("run same-source reserved alias");
             assert_eq!(status, 0);
-            assert_eq!(shell.get_var("TOP"), Some("ok"));
+            assert_eq!(shell.get_var(b"TOP"), Some(b"ok".as_slice()));
 
-            shell.aliases.insert("chain".into(), "eval ".into());
-            shell.aliases.insert("word".into(), "VALUE=chain".into());
+            shell.aliases.insert(b"chain"[..].into(), b"eval "[..].into());
+            shell.aliases.insert(b"word"[..].into(), b"VALUE=chain"[..].into());
             let status = shell
-                .execute_string("chain word")
+                .execute_string(b"chain word")
                 .expect("run blank alias chain");
             assert_eq!(status, 0);
-            assert_eq!(shell.get_var("VALUE"), Some("chain"));
+            assert_eq!(shell.get_var(b"VALUE"), Some(b"chain".as_slice()));
         });
     }
 
@@ -2762,7 +2886,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.register_background_job("done".into(), None, vec![fake_handle(1001)]);
+                shell.register_background_job(b"done"[..].into(), None, vec![fake_handle(1001)]);
                 shell.print_jobs();
                 assert!(shell.jobs.is_empty());
             },
@@ -2927,7 +3051,7 @@ mod tests {
                 let mut shell = test_shell();
                 assert_eq!(
                     shell
-                        .execute_trap_action("exit 9", 3)
+                        .execute_trap_action(b"exit 9", 3)
                         .expect("exit trap action"),
                     9
                 );
@@ -2938,7 +3062,7 @@ mod tests {
                 shell
                     .set_trap(
                         TrapCondition::Signal(sys::SIGINT),
-                        Some(TrapAction::Command(":".into())),
+                        Some(TrapAction::Command(b":"[..].into())),
                     )
                     .expect("trap");
                 sys::test_support::with_pending_signals_for_test(&[sys::SIGINT], || {
@@ -2949,7 +3073,7 @@ mod tests {
                 shell
                     .set_trap(
                         TrapCondition::Signal(sys::SIGINT),
-                        Some(TrapAction::Command("exit 7".into())),
+                        Some(TrapAction::Command(b"exit 7"[..].into())),
                     )
                     .expect("exit trap");
                 sys::test_support::with_pending_signals_for_test(&[sys::SIGINT], || {
@@ -2982,7 +3106,7 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 let id = shell.register_background_job(
-                    "sleep".into(),
+                    b"sleep"[..].into(),
                     Some(11),
                     vec![fake_handle(1001)],
                 );
@@ -3018,10 +3142,10 @@ mod tests {
                 shell
                     .set_trap(
                         TrapCondition::Signal(sys::SIGINT),
-                        Some(TrapAction::Command(":".into())),
+                        Some(TrapAction::Command(b":"[..].into())),
                     )
                     .expect("trap");
-                shell.register_background_job("sleep".into(), None, vec![fake_handle(2001)]);
+                shell.register_background_job(b"sleep"[..].into(), None, vec![fake_handle(2001)]);
                 assert_eq!(
                     shell.wait_for_job_operand(1).expect("interrupted wait"),
                     130
@@ -3102,7 +3226,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.register_background_job("sleep".into(), None, vec![fake_handle(2002)]);
+                shell.register_background_job(b"sleep"[..].into(), None, vec![fake_handle(2002)]);
                 assert!(shell.wait_for_job_operand(1).is_err());
                 assert!(shell.wait_for_child_blocking(99, true).is_err());
             },
@@ -3143,17 +3267,17 @@ mod tests {
                 shell
                     .set_trap(
                         TrapCondition::Signal(sys::SIGINT),
-                        Some(TrapAction::Command(":".into())),
+                        Some(TrapAction::Command(b":"[..].into())),
                     )
                     .expect("trap");
 
-                shell.register_background_job("sleep".into(), None, vec![fake_handle(2003)]);
+                shell.register_background_job(b"sleep"[..].into(), None, vec![fake_handle(2003)]);
                 assert_eq!(
                     shell.wait_for_pid_operand(2003).expect("pid interrupt"),
                     130
                 );
 
-                shell.register_background_job("sleep".into(), None, vec![fake_handle(2004)]);
+                shell.register_background_job(b"sleep"[..].into(), None, vec![fake_handle(2004)]);
                 assert!(shell.wait_for_pid_operand(2004).is_err());
             },
         );
@@ -3183,11 +3307,11 @@ mod tests {
                 shell
                     .set_trap(
                         TrapCondition::Signal(sys::SIGINT),
-                        Some(TrapAction::Command(":".into())),
+                        Some(TrapAction::Command(b":"[..].into())),
                     )
                     .expect("trap");
-                shell.register_background_job("sleep".into(), None, vec![fake_handle(2002)]);
-                shell.register_background_job("sleep".into(), None, vec![fake_handle(2005)]);
+                shell.register_background_job(b"sleep"[..].into(), None, vec![fake_handle(2002)]);
+                shell.register_background_job(b"sleep"[..].into(), None, vec![fake_handle(2005)]);
                 assert_eq!(shell.wait_for_all_jobs().expect("wait all status"), 130);
             },
         );
@@ -3208,7 +3332,7 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 let id =
-                    shell.register_background_job("sleep".into(), None, vec![fake_handle(3001)]);
+                    shell.register_background_job(b"sleep"[..].into(), None, vec![fake_handle(3001)]);
                 assert_eq!(shell.wait_for_job_operand(id).expect("first wait"), 42);
                 assert_eq!(shell.wait_for_job_operand(id).expect("second wait"), 127);
             },
@@ -3218,7 +3342,7 @@ mod tests {
     #[test]
     fn known_job_status_fast_path_avoids_syscalls() {
         let mut shell = test_shell();
-        let id = shell.register_background_job("sleep".into(), None, vec![fake_handle(2006)]);
+        let id = shell.register_background_job(b"sleep"[..].into(), None, vec![fake_handle(2006)]);
         if let Some(job) = shell.jobs.iter().find(|job| job.id == id) {
             if let Some(pid) = job.last_pid {
                 shell.known_pid_statuses.insert(pid, 1);
@@ -3234,24 +3358,24 @@ mod tests {
     fn parse_options_combined_c_with_other_flags() {
         run_trace(vec![t_stderr("meiksh: -c requires an argument")], || {
             let options = parse_options(&[
-                "meiksh".into(),
-                "-ac".into(),
-                "echo ok".into(),
-                "name".into(),
+                b"meiksh".to_vec(),
+                b"-ac".to_vec(),
+                b"echo ok".to_vec(),
+                b"name".to_vec(),
             ])
             .expect("parse -ac");
             assert!(options.allexport);
-            assert_eq!(options.command_string.as_deref(), Some("echo ok"));
-            assert_eq!(options.shell_name_override.as_deref(), Some("name"));
+            assert_eq!(options.command_string.as_deref(), Some(b"echo ok".as_slice()));
+            assert_eq!(options.shell_name_override.as_deref(), Some(b"name".as_slice()));
 
-            let options = parse_options(&["meiksh".into(), "-euc".into(), "echo ok".into()])
+            let options = parse_options(&[b"meiksh".to_vec(), b"-euc".to_vec(), b"echo ok".to_vec()])
                 .expect("parse -euc");
             assert!(options.errexit);
             assert!(options.nounset);
-            assert_eq!(options.command_string.as_deref(), Some("echo ok"));
+            assert_eq!(options.command_string.as_deref(), Some(b"echo ok".as_slice()));
 
             let error =
-                parse_options(&["meiksh".into(), "-ec".into()]).expect_err("missing -c arg");
+                parse_options(&[b"meiksh".to_vec(), b"-ec".to_vec()]).expect_err("missing -c arg");
             assert_eq!(error.exit_status(), 2);
         });
     }
@@ -3260,23 +3384,23 @@ mod tests {
     fn set_short_option_accepts_new_options() {
         assert_no_syscalls(|| {
             let mut opts = ShellOptions::default();
-            opts.set_short_option('e', true).expect("set -e");
+            opts.set_short_option(b'e', true).expect("set -e");
             assert!(opts.errexit);
-            opts.set_short_option('e', false).expect("set +e");
+            opts.set_short_option(b'e', false).expect("set +e");
             assert!(!opts.errexit);
 
-            opts.set_short_option('x', true).expect("set -x");
+            opts.set_short_option(b'x', true).expect("set -x");
             assert!(opts.xtrace);
-            opts.set_short_option('x', false).expect("set +x");
+            opts.set_short_option(b'x', false).expect("set +x");
             assert!(!opts.xtrace);
 
-            opts.set_short_option('b', true).expect("set -b");
+            opts.set_short_option(b'b', true).expect("set -b");
             assert!(opts.notify);
 
-            opts.set_short_option('h', true).expect("set -h");
+            opts.set_short_option(b'h', true).expect("set -h");
             assert!(opts.hashall);
 
-            opts.set_short_option('m', true).expect("set -m");
+            opts.set_short_option(b'm', true).expect("set -m");
         });
     }
 
@@ -3284,18 +3408,18 @@ mod tests {
     fn set_named_option_accepts_new_options() {
         assert_no_syscalls(|| {
             let mut opts = ShellOptions::default();
-            opts.set_named_option("errexit", true).expect("errexit");
+            opts.set_named_option(b"errexit", true).expect("errexit");
             assert!(opts.errexit);
-            opts.set_named_option("xtrace", true).expect("xtrace");
+            opts.set_named_option(b"xtrace", true).expect("xtrace");
             assert!(opts.xtrace);
-            opts.set_named_option("notify", true).expect("notify");
+            opts.set_named_option(b"notify", true).expect("notify");
             assert!(opts.notify);
-            opts.set_named_option("hashall", true).expect("hashall");
+            opts.set_named_option(b"hashall", true).expect("hashall");
             assert!(opts.hashall);
-            opts.set_named_option("monitor", true).expect("monitor");
-            opts.set_named_option("vi", true).expect("vi");
+            opts.set_named_option(b"monitor", true).expect("monitor");
+            opts.set_named_option(b"vi", true).expect("vi");
             assert!(opts.vi_mode);
-            opts.set_named_option("vi", false).expect("vi off");
+            opts.set_named_option(b"vi", false).expect("vi off");
             assert!(!opts.vi_mode);
         });
     }
@@ -3309,10 +3433,10 @@ mod tests {
             shell.options.notify = true;
             shell.options.hashall = true;
             let flags = shell.active_option_flags();
-            assert!(flags.contains('e'));
-            assert!(flags.contains('x'));
-            assert!(flags.contains('b'));
-            assert!(flags.contains('h'));
+            assert!(flags.contains(&b'e'));
+            assert!(flags.contains(&b'x'));
+            assert!(flags.contains(&b'b'));
+            assert!(flags.contains(&b'h'));
         });
     }
 
@@ -3332,11 +3456,11 @@ mod tests {
                 );
                 shell.trap_actions.insert(
                     TrapCondition::Signal(crate::sys::SIGTERM),
-                    TrapAction::Command("echo trapped".into()),
+                    TrapAction::Command(b"echo trapped"[..].into()),
                 );
                 shell
                     .trap_actions
-                    .insert(TrapCondition::Exit, TrapAction::Command("echo bye".into()));
+                    .insert(TrapCondition::Exit, TrapAction::Command(b"echo bye"[..].into()));
 
                 shell.reset_traps_for_subshell().expect("reset");
 
@@ -3360,15 +3484,15 @@ mod tests {
             opts.errexit = true;
             opts.xtrace = true;
             let reported = opts.reportable_options();
-            let names: Vec<&str> = reported.iter().map(|(n, _)| *n).collect();
-            assert!(names.contains(&"errexit"));
-            assert!(names.contains(&"xtrace"));
-            assert!(names.contains(&"notify"));
-            assert!(names.contains(&"hashall"));
-            assert!(names.contains(&"monitor"));
-            let errexit = reported.iter().find(|(n, _)| *n == "errexit").unwrap();
+            let names: Vec<&[u8]> = reported.iter().map(|(n, _)| *n).collect();
+            assert!(names.contains(&b"errexit".as_slice()));
+            assert!(names.contains(&b"xtrace".as_slice()));
+            assert!(names.contains(&b"notify".as_slice()));
+            assert!(names.contains(&b"hashall".as_slice()));
+            assert!(names.contains(&b"monitor".as_slice()));
+            let errexit = reported.iter().find(|(n, _)| *n == b"errexit").unwrap();
             assert!(errexit.1);
-            let xtrace = reported.iter().find(|(n, _)| *n == "xtrace").unwrap();
+            let xtrace = reported.iter().find(|(n, _)| *n == b"xtrace").unwrap();
             assert!(xtrace.1);
         });
     }
@@ -3392,37 +3516,31 @@ mod tests {
     fn run_standard_input_retries_read_on_eintr() {
         run_trace(
             vec![
-                // ensure_blocking_read_fd: isatty → not a tty
                 t(
                     "isatty",
                     vec![ArgMatcher::Fd(sys::STDIN_FILENO)],
                     TraceResult::Int(0),
                 ),
-                // ensure_blocking_read_fd: fstat → regular file (not FIFO)
                 t(
                     "fstat",
                     vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
                     TraceResult::StatFile(0o644),
                 ),
-                // first read: interrupted
                 t(
                     "read",
                     vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
                     TraceResult::Interrupt(sys::SIGINT),
                 ),
-                // retry: read ':'
                 t(
                     "read",
                     vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
                     TraceResult::Bytes(b":".to_vec()),
                 ),
-                // read newline
                 t(
                     "read",
                     vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
                     TraceResult::Bytes(b"\n".to_vec()),
                 ),
-                // read EOF
                 t(
                     "read",
                     vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
@@ -3491,11 +3609,11 @@ mod tests {
     fn maybe_run_stdin_source_parse_error() {
         run_trace(vec![t_stderr("meiksh: line 1: expected command")], || {
             let mut shell = test_shell();
-            let mut source = "if true\n".to_string();
+            let mut source = b"if true\n".to_vec();
             let result = shell.maybe_run_stdin_source(&mut source, false);
             assert!(result.expect("non-eof parse yields None").is_none());
 
-            let mut bad = ")\n".to_string();
+            let mut bad = b")\n".to_vec();
             let result = shell.maybe_run_stdin_source(&mut bad, true);
             assert!(result.is_err());
         });
@@ -3536,8 +3654,8 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let output = shell.capture_output(":").expect("capture");
-                assert_eq!(output, "data");
+                let output = shell.capture_output(b":").expect("capture");
+                assert_eq!(output, b"data");
             },
         );
     }
@@ -3551,7 +3669,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let result = crate::expand::Context::command_substitute(&mut shell, "true");
+                let result = crate::expand::Context::command_substitute(&mut shell, b"true");
                 assert!(result.is_err());
             },
         );
@@ -3599,7 +3717,7 @@ mod tests {
                 let mut shell = test_shell();
                 shell.interactive = true;
                 let id =
-                    shell.register_background_job("sleep 99".into(), None, vec![fake_handle(2001)]);
+                    shell.register_background_job(b"sleep 99"[..].into(), None, vec![fake_handle(2001)]);
                 let status = shell.wait_for_job(id).expect("wait stopped");
                 assert_eq!(status, 128 + 20);
                 let job = shell.jobs.iter().find(|j| j.id == id).expect("job exists");
@@ -3636,7 +3754,7 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 let id =
-                    shell.register_background_job("exit 0".into(), None, vec![fake_handle(2002)]);
+                    shell.register_background_job(b"exit 0"[..].into(), None, vec![fake_handle(2002)]);
                 let idx = shell.jobs.iter().position(|j| j.id == id).unwrap();
                 shell.jobs[idx].saved_termios = Some(termios);
                 let status = shell.wait_for_job(id).expect("wait with termios");
@@ -3659,7 +3777,7 @@ mod tests {
             )],
             || {
                 let mut shell = test_shell();
-                shell.register_background_job("sleep".into(), None, vec![fake_handle(3001)]);
+                shell.register_background_job(b"sleep"[..].into(), None, vec![fake_handle(3001)]);
                 let status = shell.wait_for_pid_operand(3001).expect("wait stopped pid");
                 assert_eq!(status, 128 + 20);
             },
@@ -3680,7 +3798,7 @@ mod tests {
             )],
             || {
                 let mut shell = test_shell();
-                shell.register_background_job("sleep".into(), None, vec![fake_handle(4001)]);
+                shell.register_background_job(b"sleep"[..].into(), None, vec![fake_handle(4001)]);
                 let status = shell
                     .wait_on_job_index(0, false)
                     .expect("wait stopped index");
@@ -3713,8 +3831,8 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert("PATH".into(), "/usr/bin".into());
-                let err = shell.load_script_source(Path::new("nonexistent-script"));
+                shell.env.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
+                let err = shell.load_script_source(b"nonexistent-script");
                 assert!(err.is_err());
                 let e = err.unwrap_err();
                 assert_eq!(e.exit_status(), 127);
@@ -3755,7 +3873,7 @@ mod tests {
             ],
             || {
                 let shell = test_shell();
-                let err = shell.load_script_source(Path::new("binary-script"));
+                let err = shell.load_script_source(b"binary-script");
                 assert!(err.is_err());
                 let e = err.unwrap_err();
                 assert_eq!(e.exit_status(), 126);
@@ -3805,7 +3923,7 @@ mod tests {
                 let mut shell = test_shell();
                 shell.jobs.push(Job {
                     id: 1,
-                    command: "sleep 99".into(),
+                    command: b"sleep 99"[..].into(),
                     children: vec![],
                     last_pid: None,
                     last_status: None,
@@ -3815,7 +3933,7 @@ mod tests {
                 });
                 shell.jobs.push(Job {
                     id: 2,
-                    command: "exit 0".into(),
+                    command: b"exit 0"[..].into(),
                     children: vec![],
                     last_pid: None,
                     last_status: None,
@@ -3825,7 +3943,7 @@ mod tests {
                 });
                 shell.jobs.push(Job {
                     id: 3,
-                    command: "sleep 300".into(),
+                    command: b"sleep 300"[..].into(),
                     children: vec![fake_handle(3001)],
                     last_pid: Some(3001),
                     last_status: None,
@@ -3843,11 +3961,11 @@ mod tests {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
             shell.options.monitor = true;
-            assert!(shell.active_option_flags().contains('m'));
+            assert!(shell.active_option_flags().contains(&b'm'));
             shell.options.monitor = false;
 
             shell.options.syntax_check_only = true;
-            assert!(shell.active_option_flags().contains('n'));
+            assert!(shell.active_option_flags().contains(&b'n'));
         });
     }
 
@@ -3857,23 +3975,23 @@ mod tests {
             vec![
                 t(
                     "access",
-                    vec![ArgMatcher::Str("missing".into()), ArgMatcher::Int(0)],
+                    vec![ArgMatcher::Str(b"missing".to_vec()), ArgMatcher::Int(0)],
                     TraceResult::Err(sys::ENOENT),
                 ),
                 t(
                     "getenv",
-                    vec![ArgMatcher::Str("PATH".into())],
-                    TraceResult::Str(":/nonexistent".into()),
+                    vec![ArgMatcher::Str(b"PATH".to_vec())],
+                    TraceResult::StrVal(b":/nonexistent".to_vec()),
                 ),
                 t(
                     "stat",
-                    vec![ArgMatcher::Str("./missing".into()), ArgMatcher::Any],
+                    vec![ArgMatcher::Str(b"./missing".to_vec()), ArgMatcher::Any],
                     TraceResult::Err(sys::ENOENT),
                 ),
                 t(
                     "stat",
                     vec![
-                        ArgMatcher::Str("/nonexistent/missing".into()),
+                        ArgMatcher::Str(b"/nonexistent/missing".to_vec()),
                         ArgMatcher::Any,
                     ],
                     TraceResult::Err(sys::ENOENT),
@@ -3881,7 +3999,7 @@ mod tests {
             ],
             || {
                 let shell = test_shell();
-                assert_eq!(resolve_script_path(&shell, Path::new("missing")), None);
+                assert_eq!(resolve_script_path(&shell, b"missing"), None);
             },
         );
     }
@@ -3892,7 +4010,7 @@ mod tests {
             let mut shell = test_shell();
             shell.source_depth = 1;
             let status = shell
-                .execute_string(":; return 5; :")
+                .execute_string(b":; return 5; :")
                 .expect("return from source");
             assert_eq!(status, 5);
             assert!(shell.pending_control.is_none());
@@ -3903,12 +4021,12 @@ mod tests {
     fn env_for_exec_utility_overlays_and_appends() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.env.insert("A".into(), "1".into());
-            shell.exported.insert("A".into());
+            shell.env.insert(b"A".to_vec(), b"1".to_vec());
+            shell.exported.insert(b"A".to_vec());
             let env =
-                shell.env_for_exec_utility(&[("A".into(), "2".into()), ("B".into(), "3".into())]);
-            assert!(env.iter().any(|(k, v)| k == "A" && v == "2"));
-            assert!(env.iter().any(|(k, v)| k == "B" && v == "3"));
+                shell.env_for_exec_utility(&[(b"A".to_vec(), b"2".to_vec()), (b"B".to_vec(), b"3".to_vec())]);
+            assert!(env.iter().any(|(k, v)| k == b"A" && v == b"2"));
+            assert!(env.iter().any(|(k, v)| k == b"B" && v == b"3"));
         });
     }
 
@@ -3916,16 +4034,16 @@ mod tests {
     fn from_args_constructs_shell_from_argv() {
         run_trace(vec![t("getpid", vec![], TraceResult::Pid(999))], || {
             let shell = Shell::from_args(&["meiksh", "-c", "echo hello"]).expect("from_args");
-            assert_eq!(&*shell.shell_name, "meiksh");
+            assert_eq!(&*shell.shell_name, b"meiksh");
         });
     }
 
     #[test]
-    fn shell_error_display_and_exit_status() {
+    fn shell_error_message_bytes_and_exit_status() {
         let err = ShellError::Status(42);
-        assert_eq!(format!("{err}"), "exit status 42");
+        assert_eq!(err.message_bytes(), b"exit status 42");
         assert_eq!(err.exit_status(), 42);
-        assert!(err.to_string().contains("42"));
+        assert!(err.message_bytes().windows(2).any(|w| w == b"42"));
     }
 
     #[test]
@@ -3942,7 +4060,7 @@ mod tests {
             )],
             || {
                 let mut shell = test_shell();
-                shell.register_background_job("sleep".into(), None, vec![fake_handle(5001)]);
+                shell.register_background_job(b"sleep"[..].into(), None, vec![fake_handle(5001)]);
                 let status = shell
                     .wait_on_job_index(0, false)
                     .expect("wait blocking exited");
@@ -3968,7 +4086,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.register_background_job("sleep".into(), None, vec![fake_handle(5002)]);
+                shell.register_background_job(b"sleep"[..].into(), None, vec![fake_handle(5002)]);
                 let result = shell.wait_on_job_index(0, false);
                 assert!(result.is_err());
             },
@@ -3989,7 +4107,7 @@ mod tests {
             )],
             || {
                 let mut shell = test_shell();
-                shell.register_background_job("sleep".into(), None, vec![fake_handle(5003)]);
+                shell.register_background_job(b"sleep"[..].into(), None, vec![fake_handle(5003)]);
                 let status = shell
                     .wait_on_job_index(0, true)
                     .expect("wait interruptible stopped");
@@ -4071,11 +4189,11 @@ mod tests {
             )],
             || {
                 let mut shell = test_shell();
-                shell.register_background_job("killed".into(), None, vec![fake_handle(4001)]);
+                shell.register_background_job(b"killed"[..].into(), None, vec![fake_handle(4001)]);
                 let finished = shell.reap_jobs();
                 assert_eq!(
                     finished,
-                    vec![(1, ReapedJobState::Signaled(9, "killed".into()))]
+                    vec![(1, ReapedJobState::Signaled(9, b"killed"[..].into()))]
                 );
                 assert!(shell.jobs.is_empty());
             },
@@ -4093,7 +4211,7 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 let id =
-                    shell.register_background_job("cont".into(), None, vec![fake_handle(4002)]);
+                    shell.register_background_job(b"cont"[..].into(), None, vec![fake_handle(4002)]);
                 shell.jobs[0].state = JobState::Stopped(sys::SIGTSTP);
                 let finished = shell.reap_jobs();
                 assert!(finished.is_empty());
@@ -4120,7 +4238,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.register_background_job("stopcont".into(), None, vec![fake_handle(4003)]);
+                shell.register_background_job(b"stopcont"[..].into(), None, vec![fake_handle(4003)]);
                 let finished = shell.reap_jobs();
                 assert!(finished.is_empty());
                 assert!(matches!(shell.jobs[0].state, JobState::Running));
@@ -4145,11 +4263,11 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.register_background_job("stopped".into(), None, vec![fake_handle(4005)]);
+                shell.register_background_job(b"stopped"[..].into(), None, vec![fake_handle(4005)]);
                 let finished = shell.reap_jobs();
                 assert_eq!(
                     finished,
-                    vec![(1, ReapedJobState::Stopped(sys::SIGTSTP, "stopped".into()))]
+                    vec![(1, ReapedJobState::Stopped(sys::SIGTSTP, b"stopped"[..].into()))]
                 );
                 assert!(matches!(
                     shell.jobs[0].state,
@@ -4169,11 +4287,11 @@ mod tests {
             )],
             || {
                 let mut shell = test_shell();
-                shell.register_background_job("termed".into(), None, vec![fake_handle(4004)]);
+                shell.register_background_job(b"termed"[..].into(), None, vec![fake_handle(4004)]);
                 let finished = shell.reap_jobs();
                 assert_eq!(
                     finished,
-                    vec![(1, ReapedJobState::Signaled(15, "termed".into()))]
+                    vec![(1, ReapedJobState::Signaled(15, b"termed"[..].into()))]
                 );
                 assert_eq!(*shell.known_pid_statuses.get(&4004).unwrap(), 128 + 15);
             },
@@ -4195,7 +4313,7 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 let id =
-                    shell.register_background_job("killed".into(), None, vec![fake_handle(5001)]);
+                    shell.register_background_job(b"killed"[..].into(), None, vec![fake_handle(5001)]);
                 let status = shell.wait_for_job(id).expect("wait signaled");
                 assert_eq!(status, 128 + 9);
                 assert!(shell.jobs.is_empty());
@@ -4219,7 +4337,7 @@ mod tests {
                 let mut shell = test_shell();
                 shell.known_pid_statuses.insert(5003, 0);
                 let id =
-                    shell.register_background_job("clean".into(), None, vec![fake_handle(5003)]);
+                    shell.register_background_job(b"clean"[..].into(), None, vec![fake_handle(5003)]);
                 let status = shell.wait_for_job(id).expect("wait");
                 assert_eq!(status, 42);
                 assert!(!shell.known_pid_statuses.contains_key(&5003));
@@ -4246,7 +4364,7 @@ mod tests {
                 let mut shell = test_shell();
                 shell.owns_terminal = true;
                 let id =
-                    shell.register_background_job("fg".into(), Some(6001), vec![fake_handle(6001)]);
+                    shell.register_background_job(b"fg"[..].into(), Some(6001), vec![fake_handle(6001)]);
                 shell.jobs[0].state = JobState::Stopped(sys::SIGTSTP);
                 shell.continue_job(id, true).expect("continue");
                 assert!(matches!(shell.jobs[0].state, JobState::Running));
@@ -4287,8 +4405,8 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.register_background_job("sig-job".into(), None, vec![fake_handle(7001)]);
-                shell.register_background_job("fail-job".into(), None, vec![fake_handle(7002)]);
+                shell.register_background_job(b"sig-job"[..].into(), None, vec![fake_handle(7001)]);
+                shell.register_background_job(b"fail-job"[..].into(), None, vec![fake_handle(7002)]);
                 shell.print_jobs();
             },
         );
@@ -4308,7 +4426,7 @@ mod tests {
             )],
             || {
                 let mut shell = test_shell();
-                shell.register_background_job("segv".into(), None, vec![fake_handle(8001)]);
+                shell.register_background_job(b"segv"[..].into(), None, vec![fake_handle(8001)]);
                 let status = shell.wait_on_job_index(0, false).expect("wait signaled");
                 assert_eq!(status, 128 + 11);
             },
@@ -4415,7 +4533,7 @@ mod tests {
                 shell.owns_terminal = true;
                 shell.pid = 100;
                 let id = shell.register_background_job(
-                    "killed".into(),
+                    b"killed"[..].into(),
                     Some(5010),
                     vec![fake_handle(5010)],
                 );
@@ -4446,20 +4564,19 @@ mod tests {
                     "write",
                     vec![
                         ArgMatcher::Fd(1),
-                        ArgMatcher::Bytes(
-                            format!(
-                                "[1] Stopped ({}) stopped-job\n",
-                                sys::signal_name(sys::SIGTSTP)
-                            )
-                            .into_bytes(),
-                        ),
+                        ArgMatcher::Bytes({
+                            let mut v = b"[1] Stopped (".to_vec();
+                            v.extend_from_slice(sys::signal_name(sys::SIGTSTP));
+                            v.extend_from_slice(b") stopped-job\n");
+                            v
+                        }),
                     ],
                     TraceResult::Auto,
                 ),
             ],
             || {
                 let mut shell = test_shell();
-                shell.register_background_job("stopped-job".into(), None, vec![fake_handle(7010)]);
+                shell.register_background_job(b"stopped-job"[..].into(), None, vec![fake_handle(7010)]);
                 shell.print_jobs();
             },
         );
@@ -4491,7 +4608,7 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 let id = shell.register_background_job(
-                    "multi".into(),
+                    b"multi"[..].into(),
                     None,
                     vec![fake_handle(5020), fake_handle(5021)],
                 );
@@ -4519,7 +4636,7 @@ mod tests {
             )],
             || {
                 let mut shell = test_shell();
-                shell.register_background_job("segv".into(), None, vec![fake_handle(8010)]);
+                shell.register_background_job(b"segv"[..].into(), None, vec![fake_handle(8010)]);
                 shell.known_pid_statuses.insert(8010, 0);
                 let status = shell.wait_on_job_index(0, false).expect("wait signaled");
                 assert_eq!(status, 128 + 11);
@@ -4565,7 +4682,7 @@ mod tests {
             let mut shell = test_shell();
             shell.options.syntax_check_only = true;
             let status = shell
-                .execute_string("echo this should not run; false")
+                .execute_string(b"echo this should not run; false")
                 .expect("syntax check");
             assert_eq!(status, 0);
         });
@@ -4574,18 +4691,18 @@ mod tests {
     #[test]
     fn add_history_skips_empty_and_respects_histsize() {
         let mut shell = test_shell();
-        shell.add_history("");
-        shell.add_history("   ");
+        shell.add_history(b"");
+        shell.add_history(b"   ");
         assert!(shell.history.is_empty());
 
-        shell.add_history("first");
+        shell.add_history(b"first");
         assert_eq!(shell.history.len(), 1);
 
-        shell.env.insert("HISTSIZE".into(), "2".into());
-        shell.add_history("second");
-        shell.add_history("third");
+        shell.env.insert(b"HISTSIZE".to_vec(), b"2".to_vec());
+        shell.add_history(b"second");
+        shell.add_history(b"third");
         assert_eq!(shell.history.len(), 2);
-        assert_eq!(&*shell.history[0], "second");
-        assert_eq!(&*shell.history[1], "third");
+        assert_eq!(&*shell.history[0], b"second".as_slice());
+        assert_eq!(&*shell.history[1], b"third".as_slice());
     }
 }
