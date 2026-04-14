@@ -193,12 +193,10 @@ pub fn expand_redirect_word<'a, C: Context>(
         }]
     };
 
-    Ok(arena.intern_vec(
-        bstr::join_bstrings(
-            &fields.into_iter().map(|f| f.text).collect::<Vec<_>>(),
-            b" ",
-        ),
-    ))
+    Ok(arena.intern_vec(bstr::join_bstrings(
+        &fields.into_iter().map(|f| f.text).collect::<Vec<_>>(),
+        b" ",
+    )))
 }
 
 fn expand_word_with_at_fields(
@@ -384,7 +382,10 @@ pub fn expand_parameter_text<'a, C: Context>(
     Ok(arena.intern_vec(expand_parameter_text_owned(ctx, raw)?))
 }
 
-fn expand_parameter_text_owned<C: Context>(ctx: &mut C, raw: &[u8]) -> Result<Vec<u8>, ExpandError> {
+fn expand_parameter_text_owned<C: Context>(
+    ctx: &mut C,
+    raw: &[u8],
+) -> Result<Vec<u8>, ExpandError> {
     let mut result = Vec::new();
     let mut index = 0usize;
 
@@ -617,11 +618,7 @@ fn expand_raw<C: Context>(ctx: &mut C, raw: &[u8]) -> Result<ExpandedWord, Expan
                 index += 1;
             }
             _ => {
-                push_segment_slice(
-                    &mut segments,
-                    &raw[index..index + 1],
-                    QuoteState::Literal,
-                );
+                push_segment_slice(&mut segments, &raw[index..index + 1], QuoteState::Literal);
                 index += 1;
             }
         }
@@ -1156,7 +1153,12 @@ fn expand_braced_parameter<C: Context>(
     let is_set = value.is_some();
     let is_null = value.as_deref().map(|s| s.is_empty()).unwrap_or(true);
 
-    let value_owned = || value.as_ref().map(|c| c.clone().into_owned()).unwrap_or_default();
+    let value_owned = || {
+        value
+            .as_ref()
+            .map(|c| c.clone().into_owned())
+            .unwrap_or_default()
+    };
     if op.is_none() {
         return Ok(Expansion::One(require_set_parameter(ctx, name, value)?));
     }
@@ -1278,7 +1280,12 @@ fn expand_braced_parameter_text<C: Context>(
     let is_set = value.is_some();
     let is_null = value.as_deref().map(|s| s.is_empty()).unwrap_or(true);
 
-    let value_owned = || value.as_ref().map(|c| c.clone().into_owned()).unwrap_or_default();
+    let value_owned = || {
+        value
+            .as_ref()
+            .map(|c| c.clone().into_owned())
+            .unwrap_or_default()
+    };
     if op.is_none() {
         return require_set_parameter(ctx, name, value);
     }
@@ -1493,9 +1500,7 @@ fn parse_parameter_expression(
         index = 1;
         &expr[..index]
     } else if b0 == b'_' || b0.is_ascii_alphabetic() {
-        while index < expr.len()
-            && (expr[index] == b'_' || expr[index].is_ascii_alphanumeric())
-        {
+        while index < expr.len() && (expr[index] == b'_' || expr[index].is_ascii_alphanumeric()) {
             index += 1;
         }
         &expr[..index]
@@ -1537,13 +1542,7 @@ fn lookup_param<'a, C: Context>(ctx: &'a C, name: &[u8]) -> Option<Cow<'a, [u8]>
     }
     if !name.is_empty() && name.iter().all(|b| b.is_ascii_digit()) {
         return bstr::parse_i64(name)
-            .and_then(|n| {
-                if n >= 0 {
-                    Some(n as usize)
-                } else {
-                    None
-                }
-            })
+            .and_then(|n| if n >= 0 { Some(n as usize) } else { None })
             .and_then(|index| ctx.positional_param(index));
     }
     if name.len() == 1 {
@@ -1786,7 +1785,11 @@ fn expand_pathname(pattern: &[u8]) -> Vec<Vec<u8>> {
         .split(|&b| b == b'/')
         .filter(|segment| !segment.is_empty())
         .collect();
-    let base: Vec<u8> = if absolute { b"/".to_vec() } else { b".".to_vec() };
+    let base: Vec<u8> = if absolute {
+        b"/".to_vec()
+    } else {
+        b".".to_vec()
+    };
     let mut matches = Vec::new();
     expand_path_segments(&base, &segments, 0, absolute, &mut matches);
     matches.sort();
@@ -1810,11 +1813,7 @@ fn expand_path_segments(
                 base.to_vec()
             }
         };
-        matches.push(if text.is_empty() {
-            b".".to_vec()
-        } else {
-            text
-        });
+        matches.push(if text.is_empty() { b".".to_vec() } else { text });
         return;
     }
 
@@ -1875,9 +1874,7 @@ fn pattern_matches_inner(text: &[u8], ti: usize, pattern: &[u8], pi: usize) -> b
             }
             false
         }
-        b'?' => {
-            ti < text.len() && pattern_matches_inner(text, ti + 1, pattern, pi + 1)
-        }
+        b'?' => ti < text.len() && pattern_matches_inner(text, ti + 1, pattern, pi + 1),
         b'[' => {
             let tc = if ti < text.len() {
                 Some(text[ti])
@@ -1966,10 +1963,7 @@ fn match_bracket(current: Option<u8>, pattern: &[u8], start: usize) -> Option<(b
         } else {
             pc
         };
-        if index + 2 < pattern.len()
-            && pattern[index + 1] == b'-'
-            && pattern[index + 2] != b']'
-        {
+        if index + 2 < pattern.len() && pattern[index + 1] == b'-' && pattern[index + 2] != b']' {
             let last = pattern[index + 2];
             matched |= first <= current && current <= last;
             index += 3;
@@ -1994,7 +1988,9 @@ fn is_name(name: &[u8]) -> bool {
     if !first.is_ascii_alphabetic() && first != b'_' {
         return false;
     }
-    name[1..].iter().all(|&b| b == b'_' || b.is_ascii_alphanumeric())
+    name[1..]
+        .iter()
+        .all(|&b| b == b'_' || b.is_ascii_alphanumeric())
 }
 
 fn expand_arithmetic_expression<C: Context>(
@@ -2106,7 +2102,17 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
     fn try_consume_assign_op(&mut self) -> Option<Vec<u8>> {
         let remaining = &self.source[self.index..];
         for op in &[
-            b"<<=".as_ref(), b">>=", b"&=", b"^=", b"|=", b"*=", b"/=", b"%=", b"+=", b"-=", b"=",
+            b"<<=".as_ref(),
+            b">>=",
+            b"&=",
+            b"^=",
+            b"|=",
+            b"*=",
+            b"/=",
+            b"%=",
+            b"+=",
+            b"-=",
+            b"=",
         ] {
             if remaining.starts_with(op) {
                 if *op == b"=" && remaining.starts_with(b"==") {
@@ -2386,8 +2392,7 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
             if self.peek() == Some(b'x') || self.peek() == Some(b'X') {
                 self.index += 1;
                 let hex_start = self.index;
-                while self.index < self.source.len()
-                    && self.source[self.index].is_ascii_hexdigit()
+                while self.index < self.source.len() && self.source[self.index].is_ascii_hexdigit()
                 {
                     self.index += 1;
                 }
@@ -2398,9 +2403,7 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
                     .ok_or_else(|| self.error_at_current(b"invalid hex constant"));
             }
             if self.peek().map_or(false, |c| c.is_ascii_digit()) {
-                while self.index < self.source.len()
-                    && self.source[self.index].is_ascii_digit()
-                {
+                while self.index < self.source.len() && self.source[self.index].is_ascii_digit() {
                     self.index += 1;
                 }
                 return bstr::parse_octal_i64(&self.source[start + 1..self.index])
@@ -2409,8 +2412,7 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
             return Ok(0);
         }
 
-        while self.index < self.source.len() && self.source[self.index].is_ascii_digit()
-        {
+        while self.index < self.source.len() && self.source[self.index].is_ascii_digit() {
             self.index += 1;
         }
         if start == self.index {
@@ -2459,24 +2461,19 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
         err_msg.extend_from_slice(name);
         err_msg.push(b'\'');
         if trimmed.starts_with(b"0x") || trimmed.starts_with(b"0X") {
-            bstr::parse_hex_i64(&trimmed[2..])
-                .ok_or_else(|| self.error_at_current(&err_msg))
+            bstr::parse_hex_i64(&trimmed[2..]).ok_or_else(|| self.error_at_current(&err_msg))
         } else if trimmed.starts_with(b"0")
             && trimmed.len() > 1
             && trimmed[1..].iter().all(|b| b.is_ascii_digit())
         {
-            bstr::parse_octal_i64(&trimmed[1..])
-                .ok_or_else(|| self.error_at_current(&err_msg))
+            bstr::parse_octal_i64(&trimmed[1..]).ok_or_else(|| self.error_at_current(&err_msg))
         } else {
-            bstr::parse_i64(&trimmed)
-                .ok_or_else(|| self.error_at_current(&err_msg))
+            bstr::parse_i64(&trimmed).ok_or_else(|| self.error_at_current(&err_msg))
         }
     }
 
     fn skip_ws(&mut self) {
-        while self.index < self.source.len()
-            && self.source[self.index].is_ascii_whitespace()
-        {
+        while self.index < self.source.len() && self.source[self.index].is_ascii_whitespace() {
             self.index += 1;
         }
     }
@@ -2862,8 +2859,8 @@ mod tests {
         expected.push(0x0b); // \v
         expected.push(0x01); // \cA
         expected.push(0x1c); // \c\\
-        expected.push(b'A');  // \x41
-        expected.push(b'A');  // \101
+        expected.push(b'A'); // \x41
+        expected.push(b'A'); // \101
         expected.push(b'Z');
         assert_eq!(value, expected);
 
@@ -2892,11 +2889,7 @@ mod tests {
     fn rejects_bad_arithmetic() {
         let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        for raw in [
-            b"$((1 / 0))".as_ref(),
-            b"$((1 + ))",
-            b"$((1 1))",
-        ] {
+        for raw in [b"$((1 / 0))".as_ref(), b"$((1 + ))", b"$((1 1))"] {
             let error = expand_word(
                 &mut ctx,
                 &Word {
@@ -3083,7 +3076,10 @@ mod tests {
             .expect("expand"),
             vec![b"value".as_ref()]
         );
-        assert_eq!(ctx.env.get(b"NEW".as_ref()).map(|v| v.as_slice()), Some(b"value".as_ref()));
+        assert_eq!(
+            ctx.env.get(b"NEW".as_ref()).map(|v| v.as_slice()),
+            Some(b"value".as_ref())
+        );
         assert_eq!(
             expand_word(
                 &mut ctx,
@@ -3321,8 +3317,14 @@ mod tests {
     fn helper_paths_cover_remaining_branches() {
         let ctx = FakeContext::new();
         assert_eq!(lookup_param(&ctx, b"?").as_deref(), Some(b"0".as_ref()));
-        assert_eq!(lookup_param(&ctx, b"0").as_deref(), Some(b"meiksh".as_ref()));
-        assert_eq!(lookup_param(&ctx, b"X").as_deref(), Some(b"fallback".as_ref()));
+        assert_eq!(
+            lookup_param(&ctx, b"0").as_deref(),
+            Some(b"meiksh".as_ref())
+        );
+        assert_eq!(
+            lookup_param(&ctx, b"X").as_deref(),
+            Some(b"fallback".as_ref())
+        );
         assert_eq!(lookup_param(&ctx, b"99"), None);
         assert_eq!(
             ctx.positional_params(),
@@ -3616,12 +3618,18 @@ mod tests {
             expand_braced_parameter_text(&mut ctx, b"UNSET:=value").expect("assign unset"),
             b"value"
         );
-        assert_eq!(ctx.env.get(b"UNSET".as_ref()).map(|v| v.as_slice()), Some(b"value".as_ref()));
+        assert_eq!(
+            ctx.env.get(b"UNSET".as_ref()).map(|v| v.as_slice()),
+            Some(b"value".as_ref())
+        );
         assert_eq!(
             expand_braced_parameter_text(&mut ctx, b"MISSING3=value").expect("assign equals unset"),
             b"value"
         );
-        assert_eq!(ctx.env.get(b"MISSING3".as_ref()).map(|v| v.as_slice()), Some(b"value".as_ref()));
+        assert_eq!(
+            ctx.env.get(b"MISSING3".as_ref()).map(|v| v.as_slice()),
+            Some(b"value".as_ref())
+        );
         assert_eq!(
             expand_braced_parameter_text(&mut ctx, b"HOME=value").expect("assign set"),
             b"/tmp/home"
@@ -3630,8 +3638,8 @@ mod tests {
 
         let err = expand_braced_parameter_text(&mut ctx, b"MISSING4?").expect_err("? no word");
         assert_eq!(&*err.message, b"MISSING4: parameter not set".as_ref());
-        let text =
-            expand_parameter_error_text(&mut ctx, b"X", Some(b""), b"my default").expect("empty word");
+        let text = expand_parameter_error_text(&mut ctx, b"X", Some(b""), b"my default")
+            .expect("empty word");
         assert_eq!(text, b"X: my default");
     }
 
@@ -3669,10 +3677,16 @@ mod tests {
         assert_eq!(&*question.message, b"boom".as_ref());
         let colon_default =
             expand_braced_parameter_text(&mut ctx, b"EMPTY:?").expect_err("colon default");
-        assert_eq!(&*colon_default.message, b"EMPTY: parameter null or not set".as_ref());
+        assert_eq!(
+            &*colon_default.message,
+            b"EMPTY: parameter null or not set".as_ref()
+        );
         let question_default =
             expand_braced_parameter_text(&mut ctx, b"MISSING?").expect_err("question default");
-        assert_eq!(&*question_default.message, b"MISSING: parameter not set".as_ref());
+        assert_eq!(
+            &*question_default.message,
+            b"MISSING: parameter not set".as_ref()
+        );
     }
 
     #[test]
@@ -3742,7 +3756,10 @@ mod tests {
             expand_braced_parameter(&mut ctx, b"MISSING=value", false).expect("assign unset"),
             Expansion::One(b"value".to_vec())
         );
-        assert_eq!(ctx.env.get(b"MISSING".as_ref()).map(|v| v.as_slice()), Some(b"value".as_ref()));
+        assert_eq!(
+            ctx.env.get(b"MISSING".as_ref()).map(|v| v.as_slice()),
+            Some(b"value".as_ref())
+        );
         assert_eq!(
             expand_braced_parameter(&mut ctx, b"USER=value", false).expect("assign set"),
             Expansion::One(b"meiksh".to_vec())
@@ -3760,7 +3777,10 @@ mod tests {
         );
 
         let error = assign_parameter(&mut ctx, b"1", b"value", false).expect_err("invalid assign");
-        assert_eq!(&*error.message, b"1: cannot assign in parameter expansion".as_ref());
+        assert_eq!(
+            &*error.message,
+            b"1: cannot assign in parameter expansion".as_ref()
+        );
 
         let parsed = parse_parameter_expression(b"@").expect("special name");
         assert_eq!(parsed, (b"@".as_ref(), None, None));
@@ -3771,9 +3791,23 @@ mod tests {
         let error = parse_parameter_expression(b"%oops").expect_err("invalid expr");
         assert_eq!(&*error.message, b"invalid parameter expansion".as_ref());
         let parsed = parse_parameter_expression(b"USER%%tail").expect("largest suffix");
-        assert_eq!(parsed, (b"USER".as_ref(), Some(b"%%".as_ref()), Some(b"tail".as_ref())));
+        assert_eq!(
+            parsed,
+            (
+                b"USER".as_ref(),
+                Some(b"%%".as_ref()),
+                Some(b"tail".as_ref())
+            )
+        );
         let parsed = parse_parameter_expression(b"USER/tail").expect("unknown operator");
-        assert_eq!(parsed, (b"USER".as_ref(), Some(b"/".as_ref()), Some(b"tail".as_ref())));
+        assert_eq!(
+            parsed,
+            (
+                b"USER".as_ref(),
+                Some(b"/".as_ref()),
+                Some(b"tail".as_ref())
+            )
+        );
 
         let error =
             expand_braced_parameter(&mut ctx, b"USER/tail", false).expect_err("unsupported expr");
@@ -3906,8 +3940,10 @@ mod tests {
     fn supports_pattern_removal_parameter_expansions() {
         let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        ctx.env.insert(b"PATHNAME".to_vec(), b"src/bin/main.rs".to_vec());
-        ctx.env.insert(b"DOTTED".to_vec(), b"alpha.beta.gamma".to_vec());
+        ctx.env
+            .insert(b"PATHNAME".to_vec(), b"src/bin/main.rs".to_vec());
+        ctx.env
+            .insert(b"DOTTED".to_vec(), b"alpha.beta.gamma".to_vec());
 
         assert_eq!(
             expand_word(
@@ -4058,7 +4094,10 @@ mod tests {
     #[test]
     fn arithmetic_parser_covers_more_operators() {
         let mut ctx = FakeContext::new();
-        assert_eq!(eval_arithmetic(&mut ctx, b"9 - 2 - 1").expect("subtract"), 6);
+        assert_eq!(
+            eval_arithmetic(&mut ctx, b"9 - 2 - 1").expect("subtract"),
+            6
+        );
         assert_eq!(eval_arithmetic(&mut ctx, b"8 / 2").expect("divide"), 4);
         assert_eq!(eval_arithmetic(&mut ctx, b"9 % 4").expect("modulo"), 1);
         assert_eq!(eval_arithmetic(&mut ctx, b"(1 + 2)").expect("parens"), 3);
@@ -4139,7 +4178,8 @@ mod tests {
             .expect("expand heredoc");
         assert_eq!(escaped, b"$USER\nlinecontinued\n");
 
-        let trailing = expand_here_document(&mut ctx, b"keep\\", 0, &arena).expect("expand heredoc");
+        let trailing =
+            expand_here_document(&mut ctx, b"keep\\", 0, &arena).expect("expand heredoc");
         assert_eq!(trailing, b"keep\\");
 
         let literal = expand_here_document(&mut ctx, b"\\x", 0, &arena).expect("expand heredoc");
@@ -4758,7 +4798,10 @@ mod tests {
 
     #[test]
     fn flatten_expansion_covers_at_fields() {
-        assert_eq!(flatten_expansion(Expansion::One(b"hello".to_vec())), b"hello");
+        assert_eq!(
+            flatten_expansion(Expansion::One(b"hello".to_vec())),
+            b"hello"
+        );
         assert_eq!(
             flatten_expansion(Expansion::AtFields(vec![b"a".to_vec(), b"b".to_vec()])),
             b"a b"
@@ -4951,7 +4994,10 @@ mod tests {
             &arena,
         )
         .expect_err(":? with unset");
-        assert_eq!(&*err_colon.message, b"NOVAR: parameter null or not set".as_ref());
+        assert_eq!(
+            &*err_colon.message,
+            b"NOVAR: parameter null or not set".as_ref()
+        );
     }
 
     #[test]
@@ -5142,37 +5188,246 @@ mod tests {
     fn arith_comparison_operators() {
         let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((3 < 5))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"1".as_ref()]);
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((5 < 3))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"0".as_ref()]);
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((3 <= 3))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"1".as_ref()]);
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((5 > 3))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"1".as_ref()]);
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((3 >= 5))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"0".as_ref()]);
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((3 == 3))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"1".as_ref()]);
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((3 != 5))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"1".as_ref()]);
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((3 < 5))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"1".as_ref()]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((5 < 3))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"0".as_ref()]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((3 <= 3))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"1".as_ref()]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((5 > 3))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"1".as_ref()]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((3 >= 5))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"0".as_ref()]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((3 == 3))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"1".as_ref()]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((3 != 5))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"1".as_ref()]
+        );
     }
 
     #[test]
     fn arith_bitwise_operators() {
         let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((6 & 3))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"2".as_ref()]);
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((6 | 3))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"7".as_ref()]);
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((6 ^ 3))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"5".as_ref()]);
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((~0))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"-1".as_ref()]);
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((1 << 4))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"16".as_ref()]);
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((16 >> 2))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"4".as_ref()]);
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((6 & 3))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"2".as_ref()]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((6 | 3))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"7".as_ref()]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((6 ^ 3))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"5".as_ref()]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((~0))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"-1".as_ref()]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((1 << 4))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"16".as_ref()]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((16 >> 2))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"4".as_ref()]
+        );
     }
 
     #[test]
     fn arith_logical_operators() {
         let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((1 && 1))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"1".as_ref()]);
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((1 && 0))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"0".as_ref()]);
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((0 || 1))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"1".as_ref()]);
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((0 || 0))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"0".as_ref()]);
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((!0))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"1".as_ref()]);
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((!5))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"0".as_ref()]);
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((1 && 1))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"1".as_ref()]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((1 && 0))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"0".as_ref()]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((0 || 1))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"1".as_ref()]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((0 || 0))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"0".as_ref()]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((!0))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"1".as_ref()]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((!5))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"0".as_ref()]
+        );
     }
 
     #[test]
@@ -5180,7 +5435,15 @@ mod tests {
         let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert(b"x".to_vec(), b"0".to_vec());
-        expand_word(&mut ctx, &Word { raw: b"$((0 && (x = 5)))".as_ref().into(), line: 0 }, &arena).unwrap();
+        expand_word(
+            &mut ctx,
+            &Word {
+                raw: b"$((0 && (x = 5)))".as_ref().into(),
+                line: 0,
+            },
+            &arena,
+        )
+        .unwrap();
         assert_eq!(ctx.env.get(b"x".as_ref()).unwrap(), b"0");
     }
 
@@ -5189,7 +5452,15 @@ mod tests {
         let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert(b"x".to_vec(), b"0".to_vec());
-        expand_word(&mut ctx, &Word { raw: b"$((1 || (x = 5)))".as_ref().into(), line: 0 }, &arena).unwrap();
+        expand_word(
+            &mut ctx,
+            &Word {
+                raw: b"$((1 || (x = 5)))".as_ref().into(),
+                line: 0,
+            },
+            &arena,
+        )
+        .unwrap();
         assert_eq!(ctx.env.get(b"x".as_ref()).unwrap(), b"0");
     }
 
@@ -5198,7 +5469,15 @@ mod tests {
         let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert(b"x".to_vec(), b"0".to_vec());
-        expand_word(&mut ctx, &Word { raw: b"$((1 ? 10 : (x = 99)))".as_ref().into(), line: 0 }, &arena).unwrap();
+        expand_word(
+            &mut ctx,
+            &Word {
+                raw: b"$((1 ? 10 : (x = 99)))".as_ref().into(),
+                line: 0,
+            },
+            &arena,
+        )
+        .unwrap();
         assert_eq!(ctx.env.get(b"x".as_ref()).unwrap(), b"0");
     }
 
@@ -5206,8 +5485,30 @@ mod tests {
     fn arith_ternary_operator() {
         let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((1 ? 10 : 20))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"10".as_ref()]);
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((0 ? 10 : 20))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"20".as_ref()]);
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((1 ? 10 : 20))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"10".as_ref()]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((0 ? 10 : 20))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"20".as_ref()]
+        );
     }
 
     #[test]
@@ -5215,57 +5516,266 @@ mod tests {
         let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert(b"x".to_vec(), b"10".to_vec());
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((x = 5))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"5".as_ref()]);
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((x = 5))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"5".as_ref()]
+        );
         assert_eq!(ctx.env.get(b"x".as_ref()).unwrap(), b"5");
 
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((x += 3))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"8".as_ref()]);
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((x += 3))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"8".as_ref()]
+        );
         assert_eq!(ctx.env.get(b"x".as_ref()).unwrap(), b"8");
 
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((x -= 2))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"6".as_ref()]);
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((x *= 3))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"18".as_ref()]);
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((x /= 6))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"3".as_ref()]);
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((x %= 2))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"1".as_ref()]);
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((x -= 2))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"6".as_ref()]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((x *= 3))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"18".as_ref()]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((x /= 6))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"3".as_ref()]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((x %= 2))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"1".as_ref()]
+        );
 
         ctx.env.insert(b"x".to_vec(), b"4".to_vec());
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((x <<= 2))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"16".as_ref()]);
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((x >>= 1))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"8".as_ref()]);
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((x &= 3))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"0".as_ref()]);
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((x <<= 2))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"16".as_ref()]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((x >>= 1))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"8".as_ref()]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((x &= 3))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"0".as_ref()]
+        );
 
         ctx.env.insert(b"x".to_vec(), b"5".to_vec());
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((x |= 2))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"7".as_ref()]);
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((x ^= 3))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"4".as_ref()]);
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((x |= 2))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"7".as_ref()]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((x ^= 3))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"4".as_ref()]
+        );
     }
 
     #[test]
     fn arith_hex_and_octal_constants() {
         let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((0xff))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"255".as_ref()]);
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((0X1A))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"26".as_ref()]);
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((010))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"8".as_ref()]);
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((0))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"0".as_ref()]);
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((0xff))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"255".as_ref()]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((0X1A))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"26".as_ref()]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((010))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"8".as_ref()]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((0))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"0".as_ref()]
+        );
     }
 
     #[test]
     fn arith_unary_plus() {
         let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((+5))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"5".as_ref()]);
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((+5))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"5".as_ref()]
+        );
     }
 
     #[test]
     fn arith_unset_variable_is_zero() {
         let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((nosuch))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"0".as_ref()]);
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((nosuch))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"0".as_ref()]
+        );
     }
 
     #[test]
     fn arith_nested_parens_and_precedence() {
         let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((2 + 3 * 4))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"14".as_ref()]);
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$(((2 + 3) * 4))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"20".as_ref()]);
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((2 + 3 * 4))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"14".as_ref()]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$(((2 + 3) * 4))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"20".as_ref()]
+        );
     }
 
     #[test]
@@ -5273,7 +5783,18 @@ mod tests {
         let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert(b"h".to_vec(), b"0xff".to_vec());
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((h))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"255".as_ref()]);
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((h))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"255".as_ref()]
+        );
     }
 
     #[test]
@@ -5281,7 +5802,18 @@ mod tests {
         let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert(b"o".to_vec(), b"010".to_vec());
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((o))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"8".as_ref()]);
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((o))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"8".as_ref()]
+        );
     }
 
     #[test]
@@ -5359,7 +5891,18 @@ mod tests {
     fn arith_not_equal_via_parse_unary() {
         let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((3 != 3))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"0".as_ref()]);
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((3 != 3))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"0".as_ref()]
+        );
     }
 
     #[test]
@@ -5367,11 +5910,27 @@ mod tests {
         let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert(b"x".to_vec(), b"5".to_vec());
-        let err = expand_word(&mut ctx, &Word { raw: b"$((x /= 0))".as_ref().into(), line: 0 }, &arena).unwrap_err();
+        let err = expand_word(
+            &mut ctx,
+            &Word {
+                raw: b"$((x /= 0))".as_ref().into(),
+                line: 0,
+            },
+            &arena,
+        )
+        .unwrap_err();
         assert_eq!(&*err.message, b"division by zero".as_ref());
 
         ctx.env.insert(b"x".to_vec(), b"5".to_vec());
-        let err = expand_word(&mut ctx, &Word { raw: b"$((x %= 0))".as_ref().into(), line: 0 }, &arena).unwrap_err();
+        let err = expand_word(
+            &mut ctx,
+            &Word {
+                raw: b"$((x %= 0))".as_ref().into(),
+                line: 0,
+            },
+            &arena,
+        )
+        .unwrap_err();
         assert_eq!(&*err.message, b"division by zero".as_ref());
     }
 
@@ -5396,15 +5955,45 @@ mod tests {
         let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert(b"x".to_vec(), b"5".to_vec());
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((x == 5))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"1".as_ref()]);
-        assert_eq!(expand_word(&mut ctx, &Word { raw: b"$((x == 3))".as_ref().into(), line: 0 }, &arena).unwrap(), vec![b"0".as_ref()]);
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((x == 5))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"1".as_ref()]
+        );
+        assert_eq!(
+            expand_word(
+                &mut ctx,
+                &Word {
+                    raw: b"$((x == 3))".as_ref().into(),
+                    line: 0
+                },
+                &arena
+            )
+            .unwrap(),
+            vec![b"0".as_ref()]
+        );
     }
 
     #[test]
     fn arith_ternary_missing_colon_error() {
         let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        let err = expand_word(&mut ctx, &Word { raw: b"$((1 ? 2 3))".as_ref().into(), line: 0 }, &arena).unwrap_err();
+        let err = expand_word(
+            &mut ctx,
+            &Word {
+                raw: b"$((1 ? 2 3))".as_ref().into(),
+                line: 0,
+            },
+            &arena,
+        )
+        .unwrap_err();
         assert!(err.message.windows(3).any(|w| w == b"':'"));
     }
 
@@ -5412,7 +6001,15 @@ mod tests {
     fn arith_invalid_hex_constant() {
         let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        let err = expand_word(&mut ctx, &Word { raw: b"$((0x))".as_ref().into(), line: 0 }, &arena).unwrap_err();
+        let err = expand_word(
+            &mut ctx,
+            &Word {
+                raw: b"$((0x))".as_ref().into(),
+                line: 0,
+            },
+            &arena,
+        )
+        .unwrap_err();
         assert!(err.message.windows(3).any(|w| w == b"hex"));
     }
 
@@ -5478,7 +6075,10 @@ mod tests {
             let mut ctx = FakeContext::new();
             ctx.positional = vec![b"x".to_vec(), b"y".to_vec()];
             let result = expand_parameter_word_as_expansion(&mut ctx, b"\"$@\"", false).unwrap();
-            assert_eq!(result, Expansion::AtFields(vec![b"x".to_vec(), b"y".to_vec()]));
+            assert_eq!(
+                result,
+                Expansion::AtFields(vec![b"x".to_vec(), b"y".to_vec()])
+            );
         });
     }
 
@@ -5578,8 +6178,14 @@ mod tests {
     #[test]
     fn fake_context_special_param_star_and_at() {
         let ctx = FakeContext::new();
-        assert_eq!(ctx.special_param(b'*').as_deref(), Some(b"alpha beta".as_ref()));
-        assert_eq!(ctx.special_param(b'@').as_deref(), Some(b"alpha beta".as_ref()));
+        assert_eq!(
+            ctx.special_param(b'*').as_deref(),
+            Some(b"alpha beta".as_ref())
+        );
+        assert_eq!(
+            ctx.special_param(b'@').as_deref(),
+            Some(b"alpha beta".as_ref())
+        );
     }
 
     #[test]
@@ -5710,5 +6316,41 @@ mod tests {
             &arena,
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_variable_base_escape_hex_digit_conversion() {
+        assert_eq!(parse_variable_base_escape(b"4F", 16, 2), (0x4F, 2));
+        assert_eq!(parse_variable_base_escape(b"ff", 16, 2), (0xff, 2));
+        assert_eq!(parse_variable_base_escape(b"a0", 16, 2), (0xa0, 2));
+        assert_eq!(parse_variable_base_escape(b"A0", 16, 2), (0xA0, 2));
+        assert_eq!(parse_variable_base_escape(b"00", 16, 2), (0x00, 2));
+    }
+
+    #[test]
+    fn is_digit_for_base_covers_all_branches() {
+        assert!(is_digit_for_base(b'0', 10));
+        assert!(is_digit_for_base(b'9', 10));
+        assert!(!is_digit_for_base(b'a', 10));
+        assert!(is_digit_for_base(b'a', 16));
+        assert!(is_digit_for_base(b'f', 16));
+        assert!(!is_digit_for_base(b'g', 16));
+        assert!(is_digit_for_base(b'A', 16));
+        assert!(is_digit_for_base(b'F', 16));
+        assert!(!is_digit_for_base(b'G', 16));
+        assert!(!is_digit_for_base(b'!', 10));
+        assert!(!is_digit_for_base(b' ', 16));
+    }
+
+    #[test]
+    fn is_name_empty_input() {
+        assert!(!is_name(b""));
+    }
+
+    #[test]
+    fn expand_arithmetic_with_literal_newlines() {
+        let mut ctx = FakeContext::new();
+        let result = expand_arithmetic_expression(&mut ctx, b"1\n+\n2").expect("newline arith");
+        assert_eq!(result, b"1\n+\n2");
     }
 }

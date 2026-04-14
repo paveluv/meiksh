@@ -1,4 +1,8 @@
-#![allow(clippy::disallowed_types, clippy::disallowed_methods)]
+#![allow(
+    clippy::disallowed_types,
+    clippy::disallowed_macros,
+    clippy::disallowed_methods
+)]
 
 use libc;
 use std::io::Write;

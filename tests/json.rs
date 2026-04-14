@@ -1,3 +1,8 @@
+#![allow(
+    clippy::disallowed_types,
+    clippy::disallowed_macros,
+    clippy::disallowed_methods
+)]
 //! Minimal JSON parser — just enough for requirements.json.
 //!
 //! Supports: objects, arrays, strings, booleans, null.

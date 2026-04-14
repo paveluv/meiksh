@@ -1,3 +1,8 @@
+#![allow(
+    clippy::disallowed_types,
+    clippy::disallowed_macros,
+    clippy::disallowed_methods
+)]
 use crate::epty_parser;
 pub use crate::epty_parser::TestSuite;
 
