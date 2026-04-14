@@ -1473,6 +1473,32 @@ begin interactive test "delete character x"
 end interactive test "delete character x"
 ```
 
+#### Test: vi command mode redraw preserves prompt
+
+After a vi command-mode edit that triggers a screen redraw (such as `x`
+to delete a character), the prompt shall remain visible on the terminal
+line before the edited command text.
+
+```
+begin interactive test "vi command mode redraw preserves prompt"
+  spawn -i
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 63
+  sendraw 1b
+  sleep 100ms
+  sendraw 78
+  sleep 100ms
+  expect "$ echo ab"
+  sendraw 0a
+  expect "ab"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi command mode redraw preserves prompt"
+```
+
 #### Test: count prefix 3x
 
 Decimal digits preceding a command letter serve as a count. Here `3x` deletes three characters starting at the cursor position.

@@ -57,7 +57,7 @@ fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
         write_prompt(&prompt_str).map_err(|e| shell.diagnostic(1, &e))?;
 
         let line = match if shell.options.vi_mode {
-            vi::read_line(shell)
+            vi::read_line(shell, &prompt_str)
         } else {
             read_line()
         }
@@ -3942,7 +3942,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell).unwrap();
+                let result = vi::read_line(&mut shell, "").unwrap();
                 assert_eq!(result, Some("h\n".to_string()));
             },
         );
@@ -3978,7 +3978,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell).unwrap();
+                let result = vi::read_line(&mut shell, "").unwrap();
                 assert_eq!(result, None);
             },
         );
@@ -4044,7 +4044,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell).unwrap();
+                let result = vi::read_line(&mut shell, "").unwrap();
                 assert_eq!(result, Some("a\n".to_string()));
             },
         );
@@ -4120,7 +4120,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell).unwrap();
+                let result = vi::read_line(&mut shell, "").unwrap();
                 assert_eq!(result, Some("ab\n".to_string()));
             },
         );
@@ -4171,7 +4171,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell).unwrap();
+                let result = vi::read_line(&mut shell, "").unwrap();
                 assert_eq!(result, Some("x\n".to_string()));
             },
         );
@@ -4211,7 +4211,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell).unwrap();
+                let result = vi::read_line(&mut shell, "").unwrap();
                 assert_eq!(result, Some("\n".to_string()));
             },
         );
@@ -4235,7 +4235,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell).unwrap();
+                let result = vi::read_line(&mut shell, "").unwrap();
                 assert_eq!(result, None);
             },
         );
@@ -4292,37 +4292,16 @@ mod tests {
                     vec![ArgMatcher::Fd(0), ArgMatcher::Any],
                     TraceResult::Bytes(vec![b'b']),
                 ),
-                // redraw: \r
+                // redraw: \r\x1b[K (clear line)
                 t(
                     "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r".to_vec())],
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\x1b[K".to_vec())],
                     TraceResult::Auto,
                 ),
-                // redraw: \x1b[K
+                // redraw: line content + cursor back
                 t(
                     "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x1b[K".to_vec())],
-                    TraceResult::Auto,
-                ),
-                // redraw: \r (prompt_len=0 so no spaces)
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r".to_vec())],
-                    TraceResult::Auto,
-                ),
-                // redraw: \r
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r".to_vec())],
-                    TraceResult::Auto,
-                ),
-                // redraw: \x1b[Kab\x1b[2D
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(1),
-                        ArgMatcher::Bytes(b"\x1b[Kab\x1b[2D".to_vec()),
-                    ],
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"ab\x1b[2D".to_vec())],
                     TraceResult::Auto,
                 ),
                 // enter
@@ -4345,7 +4324,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell).unwrap();
+                let result = vi::read_line(&mut shell, "").unwrap();
                 assert_eq!(result, Some("ab\n".to_string()));
             },
         );
@@ -4376,7 +4355,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell);
+                let result = vi::read_line(&mut shell, "");
                 assert!(result.is_err());
             },
         );
@@ -4452,7 +4431,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell).unwrap();
+                let result = vi::read_line(&mut shell, "").unwrap();
                 assert_eq!(result, Some("a\n".to_string()));
             },
         );
@@ -4501,7 +4480,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell).unwrap();
+                let result = vi::read_line(&mut shell, "").unwrap();
                 assert_eq!(result, Some("\n".to_string()));
             },
         );
@@ -4559,37 +4538,16 @@ mod tests {
                     vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x07".to_vec())],
                     TraceResult::Auto,
                 ),
-                // redraw: \r
+                // redraw: \r\x1b[K (clear line)
                 t(
                     "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r".to_vec())],
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\x1b[K".to_vec())],
                     TraceResult::Auto,
                 ),
-                // redraw: \x1b[K
+                // redraw: line content + cursor back
                 t(
                     "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x1b[K".to_vec())],
-                    TraceResult::Auto,
-                ),
-                // redraw: \r
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r".to_vec())],
-                    TraceResult::Auto,
-                ),
-                // redraw: \r
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r".to_vec())],
-                    TraceResult::Auto,
-                ),
-                // redraw: \x1b[Ka\x1b[1D
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(1),
-                        ArgMatcher::Bytes(b"\x1b[Ka\x1b[1D".to_vec()),
-                    ],
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"a\x1b[1D".to_vec())],
                     TraceResult::Auto,
                 ),
                 // enter
@@ -4611,7 +4569,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell).unwrap();
+                let result = vi::read_line(&mut shell, "").unwrap();
                 assert_eq!(result, Some("a\n".to_string()));
             },
         );
@@ -4676,32 +4634,10 @@ mod tests {
                     vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
                     TraceResult::Err(libc::ENOENT),
                 ),
-                // falls through to redraw (empty line, cursor 0, prompt_len 0)
-                // redraw writes
+                // redraw: \r\x1b[K (empty line, empty prompt)
                 t(
                     "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x1b[K".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r".to_vec())],
-                    TraceResult::Auto,
-                ),
-                // redraw: \x1b[K (empty line, no cursor_back)
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x1b[K".to_vec())],
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\x1b[K".to_vec())],
                     TraceResult::Auto,
                 ),
                 // next read → enter to exit
@@ -4725,7 +4661,7 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 let _ = shell.set_var("EDITOR", ":".into());
-                let result = vi::read_line(&mut shell).unwrap();
+                let result = vi::read_line(&mut shell, "").unwrap();
                 assert_eq!(result, Some("\n".to_string()));
             },
         );
@@ -4800,27 +4736,7 @@ mod tests {
                 // trimmed is empty → falls through, remove_file + redraw
                 t(
                     "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x1b[K".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x1b[K".to_vec())],
+                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\x1b[K".to_vec())],
                     TraceResult::Auto,
                 ),
                 // enter to exit
@@ -4843,7 +4759,7 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 let _ = shell.set_var("EDITOR", ":".into());
-                let result = vi::read_line(&mut shell).unwrap();
+                let result = vi::read_line(&mut shell, "").unwrap();
                 assert_eq!(result, Some("\n".to_string()));
             },
         );
@@ -4939,7 +4855,7 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 let _ = shell.set_var("EDITOR", ":".into());
-                let result = vi::read_line(&mut shell).unwrap();
+                let result = vi::read_line(&mut shell, "").unwrap();
                 assert_eq!(result, Some("edited\n".to_string()));
             },
         );
@@ -4989,15 +4905,10 @@ pub(crate) mod vi {
         write_bytes(b"\x07");
     }
 
-    fn redraw(line: &[u8], cursor: usize, prompt_len: usize) {
-        write_bytes(b"\r");
-        write_bytes(b"\x1b[K");
-        write_bytes(&vec![b' '; prompt_len]);
-        write_bytes(b"\r");
-        let _ = sys::write_all_fd(sys::STDERR_FILENO, &vec![b' '; 0]);
-        write_bytes(b"\r");
-        let mut buf = Vec::with_capacity(prompt_len + line.len() + 20);
-        buf.extend_from_slice(b"\x1b[K");
+    fn redraw(line: &[u8], cursor: usize, prompt: &[u8]) {
+        write_bytes(b"\r\x1b[K");
+        let _ = sys::write_all_fd(sys::STDERR_FILENO, prompt);
+        let mut buf = Vec::with_capacity(line.len() + 20);
         buf.extend_from_slice(line);
         let cursor_back = line.len().saturating_sub(cursor);
         if cursor_back > 0 {
@@ -6028,7 +5939,7 @@ pub(crate) mod vi {
         }
     }
 
-    pub fn read_line(shell: &mut Shell) -> sys::SysResult<Option<String>> {
+    pub fn read_line(shell: &mut Shell, prompt: &str) -> sys::SysResult<Option<String>> {
         let _raw = match RawMode::enter() {
             Ok(r) => r,
             Err(_) => return super::read_line(),
@@ -6061,7 +5972,7 @@ pub(crate) mod vi {
             for action in actions {
                 match action {
                     ViAction::Redraw => {
-                        redraw(&state.line, state.cursor, 0);
+                        redraw(&state.line, state.cursor, prompt.as_bytes());
                     }
                     ViAction::Bell => {
                         bell();
@@ -6098,7 +6009,7 @@ pub(crate) mod vi {
                             }
                         }
                         let _ = std::fs::remove_file(&tmp_path);
-                        redraw(&state.line, state.cursor, 0);
+                        redraw(&state.line, state.cursor, prompt.as_bytes());
                     }
                     ViAction::NeedSearchByte
                     | ViAction::NeedFindTarget
