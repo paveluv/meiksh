@@ -2244,29 +2244,9 @@ mod tests {
                             TraceResult::Int(0),
                         ),
                         t(
-                            "stat",
-                            vec![ArgMatcher::Str("/usr/bin/printf".into()), ArgMatcher::Any],
-                            TraceResult::StatFile(0o755),
-                        ),
-                        t(
-                            "open",
-                            vec![
-                                ArgMatcher::Str("/usr/bin/printf".into()),
-                                ArgMatcher::Any,
-                                ArgMatcher::Any,
-                            ],
-                            TraceResult::Fd(20),
-                        ),
-                        t(
-                            "read",
-                            vec![ArgMatcher::Fd(20), ArgMatcher::Any],
-                            TraceResult::Bytes(b"#!/bin/sh\n".to_vec()),
-                        ),
-                        t("close", vec![ArgMatcher::Fd(20)], TraceResult::Int(0)),
-                        t(
-                            "execvp",
-                            vec![ArgMatcher::Str("/usr/bin/printf".into()), ArgMatcher::Any],
-                            TraceResult::Int(0),
+                            "write",
+                            vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"ok".to_vec())],
+                            TraceResult::Int(2),
                         ),
                     ],
                 ),

@@ -35,6 +35,9 @@ pub fn run(
     let outcome = match argv[0].as_str() {
         ":" | "true" => BuiltinOutcome::Status(0),
         "false" => BuiltinOutcome::Status(1),
+        "[" | "test" => test_builtin(shell, argv)?,
+        "echo" => echo_builtin(shell, argv)?,
+        "printf" => printf_builtin(shell, argv)?,
         "cd" => cd(shell, argv)?,
         "pwd" => pwd(shell, argv)?,
         "exit" => exit(shell, argv)?,
@@ -73,10 +76,10 @@ pub fn run(
 }
 
 const BUILTIN_NAMES: &[&str] = &[
-    ".", ":", "alias", "bg", "break", "cd", "command", "continue", "eval", "exec", "exit",
-    "export", "false", "fc", "fg", "getopts", "hash", "jobs", "kill", "pwd", "read", "readonly",
-    "return", "set", "shift", "times", "trap", "true", "type", "ulimit", "umask", "unalias",
-    "unset", "wait",
+    ".", ":", "[", "alias", "bg", "break", "cd", "command", "continue", "echo", "eval", "exec",
+    "exit", "export", "false", "fc", "fg", "getopts", "hash", "jobs", "kill", "printf", "pwd",
+    "read", "readonly", "return", "set", "shift", "test", "times", "trap", "true", "type",
+    "ulimit", "umask", "unalias", "unset", "wait",
 ];
 
 pub fn is_builtin(name: &str) -> bool {
@@ -2547,6 +2550,724 @@ fn is_reserved_word_name(word: &str) -> bool {
     )
 }
 
+// ---------------------------------------------------------------------------
+// test / [ builtin
+// ---------------------------------------------------------------------------
+
+fn test_builtin(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
+    let is_bracket = argv[0] == "[";
+    let args: &[String] = if is_bracket {
+        if argv.last().map(|s| s.as_str()) != Some("]") {
+            shell.diagnostic(2, format_args!("[: missing ']'"));
+            return Ok(BuiltinOutcome::Status(2));
+        }
+        &argv[1..argv.len() - 1]
+    } else {
+        &argv[1..]
+    };
+    let result = match args.len() {
+        0 => Ok(false),
+        1 => Ok(!args[0].is_empty()),
+        2 => test_two_args(shell, &args[0], &args[1]),
+        3 => test_three_args(shell, &args[0], &args[1], &args[2]),
+        4 => {
+            if args[0] == "!" {
+                test_three_args(shell, &args[1], &args[2], &args[3]).map(|r| !r)
+            } else {
+                shell.diagnostic(2, format_args!("test: too many arguments"));
+                return Ok(BuiltinOutcome::Status(2));
+            }
+        }
+        _ => {
+            shell.diagnostic(2, format_args!("test: too many arguments"));
+            return Ok(BuiltinOutcome::Status(2));
+        }
+    };
+    match result {
+        Ok(true) => Ok(BuiltinOutcome::Status(0)),
+        Ok(false) => Ok(BuiltinOutcome::Status(1)),
+        Err(msg) => {
+            shell.diagnostic(2, format_args!("test: {msg}"));
+            Ok(BuiltinOutcome::Status(2))
+        }
+    }
+}
+
+type TestResult = Result<bool, String>;
+
+fn test_two_args(shell: &Shell, op: &str, operand: &str) -> TestResult {
+    if op == "!" {
+        return Ok(operand.is_empty());
+    }
+    test_unary(shell, op, operand)
+}
+
+fn test_three_args(_shell: &Shell, left: &str, op: &str, right: &str) -> TestResult {
+    if op == "=" {
+        return Ok(left == right);
+    }
+    if op == "!=" {
+        return Ok(left != right);
+    }
+    if op == ">" {
+        return Ok(left > right);
+    }
+    if op == "<" {
+        return Ok(left < right);
+    }
+    if let Some(r) = test_integer_binary(left, op, right) {
+        return r;
+    }
+    if let Some(r) = test_file_binary(left, op, right) {
+        return r;
+    }
+    if left == "!" {
+        return test_two_args(_shell, op, right).map(|r| !r);
+    }
+    Err(format!("unknown operator: {op}"))
+}
+
+fn test_unary(_shell: &Shell, op: &str, operand: &str) -> TestResult {
+    match op {
+        "-n" => Ok(!operand.is_empty()),
+        "-z" => Ok(operand.is_empty()),
+        "-b" => Ok(sys::stat_path(operand)
+            .map(|s| s.is_block_special())
+            .unwrap_or(false)),
+        "-c" => Ok(sys::stat_path(operand)
+            .map(|s| s.is_char_special())
+            .unwrap_or(false)),
+        "-d" => Ok(sys::stat_path(operand).map(|s| s.is_dir()).unwrap_or(false)),
+        "-e" => Ok(sys::stat_path(operand).is_ok()),
+        "-f" => Ok(sys::stat_path(operand)
+            .map(|s| s.is_regular_file())
+            .unwrap_or(false)),
+        "-g" => Ok(sys::stat_path(operand)
+            .map(|s| s.is_setgid())
+            .unwrap_or(false)),
+        "-h" | "-L" => Ok(sys::lstat_path(operand)
+            .map(|s| s.is_symlink())
+            .unwrap_or(false)),
+        "-p" => Ok(sys::stat_path(operand)
+            .map(|s| s.is_fifo())
+            .unwrap_or(false)),
+        "-r" => Ok(sys::access_path(operand, libc::R_OK).is_ok()),
+        "-s" => Ok(sys::stat_path(operand).map(|s| s.size > 0).unwrap_or(false)),
+        "-S" => Ok(sys::stat_path(operand)
+            .map(|s| s.is_socket())
+            .unwrap_or(false)),
+        "-t" => {
+            let fd: i32 = operand
+                .parse()
+                .map_err(|_| format!("{operand}: not a valid fd"))?;
+            Ok(sys::isatty_fd(fd))
+        }
+        "-u" => Ok(sys::stat_path(operand)
+            .map(|s| s.is_setuid())
+            .unwrap_or(false)),
+        "-w" => Ok(sys::access_path(operand, libc::W_OK).is_ok()),
+        "-x" => Ok(sys::access_path(operand, libc::X_OK).is_ok()),
+        _ => Err(format!("unknown unary operator: {op}")),
+    }
+}
+
+fn test_integer_binary(left: &str, op: &str, right: &str) -> Option<TestResult> {
+    let cmp = match op {
+        "-eq" | "-ne" | "-gt" | "-ge" | "-lt" | "-le" => op,
+        _ => return None,
+    };
+    let l: i64 = match left.parse() {
+        Ok(v) => v,
+        Err(_) => return Some(Err(format!("{left}: integer expression expected"))),
+    };
+    let r: i64 = match right.parse() {
+        Ok(v) => v,
+        Err(_) => return Some(Err(format!("{right}: integer expression expected"))),
+    };
+    let result = match cmp {
+        "-eq" => l == r,
+        "-ne" => l != r,
+        "-gt" => l > r,
+        "-ge" => l >= r,
+        "-lt" => l < r,
+        "-le" => l <= r,
+        _ => unreachable!(),
+    };
+    Some(Ok(result))
+}
+
+fn test_file_binary(left: &str, op: &str, right: &str) -> Option<TestResult> {
+    match op {
+        "-ef" => {
+            let a = sys::stat_path(left).ok();
+            let b = sys::stat_path(right).ok();
+            Some(Ok(a.is_some()
+                && b.is_some()
+                && a.as_ref().unwrap().same_file(b.as_ref().unwrap())))
+        }
+        "-nt" => {
+            let a = sys::stat_path(left).ok();
+            let b = sys::stat_path(right).ok();
+            Some(Ok(match (a, b) {
+                (Some(a), Some(b)) => a.newer_than(&b),
+                (Some(_), None) => true,
+                _ => false,
+            }))
+        }
+        "-ot" => {
+            let a = sys::stat_path(left).ok();
+            let b = sys::stat_path(right).ok();
+            Some(Ok(match (a, b) {
+                (Some(a), Some(b)) => b.newer_than(&a),
+                (None, Some(_)) => true,
+                _ => false,
+            }))
+        }
+        _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// echo builtin
+// ---------------------------------------------------------------------------
+
+fn echo_builtin(_shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
+    let mut out: Vec<u8> = Vec::new();
+    for (i, arg) in argv[1..].iter().enumerate() {
+        if i > 0 {
+            out.push(b' ');
+        }
+        str_to_bytes(&mut out, arg);
+    }
+    out.push(b'\n');
+    let _ = sys::write_all_fd(sys::STDOUT_FILENO, &out);
+    Ok(BuiltinOutcome::Status(0))
+}
+
+fn str_to_bytes(out: &mut Vec<u8>, s: &str) {
+    for c in s.chars() {
+        let cp = c as u32;
+        if cp <= 0xFF {
+            out.push(cp as u8);
+        } else {
+            let mut buf = [0u8; 4];
+            let encoded = c.encode_utf8(&mut buf);
+            out.extend_from_slice(encoded.as_bytes());
+        }
+    }
+}
+
+fn str_to_raw_bytes(s: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(s.len());
+    str_to_bytes(&mut out, s);
+    out
+}
+
+// ---------------------------------------------------------------------------
+// printf builtin
+// ---------------------------------------------------------------------------
+
+fn printf_builtin(shell: &Shell, argv: &[String]) -> Result<BuiltinOutcome, ShellError> {
+    if argv.len() < 2 {
+        shell.diagnostic(1, format_args!("printf: missing format operand"));
+        return Ok(BuiltinOutcome::Status(1));
+    }
+    let format = &argv[1];
+    let args = &argv[2..];
+    let mut had_error = false;
+    let mut arg_idx = 0;
+    loop {
+        let (output, consumed, stop, error) = printf_format(shell, format, args, arg_idx);
+        if !output.is_empty() {
+            let _ = sys::write_all_fd(sys::STDOUT_FILENO, &output);
+        }
+        if error {
+            had_error = true;
+        }
+        if stop {
+            break;
+        }
+        arg_idx += consumed;
+        if arg_idx >= args.len() {
+            break;
+        }
+    }
+    Ok(BuiltinOutcome::Status(if had_error { 1 } else { 0 }))
+}
+
+fn printf_parse_numeric_arg(shell: &Shell, arg: &str, had_error: &mut bool) -> (i64, bool) {
+    match printf_parse_int(arg) {
+        Ok(v) => (v, true),
+        Err(msg) => {
+            shell.diagnostic(1, format_args!("printf: {msg}"));
+            *had_error = true;
+            (0, false)
+        }
+    }
+}
+
+fn printf_check_trailing(shell: &Shell, arg: &str, had_error: &mut bool) {
+    if !arg.is_empty() && !arg.starts_with('\'') && !arg.starts_with('"') {
+        if printf_find_trailing_garbage(arg).is_some() {
+            shell.diagnostic(
+                1,
+                format_args!("printf: \"{arg}\": not completely converted"),
+            );
+            *had_error = true;
+        }
+    }
+}
+
+fn printf_get_arg<'a>(args: &'a [String], base: usize, idx: usize) -> &'a str {
+    args.get(base + idx).map(|s| s.as_str()).unwrap_or("")
+}
+
+fn printf_parse_int(s: &str) -> Result<i64, String> {
+    if s.is_empty() {
+        return Ok(0);
+    }
+    if s.starts_with('\'') || s.starts_with('"') {
+        let ch = s[1..].chars().next().unwrap_or('\0');
+        return Ok(ch as i64);
+    }
+    let (neg, s) = if let Some(rest) = s.strip_prefix('-') {
+        (true, rest)
+    } else if let Some(rest) = s.strip_prefix('+') {
+        (false, rest)
+    } else {
+        (false, s)
+    };
+    let val = if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        i64::from_str_radix(hex, 16).map_err(|_| format!("{s}: invalid number"))
+    } else if s.starts_with('0') && s.len() > 1 {
+        i64::from_str_radix(s, 8).map_err(|_| format!("{s}: invalid number"))
+    } else {
+        s.parse::<i64>().map_err(|_| format!("{s}: invalid number"))
+    };
+    val.map(|v| if neg { -v } else { v })
+}
+
+fn printf_format(
+    shell: &Shell,
+    format: &str,
+    args: &[String],
+    arg_base: usize,
+) -> (Vec<u8>, usize, bool, bool) {
+    let mut out: Vec<u8> = Vec::new();
+    let bytes = format.as_bytes();
+    let mut i = 0;
+    let mut arg_consumed = 0;
+    let mut had_error = false;
+    let mut stop = false;
+
+    while i < bytes.len() {
+        if stop {
+            break;
+        }
+        if bytes[i] == b'\\' {
+            let (esc, advance) = printf_format_escape(bytes, i + 1);
+            out.extend_from_slice(&esc);
+            i += 1 + advance;
+            continue;
+        }
+        if bytes[i] == b'%' {
+            if i + 1 < bytes.len() && bytes[i + 1] == b'%' {
+                out.push(b'%');
+                i += 2;
+                continue;
+            }
+            let spec_start = i;
+            i += 1;
+
+            let mut numbered_arg: Option<usize> = None;
+            let saved = i;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            if i < bytes.len() && bytes[i] == b'$' && i > saved {
+                let n: usize = format[saved..i].parse().unwrap_or(0);
+                if n > 0 {
+                    numbered_arg = Some(n - 1);
+                }
+                i += 1;
+            } else {
+                i = saved;
+            }
+
+            while i < bytes.len() && matches!(bytes[i], b'-' | b'+' | b' ' | b'0' | b'#') {
+                i += 1;
+            }
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            if i < bytes.len() && bytes[i] == b'.' {
+                i += 1;
+                while i < bytes.len() && bytes[i].is_ascii_digit() {
+                    i += 1;
+                }
+            }
+            if i >= bytes.len() {
+                out.extend_from_slice(format[spec_start..].as_bytes());
+                break;
+            }
+            let conv = bytes[i] as char;
+            i += 1;
+            let full_spec = &format[spec_start..i];
+
+            let arg_index = if let Some(n) = numbered_arg {
+                n
+            } else {
+                let idx = arg_consumed;
+                arg_consumed += 1;
+                idx
+            };
+            let arg = printf_get_arg(args, arg_base, arg_index);
+
+            match conv {
+                's' => {
+                    let spec_for_rust = full_spec.replace(conv, "");
+                    let raw = str_to_raw_bytes(arg);
+                    printf_format_string(&mut out, &spec_for_rust, &raw);
+                }
+                'b' => {
+                    let (expanded, saw_c) = printf_expand_b(arg);
+                    let spec_for_rust = full_spec.replace('b', "");
+                    printf_format_string(&mut out, &spec_for_rust, &expanded);
+                    if saw_c {
+                        stop = true;
+                    }
+                }
+                'c' => {
+                    if let Some(&b) = arg.as_bytes().first() {
+                        out.push(b);
+                    }
+                }
+                'd' | 'i' => {
+                    let (val, parse_ok) = printf_parse_numeric_arg(shell, arg, &mut had_error);
+                    if parse_ok {
+                        printf_check_trailing(shell, arg, &mut had_error);
+                    }
+                    let c_spec = full_spec.replace(conv, "ld");
+                    printf_format_signed(&mut out, &c_spec, val);
+                }
+                'u' => {
+                    let (val, parse_ok) = printf_parse_numeric_arg(shell, arg, &mut had_error);
+                    if parse_ok {
+                        printf_check_trailing(shell, arg, &mut had_error);
+                    }
+                    let c_spec = full_spec.replace('u', "lu");
+                    printf_format_unsigned(&mut out, &c_spec, val as u64);
+                }
+                'o' => {
+                    let (val, parse_ok) = printf_parse_numeric_arg(shell, arg, &mut had_error);
+                    if parse_ok {
+                        printf_check_trailing(shell, arg, &mut had_error);
+                    }
+                    printf_format_octal(&mut out, full_spec, val as u64);
+                }
+                'x' | 'X' => {
+                    let (val, parse_ok) = printf_parse_numeric_arg(shell, arg, &mut had_error);
+                    if parse_ok {
+                        printf_check_trailing(shell, arg, &mut had_error);
+                    }
+                    printf_format_hex(&mut out, full_spec, val as u64, conv == 'X');
+                }
+                _ => {
+                    out.extend_from_slice(full_spec.as_bytes());
+                }
+            }
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    (
+        out,
+        arg_consumed,
+        stop || arg_base + arg_consumed >= args.len(),
+        had_error,
+    )
+}
+
+fn printf_find_trailing_garbage(s: &str) -> Option<usize> {
+    let s = s.strip_prefix(['+', '-']).unwrap_or(s);
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        for (i, c) in hex.char_indices() {
+            if !c.is_ascii_hexdigit() {
+                return Some(i + 2);
+            }
+        }
+        return None;
+    }
+    if s.starts_with('0') && s.len() > 1 {
+        for (i, c) in s.char_indices().skip(1) {
+            if !('0'..='7').contains(&c) {
+                return Some(i);
+            }
+        }
+        return None;
+    }
+    for (i, c) in s.char_indices() {
+        if !c.is_ascii_digit() {
+            return Some(i);
+        }
+    }
+    None
+}
+
+fn printf_format_escape(bytes: &[u8], start: usize) -> (Vec<u8>, usize) {
+    if start >= bytes.len() {
+        return (vec![b'\\'], 0);
+    }
+    match bytes[start] {
+        b'\\' => (vec![b'\\'], 1),
+        b'a' => (vec![0x07], 1),
+        b'b' => (vec![0x08], 1),
+        b'f' => (vec![0x0c], 1),
+        b'n' => (vec![b'\n'], 1),
+        b'r' => (vec![b'\r'], 1),
+        b't' => (vec![b'\t'], 1),
+        b'v' => (vec![0x0b], 1),
+        b'0'..=b'7' => {
+            let mut val: u8 = 0;
+            let mut count = 0;
+            let mut j = start;
+            while j < bytes.len() && count < 3 && bytes[j] >= b'0' && bytes[j] <= b'7' {
+                val = val.wrapping_mul(8).wrapping_add(bytes[j] - b'0');
+                j += 1;
+                count += 1;
+            }
+            (vec![val], count)
+        }
+        _ => (vec![b'\\', bytes[start]], 1),
+    }
+}
+
+fn printf_expand_b(s: &str) -> (Vec<u8>, bool) {
+    let mut out: Vec<u8> = Vec::new();
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' {
+            i += 1;
+            if i >= bytes.len() {
+                out.push(b'\\');
+                break;
+            }
+            match bytes[i] {
+                b'\\' => {
+                    out.push(b'\\');
+                    i += 1;
+                }
+                b'a' => {
+                    out.push(0x07);
+                    i += 1;
+                }
+                b'b' => {
+                    out.push(0x08);
+                    i += 1;
+                }
+                b'f' => {
+                    out.push(0x0c);
+                    i += 1;
+                }
+                b'n' => {
+                    out.push(b'\n');
+                    i += 1;
+                }
+                b'r' => {
+                    out.push(b'\r');
+                    i += 1;
+                }
+                b't' => {
+                    out.push(b'\t');
+                    i += 1;
+                }
+                b'v' => {
+                    out.push(0x0b);
+                    i += 1;
+                }
+                b'c' => return (out, true),
+                b'0' => {
+                    i += 1;
+                    let mut val: u8 = 0;
+                    let mut count = 0;
+                    while i < bytes.len() && count < 3 && bytes[i] >= b'0' && bytes[i] <= b'7' {
+                        val = val.wrapping_mul(8).wrapping_add(bytes[i] - b'0');
+                        i += 1;
+                        count += 1;
+                    }
+                    out.push(val);
+                }
+                _ => {
+                    out.push(b'\\');
+                    out.push(bytes[i]);
+                    i += 1;
+                }
+            }
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    (out, false)
+}
+
+fn printf_format_string(out: &mut Vec<u8>, spec: &str, s: &[u8]) {
+    let spec = spec.strip_prefix('%').unwrap_or(spec);
+    let left = spec.contains('-');
+    let spec_rest = spec.trim_start_matches(['-', '+', ' ', '0', '#']);
+
+    let (width_str, prec_str) = if let Some(dot_pos) = spec_rest.find('.') {
+        (&spec_rest[..dot_pos], Some(&spec_rest[dot_pos + 1..]))
+    } else {
+        (spec_rest, None)
+    };
+
+    let width: usize = width_str.parse().unwrap_or(0);
+    let value = if let Some(prec) = prec_str {
+        let max: usize = prec.parse().unwrap_or(usize::MAX);
+        if s.len() > max { &s[..max] } else { s }
+    } else {
+        s
+    };
+
+    if left || width <= value.len() {
+        out.extend_from_slice(value);
+        if left && width > value.len() {
+            out.resize(out.len() + width - value.len(), b' ');
+        }
+    } else {
+        out.resize(out.len() + width - value.len(), b' ');
+        out.extend_from_slice(value);
+    }
+}
+
+fn printf_format_signed(out: &mut Vec<u8>, spec: &str, val: i64) {
+    let spec = spec.strip_prefix('%').unwrap_or(spec);
+    let spec = spec.strip_suffix("ld").unwrap_or(spec);
+    let left = spec.contains('-');
+    let zero_pad = spec.contains('0') && !left;
+    let spec_rest = spec.trim_start_matches(['-', '+', ' ', '0', '#']);
+
+    let width: usize = spec_rest.parse().unwrap_or(0);
+    let num = format!("{val}");
+    let num = num.as_bytes();
+
+    if width <= num.len() || (!left && !zero_pad) {
+        if width > num.len() && !left {
+            out.resize(out.len() + width - num.len(), b' ');
+        }
+        out.extend_from_slice(num);
+    } else if zero_pad {
+        if val < 0 {
+            out.push(b'-');
+            let digits = &num[1..];
+            if width > num.len() {
+                out.resize(out.len() + width - num.len(), b'0');
+            }
+            out.extend_from_slice(digits);
+        } else {
+            out.resize(out.len() + width - num.len(), b'0');
+            out.extend_from_slice(num);
+        }
+    } else {
+        out.extend_from_slice(num);
+    }
+    if left && width > num.len() {
+        out.resize(out.len() + width - num.len(), b' ');
+    }
+}
+
+fn printf_format_unsigned(out: &mut Vec<u8>, spec: &str, val: u64) {
+    let spec = spec.strip_prefix('%').unwrap_or(spec);
+    let spec = spec.strip_suffix("lu").unwrap_or(spec);
+    let left = spec.contains('-');
+    let zero_pad = spec.contains('0') && !left;
+    let spec_rest = spec.trim_start_matches(['-', '+', ' ', '0', '#']);
+    let width: usize = spec_rest.parse().unwrap_or(0);
+    let num = format!("{val}");
+    let num = num.as_bytes();
+    if zero_pad && width > num.len() {
+        out.resize(out.len() + width - num.len(), b'0');
+    } else if !left && width > num.len() {
+        out.resize(out.len() + width - num.len(), b' ');
+    }
+    out.extend_from_slice(num);
+    if left && width > num.len() {
+        out.resize(out.len() + width - num.len(), b' ');
+    }
+}
+
+fn printf_format_octal(out: &mut Vec<u8>, spec: &str, val: u64) {
+    let spec_inner = spec
+        .strip_prefix('%')
+        .unwrap_or(spec)
+        .strip_suffix('o')
+        .unwrap_or(spec);
+    let alt = spec_inner.contains('#');
+    let left = spec_inner.contains('-');
+    let zero_pad = spec_inner.contains('0') && !left;
+    let spec_rest = spec_inner.trim_start_matches(['-', '+', ' ', '0', '#']);
+    let width: usize = spec_rest.parse().unwrap_or(0);
+    let num = if alt && val != 0 {
+        format!("0{val:o}")
+    } else if alt {
+        "0".into()
+    } else {
+        format!("{val:o}")
+    };
+    let num = num.as_bytes();
+    if zero_pad && width > num.len() {
+        out.resize(out.len() + width - num.len(), b'0');
+    } else if !left && width > num.len() {
+        out.resize(out.len() + width - num.len(), b' ');
+    }
+    out.extend_from_slice(num);
+    if left && width > num.len() {
+        out.resize(out.len() + width - num.len(), b' ');
+    }
+}
+
+fn printf_format_hex(out: &mut Vec<u8>, spec: &str, val: u64, upper: bool) {
+    let suffix = if upper { 'X' } else { 'x' };
+    let spec_inner = spec
+        .strip_prefix('%')
+        .unwrap_or(spec)
+        .strip_suffix(suffix)
+        .unwrap_or(spec);
+    let alt = spec_inner.contains('#');
+    let left = spec_inner.contains('-');
+    let zero_pad = spec_inner.contains('0') && !left;
+    let spec_rest = spec_inner.trim_start_matches(['-', '+', ' ', '0', '#']);
+    let width: usize = spec_rest.parse().unwrap_or(0);
+    let num = if upper {
+        format!("{val:X}")
+    } else {
+        format!("{val:x}")
+    };
+    let num = num.as_bytes();
+    let prefix: &[u8] = if alt && val != 0 {
+        if upper { b"0X" } else { b"0x" }
+    } else {
+        b""
+    };
+    let total = prefix.len() + num.len();
+    if zero_pad && width > total {
+        out.extend_from_slice(prefix);
+        out.resize(out.len() + width - total, b'0');
+    } else if !left && width > total {
+        out.resize(out.len() + width - total, b' ');
+        out.extend_from_slice(prefix);
+    } else {
+        out.extend_from_slice(prefix);
+    }
+    out.extend_from_slice(num);
+    if left && width > total {
+        out.resize(out.len() + width - total, b' ');
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2613,7 +3334,10 @@ mod tests {
             assert!(is_builtin("export"));
             assert!(is_builtin("read"));
             assert!(is_builtin("umask"));
-            assert!(!is_builtin("printf"));
+            assert!(is_builtin("printf"));
+            assert!(is_builtin("echo"));
+            assert!(is_builtin("test"));
+            assert!(is_builtin("["));
         });
     }
 
