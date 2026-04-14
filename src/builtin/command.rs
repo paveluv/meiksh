@@ -175,8 +175,6 @@ pub(super) fn command(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutc
     }
 }
 
-#[cfg(test)]
-
 pub(super) fn type_builtin(shell: &Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, ShellError> {
     let mut status = 0;
     for name in &argv[1..] {
