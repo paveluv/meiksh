@@ -39,11 +39,9 @@ Use the manifest-driven fetch script:
 
 That script reads `docs/posix-manifest.txt`, downloads the POSIX tarball, and unpacks it under `docs/posix/`.
 
-## Requirements Tracking
+## Policy
 
-The conformance docs are organized as follows:
-- `docs/spec-matrix.md`: top-level POSIX conformance ledger and status summary
-- `docs/implementation-policy.md`: implementation-defined and temporary project choices that should reference the requirement ledger instead of replacing it
+- `docs/implementation-policy.md`: implementation-defined and temporary project choices
 
 ## Source URLs
 
@@ -71,5 +69,4 @@ Issue 7 `sh` utility:
 ## Notes
 
 - `docs/posix-manifest.txt` is the mirror contract, and `docs/fetch-posix-docs.sh` is expected to stay in sync with it.
-- `docs/spec-matrix.md` should reference exact local `docs/posix/...` paths and anchors when recording conformance status.
 - Keep the downloaded material untracked.
