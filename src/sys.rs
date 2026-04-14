@@ -97,6 +97,10 @@ pub const S_IFMT: mode_t = libc::S_IFMT;
 pub const S_IFDIR: mode_t = libc::S_IFDIR;
 pub const S_IFREG: mode_t = libc::S_IFREG;
 pub const S_IFIFO: mode_t = libc::S_IFIFO;
+pub const S_IFBLK: mode_t = libc::S_IFBLK;
+pub const S_IFCHR: mode_t = libc::S_IFCHR;
+pub const S_IFLNK: mode_t = libc::S_IFLNK;
+pub const S_IFSOCK: mode_t = libc::S_IFSOCK;
 pub const S_IXUSR: mode_t = libc::S_IXUSR;
 pub const S_IXGRP: mode_t = libc::S_IXGRP;
 pub const S_IXOTH: mode_t = libc::S_IXOTH;
@@ -1972,6 +1976,10 @@ impl FdReader {
 pub struct FileStat {
     pub mode: mode_t,
     pub size: u64,
+    pub dev: u64,
+    pub ino: u64,
+    pub mtime_sec: i64,
+    pub mtime_nsec: i64,
 }
 
 impl FileStat {
@@ -1985,6 +1993,42 @@ impl FileStat {
 
     pub fn is_executable(&self) -> bool {
         self.mode & (S_IXUSR | S_IXGRP | S_IXOTH) != 0
+    }
+
+    pub fn is_block_special(&self) -> bool {
+        (self.mode & S_IFMT) == S_IFBLK
+    }
+
+    pub fn is_char_special(&self) -> bool {
+        (self.mode & S_IFMT) == S_IFCHR
+    }
+
+    pub fn is_fifo(&self) -> bool {
+        (self.mode & S_IFMT) == S_IFIFO
+    }
+
+    pub fn is_symlink(&self) -> bool {
+        (self.mode & S_IFMT) == S_IFLNK
+    }
+
+    pub fn is_socket(&self) -> bool {
+        (self.mode & S_IFMT) == S_IFSOCK
+    }
+
+    pub fn is_setuid(&self) -> bool {
+        self.mode & libc::S_ISUID != 0
+    }
+
+    pub fn is_setgid(&self) -> bool {
+        self.mode & libc::S_ISGID != 0
+    }
+
+    pub fn same_file(&self, other: &FileStat) -> bool {
+        self.dev == other.dev && self.ino == other.ino
+    }
+
+    pub fn newer_than(&self, other: &FileStat) -> bool {
+        (self.mtime_sec, self.mtime_nsec) > (other.mtime_sec, other.mtime_nsec)
     }
 }
 
@@ -2038,6 +2082,33 @@ pub fn stat_path(path: &str) -> SysResult<FileStat> {
     Ok(FileStat {
         mode: raw.st_mode,
         size: raw.st_size as u64,
+        dev: raw.st_dev,
+        ino: raw.st_ino,
+        mtime_sec: raw.st_mtime,
+        mtime_nsec: raw.st_mtime_nsec,
+    })
+}
+
+fn lstat_raw(path: &str) -> SysResult<libc::stat> {
+    let c_path = to_cstring(path)?;
+    let mut buf = std::mem::MaybeUninit::<libc::stat>::zeroed();
+    let result = unsafe { libc::lstat(c_path.as_ptr(), buf.as_mut_ptr()) };
+    if result == 0 {
+        Ok(unsafe { buf.assume_init() })
+    } else {
+        Err(last_error())
+    }
+}
+
+pub fn lstat_path(path: &str) -> SysResult<FileStat> {
+    let raw = lstat_raw(path)?;
+    Ok(FileStat {
+        mode: raw.st_mode,
+        size: raw.st_size as u64,
+        dev: raw.st_dev,
+        ino: raw.st_ino,
+        mtime_sec: raw.st_mtime,
+        mtime_nsec: raw.st_mtime_nsec,
     })
 }
 
@@ -2049,6 +2120,10 @@ pub fn access_path(path: &str, mode: c_int) -> SysResult<()> {
     } else {
         Err(last_error())
     }
+}
+
+pub fn isatty_fd(fd: c_int) -> bool {
+    (sys_interface().isatty)(fd) != 0
 }
 
 pub fn file_exists(path: &str) -> bool {

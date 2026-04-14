@@ -4,15 +4,24 @@
 /// allocation), pushes it into the arena, and returns a `&str` whose lifetime
 /// is tied to the arena.  Since entries are only ever appended and never
 /// removed, all returned references remain valid for the arena's lifetime.
-#[derive(Default)]
+///
+/// `UnsafeCell` is required to communicate interior mutability to the
+/// compiler: `intern()` takes `&self` (so callers can hold multiple returned
+/// `&str` references simultaneously) but mutates the entry list.
 pub struct StringArena {
-    entries: Vec<Box<str>>,
+    entries: std::cell::UnsafeCell<Vec<Box<str>>>,
+}
+
+impl Default for StringArena {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl StringArena {
     pub fn new() -> Self {
         Self {
-            entries: Vec::new(),
+            entries: std::cell::UnsafeCell::new(Vec::new()),
         }
     }
 
@@ -21,13 +30,13 @@ impl StringArena {
     pub fn intern(&self, s: String) -> &str {
         let boxed: Box<str> = s.into_boxed_str();
         let ptr: *const str = &*boxed;
-        // SAFETY: The arena only grows (we never remove entries), so the
-        // Box<str> heap allocation is stable for the arena's lifetime.
-        // We convert to a raw pointer before pushing to decouple the
-        // returned &str lifetime from the &mut borrow on entries.
-        let entries = &self.entries as *const Vec<Box<str>> as *mut Vec<Box<str>>;
+        // SAFETY: The arena is single-threaded and only grows (no removal).
+        // Each Box<str> has a stable heap address regardless of Vec
+        // reallocation, so previously returned &str references remain valid.
+        // UnsafeCell tells the compiler this memory may be mutated through
+        // a shared reference, preventing misoptimization.
         unsafe {
-            (*entries).push(boxed);
+            (*self.entries.get()).push(boxed);
             &*ptr
         }
     }
