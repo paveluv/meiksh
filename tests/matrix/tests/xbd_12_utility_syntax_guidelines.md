@@ -76,7 +76,9 @@ end test "set accepts -- to indicate end of options"
 
 #### Test: unset accepts --
 
-The `unset` built-in shall accept `--` to indicate end of options per Guideline 10.
+Utilities that conform to the Utility Syntax Guidelines shall accept the
+first `--` as the end of options. This verifies the `unset` built-in
+treats the following token as an operand.
 
 ```
 begin test "unset accepts --"
@@ -98,10 +100,14 @@ Per 12.1 item 2, a conforming implementation shall permit applications to specif
 ```
 begin test "getopts parses combined option-argument"
   script
-    getopts "ab:" opt -a -bfoo
+    set -- -a -bfoo
+    OPTIND=1
+    getopts "ab:" opt "$@"
+    echo "$opt ${OPTARG-unset}"
+    getopts "ab:" opt "$@"
     echo "$opt $OPTARG"
   expect
-    stdout "a.*"
+    stdout "a unset\nb foo"
     stderr ""
     exit_code 0
 end test "getopts parses combined option-argument"
@@ -123,12 +129,14 @@ begin test "getopts parses separate option-argument"
 end test "getopts parses separate option-argument"
 ```
 
-#### Test: ulimit -Sf with value adjacent
+#### Test: ulimit accepts grouped short options
 
-Per 12.1 item 2, when the SYNOPSIS shows an optional option-argument, a conforming application places the option-argument directly adjacent to the option. `ulimit -Sf` combines the `-S` and `-f` flags, then accepts a value.
+Guideline 5 allows short options without option-arguments to be grouped
+behind one `-` delimiter. This verifies `ulimit` accepts grouped `-S`
+and `-f` options in the form `-Sf`.
 
 ```
-begin test "ulimit -Sf with value adjacent"
+begin test "ulimit accepts grouped short options"
   script
     ulimit -Sf 100
     ulimit -Sf
@@ -136,12 +144,33 @@ begin test "ulimit -Sf with value adjacent"
     stdout "100"
     stderr ""
     exit_code 0
-end test "ulimit -Sf with value adjacent"
+end test "ulimit accepts grouped short options"
+```
+
+#### Test: getopts processes repeated option-argument pairs in order
+
+Guideline 11 requires repeated option and option-argument combinations to
+be interpreted in the order specified on the command line.
+
+```
+begin test "getopts processes repeated option-argument pairs in order"
+  script
+    set -- -b first -b second
+    OPTIND=1
+    while getopts "b:" opt "$@"; do
+      echo "$opt $OPTARG"
+    done
+  expect
+    stdout "b first\nb second"
+    stderr ""
+    exit_code 0
+end test "getopts processes repeated option-argument pairs in order"
 ```
 
 #### Test: kill -l lists signals
 
-The `kill -l` option lists available signal names. This verifies the utility accepts the `-l` option and produces output containing known signal names.
+This exercises the standard short-option form used by `kill` and
+verifies that `-l` is accepted as an option.
 
 ```
 begin test "kill -l lists signals"

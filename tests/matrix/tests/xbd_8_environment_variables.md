@@ -155,15 +155,16 @@ Additional criteria for determining a valid locale name are implementation-defin
 
 #### Test: LANG passed to child environment
 
-LANG determines the locale category for native language, local customs, and coded character set in the absence of LC_ALL and other LC_* variables. When exported, it shall be visible in the child's environment.
+When `LC_ALL` and the category-specific `LC_*` variables are unset,
+`LANG` shall determine the locale category value used by standard
+utilities.
 
 ```
 begin test "LANG passed to child environment"
   script
-    export LANG=C
-    env | grep "^LANG=C$" && echo pass || echo fail
+    LANG=POSIX locale charmap
   expect
-    stdout "LANG=C\npass"
+    stdout "ANSI_X3.4-1968"
     stderr ""
     exit_code 0
 end test "LANG passed to child environment"
@@ -171,16 +172,15 @@ end test "LANG passed to child environment"
 
 #### Test: LC_ALL overrides individual LC_* variables
 
-LC_ALL determines the values for all locale categories, overriding any individual LC_* variables. When both LC_ALL and LC_CTYPE are set, LC_ALL takes precedence.
+`LC_ALL` shall determine the values for all locale categories and take
+precedence over both `LANG` and category-specific `LC_*` variables.
 
 ```
 begin test "LC_ALL overrides individual LC_* variables"
   script
-    export LC_ALL=C
-    export LC_CTYPE=en_US.UTF-8
-    env | grep "^LC_ALL=C$" && echo pass || echo fail
+    LC_ALL=POSIX LC_CTYPE=C.UTF-8 LANG=C.UTF-8 locale charmap
   expect
-    stdout "LC_ALL=C\npass"
+    stdout "ANSI_X3.4-1968"
     stderr ""
     exit_code 0
 end test "LC_ALL overrides individual LC_* variables"
@@ -188,16 +188,16 @@ end test "LC_ALL overrides individual LC_* variables"
 
 #### Test: LC_COLLATE and LC_CTYPE passed to child
 
-LC_COLLATE determines the locale category for character collation. LC_CTYPE determines the locale category for character handling functions. Both shall be visible in the child environment when exported.
+When `LC_ALL` is unset, a category-specific `LC_*` variable shall be
+used to initialize that category instead of `LANG`. This test uses
+`LC_CTYPE` to override the character handling locale.
 
 ```
 begin test "LC_COLLATE and LC_CTYPE passed to child"
   script
-    export LC_COLLATE=C
-    export LC_CTYPE=C
-    env | grep -E "^(LC_COLLATE|LC_CTYPE)=C$" | sort
+    LC_ALL= LC_CTYPE=C.UTF-8 LANG=POSIX locale charmap
   expect
-    stdout "LC_COLLATE=C\nLC_CTYPE=C"
+    stdout "UTF-8"
     stderr ""
     exit_code 0
 end test "LC_COLLATE and LC_CTYPE passed to child"
@@ -205,7 +205,9 @@ end test "LC_COLLATE and LC_CTYPE passed to child"
 
 #### Test: LC_MESSAGES passed to child
 
-LC_MESSAGES determines the locale category for processing affirmative and negative responses and the language for messages.
+`LC_MESSAGES` shall determine the locale category for processing
+affirmative and negative responses and the language for messages. When
+exported, it shall be available to child utilities.
 
 ```
 begin test "LC_MESSAGES passed to child"
@@ -221,41 +223,23 @@ end test "LC_MESSAGES passed to child"
 
 #### Test: LANGUAGE and NLSPATH passed to child
 
-LANGUAGE is examined to determine the messages object for the gettext family of functions. NLSPATH contains templates for locating message catalogs.
+`LANGUAGE`, `NLSPATH`, `TEXTDOMAIN`, and `TEXTDOMAINDIR` are used by the
+message-catalog lookup interfaces. When exported, they shall be
+available to child utilities.
 
 ```
 begin test "LANGUAGE and NLSPATH passed to child"
   script
     export LANGUAGE=C
     export NLSPATH=/dev/null
-    env | grep -E "^(LANGUAGE|NLSPATH)=" | sort
+    export TEXTDOMAIN=messages
+    export TEXTDOMAINDIR=/tmp
+    env | grep -E "^(LANGUAGE|NLSPATH|TEXTDOMAIN|TEXTDOMAINDIR)=" | sort
   expect
-    stdout "LANGUAGE=C\nNLSPATH=/dev/null"
+    stdout "LANGUAGE=C\nNLSPATH=/dev/null\nTEXTDOMAIN=messages\nTEXTDOMAINDIR=/tmp"
     stderr ""
     exit_code 0
 end test "LANGUAGE and NLSPATH passed to child"
-```
-
-#### Test: locale variables passed to child environment
-
-All internationalization variables (LANG, LC_ALL, LC_COLLATE, LC_CTYPE, LC_MESSAGES, LANGUAGE, NLSPATH) shall be visible in the child environment when exported.
-
-```
-begin test "locale variables passed to child environment"
-  script
-    export LANG=C
-    export LC_ALL=C
-    export LC_COLLATE=C
-    export LC_CTYPE=C
-    export LC_MESSAGES=C
-    export LANGUAGE=C
-    export NLSPATH=/dev/null
-    env | grep -E "^(LANG|LC_ALL|LC_COLLATE|LC_CTYPE|LC_MESSAGES|LANGUAGE|NLSPATH)=" | sort
-  expect
-    stdout "LANG=C\nLANGUAGE=C\nLC_ALL=C\nLC_COLLATE=C\nLC_CTYPE=C\nLC_MESSAGES=C\nNLSPATH=/dev/null"
-    stderr ""
-    exit_code 0
-end test "locale variables passed to child environment"
 ```
 
 ## xbd: 8.3 Other Environment Variables
@@ -354,7 +338,9 @@ end test "locale variables passed to child environment"
 
 #### Test: PATH used to find executable
 
-PATH shall represent the sequence of path prefixes that certain functions and utilities apply in searching for an executable file. This test creates a custom binary in a local directory and verifies it is found when that directory is in PATH.
+`PATH` shall represent the sequence of prefixes used when searching for
+an executable filename. If the prefix does not end in `/`, a slash
+shall be inserted before the filename.
 
 ```
 begin test "PATH used to find executable"
@@ -371,16 +357,68 @@ begin test "PATH used to find executable"
 end test "PATH used to find executable"
 ```
 
+#### Test: PATH entry with slash bypasses search
+
+If the pathname being sought contains a `/`, the search through `PATH`
+prefixes shall not be performed.
+
+```
+begin test "PATH entry with slash bypasses search"
+  script
+    mkdir -p pathbin directbin
+    printf '#!%s\necho from_path\n' "${SHELL%% *}" > pathbin/mytool
+    printf '#!%s\necho from_direct\n' "${SHELL%% *}" > directbin/mytool
+    chmod +x pathbin/mytool directbin/mytool
+    PATH="$PWD/pathbin" ./directbin/mytool
+    rm -rf pathbin directbin
+  expect
+    stdout "from_direct"
+    stderr ""
+    exit_code 0
+end test "PATH entry with slash bypasses search"
+```
+
+#### Test: zero-length PATH prefix means current directory
+
+A zero-length `PATH` prefix, written as a leading, trailing, or doubled
+`:`, shall indicate the current working directory.
+
+```
+begin test "zero-length PATH prefix means current directory"
+  script
+    printf '#!%s\necho cwd_tool\n' "${SHELL%% *}" > ./cwd_tool
+    chmod +x ./cwd_tool
+    PATH=":$PATH" cwd_tool
+    rm -f ./cwd_tool
+  expect
+    stdout "cwd_tool"
+    stderr ""
+    exit_code 0
+end test "zero-length PATH prefix means current directory"
+```
+
 #### Test: PWD reflects current working directory
 
-PWD shall represent an absolute pathname of the current working directory.
+`PWD` shall represent an absolute pathname of the current working
+directory and shall not contain `.` or `..` path components.
 
 ```
 begin test "PWD reflects current working directory"
   script
-    echo "$PWD"
+    mkdir -p pwd_test/sub
+    cd pwd_test/sub
+    case "$PWD" in
+      /*) echo "absolute" ;;
+      *) echo "not_absolute" ;;
+    esac
+    case "$PWD" in
+      */./*|*/../*|*/.|*/..) echo "has_dot_component" ;;
+      *) echo "dot_free" ;;
+    esac
+    cd ../..
+    rm -rf pwd_test
   expect
-    stdout ".*"
+    stdout "absolute\ndot_free"
     stderr ""
     exit_code 0
 end test "PWD reflects current working directory"
@@ -388,7 +426,8 @@ end test "PWD reflects current working directory"
 
 #### Test: HOME used for tilde expansion
 
-The system initializes HOME to be a pathname of the user's home directory. The shell uses HOME for tilde expansion: `~` expands to the value of HOME.
+The shell uses `HOME` for tilde expansion: `~` expands to the value of
+`HOME`.
 
 ```
 begin test "HOME used for tilde expansion"
