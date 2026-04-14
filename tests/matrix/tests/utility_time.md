@@ -290,6 +290,49 @@ begin test "time uses PATH to locate utility"
 end test "time uses PATH to locate utility"
 ```
 
+#### Test: time utility operand with slash bypasses PATH search
+
+If the utility operand contains a slash, `time` shall not search `PATH`
+for it and shall instead invoke that pathname directly.
+
+```
+begin test "time utility operand with slash bypasses PATH search"
+  script
+    tmpdir=$(mktemp -d)
+    mkdir "$tmpdir/pathbin" "$tmpdir/directbin"
+    printf '#!/bin/sh\nprintf '\''from-path\\n'\''\n' >"$tmpdir/pathbin/probe"
+    printf '#!/bin/sh\nprintf '\''from-direct\\n'\''\n' >"$tmpdir/directbin/probe"
+    chmod +x "$tmpdir/pathbin/probe" "$tmpdir/directbin/probe"
+    old_path=$PATH
+    PATH="$tmpdir/pathbin"
+    time "$tmpdir/directbin/probe"
+    status=$?
+    PATH=$old_path
+    rm -rf "$tmpdir"
+    exit "$status"
+  expect
+    stdout "from-direct"
+    stderr "(.|\n)*.+"
+    exit_code 0
+end test "time utility operand with slash bypasses PATH search"
+```
+
+#### Test: time does not consume utility stdin
+
+The `time` utility does not use standard input itself, so the invoked
+utility shall still be able to read from standard input.
+
+```
+begin test "time does not consume utility stdin"
+  script
+    printf 'stdin-data\n' | { time cat; } 2>/dev/null
+  expect
+    stdout "stdin-data"
+    stderr ""
+    exit_code 0
+end test "time does not consume utility stdin"
+```
+
 #### Test: time preserves utility stderr on stderr
 
 The timed utility and the `time` utility share standard error; output
@@ -311,7 +354,8 @@ end test "time preserves utility stderr on stderr"
 With `-p`, the timing statistics shall be written to stderr in the POSIX
 locale format using `real`, `user`, and `sys` lines with seconds-valued
 floating-point numbers. This test asserts the POSIX requirement directly,
-even though `bash --posix` currently deviates here.
+even though `bash --posix` currently deviates here and treats `-p` as the
+utility operand instead.
 
 ```
 begin test "time -p produces POSIX format on stderr"
@@ -328,7 +372,9 @@ end test "time -p produces POSIX format on stderr"
 #### Test: time exit status equals invoked utility exit status
 
 If the utility is invoked, `time` shall exit with the same status as the
-timed utility, both for success and for non-zero exits.
+timed utility, both for success and for non-zero exits. Timing
+statistics shall still be written to standard error when the utility is
+invoked and exits non-zero.
 
 ```
 begin test "time exit status equals invoked utility exit status"
@@ -337,7 +383,7 @@ begin test "time exit status equals invoked utility exit status"
     time sh -c 'exit 42'; echo "forty-two:$?"
   expect
     stdout "true:0\nforty-two:42"
-    stderr "(.|\n)*"
+    stderr "(.|\n)*.+"
     exit_code 0
 end test "time exit status equals invoked utility exit status"
 ```
