@@ -11,12 +11,10 @@ For comparison, every other major shell has verified non-compliances against the
 | Shell | Non-compliances |
 |---|---|
 | **meiksh** | **0** |
-| bash 5.2 `--posix` | 10 |
-| dash 0.5.12 | 20 |
-| ksh93u+m 1.0.10 | 22 |
-| zsh 5.9 | 28 (native) / 35 (`emulate sh`) |
-
-Compliance reports for each shell are in `tests/matrix/*_compliance.md`.
+| [bash 5.2 `--posix`](tests/matrix/bash_compliance.md) | 10 |
+| [dash 0.5.12](tests/matrix/dash_compliance.md) | 20 |
+| [ksh93u+m 1.0.10](tests/matrix/ksh_compliance.md) | 22 |
+| [zsh 5.9](tests/matrix/zsh_compliance.md) | 28 (native) / 35 (`emulate sh`) |
 
 **Note:** `meiksh` has not been officially certified by The Open Group. The compliance claim is based solely on the project's own test suites, which are written directly from the POSIX.1-2024 (Issue 8) specification text.
 
