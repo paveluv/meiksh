@@ -62,25 +62,33 @@ pub(super) fn paths_match_logically(lhs: &[u8], rhs: &[u8]) -> bool {
 mod tests {
     use super::*;
     use crate::builtin::test_support::*;
+    use crate::trace_entries;
 
     #[test]
     fn pwd_invalid_option() {
         let msg = diag(b"pwd: invalid option: -z");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            let outcome = invoke(&mut shell, &[b"pwd".to_vec(), b"-z".to_vec()]).expect("pwd -z");
-            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                let outcome =
+                    invoke(&mut shell, &[b"pwd".to_vec(), b"-z".to_vec()]).expect("pwd -z");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
     }
 
     #[test]
     fn pwd_too_many_args() {
         let msg = diag(b"pwd: too many arguments");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            let outcome =
-                invoke(&mut shell, &[b"pwd".to_vec(), b"extra".to_vec()]).expect("pwd extra");
-            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                let outcome =
+                    invoke(&mut shell, &[b"pwd".to_vec(), b"extra".to_vec()]).expect("pwd extra");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
     }
 }

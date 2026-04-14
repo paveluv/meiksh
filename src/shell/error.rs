@@ -38,6 +38,7 @@ mod tests {
     use crate::expand::ExpandError;
     use crate::syntax;
     use crate::sys::test_support::run_trace;
+    use crate::trace_entries;
 
     use super::ShellError;
     use crate::shell::test_support::{t_stderr, test_shell};
@@ -45,9 +46,11 @@ mod tests {
     #[test]
     fn shell_error_converts_from_parse_and_expand_errors() {
         run_trace(
-            vec![
-                t_stderr("meiksh: line 1: unterminated single quote"),
-                t_stderr("meiksh: expand"),
+            trace_entries![
+                ..vec![
+                    t_stderr("meiksh: line 1: unterminated single quote"),
+                    t_stderr("meiksh: expand"),
+                ],
             ],
             || {
                 let shell = test_shell();
@@ -65,14 +68,17 @@ mod tests {
 
     #[test]
     fn shell_error_status_helpers_work() {
-        run_trace(vec![t_stderr("meiksh: missing script")], || {
-            let shell = test_shell();
-            let error = shell.diagnostic(127, b"missing script");
-            assert_eq!(error.exit_status(), 127);
+        run_trace(
+            trace_entries![..vec![t_stderr("meiksh: missing script")]],
+            || {
+                let shell = test_shell();
+                let error = shell.diagnostic(127, b"missing script");
+                assert_eq!(error.exit_status(), 127);
 
-            let silent = ShellError::Status(42);
-            assert_eq!(silent.exit_status(), 42);
-        });
+                let silent = ShellError::Status(42);
+                assert_eq!(silent.exit_status(), 42);
+            },
+        );
     }
 
     #[test]

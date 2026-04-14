@@ -16,13 +16,14 @@ mod tests {
 
     use crate::sys::test_support;
     use crate::sys::types::ClockTicks;
+    use crate::trace_entries;
 
     use super::*;
     use crate::sys::*;
 
     #[test]
     fn trace_setup_locale_is_noop() {
-        test_support::run_trace(vec![], || {
+        test_support::run_trace(trace_entries![], || {
             setup_locale();
         });
     }

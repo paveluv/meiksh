@@ -164,39 +164,39 @@ pub(super) fn parse_kill_signal(shell: &Shell, spec: &[u8]) -> Result<i32, Shell
 mod tests {
     use super::*;
     use crate::builtin::test_support::*;
+    use crate::trace_entries;
 
     #[test]
     fn kill_no_args() {
         let msg = diag(b"kill: usage: kill [-s sigspec | -signum] pid... | -l [exit_status]");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            let outcome = invoke(&mut shell, &[b"kill".to_vec()]).expect("kill");
-            assert!(matches!(outcome, BuiltinOutcome::Status(2)));
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(&mut shell, &[b"kill".to_vec()]).expect("kill");
+                assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+            },
+        );
     }
 
     #[test]
     fn kill_dash_l_lists_signals() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(1),
-                    ArgMatcher::Bytes({
-                        let names: Vec<&[u8]> = sys::all_signal_names()
-                            .iter()
-                            .map(|(n, _)| {
-                                let n = *n;
-                                if n.starts_with(b"SIG") { &n[3..] } else { n }
-                            })
-                            .collect();
-                        let mut line = bstr::join_bytes(&names, b' ');
-                        line.push(b'\n');
-                        line
-                    }),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(
+                fd(crate::sys::STDOUT_FILENO),
+                bytes({
+                    let names: Vec<&[u8]> = sys::all_signal_names()
+                        .iter()
+                        .map(|(n, _)| {
+                            let n = *n;
+                            if n.starts_with(b"SIG") { &n[3..] } else { n }
+                        })
+                        .collect();
+                    let mut line = bstr::join_bytes(&names, b' ');
+                    line.push(b'\n');
+                    line
+                }),
+            ) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome =
@@ -212,11 +212,7 @@ mod tests {
         let mut expected = sig_name[3..].to_vec();
         expected.push(b'\n');
         run_trace(
-            vec![t(
-                "write",
-                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(expected)],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(fd(crate::sys::STDOUT_FILENO), bytes(expected)) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(
@@ -235,11 +231,7 @@ mod tests {
         let mut expected = sig_name[3..].to_vec();
         expected.push(b'\n');
         run_trace(
-            vec![t(
-                "write",
-                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(expected)],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(fd(crate::sys::STDOUT_FILENO), bytes(expected)) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(
@@ -255,75 +247,94 @@ mod tests {
     #[test]
     fn kill_dash_l_unknown_signal() {
         let msg = diag(b"kill: unknown signal: 999");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            let outcome = invoke(
-                &mut shell,
-                &[b"kill".to_vec(), b"-l".to_vec(), b"999".to_vec()],
-            )
-            .expect("kill -l 999");
-            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"kill".to_vec(), b"-l".to_vec(), b"999".to_vec()],
+                )
+                .expect("kill -l 999");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
     }
 
     #[test]
     fn kill_dash_l_invalid_exit_status() {
         let msg = diag(b"kill: invalid exit status: abc");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            let outcome = invoke(
-                &mut shell,
-                &[b"kill".to_vec(), b"-l".to_vec(), b"abc".to_vec()],
-            )
-            .expect("kill -l abc");
-            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"kill".to_vec(), b"-l".to_vec(), b"abc".to_vec()],
+                )
+                .expect("kill -l abc");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
     }
 
     #[test]
     fn kill_dash_s_no_signal() {
         let msg = diag(b"kill: -s requires a signal name");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            let outcome = invoke(&mut shell, &[b"kill".to_vec(), b"-s".to_vec()]).expect("kill -s");
-            assert!(matches!(outcome, BuiltinOutcome::Status(2)));
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                let outcome =
+                    invoke(&mut shell, &[b"kill".to_vec(), b"-s".to_vec()]).expect("kill -s");
+                assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+            },
+        );
     }
 
     #[test]
     fn kill_no_pid_after_signal() {
         let msg = diag(b"kill: no process id specified");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            let outcome = invoke(
-                &mut shell,
-                &[b"kill".to_vec(), b"-9".to_vec(), b"--".to_vec()],
-            )
-            .expect("kill -9 --");
-            assert!(matches!(outcome, BuiltinOutcome::Status(2)));
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"kill".to_vec(), b"-9".to_vec(), b"--".to_vec()],
+                )
+                .expect("kill -9 --");
+                assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+            },
+        );
     }
 
     #[test]
     fn kill_invalid_pid() {
         let msg = diag(b"kill: invalid pid: abc");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            let outcome =
-                invoke(&mut shell, &[b"kill".to_vec(), b"abc".to_vec()]).expect("kill abc");
-            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                let outcome =
+                    invoke(&mut shell, &[b"kill".to_vec(), b"abc".to_vec()]).expect("kill abc");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
     }
 
     #[test]
     fn kill_job_not_found() {
         let msg = diag(b"kill: %99: no such job");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            let outcome =
-                invoke(&mut shell, &[b"kill".to_vec(), b"%99".to_vec()]).expect("kill %99");
-            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                let outcome =
+                    invoke(&mut shell, &[b"kill".to_vec(), b"%99".to_vec()]).expect("kill %99");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
     }
 
     #[test]
@@ -345,10 +356,13 @@ mod tests {
     #[test]
     fn parse_kill_signal_unknown() {
         let msg = diag(b"kill: unknown signal: NOSUCHSIG");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let shell = test_shell();
-            assert!(parse_kill_signal(&shell, b"NOSUCHSIG").is_err());
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let shell = test_shell();
+                assert!(parse_kill_signal(&shell, b"NOSUCHSIG").is_err());
+            },
+        );
     }
 
     #[test]

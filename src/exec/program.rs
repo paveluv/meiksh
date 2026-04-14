@@ -79,6 +79,7 @@ mod tests {
     use crate::exec::test_support::*;
     use crate::shell::Shell;
     use crate::syntax::{Assignment, HereDoc, Redirection, Word};
+    use crate::trace_entries;
 
     #[test]
     fn execute_and_or_skips_rhs_when_guard_fails() {
@@ -165,7 +166,7 @@ mod tests {
     #[test]
     fn lineno_parse_error_unterminated_single_quote() {
         run_trace(
-            vec![t_stderr("meiksh: line 3: unterminated single quote")],
+            trace_entries![..vec![t_stderr("meiksh: line 3: unterminated single quote")]],
             || {
                 let mut shell = test_shell();
                 let _ = shell.execute_string(b"true\ntrue\necho '");
@@ -176,7 +177,7 @@ mod tests {
     #[test]
     fn lineno_parse_error_unterminated_double_quote() {
         run_trace(
-            vec![t_stderr("meiksh: line 2: unterminated double quote")],
+            trace_entries![..vec![t_stderr("meiksh: line 2: unterminated double quote")]],
             || {
                 let mut shell = test_shell();
                 let _ = shell.execute_string(b"true\necho \"hello");
@@ -187,7 +188,7 @@ mod tests {
     #[test]
     fn lineno_parse_error_empty_if_condition() {
         run_trace(
-            vec![t_stderr("meiksh: line 3: expected command list after 'if'")],
+            trace_entries![..vec![t_stderr("meiksh: line 3: expected command list after 'if'",)]],
             || {
                 let mut shell = test_shell();
                 let _ = shell.execute_string(b"true\nif\nthen true; fi");
@@ -198,7 +199,7 @@ mod tests {
     #[test]
     fn lineno_expand_nounset_on_line_2() {
         run_trace(
-            vec![t_stderr("meiksh: line 2: MISSING: parameter not set")],
+            trace_entries![..vec![t_stderr("meiksh: line 2: MISSING: parameter not set")]],
             || {
                 let mut shell = test_shell();
                 shell.options.nounset = true;
@@ -209,16 +210,19 @@ mod tests {
 
     #[test]
     fn lineno_expand_error_on_line_3() {
-        run_trace(vec![t_stderr("meiksh: line 3: must be set")], || {
-            let mut shell = test_shell();
-            let _ = shell.execute_string(b"true\ntrue\n: ${NOVAR?must be set}");
-        });
+        run_trace(
+            trace_entries![..vec![t_stderr("meiksh: line 3: must be set")]],
+            || {
+                let mut shell = test_shell();
+                let _ = shell.execute_string(b"true\ntrue\n: ${NOVAR?must be set}");
+            },
+        );
     }
 
     #[test]
     fn lineno_runtime_break_outside_loop() {
         run_trace(
-            vec![t_stderr("meiksh: line 2: break: only meaningful in a loop")],
+            trace_entries![..vec![t_stderr("meiksh: line 2: break: only meaningful in a loop",)]],
             || {
                 let mut shell = test_shell();
                 let _ = shell.execute_string(b"true\nbreak");
@@ -229,7 +233,7 @@ mod tests {
     #[test]
     fn lineno_runtime_readonly_assignment() {
         run_trace(
-            vec![t_stderr("meiksh: line 2: X: readonly variable")],
+            trace_entries![..vec![t_stderr("meiksh: line 2: X: readonly variable")]],
             || {
                 let mut shell = test_shell();
                 let _ = shell.execute_string(b"readonly X=1\nX=2");
@@ -259,14 +263,10 @@ mod tests {
     #[test]
     fn special_builtin_utility_error_exits_noninteractive() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(b"meiksh: line 1: set: invalid option: Z\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(
+                fd(sys::STDERR_FILENO),
+                bytes(b"meiksh: line 1: set: invalid option: Z\n"),
+            ) -> auto,],
             || {
                 let mut shell = test_shell();
                 let err = shell.execute_string(b"set -Z").expect_err("sbi error");
@@ -278,14 +278,10 @@ mod tests {
     #[test]
     fn special_builtin_utility_error_continues_interactive() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(b"meiksh: set: invalid option: Z\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(
+                fd(sys::STDERR_FILENO),
+                bytes(b"meiksh: set: invalid option: Z\n"),
+            ) -> auto,],
             || {
                 let mut shell = test_shell();
                 shell.interactive = true;

@@ -206,6 +206,7 @@ pub(super) fn test_file_binary(left: &[u8], op: &[u8], right: &[u8]) -> Option<T
 mod tests {
     use super::*;
     use crate::builtin::test_support::*;
+    use crate::trace_entries;
 
     #[test]
     fn test_string_less_than_operator() {
@@ -242,17 +243,9 @@ mod tests {
     #[test]
     fn test_ef_same_file() {
         run_trace(
-            vec![
-                t(
-                    "stat",
-                    vec![ArgMatcher::Str(b"/file1".to_vec()), ArgMatcher::Any],
-                    TraceResult::StatFile(0o644),
-                ),
-                t(
-                    "stat",
-                    vec![ArgMatcher::Str(b"/file2".to_vec()), ArgMatcher::Any],
-                    TraceResult::StatFile(0o644),
-                ),
+            trace_entries![
+                stat(str(b"/file1"), any) -> stat_file(0o644),
+                stat(str(b"/file2"), any) -> stat_file(0o644),
             ],
             || {
                 let result = test_file_binary(b"/file1", b"-ef", b"/file2");
@@ -266,17 +259,9 @@ mod tests {
     #[test]
     fn test_ef_different_files() {
         run_trace(
-            vec![
-                t(
-                    "stat",
-                    vec![ArgMatcher::Str(b"/a".to_vec()), ArgMatcher::Any],
-                    TraceResult::StatFile(0o644),
-                ),
-                t(
-                    "stat",
-                    vec![ArgMatcher::Str(b"/b".to_vec()), ArgMatcher::Any],
-                    TraceResult::StatFile(0o755),
-                ),
+            trace_entries![
+                stat(str(b"/a"), any) -> stat_file(0o644),
+                stat(str(b"/b"), any) -> stat_file(0o755),
             ],
             || {
                 let result = test_file_binary(b"/a", b"-ef", b"/b");
@@ -288,17 +273,9 @@ mod tests {
     #[test]
     fn test_nt_newer_than() {
         run_trace(
-            vec![
-                t(
-                    "stat",
-                    vec![ArgMatcher::Str(b"/new".to_vec()), ArgMatcher::Any],
-                    TraceResult::StatFile(0o644),
-                ),
-                t(
-                    "stat",
-                    vec![ArgMatcher::Str(b"/old".to_vec()), ArgMatcher::Any],
-                    TraceResult::StatFile(0o644),
-                ),
+            trace_entries![
+                stat(str(b"/new"), any) -> stat_file(0o644),
+                stat(str(b"/old"), any) -> stat_file(0o644),
             ],
             || {
                 let result = test_file_binary(b"/new", b"-nt", b"/old");
@@ -310,17 +287,9 @@ mod tests {
     #[test]
     fn test_nt_first_exists_second_not() {
         run_trace(
-            vec![
-                t(
-                    "stat",
-                    vec![ArgMatcher::Str(b"/exists".to_vec()), ArgMatcher::Any],
-                    TraceResult::StatFile(0o644),
-                ),
-                t(
-                    "stat",
-                    vec![ArgMatcher::Str(b"/gone".to_vec()), ArgMatcher::Any],
-                    TraceResult::Err(libc::ENOENT),
-                ),
+            trace_entries![
+                stat(str(b"/exists"), any) -> stat_file(0o644),
+                stat(str(b"/gone"), any) -> err(libc::ENOENT),
             ],
             || {
                 let result = test_file_binary(b"/exists", b"-nt", b"/gone");
@@ -332,17 +301,9 @@ mod tests {
     #[test]
     fn test_ot_older_than() {
         run_trace(
-            vec![
-                t(
-                    "stat",
-                    vec![ArgMatcher::Str(b"/old".to_vec()), ArgMatcher::Any],
-                    TraceResult::StatFile(0o644),
-                ),
-                t(
-                    "stat",
-                    vec![ArgMatcher::Str(b"/new".to_vec()), ArgMatcher::Any],
-                    TraceResult::StatFile(0o644),
-                ),
+            trace_entries![
+                stat(str(b"/old"), any) -> stat_file(0o644),
+                stat(str(b"/new"), any) -> stat_file(0o644),
             ],
             || {
                 let result = test_file_binary(b"/old", b"-ot", b"/new");
@@ -354,17 +315,9 @@ mod tests {
     #[test]
     fn test_ot_first_missing_second_exists() {
         run_trace(
-            vec![
-                t(
-                    "stat",
-                    vec![ArgMatcher::Str(b"/gone".to_vec()), ArgMatcher::Any],
-                    TraceResult::Err(libc::ENOENT),
-                ),
-                t(
-                    "stat",
-                    vec![ArgMatcher::Str(b"/exists".to_vec()), ArgMatcher::Any],
-                    TraceResult::StatFile(0o644),
-                ),
+            trace_entries![
+                stat(str(b"/gone"), any) -> err(libc::ENOENT),
+                stat(str(b"/exists"), any) -> stat_file(0o644),
             ],
             || {
                 let result = test_file_binary(b"/gone", b"-ot", b"/exists");
@@ -376,11 +329,7 @@ mod tests {
     #[test]
     fn test_socket_file_operator() {
         run_trace(
-            vec![t(
-                "stat",
-                vec![ArgMatcher::Str(b"/sock".to_vec()), ArgMatcher::Any],
-                TraceResult::StatFile(0o644),
-            )],
+            trace_entries![stat(str(b"/sock"), any) -> stat_file(0o644),],
             || {
                 let shell = test_shell();
                 let result = test_unary(&shell, b"-S", b"/sock");
@@ -415,12 +364,15 @@ mod tests {
     #[test]
     fn test_bracket_missing_closing() {
         let msg = diag(b"[: missing ']'");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            let outcome =
-                invoke(&mut shell, &[b"[".to_vec(), b"-n".to_vec(), b"x".to_vec()]).expect("[");
-            assert!(matches!(outcome, BuiltinOutcome::Status(2)));
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                let outcome =
+                    invoke(&mut shell, &[b"[".to_vec(), b"-n".to_vec(), b"x".to_vec()]).expect("[");
+                assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+            },
+        );
     }
 
     #[test]
@@ -434,125 +386,113 @@ mod tests {
 
     #[test]
     fn test_four_args_negated() {
+        run_trace(trace_entries![stat(any, any) -> err(libc::ENOENT),], || {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[
+                    b"test".to_vec(),
+                    b"!".to_vec(),
+                    b"-e".to_vec(),
+                    b"/nonexistent_file_xyzzy".to_vec(),
+                ],
+            )
+            .expect("test ! -e /nonexistent");
+            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        });
+    }
+
+    #[test]
+    fn test_four_args_invalid() {
+        let msg = diag(b"test: unknown operator: b");
         run_trace(
-            vec![t(
-                "stat",
-                vec![ArgMatcher::Any, ArgMatcher::Any],
-                TraceResult::Err(libc::ENOENT),
-            )],
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(
                     &mut shell,
                     &[
                         b"test".to_vec(),
-                        b"!".to_vec(),
-                        b"-e".to_vec(),
-                        b"/nonexistent_file_xyzzy".to_vec(),
+                        b"a".to_vec(),
+                        b"b".to_vec(),
+                        b"c".to_vec(),
                     ],
                 )
-                .expect("test ! -e /nonexistent");
-                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                .expect("test a b c");
+                assert!(matches!(outcome, BuiltinOutcome::Status(2)));
             },
         );
-    }
-
-    #[test]
-    fn test_four_args_invalid() {
-        let msg = diag(b"test: unknown operator: b");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            let outcome = invoke(
-                &mut shell,
-                &[
-                    b"test".to_vec(),
-                    b"a".to_vec(),
-                    b"b".to_vec(),
-                    b"c".to_vec(),
-                ],
-            )
-            .expect("test a b c");
-            assert!(matches!(outcome, BuiltinOutcome::Status(2)));
-        });
     }
 
     #[test]
     fn test_five_args_too_many() {
         let msg = diag(b"test: too many arguments");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            let outcome = invoke(
-                &mut shell,
-                &[
-                    b"test".to_vec(),
-                    b"a".to_vec(),
-                    b"b".to_vec(),
-                    b"c".to_vec(),
-                    b"d".to_vec(),
-                ],
-            )
-            .expect("test a b c d");
-            assert!(matches!(outcome, BuiltinOutcome::Status(2)));
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[
+                        b"test".to_vec(),
+                        b"a".to_vec(),
+                        b"b".to_vec(),
+                        b"c".to_vec(),
+                        b"d".to_vec(),
+                    ],
+                )
+                .expect("test a b c d");
+                assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+            },
+        );
     }
 
     #[test]
     fn test_unknown_operator_error() {
         let msg = diag(b"test: unknown operator: -zz");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            let outcome = invoke(
-                &mut shell,
-                &[
-                    b"test".to_vec(),
-                    b"a".to_vec(),
-                    b"-zz".to_vec(),
-                    b"b".to_vec(),
-                ],
-            )
-            .expect("test a -zz b");
-            assert!(matches!(outcome, BuiltinOutcome::Status(2)));
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[
+                        b"test".to_vec(),
+                        b"a".to_vec(),
+                        b"-zz".to_vec(),
+                        b"b".to_vec(),
+                    ],
+                )
+                .expect("test a -zz b");
+                assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+            },
+        );
     }
 
     #[test]
     fn test_unary_setgid() {
-        run_trace(
-            vec![t(
-                "stat",
-                vec![ArgMatcher::Any, ArgMatcher::Any],
-                TraceResult::Err(libc::ENOENT),
-            )],
-            || {
-                let mut shell = test_shell();
-                let outcome = invoke(
-                    &mut shell,
-                    &[b"test".to_vec(), b"-g".to_vec(), b"/no".to_vec()],
-                )
-                .expect("test -g");
-                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
-            },
-        );
+        run_trace(trace_entries![stat(any, any) -> err(libc::ENOENT),], || {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[b"test".to_vec(), b"-g".to_vec(), b"/no".to_vec()],
+            )
+            .expect("test -g");
+            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+        });
     }
 
     #[test]
     fn test_unary_setuid() {
-        run_trace(
-            vec![t(
-                "stat",
-                vec![ArgMatcher::Any, ArgMatcher::Any],
-                TraceResult::Err(libc::ENOENT),
-            )],
-            || {
-                let mut shell = test_shell();
-                let outcome = invoke(
-                    &mut shell,
-                    &[b"test".to_vec(), b"-u".to_vec(), b"/no".to_vec()],
-                )
-                .expect("test -u");
-                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
-            },
-        );
+        run_trace(trace_entries![stat(any, any) -> err(libc::ENOENT),], || {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[b"test".to_vec(), b"-u".to_vec(), b"/no".to_vec()],
+            )
+            .expect("test -u");
+            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+        });
     }
 
     #[test]
@@ -574,32 +514,21 @@ mod tests {
 
     #[test]
     fn test_unary_fifo() {
-        run_trace(
-            vec![t(
-                "stat",
-                vec![ArgMatcher::Any, ArgMatcher::Any],
-                TraceResult::Err(libc::ENOENT),
-            )],
-            || {
-                let mut shell = test_shell();
-                let outcome = invoke(
-                    &mut shell,
-                    &[b"test".to_vec(), b"-p".to_vec(), b"/no".to_vec()],
-                )
-                .expect("test -p");
-                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
-            },
-        );
+        run_trace(trace_entries![stat(any, any) -> err(libc::ENOENT),], || {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[b"test".to_vec(), b"-p".to_vec(), b"/no".to_vec()],
+            )
+            .expect("test -p");
+            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+        });
     }
 
     #[test]
     fn test_unary_readable() {
         run_trace(
-            vec![t(
-                "access",
-                vec![ArgMatcher::Any, ArgMatcher::Any],
-                TraceResult::Err(libc::ENOENT),
-            )],
+            trace_entries![access(any, any) -> err(libc::ENOENT),],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(
@@ -615,11 +544,7 @@ mod tests {
     #[test]
     fn test_unary_writable() {
         run_trace(
-            vec![t(
-                "access",
-                vec![ArgMatcher::Any, ArgMatcher::Any],
-                TraceResult::Err(libc::ENOENT),
-            )],
+            trace_entries![access(any, any) -> err(libc::ENOENT),],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(
@@ -635,11 +560,7 @@ mod tests {
     #[test]
     fn test_unary_executable() {
         run_trace(
-            vec![t(
-                "access",
-                vec![ArgMatcher::Any, ArgMatcher::Any],
-                TraceResult::Err(libc::ENOENT),
-            )],
+            trace_entries![access(any, any) -> err(libc::ENOENT),],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(
@@ -654,88 +575,66 @@ mod tests {
 
     #[test]
     fn test_unary_size_nonzero() {
-        run_trace(
-            vec![t(
-                "stat",
-                vec![ArgMatcher::Any, ArgMatcher::Any],
-                TraceResult::Err(libc::ENOENT),
-            )],
-            || {
-                let mut shell = test_shell();
-                let outcome = invoke(
-                    &mut shell,
-                    &[b"test".to_vec(), b"-s".to_vec(), b"/no".to_vec()],
-                )
-                .expect("test -s");
-                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
-            },
-        );
+        run_trace(trace_entries![stat(any, any) -> err(libc::ENOENT),], || {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[b"test".to_vec(), b"-s".to_vec(), b"/no".to_vec()],
+            )
+            .expect("test -s");
+            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+        });
     }
 
     #[test]
     fn test_unary_socket() {
-        run_trace(
-            vec![t(
-                "stat",
-                vec![ArgMatcher::Any, ArgMatcher::Any],
-                TraceResult::Err(libc::ENOENT),
-            )],
-            || {
-                let mut shell = test_shell();
-                let outcome = invoke(
-                    &mut shell,
-                    &[b"test".to_vec(), b"-S".to_vec(), b"/no".to_vec()],
-                )
-                .expect("test -S");
-                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
-            },
-        );
+        run_trace(trace_entries![stat(any, any) -> err(libc::ENOENT),], || {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[b"test".to_vec(), b"-S".to_vec(), b"/no".to_vec()],
+            )
+            .expect("test -S");
+            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+        });
     }
 
     #[test]
     fn test_unary_tty_bad_fd() {
-        run_trace(
-            vec![t("isatty", vec![ArgMatcher::Int(999)], TraceResult::Int(0))],
-            || {
-                let mut shell = test_shell();
-                let outcome = invoke(
-                    &mut shell,
-                    &[b"test".to_vec(), b"-t".to_vec(), b"999".to_vec()],
-                )
-                .expect("test -t 999");
-                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
-            },
-        );
+        run_trace(trace_entries![isatty(int(999)) -> 0,], || {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[b"test".to_vec(), b"-t".to_vec(), b"999".to_vec()],
+            )
+            .expect("test -t 999");
+            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+        });
     }
 
     #[test]
     fn test_unary_tty_invalid_fd() {
         let msg = diag(b"test: abc: not a valid fd");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            let outcome = invoke(
-                &mut shell,
-                &[b"test".to_vec(), b"-t".to_vec(), b"abc".to_vec()],
-            )
-            .expect("test -t abc");
-            assert!(matches!(outcome, BuiltinOutcome::Status(2)));
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"test".to_vec(), b"-t".to_vec(), b"abc".to_vec()],
+                )
+                .expect("test -t abc");
+                assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+            },
+        );
     }
 
     #[test]
     fn test_file_binary_nt_with_missing() {
         run_trace(
-            vec![
-                t(
-                    "stat",
-                    vec![ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::StatFile(0o644),
-                ),
-                t(
-                    "stat",
-                    vec![ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Err(libc::ENOENT),
-                ),
+            trace_entries![
+                stat(any, any) -> stat_file(0o644),
+                stat(any, any) -> err(libc::ENOENT),
             ],
             || {
                 let mut shell = test_shell();
@@ -757,17 +656,9 @@ mod tests {
     #[test]
     fn test_file_binary_ot_both_missing() {
         run_trace(
-            vec![
-                t(
-                    "stat",
-                    vec![ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Err(libc::ENOENT),
-                ),
-                t(
-                    "stat",
-                    vec![ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Err(libc::ENOENT),
-                ),
+            trace_entries![
+                stat(any, any) -> err(libc::ENOENT),
+                stat(any, any) -> err(libc::ENOENT),
             ],
             || {
                 let mut shell = test_shell();

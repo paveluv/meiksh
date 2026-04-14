@@ -759,9 +759,7 @@ mod tests {
 
     use crate::syntax;
     use crate::sys;
-    use crate::sys::test_support::{
-        ArgMatcher, TraceResult, assert_no_syscalls, run_trace, t, t_fork,
-    };
+    use crate::sys::test_support::{ArgMatcher, TraceResult, assert_no_syscalls, run_trace, t};
 
     use super::{
         classify_script_read_error, parse_options, resolve_script_path,
@@ -769,14 +767,17 @@ mod tests {
     };
     use crate::shell::state::Shell;
     use crate::shell::test_support::{capture_forked_trace, t_stderr, test_shell};
+    use crate::trace_entries;
 
     #[test]
     fn parse_options_handles_command_script_and_errors() {
         run_trace(
-            vec![
-                t_stderr("meiksh: -c requires an argument"),
-                t_stderr("meiksh: -o requires an argument"),
-                t_stderr("meiksh: invalid option name: bogus"),
+            trace_entries![
+                ..vec![
+                    t_stderr("meiksh: -c requires an argument"),
+                    t_stderr("meiksh: -o requires an argument"),
+                    t_stderr("meiksh: invalid option name: bogus"),
+                ],
             ],
             || {
                 let options = parse_options(&[
@@ -871,22 +872,10 @@ mod tests {
     #[test]
     fn setup_interactive_signals_ignores_sigquit_sigterm_installs_sigint() {
         run_trace(
-            vec![
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(sys::SIGQUIT as i64), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(sys::SIGTERM as i64), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(sys::SIGINT as i64), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                signal(int(sys::SIGQUIT), any) -> 0,
+                signal(int(sys::SIGTERM), any) -> 0,
+                signal(int(sys::SIGINT), any) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -911,7 +900,7 @@ mod tests {
 
     #[test]
     fn capture_output_success() {
-        run_trace(capture_forked_trace(0, 1000), || {
+        run_trace(trace_entries![..capture_forked_trace(0, 1000)], || {
             let mut shell = test_shell();
             let output = shell.capture_output(b"true").expect("capture");
             assert_eq!(output, b"");
@@ -920,7 +909,7 @@ mod tests {
 
     #[test]
     fn capture_output_sets_last_status_on_nonzero_exit() {
-        run_trace(capture_forked_trace(1, 1000), || {
+        run_trace(trace_entries![..capture_forked_trace(1, 1000)], || {
             let mut shell = test_shell();
             let output = shell.capture_output(b"false").expect("capture ok");
             assert_eq!(output, b"");
@@ -930,75 +919,63 @@ mod tests {
 
     #[test]
     fn parse_options_covers_dashdash_and_unknown_flags() {
-        run_trace(vec![t_stderr("meiksh: invalid option: z")], || {
-            let options = parse_options(&[
-                b"meiksh".to_vec(),
-                b"--".to_vec(),
-                b"arg1".to_vec(),
-                b"arg2".to_vec(),
-            ])
-            .expect("parse");
-            assert_eq!(options.positional, vec![b"arg1".to_vec(), b"arg2".to_vec()]);
+        run_trace(
+            trace_entries![..vec![t_stderr("meiksh: invalid option: z")]],
+            || {
+                let options = parse_options(&[
+                    b"meiksh".to_vec(),
+                    b"--".to_vec(),
+                    b"arg1".to_vec(),
+                    b"arg2".to_vec(),
+                ])
+                .expect("parse");
+                assert_eq!(options.positional, vec![b"arg1".to_vec(), b"arg2".to_vec()]);
 
-            let error = parse_options(&[b"meiksh".to_vec(), b"-z".to_vec(), b"script.sh".to_vec()])
-                .expect_err("invalid option");
-            assert_eq!(error.exit_status(), 2);
+                let error =
+                    parse_options(&[b"meiksh".to_vec(), b"-z".to_vec(), b"script.sh".to_vec()])
+                        .expect_err("invalid option");
+                assert_eq!(error.exit_status(), 2);
 
-            let options = parse_options(&[
-                b"meiksh".to_vec(),
-                b"-fC".to_vec(),
-                b"+f".to_vec(),
-                b"script.sh".to_vec(),
-            ])
-            .expect("parse");
-            assert!(!options.noglob);
-            assert!(options.noclobber);
-            assert_eq!(options.script_path, Some(b"script.sh".to_vec()));
+                let options = parse_options(&[
+                    b"meiksh".to_vec(),
+                    b"-fC".to_vec(),
+                    b"+f".to_vec(),
+                    b"script.sh".to_vec(),
+                ])
+                .expect("parse");
+                assert!(!options.noglob);
+                assert!(options.noclobber);
+                assert_eq!(options.script_path, Some(b"script.sh".to_vec()));
 
-            let options = parse_options(&[
-                b"meiksh".to_vec(),
-                b"-inuv".to_vec(),
-                b"+nuv".to_vec(),
-                b"script.sh".to_vec(),
-            ])
-            .expect("parse");
-            assert!(options.force_interactive);
-            assert!(!options.syntax_check_only);
-            assert!(!options.nounset);
-            assert!(!options.verbose);
-            assert_eq!(options.script_path, Some(b"script.sh".to_vec()));
+                let options = parse_options(&[
+                    b"meiksh".to_vec(),
+                    b"-inuv".to_vec(),
+                    b"+nuv".to_vec(),
+                    b"script.sh".to_vec(),
+                ])
+                .expect("parse");
+                assert!(options.force_interactive);
+                assert!(!options.syntax_check_only);
+                assert!(!options.nounset);
+                assert!(!options.verbose);
+                assert_eq!(options.script_path, Some(b"script.sh".to_vec()));
 
-            let options =
-                parse_options(&[b"meiksh".to_vec(), b"-".to_vec()]).expect("parse lone dash");
-            assert_eq!(options.script_path, None);
-            assert!(options.positional.is_empty());
-        });
+                let options =
+                    parse_options(&[b"meiksh".to_vec(), b"-".to_vec()]).expect("parse lone dash");
+                assert_eq!(options.script_path, None);
+                assert!(options.positional.is_empty());
+            },
+        );
     }
 
     #[test]
     fn shell_run_executes_script_from_path() {
         run_trace(
-            vec![
-                t(
-                    "open",
-                    vec![
-                        ArgMatcher::Str("/tmp/run-test.sh".into()),
-                        ArgMatcher::Any,
-                        ArgMatcher::Any,
-                    ],
-                    TraceResult::Fd(10),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(10), ArgMatcher::Any],
-                    TraceResult::Bytes(b"VALUE=77\n".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(10), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
+            trace_entries![
+                open(str("/tmp/run-test.sh"), any, any) -> fd(10),
+                read(fd(10), _) -> bytes(b"VALUE=77\n"),
+                read(fd(10), _) -> 0,
+                close(fd(10)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -1012,7 +989,7 @@ mod tests {
 
     #[test]
     fn capture_output_sets_last_status_127() {
-        run_trace(capture_forked_trace(127, 1000), || {
+        run_trace(trace_entries![..capture_forked_trace(127, 1000)], || {
             let mut shell = test_shell();
             let output = shell.capture_output(b"exit 127").expect("capture ok");
             assert_eq!(output, b"");
@@ -1048,11 +1025,7 @@ mod tests {
     #[test]
     fn resolve_script_path_prefers_current_directory() {
         run_trace(
-            vec![t(
-                "access",
-                vec![ArgMatcher::Str("cwd-script".into()), ArgMatcher::Int(0)],
-                TraceResult::Int(0),
-            )],
+            trace_entries![access(str("cwd-script"), int(0)) -> 0,],
             || {
                 let mut shell = test_shell();
                 shell.env.insert(b"PATH".to_vec(), b"/search-path".to_vec());
@@ -1067,20 +1040,9 @@ mod tests {
     #[test]
     fn resolve_script_path_searches_executable_path_entries() {
         run_trace(
-            vec![
-                t(
-                    "access",
-                    vec![ArgMatcher::Str("path-script".into()), ArgMatcher::Int(0)],
-                    TraceResult::Err(sys::ENOENT),
-                ),
-                t(
-                    "stat",
-                    vec![
-                        ArgMatcher::Str("/search-path/path-script".into()),
-                        ArgMatcher::Any,
-                    ],
-                    TraceResult::StatFile(0o755),
-                ),
+            trace_entries![
+                access(str("path-script"), int(0)) -> err(sys::ENOENT),
+                stat(str("/search-path/path-script"), any) -> stat_file(0o755),
             ],
             || {
                 let mut shell = test_shell();
@@ -1096,9 +1058,11 @@ mod tests {
     #[test]
     fn classify_script_read_error_maps_to_sh_exit_statuses() {
         run_trace(
-            vec![
-                t_stderr("meiksh: missing: not found"),
-                t_stderr("meiksh: bad: Input/output error"),
+            trace_entries![
+                ..vec![
+                    t_stderr("meiksh: missing: not found"),
+                    t_stderr("meiksh: bad: Input/output error"),
+                ],
             ],
             || {
                 let classified =
@@ -1122,7 +1086,7 @@ mod tests {
 
     #[test]
     fn shell_run_executes_command_string() {
-        run_trace(vec![], || {
+        run_trace(trace_entries![], || {
             let mut shell = test_shell();
             shell.options.command_string = Some(b"VALUE=13"[..].into());
             let status = shell.run().expect("run command string");
@@ -1134,17 +1098,13 @@ mod tests {
     #[test]
     fn capture_output_returns_error_on_fork_failure() {
         run_trace(
-            vec![
-                t("pipe", vec![], TraceResult::Fds(200, 201)),
-                t("fork", vec![], TraceResult::Err(sys::EINVAL)),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"meiksh: Invalid argument\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
+            trace_entries![
+                pipe() -> fds(200, 201),
+                fork() -> err(sys::EINVAL),
+                write(
+                    fd(sys::STDERR_FILENO),
+                    bytes(b"meiksh: Invalid argument\n"),
+                ) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -1156,7 +1116,7 @@ mod tests {
 
     #[test]
     fn execute_string_uses_current_alias_table() {
-        run_trace(vec![], || {
+        run_trace(trace_entries![], || {
             let mut shell = test_shell();
             shell
                 .execute_string(b"alias setok='export VALUE=ok'")
@@ -1200,38 +1160,41 @@ mod tests {
 
     #[test]
     fn parse_options_combined_c_with_other_flags() {
-        run_trace(vec![t_stderr("meiksh: -c requires an argument")], || {
-            let options = parse_options(&[
-                b"meiksh".to_vec(),
-                b"-ac".to_vec(),
-                b"echo ok".to_vec(),
-                b"name".to_vec(),
-            ])
-            .expect("parse -ac");
-            assert!(options.allexport);
-            assert_eq!(
-                options.command_string.as_deref(),
-                Some(b"echo ok".as_slice())
-            );
-            assert_eq!(
-                options.shell_name_override.as_deref(),
-                Some(b"name".as_slice())
-            );
+        run_trace(
+            trace_entries![..vec![t_stderr("meiksh: -c requires an argument")]],
+            || {
+                let options = parse_options(&[
+                    b"meiksh".to_vec(),
+                    b"-ac".to_vec(),
+                    b"echo ok".to_vec(),
+                    b"name".to_vec(),
+                ])
+                .expect("parse -ac");
+                assert!(options.allexport);
+                assert_eq!(
+                    options.command_string.as_deref(),
+                    Some(b"echo ok".as_slice())
+                );
+                assert_eq!(
+                    options.shell_name_override.as_deref(),
+                    Some(b"name".as_slice())
+                );
 
-            let options =
-                parse_options(&[b"meiksh".to_vec(), b"-euc".to_vec(), b"echo ok".to_vec()])
-                    .expect("parse -euc");
-            assert!(options.errexit);
-            assert!(options.nounset);
-            assert_eq!(
-                options.command_string.as_deref(),
-                Some(b"echo ok".as_slice())
-            );
+                let options =
+                    parse_options(&[b"meiksh".to_vec(), b"-euc".to_vec(), b"echo ok".to_vec()])
+                        .expect("parse -euc");
+                assert!(options.errexit);
+                assert!(options.nounset);
+                assert_eq!(
+                    options.command_string.as_deref(),
+                    Some(b"echo ok".as_slice())
+                );
 
-            let error =
-                parse_options(&[b"meiksh".to_vec(), b"-ec".to_vec()]).expect_err("missing -c arg");
-            assert_eq!(error.exit_status(), 2);
-        });
+                let error = parse_options(&[b"meiksh".to_vec(), b"-ec".to_vec()])
+                    .expect_err("missing -c arg");
+                assert_eq!(error.exit_status(), 2);
+            },
+        );
     }
 
     #[test]
@@ -1253,37 +1216,13 @@ mod tests {
     #[test]
     fn run_standard_input_retries_read_on_eintr() {
         run_trace(
-            vec![
-                t(
-                    "isatty",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO)],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "fstat",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::StatFile(0o644),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Interrupt(sys::SIGINT),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b":".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b"\n".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                isatty(fd(sys::STDIN_FILENO)) -> 0,
+                fstat(fd(sys::STDIN_FILENO), any) -> stat_file(0o644),
+                read(fd(sys::STDIN_FILENO), _) -> interrupt(sys::SIGINT),
+                read(fd(sys::STDIN_FILENO), _) -> bytes(b":"),
+                read(fd(sys::STDIN_FILENO), _) -> bytes(b"\n"),
+                read(fd(sys::STDIN_FILENO), _) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -1294,101 +1233,78 @@ mod tests {
     }
 
     fn stdin_blocking_trace() -> Vec<crate::sys::test_support::TraceEntry> {
-        vec![
-            t(
-                "isatty",
-                vec![ArgMatcher::Fd(sys::STDIN_FILENO)],
-                TraceResult::Int(0),
-            ),
-            t(
-                "fstat",
-                vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                TraceResult::StatFile(0o644),
-            ),
+        trace_entries![
+            isatty(fd(sys::STDIN_FILENO)) -> 0,
+            fstat(fd(sys::STDIN_FILENO), any) -> stat_file(0o644),
         ]
     }
 
     #[test]
     fn run_standard_input_fatal_read_error() {
-        let mut trace = stdin_blocking_trace();
-        trace.push(t(
-            "read",
-            vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-            TraceResult::Err(libc::EIO),
-        ));
-        trace.push(t_stderr("meiksh: Input/output error"));
-        run_trace(trace, || {
-            let mut shell = test_shell();
-            assert!(shell.run_standard_input().is_err());
-        });
+        run_trace(
+            trace_entries![
+                ..stdin_blocking_trace(),
+                read(fd(sys::STDIN_FILENO), _) -> err(libc::EIO),
+                write(
+                    fd(sys::STDERR_FILENO),
+                    bytes(b"meiksh: Input/output error\n"),
+                ) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                assert!(shell.run_standard_input().is_err());
+            },
+        );
     }
 
     #[test]
     fn run_standard_input_eof_with_remaining_bytes() {
-        let mut trace = stdin_blocking_trace();
-        trace.push(t(
-            "read",
-            vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-            TraceResult::Bytes(b":".to_vec()),
-        ));
-        trace.push(t(
-            "read",
-            vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-            TraceResult::Int(0),
-        ));
-        run_trace(trace, || {
-            let mut shell = test_shell();
-            let status = shell.run_standard_input().expect("stdin eof partial");
-            assert_eq!(status, 0);
-        });
+        run_trace(
+            trace_entries![
+                ..stdin_blocking_trace(),
+                read(fd(sys::STDIN_FILENO), _) -> bytes(b":"),
+                read(fd(sys::STDIN_FILENO), _) -> 0,
+            ],
+            || {
+                let mut shell = test_shell();
+                let status = shell.run_standard_input().expect("stdin eof partial");
+                assert_eq!(status, 0);
+            },
+        );
     }
 
     #[test]
     fn maybe_run_stdin_source_parse_error() {
-        run_trace(vec![t_stderr("meiksh: line 1: expected command")], || {
-            let mut shell = test_shell();
-            let mut source = b"if true\n".to_vec();
-            let result = shell.maybe_run_stdin_source(&mut source, false);
-            assert!(result.expect("non-eof parse yields None").is_none());
+        run_trace(
+            trace_entries![..vec![t_stderr("meiksh: line 1: expected command")]],
+            || {
+                let mut shell = test_shell();
+                let mut source = b"if true\n".to_vec();
+                let result = shell.maybe_run_stdin_source(&mut source, false);
+                assert!(result.expect("non-eof parse yields None").is_none());
 
-            let mut bad = b")\n".to_vec();
-            let result = shell.maybe_run_stdin_source(&mut bad, true);
-            assert!(result.is_err());
-        });
+                let mut bad = b")\n".to_vec();
+                let result = shell.maybe_run_stdin_source(&mut bad, true);
+                assert!(result.is_err());
+            },
+        );
     }
 
     #[test]
     fn capture_output_reads_data_from_pipe() {
-        let child = vec![
-            t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
-            t(
-                "dup2",
-                vec![ArgMatcher::Fd(201), ArgMatcher::Fd(1)],
-                TraceResult::Int(0),
-            ),
-            t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
-        ];
         run_trace(
-            vec![
-                t("pipe", vec![], TraceResult::Fds(200, 201)),
-                t_fork(TraceResult::Pid(1000), child),
-                t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(200), ArgMatcher::Any],
-                    TraceResult::Bytes(b"data".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(200), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)],
-                    TraceResult::Status(0),
-                ),
+            trace_entries![
+                pipe() -> fds(200, 201),
+                fork() -> pid(1000), child: [
+                    close(fd(200)) -> 0,
+                    dup2(fd(201), fd(sys::STDOUT_FILENO)) -> 0,
+                    close(fd(201)) -> 0,
+                ],
+                close(fd(201)) -> 0,
+                read(fd(200), _) -> bytes(b"data"),
+                read(fd(200), _) -> 0,
+                close(fd(200)) -> 0,
+                waitpid(int(1000), any, int(0)) -> status(0),
             ],
             || {
                 let mut shell = test_shell();
@@ -1401,24 +1317,10 @@ mod tests {
     #[test]
     fn load_script_source_not_found() {
         run_trace(
-            vec![
-                t(
-                    "access",
-                    vec![
-                        ArgMatcher::Str("nonexistent-script".into()),
-                        ArgMatcher::Int(0),
-                    ],
-                    TraceResult::Err(sys::ENOENT),
-                ),
-                t(
-                    "stat",
-                    vec![
-                        ArgMatcher::Str("/usr/bin/nonexistent-script".into()),
-                        ArgMatcher::Any,
-                    ],
-                    TraceResult::Err(sys::ENOENT),
-                ),
-                t_stderr("meiksh: nonexistent-script: not found"),
+            trace_entries![
+                access(str("nonexistent-script"), int(0)) -> err(sys::ENOENT),
+                stat(str("/usr/bin/nonexistent-script"), any) -> err(sys::ENOENT),
+                ..vec![t_stderr("meiksh: nonexistent-script: not found")],
             ],
             || {
                 let mut shell = test_shell();
@@ -1434,33 +1336,13 @@ mod tests {
     #[test]
     fn load_script_source_binary_file_rejected() {
         run_trace(
-            vec![
-                t(
-                    "access",
-                    vec![ArgMatcher::Str("binary-script".into()), ArgMatcher::Int(0)],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "open",
-                    vec![
-                        ArgMatcher::Str("binary-script".into()),
-                        ArgMatcher::Any,
-                        ArgMatcher::Any,
-                    ],
-                    TraceResult::Fd(10),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(10), ArgMatcher::Any],
-                    TraceResult::Bytes(b"#!/bin/sh\0binary-data".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(10), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
-                t_stderr("meiksh: binary-script: cannot execute"),
+            trace_entries![
+                access(str("binary-script"), int(0)) -> 0,
+                open(str("binary-script"), any, any) -> fd(10),
+                read(fd(10), _) -> bytes(b"#!/bin/sh\0binary-data"),
+                read(fd(10), _) -> 0,
+                close(fd(10)) -> 0,
+                ..vec![t_stderr("meiksh: binary-script: cannot execute")],
             ],
             || {
                 let shell = test_shell();
@@ -1488,30 +1370,15 @@ mod tests {
     #[test]
     fn search_script_path_empty_dir_and_not_found() {
         run_trace(
-            vec![
-                t(
-                    "access",
-                    vec![ArgMatcher::Str(b"missing".to_vec()), ArgMatcher::Int(0)],
-                    TraceResult::Err(sys::ENOENT),
-                ),
-                t(
+            trace_entries![
+                access(str(b"missing"), int(0)) -> err(sys::ENOENT),
+                ..vec![t(
                     "getenv",
                     vec![ArgMatcher::Str(b"PATH".to_vec())],
                     TraceResult::StrVal(b":/nonexistent".to_vec()),
-                ),
-                t(
-                    "stat",
-                    vec![ArgMatcher::Str(b"./missing".to_vec()), ArgMatcher::Any],
-                    TraceResult::Err(sys::ENOENT),
-                ),
-                t(
-                    "stat",
-                    vec![
-                        ArgMatcher::Str(b"/nonexistent/missing".to_vec()),
-                        ArgMatcher::Any,
-                    ],
-                    TraceResult::Err(sys::ENOENT),
-                ),
+                )],
+                stat(str(b"./missing"), any) -> err(sys::ENOENT),
+                stat(str(b"/nonexistent/missing"), any) -> err(sys::ENOENT),
             ],
             || {
                 let shell = test_shell();
@@ -1522,7 +1389,7 @@ mod tests {
 
     #[test]
     fn from_args_constructs_shell_from_argv() {
-        run_trace(vec![t("getpid", vec![], TraceResult::Pid(999))], || {
+        run_trace(trace_entries![getpid() -> pid(999),], || {
             let shell = Shell::from_args(&["meiksh", "-c", "echo hello"]).expect("from_args");
             assert_eq!(&*shell.shell_name, b"meiksh");
         });

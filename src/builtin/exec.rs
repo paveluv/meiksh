@@ -33,32 +33,28 @@ pub(super) fn exec_builtin(
 #[cfg(test)]
 mod tests {
     use crate::builtin::test_support::*;
+    use crate::trace_entries;
 
     #[test]
     fn exec_nul_byte_arg_error() {
         let msg = diag(b"exec: invalid argument");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            let _ = invoke(&mut shell, &[b"exec".to_vec(), b"foo\x00bar".to_vec()]);
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                let _ = invoke(&mut shell, &[b"exec".to_vec(), b"foo\x00bar".to_vec()]);
+            },
+        );
     }
 
     #[test]
     fn exec_not_found_error() {
         let msg = diag(b"exec: totally_missing: not found");
         run_trace(
-            vec![
-                t(
-                    "access",
-                    vec![ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Err(libc::ENOENT),
-                ),
-                t(
-                    "access",
-                    vec![ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Err(libc::ENOENT),
-                ),
-                trace_write_stderr(&msg),
+            trace_entries![
+                access(any, any) -> err(libc::ENOENT),
+                access(any, any) -> err(libc::ENOENT),
+                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {
                 let mut shell = test_shell();

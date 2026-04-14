@@ -26,10 +26,11 @@ pub(super) fn load_env_file(shell: &mut Shell) -> Result<(), ShellError> {
 mod tests {
     use super::*;
     use crate::interactive::test_support::*;
+    use crate::trace_entries;
 
     #[test]
     fn load_env_file_ignores_relative_path() {
-        run_trace(vec![], || {
+        run_trace(trace_entries![], || {
             let mut shell = test_shell();
             shell.env.insert(b"ENV".to_vec(), b"relative.sh".to_vec());
             load_env_file(&mut shell).expect("relative ignored");
@@ -39,14 +40,7 @@ mod tests {
     #[test]
     fn load_env_file_ignores_missing_absolute_path() {
         run_trace(
-            vec![t(
-                "access",
-                vec![
-                    ArgMatcher::Str("/tmp/meiksh-missing-env.sh".into()),
-                    ArgMatcher::Int(0),
-                ],
-                TraceResult::Err(sys::ENOENT),
-            )],
+            trace_entries![access(str("/tmp/meiksh-missing-env.sh"), int(0)) -> err(sys::ENOENT),],
             || {
                 let mut shell = test_shell();
                 shell
@@ -60,32 +54,12 @@ mod tests {
     #[test]
     fn load_env_file_sources_existing_absolute_path() {
         run_trace(
-            vec![
-                t(
-                    "access",
-                    vec![ArgMatcher::Str("/tmp/env.sh".into()), ArgMatcher::Int(0)],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "open",
-                    vec![
-                        ArgMatcher::Str("/tmp/env.sh".into()),
-                        ArgMatcher::Any,
-                        ArgMatcher::Any,
-                    ],
-                    TraceResult::Fd(10),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(10), ArgMatcher::Any],
-                    TraceResult::Bytes(b"FROM_ENV_FILE=1\n".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(10), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
+            trace_entries![
+                access(str("/tmp/env.sh"), int(0)) -> 0,
+                open(str("/tmp/env.sh"), any, any) -> fd(10),
+                read(fd(10), _) -> bytes(b"FROM_ENV_FILE=1\n"),
+                read(fd(10), _) -> 0,
+                close(fd(10)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -99,35 +73,12 @@ mod tests {
     #[test]
     fn load_env_file_expands_parameters() {
         run_trace(
-            vec![
-                t(
-                    "access",
-                    vec![
-                        ArgMatcher::Str("/home/user/env.sh".into()),
-                        ArgMatcher::Int(0),
-                    ],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "open",
-                    vec![
-                        ArgMatcher::Str("/home/user/env.sh".into()),
-                        ArgMatcher::Any,
-                        ArgMatcher::Any,
-                    ],
-                    TraceResult::Fd(10),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(10), ArgMatcher::Any],
-                    TraceResult::Bytes(b"FROM_EXPANDED_ENV=1\n".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(10), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
+            trace_entries![
+                access(str("/home/user/env.sh"), int(0)) -> 0,
+                open(str("/home/user/env.sh"), any, any) -> fd(10),
+                read(fd(10), _) -> bytes(b"FROM_EXPANDED_ENV=1\n"),
+                read(fd(10), _) -> 0,
+                close(fd(10)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -143,7 +94,7 @@ mod tests {
 
     #[test]
     fn load_env_file_respects_identity_guard() {
-        run_trace(vec![], || {
+        run_trace(trace_entries![], || {
             let mut shell = test_shell();
             shell.env.insert(b"HOME".to_vec(), b"/home/user".to_vec());
             shell
@@ -159,40 +110,16 @@ mod tests {
     #[test]
     fn load_env_file_propagates_source_errors() {
         run_trace(
-            vec![
-                t(
-                    "access",
-                    vec![ArgMatcher::Str("/tmp/bad.sh".into()), ArgMatcher::Int(0)],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "open",
-                    vec![
-                        ArgMatcher::Str("/tmp/bad.sh".into()),
-                        ArgMatcher::Any,
-                        ArgMatcher::Any,
-                    ],
-                    TraceResult::Fd(10),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(10), ArgMatcher::Any],
-                    TraceResult::Bytes(b"echo 'unterminated\n".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(10), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"meiksh: line 2: unterminated single quote\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
+            trace_entries![
+                access(str("/tmp/bad.sh"), int(0)) -> 0,
+                open(str("/tmp/bad.sh"), any, any) -> fd(10),
+                read(fd(10), _) -> bytes(b"echo 'unterminated\n"),
+                read(fd(10), _) -> 0,
+                close(fd(10)) -> 0,
+                write(
+                    fd(sys::STDERR_FILENO),
+                    bytes(b"meiksh: line 2: unterminated single quote\n"),
+                ) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -205,7 +132,7 @@ mod tests {
 
     #[test]
     fn load_env_file_noop_when_env_variable_unset() {
-        run_trace(vec![], || {
+        run_trace(trace_entries![], || {
             let mut shell = test_shell();
             load_env_file(&mut shell).expect("no env");
         });

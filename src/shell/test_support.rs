@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::sys;
-use crate::sys::test_support::{ArgMatcher, TraceResult, t, t_fork};
+use crate::trace_entries;
 
 use super::options::ShellOptions;
 use super::state::Shell;
@@ -14,14 +14,9 @@ pub fn fake_handle(pid: sys::Pid) -> sys::ChildHandle {
 }
 
 pub fn t_stderr(msg: &str) -> crate::sys::test_support::TraceEntry {
-    t(
-        "write",
-        vec![
-            ArgMatcher::Fd(sys::STDERR_FILENO),
-            ArgMatcher::Bytes(format!("{msg}\n").into_bytes()),
-        ],
-        TraceResult::Auto,
-    )
+    trace_entries![write(fd(sys::STDERR_FILENO), bytes(format!("{msg}\n"))) -> auto]
+        .pop()
+        .expect("t_stderr trace")
 }
 
 pub fn test_shell() -> Shell {
@@ -65,33 +60,16 @@ pub fn capture_forked_trace(
     exit_status: i32,
     pid: i32,
 ) -> Vec<crate::sys::test_support::TraceEntry> {
-    let child = vec![
-        t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
-        t(
-            "dup2",
-            vec![ArgMatcher::Fd(201), ArgMatcher::Fd(1)],
-            TraceResult::Int(0),
-        ),
-        t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
-    ];
-    vec![
-        t("pipe", vec![], TraceResult::Fds(200, 201)),
-        t_fork(TraceResult::Pid(pid), child),
-        t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
-        t(
-            "read",
-            vec![ArgMatcher::Fd(200), ArgMatcher::Any],
-            TraceResult::Int(0),
-        ),
-        t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
-        t(
-            "waitpid",
-            vec![
-                ArgMatcher::Int(pid as i64),
-                ArgMatcher::Any,
-                ArgMatcher::Int(0),
-            ],
-            TraceResult::Status(exit_status),
-        ),
+    trace_entries![
+        pipe() -> fds(200, 201),
+        fork() -> pid(pid), child: [
+            close(fd(200)) -> 0,
+            dup2(fd(201), fd(sys::STDOUT_FILENO)) -> 0,
+            close(fd(201)) -> 0,
+        ],
+        close(fd(201)) -> 0,
+        read(fd(200), _) -> 0,
+        close(fd(200)) -> 0,
+        waitpid(int(pid), _, int(0)) -> status(exit_status),
     ]
 }

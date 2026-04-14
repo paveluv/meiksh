@@ -1186,6 +1186,56 @@ pub(crate) fn t_fork(result: TraceResult, child: Vec<TraceEntry>) -> TraceEntry 
     }
 }
 
+/// Normalize byte data for trace `ArgMatcher::Bytes` / `DirEntryBytes` (macro helpers).
+#[allow(dead_code)]
+pub(crate) fn trace_bytes_from_ref<B: AsRef<[u8]> + ?Sized>(b: &B) -> Vec<u8> {
+    b.as_ref().to_vec()
+}
+
+/// Normalize byte data for trace `ArgMatcher::Str` (macro `str(...)` args).
+#[allow(dead_code)]
+pub(crate) fn trace_str_from_ref<B: AsRef<[u8]> + ?Sized>(b: &B) -> Vec<u8> {
+    b.as_ref().to_vec()
+}
+
+/// `read(STDIN_FILENO, _)` returning each chunk, then EOF (`Int(0)`).
+#[allow(dead_code)]
+pub(crate) fn stdin_chunks<I, B>(chunks: I) -> Vec<TraceEntry>
+where
+    I: IntoIterator<Item = B>,
+    B: AsRef<[u8]>,
+{
+    use crate::sys::STDIN_FILENO;
+    let mut out: Vec<TraceEntry> = chunks
+        .into_iter()
+        .map(|chunk| {
+            t(
+                "read",
+                vec![ArgMatcher::Fd(STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Bytes(chunk.as_ref().to_vec()),
+            )
+        })
+        .collect();
+    out.push(t(
+        "read",
+        vec![ArgMatcher::Fd(STDIN_FILENO), ArgMatcher::Any],
+        TraceResult::Int(0),
+    ));
+    out
+}
+
+/// One stdin `read` with payload `data`, then EOF.
+#[allow(dead_code)]
+pub(crate) fn stdin_bytes<B: AsRef<[u8]> + ?Sized>(data: &B) -> Vec<TraceEntry> {
+    stdin_chunks(std::iter::once(data))
+}
+
+/// `times` identical stdin reads of `chunk`, then EOF.
+#[allow(dead_code)]
+pub(crate) fn stdin_repeat<B: AsRef<[u8]> + Clone>(chunk: B, times: usize) -> Vec<TraceEntry> {
+    stdin_chunks((0..times).map(|_| chunk.clone()))
+}
+
 #[allow(dead_code)]
 pub(crate) trait IntoArgMatcher {
     fn into_arg(self) -> ArgMatcher;

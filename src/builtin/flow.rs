@@ -75,59 +75,75 @@ pub(super) fn parse_loop_count(
 #[cfg(test)]
 mod tests {
     use crate::builtin::test_support::*;
+    use crate::trace_entries;
 
     #[test]
     fn return_too_many_args() {
         let msg = diag(b"return: too many arguments");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            shell.function_depth = 1;
-            let _ = invoke(
-                &mut shell,
-                &[b"return".to_vec(), b"0".to_vec(), b"1".to_vec()],
-            );
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                shell.function_depth = 1;
+                let _ = invoke(
+                    &mut shell,
+                    &[b"return".to_vec(), b"0".to_vec(), b"1".to_vec()],
+                );
+            },
+        );
     }
 
     #[test]
     fn continue_not_in_loop() {
         let msg = diag(b"continue: only meaningful in a loop");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            let _ = invoke(&mut shell, &[b"continue".to_vec()]);
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                let _ = invoke(&mut shell, &[b"continue".to_vec()]);
+            },
+        );
     }
 
     #[test]
     fn break_too_many_args() {
         let msg = diag(b"break: too many arguments");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            shell.loop_depth = 1;
-            let _ = invoke(
-                &mut shell,
-                &[b"break".to_vec(), b"1".to_vec(), b"2".to_vec()],
-            );
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                shell.loop_depth = 1;
+                let _ = invoke(
+                    &mut shell,
+                    &[b"break".to_vec(), b"1".to_vec(), b"2".to_vec()],
+                );
+            },
+        );
     }
 
     #[test]
     fn break_invalid_number() {
         let msg = diag(b"break: numeric argument required");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            shell.loop_depth = 1;
-            let _ = invoke(&mut shell, &[b"break".to_vec(), b"abc".to_vec()]);
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                shell.loop_depth = 1;
+                let _ = invoke(&mut shell, &[b"break".to_vec(), b"abc".to_vec()]);
+            },
+        );
     }
 
     #[test]
     fn break_zero_level() {
         let msg = diag(b"break: numeric argument required");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            shell.loop_depth = 1;
-            let _ = invoke(&mut shell, &[b"break".to_vec(), b"0".to_vec()]);
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                shell.loop_depth = 1;
+                let _ = invoke(&mut shell, &[b"break".to_vec(), b"0".to_vec()]);
+            },
+        );
     }
 }
