@@ -2590,6 +2590,8 @@ mod tests {
             lineno: 0,
             path_cache: HashMap::new(),
             history: Vec::new(),
+            mail_last_check: 0,
+            mail_sizes: HashMap::new(),
         }
     }
 

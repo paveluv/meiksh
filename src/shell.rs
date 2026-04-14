@@ -35,6 +35,7 @@ pub struct ShellOptions {
     pub script_path: Option<PathBuf>,
     pub shell_name_override: Option<Box<str>>,
     pub positional: Vec<String>,
+    pub vi_mode: bool,
 }
 
 const REPORTABLE_OPTION_NAMES: [(&str, char); 11] = [
@@ -74,6 +75,10 @@ impl ShellOptions {
     pub fn set_named_option(&mut self, name: &str, enabled: bool) -> Result<(), OptionError> {
         if name == "pipefail" {
             self.pipefail = enabled;
+            return Ok(());
+        }
+        if name == "vi" {
+            self.vi_mode = enabled;
             return Ok(());
         }
         let Some((_, letter)) = REPORTABLE_OPTION_NAMES
@@ -185,6 +190,8 @@ pub struct Shell {
     pub(crate) lineno: usize,
     pub path_cache: HashMap<Box<str>, PathBuf>,
     pub history: Vec<Box<str>>,
+    pub(crate) mail_last_check: u64,
+    pub(crate) mail_sizes: HashMap<Box<str>, u64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -336,6 +343,9 @@ impl Shell {
         env.insert("IFS".into(), " \t\n".into());
         env.insert("PPID".into(), sys::parent_pid().to_string());
         env.insert("OPTIND".into(), "1".into());
+        if !env.contains_key("MAILCHECK") {
+            env.insert("MAILCHECK".into(), "600".into());
+        }
         Self::init_pwd(&mut env);
         Ok(Self {
             positional: options.positional.clone(),
@@ -368,6 +378,8 @@ impl Shell {
             lineno: 0,
             path_cache: HashMap::new(),
             history: Vec::new(),
+            mail_last_check: 0,
+            mail_sizes: HashMap::new(),
         })
     }
 
@@ -433,6 +445,8 @@ impl Shell {
             lineno: 0,
             path_cache: HashMap::new(),
             history: Vec::new(),
+            mail_last_check: 0,
+            mail_sizes: HashMap::new(),
         })
     }
 
@@ -1827,6 +1841,8 @@ mod tests {
             lineno: 0,
             path_cache: HashMap::new(),
             history: Vec::new(),
+            mail_last_check: 0,
+            mail_sizes: HashMap::new(),
         }
     }
 
@@ -3277,6 +3293,10 @@ mod tests {
             opts.set_named_option("hashall", true).expect("hashall");
             assert!(opts.hashall);
             opts.set_named_option("monitor", true).expect("monitor");
+            opts.set_named_option("vi", true).expect("vi");
+            assert!(opts.vi_mode);
+            opts.set_named_option("vi", false).expect("vi off");
+            assert!(!opts.vi_mode);
         });
     }
 

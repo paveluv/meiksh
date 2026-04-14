@@ -532,6 +532,7 @@ pub(crate) mod test_support {
         RealpathStr(String),
         StatDir,
         StatFile(mode_t),
+        StatFileSize(u64),
         StatFifo,
         DirEntry(String),
         Str(String),
@@ -942,6 +943,14 @@ pub(crate) mod test_support {
                 }
                 0
             }
+            TraceResult::StatFileSize(size) => {
+                unsafe {
+                    std::ptr::write_bytes(buf, 0, 1);
+                    (*buf).st_mode = libc::S_IFREG | 0o644;
+                    (*buf).st_size = *size as i64;
+                }
+                0
+            }
             TraceResult::StatFifo => {
                 unsafe {
                     std::ptr::write_bytes(buf, 0, 1);
@@ -973,6 +982,14 @@ pub(crate) mod test_support {
                 unsafe {
                     std::ptr::write_bytes(buf, 0, 1);
                     (*buf).st_mode = libc::S_IFREG | mode;
+                }
+                0
+            }
+            TraceResult::StatFileSize(size) => {
+                unsafe {
+                    std::ptr::write_bytes(buf, 0, 1);
+                    (*buf).st_mode = libc::S_IFREG | 0o644;
+                    (*buf).st_size = *size as i64;
                 }
                 0
             }
