@@ -33,3 +33,92 @@ pub(super) fn history_path(shell: &Shell) -> Vec<u8> {
         })
         .unwrap_or_else(|| b".sh_history".to_vec())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::interactive::test_support::*;
+
+    #[test]
+    fn append_history_writes_to_histfile() {
+        run_trace(
+            vec![
+                t(
+                    "open",
+                    vec![
+                        ArgMatcher::Str("/tmp/history.txt".into()),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Fd(10),
+                ),
+                t(
+                    "write",
+                    vec![ArgMatcher::Fd(10), ArgMatcher::Bytes(b"echo hi\n".to_vec())],
+                    TraceResult::Auto,
+                ),
+                t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell
+                    .env
+                    .insert(b"HISTFILE".to_vec(), b"/tmp/history.txt".to_vec());
+                append_history(&shell, b"echo hi\n").expect("append history");
+            },
+        );
+    }
+
+    #[test]
+    fn append_history_silently_ignores_open_error() {
+        run_trace(
+            vec![t(
+                "open",
+                vec![
+                    ArgMatcher::Str("/tmp/history-dir".into()),
+                    ArgMatcher::Any,
+                    ArgMatcher::Any,
+                ],
+                TraceResult::Err(sys::EISDIR),
+            )],
+            || {
+                let mut shell = test_shell();
+                shell
+                    .env
+                    .insert(b"HISTFILE".to_vec(), b"/tmp/history-dir".to_vec());
+                append_history(&shell, b"echo hi\n").expect("should silently succeed");
+            },
+        );
+    }
+
+    #[test]
+    fn append_history_uses_default_path_when_histfile_unset() {
+        run_trace(
+            vec![
+                t(
+                    "open",
+                    vec![
+                        ArgMatcher::Str("/home/user/.sh_history".into()),
+                        ArgMatcher::Any,
+                        ArgMatcher::Any,
+                    ],
+                    TraceResult::Fd(10),
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(10),
+                        ArgMatcher::Bytes(b"echo default\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+                t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"HOME".to_vec(), b"/home/user".to_vec());
+                append_history(&shell, b"echo default\n").expect("default history");
+            },
+        );
+    }
+}

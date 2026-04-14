@@ -66,3 +66,69 @@ pub(super) fn expand_prompt_exclamation(s: &[u8], histnum: usize) -> Vec<u8> {
     }
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::interactive::test_support::*;
+
+    #[test]
+    fn prompt_prefers_ps1() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            assert_eq!(expand_prompt(&mut shell, b"PS1", b"$ "), b"$ ");
+            shell.env.insert(b"PS1".to_vec(), b"custom> ".to_vec());
+            assert_eq!(expand_prompt(&mut shell, b"PS1", b"$ "), b"custom> ");
+        });
+    }
+
+    #[test]
+    fn read_line_propagates_non_eintr_error() {
+        run_trace(
+            vec![t(
+                "read",
+                vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                TraceResult::Err(sys::EBADF),
+            )],
+            || {
+                let err = read_line().expect_err("should propagate EBADF");
+                assert!(!err.is_eintr());
+            },
+        );
+    }
+
+    #[test]
+    fn read_line_returns_empty_on_eintr() {
+        run_trace(
+            vec![
+                t(
+                    "read",
+                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                    TraceResult::Err(sys::EINTR),
+                ),
+                t(
+                    "write",
+                    vec![
+                        ArgMatcher::Fd(sys::STDERR_FILENO),
+                        ArgMatcher::Bytes(b"\n".to_vec()),
+                    ],
+                    TraceResult::Auto,
+                ),
+            ],
+            || {
+                let result = read_line().expect("should not fail on EINTR");
+                assert_eq!(result, Some(Vec::new()));
+            },
+        );
+    }
+
+    #[test]
+    fn expand_prompt_exclamation_covers_all_branches() {
+        assert_no_syscalls(|| {
+            assert_eq!(expand_prompt_exclamation(b"!!", 42), b"!");
+            assert_eq!(expand_prompt_exclamation(b"!x", 42), b"42x");
+            assert_eq!(expand_prompt_exclamation(b"!", 42), b"42");
+            assert_eq!(expand_prompt_exclamation(b"no bang", 42), b"no bang");
+        });
+    }
+}
