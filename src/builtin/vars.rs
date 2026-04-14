@@ -195,6 +195,7 @@ pub(super) fn parse_unset_target(
 mod tests {
     use super::*;
     use crate::builtin::test_support::*;
+    use crate::trace_entries;
 
     #[test]
     fn export_updates_shell_state() {
@@ -244,14 +245,17 @@ mod tests {
     #[test]
     fn unset_readonly_var_error() {
         let msg = diag(b"unset: readonly variable: RO");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            shell.set_var(b"RO", b"val".to_vec()).unwrap();
-            shell.mark_readonly(b"RO");
-            let outcome =
-                invoke(&mut shell, &[b"unset".to_vec(), b"RO".to_vec()]).expect("unset RO");
-            assert!(matches!(outcome, BuiltinOutcome::UtilityError(1)));
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                shell.set_var(b"RO", b"val".to_vec()).unwrap();
+                shell.mark_readonly(b"RO");
+                let outcome =
+                    invoke(&mut shell, &[b"unset".to_vec(), b"RO".to_vec()]).expect("unset RO");
+                assert!(matches!(outcome, BuiltinOutcome::UtilityError(1)));
+            },
+        );
     }
 
     #[test]

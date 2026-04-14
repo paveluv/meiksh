@@ -25,7 +25,7 @@ macro_rules! syscall_test {
     ) => {
         #[test]
         fn $name() {
-            let trace = syscall_test!(@trace_entries $($trace)*);
+            let trace = $crate::syscall_test!(@trace_entries $($trace)*);
             $crate::sys::test_support::run_trace(trace, || {
                 let mut shell = $crate::shell::Shell::from_args(
                     &["meiksh", $($arg),*]
@@ -39,7 +39,7 @@ macro_rules! syscall_test {
     (@trace_entries) => { vec![] };
     (@trace_entries $($entries:tt)+) => {{
         let mut trace: Vec<$crate::sys::test_support::TraceEntry> = Vec::new();
-        syscall_test!(@parse_entries trace; $($entries)*);
+        $crate::syscall_test!(@parse_entries trace; $($entries)*);
         trace
     }};
 
@@ -49,7 +49,7 @@ macro_rules! syscall_test {
     // spread a Vec<TraceEntry> from an expression
     (@parse_entries $trace:ident; ..$spread:expr, $($rest:tt)*) => {
         $trace.extend($spread);
-        syscall_test!(@parse_entries $trace; $($rest)*);
+        $crate::syscall_test!(@parse_entries $trace; $($rest)*);
     };
     (@parse_entries $trace:ident; ..$spread:expr) => {
         $trace.extend($spread);
@@ -59,14 +59,14 @@ macro_rules! syscall_test {
     (@parse_entries $trace:ident; fork() -> pid($pid:expr), child: [$($child:tt)*], $($rest:tt)*) => {
         $trace.push($crate::sys::test_support::t_fork(
             $crate::sys::test_support::TraceResult::Pid($pid),
-            syscall_test!(@trace_entries $($child)*),
+            $crate::syscall_test!(@trace_entries $($child)*),
         ));
-        syscall_test!(@parse_entries $trace; $($rest)*);
+        $crate::syscall_test!(@parse_entries $trace; $($rest)*);
     };
     (@parse_entries $trace:ident; fork() -> pid($pid:expr), child: [$($child:tt)*]) => {
         $trace.push($crate::sys::test_support::t_fork(
             $crate::sys::test_support::TraceResult::Pid($pid),
-            syscall_test!(@trace_entries $($child)*),
+            $crate::syscall_test!(@trace_entries $($child)*),
         ));
     };
 
@@ -77,7 +77,7 @@ macro_rules! syscall_test {
             vec![$crate::sys::test_support::ArgMatcher::Int($pid as i64), $crate::sys::test_support::ArgMatcher::Any, $crate::sys::test_support::ArgMatcher::Any],
             $crate::sys::test_support::TraceResult::Status($status),
         ));
-        syscall_test!(@parse_entries $trace; $($rest)*);
+        $crate::syscall_test!(@parse_entries $trace; $($rest)*);
     };
     (@parse_entries $trace:ident; waitpid($pid:expr, _) -> status($status:expr)) => {
         $trace.push($crate::sys::test_support::t(
@@ -86,161 +86,345 @@ macro_rules! syscall_test {
             $crate::sys::test_support::TraceResult::Status($status),
         ));
     };
+    (@parse_entries $trace:ident; waitpid($pid:expr, _) -> stopped_sig($sig:expr), $($rest:tt)*) => {
+        $trace.push($crate::sys::test_support::t(
+            "waitpid",
+            vec![$crate::sys::test_support::ArgMatcher::Int($pid as i64), $crate::sys::test_support::ArgMatcher::Any, $crate::sys::test_support::ArgMatcher::Any],
+            $crate::sys::test_support::TraceResult::StoppedSig($sig),
+        ));
+        $crate::syscall_test!(@parse_entries $trace; $($rest)*);
+    };
+    (@parse_entries $trace:ident; waitpid($pid:expr, _) -> stopped_sig($sig:expr)) => {
+        $trace.push($crate::sys::test_support::t(
+            "waitpid",
+            vec![$crate::sys::test_support::ArgMatcher::Int($pid as i64), $crate::sys::test_support::ArgMatcher::Any, $crate::sys::test_support::ArgMatcher::Any],
+            $crate::sys::test_support::TraceResult::StoppedSig($sig),
+        ));
+    };
+    (@parse_entries $trace:ident; waitpid($pid:expr, _) -> signaled_sig($sig:expr), $($rest:tt)*) => {
+        $trace.push($crate::sys::test_support::t(
+            "waitpid",
+            vec![$crate::sys::test_support::ArgMatcher::Int($pid as i64), $crate::sys::test_support::ArgMatcher::Any, $crate::sys::test_support::ArgMatcher::Any],
+            $crate::sys::test_support::TraceResult::SignaledSig($sig),
+        ));
+        $crate::syscall_test!(@parse_entries $trace; $($rest)*);
+    };
+    (@parse_entries $trace:ident; waitpid($pid:expr, _) -> signaled_sig($sig:expr)) => {
+        $trace.push($crate::sys::test_support::t(
+            "waitpid",
+            vec![$crate::sys::test_support::ArgMatcher::Int($pid as i64), $crate::sys::test_support::ArgMatcher::Any, $crate::sys::test_support::ArgMatcher::Any],
+            $crate::sys::test_support::TraceResult::SignaledSig($sig),
+        ));
+    };
+    (@parse_entries $trace:ident; waitpid($pid:expr, _) -> continued, $($rest:tt)*) => {
+        $trace.push($crate::sys::test_support::t(
+            "waitpid",
+            vec![$crate::sys::test_support::ArgMatcher::Int($pid as i64), $crate::sys::test_support::ArgMatcher::Any, $crate::sys::test_support::ArgMatcher::Any],
+            $crate::sys::test_support::TraceResult::ContinuedStatus,
+        ));
+        $crate::syscall_test!(@parse_entries $trace; $($rest)*);
+    };
+    (@parse_entries $trace:ident; waitpid($pid:expr, _) -> continued) => {
+        $trace.push($crate::sys::test_support::t(
+            "waitpid",
+            vec![$crate::sys::test_support::ArgMatcher::Int($pid as i64), $crate::sys::test_support::ArgMatcher::Any, $crate::sys::test_support::ArgMatcher::Any],
+            $crate::sys::test_support::TraceResult::ContinuedStatus,
+        ));
+    };
 
     // Generic syscall: name(args...) -> result
     (@parse_entries $trace:ident; $syscall:ident($($args:tt)*) -> $($result:tt)*) => {
-        syscall_test!(@emit_entry $trace; $syscall; ($($args)*); $($result)*);
+        $crate::syscall_test!(@emit_entry $trace; $syscall; ($($args)*); $($result)*);
     };
 
     // Handle splitting result from rest (result , rest...)
     (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); err($errno:expr), $($rest:tt)*) => {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
-            syscall_test!(@args $($args)*),
+            $crate::syscall_test!(@args $($args)*),
             $crate::sys::test_support::TraceResult::Err($errno),
         ));
-        syscall_test!(@parse_entries $trace; $($rest)*);
+        $crate::syscall_test!(@parse_entries $trace; $($rest)*);
     };
     (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); err($errno:expr)) => {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
-            syscall_test!(@args $($args)*),
+            $crate::syscall_test!(@args $($args)*),
             $crate::sys::test_support::TraceResult::Err($errno),
         ));
     };
     (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); bytes($bytes:expr), $($rest:tt)*) => {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
-            syscall_test!(@args $($args)*),
+            $crate::syscall_test!(@args $($args)*),
             $crate::sys::test_support::TraceResult::Bytes($bytes.to_vec()),
         ));
-        syscall_test!(@parse_entries $trace; $($rest)*);
+        $crate::syscall_test!(@parse_entries $trace; $($rest)*);
     };
     (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); bytes($bytes:expr)) => {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
-            syscall_test!(@args $($args)*),
+            $crate::syscall_test!(@args $($args)*),
             $crate::sys::test_support::TraceResult::Bytes($bytes.to_vec()),
         ));
     };
     (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); fd($fd:expr), $($rest:tt)*) => {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
-            syscall_test!(@args $($args)*),
+            $crate::syscall_test!(@args $($args)*),
             $crate::sys::test_support::TraceResult::Fd($fd),
         ));
-        syscall_test!(@parse_entries $trace; $($rest)*);
+        $crate::syscall_test!(@parse_entries $trace; $($rest)*);
     };
     (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); fd($fd:expr)) => {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
-            syscall_test!(@args $($args)*),
+            $crate::syscall_test!(@args $($args)*),
             $crate::sys::test_support::TraceResult::Fd($fd),
         ));
     };
     (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); pid($pid:expr), $($rest:tt)*) => {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
-            syscall_test!(@args $($args)*),
+            $crate::syscall_test!(@args $($args)*),
             $crate::sys::test_support::TraceResult::Pid($pid),
         ));
-        syscall_test!(@parse_entries $trace; $($rest)*);
+        $crate::syscall_test!(@parse_entries $trace; $($rest)*);
     };
     (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); pid($pid:expr)) => {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
-            syscall_test!(@args $($args)*),
+            $crate::syscall_test!(@args $($args)*),
             $crate::sys::test_support::TraceResult::Pid($pid),
         ));
     };
     (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); fds($r:expr, $w:expr), $($rest:tt)*) => {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
-            syscall_test!(@args $($args)*),
+            $crate::syscall_test!(@args $($args)*),
             $crate::sys::test_support::TraceResult::Fds($r, $w),
         ));
-        syscall_test!(@parse_entries $trace; $($rest)*);
+        $crate::syscall_test!(@parse_entries $trace; $($rest)*);
     };
     (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); fds($r:expr, $w:expr)) => {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
-            syscall_test!(@args $($args)*),
+            $crate::syscall_test!(@args $($args)*),
             $crate::sys::test_support::TraceResult::Fds($r, $w),
         ));
     };
     (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); cwd($s:expr), $($rest:tt)*) => {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
-            syscall_test!(@args $($args)*),
+            $crate::syscall_test!(@args $($args)*),
             $crate::sys::test_support::TraceResult::CwdBytes($s.as_bytes().to_vec()),
         ));
-        syscall_test!(@parse_entries $trace; $($rest)*);
+        $crate::syscall_test!(@parse_entries $trace; $($rest)*);
     };
     (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); cwd($s:expr)) => {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
-            syscall_test!(@args $($args)*),
+            $crate::syscall_test!(@args $($args)*),
             $crate::sys::test_support::TraceResult::CwdBytes($s.as_bytes().to_vec()),
         ));
     };
     (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); realpath($s:expr), $($rest:tt)*) => {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
-            syscall_test!(@args $($args)*),
+            $crate::syscall_test!(@args $($args)*),
             $crate::sys::test_support::TraceResult::RealpathBytes($s.as_bytes().to_vec()),
         ));
-        syscall_test!(@parse_entries $trace; $($rest)*);
+        $crate::syscall_test!(@parse_entries $trace; $($rest)*);
     };
     (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); realpath($s:expr)) => {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
-            syscall_test!(@args $($args)*),
+            $crate::syscall_test!(@args $($args)*),
             $crate::sys::test_support::TraceResult::RealpathBytes($s.as_bytes().to_vec()),
         ));
     };
     (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); stat_dir, $($rest:tt)*) => {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
-            syscall_test!(@args $($args)*),
+            $crate::syscall_test!(@args $($args)*),
             $crate::sys::test_support::TraceResult::StatDir,
         ));
-        syscall_test!(@parse_entries $trace; $($rest)*);
+        $crate::syscall_test!(@parse_entries $trace; $($rest)*);
     };
     (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); stat_dir) => {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
-            syscall_test!(@args $($args)*),
+            $crate::syscall_test!(@args $($args)*),
             $crate::sys::test_support::TraceResult::StatDir,
         ));
     };
     (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); stat_file($mode:expr), $($rest:tt)*) => {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
-            syscall_test!(@args $($args)*),
+            $crate::syscall_test!(@args $($args)*),
             $crate::sys::test_support::TraceResult::StatFile($mode),
         ));
-        syscall_test!(@parse_entries $trace; $($rest)*);
+        $crate::syscall_test!(@parse_entries $trace; $($rest)*);
     };
     (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); stat_file($mode:expr)) => {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
-            syscall_test!(@args $($args)*),
+            $crate::syscall_test!(@args $($args)*),
             $crate::sys::test_support::TraceResult::StatFile($mode),
+        ));
+    };
+    (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); stat_file_size($sz:expr), $($rest:tt)*) => {
+        $trace.push($crate::sys::test_support::t(
+            stringify!($syscall),
+            $crate::syscall_test!(@args $($args)*),
+            $crate::sys::test_support::TraceResult::StatFileSize($sz),
+        ));
+        $crate::syscall_test!(@parse_entries $trace; $($rest)*);
+    };
+    (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); stat_file_size($sz:expr)) => {
+        $trace.push($crate::sys::test_support::t(
+            stringify!($syscall),
+            $crate::syscall_test!(@args $($args)*),
+            $crate::sys::test_support::TraceResult::StatFileSize($sz),
+        ));
+    };
+    (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); dir_entry($name:expr), $($rest:tt)*) => {
+        $trace.push($crate::sys::test_support::t(
+            stringify!($syscall),
+            $crate::syscall_test!(@args $($args)*),
+            $crate::sys::test_support::TraceResult::DirEntryBytes(
+                $crate::sys::test_support::trace_bytes_from_ref(&($name)),
+            ),
+        ));
+        $crate::syscall_test!(@parse_entries $trace; $($rest)*);
+    };
+    (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); dir_entry($name:expr)) => {
+        $trace.push($crate::sys::test_support::t(
+            stringify!($syscall),
+            $crate::syscall_test!(@args $($args)*),
+            $crate::sys::test_support::TraceResult::DirEntryBytes(
+                $crate::sys::test_support::trace_bytes_from_ref(&($name)),
+            ),
+        ));
+    };
+    (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); status($s:expr), $($rest:tt)*) => {
+        $trace.push($crate::sys::test_support::t(
+            stringify!($syscall),
+            $crate::syscall_test!(@args $($args)*),
+            $crate::sys::test_support::TraceResult::Status($s),
+        ));
+        $crate::syscall_test!(@parse_entries $trace; $($rest)*);
+    };
+    (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); status($s:expr)) => {
+        $trace.push($crate::sys::test_support::t(
+            stringify!($syscall),
+            $crate::syscall_test!(@args $($args)*),
+            $crate::sys::test_support::TraceResult::Status($s),
+        ));
+    };
+    (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); stopped_sig($sig:expr), $($rest:tt)*) => {
+        $trace.push($crate::sys::test_support::t(
+            stringify!($syscall),
+            $crate::syscall_test!(@args $($args)*),
+            $crate::sys::test_support::TraceResult::StoppedSig($sig),
+        ));
+        $crate::syscall_test!(@parse_entries $trace; $($rest)*);
+    };
+    (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); stopped_sig($sig:expr)) => {
+        $trace.push($crate::sys::test_support::t(
+            stringify!($syscall),
+            $crate::syscall_test!(@args $($args)*),
+            $crate::sys::test_support::TraceResult::StoppedSig($sig),
+        ));
+    };
+    (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); signaled_sig($sig:expr), $($rest:tt)*) => {
+        $trace.push($crate::sys::test_support::t(
+            stringify!($syscall),
+            $crate::syscall_test!(@args $($args)*),
+            $crate::sys::test_support::TraceResult::SignaledSig($sig),
+        ));
+        $crate::syscall_test!(@parse_entries $trace; $($rest)*);
+    };
+    (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); signaled_sig($sig:expr)) => {
+        $trace.push($crate::sys::test_support::t(
+            stringify!($syscall),
+            $crate::syscall_test!(@args $($args)*),
+            $crate::sys::test_support::TraceResult::SignaledSig($sig),
+        ));
+    };
+    (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); continued, $($rest:tt)*) => {
+        $trace.push($crate::sys::test_support::t(
+            stringify!($syscall),
+            $crate::syscall_test!(@args $($args)*),
+            $crate::sys::test_support::TraceResult::ContinuedStatus,
+        ));
+        $crate::syscall_test!(@parse_entries $trace; $($rest)*);
+    };
+    (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); continued) => {
+        $trace.push($crate::sys::test_support::t(
+            stringify!($syscall),
+            $crate::syscall_test!(@args $($args)*),
+            $crate::sys::test_support::TraceResult::ContinuedStatus,
+        ));
+    };
+    (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); auto, $($rest:tt)*) => {
+        $trace.push($crate::sys::test_support::t(
+            stringify!($syscall),
+            $crate::syscall_test!(@args $($args)*),
+            $crate::sys::test_support::TraceResult::Auto,
+        ));
+        $crate::syscall_test!(@parse_entries $trace; $($rest)*);
+    };
+    (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); auto) => {
+        $trace.push($crate::sys::test_support::t(
+            stringify!($syscall),
+            $crate::syscall_test!(@args $($args)*),
+            $crate::sys::test_support::TraceResult::Auto,
+        ));
+    };
+    (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); interrupt($sig:expr), $($rest:tt)*) => {
+        $trace.push($crate::sys::test_support::t(
+            stringify!($syscall),
+            $crate::syscall_test!(@args $($args)*),
+            $crate::sys::test_support::TraceResult::Interrupt($sig),
+        ));
+        $crate::syscall_test!(@parse_entries $trace; $($rest)*);
+    };
+    (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); interrupt($sig:expr)) => {
+        $trace.push($crate::sys::test_support::t(
+            stringify!($syscall),
+            $crate::syscall_test!(@args $($args)*),
+            $crate::sys::test_support::TraceResult::Interrupt($sig),
+        ));
+    };
+    (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); int($v:expr), $($rest:tt)*) => {
+        $trace.push($crate::sys::test_support::t(
+            stringify!($syscall),
+            $crate::syscall_test!(@args $($args)*),
+            $crate::sys::test_support::TraceResult::Int($v as i64),
+        ));
+        $crate::syscall_test!(@parse_entries $trace; $($rest)*);
+    };
+    (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); int($v:expr)) => {
+        $trace.push($crate::sys::test_support::t(
+            stringify!($syscall),
+            $crate::syscall_test!(@args $($args)*),
+            $crate::sys::test_support::TraceResult::Int($v as i64),
         ));
     };
     // Wildcard return
     (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); _, $($rest:tt)*) => {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
-            syscall_test!(@args $($args)*),
+            $crate::syscall_test!(@args $($args)*),
             $crate::sys::test_support::TraceResult::Int(0),
         ));
-        syscall_test!(@parse_entries $trace; $($rest)*);
+        $crate::syscall_test!(@parse_entries $trace; $($rest)*);
     };
     (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); _) => {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
-            syscall_test!(@args $($args)*),
+            $crate::syscall_test!(@args $($args)*),
             $crate::sys::test_support::TraceResult::Int(0),
         ));
     };
@@ -248,15 +432,15 @@ macro_rules! syscall_test {
     (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); void, $($rest:tt)*) => {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
-            syscall_test!(@args $($args)*),
+            $crate::syscall_test!(@args $($args)*),
             $crate::sys::test_support::TraceResult::Void,
         ));
-        syscall_test!(@parse_entries $trace; $($rest)*);
+        $crate::syscall_test!(@parse_entries $trace; $($rest)*);
     };
     (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); void) => {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
-            syscall_test!(@args $($args)*),
+            $crate::syscall_test!(@args $($args)*),
             $crate::sys::test_support::TraceResult::Void,
         ));
     };
@@ -264,15 +448,15 @@ macro_rules! syscall_test {
     (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); $val:expr, $($rest:tt)*) => {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
-            syscall_test!(@args $($args)*),
+            $crate::syscall_test!(@args $($args)*),
             $crate::sys::test_support::TraceResult::Int($val as i64),
         ));
-        syscall_test!(@parse_entries $trace; $($rest)*);
+        $crate::syscall_test!(@parse_entries $trace; $($rest)*);
     };
     (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); $val:expr) => {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
-            syscall_test!(@args $($args)*),
+            $crate::syscall_test!(@args $($args)*),
             $crate::sys::test_support::TraceResult::Int($val as i64),
         ));
     };
@@ -282,21 +466,80 @@ macro_rules! syscall_test {
     (@args _) => { vec![$crate::sys::test_support::ArgMatcher::Any] };
     (@args _, $($rest:tt)*) => {{
         let mut args = vec![$crate::sys::test_support::ArgMatcher::Any];
-        args.extend(syscall_test!(@args $($rest)*));
+        args.extend($crate::syscall_test!(@args $($rest)*));
         args
     }};
-    (@args $arg:expr) => { vec![syscall_test!(@one_arg $arg)] };
+    (@args any) => { vec![$crate::sys::test_support::ArgMatcher::Any] };
+    (@args any, $($rest:tt)*) => {{
+        let mut args = vec![$crate::sys::test_support::ArgMatcher::Any];
+        args.extend($crate::syscall_test!(@args $($rest)*));
+        args
+    }};
+    (@args int($e:expr)) => {
+        vec![$crate::sys::test_support::ArgMatcher::Int($e as i64)]
+    };
+    (@args int($e:expr), $($rest:tt)*) => {{
+        let mut args = vec![$crate::sys::test_support::ArgMatcher::Int($e as i64)];
+        args.extend($crate::syscall_test!(@args $($rest)*));
+        args
+    }};
+    (@args fd($e:expr)) => { vec![$crate::sys::test_support::ArgMatcher::Fd($e)] };
+    (@args fd($e:expr), $($rest:tt)*) => {{
+        let mut args = vec![$crate::sys::test_support::ArgMatcher::Fd($e)];
+        args.extend($crate::syscall_test!(@args $($rest)*));
+        args
+    }};
+    (@args bytes($e:expr)) => {
+        vec![$crate::sys::test_support::ArgMatcher::Bytes(
+            $crate::sys::test_support::trace_bytes_from_ref(&($e)),
+        )]
+    };
+    (@args bytes($e:expr), $($rest:tt)*) => {{
+        let mut args = vec![$crate::sys::test_support::ArgMatcher::Bytes(
+            $crate::sys::test_support::trace_bytes_from_ref(&($e)),
+        )];
+        args.extend($crate::syscall_test!(@args $($rest)*));
+        args
+    }};
+    (@args str($e:expr)) => {
+        vec![$crate::sys::test_support::ArgMatcher::Str(
+            $crate::sys::test_support::trace_str_from_ref(&($e)),
+        )]
+    };
+    (@args str($e:expr), $($rest:tt)*) => {{
+        let mut args = vec![$crate::sys::test_support::ArgMatcher::Str(
+            $crate::sys::test_support::trace_str_from_ref(&($e)),
+        )];
+        args.extend($crate::syscall_test!(@args $($rest)*));
+        args
+    }};
+    (@args $arg:expr) => { vec![$crate::syscall_test!(@one_arg $arg)] };
     (@args $arg:expr, $($rest:tt)*) => {{
-        let mut args = vec![syscall_test!(@one_arg $arg)];
-        args.extend(syscall_test!(@args $($rest)*));
+        let mut args = vec![$crate::syscall_test!(@one_arg $arg)];
+        args.extend($crate::syscall_test!(@args $($rest)*));
         args
     }};
 
-    // Single argument conversion
+    // Single argument conversion (expr path)
     (@one_arg _) => { $crate::sys::test_support::ArgMatcher::Any };
+    (@one_arg any) => { $crate::sys::test_support::ArgMatcher::Any };
     (@one_arg $arg:expr) => { $crate::sys::test_support::arg_from($arg) };
+}
+
+#[cfg(test)]
+#[allow(unused_macros)]
+macro_rules! trace_entries {
+    ($($entries:tt)*) => {{
+        #[allow(unused_mut)]
+        let mut trace: Vec<$crate::sys::test_support::TraceEntry> = Vec::new();
+        $crate::syscall_test!(@parse_entries trace; $($entries)*);
+        trace
+    }};
 }
 
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use syscall_test;
+
+#[cfg(test)]
+pub(crate) use trace_entries;

@@ -1404,6 +1404,9 @@ mod tests {
     use super::*;
     use crate::interactive::test_support::*;
     use crate::interactive::vi;
+    use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
+    use crate::sys::{STDIN_FILENO, STDOUT_FILENO};
+    use crate::trace_entries;
 
     fn has_return(actions: &[ViAction]) -> bool {
         actions.iter().any(|a| matches!(a, ViAction::Return(_)))
@@ -2383,26 +2386,13 @@ mod tests {
 
         #[test]
         fn vi_command_v_returns_run_editor_action() {
-            use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
             run_trace(
-                vec![
-                    t("getpid", vec![], TraceResult::Int(42)),
-                    t(
-                        "open",
-                        vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
-                        TraceResult::Int(10),
-                    ),
-                    t(
-                        "write",
-                        vec![ArgMatcher::Fd(10), ArgMatcher::Any],
-                        TraceResult::Auto,
-                    ),
-                    t(
-                        "write",
-                        vec![ArgMatcher::Fd(10), ArgMatcher::Any],
-                        TraceResult::Auto,
-                    ),
-                    t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
+                trace_entries![
+                    getpid() -> 42,
+                    open(_, _, _) -> 10,
+                    write(fd(10), _) -> auto,
+                    write(fd(10), _) -> auto,
+                    close(fd(10)) -> 0,
                 ],
                 || {
                     let mut state = ViState::new(0x7f, 0);
@@ -2975,7 +2965,6 @@ mod tests {
 
         #[test]
         fn vi_backslash_unique_completion() {
-            use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
             let dir = std::env::temp_dir().join("meiksh_vi_bslash_test");
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
@@ -3012,7 +3001,6 @@ mod tests {
 
         #[test]
         fn vi_backslash_dir_appends_slash() {
-            use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
             let dir = std::env::temp_dir().join("meiksh_vi_bslash_dir_test");
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(dir.join("subdir_only")).unwrap();
@@ -3661,41 +3649,16 @@ mod tests {
 
     #[test]
     fn vi_read_line_returns_line_on_enter() {
-        use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
         run_trace(
-            vec![
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'h']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(vec![b'h'])],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'\n']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                tcgetattr(fd(STDIN_FILENO)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcgetattr(fd(STDIN_FILENO)) -> 0,
+                read(fd(STDIN_FILENO), _) -> bytes([b'h']),
+                write(fd(STDOUT_FILENO), bytes([b'h'])) -> auto,
+                read(fd(STDIN_FILENO), _) -> bytes([b'\n']),
+                write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -3707,31 +3670,14 @@ mod tests {
 
     #[test]
     fn vi_read_line_eof_returns_none() {
-        use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
         run_trace(
-            vec![
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![]),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                tcgetattr(fd(STDIN_FILENO)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcgetattr(fd(STDIN_FILENO)) -> 0,
+                read(fd(STDIN_FILENO), _) -> bytes(b""),
+                write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -3743,61 +3689,20 @@ mod tests {
 
     #[test]
     fn vi_read_line_bell_and_redraw() {
-        use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
         run_trace(
-            vec![
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'a']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(vec![b'a'])],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![0x1b]),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x1b[D".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'Q']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x07".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'\r']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                tcgetattr(fd(STDIN_FILENO)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcgetattr(fd(STDIN_FILENO)) -> 0,
+                read(fd(STDIN_FILENO), _) -> bytes([b'a']),
+                write(fd(STDOUT_FILENO), bytes([b'a'])) -> auto,
+                read(fd(STDIN_FILENO), _) -> bytes([0x1b]),
+                write(fd(STDOUT_FILENO), bytes(b"\x1b[D")) -> auto,
+                read(fd(STDIN_FILENO), _) -> bytes([b'Q']),
+                write(fd(STDOUT_FILENO), bytes(b"\x07")) -> auto,
+                read(fd(STDIN_FILENO), _) -> bytes([b'\r']),
+                write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -3809,71 +3714,22 @@ mod tests {
 
     #[test]
     fn vi_read_line_redraw_on_motion() {
-        use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
         run_trace(
-            vec![
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'a']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(vec![b'a'])],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'b']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(vec![b'b'])],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![0x1b]),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x1b[D".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'h']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x1b[1D".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'\r']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                tcgetattr(fd(STDIN_FILENO)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcgetattr(fd(STDIN_FILENO)) -> 0,
+                read(fd(STDIN_FILENO), _) -> bytes([b'a']),
+                write(fd(STDOUT_FILENO), bytes([b'a'])) -> auto,
+                read(fd(STDIN_FILENO), _) -> bytes([b'b']),
+                write(fd(STDOUT_FILENO), bytes([b'b'])) -> auto,
+                read(fd(STDIN_FILENO), _) -> bytes([0x1b]),
+                write(fd(STDOUT_FILENO), bytes(b"\x1b[D")) -> auto,
+                read(fd(STDIN_FILENO), _) -> bytes([b'h']),
+                write(fd(STDOUT_FILENO), bytes(b"\x1b[1D")) -> auto,
+                read(fd(STDIN_FILENO), _) -> bytes([b'\r']),
+                write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -3885,46 +3741,17 @@ mod tests {
 
     #[test]
     fn vi_read_line_eof_with_nonempty_continues() {
-        use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
         run_trace(
-            vec![
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'x']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(vec![b'x'])],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![]),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'\n']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                tcgetattr(fd(STDIN_FILENO)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcgetattr(fd(STDIN_FILENO)) -> 0,
+                read(fd(STDIN_FILENO), _) -> bytes([b'x']),
+                write(fd(STDOUT_FILENO), bytes([b'x'])) -> auto,
+                read(fd(STDIN_FILENO), _) -> bytes(b""),
+                read(fd(STDIN_FILENO), _) -> bytes([b'\n']),
+                write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -3936,35 +3763,14 @@ mod tests {
 
     #[test]
     fn vi_read_line_erase_char_fallback() {
-        use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
         run_trace(
-            vec![
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "tcgetattr",
-                    vec![ArgMatcher::Fd(0)],
-                    TraceResult::Err(libc::EINVAL),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'\n']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                tcgetattr(fd(STDIN_FILENO)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcgetattr(fd(STDIN_FILENO)) -> err(libc::EINVAL),
+                read(fd(STDIN_FILENO), _) -> bytes([b'\n']),
+                write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -3976,19 +3782,10 @@ mod tests {
 
     #[test]
     fn vi_read_line_tcgetattr_error_falls_back() {
-        use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
         run_trace(
-            vec![
-                t(
-                    "tcgetattr",
-                    vec![ArgMatcher::Fd(0)],
-                    TraceResult::Err(libc::ENOTTY),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![]),
-                ),
+            trace_entries![
+                tcgetattr(fd(STDIN_FILENO)) -> err(libc::ENOTTY),
+                read(fd(STDIN_FILENO), _) -> bytes(b""),
             ],
             || {
                 let mut shell = test_shell();
@@ -4000,76 +3797,23 @@ mod tests {
 
     #[test]
     fn vi_read_line_redraw_covers_full_redraw() {
-        use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
         run_trace(
-            vec![
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'a']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(vec![b'a'])],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'b']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(vec![b'b'])],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![0x1b]),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x1b[D".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'b']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\x1b[K".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"ab\x1b[2D".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'\r']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                tcgetattr(fd(STDIN_FILENO)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcgetattr(fd(STDIN_FILENO)) -> 0,
+                read(fd(STDIN_FILENO), _) -> bytes([b'a']),
+                write(fd(STDOUT_FILENO), bytes([b'a'])) -> auto,
+                read(fd(STDIN_FILENO), _) -> bytes([b'b']),
+                write(fd(STDOUT_FILENO), bytes([b'b'])) -> auto,
+                read(fd(STDIN_FILENO), _) -> bytes([0x1b]),
+                write(fd(STDOUT_FILENO), bytes(b"\x1b[D")) -> auto,
+                read(fd(STDIN_FILENO), _) -> bytes([b'b']),
+                write(fd(STDOUT_FILENO), bytes(b"\r\x1b[K")) -> auto,
+                write(fd(STDOUT_FILENO), bytes(b"ab\x1b[2D")) -> auto,
+                read(fd(STDIN_FILENO), _) -> bytes([b'\r']),
+                write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -4081,26 +3825,13 @@ mod tests {
 
     #[test]
     fn vi_read_line_read_error_propagates() {
-        use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
         run_trace(
-            vec![
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Err(libc::EIO),
-                ),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                tcgetattr(fd(STDIN_FILENO)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcgetattr(fd(STDIN_FILENO)) -> 0,
+                read(fd(STDIN_FILENO), _) -> err(libc::EIO),
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -4112,66 +3843,21 @@ mod tests {
 
     #[test]
     fn vi_read_line_count_digit_triggers_readbyte() {
-        use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
         run_trace(
-            vec![
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'a']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(vec![b'a'])],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![0x1b]),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x1b[D".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'2']),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'l']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x07".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'\r']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                tcgetattr(fd(STDIN_FILENO)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcgetattr(fd(STDIN_FILENO)) -> 0,
+                read(fd(STDIN_FILENO), _) -> bytes([b'a']),
+                write(fd(STDOUT_FILENO), bytes([b'a'])) -> auto,
+                read(fd(STDIN_FILENO), _) -> bytes([0x1b]),
+                write(fd(STDOUT_FILENO), bytes(b"\x1b[D")) -> auto,
+                read(fd(STDIN_FILENO), _) -> bytes([b'2']),
+                read(fd(STDIN_FILENO), _) -> bytes([b'l']),
+                write(fd(STDOUT_FILENO), bytes(b"\x07")) -> auto,
+                read(fd(STDIN_FILENO), _) -> bytes([b'\r']),
+                write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -4183,41 +3869,16 @@ mod tests {
 
     #[test]
     fn vi_read_line_insert_mode_change() {
-        use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
         run_trace(
-            vec![
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![0x1b]),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'i']),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'\r']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                tcgetattr(fd(STDIN_FILENO)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcgetattr(fd(STDIN_FILENO)) -> 0,
+                read(fd(STDIN_FILENO), _) -> bytes([0x1b]),
+                read(fd(STDIN_FILENO), _) -> bytes([b'i']),
+                read(fd(STDIN_FILENO), _) -> bytes([b'\r']),
+                write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -4229,76 +3890,23 @@ mod tests {
 
     #[test]
     fn vi_read_line_find_triggers_need_find_target() {
-        use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
         run_trace(
-            vec![
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'a']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(vec![b'a'])],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![0x1b]),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x1b[D".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'f']),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'z']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\x07".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\x1b[K".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"a\x1b[1D".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'\r']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                tcgetattr(fd(STDIN_FILENO)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcgetattr(fd(STDIN_FILENO)) -> 0,
+                read(fd(STDIN_FILENO), _) -> bytes([b'a']),
+                write(fd(STDOUT_FILENO), bytes([b'a'])) -> auto,
+                read(fd(STDIN_FILENO), _) -> bytes([0x1b]),
+                write(fd(STDOUT_FILENO), bytes(b"\x1b[D")) -> auto,
+                read(fd(STDIN_FILENO), _) -> bytes([b'f']),
+                read(fd(STDIN_FILENO), _) -> bytes([b'z']),
+                write(fd(STDOUT_FILENO), bytes(b"\x07")) -> auto,
+                write(fd(STDOUT_FILENO), bytes(b"\r\x1b[K")) -> auto,
+                write(fd(STDOUT_FILENO), bytes(b"a\x1b[1D")) -> auto,
+                read(fd(STDIN_FILENO), _) -> bytes([b'\r']),
+                write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -4310,78 +3918,25 @@ mod tests {
 
     #[test]
     fn vi_read_line_v_command_empty_file_redraws() {
-        use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
         run_trace(
-            vec![
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![0x1b]),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'v']),
-                ),
-                t("getpid", vec![], TraceResult::Int(42)),
-                t(
-                    "open",
-                    vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Int(10),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(10), ArgMatcher::Bytes(b"\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "open",
-                    vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Err(libc::ENOENT),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\x1b[K".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'\r']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                tcgetattr(fd(STDIN_FILENO)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcgetattr(fd(STDIN_FILENO)) -> 0,
+                read(fd(STDIN_FILENO), _) -> bytes([0x1b]),
+                read(fd(STDIN_FILENO), _) -> bytes([b'v']),
+                getpid() -> 42,
+                open(_, _, _) -> 10,
+                write(fd(10), bytes(b"\n")) -> auto,
+                close(fd(10)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                open(_, _, _) -> err(libc::ENOENT),
+                write(fd(STDOUT_FILENO), bytes(b"\r\x1b[K")) -> auto,
+                read(fd(STDIN_FILENO), _) -> bytes([b'\r']),
+                write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -4394,89 +3949,28 @@ mod tests {
 
     #[test]
     fn vi_read_line_v_command_whitespace_only_redraws() {
-        use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
         run_trace(
-            vec![
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![0x1b]),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'v']),
-                ),
-                t("getpid", vec![], TraceResult::Int(42)),
-                t(
-                    "open",
-                    vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Int(10),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(10), ArgMatcher::Bytes(b"\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "open",
-                    vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Int(11),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(11), ArgMatcher::Any],
-                    TraceResult::Bytes(b"\n".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(11), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                t("close", vec![ArgMatcher::Fd(11)], TraceResult::Int(0)),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\x1b[K".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'\r']),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                tcgetattr(fd(STDIN_FILENO)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcgetattr(fd(STDIN_FILENO)) -> 0,
+                read(fd(STDIN_FILENO), _) -> bytes([0x1b]),
+                read(fd(STDIN_FILENO), _) -> bytes([b'v']),
+                getpid() -> 42,
+                open(_, _, _) -> 10,
+                write(fd(10), bytes(b"\n")) -> auto,
+                close(fd(10)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                open(_, _, _) -> 11,
+                read(fd(11), _) -> bytes(b"\n"),
+                read(fd(11), _) -> 0,
+                close(fd(11)) -> 0,
+                write(fd(STDOUT_FILENO), bytes(b"\r\x1b[K")) -> auto,
+                read(fd(STDIN_FILENO), _) -> bytes([b'\r']),
+                write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -4489,79 +3983,26 @@ mod tests {
 
     #[test]
     fn vi_read_line_v_command_runs_editor() {
-        use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
         run_trace(
-            vec![
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![0x1b]),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![b'v']),
-                ),
-                t("getpid", vec![], TraceResult::Int(42)),
-                t(
-                    "open",
-                    vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Int(10),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(10), ArgMatcher::Bytes(b"\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "open",
-                    vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Int(11),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(11), ArgMatcher::Any],
-                    TraceResult::Bytes(b"edited\n".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(11), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                t("close", vec![ArgMatcher::Fd(11)], TraceResult::Int(0)),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                tcgetattr(fd(STDIN_FILENO)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcgetattr(fd(STDIN_FILENO)) -> 0,
+                read(fd(STDIN_FILENO), _) -> bytes([0x1b]),
+                read(fd(STDIN_FILENO), _) -> bytes([b'v']),
+                getpid() -> 42,
+                open(_, _, _) -> 10,
+                write(fd(10), bytes(b"\n")) -> auto,
+                close(fd(10)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                open(_, _, _) -> 11,
+                read(fd(11), _) -> bytes(b"edited\n"),
+                read(fd(11), _) -> 0,
+                close(fd(11)) -> 0,
+                write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
+                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
             ],
             || {
                 let mut shell = test_shell();

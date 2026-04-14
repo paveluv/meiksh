@@ -147,24 +147,14 @@ mod tests {
     use super::*;
     use crate::interactive::test_support::*;
     use crate::shell::{TrapAction, TrapCondition};
+    use crate::trace_entries;
 
     #[test]
     fn run_loop_exits_on_immediate_eof() {
         run_trace(
-            vec![
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"$ ".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                write(fd(sys::STDERR_FILENO), bytes(b"$ ")) -> auto,
+                read(fd(sys::STDIN_FILENO), _) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -177,96 +167,23 @@ mod tests {
     #[test]
     fn run_loop_covers_reaped_jobs_blank_lines_and_exit() {
         run_trace(
-            vec![
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(4001), ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Status(0),
-                ),
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(4002), ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Status(0),
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"[1] Done\tdone\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"test$ ".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b"\n".to_vec()),
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"test$ ".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b"e".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b"x".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b"i".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b"t".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b" ".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b"5".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b"\n".to_vec()),
-                ),
-                t(
-                    "open",
-                    vec![
-                        ArgMatcher::Str("/tmp/history.txt".into()),
-                        ArgMatcher::Any,
-                        ArgMatcher::Any,
-                    ],
-                    TraceResult::Fd(10),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(10), ArgMatcher::Bytes(b"exit 5\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
+            trace_entries![
+                waitpid(4001, _) -> status(0),
+                waitpid(4002, _) -> status(0),
+                write(fd(sys::STDERR_FILENO), bytes(b"[1] Done\tdone\n")) -> auto,
+                write(fd(sys::STDERR_FILENO), bytes(b"test$ ")) -> auto,
+                read(fd(sys::STDIN_FILENO), _) -> bytes(b"\n"),
+                write(fd(sys::STDERR_FILENO), bytes(b"test$ ")) -> auto,
+                read(fd(sys::STDIN_FILENO), _) -> bytes(b"e"),
+                read(fd(sys::STDIN_FILENO), _) -> bytes(b"x"),
+                read(fd(sys::STDIN_FILENO), _) -> bytes(b"i"),
+                read(fd(sys::STDIN_FILENO), _) -> bytes(b"t"),
+                read(fd(sys::STDIN_FILENO), _) -> bytes(b" "),
+                read(fd(sys::STDIN_FILENO), _) -> bytes(b"5"),
+                read(fd(sys::STDIN_FILENO), _) -> bytes(b"\n"),
+                open("/tmp/history.txt", _, _) -> fd(10),
+                write(fd(10), bytes(b"exit 5\n")) -> auto,
+                close(fd(10)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -300,20 +217,9 @@ mod tests {
     #[test]
     fn run_loop_exits_cleanly_on_eof() {
         run_trace(
-            vec![
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"$ ".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                write(fd(sys::STDERR_FILENO), bytes(b"$ ")) -> auto,
+                read(fd(sys::STDIN_FILENO), _) -> 0,
             ],
             || {
                 let mut shell = test_shell();

@@ -399,15 +399,12 @@ pub(super) fn is_reserved_word_name(word: &[u8]) -> bool {
 mod tests {
     use super::*;
     use crate::builtin::test_support::*;
+    use crate::trace_entries;
 
     #[test]
     fn command_runs_builtin() {
         run_trace(
-            vec![t(
-                "write",
-                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"hello\n".to_vec())],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(fd(crate::sys::STDOUT_FILENO), bytes(b"hello\n")) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(
@@ -423,20 +420,9 @@ mod tests {
     #[test]
     fn which_in_path_with_slash_existing() {
         run_trace(
-            vec![
-                t(
-                    "access",
-                    vec![
-                        ArgMatcher::Str(b"./myscript".to_vec()),
-                        ArgMatcher::Int(libc::F_OK as i64),
-                    ],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "getcwd",
-                    vec![],
-                    TraceResult::CwdBytes(b"/home/user".to_vec()),
-                ),
+            trace_entries![
+                access(str(b"./myscript"), int(libc::F_OK)) -> 0,
+                getcwd() -> cwd("/home/user"),
             ],
             || {
                 let shell = test_shell();
@@ -449,14 +435,7 @@ mod tests {
     #[test]
     fn which_in_path_with_slash_not_found() {
         run_trace(
-            vec![t(
-                "access",
-                vec![
-                    ArgMatcher::Str(b"./nosuch".to_vec()),
-                    ArgMatcher::Int(libc::F_OK as i64),
-                ],
-                TraceResult::Err(libc::ENOENT),
-            )],
+            trace_entries![access(str(b"./nosuch"), int(libc::F_OK)) -> err(libc::ENOENT),],
             || {
                 let shell = test_shell();
                 let result = which(b"./nosuch", &shell);
@@ -468,25 +447,24 @@ mod tests {
     #[test]
     fn command_no_utility_name() {
         let msg = diag(b"command: utility name required");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            let outcome =
-                invoke(&mut shell, &[b"command".to_vec(), b"-v".to_vec()]).expect("command -v");
-            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                let outcome =
+                    invoke(&mut shell, &[b"command".to_vec(), b"-v".to_vec()]).expect("command -v");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
     }
 
     #[test]
     fn type_not_found() {
         let msg = diag(b"totally_missing_cmd: not found");
         run_trace(
-            vec![
-                t(
-                    "access",
-                    vec![ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Err(libc::ENOENT),
-                ),
-                trace_write_stderr(&msg),
+            trace_entries![
+                access(any, any) -> err(libc::ENOENT),
+                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -527,13 +505,9 @@ mod tests {
     fn hash_command_not_found() {
         let msg = diag(b"hash: totally_missing: not found");
         run_trace(
-            vec![
-                t(
-                    "access",
-                    vec![ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Err(libc::ENOENT),
-                ),
-                trace_write_stderr(&msg),
+            trace_entries![
+                access(any, any) -> err(libc::ENOENT),
+                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {
                 let mut shell = test_shell();

@@ -171,14 +171,18 @@ pub(super) fn getopts_inner(
 mod tests {
     use super::*;
     use crate::builtin::test_support::*;
+    use crate::trace_entries;
 
     #[test]
     fn getopts_too_few_args() {
         let msg = diag(b"getopts: usage: getopts optstring name [arg ...]");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            let outcome = invoke(&mut shell, &[b"getopts".to_vec()]).expect("getopts");
-            assert!(matches!(outcome, BuiltinOutcome::Status(2)));
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(&mut shell, &[b"getopts".to_vec()]).expect("getopts");
+                assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+            },
+        );
     }
 }

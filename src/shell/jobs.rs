@@ -676,6 +676,7 @@ mod tests {
 
     use crate::sys;
     use crate::sys::test_support::{ArgMatcher, TraceResult, assert_no_syscalls, run_trace, t};
+    use crate::trace_entries;
 
     use super::{
         BlockingWaitOutcome, ChildWaitResult, Job, JobState, ReapedJobState, WaitOutcome,
@@ -686,15 +687,9 @@ mod tests {
     #[test]
     fn launch_and_wait_for_background_job_updates_state() {
         run_trace(
-            vec![t(
-                "waitpid",
-                vec![
-                    ArgMatcher::Int(1001),
-                    ArgMatcher::Any,
-                    ArgMatcher::Int(sys::WUNTRACED as i64),
-                ],
-                TraceResult::Status(7),
-            )],
+            trace_entries![
+                waitpid(int(1001), _, int(sys::WUNTRACED)) -> status(7),
+            ],
             || {
                 let mut shell = test_shell();
                 let id = shell.register_background_job(
@@ -713,27 +708,11 @@ mod tests {
     #[test]
     fn source_path_runs_script() {
         run_trace(
-            vec![
-                t(
-                    "open",
-                    vec![
-                        ArgMatcher::Str("/tmp/source-test.sh".into()),
-                        ArgMatcher::Any,
-                        ArgMatcher::Any,
-                    ],
-                    TraceResult::Fd(10),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(10), ArgMatcher::Any],
-                    TraceResult::Bytes(b"VALUE=42\n".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(10), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
+            trace_entries![
+                open("/tmp/source-test.sh", _, _) -> fd(10),
+                read(fd(10), _) -> bytes(b"VALUE=42\n"),
+                read(fd(10), _) -> 0,
+                close(fd(10)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -746,33 +725,22 @@ mod tests {
 
     #[test]
     fn reap_jobs_collects_finished_background_jobs() {
-        run_trace(
-            vec![t(
-                "waitpid",
-                vec![ArgMatcher::Int(1001), ArgMatcher::Any, ArgMatcher::Any],
-                TraceResult::Status(0),
-            )],
-            || {
-                let mut shell = test_shell();
-                shell.register_background_job(b"exit 0"[..].into(), None, vec![fake_handle(1001)]);
-                let finished = shell.reap_jobs();
-                assert_eq!(
-                    finished,
-                    vec![(1, ReapedJobState::Done(0, b"exit 0"[..].into()))]
-                );
-                assert!(shell.jobs.is_empty());
-            },
-        );
+        run_trace(trace_entries![waitpid(1001, _) -> status(0),], || {
+            let mut shell = test_shell();
+            shell.register_background_job(b"exit 0"[..].into(), None, vec![fake_handle(1001)]);
+            let finished = shell.reap_jobs();
+            assert_eq!(
+                finished,
+                vec![(1, ReapedJobState::Done(0, b"exit 0"[..].into()))]
+            );
+            assert!(shell.jobs.is_empty());
+        });
     }
 
     #[test]
     fn reap_jobs_handles_try_wait_errors() {
         run_trace(
-            vec![t(
-                "waitpid",
-                vec![ArgMatcher::Int(1001), ArgMatcher::Any, ArgMatcher::Any],
-                TraceResult::Err(sys::ECHILD),
-            )],
+            trace_entries![waitpid(1001, _) -> err(sys::ECHILD),],
             || {
                 let mut shell = test_shell();
                 let id = shell.register_background_job(
@@ -811,24 +779,9 @@ mod tests {
     #[test]
     fn source_path_errors_when_file_missing() {
         run_trace(
-            vec![
-                t(
-                    "open",
-                    vec![
-                        ArgMatcher::Str("/definitely/missing-meiksh-script".into()),
-                        ArgMatcher::Any,
-                        ArgMatcher::Any,
-                    ],
-                    TraceResult::Err(sys::ENOENT),
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"meiksh: No such file or directory\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
+            trace_entries![
+                open("/definitely/missing-meiksh-script", _, _) -> err(sys::ENOENT),
+                write(fd(sys::STDERR_FILENO), bytes(b"meiksh: No such file or directory\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -843,25 +796,10 @@ mod tests {
     #[test]
     fn print_jobs_shows_done_for_finished_job() {
         run_trace(
-            vec![
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(1001), ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Status(0),
-                ),
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(1002), ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Status(0),
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(1),
-                        ArgMatcher::Bytes(b"[1] Done\tsleep\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
+            trace_entries![
+                waitpid(1001, _) -> status(0),
+                waitpid(1002, _) -> status(0),
+                write(fd(sys::STDOUT_FILENO), bytes(b"[1] Done\tsleep\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -877,29 +815,10 @@ mod tests {
     #[test]
     fn print_jobs_shows_running_for_active_job() {
         run_trace(
-            vec![
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(1003), ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Pid(0),
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(1),
-                        ArgMatcher::Bytes(b"[1] Running sleep\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "waitpid",
-                    vec![
-                        ArgMatcher::Int(1003),
-                        ArgMatcher::Any,
-                        ArgMatcher::Int(sys::WUNTRACED as i64),
-                    ],
-                    TraceResult::Status(0),
-                ),
+            trace_entries![
+                waitpid(1003, _) -> pid(0),
+                write(fd(sys::STDOUT_FILENO), bytes(b"[1] Running sleep\n")) -> auto,
+                waitpid(int(1003), _, int(sys::WUNTRACED)) -> status(0),
             ],
             || {
                 let mut shell = test_shell();
@@ -915,20 +834,9 @@ mod tests {
     #[test]
     fn print_jobs_emits_finished_branch_when_job_is_done() {
         run_trace(
-            vec![
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(1001), ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Status(0),
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(1),
-                        ArgMatcher::Bytes(b"[1] Done\tdone\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
+            trace_entries![
+                waitpid(1001, _) -> status(0),
+                write(fd(sys::STDOUT_FILENO), bytes(b"[1] Done\tdone\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -942,16 +850,10 @@ mod tests {
     #[test]
     fn wait_operands_return_known_statuses_or_127() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(2),
-                    ArgMatcher::Bytes(
-                        b"meiksh: wait: pid 999999 is not a child of this shell\n".to_vec(),
-                    ),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(
+                fd(sys::STDERR_FILENO),
+                bytes(b"meiksh: wait: pid 999999 is not a child of this shell\n"),
+            ) -> auto,],
             || {
                 let mut shell = test_shell();
                 shell.known_job_statuses.insert(9, 44);
@@ -970,32 +872,12 @@ mod tests {
     #[test]
     fn foreground_handoff_switches_terminal_process_group() {
         run_trace(
-            vec![
-                t(
-                    "isatty",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO)],
-                    TraceResult::Int(1),
-                ),
-                t(
-                    "isatty",
-                    vec![ArgMatcher::Fd(sys::STDERR_FILENO)],
-                    TraceResult::Int(1),
-                ),
-                t(
-                    "tcgetpgrp",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO)],
-                    TraceResult::Pid(77),
-                ),
-                t(
-                    "tcsetpgrp",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Int(88)],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "tcsetpgrp",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Int(77)],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                isatty(fd(sys::STDIN_FILENO)) -> 1,
+                isatty(fd(sys::STDERR_FILENO)) -> 1,
+                tcgetpgrp(fd(sys::STDIN_FILENO)) -> pid(77),
+                tcsetpgrp(fd(sys::STDIN_FILENO), int(88)) -> 0,
+                tcsetpgrp(fd(sys::STDIN_FILENO), int(77)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -1009,22 +891,10 @@ mod tests {
     #[test]
     fn foreground_handoff_returns_none_when_tcgetpgrp_fails() {
         run_trace(
-            vec![
-                t(
-                    "isatty",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO)],
-                    TraceResult::Int(1),
-                ),
-                t(
-                    "isatty",
-                    vec![ArgMatcher::Fd(sys::STDERR_FILENO)],
-                    TraceResult::Int(1),
-                ),
-                t(
-                    "tcgetpgrp",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO)],
-                    TraceResult::Pid(-1),
-                ),
+            trace_entries![
+                isatty(fd(sys::STDIN_FILENO)) -> 1,
+                isatty(fd(sys::STDERR_FILENO)) -> 1,
+                tcgetpgrp(fd(sys::STDIN_FILENO)) -> pid(-1),
             ],
             || {
                 let mut shell = test_shell();
@@ -1037,11 +907,7 @@ mod tests {
     #[test]
     fn continue_job_sends_sigcont_to_process_group() {
         run_trace(
-            vec![t(
-                "kill",
-                vec![ArgMatcher::Int(-11), ArgMatcher::Int(sys::SIGCONT as i64)],
-                TraceResult::Int(0),
-            )],
+            trace_entries![kill(int(-11), int(sys::SIGCONT)) -> 0,],
             || {
                 let mut shell = test_shell();
                 let id = shell.register_background_job(
@@ -1060,21 +926,9 @@ mod tests {
     #[test]
     fn wait_for_job_operand_returns_130_on_eintr_with_pending_signal() {
         run_trace(
-            vec![
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(sys::SIGINT as i64), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "waitpid",
-                    vec![
-                        ArgMatcher::Int(2001),
-                        ArgMatcher::Any,
-                        ArgMatcher::Int(sys::WUNTRACED as i64),
-                    ],
-                    TraceResult::Interrupt(sys::SIGINT),
-                ),
+            trace_entries![
+                signal(int(sys::SIGINT), _) -> 0,
+                waitpid(int(2001), _, int(sys::WUNTRACED)) -> interrupt(sys::SIGINT),
             ],
             || {
                 let mut shell = test_shell();
@@ -1097,34 +951,10 @@ mod tests {
     #[test]
     fn wait_for_child_blocking_retries_on_eintr_and_pid_zero() {
         run_trace(
-            vec![
-                t(
-                    "waitpid",
-                    vec![
-                        ArgMatcher::Int(99),
-                        ArgMatcher::Any,
-                        ArgMatcher::Int(sys::WUNTRACED as i64),
-                    ],
-                    TraceResult::Err(sys::EINTR),
-                ),
-                t(
-                    "waitpid",
-                    vec![
-                        ArgMatcher::Int(99),
-                        ArgMatcher::Any,
-                        ArgMatcher::Int(sys::WUNTRACED as i64),
-                    ],
-                    TraceResult::Pid(0),
-                ),
-                t(
-                    "waitpid",
-                    vec![
-                        ArgMatcher::Int(99),
-                        ArgMatcher::Any,
-                        ArgMatcher::Int(sys::WUNTRACED as i64),
-                    ],
-                    TraceResult::Status(7),
-                ),
+            trace_entries![
+                waitpid(int(99), _, int(sys::WUNTRACED)) -> err(sys::EINTR),
+                waitpid(int(99), _, int(sys::WUNTRACED)) -> pid(0),
+                waitpid(int(99), _, int(sys::WUNTRACED)) -> status(7),
             ],
             || {
                 let mut shell = test_shell();
@@ -1141,27 +971,11 @@ mod tests {
     #[test]
     fn wait_operations_fail_on_echild() {
         run_trace(
-            vec![
-                t(
-                    "waitpid",
-                    vec![
-                        ArgMatcher::Int(2002),
-                        ArgMatcher::Any,
-                        ArgMatcher::Int(sys::WUNTRACED as i64),
-                    ],
-                    TraceResult::Err(sys::ECHILD),
-                ),
-                t_stderr("meiksh: No child processes"),
-                t(
-                    "waitpid",
-                    vec![
-                        ArgMatcher::Int(99),
-                        ArgMatcher::Any,
-                        ArgMatcher::Int(sys::WUNTRACED as i64),
-                    ],
-                    TraceResult::Err(sys::ECHILD),
-                ),
-                t_stderr("meiksh: No child processes"),
+            trace_entries![
+                waitpid(int(2002), _, int(sys::WUNTRACED)) -> err(sys::ECHILD),
+                ..vec![t_stderr("meiksh: No child processes")],
+                ..trace_entries![waitpid(int(99), _, int(sys::WUNTRACED)) -> err(sys::ECHILD),],
+                ..vec![t_stderr("meiksh: No child processes")],
             ],
             || {
                 let mut shell = test_shell();
@@ -1175,31 +989,11 @@ mod tests {
     #[test]
     fn wait_for_pid_operand_handles_interrupt_and_echild() {
         run_trace(
-            vec![
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(sys::SIGINT as i64), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "waitpid",
-                    vec![
-                        ArgMatcher::Int(2003),
-                        ArgMatcher::Any,
-                        ArgMatcher::Int(sys::WUNTRACED as i64),
-                    ],
-                    TraceResult::Interrupt(sys::SIGINT),
-                ),
-                t(
-                    "waitpid",
-                    vec![
-                        ArgMatcher::Int(2004),
-                        ArgMatcher::Any,
-                        ArgMatcher::Int(sys::WUNTRACED as i64),
-                    ],
-                    TraceResult::Err(sys::ECHILD),
-                ),
-                t_stderr("meiksh: No child processes"),
+            trace_entries![
+                signal(int(sys::SIGINT), _) -> 0,
+                waitpid(int(2003), _, int(sys::WUNTRACED)) -> interrupt(sys::SIGINT),
+                waitpid(int(2004), _, int(sys::WUNTRACED)) -> err(sys::ECHILD),
+                ..vec![t_stderr("meiksh: No child processes")],
             ],
             || {
                 let mut shell = test_shell();
@@ -1225,21 +1019,9 @@ mod tests {
     #[test]
     fn wait_for_all_jobs_returns_130_on_interrupt() {
         run_trace(
-            vec![
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(sys::SIGINT as i64), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "waitpid",
-                    vec![
-                        ArgMatcher::Int(2002),
-                        ArgMatcher::Any,
-                        ArgMatcher::Int(sys::WUNTRACED as i64),
-                    ],
-                    TraceResult::Interrupt(sys::SIGINT),
-                ),
+            trace_entries![
+                signal(int(sys::SIGINT), _) -> 0,
+                waitpid(int(2002), _, int(sys::WUNTRACED)) -> interrupt(sys::SIGINT),
             ],
             || {
                 let mut shell = test_shell();
@@ -1259,15 +1041,7 @@ mod tests {
     #[test]
     fn wait_for_job_operand_consumes_status_second_wait_returns_127() {
         run_trace(
-            vec![t(
-                "waitpid",
-                vec![
-                    ArgMatcher::Int(3001),
-                    ArgMatcher::Any,
-                    ArgMatcher::Int(sys::WUNTRACED as i64),
-                ],
-                TraceResult::Status(42),
-            )],
+            trace_entries![waitpid(int(3001), _, int(sys::WUNTRACED)) -> status(42),],
             || {
                 let mut shell = test_shell();
                 let id = shell.register_background_job(
@@ -1299,11 +1073,7 @@ mod tests {
     #[test]
     fn try_wait_child_returns_stopped_for_stopped_process() {
         run_trace(
-            vec![t(
-                "waitpid",
-                vec![ArgMatcher::Int(2222), ArgMatcher::Any, ArgMatcher::Any],
-                TraceResult::StoppedSig(sys::SIGTSTP),
-            )],
+            trace_entries![waitpid(2222, _) -> stopped_sig(sys::SIGTSTP),],
             || {
                 let result = try_wait_child(2222).expect("try_wait_child");
                 assert_eq!(result, Some(WaitOutcome::Stopped(sys::SIGTSTP)));
@@ -1325,29 +1095,13 @@ mod tests {
     #[test]
     fn wait_for_job_stopped_handling() {
         run_trace(
-            vec![
-                t(
-                    "waitpid",
-                    vec![
-                        ArgMatcher::Int(2001),
-                        ArgMatcher::Any,
-                        ArgMatcher::Int(sys::WUNTRACED as i64),
-                    ],
-                    TraceResult::StoppedSig(20),
-                ),
-                t(
-                    "tcgetattr",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"\n[1] Stopped (SIGTSTP)\tsleep 99\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
+            trace_entries![
+                waitpid(int(2001), _, int(sys::WUNTRACED)) -> stopped_sig(20),
+                tcgetattr(fd(sys::STDIN_FILENO), _) -> 0,
+                write(
+                    fd(sys::STDERR_FILENO),
+                    bytes(b"\n[1] Stopped (SIGTSTP)\tsleep 99\n"),
+                ) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -1370,25 +1124,9 @@ mod tests {
     fn wait_for_job_restores_saved_termios() {
         let termios = unsafe { std::mem::zeroed::<libc::termios>() };
         run_trace(
-            vec![
-                t(
-                    "tcsetattr",
-                    vec![
-                        ArgMatcher::Fd(sys::STDIN_FILENO),
-                        ArgMatcher::Any,
-                        ArgMatcher::Any,
-                    ],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "waitpid",
-                    vec![
-                        ArgMatcher::Int(2002),
-                        ArgMatcher::Any,
-                        ArgMatcher::Int(sys::WUNTRACED as i64),
-                    ],
-                    TraceResult::Status(0),
-                ),
+            trace_entries![
+                tcsetattr(fd(sys::STDIN_FILENO), _, _) -> 0,
+                waitpid(int(2002), _, int(sys::WUNTRACED)) -> status(0),
             ],
             || {
                 let mut shell = test_shell();
@@ -1408,15 +1146,7 @@ mod tests {
     #[test]
     fn wait_for_pid_operand_stopped() {
         run_trace(
-            vec![t(
-                "waitpid",
-                vec![
-                    ArgMatcher::Int(3001),
-                    ArgMatcher::Any,
-                    ArgMatcher::Int(sys::WUNTRACED as i64),
-                ],
-                TraceResult::StoppedSig(20),
-            )],
+            trace_entries![waitpid(int(3001), _, int(sys::WUNTRACED)) -> stopped_sig(20),],
             || {
                 let mut shell = test_shell();
                 shell.register_background_job(b"sleep"[..].into(), None, vec![fake_handle(3001)]);
@@ -1429,15 +1159,7 @@ mod tests {
     #[test]
     fn wait_on_job_index_stopped() {
         run_trace(
-            vec![t(
-                "waitpid",
-                vec![
-                    ArgMatcher::Int(4001),
-                    ArgMatcher::Any,
-                    ArgMatcher::Int(sys::WUNTRACED as i64),
-                ],
-                TraceResult::StoppedSig(20),
-            )],
+            trace_entries![waitpid(int(4001), _, int(sys::WUNTRACED)) -> stopped_sig(20),],
             || {
                 let mut shell = test_shell();
                 shell.register_background_job(b"sleep"[..].into(), None, vec![fake_handle(4001)]);
@@ -1452,40 +1174,18 @@ mod tests {
     #[test]
     fn print_jobs_shows_stopped_running_and_done() {
         run_trace(
-            vec![
-                t(
-                    "waitpid",
-                    vec![
-                        ArgMatcher::Int(3001),
-                        ArgMatcher::Any,
-                        ArgMatcher::Int((sys::WUNTRACED | sys::WCONTINUED | sys::WNOHANG) as i64),
-                    ],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(1),
-                        ArgMatcher::Bytes(b"[2] Done\texit 0\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(1),
-                        ArgMatcher::Bytes(b"[1] Stopped (SIGTSTP) sleep 99\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(1),
-                        ArgMatcher::Bytes(b"[3] Running sleep 300\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
+            trace_entries![
+                waitpid(
+                    int(3001),
+                    _,
+                    int((sys::WUNTRACED | sys::WCONTINUED | sys::WNOHANG) as i64),
+                ) -> 0,
+                write(fd(sys::STDOUT_FILENO), bytes(b"[2] Done\texit 0\n")) -> auto,
+                write(
+                    fd(sys::STDOUT_FILENO),
+                    bytes(b"[1] Stopped (SIGTSTP) sleep 99\n"),
+                ) -> auto,
+                write(fd(sys::STDOUT_FILENO), bytes(b"[3] Running sleep 300\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -1527,15 +1227,7 @@ mod tests {
     #[test]
     fn wait_on_job_index_blocking_exited() {
         run_trace(
-            vec![t(
-                "waitpid",
-                vec![
-                    ArgMatcher::Int(5001),
-                    ArgMatcher::Any,
-                    ArgMatcher::Int(sys::WUNTRACED as i64),
-                ],
-                TraceResult::Status(0),
-            )],
+            trace_entries![waitpid(int(5001), _, int(sys::WUNTRACED)) -> status(0),],
             || {
                 let mut shell = test_shell();
                 shell.register_background_job(b"sleep"[..].into(), None, vec![fake_handle(5001)]);
@@ -1550,17 +1242,9 @@ mod tests {
     #[test]
     fn wait_on_job_index_blocking_error() {
         run_trace(
-            vec![
-                t(
-                    "waitpid",
-                    vec![
-                        ArgMatcher::Int(5002),
-                        ArgMatcher::Any,
-                        ArgMatcher::Int(sys::WUNTRACED as i64),
-                    ],
-                    TraceResult::Err(sys::ECHILD),
-                ),
-                t_stderr("meiksh: No child processes"),
+            trace_entries![
+                waitpid(int(5002), _, int(sys::WUNTRACED)) -> err(sys::ECHILD),
+                ..vec![t_stderr("meiksh: No child processes")],
             ],
             || {
                 let mut shell = test_shell();
@@ -1574,15 +1258,9 @@ mod tests {
     #[test]
     fn wait_on_job_index_interruptible_stopped() {
         run_trace(
-            vec![t(
-                "waitpid",
-                vec![
-                    ArgMatcher::Int(5003),
-                    ArgMatcher::Any,
-                    ArgMatcher::Int(sys::WUNTRACED as i64),
-                ],
-                TraceResult::StoppedSig(sys::SIGTSTP),
-            )],
+            trace_entries![
+                waitpid(int(5003), _, int(sys::WUNTRACED)) -> stopped_sig(sys::SIGTSTP),
+            ],
             || {
                 let mut shell = test_shell();
                 shell.register_background_job(b"sleep"[..].into(), None, vec![fake_handle(5003)]);
@@ -1597,25 +1275,9 @@ mod tests {
     #[test]
     fn wait_for_child_interruptible_retries_on_pid_zero() {
         run_trace(
-            vec![
-                t(
-                    "waitpid",
-                    vec![
-                        ArgMatcher::Int(5004),
-                        ArgMatcher::Any,
-                        ArgMatcher::Int(sys::WUNTRACED as i64),
-                    ],
-                    TraceResult::Pid(0),
-                ),
-                t(
-                    "waitpid",
-                    vec![
-                        ArgMatcher::Int(5004),
-                        ArgMatcher::Any,
-                        ArgMatcher::Int(sys::WUNTRACED as i64),
-                    ],
-                    TraceResult::Status(42),
-                ),
+            trace_entries![
+                waitpid(int(5004), _, int(sys::WUNTRACED)) -> pid(0),
+                waitpid(int(5004), _, int(sys::WUNTRACED)) -> status(42),
             ],
             || {
                 let mut shell = test_shell();
@@ -1629,93 +1291,54 @@ mod tests {
 
     #[test]
     fn try_wait_child_returns_continued() {
-        run_trace(
-            vec![t(
-                "waitpid",
-                vec![ArgMatcher::Int(3333), ArgMatcher::Any, ArgMatcher::Any],
-                TraceResult::ContinuedStatus,
-            )],
-            || {
-                let result = try_wait_child(3333).expect("try_wait_child");
-                assert_eq!(result, Some(WaitOutcome::Continued));
-            },
-        );
+        run_trace(trace_entries![waitpid(3333, _) -> continued,], || {
+            let result = try_wait_child(3333).expect("try_wait_child");
+            assert_eq!(result, Some(WaitOutcome::Continued));
+        });
     }
 
     #[test]
     fn try_wait_child_returns_signaled() {
-        run_trace(
-            vec![t(
-                "waitpid",
-                vec![ArgMatcher::Int(3334), ArgMatcher::Any, ArgMatcher::Any],
-                TraceResult::SignaledSig(9),
-            )],
-            || {
-                let result = try_wait_child(3334).expect("try_wait_child");
-                assert_eq!(result, Some(WaitOutcome::Signaled(9)));
-            },
-        );
+        run_trace(trace_entries![waitpid(3334, _) -> signaled_sig(9),], || {
+            let result = try_wait_child(3334).expect("try_wait_child");
+            assert_eq!(result, Some(WaitOutcome::Signaled(9)));
+        });
     }
 
     #[test]
     fn reap_jobs_signaled_child() {
-        run_trace(
-            vec![t(
-                "waitpid",
-                vec![ArgMatcher::Int(4001), ArgMatcher::Any, ArgMatcher::Any],
-                TraceResult::SignaledSig(9),
-            )],
-            || {
-                let mut shell = test_shell();
-                shell.register_background_job(b"killed"[..].into(), None, vec![fake_handle(4001)]);
-                let finished = shell.reap_jobs();
-                assert_eq!(
-                    finished,
-                    vec![(1, ReapedJobState::Signaled(9, b"killed"[..].into()))]
-                );
-                assert!(shell.jobs.is_empty());
-            },
-        );
+        run_trace(trace_entries![waitpid(4001, _) -> signaled_sig(9),], || {
+            let mut shell = test_shell();
+            shell.register_background_job(b"killed"[..].into(), None, vec![fake_handle(4001)]);
+            let finished = shell.reap_jobs();
+            assert_eq!(
+                finished,
+                vec![(1, ReapedJobState::Signaled(9, b"killed"[..].into()))]
+            );
+            assert!(shell.jobs.is_empty());
+        });
     }
 
     #[test]
     fn reap_jobs_continued_child_transitions_to_running() {
-        run_trace(
-            vec![t(
-                "waitpid",
-                vec![ArgMatcher::Int(4002), ArgMatcher::Any, ArgMatcher::Any],
-                TraceResult::ContinuedStatus,
-            )],
-            || {
-                let mut shell = test_shell();
-                let id = shell.register_background_job(
-                    b"cont"[..].into(),
-                    None,
-                    vec![fake_handle(4002)],
-                );
-                shell.jobs[0].state = JobState::Stopped(sys::SIGTSTP);
-                let finished = shell.reap_jobs();
-                assert!(finished.is_empty());
-                let job = shell.jobs.iter().find(|j| j.id == id).expect("job");
-                assert!(matches!(job.state, JobState::Running));
-            },
-        );
+        run_trace(trace_entries![waitpid(4002, _) -> continued,], || {
+            let mut shell = test_shell();
+            let id =
+                shell.register_background_job(b"cont"[..].into(), None, vec![fake_handle(4002)]);
+            shell.jobs[0].state = JobState::Stopped(sys::SIGTSTP);
+            let finished = shell.reap_jobs();
+            assert!(finished.is_empty());
+            let job = shell.jobs.iter().find(|j| j.id == id).expect("job");
+            assert!(matches!(job.state, JobState::Running));
+        });
     }
 
     #[test]
     fn reap_jobs_stopped_then_continued() {
         run_trace(
-            vec![
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(4003), ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::StoppedSig(sys::SIGTSTP),
-                ),
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(4003), ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::ContinuedStatus,
-                ),
+            trace_entries![
+                waitpid(4003, _) -> stopped_sig(sys::SIGTSTP),
+                waitpid(4003, _) -> continued,
             ],
             || {
                 let mut shell = test_shell();
@@ -1734,17 +1357,9 @@ mod tests {
     #[test]
     fn reap_jobs_reports_stopped_when_child_remains_stopped() {
         run_trace(
-            vec![
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(4005), ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::StoppedSig(sys::SIGTSTP),
-                ),
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(4005), ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Pid(0),
-                ),
+            trace_entries![
+                waitpid(4005, _) -> stopped_sig(sys::SIGTSTP),
+                waitpid(4005, _) -> pid(0),
             ],
             || {
                 let mut shell = test_shell();
@@ -1768,11 +1383,7 @@ mod tests {
     #[test]
     fn reap_jobs_signaled_produces_finished_entry() {
         run_trace(
-            vec![t(
-                "waitpid",
-                vec![ArgMatcher::Int(4004), ArgMatcher::Any, ArgMatcher::Any],
-                TraceResult::SignaledSig(15),
-            )],
+            trace_entries![waitpid(4004, _) -> signaled_sig(15),],
             || {
                 let mut shell = test_shell();
                 shell.register_background_job(b"termed"[..].into(), None, vec![fake_handle(4004)]);
@@ -1789,15 +1400,7 @@ mod tests {
     #[test]
     fn wait_for_job_signaled_child() {
         run_trace(
-            vec![t(
-                "waitpid",
-                vec![
-                    ArgMatcher::Int(5001),
-                    ArgMatcher::Any,
-                    ArgMatcher::Int(sys::WUNTRACED as i64),
-                ],
-                TraceResult::SignaledSig(9),
-            )],
+            trace_entries![waitpid(int(5001), _, int(sys::WUNTRACED)) -> signaled_sig(9),],
             || {
                 let mut shell = test_shell();
                 let id = shell.register_background_job(
@@ -1815,15 +1418,7 @@ mod tests {
     #[test]
     fn wait_for_job_cleanup_removes_known_pids() {
         run_trace(
-            vec![t(
-                "waitpid",
-                vec![
-                    ArgMatcher::Int(5003),
-                    ArgMatcher::Any,
-                    ArgMatcher::Int(sys::WUNTRACED as i64),
-                ],
-                TraceResult::Status(42),
-            )],
+            trace_entries![waitpid(int(5003), _, int(sys::WUNTRACED)) -> status(42),],
             || {
                 let mut shell = test_shell();
                 shell.known_pid_statuses.insert(5003, 0);
@@ -1842,17 +1437,9 @@ mod tests {
     #[test]
     fn continue_job_foreground_with_owns_terminal() {
         run_trace(
-            vec![
-                t(
-                    "tcsetpgrp",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Int(6001)],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "kill",
-                    vec![ArgMatcher::Int(-6001), ArgMatcher::Int(sys::SIGCONT as i64)],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                tcsetpgrp(fd(sys::STDIN_FILENO), int(6001)) -> 0,
+                kill(int(-6001), int(sys::SIGCONT)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -1872,33 +1459,14 @@ mod tests {
     #[test]
     fn print_jobs_signaled_and_done_nonzero() {
         run_trace(
-            vec![
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(7001), ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::SignaledSig(15),
-                ),
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(7002), ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Status(3),
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(1),
-                        ArgMatcher::Bytes(b"[1] Terminated (SIGTERM)\tsig-job\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(1),
-                        ArgMatcher::Bytes(b"[2] Done(3)\tfail-job\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
+            trace_entries![
+                waitpid(7001, _) -> signaled_sig(15),
+                waitpid(7002, _) -> status(3),
+                write(
+                    fd(sys::STDOUT_FILENO),
+                    bytes(b"[1] Terminated (SIGTERM)\tsig-job\n"),
+                ) -> auto,
+                write(fd(sys::STDOUT_FILENO), bytes(b"[2] Done(3)\tfail-job\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -1916,15 +1484,7 @@ mod tests {
     #[test]
     fn wait_on_job_index_signaled() {
         run_trace(
-            vec![t(
-                "waitpid",
-                vec![
-                    ArgMatcher::Int(8001),
-                    ArgMatcher::Any,
-                    ArgMatcher::Int(sys::WUNTRACED as i64),
-                ],
-                TraceResult::SignaledSig(11),
-            )],
+            trace_entries![waitpid(int(8001), _, int(sys::WUNTRACED)) -> signaled_sig(11),],
             || {
                 let mut shell = test_shell();
                 shell.register_background_job(b"segv"[..].into(), None, vec![fake_handle(8001)]);
@@ -1937,15 +1497,7 @@ mod tests {
     #[test]
     fn wait_for_child_blocking_signaled() {
         run_trace(
-            vec![t(
-                "waitpid",
-                vec![
-                    ArgMatcher::Int(9002),
-                    ArgMatcher::Any,
-                    ArgMatcher::Int(sys::WUNTRACED as i64),
-                ],
-                TraceResult::SignaledSig(6),
-            )],
+            trace_entries![waitpid(int(9002), _, int(sys::WUNTRACED)) -> signaled_sig(6),],
             || {
                 let mut shell = test_shell();
                 let outcome = shell.wait_for_child_blocking(9002, true).expect("wait");
@@ -1957,27 +1509,11 @@ mod tests {
     #[test]
     fn foreground_handoff_with_owns_terminal() {
         run_trace(
-            vec![
-                t(
-                    "isatty",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO)],
-                    TraceResult::Int(1),
-                ),
-                t(
-                    "isatty",
-                    vec![ArgMatcher::Fd(sys::STDERR_FILENO)],
-                    TraceResult::Int(1),
-                ),
-                t(
-                    "tcgetpgrp",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO)],
-                    TraceResult::Pid(1000),
-                ),
-                t(
-                    "tcsetpgrp",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Int(2000)],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                isatty(fd(sys::STDIN_FILENO)) -> 1,
+                isatty(fd(sys::STDERR_FILENO)) -> 1,
+                tcgetpgrp(fd(sys::STDIN_FILENO)) -> pid(1000),
+                tcsetpgrp(fd(sys::STDIN_FILENO), int(2000)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -1990,44 +1526,21 @@ mod tests {
 
     #[test]
     fn foreground_handoff_not_interactive_returns_none() {
-        run_trace(
-            vec![t(
-                "isatty",
-                vec![ArgMatcher::Fd(sys::STDIN_FILENO)],
-                TraceResult::Int(0),
-            )],
-            || {
-                let mut shell = test_shell();
-                shell.owns_terminal = true;
-                let saved = shell.foreground_handoff(Some(2000));
-                assert_eq!(saved, None);
-            },
-        );
+        run_trace(trace_entries![isatty(fd(sys::STDIN_FILENO)) -> 0,], || {
+            let mut shell = test_shell();
+            shell.owns_terminal = true;
+            let saved = shell.foreground_handoff(Some(2000));
+            assert_eq!(saved, None);
+        });
     }
 
     #[test]
     fn wait_for_job_with_owns_terminal_and_signaled_cleanup() {
         run_trace(
-            vec![
-                t(
-                    "tcsetpgrp",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Int(5010)],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "waitpid",
-                    vec![
-                        ArgMatcher::Int(5010),
-                        ArgMatcher::Any,
-                        ArgMatcher::Int(sys::WUNTRACED as i64),
-                    ],
-                    TraceResult::SignaledSig(9),
-                ),
-                t(
-                    "tcsetpgrp",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Int(100)],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                tcsetpgrp(fd(sys::STDIN_FILENO), int(5010)) -> 0,
+                waitpid(int(5010), _, int(sys::WUNTRACED)) -> signaled_sig(9),
+                tcsetpgrp(fd(sys::STDIN_FILENO), int(100)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -2050,21 +1563,13 @@ mod tests {
     #[test]
     fn print_jobs_stopped_notification_is_noop() {
         run_trace(
-            vec![
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(7010), ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::StoppedSig(sys::SIGTSTP),
-                ),
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(7010), ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Pid(0),
-                ),
-                t(
+            trace_entries![
+                waitpid(7010, _) -> stopped_sig(sys::SIGTSTP),
+                waitpid(7010, _) -> pid(0),
+                ..vec![t(
                     "write",
                     vec![
-                        ArgMatcher::Fd(1),
+                        ArgMatcher::Fd(sys::STDOUT_FILENO),
                         ArgMatcher::Bytes({
                             let mut v = b"[1] Stopped (".to_vec();
                             v.extend_from_slice(sys::signal_name(sys::SIGTSTP));
@@ -2073,7 +1578,7 @@ mod tests {
                         }),
                     ],
                     TraceResult::Auto,
-                ),
+                )],
             ],
             || {
                 let mut shell = test_shell();
@@ -2090,25 +1595,9 @@ mod tests {
     #[test]
     fn wait_for_job_cleanup_iterates_remaining_children() {
         run_trace(
-            vec![
-                t(
-                    "waitpid",
-                    vec![
-                        ArgMatcher::Int(5020),
-                        ArgMatcher::Any,
-                        ArgMatcher::Int(sys::WUNTRACED as i64),
-                    ],
-                    TraceResult::Status(0),
-                ),
-                t(
-                    "waitpid",
-                    vec![
-                        ArgMatcher::Int(5021),
-                        ArgMatcher::Any,
-                        ArgMatcher::Int(sys::WUNTRACED as i64),
-                    ],
-                    TraceResult::Status(0),
-                ),
+            trace_entries![
+                waitpid(int(5020), _, int(sys::WUNTRACED)) -> status(0),
+                waitpid(int(5021), _, int(sys::WUNTRACED)) -> status(0),
             ],
             || {
                 let mut shell = test_shell();
@@ -2130,15 +1619,7 @@ mod tests {
     #[test]
     fn wait_on_job_index_signaled_with_cleanup() {
         run_trace(
-            vec![t(
-                "waitpid",
-                vec![
-                    ArgMatcher::Int(8010),
-                    ArgMatcher::Any,
-                    ArgMatcher::Int(sys::WUNTRACED as i64),
-                ],
-                TraceResult::SignaledSig(11),
-            )],
+            trace_entries![waitpid(int(8010), _, int(sys::WUNTRACED)) -> signaled_sig(11),],
             || {
                 let mut shell = test_shell();
                 shell.register_background_job(b"segv"[..].into(), None, vec![fake_handle(8010)]);
@@ -2153,25 +1634,9 @@ mod tests {
     #[test]
     fn wait_for_child_blocking_skips_stop_when_not_reporting() {
         run_trace(
-            vec![
-                t(
-                    "waitpid",
-                    vec![
-                        ArgMatcher::Int(7070),
-                        ArgMatcher::Any,
-                        ArgMatcher::Int(sys::WUNTRACED as i64),
-                    ],
-                    TraceResult::StoppedSig(19),
-                ),
-                t(
-                    "waitpid",
-                    vec![
-                        ArgMatcher::Int(7070),
-                        ArgMatcher::Any,
-                        ArgMatcher::Int(sys::WUNTRACED as i64),
-                    ],
-                    TraceResult::Status(42),
-                ),
+            trace_entries![
+                waitpid(int(7070), _, int(sys::WUNTRACED)) -> stopped_sig(19),
+                waitpid(int(7070), _, int(sys::WUNTRACED)) -> status(42),
             ],
             || {
                 let mut shell = test_shell();

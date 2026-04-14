@@ -324,7 +324,10 @@ pub(super) mod test_support {
     pub(crate) fn trace_write_stderr(msg: &[u8]) -> TraceEntry {
         t(
             "write",
-            vec![ArgMatcher::Fd(2), ArgMatcher::Bytes(msg.to_vec())],
+            vec![
+                ArgMatcher::Fd(crate::sys::STDERR_FILENO),
+                ArgMatcher::Bytes(msg.to_vec()),
+            ],
             TraceResult::Auto,
         )
     }
@@ -334,6 +337,7 @@ pub(super) mod test_support {
 mod tests {
     use super::*;
     use crate::builtin::test_support::*;
+    use crate::trace_entries;
 
     #[test]
     fn builtin_registry_knows_core_commands() {
@@ -373,11 +377,7 @@ mod tests {
     #[test]
     fn write_stdout_coverage() {
         run_trace(
-            vec![t(
-                "write",
-                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"hi".to_vec())],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(fd(crate::sys::STDOUT_FILENO), bytes(b"hi")) -> auto,],
             || {
                 write_stdout(b"hi");
             },
@@ -387,12 +387,15 @@ mod tests {
     #[test]
     fn diag_status_syserr_coverage() {
         let msg = diag(b"open: No such file or directory");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let shell = test_shell();
-            let e = sys::SysError::Errno(libc::ENOENT);
-            let outcome = diag_status_syserr(&shell, 1, b"open: ", &e);
-            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let shell = test_shell();
+                let e = sys::SysError::Errno(libc::ENOENT);
+                let outcome = diag_status_syserr(&shell, 1, b"open: ", &e);
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
     }
 
     #[test]
@@ -424,36 +427,21 @@ mod tests {
 
     #[test]
     fn resolve_cd_target_cdpath_empty_prefix() {
-        run_trace(
-            vec![t(
-                "stat",
-                vec![ArgMatcher::Any, ArgMatcher::Any],
-                TraceResult::StatDir,
-            )],
-            || {
-                let mut shell = test_shell();
-                shell.env.insert(b"CDPATH".to_vec(), b":".to_vec());
-                let (resolved, _, print) = resolve_cd_target(&shell, b"subdir", false);
-                assert_eq!(resolved, b"./subdir");
-                assert!(!print);
-            },
-        );
+        run_trace(trace_entries![stat(any, any) -> stat_dir,], || {
+            let mut shell = test_shell();
+            shell.env.insert(b"CDPATH".to_vec(), b":".to_vec());
+            let (resolved, _, print) = resolve_cd_target(&shell, b"subdir", false);
+            assert_eq!(resolved, b"./subdir");
+            assert!(!print);
+        });
     }
 
     #[test]
     fn resolve_cd_target_cdpath_no_match() {
         run_trace(
-            vec![
-                t(
-                    "stat",
-                    vec![ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Err(libc::ENOENT),
-                ),
-                t(
-                    "stat",
-                    vec![ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Err(libc::ENOENT),
-                ),
+            trace_entries![
+                stat(any, any) -> err(libc::ENOENT),
+                stat(any, any) -> err(libc::ENOENT),
             ],
             || {
                 let mut shell = test_shell();

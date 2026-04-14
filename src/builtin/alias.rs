@@ -114,43 +114,25 @@ pub(super) fn unalias(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutc
 mod tests {
     use super::*;
     use crate::builtin::test_support::*;
+    use crate::trace_entries;
 
     #[test]
     fn alias_and_unalias_manage_alias_table() {
         run_trace(
-            vec![
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(1),
-                        ArgMatcher::Bytes(b"ll='ls -l'\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(2),
-                        ArgMatcher::Bytes(b"meiksh: alias: missing: not found\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(2),
-                        ArgMatcher::Bytes(b"meiksh: unalias: missing: not found\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(2),
-                        ArgMatcher::Bytes(b"meiksh: unalias: name required\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
+            trace_entries![
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"ll='ls -l'\n")) -> auto,
+                write(
+                    fd(crate::sys::STDERR_FILENO),
+                    bytes(b"meiksh: alias: missing: not found\n"),
+                ) -> auto,
+                write(
+                    fd(crate::sys::STDERR_FILENO),
+                    bytes(b"meiksh: unalias: missing: not found\n"),
+                ) -> auto,
+                write(
+                    fd(crate::sys::STDERR_FILENO),
+                    bytes(b"meiksh: unalias: name required\n"),
+                ) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -212,14 +194,10 @@ mod tests {
     #[test]
     fn alias_define_and_lookup() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(1),
-                    ArgMatcher::Bytes(b"ll='ls -la'\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(
+                fd(crate::sys::STDOUT_FILENO),
+                bytes(b"ll='ls -la'\n"),
+            ) -> auto,],
             || {
                 let mut shell = test_shell();
                 shell.aliases.insert(b"ll"[..].into(), b"ls -la"[..].into());
@@ -233,14 +211,10 @@ mod tests {
     #[test]
     fn alias_no_args_lists() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(1),
-                    ArgMatcher::Bytes(b"ll='ls -la'\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(
+                fd(crate::sys::STDOUT_FILENO),
+                bytes(b"ll='ls -la'\n"),
+            ) -> auto,],
             || {
                 let mut shell = test_shell();
                 shell.aliases.insert(b"ll"[..].into(), b"ls -la"[..].into());
@@ -253,12 +227,15 @@ mod tests {
     #[test]
     fn alias_single_name_lookup_missing() {
         let msg = diag(b"alias: nosuch: not found");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            let outcome =
-                invoke(&mut shell, &[b"alias".to_vec(), b"nosuch".to_vec()]).expect("alias nosuch");
-            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(&mut shell, &[b"alias".to_vec(), b"nosuch".to_vec()])
+                    .expect("alias nosuch");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
     }
 
     #[test]
@@ -276,11 +253,14 @@ mod tests {
     #[test]
     fn unalias_missing_name() {
         let msg = diag(b"unalias: nosuch: not found");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            let outcome =
-                invoke(&mut shell, &[b"unalias".to_vec(), b"nosuch".to_vec()]).expect("unalias");
-            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(&mut shell, &[b"unalias".to_vec(), b"nosuch".to_vec()])
+                    .expect("unalias");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
     }
 }

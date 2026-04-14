@@ -191,6 +191,7 @@ pub(super) fn resolve_cd_target(
 mod tests {
     use super::*;
     use crate::builtin::test_support::*;
+    use crate::trace_entries;
 
     #[test]
     fn canonicalize_logical_path_handles_all_cases() {
@@ -207,24 +208,12 @@ mod tests {
     #[test]
     fn cd_physical_mode_with_dash_e_get_cwd_fails() {
         run_trace(
-            vec![
-                t("getcwd", vec![], TraceResult::CwdBytes(b"/home".to_vec())),
-                t(
-                    "realpath",
-                    vec![ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::RealpathBytes(b"/home".to_vec()),
-                ),
-                t(
-                    "realpath",
-                    vec![ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::RealpathBytes(b"/home".to_vec()),
-                ),
-                t(
-                    "chdir",
-                    vec![ArgMatcher::Str(b"/tmp".to_vec())],
-                    TraceResult::Int(0),
-                ),
-                t("getcwd", vec![], TraceResult::Err(libc::ENOENT)),
+            trace_entries![
+                getcwd() -> cwd("/home"),
+                realpath(any, any) -> realpath("/home"),
+                realpath(any, any) -> realpath("/home"),
+                chdir(str(b"/tmp")) -> 0,
+                getcwd() -> err(libc::ENOENT),
             ],
             || {
                 let mut shell = test_shell();
@@ -242,24 +231,12 @@ mod tests {
     #[test]
     fn cd_physical_mode() {
         run_trace(
-            vec![
-                t("getcwd", vec![], TraceResult::CwdBytes(b"/home".to_vec())),
-                t(
-                    "realpath",
-                    vec![ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::RealpathBytes(b"/home".to_vec()),
-                ),
-                t(
-                    "realpath",
-                    vec![ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::RealpathBytes(b"/home".to_vec()),
-                ),
-                t(
-                    "chdir",
-                    vec![ArgMatcher::Str(b"/usr".to_vec())],
-                    TraceResult::Int(0),
-                ),
-                t("getcwd", vec![], TraceResult::CwdBytes(b"/usr".to_vec())),
+            trace_entries![
+                getcwd() -> cwd("/home"),
+                realpath(any, any) -> realpath("/home"),
+                realpath(any, any) -> realpath("/home"),
+                chdir(str(b"/usr")) -> 0,
+                getcwd() -> cwd("/usr"),
             ],
             || {
                 let mut shell = test_shell();
@@ -278,14 +255,10 @@ mod tests {
     #[test]
     fn cd_home_not_set() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(2),
-                    ArgMatcher::Bytes(b"meiksh: cd: HOME not set\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(
+                fd(crate::sys::STDERR_FILENO),
+                bytes(b"meiksh: cd: HOME not set\n"),
+            ) -> auto,],
             || {
                 let mut shell = test_shell();
                 let _ = invoke(&mut shell, &[b"cd".to_vec()]);
@@ -296,36 +269,13 @@ mod tests {
     #[test]
     fn cd_cdpath_match_found() {
         run_trace(
-            vec![
-                t(
-                    "stat",
-                    vec![ArgMatcher::Str(b"/opt/subdir".to_vec()), ArgMatcher::Any],
-                    TraceResult::StatDir,
-                ),
-                t("getcwd", vec![], TraceResult::CwdBytes(b"/home".to_vec())),
-                t(
-                    "realpath",
-                    vec![ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::RealpathBytes(b"/home".to_vec()),
-                ),
-                t(
-                    "realpath",
-                    vec![ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::RealpathBytes(b"/home".to_vec()),
-                ),
-                t(
-                    "chdir",
-                    vec![ArgMatcher::Str(b"/opt/subdir".to_vec())],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(1),
-                        ArgMatcher::Bytes(b"/opt/subdir\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
+            trace_entries![
+                stat(str(b"/opt/subdir"), any) -> stat_dir,
+                getcwd() -> cwd("/home"),
+                realpath(any, any) -> realpath("/home"),
+                realpath(any, any) -> realpath("/home"),
+                chdir(str(b"/opt/subdir")) -> 0,
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"/opt/subdir\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -341,50 +291,47 @@ mod tests {
     #[test]
     fn cd_invalid_option() {
         let msg = diag(b"cd: invalid option: -z");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            let _ = invoke(&mut shell, &[b"cd".to_vec(), b"-z".to_vec()]);
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                let _ = invoke(&mut shell, &[b"cd".to_vec(), b"-z".to_vec()]);
+            },
+        );
     }
 
     #[test]
     fn cd_too_many_args() {
         let msg = diag(b"cd: too many arguments");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            let _ = invoke(&mut shell, &[b"cd".to_vec(), b"a".to_vec(), b"b".to_vec()]);
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                let _ = invoke(&mut shell, &[b"cd".to_vec(), b"a".to_vec(), b"b".to_vec()]);
+            },
+        );
     }
 
     #[test]
     fn cd_empty_dir() {
         let msg = diag(b"cd: empty directory");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            let _ = invoke(&mut shell, &[b"cd".to_vec(), b"".to_vec()]);
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                let _ = invoke(&mut shell, &[b"cd".to_vec(), b"".to_vec()]);
+            },
+        );
     }
 
     #[test]
     fn cd_dash_dash_handling() {
         run_trace(
-            vec![
-                t("getcwd", vec![], TraceResult::CwdBytes(b"/home".to_vec())),
-                t(
-                    "realpath",
-                    vec![ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::RealpathBytes(b"/home".to_vec()),
-                ),
-                t(
-                    "realpath",
-                    vec![ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::RealpathBytes(b"/home".to_vec()),
-                ),
-                t(
-                    "chdir",
-                    vec![ArgMatcher::Str(b"/tmp".to_vec())],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                getcwd() -> cwd("/home"),
+                realpath(any, any) -> realpath("/home"),
+                realpath(any, any) -> realpath("/home"),
+                chdir(str(b"/tmp")) -> 0,
             ],
             || {
                 let mut shell = test_shell();

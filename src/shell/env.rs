@@ -121,6 +121,7 @@ impl Shell {
 mod tests {
     use crate::shell::test_support::t_stderr;
     use crate::sys::test_support::{assert_no_syscalls, run_trace};
+    use crate::trace_entries;
 
     use crate::shell::error::var_error_message;
     use crate::shell::test_support::test_shell;
@@ -215,14 +216,17 @@ mod tests {
 
     #[test]
     fn export_var_error_on_readonly() {
-        run_trace(vec![t_stderr("meiksh: RO: readonly variable")], || {
-            let mut shell = test_shell();
-            shell.set_var(b"RO", b"orig".to_vec()).expect("set");
-            shell.mark_readonly(b"RO");
-            let error = shell
-                .export_var(b"RO", Some(b"new".to_vec()))
-                .expect_err("readonly export");
-            assert_eq!(error.exit_status(), 1);
-        });
+        run_trace(
+            trace_entries![..vec![t_stderr("meiksh: RO: readonly variable")]],
+            || {
+                let mut shell = test_shell();
+                shell.set_var(b"RO", b"orig".to_vec()).expect("set");
+                shell.mark_readonly(b"RO");
+                let error = shell
+                    .export_var(b"RO", Some(b"new".to_vec()))
+                    .expect_err("readonly export");
+                assert_eq!(error.exit_status(), 1);
+            },
+        );
     }
 }

@@ -319,18 +319,15 @@ pub(super) fn parse_wait_operand(operand: &[u8], shell: &Shell) -> Result<WaitOp
 mod tests {
     use super::*;
     use crate::builtin::test_support::*;
+    use crate::trace_entries;
 
     #[test]
     fn jobs_stopped_job_output() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(1),
-                    ArgMatcher::Bytes(b"[1] + Stopped (SIGTSTP) vim\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(
+                fd(crate::sys::STDOUT_FILENO),
+                bytes(b"[1] + Stopped (SIGTSTP) vim\n"),
+            ) -> auto,],
             || {
                 let mut shell = test_shell();
                 shell.jobs.push(crate::shell::Job {
@@ -351,14 +348,10 @@ mod tests {
     #[test]
     fn jobs_invalid_option_error() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(2),
-                    ArgMatcher::Bytes(b"meiksh: jobs: invalid option: -z\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(
+                fd(crate::sys::STDERR_FILENO),
+                bytes(b"meiksh: jobs: invalid option: -z\n"),
+            ) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome =
@@ -438,14 +431,10 @@ mod tests {
     #[test]
     fn fg_no_job_control_error() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(2),
-                    ArgMatcher::Bytes(b"meiksh: fg: no job control\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(
+                fd(crate::sys::STDERR_FILENO),
+                bytes(b"meiksh: fg: no job control\n"),
+            ) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(&mut shell, &[b"fg".to_vec()]).expect("fg");
@@ -457,14 +446,10 @@ mod tests {
     #[test]
     fn bg_no_job_control_error() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(2),
-                    ArgMatcher::Bytes(b"meiksh: bg: no job control\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(
+                fd(crate::sys::STDERR_FILENO),
+                bytes(b"meiksh: bg: no job control\n"),
+            ) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(&mut shell, &[b"bg".to_vec()]).expect("bg");
@@ -476,14 +461,10 @@ mod tests {
     #[test]
     fn fg_no_current_job_error() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(2),
-                    ArgMatcher::Bytes(b"meiksh: fg: no current job\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(
+                fd(crate::sys::STDERR_FILENO),
+                bytes(b"meiksh: fg: no current job\n"),
+            ) -> auto,],
             || {
                 let mut shell = test_shell();
                 shell.options.monitor = true;
@@ -495,14 +476,10 @@ mod tests {
     #[test]
     fn bg_no_current_job_error() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(2),
-                    ArgMatcher::Bytes(b"meiksh: bg: no current job\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(
+                fd(crate::sys::STDERR_FILENO),
+                bytes(b"meiksh: bg: no current job\n"),
+            ) -> auto,],
             || {
                 let mut shell = test_shell();
                 shell.options.monitor = true;
@@ -514,14 +491,10 @@ mod tests {
     #[test]
     fn wait_invalid_job_id() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(2),
-                    ArgMatcher::Bytes(b"meiksh: wait: invalid job id: %nosuch\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(
+                fd(crate::sys::STDERR_FILENO),
+                bytes(b"meiksh: wait: invalid job id: %nosuch\n"),
+            ) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(&mut shell, &[b"wait".to_vec(), b"%nosuch".to_vec()])
@@ -534,14 +507,10 @@ mod tests {
     #[test]
     fn wait_invalid_pid() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(2),
-                    ArgMatcher::Bytes(b"meiksh: wait: invalid process id: abc\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(
+                fd(crate::sys::STDERR_FILENO),
+                bytes(b"meiksh: wait: invalid process id: abc\n"),
+            ) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome =
@@ -624,20 +593,26 @@ mod tests {
     #[test]
     fn fg_no_job_control() {
         let msg = diag(b"fg: no job control");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            let outcome = invoke(&mut shell, &[b"fg".to_vec()]).expect("fg");
-            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(&mut shell, &[b"fg".to_vec()]).expect("fg");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
     }
 
     #[test]
     fn bg_no_job_control() {
         let msg = diag(b"bg: no job control");
-        run_trace(vec![trace_write_stderr(&msg)], || {
-            let mut shell = test_shell();
-            let outcome = invoke(&mut shell, &[b"bg".to_vec()]).expect("bg");
-            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
-        });
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(&mut shell, &[b"bg".to_vec()]).expect("bg");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
     }
 }

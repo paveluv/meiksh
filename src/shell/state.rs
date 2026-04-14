@@ -60,10 +60,11 @@ pub struct Shell {
 mod tests {
     use super::{FlowSignal, PendingControl};
     use crate::shell::test_support::test_shell;
+    use crate::trace_entries;
 
     #[test]
     fn run_builtin_returns_correct_flow_signals() {
-        crate::sys::test_support::run_trace(vec![], || {
+        crate::sys::test_support::run_trace(trace_entries![], || {
             let mut shell = test_shell();
 
             let flow = shell
