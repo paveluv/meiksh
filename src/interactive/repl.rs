@@ -317,7 +317,7 @@ mod tests {
                 shell
                     .set_trap(
                         TrapCondition::Signal(sys::constants::SIGINT),
-                        Some(TrapAction::Command(b"TRAPPED=yes"[..].into())),
+                        Some(TrapAction::command(b"TRAPPED=yes")),
                     )
                     .expect("trap");
                 let status = run_loop(&mut shell).expect("trap at prompt");
@@ -341,7 +341,7 @@ mod tests {
                 shell
                     .set_trap(
                         TrapCondition::Signal(sys::constants::SIGINT),
-                        Some(TrapAction::Command(b"exit 42"[..].into())),
+                        Some(TrapAction::command(b"exit 42")),
                     )
                     .expect("trap");
                 let status = run_loop(&mut shell).expect("exit trap at prompt");

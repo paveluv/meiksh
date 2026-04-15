@@ -962,7 +962,7 @@ mod tests {
                 shell
                     .set_trap(
                         TrapCondition::Signal(sys::constants::SIGINT),
-                        Some(TrapAction::Command(b":"[..].into())),
+                        Some(TrapAction::command(b":")),
                     )
                     .expect("trap");
                 shell.register_background_job(b"sleep"[..].into(), None, vec![fake_handle(2001)]);
@@ -1027,7 +1027,7 @@ mod tests {
                 shell
                     .set_trap(
                         TrapCondition::Signal(sys::constants::SIGINT),
-                        Some(TrapAction::Command(b":"[..].into())),
+                        Some(TrapAction::command(b":")),
                     )
                     .expect("trap");
 
@@ -1055,7 +1055,7 @@ mod tests {
                 shell
                     .set_trap(
                         TrapCondition::Signal(sys::constants::SIGINT),
-                        Some(TrapAction::Command(b":"[..].into())),
+                        Some(TrapAction::command(b":")),
                     )
                     .expect("trap");
                 shell.register_background_job(b"sleep"[..].into(), None, vec![fake_handle(2002)]);

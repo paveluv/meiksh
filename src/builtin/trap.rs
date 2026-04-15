@@ -1,3 +1,6 @@
+use std::collections::BTreeSet;
+use std::rc::Rc;
+
 use super::alias::shell_quote;
 use super::{BuiltinOutcome, write_stdout_line};
 use crate::bstr;
@@ -5,8 +8,8 @@ use crate::bstr::ByteWriter;
 use crate::shell::error::ShellError;
 use crate::shell::state::Shell;
 use crate::shell::traps::{TrapAction, TrapCondition};
+use crate::syntax::ast::Program;
 use crate::sys;
-use std::collections::BTreeSet;
 
 pub(super) fn trap(shell: &mut Shell, argv: &[Vec<u8>]) -> BuiltinOutcome {
     match trap_impl(shell, argv) {
@@ -128,7 +131,17 @@ pub(super) fn parse_trap_action(action: &[u8]) -> Option<TrapAction> {
     match action {
         b"-" => None,
         _ if action.is_empty() => Some(TrapAction::Ignore),
-        _ => Some(TrapAction::Command(action.into())),
+        _ => {
+            let program =
+                crate::syntax::parse_with_aliases(action, &std::collections::HashMap::new())
+                    .unwrap_or_else(|_| Program {
+                        items: Box::new([]),
+                    });
+            Some(TrapAction::Command {
+                text: action.into(),
+                program: Rc::new(program),
+            })
+        }
     }
 }
 
@@ -207,7 +220,7 @@ pub(super) fn trap_output_action(
         .or_else(|| shell.trap_action(condition));
     match action {
         Some(TrapAction::Ignore) => Some(b"''".to_vec()),
-        Some(TrapAction::Command(command)) => Some(shell_quote(command)),
+        Some(TrapAction::Command { text, .. }) => Some(shell_quote(text)),
         None if include_defaults || explicit_operand => Some(b"-".to_vec()),
         None => None,
     }
@@ -232,10 +245,9 @@ mod tests {
     fn trap_set_and_reset_via_dash() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.trap_actions.insert(
-                TrapCondition::Exit,
-                TrapAction::Command(b"echo bye"[..].into()),
-            );
+            shell
+                .trap_actions
+                .insert(TrapCondition::Exit, TrapAction::command(b"echo bye"));
             invoke(
                 &mut shell,
                 &[b"trap".to_vec(), b"-".to_vec(), b"EXIT".to_vec()],
@@ -282,10 +294,9 @@ mod tests {
     fn trap_numeric_reset() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.trap_actions.insert(
-                TrapCondition::Exit,
-                TrapAction::Command(b"echo bye"[..].into()),
-            );
+            shell
+                .trap_actions
+                .insert(TrapCondition::Exit, TrapAction::command(b"echo bye"));
             invoke(&mut shell, &[b"trap".to_vec(), b"0".to_vec()]).expect("trap 0");
             assert!(!shell.trap_actions.contains_key(&TrapCondition::Exit));
         });
@@ -299,10 +310,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.trap_actions.insert(
-                    TrapCondition::Exit,
-                    TrapAction::Command(b"echo bye"[..].into()),
-                );
+                shell
+                    .trap_actions
+                    .insert(TrapCondition::Exit, TrapAction::command(b"echo bye"));
                 invoke(&mut shell, &[b"trap".to_vec(), b"--".to_vec()]).expect("trap --");
             },
         );
@@ -316,10 +326,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.trap_actions.insert(
-                    TrapCondition::Exit,
-                    TrapAction::Command(b"echo done"[..].into()),
-                );
+                shell
+                    .trap_actions
+                    .insert(TrapCondition::Exit, TrapAction::command(b"echo done"));
                 invoke(
                     &mut shell,
                     &[b"trap".to_vec(), b"-p".to_vec(), b"EXIT".to_vec()],
@@ -533,11 +542,13 @@ mod tests {
     fn parse_trap_action_variants() {
         assert_no_syscalls(|| {
             assert!(parse_trap_action(b"-").is_none());
-            assert_eq!(parse_trap_action(b""), Some(TrapAction::Ignore));
-            assert_eq!(
-                parse_trap_action(b"echo hi"),
-                Some(TrapAction::Command(b"echo hi"[..].into()))
-            );
+            assert!(matches!(parse_trap_action(b""), Some(TrapAction::Ignore)));
+            match parse_trap_action(b"echo hi") {
+                Some(TrapAction::Command { text, .. }) => {
+                    assert_eq!(&*text, b"echo hi");
+                }
+                other => panic!("expected Command, got {:?}", other),
+            }
         });
     }
 
@@ -566,10 +577,12 @@ mod tests {
                 ],
             )
             .expect("trap -- 'echo goodbye' EXIT");
-            assert_eq!(
-                shell.trap_actions.get(&TrapCondition::Exit),
-                Some(&TrapAction::Command(b"echo goodbye"[..].into()))
-            );
+            match shell.trap_actions.get(&TrapCondition::Exit) {
+                Some(TrapAction::Command { text, .. }) => {
+                    assert_eq!(&**text, b"echo goodbye".as_slice());
+                }
+                other => panic!("expected Command, got {:?}", other),
+            }
         });
     }
 
@@ -659,10 +672,9 @@ mod tests {
             let action = trap_output_action(&shell, TrapCondition::Exit, false, false);
             assert_eq!(action, Some(b"''".to_vec()));
 
-            shell.trap_actions.insert(
-                TrapCondition::Exit,
-                TrapAction::Command(b"echo bye"[..].into()),
-            );
+            shell
+                .trap_actions
+                .insert(TrapCondition::Exit, TrapAction::command(b"echo bye"));
             let action = trap_output_action(&shell, TrapCondition::Exit, false, false);
             assert_eq!(action, Some(b"'echo bye'".to_vec()));
 

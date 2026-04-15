@@ -1,3 +1,6 @@
+use std::rc::Rc;
+
+use crate::syntax::ast::Program;
 use crate::sys;
 
 use super::error::ShellError;
@@ -9,10 +12,27 @@ pub(crate) enum TrapCondition {
     Signal(sys::types::Pid),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub(crate) enum TrapAction {
     Ignore,
-    Command(Box<[u8]>),
+    Command {
+        text: Box<[u8]>,
+        program: Rc<Program>,
+    },
+}
+
+#[cfg(test)]
+impl TrapAction {
+    pub(crate) fn command(text: &[u8]) -> Self {
+        let program = crate::syntax::parse_with_aliases(text, &std::collections::HashMap::new())
+            .unwrap_or_else(|_| Program {
+                items: Box::new([]),
+            });
+        TrapAction::Command {
+            text: text.into(),
+            program: Rc::new(program),
+        }
+    }
 }
 
 impl Shell {
@@ -33,8 +53,10 @@ impl Shell {
             match action.as_ref() {
                 Some(TrapAction::Ignore) => sys::process::ignore_signal(signal)
                     .map_err(|e| self.diagnostic_syserr(1, &e))?,
-                Some(TrapAction::Command(_)) => sys::process::install_shell_signal_handler(signal)
-                    .map_err(|e| self.diagnostic_syserr(1, &e))?,
+                Some(TrapAction::Command { .. }) => {
+                    sys::process::install_shell_signal_handler(signal)
+                        .map_err(|e| self.diagnostic_syserr(1, &e))?
+                }
                 None => sys::process::default_signal_action(signal)
                     .map_err(|e| self.diagnostic_syserr(1, &e))?,
             }
@@ -58,7 +80,7 @@ impl Shell {
             .trap_actions
             .iter()
             .filter_map(|(cond, action)| match action {
-                TrapAction::Command(_) => Some(*cond),
+                TrapAction::Command { .. } => Some(*cond),
                 TrapAction::Ignore => None,
             })
             .collect();
@@ -104,14 +126,13 @@ impl Shell {
 
     pub(crate) fn run_pending_traps(&mut self) -> Result<(), ShellError> {
         for signal in sys::process::take_pending_signals() {
-            let Some(TrapAction::Command(action)) = self
-                .trap_actions
-                .get(&TrapCondition::Signal(signal))
-                .cloned()
+            let Some(TrapAction::Command { program, .. }) =
+                self.trap_actions.get(&TrapCondition::Signal(signal))
             else {
                 continue;
             };
-            self.execute_trap_action(&action, self.last_status)?;
+            let program = Rc::clone(program);
+            self.execute_trap_action(&program, self.last_status)?;
             if !self.running {
                 break;
             }
@@ -120,25 +141,25 @@ impl Shell {
     }
 
     pub(crate) fn run_exit_trap(&mut self, status: i32) -> Result<i32, ShellError> {
-        let Some(TrapAction::Command(action)) =
-            self.trap_actions.get(&TrapCondition::Exit).cloned()
+        let Some(TrapAction::Command { program, .. }) = self.trap_actions.get(&TrapCondition::Exit)
         else {
             self.last_status = status;
             return Ok(status);
         };
-        self.execute_trap_action(&action, status)
+        let program = Rc::clone(program);
+        self.execute_trap_action(&program, status)
     }
 
     pub(super) fn execute_trap_action(
         &mut self,
-        action: &[u8],
+        program: &Program,
         preserved_status: i32,
     ) -> Result<i32, ShellError> {
         let saved_lineno = self.lineno;
         let was_running = self.running;
         self.running = true;
         self.last_status = preserved_status;
-        let status = self.execute_string(action)?;
+        let status = self.execute_program(program)?;
         self.lineno = saved_lineno;
         if self.running {
             self.running = was_running;
@@ -206,24 +227,24 @@ mod tests {
                 );
                 shell.trap_actions.insert(
                     TrapCondition::Signal(crate::sys::constants::SIGTERM),
-                    TrapAction::Command(b"echo trapped"[..].into()),
+                    TrapAction::command(b"echo trapped"),
                 );
-                shell.trap_actions.insert(
-                    TrapCondition::Exit,
-                    TrapAction::Command(b"echo bye"[..].into()),
-                );
+                shell
+                    .trap_actions
+                    .insert(TrapCondition::Exit, TrapAction::command(b"echo bye"));
 
                 shell.reset_traps_for_subshell().expect("reset");
 
-                assert_eq!(
+                assert!(matches!(
                     shell.trap_action(TrapCondition::Signal(crate::sys::constants::SIGINT)),
-                    Some(&TrapAction::Ignore),
+                    Some(TrapAction::Ignore),
+                ));
+                assert!(
+                    shell
+                        .trap_action(TrapCondition::Signal(crate::sys::constants::SIGTERM))
+                        .is_none(),
                 );
-                assert_eq!(
-                    shell.trap_action(TrapCondition::Signal(crate::sys::constants::SIGTERM)),
-                    None,
-                );
-                assert_eq!(shell.trap_action(TrapCondition::Exit), None);
+                assert!(shell.trap_action(TrapCondition::Exit).is_none());
             },
         );
     }
@@ -238,9 +259,12 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
+                let exit9 =
+                    crate::syntax::parse_with_aliases(b"exit 9", &std::collections::HashMap::new())
+                        .unwrap();
                 assert_eq!(
                     shell
-                        .execute_trap_action(b"exit 9", 3)
+                        .execute_trap_action(&exit9, 3)
                         .expect("exit trap action"),
                     9
                 );
@@ -251,7 +275,7 @@ mod tests {
                 shell
                     .set_trap(
                         TrapCondition::Signal(sys::constants::SIGINT),
-                        Some(TrapAction::Command(b":"[..].into())),
+                        Some(TrapAction::command(b":")),
                     )
                     .expect("trap");
                 sys::test_support::with_pending_signals_for_test(&[sys::constants::SIGINT], || {
@@ -262,7 +286,7 @@ mod tests {
                 shell
                     .set_trap(
                         TrapCondition::Signal(sys::constants::SIGINT),
-                        Some(TrapAction::Command(b"exit 7"[..].into())),
+                        Some(TrapAction::command(b"exit 7")),
                     )
                     .expect("exit trap");
                 sys::test_support::with_pending_signals_for_test(&[sys::constants::SIGINT], || {
@@ -294,7 +318,7 @@ mod tests {
             let cond = TrapCondition::Signal(sys::constants::SIGQUIT);
             shell.ignored_on_entry.insert(cond);
             shell
-                .set_trap(cond, Some(TrapAction::Command(b"echo trapped"[..].into())))
+                .set_trap(cond, Some(TrapAction::command(b"echo trapped")))
                 .expect("set_trap");
             assert!(shell.trap_action(cond).is_none());
         });
