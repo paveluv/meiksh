@@ -1,8 +1,8 @@
+use std::collections::HashMap;
 use std::env;
 use std::error::Error;
 use std::fmt::Write as _;
 use std::fs;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
@@ -34,7 +34,8 @@ struct ParsedTag {
 }
 
 static CURRENT_INPUT_PATH: OnceLock<PathBuf> = OnceLock::new();
-static HEADING_SLUG_CACHE: OnceLock<Mutex<HashMap<PathBuf, HashMap<String, String>>>> = OnceLock::new();
+static HEADING_SLUG_CACHE: OnceLock<Mutex<HashMap<PathBuf, HashMap<String, String>>>> =
+    OnceLock::new();
 
 fn main() {
     if let Err(err) = run() {
@@ -45,8 +46,12 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn Error>> {
     let mut args = env::args().skip(1);
-    let input = args.next().ok_or("usage: html_to_md <input.html> <output.md>")?;
-    let output = args.next().ok_or("usage: html_to_md <input.html> <output.md>")?;
+    let input = args
+        .next()
+        .ok_or("usage: html_to_md <input.html> <output.md>")?;
+    let output = args
+        .next()
+        .ok_or("usage: html_to_md <input.html> <output.md>")?;
     if args.next().is_some() {
         return Err("usage: html_to_md <input.html> <output.md>".into());
     }
@@ -77,7 +82,10 @@ fn parse_html(input: &str) -> Node {
 
     while i < input.len() {
         if bytes[i] != b'<' {
-            let next = input[i..].find('<').map(|offset| i + offset).unwrap_or(input.len());
+            let next = input[i..]
+                .find('<')
+                .map(|offset| i + offset)
+                .unwrap_or(input.len());
             push_text(&mut stack, &input[i..next]);
             i = next;
             continue;
@@ -119,7 +127,9 @@ fn parse_html(input: &str) -> Node {
             let raw = &input[i + 1..end];
             if let Some(tag) = parse_start_tag(raw) {
                 if tag.name == "script" || tag.name == "style" {
-                    if let Some(close_end) = find_case_insensitive_closing_tag(input, &lower, end + 1, &tag.name) {
+                    if let Some(close_end) =
+                        find_case_insensitive_closing_tag(input, &lower, end + 1, &tag.name)
+                    {
                         i = close_end;
                     } else {
                         i = end + 1;
@@ -203,7 +213,8 @@ fn render_blocks(nodes: &[Node], out: &mut String) {
                 }
 
                 match element.name.as_str() {
-                    "html" | "head" | "body" | "div" | "span" | "font" | "basefont" | "center" | "section" => {
+                    "html" | "head" | "body" | "div" | "span" | "font" | "basefont" | "center"
+                    | "section" => {
                         render_blocks(&element.children, out);
                     }
                     "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
@@ -334,7 +345,9 @@ fn render_inline_run(nodes: &[Node], start: usize) -> Option<(usize, String)> {
     while index < nodes.len() {
         match &nodes[index] {
             Node::Text(text) => raw.push_str(&format_plain_text(&decode_html_entities(text))),
-            Node::Element(element) if !should_skip_element(element) && is_inline_tag(&element.name) => {
+            Node::Element(element)
+                if !should_skip_element(element) && is_inline_tag(&element.name) =>
+            {
                 raw.push_str(&render_inline_element(element));
             }
             _ => break,
@@ -556,7 +569,9 @@ fn split_definition_children(children: &[Node]) -> (String, Vec<String>) {
 
     for child in children {
         match child {
-            Node::Text(text) if !seen_block => lead.push_str(&format_plain_text(&decode_html_entities(text))),
+            Node::Text(text) if !seen_block => {
+                lead.push_str(&format_plain_text(&decode_html_entities(text)))
+            }
             Node::Element(element) if !seen_block && is_inline_tag(&element.name) => {
                 lead.push_str(&render_inline_element(element));
             }
@@ -695,9 +710,7 @@ fn render_table(element: &Element) -> String {
         return String::new();
     }
 
-    let has_header = rows
-        .iter()
-        .any(|row| row.iter().any(|cell| cell.header));
+    let has_header = rows.iter().any(|row| row.iter().any(|cell| cell.header));
 
     if rows.len() == 1 && rows[0].len() > 1 && !has_header {
         if let Some(items) = flatten_simple_word_table(&rows[0]) {
@@ -759,13 +772,17 @@ fn flatten_simple_word_table(row: &[TableCell]) -> Option<Vec<String>> {
             continue;
         }
 
-        let (wrapper, inner) = if text.starts_with("**") && text.ends_with("**") && text.len() >= 4 {
+        let (wrapper, inner) = if text.starts_with("**") && text.ends_with("**") && text.len() >= 4
+        {
             ("**", &text[2..text.len() - 2])
         } else {
             ("", text.as_str())
         };
 
-        let parts: Vec<&str> = inner.split_whitespace().filter(|part| !part.is_empty()).collect();
+        let parts: Vec<&str> = inner
+            .split_whitespace()
+            .filter(|part| !part.is_empty())
+            .collect();
         if parts.is_empty() {
             continue;
         }
@@ -792,9 +809,13 @@ fn flatten_simple_word_table(row: &[TableCell]) -> Option<Vec<String>> {
 
 fn is_simple_table_item(item: &str) -> bool {
     !item.is_empty()
-        && item
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '!' | '{' | '}' | '[' | ']' | '_' | '-' | '+' | '?' | '*' | '/' | '.'))
+        && item.chars().all(|ch| {
+            ch.is_ascii_alphanumeric()
+                || matches!(
+                    ch,
+                    '!' | '{' | '}' | '[' | ']' | '_' | '-' | '+' | '?' | '*' | '/' | '.'
+                )
+        })
 }
 
 fn render_markdown_table(rows: &[Vec<TableCell>]) -> String {
@@ -803,7 +824,10 @@ fn render_markdown_table(rows: &[Vec<TableCell>]) -> String {
         return String::new();
     }
 
-    let header_index = rows.iter().position(|row| row.iter().any(|cell| cell.header)).unwrap_or(0);
+    let header_index = rows
+        .iter()
+        .position(|row| row.iter().any(|cell| cell.header))
+        .unwrap_or(0);
     let header_cells = pad_cells(
         rows[header_index]
             .iter()
@@ -880,14 +904,12 @@ fn render_inline_element(element: &Element) -> String {
         }
         "b" | "strong" => wrap_markdown("**", &render_inline_children(&element.children)),
         "i" | "em" => wrap_markdown("*", &render_inline_children(&element.children)),
-        "tt" | "code" | "kbd" | "samp" => inline_code(&normalize_inline(&render_raw_inline_children(&element.children))),
+        "tt" | "code" | "kbd" | "samp" => inline_code(&normalize_inline(
+            &render_raw_inline_children(&element.children),
+        )),
         "sub" | "sup" | "small" => {
             let text = normalize_inline(&render_inline_children(&element.children));
-            if text == "[]" {
-                String::new()
-            } else {
-                text
-            }
+            if text == "[]" { String::new() } else { text }
         }
         "span" | "font" | "basefont" | "center" => render_inline_children(&element.children),
         "p" => render_inline_children(&element.children),
@@ -1132,7 +1154,10 @@ fn collect_rows(element: &Element, rows: &mut Vec<Vec<TableCell>>) {
     if element.name == "tr" {
         let mut cells = Vec::new();
         collect_cells(element, &mut cells);
-        if cells.iter().any(|cell| !normalize_inline(&cell.text).is_empty()) {
+        if cells
+            .iter()
+            .any(|cell| !normalize_inline(&cell.text).is_empty())
+        {
             rows.push(cells);
         }
         return;
@@ -1309,7 +1334,12 @@ fn find_tag_end(input: &str, mut index: usize) -> Option<usize> {
     None
 }
 
-fn find_case_insensitive_closing_tag(input: &str, lower: &str, start: usize, name: &str) -> Option<usize> {
+fn find_case_insensitive_closing_tag(
+    input: &str,
+    lower: &str,
+    start: usize,
+    name: &str,
+) -> Option<usize> {
     let needle = format!("</{name}");
     let offset = lower[start..].find(&needle)?;
     let close_start = start + offset + 2;
@@ -1490,7 +1520,9 @@ fn decode_entity(entity: &str) -> Option<char> {
         "mdash" => Some('-'),
         "ndash" => Some('-'),
         _ if entity.starts_with("#x") || entity.starts_with("#X") => {
-            u32::from_str_radix(&entity[2..], 16).ok().and_then(char::from_u32)
+            u32::from_str_radix(&entity[2..], 16)
+                .ok()
+                .and_then(char::from_u32)
         }
         _ if entity.starts_with('#') => entity[1..].parse::<u32>().ok().and_then(char::from_u32),
         _ => None,
@@ -1608,9 +1640,10 @@ fn format_plain_text(text: &str) -> String {
 fn looks_like_posix_metasyntax(inner: &str) -> bool {
     let inner = inner.trim();
     !inner.is_empty()
-        && inner
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, ' ' | '-' | '_' | '/' | '+' | '\'' | '"' | ':'))
+        && inner.chars().all(|ch| {
+            ch.is_ascii_alphanumeric()
+                || matches!(ch, ' ' | '-' | '_' | '/' | '+' | '\'' | '"' | ':')
+        })
 }
 
 fn term_ends_with_colon(term: &str) -> bool {
@@ -1748,8 +1781,22 @@ fn is_heading_tag(name: &str) -> bool {
 fn is_inline_tag(name: &str) -> bool {
     matches!(
         name,
-        "a" | "abbr" | "b" | "code" | "em" | "font" | "i" | "img" | "kbd" | "q" | "samp" | "small" | "span"
-            | "strong" | "sub" | "sup" | "tt"
+        "a" | "abbr"
+            | "b"
+            | "code"
+            | "em"
+            | "font"
+            | "i"
+            | "img"
+            | "kbd"
+            | "q"
+            | "samp"
+            | "small"
+            | "span"
+            | "strong"
+            | "sub"
+            | "sup"
+            | "tt"
     )
 }
 

@@ -271,9 +271,13 @@ pub(super) fn resolve_command_path(
         .unwrap_or_default();
 
     split_bytes(&path, b':')
-        .filter(|segment| !segment.is_empty())
         .map(|segment| {
-            let mut candidate = segment.to_vec();
+            let base = if segment.is_empty() {
+                b".".as_slice()
+            } else {
+                segment
+            };
+            let mut candidate = base.to_vec();
             candidate.push(b'/');
             candidate.extend_from_slice(program);
             candidate
@@ -303,6 +307,7 @@ mod tests {
         run_trace(
             trace_entries![
                 write(fd(sys::STDERR_FILENO), bytes(b"meiksh: empty command\n")) -> auto,
+                stat(str("./echo"), _) -> err(sys::ENOENT),
             ],
             || {
                 let arena = ByteArena::new();
