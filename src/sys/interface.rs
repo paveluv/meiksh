@@ -313,6 +313,7 @@ mod tests {
 
     use crate::sys::test_support;
     use crate::sys::types::ClockTicks;
+    use crate::trace_entries;
 
     use super::*;
     use crate::sys::*;
@@ -473,9 +474,9 @@ mod tests {
     #[test]
     fn trace_getpid_and_getppid_dispatch() {
         test_support::run_trace(
-            vec![
-                test_support::t("getpid", vec![], test_support::TraceResult::Pid(42)),
-                test_support::t("getppid", vec![], test_support::TraceResult::Pid(43)),
+            trace_entries![
+                getpid() -> pid(42),
+                getppid() -> pid(43),
             ],
             || {
                 assert_eq!(current_pid(), 42);

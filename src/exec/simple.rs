@@ -530,6 +530,7 @@ mod tests {
     use crate::exec::test_support::*;
     use crate::shell::Shell;
     use crate::syntax::{Assignment, HereDoc, Redirection, Word};
+    use crate::trace_entries;
 
     #[test]
     fn save_restore_vars_restores_previous_values() {
@@ -618,14 +619,7 @@ mod tests {
     #[test]
     fn xtrace_writes_trace_to_stderr() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(2),
-                    ArgMatcher::Bytes(b"+ echo hello\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(fd(2), bytes(b"+ echo hello\n")) -> auto],
             || {
                 let mut shell = test_shell();
                 shell.options.xtrace = true;
@@ -658,14 +652,7 @@ mod tests {
     #[test]
     fn xtrace_includes_assignments() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(2),
-                    ArgMatcher::Bytes(b"+ FOO=bar cmd\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(fd(2), bytes(b"+ FOO=bar cmd\n")) -> auto],
             || {
                 let mut shell = test_shell();
                 shell.options.xtrace = true;
@@ -838,14 +825,7 @@ mod tests {
     #[test]
     fn readonly_var_blocks_external_cmd_prefix_assignment() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(b"meiksh: line 1: X: readonly variable\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(fd(sys::STDERR_FILENO), bytes(b"meiksh: line 1: X: readonly variable\n")) -> auto],
             || {
                 let mut shell = test_shell();
                 shell.env.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
@@ -861,14 +841,7 @@ mod tests {
     #[test]
     fn write_xtrace_with_custom_ps4() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(2),
-                    ArgMatcher::Bytes(b">> echo hi\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(fd(2), bytes(b">> echo hi\n")) -> auto],
             || {
                 let mut shell = test_shell();
                 shell.options.xtrace = true;
@@ -886,14 +859,7 @@ mod tests {
     #[test]
     fn write_xtrace_empty_argv_with_assignments_only() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(2),
-                    ArgMatcher::Bytes(b"+ A=1 B=2 \n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(fd(2), bytes(b"+ A=1 B=2 \n")) -> auto],
             || {
                 let mut shell = test_shell();
                 shell.options.xtrace = true;
@@ -910,14 +876,7 @@ mod tests {
     #[test]
     fn apply_prefix_assignments_readonly_error() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(b"meiksh: RO: readonly variable\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(fd(sys::STDERR_FILENO), bytes(b"meiksh: RO: readonly variable\n")) -> auto],
             || {
                 let mut shell = test_shell();
                 shell.readonly.insert(b"RO".to_vec());

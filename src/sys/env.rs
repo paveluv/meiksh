@@ -44,18 +44,12 @@ mod tests {
     use super::*;
     use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
     use crate::sys::*;
+    use crate::trace_entries;
 
     #[test]
     fn setenv_success() {
         run_trace(
-            vec![t(
-                "setenv",
-                vec![
-                    ArgMatcher::Str(b"MY_KEY".to_vec()),
-                    ArgMatcher::Str(b"my_val".to_vec()),
-                ],
-                TraceResult::Int(0),
-            )],
+            trace_entries![setenv(str(b"MY_KEY"), str(b"my_val")) -> 0],
             || {
                 let result = (sys_interface().setenv)(b"MY_KEY", b"my_val");
                 assert!(result.is_ok());
@@ -65,27 +59,22 @@ mod tests {
 
     #[test]
     fn unsetenv_success() {
-        run_trace(
-            vec![t(
-                "unsetenv",
-                vec![ArgMatcher::Str(b"MY_KEY".to_vec())],
-                TraceResult::Int(0),
-            )],
-            || {
-                let result = (sys_interface().unsetenv)(b"MY_KEY");
-                assert!(result.is_ok());
-            },
-        );
+        run_trace(trace_entries![unsetenv(str(b"MY_KEY")) -> 0], || {
+            let result = (sys_interface().unsetenv)(b"MY_KEY");
+            assert!(result.is_ok());
+        });
     }
 
     #[test]
     fn getenv_found() {
         run_trace(
-            vec![t(
-                "getenv",
-                vec![ArgMatcher::Str(b"HOME".to_vec())],
-                TraceResult::StrVal(b"/home/user".to_vec()),
-            )],
+            trace_entries![
+                ..vec![t(
+                    "getenv",
+                    vec![ArgMatcher::Str(b"HOME".to_vec())],
+                    TraceResult::StrVal(b"/home/user".to_vec()),
+                )]
+            ],
             || {
                 let val = (sys_interface().getenv)(b"HOME");
                 assert_eq!(val, Some(b"/home/user".to_vec()));
@@ -100,11 +89,13 @@ mod tests {
         expected.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
 
         run_trace(
-            vec![t(
-                "get_environ",
-                vec![],
-                TraceResult::EnvMap(expected.clone()),
-            )],
+            trace_entries![
+                ..vec![t(
+                    "get_environ",
+                    vec![],
+                    TraceResult::EnvMap(expected.clone()),
+                )]
+            ],
             || {
                 let map = (sys_interface().get_environ)();
                 assert_eq!(map.get(b"HOME".as_ref()), Some(&b"/home/user".to_vec()));

@@ -197,28 +197,21 @@ pub fn open_for_redirect(
 
 #[cfg(test)]
 mod tests {
-    use libc::{c_char, c_int, c_long, mode_t};
-    use std::collections::HashMap;
-    use std::ffi::CString;
+    use libc::{c_char, c_int, mode_t};
 
     use crate::sys::test_support;
-    use crate::sys::types::ClockTicks;
+    use crate::trace_entries;
 
     use super::*;
     use crate::sys::*;
 
     #[test]
     fn read_dir_entries_readdir_error() {
-        use test_support::{ArgMatcher, TraceResult, run_trace, t};
-        run_trace(
-            vec![
-                t("opendir", vec![ArgMatcher::Any], TraceResult::Int(1)),
-                t(
-                    "readdir",
-                    vec![ArgMatcher::Any],
-                    TraceResult::Err(libc::EIO),
-                ),
-                t("closedir", vec![ArgMatcher::Any], TraceResult::Int(0)),
+        test_support::run_trace(
+            trace_entries![
+                opendir(_) -> 1,
+                readdir(_) -> err(libc::EIO),
+                closedir(_) -> 0,
             ],
             || {
                 assert!(read_dir_entries(b"/tmp").is_err());
@@ -287,17 +280,9 @@ mod tests {
     #[test]
     fn trace_stat_fifo_and_fstat_dir_arms() {
         test_support::run_trace(
-            vec![
-                test_support::t(
-                    "stat",
-                    vec![test_support::ArgMatcher::Any, test_support::ArgMatcher::Any],
-                    test_support::TraceResult::StatFifo,
-                ),
-                test_support::t(
-                    "stat",
-                    vec![test_support::ArgMatcher::Any, test_support::ArgMatcher::Any],
-                    test_support::TraceResult::Int(0),
-                ),
+            trace_entries![
+                stat(_, _) -> stat_fifo,
+                stat(_, _) -> 0,
             ],
             || {
                 let s = stat_path(b"/fifo").expect("stat fifo");
@@ -310,11 +295,9 @@ mod tests {
     #[test]
     fn trace_opendir_int_and_readdir_fallback() {
         test_support::run_trace(
-            vec![test_support::t(
-                "opendir",
-                vec![test_support::ArgMatcher::Any],
-                test_support::TraceResult::Int(0),
-            )],
+            trace_entries![
+                opendir(_) -> 0,
+            ],
             || {
                 assert!(read_dir_entries(b"/tmp").is_err());
             },

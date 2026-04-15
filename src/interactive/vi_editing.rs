@@ -1404,7 +1404,7 @@ mod tests {
     use super::*;
     use crate::interactive::test_support::*;
     use crate::interactive::vi;
-    use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
+    use crate::sys::test_support::run_trace;
     use crate::sys::{STDIN_FILENO, STDOUT_FILENO};
     use crate::trace_entries;
 
@@ -2972,14 +2972,9 @@ mod tests {
 
             let expected = format!("{}/unique_file.txt", dir.display());
             run_trace(
-                vec![t(
-                    "stat",
-                    vec![
-                        ArgMatcher::Str(expected.as_bytes().to_vec()),
-                        ArgMatcher::Any,
-                    ],
-                    TraceResult::StatFile(0o644),
-                )],
+                trace_entries![
+                    stat(str(expected), _) -> stat_file(0o644),
+                ],
                 || {
                     let prefix = format!("{}/unique_fi", dir.display());
                     let mut state = ViState::new(0x7f, 0);
@@ -3007,14 +3002,9 @@ mod tests {
 
             let expected = format!("{}/subdir_only/", dir.display());
             run_trace(
-                vec![t(
-                    "stat",
-                    vec![
-                        ArgMatcher::Str(expected.as_bytes().to_vec()),
-                        ArgMatcher::Any,
-                    ],
-                    TraceResult::StatDir,
-                )],
+                trace_entries![
+                    stat(str(expected), _) -> stat_dir,
+                ],
                 || {
                     let prefix = format!("{}/subdir_on", dir.display());
                     let mut state = ViState::new(0x7f, 0);

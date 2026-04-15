@@ -5,9 +5,7 @@ use crate::bstr;
 use crate::expand::core::{Context, ExpandError};
 use crate::expand::model::Expansion;
 
-pub(super) use crate::sys::test_support::{
-    ArgMatcher, TraceResult, assert_no_syscalls, run_trace, t,
-};
+pub(super) use crate::sys::test_support::{assert_no_syscalls, run_trace};
 
 pub(super) struct FakeContext {
     pub(super) env: HashMap<Vec<u8>, Vec<u8>>,

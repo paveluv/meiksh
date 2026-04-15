@@ -95,6 +95,7 @@ mod tests {
     use crate::expand::test_support::*;
     use crate::expand::word::*;
     use crate::syntax::Word;
+    use crate::trace_entries;
 
     #[test]
     fn expands_text_without_field_splitting_or_pathname_expansion() {
@@ -131,90 +132,64 @@ mod tests {
     fn performs_pathname_expansion() {
         let arena = ByteArena::new();
         let dir_entries = || {
-            vec![
-                t(
-                    "readdir",
-                    vec![ArgMatcher::Any],
-                    TraceResult::DirEntryBytes(b"a.txt".to_vec()),
-                ),
-                t(
-                    "readdir",
-                    vec![ArgMatcher::Any],
-                    TraceResult::DirEntryBytes(b"b.txt".to_vec()),
-                ),
-                t(
-                    "readdir",
-                    vec![ArgMatcher::Any],
-                    TraceResult::DirEntryBytes(b".hidden.txt".to_vec()),
-                ),
-                t("readdir", vec![ArgMatcher::Any], TraceResult::Int(0)),
+            trace_entries![
+                readdir(_) -> dir_entry(b"a.txt"),
+                readdir(_) -> dir_entry(b"b.txt"),
+                readdir(_) -> dir_entry(b".hidden.txt"),
+                readdir(_) -> 0,
             ]
         };
-        let mut trace = vec![
-            t(
-                "access",
-                vec![ArgMatcher::Str("/testdir".into()), ArgMatcher::Any],
-                TraceResult::Int(0),
-            ),
-            t(
-                "opendir",
-                vec![ArgMatcher::Str("/testdir".into())],
-                TraceResult::Int(1),
-            ),
-        ];
-        trace.extend(dir_entries());
-        trace.push(t("closedir", vec![ArgMatcher::Any], TraceResult::Int(0)));
-        trace.push(t(
-            "access",
-            vec![ArgMatcher::Str("/testdir".into()), ArgMatcher::Any],
-            TraceResult::Int(0),
-        ));
-        trace.push(t(
-            "opendir",
-            vec![ArgMatcher::Str("/testdir".into())],
-            TraceResult::Int(1),
-        ));
-        trace.extend(dir_entries());
-        trace.push(t("closedir", vec![ArgMatcher::Any], TraceResult::Int(0)));
-        run_trace(trace, || {
-            let mut ctx = FakeContext::new();
-            assert_eq!(
-                expand_word(
-                    &mut ctx,
-                    &Word {
-                        raw: b"/testdir/*.txt".as_ref().into(),
-                        line: 0
-                    },
-                    &arena,
-                )
-                .expect("glob"),
-                vec![b"/testdir/a.txt".as_ref(), b"/testdir/b.txt".as_ref()]
-            );
-            assert_eq!(
-                expand_word(
-                    &mut ctx,
-                    &Word {
-                        raw: b"\\*.txt".as_ref().into(),
-                        line: 0
-                    },
-                    &arena,
-                )
-                .expect("escaped glob"),
-                vec![b"*.txt".as_ref()]
-            );
-            assert_eq!(
-                expand_word(
-                    &mut ctx,
-                    &Word {
-                        raw: b"/testdir/.*.txt".as_ref().into(),
-                        line: 0
-                    },
-                    &arena,
-                )
-                .expect("hidden glob"),
-                vec![b"/testdir/.hidden.txt".as_ref()]
-            );
-        });
+        run_trace(
+            trace_entries![
+                access(str("/testdir"), _) -> 0,
+                opendir(str("/testdir")) -> 1,
+                ..dir_entries(),
+                closedir(_) -> 0,
+                access(str("/testdir"), _) -> 0,
+                opendir(str("/testdir")) -> 1,
+                ..dir_entries(),
+                closedir(_) -> 0,
+            ],
+            || {
+                let mut ctx = FakeContext::new();
+                assert_eq!(
+                    expand_word(
+                        &mut ctx,
+                        &Word {
+                            raw: b"/testdir/*.txt".as_ref().into(),
+                            line: 0
+                        },
+                        &arena,
+                    )
+                    .expect("glob"),
+                    vec![b"/testdir/a.txt".as_ref(), b"/testdir/b.txt".as_ref()]
+                );
+                assert_eq!(
+                    expand_word(
+                        &mut ctx,
+                        &Word {
+                            raw: b"\\*.txt".as_ref().into(),
+                            line: 0
+                        },
+                        &arena,
+                    )
+                    .expect("escaped glob"),
+                    vec![b"*.txt".as_ref()]
+                );
+                assert_eq!(
+                    expand_word(
+                        &mut ctx,
+                        &Word {
+                            raw: b"/testdir/.*.txt".as_ref().into(),
+                            line: 0
+                        },
+                        &arena,
+                    )
+                    .expect("hidden glob"),
+                    vec![b"/testdir/.hidden.txt".as_ref()]
+                );
+            },
+        );
     }
 
     #[test]
@@ -261,11 +236,7 @@ mod tests {
     fn unmatched_glob_returns_pattern_literally() {
         let arena = ByteArena::new();
         run_trace(
-            vec![t(
-                "opendir",
-                vec![ArgMatcher::Any],
-                TraceResult::Err(crate::sys::ENOENT),
-            )],
+            trace_entries![opendir(_) -> err(crate::sys::ENOENT)],
             || {
                 let mut ctx = DefaultPathContext::new();
                 assert_eq!(

@@ -434,12 +434,11 @@ pub fn shell_name_from_args(args: &[Vec<u8>]) -> &[u8] {
 
 #[cfg(test)]
 mod tests {
-    use libc::{c_char, c_int, c_long, mode_t};
-    use std::collections::HashMap;
+    use libc::{c_char, c_int};
     use std::ffi::CString;
 
     use crate::sys::test_support;
-    use crate::sys::types::ClockTicks;
+    use crate::trace_entries;
 
     use super::*;
     use crate::sys::*;
@@ -655,25 +654,13 @@ mod tests {
 
     #[test]
     fn signal_handler_installation_succeeds() {
-        use test_support::{ArgMatcher, TraceResult, run_trace, t};
+        use test_support::run_trace;
 
         run_trace(
-            vec![
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(SIGINT as i64), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(SIGTERM as i64), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(SIGQUIT as i64), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                signal(int(SIGINT), _) -> 0,
+                signal(int(SIGTERM), _) -> 0,
+                signal(int(SIGQUIT), _) -> 0,
             ],
             || {
                 install_shell_signal_handler(SIGINT).expect("install");
@@ -685,25 +672,13 @@ mod tests {
 
     #[test]
     fn signal_handler_error_paths() {
-        use test_support::{ArgMatcher, TraceResult, run_trace, t};
+        use test_support::run_trace;
 
         run_trace(
-            vec![
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(SIGINT as i64), ArgMatcher::Any],
-                    TraceResult::Err(libc::EINVAL),
-                ),
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(SIGTERM as i64), ArgMatcher::Any],
-                    TraceResult::Err(libc::EINVAL),
-                ),
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(SIGQUIT as i64), ArgMatcher::Any],
-                    TraceResult::Err(libc::EINVAL),
-                ),
+            trace_entries![
+                signal(int(SIGINT), _) -> err(libc::EINVAL),
+                signal(int(SIGTERM), _) -> err(libc::EINVAL),
+                signal(int(SIGQUIT), _) -> err(libc::EINVAL),
             ],
             || {
                 assert!(install_shell_signal_handler(SIGINT).is_err());
@@ -822,13 +797,11 @@ mod tests {
 
     #[test]
     fn query_signal_disposition_error() {
-        use test_support::{ArgMatcher, TraceResult, run_trace, t};
+        use test_support::run_trace;
         run_trace(
-            vec![t(
-                "signal",
-                vec![ArgMatcher::Int(SIGINT as i64), ArgMatcher::Any],
-                TraceResult::Err(libc::EINVAL),
-            )],
+            trace_entries![
+                signal(int(SIGINT), _) -> err(libc::EINVAL),
+            ],
             || {
                 assert!(query_signal_disposition(SIGINT).is_err());
             },
@@ -837,32 +810,12 @@ mod tests {
 
     #[test]
     fn ensure_blocking_setfl_error() {
-        use test_support::{ArgMatcher, TraceResult, run_trace, t};
+        use test_support::run_trace;
         run_trace(
-            vec![
-                t(
-                    "isatty",
-                    vec![ArgMatcher::Fd(STDIN_FILENO)],
-                    TraceResult::Int(1),
-                ),
-                t(
-                    "fcntl",
-                    vec![
-                        ArgMatcher::Fd(STDIN_FILENO),
-                        ArgMatcher::Int(F_GETFL as i64),
-                        ArgMatcher::Int(0),
-                    ],
-                    TraceResult::Int((O_NONBLOCK | 0o2) as i64),
-                ),
-                t(
-                    "fcntl",
-                    vec![
-                        ArgMatcher::Fd(STDIN_FILENO),
-                        ArgMatcher::Int(F_SETFL as i64),
-                        ArgMatcher::Int(0o2),
-                    ],
-                    TraceResult::Err(libc::EIO),
-                ),
+            trace_entries![
+                isatty(fd(STDIN_FILENO)) -> 1,
+                fcntl(fd(STDIN_FILENO), int(F_GETFL), int(0)) -> int((O_NONBLOCK | 0o2) as i64),
+                fcntl(fd(STDIN_FILENO), int(F_SETFL), int(0o2)) -> err(libc::EIO),
             ],
             || {
                 assert!(ensure_blocking_read_fd(STDIN_FILENO).is_err());
@@ -872,25 +825,13 @@ mod tests {
 
     #[test]
     fn child_handle_wait_with_output_reads_pipe() {
-        use test_support::{ArgMatcher, TraceResult, run_trace, t};
+        use test_support::run_trace;
         run_trace(
-            vec![
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(10), ArgMatcher::Any],
-                    TraceResult::Bytes(b"hello".to_vec()),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(10), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(99), ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Status(0),
-                ),
+            trace_entries![
+                read(fd(10), _) -> bytes(b"hello"),
+                read(fd(10), _) -> 0,
+                close(fd(10)) -> 0,
+                waitpid(int(99), _, _) -> status(0),
             ],
             || {
                 let handle = ChildHandle {
@@ -906,15 +847,11 @@ mod tests {
 
     #[test]
     fn child_handle_wait_closes_stdout_pipe() {
-        use test_support::{ArgMatcher, TraceResult, run_trace, t};
+        use test_support::run_trace;
         run_trace(
-            vec![
-                t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(99), ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Status(0),
-                ),
+            trace_entries![
+                close(fd(10)) -> 0,
+                waitpid(int(99), _, _) -> status(0),
             ],
             || {
                 let handle = ChildHandle {
@@ -929,54 +866,24 @@ mod tests {
 
     #[test]
     fn spawn_child_with_pipe_stdout_and_all_params() {
-        use test_support::{ArgMatcher, TraceResult, run_trace, t, t_fork};
+        use test_support::run_trace;
         run_trace(
-            vec![
-                t("pipe", vec![ArgMatcher::Any], TraceResult::Fds(10, 11)),
-                t_fork(
-                    TraceResult::Pid(100),
-                    vec![
-                        t(
-                            "setpgid",
-                            vec![ArgMatcher::Int(0), ArgMatcher::Int(42)],
-                            TraceResult::Int(0),
-                        ),
-                        t(
-                            "dup2",
-                            vec![ArgMatcher::Fd(5), ArgMatcher::Fd(STDIN_FILENO)],
-                            TraceResult::Fd(STDIN_FILENO),
-                        ),
-                        t("close", vec![ArgMatcher::Fd(5)], TraceResult::Int(0)),
-                        t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
-                        t(
-                            "dup2",
-                            vec![ArgMatcher::Fd(11), ArgMatcher::Fd(STDOUT_FILENO)],
-                            TraceResult::Fd(STDOUT_FILENO),
-                        ),
-                        t("close", vec![ArgMatcher::Fd(11)], TraceResult::Int(0)),
-                        t(
-                            "dup2",
-                            vec![ArgMatcher::Fd(7), ArgMatcher::Fd(2)],
-                            TraceResult::Fd(2),
-                        ),
-                        t("close", vec![ArgMatcher::Fd(7)], TraceResult::Int(0)),
-                        t(
-                            "setenv",
-                            vec![
-                                ArgMatcher::Str(b"VAR".to_vec()),
-                                ArgMatcher::Str(b"val".to_vec()),
-                            ],
-                            TraceResult::Int(0),
-                        ),
-                        t(
-                            "execvp",
-                            vec![ArgMatcher::Any, ArgMatcher::Any],
-                            TraceResult::Int(-1),
-                        ),
-                    ],
-                ),
-                t("close", vec![ArgMatcher::Fd(5)], TraceResult::Int(0)),
-                t("close", vec![ArgMatcher::Fd(11)], TraceResult::Int(0)),
+            trace_entries![
+                pipe(_) -> fds(10, 11),
+                fork() -> pid(100), child: [
+                    setpgid(int(0), int(42)) -> 0,
+                    dup2(fd(5), fd(STDIN_FILENO)) -> fd(STDIN_FILENO),
+                    close(fd(5)) -> 0,
+                    close(fd(10)) -> 0,
+                    dup2(fd(11), fd(STDOUT_FILENO)) -> fd(STDOUT_FILENO),
+                    close(fd(11)) -> 0,
+                    dup2(fd(7), fd(2)) -> fd(2),
+                    close(fd(7)) -> 0,
+                    setenv(str(b"VAR"), str(b"val")) -> 0,
+                    execvp(_, _) -> int(-1),
+                ],
+                close(fd(5)) -> 0,
+                close(fd(11)) -> 0,
             ],
             || {
                 let handle = spawn_child(
@@ -998,13 +905,9 @@ mod tests {
     #[test]
     fn trace_getcwd_erange_and_pipe_err() {
         test_support::run_trace(
-            vec![
-                test_support::t(
-                    "getcwd",
-                    vec![],
-                    test_support::TraceResult::Err(libc::ERANGE),
-                ),
-                test_support::t("pipe", vec![], test_support::TraceResult::Err(libc::EMFILE)),
+            trace_entries![
+                getcwd() -> err(libc::ERANGE),
+                pipe() -> err(libc::EMFILE),
             ],
             || {
                 assert!(get_cwd().is_err());
@@ -1016,17 +919,9 @@ mod tests {
     #[test]
     fn trace_realpath_resolved_and_err() {
         test_support::run_trace(
-            vec![
-                test_support::t(
-                    "realpath",
-                    vec![test_support::ArgMatcher::Any, test_support::ArgMatcher::Any],
-                    test_support::TraceResult::RealpathBytes(b"/resolved".to_vec()),
-                ),
-                test_support::t(
-                    "realpath",
-                    vec![test_support::ArgMatcher::Any, test_support::ArgMatcher::Any],
-                    test_support::TraceResult::Err(ENOENT),
-                ),
+            trace_entries![
+                realpath(_, _) -> realpath("/resolved"),
+                realpath(_, _) -> err(ENOENT),
             ],
             || {
                 assert_eq!(canonicalize(b"/foo").expect("resolve"), b"/resolved");
@@ -1037,12 +932,15 @@ mod tests {
 
     #[test]
     fn trace_getpwnam_null_str() {
+        use test_support::{ArgMatcher, TraceResult, t};
         test_support::run_trace(
-            vec![test_support::t(
-                "getpwnam",
-                vec![test_support::ArgMatcher::Str(b"nobody".to_vec())],
-                test_support::TraceResult::NullStr,
-            )],
+            trace_entries![
+                ..vec![t(
+                    "getpwnam",
+                    vec![ArgMatcher::Str(b"nobody".to_vec())],
+                    TraceResult::NullStr,
+                )],
+            ],
             || {
                 assert!(home_dir_for_user(b"nobody").is_none());
             },
@@ -1052,15 +950,9 @@ mod tests {
     #[test]
     fn trace_waitpid_fallthrough() {
         test_support::run_trace(
-            vec![test_support::t(
-                "waitpid",
-                vec![
-                    test_support::ArgMatcher::Int(-1),
-                    test_support::ArgMatcher::Any,
-                    test_support::ArgMatcher::Any,
-                ],
-                test_support::TraceResult::Int(0),
-            )],
+            trace_entries![
+                waitpid(int(-1), _, _) -> 0,
+            ],
             || {
                 let r = wait_pid(-1, true);
                 assert!(r.is_ok());
@@ -1071,14 +963,9 @@ mod tests {
     #[test]
     fn trace_signal_default_fallthrough() {
         test_support::run_trace(
-            vec![test_support::t(
-                "signal",
-                vec![
-                    test_support::ArgMatcher::Int(SIGINT as i64),
-                    test_support::ArgMatcher::Any,
-                ],
-                test_support::TraceResult::Int(0),
-            )],
+            trace_entries![
+                signal(int(SIGINT), _) -> 0,
+            ],
             || {
                 let _ = default_signal_action(SIGINT);
             },
@@ -1108,11 +995,9 @@ mod tests {
     #[test]
     fn exec_replace_with_env_error_path() {
         test_support::run_trace(
-            vec![test_support::t(
-                "execve",
-                vec![test_support::ArgMatcher::Any, test_support::ArgMatcher::Any],
-                test_support::TraceResult::Err(ENOENT),
-            )],
+            trace_entries![
+                execve(_, _) -> err(ENOENT),
+            ],
             || {
                 let result = exec_replace_with_env(b"/nonexistent", &[b"test".to_vec()], &[]);
                 assert!(result.is_err());

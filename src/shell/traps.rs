@@ -151,7 +151,8 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use crate::sys;
-    use crate::sys::test_support::{ArgMatcher, TraceResult, assert_no_syscalls, run_trace, t};
+    use crate::sys::test_support::{assert_no_syscalls, run_trace};
+    use crate::trace_entries;
 
     use super::{TrapAction, TrapCondition};
     use crate::shell::test_support::test_shell;
@@ -159,17 +160,9 @@ mod tests {
     #[test]
     fn set_trap_ignore_and_default_use_signal_syscall() {
         run_trace(
-            vec![
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(sys::SIGTERM as i64), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(sys::SIGTERM as i64), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                signal(int(sys::SIGTERM as i64), _) -> 0,
+                signal(int(sys::SIGTERM as i64), _) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -198,11 +191,9 @@ mod tests {
     #[test]
     fn reset_traps_for_subshell_keeps_ignore_removes_command() {
         run_trace(
-            vec![t(
-                "signal",
-                vec![ArgMatcher::Int(crate::sys::SIGTERM as i64), ArgMatcher::Any],
-                TraceResult::Int(0),
-            )],
+            trace_entries![
+                signal(int(crate::sys::SIGTERM as i64), _) -> 0,
+            ],
             || {
                 let mut shell = test_shell();
                 shell.trap_actions.insert(
@@ -236,22 +227,10 @@ mod tests {
     #[test]
     fn execute_trap_action_and_run_pending_traps_work() {
         run_trace(
-            vec![
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(sys::SIGINT as i64), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(sys::SIGINT as i64), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(sys::SIGTERM as i64), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                signal(int(sys::SIGINT as i64), _) -> 0,
+                signal(int(sys::SIGINT as i64), _) -> 0,
+                signal(int(sys::SIGTERM as i64), _) -> 0,
             ],
             || {
                 let mut shell = test_shell();

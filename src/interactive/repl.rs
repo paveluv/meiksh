@@ -231,94 +231,34 @@ mod tests {
 
     #[test]
     fn run_loop_recovers_from_parse_error() {
-        let mut trace = vec![t(
-            "write",
-            vec![
-                ArgMatcher::Fd(sys::STDERR_FILENO),
-                ArgMatcher::Bytes(b"$ ".to_vec()),
+        run_trace(
+            trace_entries![
+                write(fd(sys::STDERR_FILENO), bytes(b"$ ")) -> auto,
+                ..read_line_trace(b"echo 'unterminated\n"),
+                write(fd(sys::STDERR_FILENO), bytes(b"> ")) -> auto,
+                read(fd(sys::STDIN_FILENO), _) -> 0,
+                write(fd(sys::STDERR_FILENO), bytes(b"meiksh: unexpected EOF while looking for matching token\n")) -> auto,
             ],
-            TraceResult::Auto,
-        )];
-        for b in b"echo 'unterminated\n" {
-            trace.push(t(
-                "read",
-                vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                TraceResult::Bytes(vec![*b]),
-            ));
-        }
-        trace.extend_from_slice(&[
-            t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(b"> ".to_vec()),
-                ],
-                TraceResult::Auto,
-            ),
-            t(
-                "read",
-                vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                TraceResult::Int(0),
-            ),
-            t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(
-                        b"meiksh: unexpected EOF while looking for matching token\n".to_vec(),
-                    ),
-                ],
-                TraceResult::Auto,
-            ),
-        ]);
-        run_trace(trace, || {
-            let mut shell = test_shell();
-            shell
-                .env
-                .insert(b"HISTFILE".to_vec(), b"/tmp/bad-history.txt".to_vec());
-            let status = run_loop(&mut shell).expect("parse handled");
-            assert_eq!(status, 0);
-        });
+            || {
+                let mut shell = test_shell();
+                shell
+                    .env
+                    .insert(b"HISTFILE".to_vec(), b"/tmp/bad-history.txt".to_vec());
+                let status = run_loop(&mut shell).expect("parse handled");
+                assert_eq!(status, 0);
+            },
+        );
     }
 
     #[test]
     fn run_loop_handles_sigint_by_redisplaying_prompt() {
         run_trace(
-            vec![
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"$ ".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Err(sys::EINTR),
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"$ ".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                write(fd(sys::STDERR_FILENO), bytes(b"$ ")) -> auto,
+                read(fd(sys::STDIN_FILENO), _) -> err(sys::EINTR),
+                write(fd(sys::STDERR_FILENO), bytes(b"\n")) -> auto,
+                write(fd(sys::STDERR_FILENO), bytes(b"$ ")) -> auto,
+                read(fd(sys::STDIN_FILENO), _) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -331,43 +271,13 @@ mod tests {
     #[test]
     fn run_loop_prints_stopped_and_running_reap_notifications() {
         run_trace(
-            vec![
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(4010), ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::StoppedSig(sys::SIGTSTP),
-                ),
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(4010), ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Pid(0),
-                ),
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(4011), ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Pid(0),
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"[1] Stopped (SIGTSTP)\tvim\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"$ ".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(b"".to_vec()),
-                ),
+            trace_entries![
+                waitpid(4010, _) -> stopped_sig(sys::SIGTSTP),
+                waitpid(4010, _) -> pid(0),
+                waitpid(4011, _) -> pid(0),
+                write(fd(sys::STDERR_FILENO), bytes(b"[1] Stopped (SIGTSTP)\tvim\n")) -> auto,
+                write(fd(sys::STDERR_FILENO), bytes(b"$ ")) -> auto,
+                read(fd(sys::STDIN_FILENO), _) -> bytes(b""),
             ],
             || {
                 let mut shell = test_shell();
@@ -390,46 +300,13 @@ mod tests {
     #[test]
     fn run_loop_fires_trap_on_sigint_at_prompt() {
         run_trace(
-            vec![
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(sys::SIGINT as i64), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"$ ".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Interrupt(sys::SIGINT),
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"$ ".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                signal(int(sys::SIGINT), _) -> 0,
+                write(fd(sys::STDERR_FILENO), bytes(b"$ ")) -> auto,
+                read(fd(sys::STDIN_FILENO), _) -> interrupt(sys::SIGINT),
+                write(fd(sys::STDERR_FILENO), bytes(b"\n")) -> auto,
+                write(fd(sys::STDERR_FILENO), bytes(b"$ ")) -> auto,
+                read(fd(sys::STDIN_FILENO), _) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -449,33 +326,11 @@ mod tests {
     #[test]
     fn run_loop_exit_trap_on_sigint_stops_shell() {
         run_trace(
-            vec![
-                t(
-                    "signal",
-                    vec![ArgMatcher::Int(sys::SIGINT as i64), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"$ ".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Interrupt(sys::SIGINT),
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
+            trace_entries![
+                signal(int(sys::SIGINT), _) -> 0,
+                write(fd(sys::STDERR_FILENO), bytes(b"$ ")) -> auto,
+                read(fd(sys::STDIN_FILENO), _) -> interrupt(sys::SIGINT),
+                write(fd(sys::STDERR_FILENO), bytes(b"\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -495,28 +350,10 @@ mod tests {
     #[test]
     fn run_loop_retries_prompt_write_on_eintr() {
         run_trace(
-            vec![
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"$ ".to_vec()),
-                    ],
-                    TraceResult::Err(sys::EINTR),
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"$ ".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                write(fd(sys::STDERR_FILENO), bytes(b"$ ")) -> err(sys::EINTR),
+                write(fd(sys::STDERR_FILENO), bytes(b"$ ")) -> auto,
+                read(fd(sys::STDIN_FILENO), _) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -529,23 +366,9 @@ mod tests {
     #[test]
     fn run_loop_propagates_prompt_write_error() {
         run_trace(
-            vec![
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"$ ".to_vec()),
-                    ],
-                    TraceResult::Err(sys::EIO),
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"meiksh: Input/output error\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
+            trace_entries![
+                write(fd(sys::STDERR_FILENO), bytes(b"$ ")) -> err(sys::EIO),
+                write(fd(sys::STDERR_FILENO), bytes(b"meiksh: Input/output error\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -557,242 +380,91 @@ mod tests {
 
     #[test]
     fn run_loop_command_not_found_sets_status_127_and_continues() {
-        let mut trace = vec![t(
-            "write",
-            vec![
-                ArgMatcher::Fd(sys::STDERR_FILENO),
-                ArgMatcher::Bytes(b"$ ".to_vec()),
+        run_trace(
+            trace_entries![
+                write(fd(sys::STDERR_FILENO), bytes(b"$ ")) -> auto,
+                ..read_line_trace(b"gibberish\n"),
+                open(str("/tmp/hist"), _, _) -> fd(10),
+                write(fd(10), bytes(b"gibberish\n")) -> auto,
+                close(fd(10)) -> 0,
+                stat(str("/usr/bin/gibberish"), _) -> err(sys::ENOENT),
+                write(fd(sys::STDERR_FILENO), bytes(b"gibberish: not found\n")) -> auto,
+                write(fd(sys::STDERR_FILENO), bytes(b"$ ")) -> auto,
+                read(fd(sys::STDIN_FILENO), _) -> 0,
             ],
-            TraceResult::Auto,
-        )];
-        trace.extend(read_line_trace(b"gibberish\n"));
-        trace.extend([
-            t(
-                "open",
-                vec![
-                    ArgMatcher::Str("/tmp/hist".into()),
-                    ArgMatcher::Any,
-                    ArgMatcher::Any,
-                ],
-                TraceResult::Fd(10),
-            ),
-            t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(10),
-                    ArgMatcher::Bytes(b"gibberish\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            ),
-            t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
-            t(
-                "stat",
-                vec![
-                    ArgMatcher::Str("/usr/bin/gibberish".into()),
-                    ArgMatcher::Any,
-                ],
-                TraceResult::Err(sys::ENOENT),
-            ),
-            t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(b"gibberish: not found\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            ),
-            t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(b"$ ".to_vec()),
-                ],
-                TraceResult::Auto,
-            ),
-            t(
-                "read",
-                vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                TraceResult::Int(0),
-            ),
-        ]);
-
-        run_trace(trace, || {
-            let mut shell = test_shell();
-            shell.env.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
-            shell
-                .env
-                .insert(b"HISTFILE".to_vec(), b"/tmp/hist".to_vec());
-            let status = run_loop(&mut shell).expect("command not found handled");
-            assert_eq!(
-                status, 127,
-                "exit status should be 127 for command not found"
-            );
-        });
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
+                shell
+                    .env
+                    .insert(b"HISTFILE".to_vec(), b"/tmp/hist".to_vec());
+                let status = run_loop(&mut shell).expect("command not found handled");
+                assert_eq!(
+                    status, 127,
+                    "exit status should be 127 for command not found"
+                );
+            },
+        );
     }
 
     #[test]
     fn run_loop_syntax_error_prints_error_and_continues() {
-        let mut trace = Vec::new();
-
-        let prompt = t(
-            "write",
-            vec![
-                ArgMatcher::Fd(sys::STDERR_FILENO),
-                ArgMatcher::Bytes(b"$ ".to_vec()),
+        run_trace(
+            trace_entries![
+                write(fd(sys::STDERR_FILENO), bytes(b"$ ")) -> int(2),
+                ..read_line_trace(b"$(\n"),
+                open(str("/tmp/hist"), _, _) -> fd(10),
+                write(fd(10), bytes(b"$(\n")) -> int(3),
+                close(fd(10)) -> 0,
+                write(fd(sys::STDERR_FILENO), bytes(b"meiksh: line 2: unterminated command substitution\n")) -> int(50),
+                write(fd(sys::STDERR_FILENO), bytes(b"$ ")) -> int(2),
+                read(fd(sys::STDIN_FILENO), _) -> bytes(b""),
             ],
-            TraceResult::Int(2),
+            || {
+                let mut shell = test_shell();
+                shell
+                    .env
+                    .insert(b"HISTFILE".to_vec(), b"/tmp/hist".to_vec());
+                let _ = run_loop(&mut shell);
+            },
         );
-        trace.push(prompt.clone());
-        trace.extend(read_line_trace(b"$(\n"));
-
-        trace.push(t(
-            "open",
-            vec![
-                ArgMatcher::Str("/tmp/hist".into()),
-                ArgMatcher::Any,
-                ArgMatcher::Any,
-            ],
-            TraceResult::Fd(10),
-        ));
-        trace.push(t(
-            "write",
-            vec![ArgMatcher::Fd(10), ArgMatcher::Bytes(b"$(\n".to_vec())],
-            TraceResult::Int(3),
-        ));
-        trace.push(t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)));
-
-        let err_msg = b"meiksh: line 2: unterminated command substitution\n";
-        trace.push(t(
-            "write",
-            vec![
-                ArgMatcher::Fd(sys::STDERR_FILENO),
-                ArgMatcher::Bytes(err_msg.to_vec()),
-            ],
-            TraceResult::Int(err_msg.len() as i64),
-        ));
-
-        trace.push(prompt.clone());
-        trace.push(t(
-            "read",
-            vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-            TraceResult::Bytes(vec![]),
-        ));
-
-        run_trace(trace, || {
-            let mut shell = test_shell();
-            shell
-                .env
-                .insert(b"HISTFILE".to_vec(), b"/tmp/hist".to_vec());
-            let _ = run_loop(&mut shell);
-        });
     }
 
     #[test]
     fn run_loop_sigchld_install_and_remove() {
-        let mut trace = vec![
-            t(
-                "signal",
-                vec![ArgMatcher::Int(sys::SIGCHLD as i64), ArgMatcher::Any],
-                TraceResult::Int(0),
-            ),
-            t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(b"$ ".to_vec()),
-                ],
-                TraceResult::Auto,
-            ),
-        ];
-        trace.extend(read_line_trace(b"set +b\n"));
-        trace.extend(vec![
-            t(
-                "open",
-                vec![
-                    ArgMatcher::Str("/tmp/hist".into()),
-                    ArgMatcher::Any,
-                    ArgMatcher::Any,
-                ],
-                TraceResult::Fd(10),
-            ),
-            t(
-                "write",
-                vec![ArgMatcher::Fd(10), ArgMatcher::Bytes(b"set +b\n".to_vec())],
-                TraceResult::Auto,
-            ),
-            t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
-            t(
-                "signal",
-                vec![ArgMatcher::Int(sys::SIGCHLD as i64), ArgMatcher::Any],
-                TraceResult::Int(0),
-            ),
-            t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(b"$ ".to_vec()),
-                ],
-                TraceResult::Auto,
-            ),
-            t(
-                "read",
-                vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                TraceResult::Bytes(vec![]),
-            ),
-        ]);
-        run_trace(trace, || {
-            let mut shell = test_shell();
-            shell.options.notify = true;
-            shell
-                .env
-                .insert(b"HISTFILE".to_vec(), b"/tmp/hist".to_vec());
-            let _ = run_loop(&mut shell);
-        });
+        run_trace(
+            trace_entries![
+                signal(int(sys::SIGCHLD), _) -> 0,
+                write(fd(sys::STDERR_FILENO), bytes(b"$ ")) -> auto,
+                ..read_line_trace(b"set +b\n"),
+                open(str("/tmp/hist"), _, _) -> fd(10),
+                write(fd(10), bytes(b"set +b\n")) -> auto,
+                close(fd(10)) -> 0,
+                signal(int(sys::SIGCHLD), _) -> 0,
+                write(fd(sys::STDERR_FILENO), bytes(b"$ ")) -> auto,
+                read(fd(sys::STDIN_FILENO), _) -> bytes(b""),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.options.notify = true;
+                shell
+                    .env
+                    .insert(b"HISTFILE".to_vec(), b"/tmp/hist".to_vec());
+                let _ = run_loop(&mut shell);
+            },
+        );
     }
 
     #[test]
     fn run_loop_signaled_and_done_nonzero_notifications() {
         run_trace(
-            vec![
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(6001), ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::SignaledSig(15),
-                ),
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(6002), ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Status(7),
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"[1] Terminated (SIGTERM)\tkilled\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"[2] Done(7)\tfailed\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"$ ".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![]),
-                ),
+            trace_entries![
+                waitpid(6001, _) -> signaled_sig(15),
+                waitpid(6002, _) -> status(7),
+                write(fd(sys::STDERR_FILENO), bytes(b"[1] Terminated (SIGTERM)\tkilled\n")) -> auto,
+                write(fd(sys::STDERR_FILENO), bytes(b"[2] Done(7)\tfailed\n")) -> auto,
+                write(fd(sys::STDERR_FILENO), bytes(b"$ ")) -> auto,
+                read(fd(sys::STDIN_FILENO), _) -> bytes(b""),
             ],
             || {
                 let mut shell = test_shell();
@@ -820,37 +492,14 @@ mod tests {
     #[test]
     fn run_loop_vi_mode_exits_on_eof() {
         run_trace(
-            vec![
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"$ ".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
-                t("tcgetattr", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Any],
-                    TraceResult::Bytes(vec![]),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"\r\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(1)],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                write(fd(sys::STDERR_FILENO), bytes(b"$ ")) -> auto,
+                tcgetattr(fd(sys::STDIN_FILENO)) -> 0,
+                tcsetattr(fd(sys::STDIN_FILENO), int(1)) -> 0,
+                tcgetattr(fd(sys::STDIN_FILENO)) -> 0,
+                read(fd(sys::STDIN_FILENO), _) -> bytes(b""),
+                write(fd(sys::STDOUT_FILENO), bytes(b"\r\n")) -> auto,
+                tcsetattr(fd(sys::STDIN_FILENO), int(1)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
