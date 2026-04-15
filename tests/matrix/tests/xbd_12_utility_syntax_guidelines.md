@@ -40,62 +40,53 @@ It is recommended that all future utilities and applications use these guideline
 
 ### Tests
 
-#### Test: cd accepts -- and processes directory starting with dash
+#### Test: getopts parses grouped short options
 
-Guideline 10 requires that `--` be accepted as a delimiter indicating the end of options. Any following arguments shall be treated as operands, even if they begin with `-`. This test verifies `cd -- -dir` works correctly.
+Guideline 5 requires that options without option-arguments can be grouped
+behind one `-` delimiter. When getopts encounters `-ab`, it shall parse `a`
+and `b` as two separate options.
 
 ```
-begin test "cd accepts -- and processes directory starting with dash"
+begin test "getopts parses grouped short options"
   script
-    mkdir -p ./-dir
-    cd -- -dir && echo "$PWD" | grep -q -- "-dir$" && echo success || echo fail
-    cd ..
-    rm -rf ./-dir
+    set -- -ab
+    OPTIND=1
+    while getopts "ab" opt "$@"; do
+      echo "$opt"
+    done
   expect
-    stdout ".*success.*"
+    stdout "a\nb"
     stderr ""
     exit_code 0
-end test "cd accepts -- and processes directory starting with dash"
+end test "getopts parses grouped short options"
 ```
 
-#### Test: set accepts -- to indicate end of options
+#### Test: getopts parses grouped options with trailing option-argument
 
-The `--` argument indicates the end of options for the `set` built-in. After `--`, remaining arguments become positional parameters, even if they look like options.
+Guideline 5 requires that one or more options without option-arguments,
+followed by at most one option that takes an option-argument, shall be
+accepted when grouped behind one `-` delimiter.
 
 ```
-begin test "set accepts -- to indicate end of options"
+begin test "getopts parses grouped options with trailing option-argument"
   script
-    set -- -x -e
-    echo "$1 $2"
+    set -- -ab value
+    OPTIND=1
+    while getopts "ab:" opt "$@"; do
+      echo "$opt ${OPTARG:-none}"
+    done
   expect
-    stdout "-x -e"
+    stdout "a none\nb value"
     stderr ""
     exit_code 0
-end test "set accepts -- to indicate end of options"
-```
-
-#### Test: unset accepts --
-
-Utilities that conform to the Utility Syntax Guidelines shall accept the
-first `--` as the end of options. This verifies the `unset` built-in
-treats the following token as an operand.
-
-```
-begin test "unset accepts --"
-  script
-    myvar=foo
-    unset -- myvar
-    echo "${myvar:-empty}"
-  expect
-    stdout "empty"
-    stderr ""
-    exit_code 0
-end test "unset accepts --"
+end test "getopts parses grouped options with trailing option-argument"
 ```
 
 #### Test: getopts parses combined option-argument
 
-Per 12.1 item 2, a conforming implementation shall permit applications to specify the option and option-argument in the same argument string without intervening blanks (e.g., `-bfoo` for `-b foo`).
+Per Guideline 6 (with the exception noted in 12.1 item 2), a conforming
+implementation shall permit applications to specify the option and
+option-argument in the same argument string without intervening blanks.
 
 ```
 begin test "getopts parses combined option-argument"
@@ -115,7 +106,9 @@ end test "getopts parses combined option-argument"
 
 #### Test: getopts parses separate option-argument
 
-Per Guideline 6, each option and option-argument should be a separate argument. This is the standard form: `-b foo` as two separate arguments.
+Guideline 6 requires that each option and option-argument shall be a
+separate argument. This tests the standard form where `-b` and `foo` are
+two separate arguments.
 
 ```
 begin test "getopts parses separate option-argument"
@@ -129,28 +122,168 @@ begin test "getopts parses separate option-argument"
 end test "getopts parses separate option-argument"
 ```
 
-#### Test: ulimit accepts grouped short options
+#### Test: getopts stops at first non-option operand
 
-Guideline 5 allows short options without option-arguments to be grouped
-behind one `-` delimiter. This verifies `ulimit` accepts grouped `-S`
-and `-f` options in the form `-Sf`.
+Guideline 9 requires that all options shall precede operands on the command
+line. When getopts encounters a non-option argument (`file`), it shall stop
+processing and not recognize a subsequent `-b` as an option.
 
 ```
-begin test "ulimit accepts grouped short options"
+begin test "getopts stops at first non-option operand"
   script
-    ulimit -Sf 100
-    ulimit -Sf
+    set -- -a file -b
+    OPTIND=1
+    while getopts "ab" opt "$@"; do
+      echo "$opt"
+    done
+    echo "OPTIND=$OPTIND"
   expect
-    stdout "100"
+    stdout "a\nOPTIND=2"
     stderr ""
     exit_code 0
-end test "ulimit accepts grouped short options"
+end test "getopts stops at first non-option operand"
+```
+
+#### Test: getopts stops at -- delimiter
+
+Guideline 10 requires that the first `--` argument that is not an
+option-argument shall be accepted as a delimiter indicating the end of
+options. After `--`, getopts shall stop and any following arguments shall
+be treated as operands.
+
+```
+begin test "getopts stops at -- delimiter"
+  script
+    set -- -a -- -b
+    OPTIND=1
+    while getopts "ab" opt "$@"; do
+      echo "$opt"
+    done
+    echo "OPTIND=$OPTIND"
+  expect
+    stdout "a\nOPTIND=3"
+    stderr ""
+    exit_code 0
+end test "getopts stops at -- delimiter"
+```
+
+#### Test: set accepts -- to indicate end of options
+
+Guideline 10 requires `--` to signal end of options. After `set --`,
+remaining arguments shall become positional parameters even if they
+begin with `-`.
+
+```
+begin test "set accepts -- to indicate end of options"
+  script
+    set -- -x -e
+    echo "$1 $2"
+  expect
+    stdout "-x -e"
+    stderr ""
+    exit_code 0
+end test "set accepts -- to indicate end of options"
+```
+
+#### Test: cd accepts -- and processes directory starting with dash
+
+Guideline 10 requires `--` to end option processing. After `cd --`, the
+following argument shall be treated as a directory operand even if it begins
+with `-`.
+
+```
+begin test "cd accepts -- and processes directory starting with dash"
+  script
+    dir=$(mktemp -d)
+    mkdir "$dir/-testdir"
+    cd -- "$dir/-testdir" && basename "$PWD"
+    rm -rf "$dir"
+  expect
+    stdout "-testdir"
+    stderr ""
+    exit_code 0
+end test "cd accepts -- and processes directory starting with dash"
+```
+
+#### Test: unset accepts -- to indicate end of options
+
+Guideline 10 requires `--` to end option processing. After `unset --`,
+the following argument shall be treated as a variable name operand.
+
+```
+begin test "unset accepts -- to indicate end of options"
+  script
+    myvar=foo
+    unset -- myvar
+    echo "${myvar:-empty}"
+  expect
+    stdout "empty"
+    stderr ""
+    exit_code 0
+end test "unset accepts -- to indicate end of options"
+```
+
+#### Test: export accepts -- to indicate end of options
+
+Guideline 10 requires `--` to end option processing. After `export --`,
+the following argument shall be treated as a name operand.
+
+```
+begin test "export accepts -- to indicate end of options"
+  script
+    export -- TESTVAR=hello
+    echo "$TESTVAR"
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
+end test "export accepts -- to indicate end of options"
+```
+
+#### Test: readonly accepts -- to indicate end of options
+
+Guideline 10 requires `--` to end option processing. After `readonly --`,
+the following argument shall be treated as a name operand.
+
+```
+begin test "readonly accepts -- to indicate end of options"
+  script
+    readonly -- ROVAR=world
+    echo "$ROVAR"
+  expect
+    stdout "world"
+    stderr ""
+    exit_code 0
+end test "readonly accepts -- to indicate end of options"
+```
+
+#### Test: set option order does not matter
+
+Guideline 11 requires that the order of different options relative to one
+another shall not matter. Setting `set -f -u` and `set -u -f` shall produce
+the same effect.
+
+```
+begin test "set option order does not matter"
+  script
+    set -f -u
+    echo "ok1"
+    set +f +u
+    set -u -f
+    echo "ok2"
+    set +u +f
+  expect
+    stdout "ok1\nok2"
+    stderr ""
+    exit_code 0
+end test "set option order does not matter"
 ```
 
 #### Test: getopts processes repeated option-argument pairs in order
 
-Guideline 11 requires repeated option and option-argument combinations to
-be interpreted in the order specified on the command line.
+Guideline 11 requires that if an option with option-arguments is repeated,
+the option and option-argument combinations shall be interpreted in the order
+specified on the command line.
 
 ```
 begin test "getopts processes repeated option-argument pairs in order"
@@ -167,18 +300,37 @@ begin test "getopts processes repeated option-argument pairs in order"
 end test "getopts processes repeated option-argument pairs in order"
 ```
 
-#### Test: kill -l lists signals
+#### Test: ulimit accepts grouped short options
 
-This exercises the standard short-option form used by `kill` and
-verifies that `-l` is accepted as an option.
+Guideline 5 requires that options without option-arguments followed by at
+most one option that takes an option-argument shall be accepted when grouped
+behind one `-` delimiter. This verifies `ulimit -Sf` groups `-S` (modifier)
+and `-f` (resource) correctly.
 
 ```
-begin test "kill -l lists signals"
+begin test "ulimit accepts grouped short options"
   script
-    kill -l 2>/dev/null
+    ulimit -Sf 100
+    ulimit -Sf
   expect
-    stdout "([^\n]*\n)*.*(HUP|INT|TERM).*(\n.*)*"
+    stdout "100"
     stderr ""
     exit_code 0
-end test "kill -l lists signals"
+end test "ulimit accepts grouped short options"
+```
+
+#### Test: read accepts -- to indicate end of options
+
+Guideline 10 requires `--` to end option processing. After `read --`,
+the following argument shall be treated as a variable name operand.
+
+```
+begin test "read accepts -- to indicate end of options"
+  script
+    echo "hello" | { read -- var; echo "$var"; }
+  expect
+    stdout "hello"
+    stderr ""
+    exit_code 0
+end test "read accepts -- to indicate end of options"
 ```

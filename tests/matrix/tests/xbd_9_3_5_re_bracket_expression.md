@@ -55,9 +55,11 @@ The following rules and definitions apply to bracket expressions:
 
 #### Test: circumflex negation in bracket expressions
 
-A non-matching list expression begins with `!` (or `^` in regex context).
-The matching behavior is the logical inverse of the corresponding
-matching list, and `!` is literal when it does not appear first.
+In shell patterns, `!` replaces `^` as the non-matching list indicator
+(per XCU 2.14.1). A non-matching list expression beginning with `!`
+shall have matching behavior that is the logical inverse of the
+corresponding matching list. When `!` does not occur first, it is a
+literal character.
 
 ```
 begin test "circumflex negation in bracket expressions"
@@ -273,7 +275,10 @@ end test "collating symbol basic syntax"
 
 #### Test: equivalence class expression syntax
 
-An equivalence class expression represents the set of collating elements belonging to an equivalence class, enclosed within bracket-equal (`[=` and `=]`) delimiters.
+An equivalence class expression represents the set of collating elements
+belonging to an equivalence class, enclosed within bracket-equal (`[=`
+and `=]`) delimiters. Only primary equivalence classes shall be
+recognized.
 
 ```
 begin test "equivalence class expression syntax"
@@ -288,25 +293,6 @@ begin test "equivalence class expression syntax"
     stderr ""
     exit_code 0
 end test "equivalence class expression syntax"
-```
-
-#### Test: primary equivalence class recognition
-
-Only primary equivalence classes shall be recognized. `[[=a=]]` matches `a` and any characters in its equivalence class.
-
-```
-begin test "primary equivalence class recognition"
-  setenv "LC_ALL" "test_EPTY.UTF-8"
-  script
-    case "a" in
-      [[=a=]]) echo "match";;
-      *) echo "nomatch";;
-    esac
-  expect
-    stdout "match"
-    stderr ""
-    exit_code 0
-end test "primary equivalence class recognition"
 ```
 
 #### Test: equivalence class bracket notation
@@ -518,4 +504,167 @@ begin test "bracket with both ] and -"
     stderr ""
     exit_code 0
 end test "bracket with both ] and -"
+```
+
+#### Test: hyphen literal when first after negation
+
+The hyphen-minus shall be treated as itself when it occurs first in the
+list. In a non-matching list, "first" means immediately after the `!`.
+`[!-ac]` shall match any character except `-`, `a`, or `c`.
+
+```
+begin test "hyphen literal when first after negation"
+  setenv "LC_ALL" "C"
+  script
+    case "b" in [!-ac]) echo "match_b";; *) echo "nomatch_b";; esac
+    case "-" in [!-ac]) echo "match_hyp";; *) echo "nomatch_hyp";; esac
+    case "a" in [!-ac]) echo "match_a";; *) echo "nomatch_a";; esac
+  expect
+    stdout "match_b\nnomatch_hyp\nnomatch_a"
+    stderr ""
+    exit_code 0
+end test "hyphen literal when first after negation"
+```
+
+#### Test: matching list with hyphen first or last equivalence
+
+The expressions `[-ac]` and `[ac-]` are equivalent and shall match any
+of the characters `a`, `c`, or `-`.
+
+```
+begin test "matching list with hyphen first or last equivalence"
+  setenv "LC_ALL" "C"
+  script
+    case "a" in [-ac]) echo "first_a";; *) echo "first_na";; esac
+    case "c" in [-ac]) echo "first_c";; *) echo "first_nc";; esac
+    case "-" in [-ac]) echo "first_h";; *) echo "first_nh";; esac
+    case "b" in [-ac]) echo "first_b";; *) echo "first_nb";; esac
+    case "a" in [ac-]) echo "last_a";; *) echo "last_na";; esac
+    case "c" in [ac-]) echo "last_c";; *) echo "last_nc";; esac
+    case "-" in [ac-]) echo "last_h";; *) echo "last_nh";; esac
+    case "b" in [ac-]) echo "last_b";; *) echo "last_nb";; esac
+  expect
+    stdout "first_a\nfirst_c\nfirst_h\nfirst_nb\nlast_a\nlast_c\nlast_h\nlast_nb"
+    stderr ""
+    exit_code 0
+end test "matching list with hyphen first or last equivalence"
+```
+
+#### Test: non-matching list with hyphen first or last equivalence
+
+The expressions `[!-ac]` and `[!ac-]` are equivalent and shall match
+any character except `a`, `c`, or `-`.
+
+```
+begin test "non-matching list with hyphen first or last equivalence"
+  setenv "LC_ALL" "C"
+  script
+    case "b" in [!-ac]) echo "first_b";; *) echo "first_nb";; esac
+    case "a" in [!-ac]) echo "first_a";; *) echo "first_na";; esac
+    case "-" in [!-ac]) echo "first_h";; *) echo "first_nh";; esac
+    case "b" in [!ac-]) echo "last_b";; *) echo "last_nb";; esac
+    case "a" in [!ac-]) echo "last_a";; *) echo "last_na";; esac
+    case "-" in [!ac-]) echo "last_h";; *) echo "last_nh";; esac
+  expect
+    stdout "first_b\nfirst_na\nfirst_nh\nlast_b\nlast_na\nlast_nh"
+    stderr ""
+    exit_code 0
+end test "non-matching list with hyphen first or last equivalence"
+```
+
+#### Test: range expression endpoints are inclusive
+
+In the POSIX locale, a range expression represents the set of collating
+elements that fall between two elements in the collation sequence,
+inclusive. Both the starting and ending range points shall be included
+in the set.
+
+```
+begin test "range expression endpoints are inclusive"
+  setenv "LC_ALL" "C"
+  script
+    case "a" in [a-c]) echo "start_match";; *) echo "start_nomatch";; esac
+    case "c" in [a-c]) echo "end_match";; *) echo "end_nomatch";; esac
+    case "b" in [a-c]) echo "mid_match";; *) echo "mid_nomatch";; esac
+    case "d" in [a-c]) echo "out_match";; *) echo "out_nomatch";; esac
+  expect
+    stdout "start_match\nend_match\nmid_match\nout_nomatch"
+    stderr ""
+    exit_code 0
+end test "range expression endpoints are inclusive"
+```
+
+#### Test: right-bracket first in negated bracket expression
+
+The `]` character shall lose its special meaning and represent itself
+when it occurs first in the list after the initial `!` in a non-matching
+list expression.
+
+```
+begin test "right-bracket first in negated bracket expression"
+  setenv "LC_ALL" "C"
+  script
+    case "]" in [!]ab]) echo "match_bracket";; *) echo "nomatch_bracket";; esac
+    case "c" in [!]ab]) echo "match_c";; *) echo "nomatch_c";; esac
+    case "a" in [!]ab]) echo "match_a";; *) echo "nomatch_a";; esac
+  expect
+    stdout "nomatch_bracket\nmatch_c\nnomatch_a"
+    stderr ""
+    exit_code 0
+end test "right-bracket first in negated bracket expression"
+```
+
+#### Test: character class negative matching
+
+Character class expressions in a non-matching list shall invert the
+match. `[![:digit:]]` shall match any character that is not a digit.
+
+```
+begin test "character class negative matching"
+  setenv "LC_ALL" "C"
+  script
+    case "a" in [![:digit:]]) echo "alpha_match";; *) echo "alpha_nomatch";; esac
+    case "5" in [![:digit:]]) echo "digit_match";; *) echo "digit_nomatch";; esac
+  expect
+    stdout "alpha_match\ndigit_nomatch"
+    stderr ""
+    exit_code 0
+end test "character class negative matching"
+```
+
+#### Test: collating symbol in range expression
+
+The starting and ending range points shall be a collating element or
+collating symbol. A collating symbol can be used as a range endpoint.
+
+```
+begin test "collating symbol in range expression"
+  setenv "LC_ALL" "C"
+  script
+    case "b" in [[.a.]-[.c.]]) echo "match_b";; *) echo "nomatch_b";; esac
+    case "d" in [[.a.]-[.c.]]) echo "match_d";; *) echo "nomatch_d";; esac
+  expect
+    stdout "match_b\nnomatch_d"
+    stderr ""
+    exit_code 0
+end test "collating symbol in range expression"
+```
+
+#### Test: bracket expression matches single character only
+
+A bracket expression is an RE that shall match a specific set of single
+characters. A bracket expression used in a shell pattern shall match
+exactly one character, not a multi-character string.
+
+```
+begin test "bracket expression matches single character only"
+  setenv "LC_ALL" "C"
+  script
+    case "ab" in [abc]) echo "multi_match";; *) echo "multi_nomatch";; esac
+    case "a" in [abc]) echo "single_match";; *) echo "single_nomatch";; esac
+  expect
+    stdout "multi_nomatch\nsingle_match"
+    stderr ""
+    exit_code 0
+end test "bracket expression matches single character only"
 ```

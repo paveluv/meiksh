@@ -21,3 +21,7 @@ path = "tests/expect_pty.rs"
 [[bin]]
 name = "check_integrity"
 path = "tests/check_matrix_integrity.rs"
+
+[[bin]]
+name = "html_to_md"
+path = "docs/html_to_md.rs"

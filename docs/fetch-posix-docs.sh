@@ -57,4 +57,34 @@ if [ ! -d "$POSIX_DIR/$archive_root" ]; then
     exit 1
 fi
 
-printf 'Done! Archive unpacked to %s\n' "$POSIX_DIR"
+echo "Building html_to_md converter..."
+REPO_DIR=$(CDPATH= cd -- "$DOCS_DIR/.." && pwd)
+cargo build --quiet --bin html_to_md --manifest-path "$REPO_DIR/Cargo.toml"
+converter="$REPO_DIR/target/debug/html_to_md"
+
+HTML_ROOT="$POSIX_DIR/$archive_root"
+MD_ROOT="$POSIX_DIR/md"
+rm -rf "$MD_ROOT"
+
+echo "Converting HTML to Markdown..."
+converted=0
+for dir in basedefs utilities functions xrat frontmatter help idx; do
+    srcdir="$HTML_ROOT/$dir"
+    [ -d "$srcdir" ] || continue
+    destdir="$MD_ROOT/$dir"
+    mkdir -p "$destdir"
+    for html in "$srcdir"/*.html; do
+        [ -f "$html" ] || continue
+        base=$(basename "$html" .html)
+        "$converter" "$html" "$destdir/$base.md"
+        converted=$((converted + 1))
+    done
+done
+for html in "$HTML_ROOT"/*.html; do
+    [ -f "$html" ] || continue
+    base=$(basename "$html" .html)
+    "$converter" "$html" "$MD_ROOT/$base.md"
+    converted=$((converted + 1))
+done
+
+printf 'Done! %d HTML files converted to Markdown in %s\n' "$converted" "$MD_ROOT"
