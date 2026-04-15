@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use crate::arena::ByteArena;
 use crate::expand::word;
 use crate::shell::error::ShellError;
@@ -60,7 +62,7 @@ pub(super) fn execute_command_inner(
         Command::FunctionDef(function) => {
             shell
                 .functions
-                .insert(function.name.to_vec(), (*function.body).clone());
+                .insert(function.name.to_vec(), Rc::clone(&function.body));
             Ok(0)
         }
         Command::If(if_command) => execute_if(shell, if_command),

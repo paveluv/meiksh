@@ -1,7 +1,7 @@
 use crate::expand::glob;
 use crate::syntax::ast::{
     AndOr, CaseCommand, Command, ForCommand, FunctionDef, HereDoc, IfCommand, ListItem, LogicalOp,
-    LoopCommand, LoopKind, Pipeline, Program, RedirectionKind, SimpleCommand, TimedMode,
+    LoopCommand, LoopKind, Pipeline, Program, RedirectionKind, SimpleCommand,
 };
 
 pub(super) fn case_pattern_matches(text: &[u8], pattern: &[u8]) -> bool {
@@ -113,14 +113,7 @@ pub(super) fn render_function(function: &FunctionDef) -> Vec<u8> {
 pub(super) fn render_function_into(function: &FunctionDef, buf: &mut Vec<u8>) {
     buf.extend_from_slice(&function.name);
     buf.extend_from_slice(b"() ");
-    render_pipeline_into(
-        &Pipeline {
-            negated: false,
-            timed: TimedMode::Off,
-            commands: vec![(*function.body).clone()].into_boxed_slice(),
-        },
-        buf,
-    );
+    render_command_into(&function.body, buf);
 }
 
 #[cfg(test)]
@@ -341,10 +334,12 @@ pub(super) fn render_redirected_command_into(
 #[cfg(test)]
 #[allow(unused_imports)]
 mod tests {
+    use std::rc::Rc;
+
     use super::*;
     use crate::exec::test_support::parse_test;
     use crate::shell::state::Shell;
-    use crate::syntax::ast::{Assignment, HereDoc, Redirection, SimpleCommand, Word};
+    use crate::syntax::ast::{Assignment, HereDoc, Redirection, SimpleCommand, TimedMode, Word};
     use crate::sys::test_support::assert_no_syscalls;
 
     #[test]
@@ -424,7 +419,7 @@ mod tests {
 
             let function = FunctionDef {
                 name: b"greet".to_vec().into(),
-                body: Box::new(Command::Group(program.clone())),
+                body: Rc::new(Command::Group(program.clone())),
             };
             let if_command = IfCommand {
                 condition: program.clone(),
