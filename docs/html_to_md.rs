@@ -1775,7 +1775,7 @@ fn is_void_tag(name: &str) -> bool {
 }
 
 fn markdown_table_cell(text: &str) -> String {
-    text.replace('|', "\\|").replace('\n', "<br>")
+    text.replace('|', "\\|").replace('\n', " ")
 }
 
 fn pad_cells(mut cells: Vec<String>, width: usize) -> Vec<String> {

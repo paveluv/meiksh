@@ -153,27 +153,27 @@ Additional criteria for determining a valid locale name are implementation-defin
 
 ### Tests
 
-#### Test: LANG passed to child environment
+#### Test: LANG determines locale in absence of LC_ALL and LC_*
 
 When `LC_ALL` and the category-specific `LC_*` variables are unset,
-`LANG` shall determine the locale category value used by standard
-utilities.
+`LANG` shall determine the locale category for all categories. This
+verifies precedence rule 3.
 
 ```
-begin test "LANG passed to child environment"
+begin test "LANG determines locale in absence of LC_ALL and LC_*"
   script
     LANG=POSIX locale charmap
   expect
     stdout "ANSI_X3.4-1968"
     stderr ""
     exit_code 0
-end test "LANG passed to child environment"
+end test "LANG determines locale in absence of LC_ALL and LC_*"
 ```
 
 #### Test: LC_ALL overrides individual LC_* variables
 
-`LC_ALL` shall determine the values for all locale categories and take
-precedence over both `LANG` and category-specific `LC_*` variables.
+`LC_ALL` shall take precedence over all category-specific `LC_*`
+variables and `LANG` (precedence rule 1).
 
 ```
 begin test "LC_ALL overrides individual LC_* variables"
@@ -186,31 +186,64 @@ begin test "LC_ALL overrides individual LC_* variables"
 end test "LC_ALL overrides individual LC_* variables"
 ```
 
-#### Test: LC_COLLATE and LC_CTYPE passed to child
+#### Test: LC_CTYPE overrides LANG when LC_ALL is unset
 
-When `LC_ALL` is unset, a category-specific `LC_*` variable shall be
-used to initialize that category instead of `LANG`. This test uses
-`LC_CTYPE` to override the character handling locale.
+When `LC_ALL` is null or unset, a category-specific `LC_*` variable
+shall be used to initialize that category instead of `LANG` (precedence
+rule 2 takes priority over rule 3).
 
 ```
-begin test "LC_COLLATE and LC_CTYPE passed to child"
+begin test "LC_CTYPE overrides LANG when LC_ALL is unset"
   script
     LC_ALL= LC_CTYPE=C.UTF-8 LANG=POSIX locale charmap
   expect
     stdout "UTF-8"
     stderr ""
     exit_code 0
-end test "LC_COLLATE and LC_CTYPE passed to child"
+end test "LC_CTYPE overrides LANG when LC_ALL is unset"
 ```
 
-#### Test: LC_MESSAGES passed to child
+#### Test: LC_COLLATE determines collation locale
+
+`LC_COLLATE` shall determine the locale category for character
+collation. In the C locale, uppercase letters sort before lowercase
+in byte order.
+
+```
+begin test "LC_COLLATE determines collation locale"
+  script
+    printf "b\nA\n" | LC_ALL=C sort
+  expect
+    stdout "A\nb"
+    stderr ""
+    exit_code 0
+end test "LC_COLLATE determines collation locale"
+```
+
+#### Test: LC_CTYPE determines character classification
+
+`LC_CTYPE` shall determine the locale category for character handling
+functions such as character classification and case conversion.
+
+```
+begin test "LC_CTYPE determines character classification"
+  script
+    printf "abc" | LC_ALL=C tr "[:lower:]" "[:upper:]"
+  expect
+    stdout "ABC"
+    stderr ""
+    exit_code 0
+end test "LC_CTYPE determines character classification"
+```
+
+#### Test: LC_MESSAGES exported to child
 
 `LC_MESSAGES` shall determine the locale category for processing
-affirmative and negative responses and the language for messages. When
-exported, it shall be available to child utilities.
+affirmative and negative responses and the language for messages.
+When exported, it is available to child utilities.
 
 ```
-begin test "LC_MESSAGES passed to child"
+begin test "LC_MESSAGES exported to child"
   script
     export LC_MESSAGES=C
     env | grep "^LC_MESSAGES=C$" && echo pass || echo fail
@@ -218,17 +251,36 @@ begin test "LC_MESSAGES passed to child"
     stdout "LC_MESSAGES=C\npass"
     stderr ""
     exit_code 0
-end test "LC_MESSAGES passed to child"
+end test "LC_MESSAGES exported to child"
 ```
 
-#### Test: LANGUAGE and NLSPATH passed to child
+#### Test: C and POSIX locale values select POSIX locale
 
-`LANGUAGE`, `NLSPATH`, `TEXTDOMAIN`, and `TEXTDOMAINDIR` are used by the
-message-catalog lookup interfaces. When exported, they shall be
+If the locale value is `"C"` or `"POSIX"`, the POSIX locale shall be
+used. Both values must produce identical results.
+
+```
+begin test "C and POSIX locale values select POSIX locale"
+  script
+    c_charmap=$(LC_ALL=C locale charmap)
+    posix_charmap=$(LC_ALL=POSIX locale charmap)
+    echo "$c_charmap"
+    test "$c_charmap" = "$posix_charmap" && echo match || echo mismatch
+  expect
+    stdout "ANSI_X3.4-1968\nmatch"
+    stderr ""
+    exit_code 0
+end test "C and POSIX locale values select POSIX locale"
+```
+
+#### Test: LANGUAGE NLSPATH TEXTDOMAIN TEXTDOMAINDIR exported to child
+
+`LANGUAGE`, `NLSPATH`, `TEXTDOMAIN`, and `TEXTDOMAINDIR` are used by
+the message-catalog lookup interfaces. When exported, they shall be
 available to child utilities.
 
 ```
-begin test "LANGUAGE and NLSPATH passed to child"
+begin test "LANGUAGE NLSPATH TEXTDOMAIN TEXTDOMAINDIR exported to child"
   script
     export LANGUAGE=C
     export NLSPATH=/dev/null
@@ -239,7 +291,7 @@ begin test "LANGUAGE and NLSPATH passed to child"
     stdout "LANGUAGE=C\nNLSPATH=/dev/null\nTEXTDOMAIN=messages\nTEXTDOMAINDIR=/tmp"
     stderr ""
     exit_code 0
-end test "LANGUAGE and NLSPATH passed to child"
+end test "LANGUAGE NLSPATH TEXTDOMAIN TEXTDOMAINDIR exported to child"
 ```
 
 ## xbd: 8.3 Other Environment Variables
@@ -336,17 +388,16 @@ end test "LANGUAGE and NLSPATH passed to child"
 
 ### Tests
 
-#### Test: PATH used to find executable
+#### Test: PATH searches prefixes for executable filename
 
-`PATH` shall represent the sequence of prefixes used when searching for
-an executable filename. If the prefix does not end in `/`, a slash
-shall be inserted before the filename.
+`PATH` shall represent the sequence of path prefixes that are searched
+from beginning to end when looking up a filename that contains no `/`.
 
 ```
-begin test "PATH used to find executable"
+begin test "PATH searches prefixes for executable filename"
   script
     mkdir -p mybin
-    printf '#!%s\necho mytool executed\n' "${SHELL%% *}" > mybin/mytool
+    printf '#!/bin/sh\necho mytool executed\n' > mybin/mytool
     chmod +x mybin/mytool
     PATH="$PWD/mybin:$PATH" mytool
     rm -rf mybin
@@ -354,20 +405,41 @@ begin test "PATH used to find executable"
     stdout "mytool executed"
     stderr ""
     exit_code 0
-end test "PATH used to find executable"
+end test "PATH searches prefixes for executable filename"
 ```
 
-#### Test: PATH entry with slash bypasses search
+#### Test: PATH inserts slash between prefix and filename
 
-If the pathname being sought contains a `/`, the search through `PATH`
-prefixes shall not be performed.
+When a non-zero-length prefix is applied to a filename, a `/` shall
+be inserted between the prefix and the filename if the prefix did not
+end in `/`.
 
 ```
-begin test "PATH entry with slash bypasses search"
+begin test "PATH inserts slash between prefix and filename"
+  script
+    mkdir -p /tmp/pathslash
+    printf '#!/bin/sh\necho slashok\n' > /tmp/pathslash/slashcheck
+    chmod +x /tmp/pathslash/slashcheck
+    PATH="/tmp/pathslash" slashcheck
+    rm -rf /tmp/pathslash
+  expect
+    stdout "slashok"
+    stderr ""
+    exit_code 0
+end test "PATH inserts slash between prefix and filename"
+```
+
+#### Test: pathname with slash bypasses PATH search
+
+If the pathname being sought contains any `/` characters, the search
+through the path prefixes shall not be performed.
+
+```
+begin test "pathname with slash bypasses PATH search"
   script
     mkdir -p pathbin directbin
-    printf '#!%s\necho from_path\n' "${SHELL%% *}" > pathbin/mytool
-    printf '#!%s\necho from_direct\n' "${SHELL%% *}" > directbin/mytool
+    printf '#!/bin/sh\necho from_path\n' > pathbin/mytool
+    printf '#!/bin/sh\necho from_direct\n' > directbin/mytool
     chmod +x pathbin/mytool directbin/mytool
     PATH="$PWD/pathbin" ./directbin/mytool
     rm -rf pathbin directbin
@@ -375,35 +447,73 @@ begin test "PATH entry with slash bypasses search"
     stdout "from_direct"
     stderr ""
     exit_code 0
-end test "PATH entry with slash bypasses search"
+end test "pathname with slash bypasses PATH search"
 ```
 
-#### Test: zero-length PATH prefix means current directory
+#### Test: zero-length PATH prefix means current directory (leading colon)
 
-A zero-length `PATH` prefix, written as a leading, trailing, or doubled
-`:`, shall indicate the current working directory.
+A zero-length prefix (appearing as a leading `:` in PATH) is a legacy
+feature that indicates the current working directory.
 
 ```
-begin test "zero-length PATH prefix means current directory"
+begin test "zero-length PATH prefix means current directory (leading colon)"
   script
-    printf '#!%s\necho cwd_tool\n' "${SHELL%% *}" > ./cwd_tool
-    chmod +x ./cwd_tool
-    PATH=":$PATH" cwd_tool
-    rm -f ./cwd_tool
+    printf '#!/bin/sh\necho cwd_leading\n' > ./cwd_leading
+    chmod +x ./cwd_leading
+    PATH=":$PATH" cwd_leading
+    rm -f ./cwd_leading
   expect
-    stdout "cwd_tool"
+    stdout "cwd_leading"
     stderr ""
     exit_code 0
-end test "zero-length PATH prefix means current directory"
+end test "zero-length PATH prefix means current directory (leading colon)"
 ```
 
-#### Test: PWD reflects current working directory
+#### Test: zero-length PATH prefix means current directory (trailing colon)
+
+A zero-length prefix (appearing as a trailing `:` in PATH) is a legacy
+feature that indicates the current working directory.
+
+```
+begin test "zero-length PATH prefix means current directory (trailing colon)"
+  script
+    printf '#!/bin/sh\necho cwd_trailing\n' > ./cwd_trailing
+    chmod +x ./cwd_trailing
+    PATH="/usr/bin:" cwd_trailing
+    rm -f ./cwd_trailing
+  expect
+    stdout "cwd_trailing"
+    stderr ""
+    exit_code 0
+end test "zero-length PATH prefix means current directory (trailing colon)"
+```
+
+#### Test: zero-length PATH prefix means current directory (double colon)
+
+A zero-length prefix (appearing as two adjacent `::` in PATH) is a
+legacy feature that indicates the current working directory.
+
+```
+begin test "zero-length PATH prefix means current directory (double colon)"
+  script
+    printf '#!/bin/sh\necho cwd_double\n' > ./cwd_double
+    chmod +x ./cwd_double
+    PATH="/nonexistent::/usr/bin" cwd_double
+    rm -f ./cwd_double
+  expect
+    stdout "cwd_double"
+    stderr ""
+    exit_code 0
+end test "zero-length PATH prefix means current directory (double colon)"
+```
+
+#### Test: PWD is absolute and contains no dot components
 
 `PWD` shall represent an absolute pathname of the current working
-directory and shall not contain `.` or `..` path components.
+directory. It shall not contain any components that are dot or dot-dot.
 
 ```
-begin test "PWD reflects current working directory"
+begin test "PWD is absolute and contains no dot components"
   script
     mkdir -p pwd_test/sub
     cd pwd_test/sub
@@ -421,16 +531,36 @@ begin test "PWD reflects current working directory"
     stdout "absolute\ndot_free"
     stderr ""
     exit_code 0
-end test "PWD reflects current working directory"
+end test "PWD is absolute and contains no dot components"
 ```
 
-#### Test: HOME used for tilde expansion
+#### Test: PWD is updated by cd
 
-The shell uses `HOME` for tilde expansion: `~` expands to the value of
-`HOME`.
+The value of `PWD` shall be set by the `cd` utility. After changing
+directory, `PWD` must reflect the new location.
 
 ```
-begin test "HOME used for tilde expansion"
+begin test "PWD is updated by cd"
+  script
+    mkdir -p /tmp/pwdcdtest
+    cd /tmp/pwdcdtest
+    echo "$PWD"
+    cd /
+    rm -rf /tmp/pwdcdtest
+  expect
+    stdout "/tmp/pwdcdtest"
+    stderr ""
+    exit_code 0
+end test "PWD is updated by cd"
+```
+
+#### Test: HOME initialized and used for tilde expansion
+
+The system shall initialize `HOME` at login time. The shell uses
+`HOME` for tilde expansion: `~` expands to the value of `HOME`.
+
+```
+begin test "HOME initialized and used for tilde expansion"
   script
     mkdir -p myhome
     HOME="$PWD/myhome"
@@ -440,5 +570,149 @@ begin test "HOME used for tilde expansion"
     stdout ".*/myhome"
     stderr ""
     exit_code 0
-end test "HOME used for tilde expansion"
+end test "HOME initialized and used for tilde expansion"
+```
+
+#### Test: HOME is set at startup
+
+The system shall initialize `HOME` at the time of login to be a
+pathname of the user's home directory.
+
+```
+begin test "HOME is set at startup"
+  script
+    test -n "$HOME" && echo "set" || echo "empty"
+  expect
+    stdout "set"
+    stderr ""
+    exit_code 0
+end test "HOME is set at startup"
+```
+
+#### Test: LOGNAME is accessible when set in environment
+
+The system shall initialize `LOGNAME` at the time of login to be the
+user's login name. When present in the environment, the shell makes it
+accessible to scripts and child processes.
+
+```
+begin test "LOGNAME is accessible when set in environment"
+  setenv "LOGNAME" "testuser"
+  script
+    echo "$LOGNAME"
+  expect
+    stdout "testuser"
+    stderr ""
+    exit_code 0
+end test "LOGNAME is accessible when set in environment"
+```
+
+#### Test: SHELL represents user preferred command interpreter
+
+`SHELL` shall represent a pathname of the user's preferred command
+language interpreter.
+
+```
+begin test "SHELL represents user preferred command interpreter"
+  script
+    test -n "$SHELL" && echo "set" || echo "empty"
+    case "$SHELL" in
+      /*) echo "pathname" ;;
+      *) echo "not_pathname" ;;
+    esac
+  expect
+    stdout "set\npathname"
+    stderr ""
+    exit_code 0
+end test "SHELL represents user preferred command interpreter"
+```
+
+#### Test: TMPDIR represents a temporary directory pathname
+
+`TMPDIR` shall represent a pathname of a directory made available for
+programs that need a place to create temporary files. When set, it is
+available to the shell.
+
+```
+begin test "TMPDIR represents a temporary directory pathname"
+  script
+    TMPDIR=/tmp/mytempdir
+    echo "$TMPDIR"
+  expect
+    stdout "/tmp/mytempdir"
+    stderr ""
+    exit_code 0
+end test "TMPDIR represents a temporary directory pathname"
+```
+
+#### Test: TERM represents terminal type
+
+`TERM` shall represent the terminal type for which output is to be
+prepared. When exported, it is available to child utilities.
+
+```
+begin test "TERM represents terminal type"
+  script
+    TERM=dumb
+    export TERM
+    env | grep "^TERM=dumb$" && echo pass || echo fail
+  expect
+    stdout "TERM=dumb\npass"
+    stderr ""
+    exit_code 0
+end test "TERM represents terminal type"
+```
+
+#### Test: TZ affects timezone used by utilities
+
+`TZ` shall represent timezone information. The contents of `TZ` are
+used by date and time utilities to override the default timezone.
+
+```
+begin test "TZ affects timezone used by utilities"
+  script
+    TZ=UTC0 date +%Z
+  expect
+    stdout "UTC"
+    stderr ""
+    exit_code 0
+end test "TZ affects timezone used by utilities"
+```
+
+#### Test: COLUMNS represents preferred terminal width
+
+`COLUMNS` shall represent a decimal integer >0 used to indicate the
+user's preferred width in column positions. When set, it overrides
+terminal window size information.
+
+```
+begin test "COLUMNS represents preferred terminal width"
+  script
+    COLUMNS=40
+    export COLUMNS
+    env | grep "^COLUMNS=40$" && echo pass || echo fail
+  expect
+    stdout "COLUMNS=40\npass"
+    stderr ""
+    exit_code 0
+end test "COLUMNS represents preferred terminal width"
+```
+
+#### Test: LINES represents preferred terminal height
+
+`LINES` shall represent a decimal integer >0 used to indicate the
+user's preferred number of lines on a page. When set, it overrides
+terminal window size information.
+
+```
+begin test "LINES represents preferred terminal height"
+  script
+    LINES=24
+    export LINES
+    env | grep "^LINES=24$" && echo pass || echo fail
+  expect
+    stdout "LINES=24\npass"
+    stderr ""
+    exit_code 0
+end test "LINES represents preferred terminal height"
 ```
