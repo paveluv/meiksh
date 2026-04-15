@@ -14,6 +14,7 @@ fn write_stderr(msg: &[u8]) {
     let _ = sys::write_all_fd(sys::STDERR_FILENO, msg);
 }
 
+#[cfg(test)]
 fn write_stdout(msg: &[u8]) {
     let _ = sys::write_all_fd(sys::STDOUT_FILENO, msg);
 }

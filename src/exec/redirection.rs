@@ -163,6 +163,7 @@ pub(super) fn apply_child_fd_actions(actions: &[ChildFdAction]) -> sys::SysResul
     Ok(())
 }
 
+#[cfg(test)]
 pub(super) fn apply_child_setup(
     actions: &[ChildFdAction],
     process_group: ProcessGroupPlan,

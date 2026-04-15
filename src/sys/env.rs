@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use super::error::SysResult;
-use super::interface::{default_interface, sys_interface};
+use super::interface::sys_interface;
 
 pub fn env_set_var(key: &[u8], value: &[u8]) -> SysResult<()> {
     (sys_interface().setenv)(key, value)
@@ -34,6 +34,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
+    use crate::sys::interface::default_interface;
     use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
     use crate::trace_entries;
 

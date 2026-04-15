@@ -2,6 +2,7 @@ use super::*;
 
 pub(super) const DEFAULT_COMMAND_PATH: &[u8] = b"/usr/bin:/bin";
 
+#[cfg(test)]
 pub(super) fn which(name: &[u8], shell: &Shell) -> Option<Vec<u8>> {
     which_in_path(name, shell, false)
 }
