@@ -52,15 +52,7 @@ impl SysError {
 
 #[cfg(test)]
 mod tests {
-    use libc::{c_char, c_int, c_long, mode_t};
-    use std::collections::HashMap;
-    use std::ffi::CString;
-
-    use crate::sys::test_support;
-    use crate::sys::types::ClockTicks;
-
     use super::*;
-    use crate::sys::*;
 
     #[test]
     fn sys_error_helper_methods_report_correct_variants() {

@@ -91,13 +91,6 @@ pub const RLIM_INFINITY: u64 = libc::RLIM_INFINITY;
 
 #[cfg(test)]
 mod tests {
-    use libc::{c_char, c_int, c_long, mode_t};
-    use std::collections::HashMap;
-    use std::ffi::CString;
-
-    use crate::sys::test_support;
-    use crate::sys::types::ClockTicks;
-
     use super::*;
     use crate::sys::*;
 

@@ -266,9 +266,7 @@ pub(super) mod test_support {
     use crate::shell::ShellOptions;
     use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-    pub(crate) use crate::sys::test_support::{
-        ArgMatcher, TraceEntry, TraceResult, assert_no_syscalls, run_trace, t,
-    };
+    pub(crate) use crate::sys::test_support::{assert_no_syscalls, run_trace};
 
     pub(crate) fn test_shell() -> Shell {
         Shell {
@@ -319,17 +317,6 @@ pub(super) mod test_support {
         v.extend_from_slice(msg);
         v.push(b'\n');
         v
-    }
-
-    pub(crate) fn trace_write_stderr(msg: &[u8]) -> TraceEntry {
-        t(
-            "write",
-            vec![
-                ArgMatcher::Fd(crate::sys::STDERR_FILENO),
-                ArgMatcher::Bytes(msg.to_vec()),
-            ],
-            TraceResult::Auto,
-        )
     }
 }
 
