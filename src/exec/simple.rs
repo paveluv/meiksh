@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use crate::arena::ByteArena;
 use crate::bstr::ByteWriter;
 use crate::builtin;
@@ -203,7 +205,7 @@ pub(super) fn execute_simple(
         };
     }
 
-    if let Some(function) = shell.functions.get(&owned_argv[0]).cloned() {
+    if let Some(function) = shell.functions.get(&owned_argv[0]).map(Rc::clone) {
         let guard = match apply_shell_redirections(&expanded.redirections, shell.options.noclobber)
         {
             Ok(g) => g,

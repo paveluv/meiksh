@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::rc::Rc;
 
 use crate::sys;
 
@@ -27,7 +28,7 @@ pub(crate) struct Shell {
     pub(crate) exported: BTreeSet<Vec<u8>>,
     pub(crate) readonly: BTreeSet<Vec<u8>>,
     pub(crate) aliases: HashMap<Box<[u8]>, Box<[u8]>>,
-    pub(crate) functions: HashMap<Vec<u8>, crate::syntax::ast::Command>,
+    pub(crate) functions: HashMap<Vec<u8>, Rc<crate::syntax::ast::Command>>,
     pub(crate) positional: Vec<Vec<u8>>,
     pub(crate) last_status: i32,
     pub(crate) last_background: Option<sys::types::Pid>,

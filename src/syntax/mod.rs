@@ -88,6 +88,8 @@ pub(crate) fn is_name(name: &[u8]) -> bool {
     clippy::disallowed_methods
 )]
 mod tests {
+    use std::rc::Rc;
+
     use super::ast::{
         AndOr, Assignment, CaseArm, CaseCommand, Command, ElifBranch, ForCommand, FunctionDef,
         HereDoc, IfCommand, ListItem, LogicalOp, LoopCommand, LoopKind, Pipeline, Program,
@@ -822,7 +824,7 @@ mod tests {
 
         let func = Command::FunctionDef(FunctionDef {
             name: bx(b"f"),
-            body: Box::new(s.clone()),
+            body: Rc::new(s.clone()),
         });
         assert!(matches!(&func, Command::FunctionDef(fd) if &*fd.name == b"f"));
 

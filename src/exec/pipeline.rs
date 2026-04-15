@@ -396,6 +396,8 @@ pub(super) fn restore_foreground(saved_foreground: Option<sys::types::Pid>) {
 #[cfg(test)]
 #[allow(unused_imports)]
 mod tests {
+    use std::rc::Rc;
+
     use super::*;
     use crate::exec::program::execute_program;
     use crate::exec::test_support::{parse_test, test_shell};
@@ -701,7 +703,7 @@ mod tests {
             commands: vec![
                 Command::FunctionDef(FunctionDef {
                     name: b"f".to_vec().into(),
-                    body: Box::new(Command::Group(program.clone())),
+                    body: Rc::new(Command::Group(program.clone())),
                 }),
                 Command::If(IfCommand {
                     condition: program.clone(),

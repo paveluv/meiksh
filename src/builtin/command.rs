@@ -694,7 +694,7 @@ mod tests {
                 let mut shell = test_shell();
                 shell.functions.insert(
                     b"myfunc"[..].into(),
-                    crate::syntax::ast::Command::Simple(Default::default()),
+                    std::rc::Rc::new(crate::syntax::ast::Command::Simple(Default::default())),
                 );
                 let outcome = invoke(
                     &mut shell,
@@ -776,7 +776,7 @@ mod tests {
                 let mut shell = test_shell();
                 shell.functions.insert(
                     b"myfunc"[..].into(),
-                    crate::syntax::ast::Command::Simple(Default::default()),
+                    std::rc::Rc::new(crate::syntax::ast::Command::Simple(Default::default())),
                 );
                 let outcome = invoke(
                     &mut shell,
@@ -966,7 +966,7 @@ mod tests {
                 let mut shell = test_shell();
                 shell.functions.insert(
                     b"myfunc"[..].into(),
-                    crate::syntax::ast::Command::Simple(Default::default()),
+                    std::rc::Rc::new(crate::syntax::ast::Command::Simple(Default::default())),
                 );
                 let outcome = invoke(&mut shell, &[b"type".to_vec(), b"myfunc".to_vec()])
                     .expect("type myfunc");
@@ -1255,7 +1255,7 @@ mod tests {
             let mut shell = test_shell();
             shell.functions.insert(
                 b"myfunc"[..].into(),
-                crate::syntax::ast::Command::Simple(Default::default()),
+                std::rc::Rc::new(crate::syntax::ast::Command::Simple(Default::default())),
             );
             let desc = describe_command(&shell, b"myfunc", false);
             assert_eq!(desc, Some(CommandDescription::Function));

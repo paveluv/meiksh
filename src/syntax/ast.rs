@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use super::ParseError;
 use super::token::{Parser, Token};
 
@@ -96,7 +98,7 @@ pub(crate) struct Redirection {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FunctionDef {
     pub(crate) name: Box<[u8]>,
-    pub(crate) body: Box<Command>,
+    pub(crate) body: Rc<Command>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -429,7 +431,7 @@ impl<'a> Parser<'a> {
                         let body = self.parse_command()?;
                         return Ok(Command::FunctionDef(FunctionDef {
                             name: raw,
-                            body: Box::new(body),
+                            body: Rc::new(body),
                         }));
                     }
                     return Err(self.error(b"syntax error near unexpected token `('"));
@@ -910,7 +912,7 @@ impl<'a> Parser<'a> {
         let body = self.parse_command()?;
         Ok(Command::FunctionDef(FunctionDef {
             name,
-            body: Box::new(body),
+            body: Rc::new(body),
         }))
     }
 
