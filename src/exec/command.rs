@@ -1,6 +1,5 @@
 use std::rc::Rc;
 
-use crate::arena::ByteArena;
 use crate::expand::word;
 use crate::shell::error::ShellError;
 use crate::shell::state::{PendingControl, Shell};
@@ -81,8 +80,7 @@ pub(super) fn execute_redirected(
     redirections: &[crate::syntax::ast::Redirection],
     allow_exec_in_place: bool,
 ) -> Result<i32, ShellError> {
-    let arena = ByteArena::new();
-    let expanded = expand_redirections(shell, redirections, &arena)?;
+    let expanded = expand_redirections(shell, redirections)?;
     if let Some(first) = expanded.first() {
         shell.lineno = first.line;
     }
@@ -192,13 +190,10 @@ pub(super) fn execute_loop(
 }
 
 pub(super) fn execute_for(shell: &mut Shell, for_command: &ForCommand) -> Result<i32, ShellError> {
-    let arena = ByteArena::new();
     let values: Vec<Vec<u8>> = if let Some(items) = &for_command.items {
         let mut values = Vec::new();
         for item in items {
-            for s in word::expand_word(shell, item, &arena).map_err(|e| shell.expand_to_err(e))? {
-                values.push(s.to_vec());
-            }
+            values.extend(word::expand_word(shell, item).map_err(|e| shell.expand_to_err(e))?);
         }
         values
     } else {
@@ -248,17 +243,16 @@ pub(super) fn execute_case(
     shell: &mut Shell,
     case_command: &CaseCommand,
 ) -> Result<i32, ShellError> {
-    let arena = ByteArena::new();
-    let word = word::expand_word_text(shell, &case_command.word, &arena)
-        .map_err(|e| shell.expand_to_err(e))?;
+    let word =
+        word::expand_word_text(shell, &case_command.word).map_err(|e| shell.expand_to_err(e))?;
     let arms = &case_command.arms;
     let mut matched = false;
     for (i, arm) in arms.iter().enumerate() {
         if !matched {
             for pattern in &arm.patterns {
-                let pattern = word::expand_word_pattern(shell, pattern, &arena)
+                let pattern = word::expand_word_pattern(shell, pattern)
                     .map_err(|e| shell.expand_to_err(e))?;
-                if case_pattern_matches(word, pattern) {
+                if case_pattern_matches(&word, &pattern) {
                     matched = true;
                     break;
                 }
@@ -277,7 +271,7 @@ pub(super) fn execute_case(
     Ok(0)
 }
 
-impl<'a> RedirectionRef for ExpandedRedirection<'a> {
+impl RedirectionRef for ExpandedRedirection {
     fn fd(&self) -> i32 {
         self.fd
     }
@@ -285,10 +279,10 @@ impl<'a> RedirectionRef for ExpandedRedirection<'a> {
         self.kind
     }
     fn target(&self) -> &[u8] {
-        self.target
+        &self.target
     }
     fn here_doc_body(&self) -> Option<&[u8]> {
-        self.here_doc_body
+        self.here_doc_body.as_deref()
     }
 }
 

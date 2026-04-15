@@ -1,4 +1,3 @@
-use crate::arena::ByteArena;
 use crate::bstr;
 use crate::expand::word;
 use crate::shell::state::Shell;
@@ -38,9 +37,8 @@ pub(super) fn read_line() -> sys::error::SysResult<Option<Vec<u8>>> {
 pub(super) fn expand_prompt(shell: &mut Shell, var: &[u8], default: &[u8]) -> Vec<u8> {
     let raw = shell.get_var(var).unwrap_or(default).to_vec();
     let histnum = shell.history_number();
-    let arena = ByteArena::new();
-    let expanded = word::expand_parameter_text(shell, &raw, &arena).unwrap_or(&raw);
-    expand_prompt_exclamation(expanded, histnum)
+    let expanded = word::expand_parameter_text(shell, &raw).unwrap_or_else(|_| raw.clone());
+    expand_prompt_exclamation(&expanded, histnum)
 }
 
 pub(super) fn expand_prompt_exclamation(s: &[u8], histnum: usize) -> Vec<u8> {

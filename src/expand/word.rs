@@ -1,6 +1,5 @@
 use std::borrow::Cow;
 
-use crate::arena::ByteArena;
 use crate::bstr;
 use crate::syntax::ast::Word;
 
@@ -12,23 +11,21 @@ use super::model::{
 use super::parameter::{expand_dollar, expand_parameter_dollar};
 use super::pathname::expand_pathname;
 
-pub(crate) fn expand_words<'a, C: Context>(
+pub(crate) fn expand_words<C: Context>(
     ctx: &mut C,
     words: &[Word],
-    arena: &'a ByteArena,
-) -> Result<Vec<&'a [u8]>, ExpandError> {
+) -> Result<Vec<Vec<u8>>, ExpandError> {
     let mut result = Vec::new();
     for word in words {
-        result.extend(expand_word(ctx, word, arena)?);
+        result.extend(expand_word(ctx, word)?);
     }
     Ok(result)
 }
 
-pub(crate) fn expand_word_as_declaration_assignment<'a, C: Context>(
+pub(crate) fn expand_word_as_declaration_assignment<C: Context>(
     ctx: &mut C,
     word: &Word,
-    arena: &'a ByteArena,
-) -> Result<&'a [u8], ExpandError> {
+) -> Result<Vec<u8>, ExpandError> {
     ctx.set_lineno(word.line);
     let value_raw = word_assignment_value(&word.raw).unwrap_or(&word.raw);
     let name = &word.raw[..word.raw.len() - value_raw.len()];
@@ -36,11 +33,11 @@ pub(crate) fn expand_word_as_declaration_assignment<'a, C: Context>(
         raw: value_raw.into(),
         line: word.line,
     };
-    let expanded_value = expand_word_text_assignment(ctx, &value_word, true, arena)?;
+    let expanded_value = expand_word_text_assignment(ctx, &value_word, true)?;
     let mut combined = Vec::with_capacity(name.len() + expanded_value.len());
     combined.extend_from_slice(name);
-    combined.extend_from_slice(expanded_value);
-    Ok(arena.intern_vec(combined))
+    combined.extend_from_slice(&expanded_value);
+    Ok(combined)
 }
 
 pub(crate) fn word_is_assignment(raw: &[u8]) -> bool {
@@ -69,22 +66,20 @@ pub(super) fn word_assignment_value(raw: &[u8]) -> Option<&[u8]> {
     None
 }
 
-pub(crate) fn expand_word<'a, C: Context>(
+pub(crate) fn expand_word<C: Context>(
     ctx: &mut C,
     word: &Word,
-    arena: &'a ByteArena,
-) -> Result<Vec<&'a [u8]>, ExpandError> {
+) -> Result<Vec<Vec<u8>>, ExpandError> {
     ctx.set_lineno(word.line);
     let expanded = expand_raw(ctx, &word.raw)?;
 
     if expanded.has_at_expansion {
-        let fields = expand_word_with_at_fields(&expanded, expanded.had_quoted_null_outside_at)?;
-        return Ok(fields.into_iter().map(|s| arena.intern_vec(s)).collect());
+        return expand_word_with_at_fields(&expanded, expanded.had_quoted_null_outside_at);
     }
 
     if expanded.segments.is_empty() {
         if expanded.had_quoted_content {
-            return Ok(vec![arena.intern_vec(Vec::new())]);
+            return Ok(vec![Vec::new()]);
         }
         return Ok(Vec::new());
     }
@@ -115,29 +110,26 @@ pub(crate) fn expand_word<'a, C: Context>(
         if field.has_unquoted_glob && ctx.pathname_expansion_enabled() {
             let matches = expand_pathname(&field.text);
             if matches.is_empty() {
-                result.push(arena.intern_vec(field.text));
+                result.push(field.text);
             } else {
-                for m in matches {
-                    result.push(arena.intern_vec(m));
-                }
+                result.extend(matches);
             }
         } else {
-            result.push(arena.intern_vec(field.text));
+            result.push(field.text);
         }
     }
     Ok(result)
 }
 
-pub(crate) fn expand_redirect_word<'a, C: Context>(
+pub(crate) fn expand_redirect_word<C: Context>(
     ctx: &mut C,
     word: &Word,
-    arena: &'a ByteArena,
-) -> Result<&'a [u8], ExpandError> {
+) -> Result<Vec<u8>, ExpandError> {
     ctx.set_lineno(word.line);
     let expanded = expand_raw(ctx, &word.raw)?;
 
     if expanded.segments.is_empty() {
-        return Ok(arena.intern_vec(Vec::new()));
+        return Ok(Vec::new());
     }
 
     let has_expanded = expanded
@@ -155,10 +147,10 @@ pub(crate) fn expand_redirect_word<'a, C: Context>(
         }]
     };
 
-    Ok(arena.intern_vec(bstr::join_bstrings(
+    Ok(bstr::join_bstrings(
         &fields.into_iter().map(|f| f.text).collect::<Vec<_>>(),
         b" ",
-    )))
+    ))
 }
 
 pub(super) fn expand_word_with_at_fields(
@@ -206,43 +198,39 @@ pub(super) fn expand_word_with_at_fields(
     Ok(fields)
 }
 
-pub(crate) fn expand_word_text<'a, C: Context>(
+pub(crate) fn expand_word_text<C: Context>(
     ctx: &mut C,
     word: &Word,
-    arena: &'a ByteArena,
-) -> Result<&'a [u8], ExpandError> {
+) -> Result<Vec<u8>, ExpandError> {
     ctx.set_lineno(word.line);
-    expand_word_text_assignment(ctx, word, false, arena)
+    expand_word_text_assignment(ctx, word, false)
 }
 
-pub(crate) fn expand_word_pattern<'a, C: Context>(
+pub(crate) fn expand_word_pattern<C: Context>(
     ctx: &mut C,
     word: &Word,
-    arena: &'a ByteArena,
-) -> Result<&'a [u8], ExpandError> {
+) -> Result<Vec<u8>, ExpandError> {
     ctx.set_lineno(word.line);
     let expanded = expand_raw(ctx, &word.raw)?;
-    Ok(arena.intern_vec(render_pattern_from_segments(&expanded.segments)))
+    Ok(render_pattern_from_segments(&expanded.segments))
 }
 
-pub(crate) fn expand_assignment_value<'a, C: Context>(
+pub(crate) fn expand_assignment_value<C: Context>(
     ctx: &mut C,
     word: &Word,
-    arena: &'a ByteArena,
-) -> Result<&'a [u8], ExpandError> {
+) -> Result<Vec<u8>, ExpandError> {
     ctx.set_lineno(word.line);
-    expand_word_text_assignment(ctx, word, true, arena)
+    expand_word_text_assignment(ctx, word, true)
 }
 
-pub(super) fn expand_word_text_assignment<'a, C: Context>(
+pub(super) fn expand_word_text_assignment<C: Context>(
     ctx: &mut C,
     word: &Word,
     assignment_rhs: bool,
-    arena: &'a ByteArena,
-) -> Result<&'a [u8], ExpandError> {
+) -> Result<Vec<u8>, ExpandError> {
     if !assignment_rhs {
         let expanded = expand_raw(ctx, &word.raw)?;
-        return Ok(arena.intern_vec(flatten_segments(&expanded.segments)));
+        return Ok(flatten_segments(&expanded.segments));
     }
     let raw = &word.raw;
     let mut result = Vec::new();
@@ -255,7 +243,7 @@ pub(super) fn expand_word_text_assignment<'a, C: Context>(
         let expanded = expand_raw(ctx, &part)?;
         result.extend_from_slice(&flatten_segments(&expanded.segments));
     }
-    Ok(arena.intern_vec(result))
+    Ok(result)
 }
 
 pub(super) fn split_on_unquoted_colons(raw: &[u8]) -> Vec<Vec<u8>> {
@@ -336,12 +324,11 @@ pub(super) fn split_on_unquoted_colons(raw: &[u8]) -> Vec<Vec<u8>> {
     parts
 }
 
-pub(crate) fn expand_parameter_text<'a, C: Context>(
+pub(crate) fn expand_parameter_text<C: Context>(
     ctx: &mut C,
     raw: &[u8],
-    arena: &'a ByteArena,
-) -> Result<&'a [u8], ExpandError> {
-    Ok(arena.intern_vec(expand_parameter_text_owned(ctx, raw)?))
+) -> Result<Vec<u8>, ExpandError> {
+    expand_parameter_text_owned(ctx, raw)
 }
 
 pub(super) fn expand_parameter_text_owned<C: Context>(
@@ -635,12 +622,11 @@ pub(super) fn scan_backtick_command(
     })
 }
 
-pub(crate) fn expand_here_document<'a, C: Context>(
+pub(crate) fn expand_here_document<C: Context>(
     ctx: &mut C,
     text: &[u8],
     body_line: usize,
-    arena: &'a ByteArena,
-) -> Result<&'a [u8], ExpandError> {
+) -> Result<Vec<u8>, ExpandError> {
     ctx.set_lineno(body_line);
     let mut result = Vec::new();
     let mut index = 0usize;
@@ -692,13 +678,12 @@ pub(crate) fn expand_here_document<'a, C: Context>(
         }
     }
 
-    Ok(arena.intern_vec(result))
+    Ok(result)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::arena::ByteArena;
     use crate::expand::arithmetic::{
         ArithmeticParser, eval_arithmetic, expand_arithmetic_expression,
     };
@@ -712,7 +697,6 @@ mod tests {
 
     #[test]
     fn expands_home_and_params() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
@@ -720,15 +704,13 @@ mod tests {
                 raw: b"~/$USER".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect("expand");
-        assert_eq!(fields, vec![b"/tmp/home/meiksh".as_ref()]);
+        assert_eq!(fields, vec![b"/tmp/home/meiksh".to_vec()]);
     }
 
     #[test]
     fn expands_arithmetic_expressions() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
@@ -737,16 +719,14 @@ mod tests {
                     raw: b"$((1 + 2 * 3))".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("expand"),
-            vec![b"7".as_ref()]
+            vec![b"7".to_vec()]
         );
     }
 
     #[test]
     fn expands_command_substitution() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_words(
@@ -761,22 +741,20 @@ mod tests {
                         line: 0
                     },
                 ],
-                &arena,
             )
             .expect("expand"),
             vec![
-                b"one".as_ref(),
-                b"two".as_ref(),
-                b"three".as_ref(),
-                b"printf".as_ref(),
-                b"hi".as_ref(),
+                b"one".to_vec(),
+                b"two".to_vec(),
+                b"three".to_vec(),
+                b"printf".to_vec(),
+                b"hi".to_vec(),
             ]
         );
     }
 
     #[test]
     fn preserves_quoted_and_escaped_characters() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
@@ -785,10 +763,9 @@ mod tests {
                     raw: b"\"$0 $1\"".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("expand"),
-            vec![b"meiksh alpha".as_ref()]
+            vec![b"meiksh alpha".to_vec()]
         );
         assert_eq!(
             expand_word(
@@ -797,10 +774,9 @@ mod tests {
                     raw: b"\\$HOME".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("expand"),
-            vec![b"$HOME".as_ref()]
+            vec![b"$HOME".to_vec()]
         );
         assert_eq!(
             expand_word(
@@ -809,10 +785,9 @@ mod tests {
                     raw: b"a\\ b".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("expand"),
-            vec![b"a b".as_ref()]
+            vec![b"a b".to_vec()]
         );
         assert_eq!(
             expand_word(
@@ -821,10 +796,9 @@ mod tests {
                     raw: b"'literal text'".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("expand"),
-            vec![b"literal text".as_ref()]
+            vec![b"literal text".to_vec()]
         );
         assert_eq!(
             expand_word(
@@ -833,10 +807,9 @@ mod tests {
                     raw: b"\"cost:\\$USER\"".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("expand"),
-            vec![b"cost:$USER".as_ref()]
+            vec![b"cost:$USER".to_vec()]
         );
         assert_eq!(
             expand_word(
@@ -845,10 +818,9 @@ mod tests {
                     raw: b"$'a b'".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("expand"),
-            vec![b"a b".as_ref()]
+            vec![b"a b".to_vec()]
         );
         assert_eq!(
             expand_word(
@@ -857,10 +829,9 @@ mod tests {
                     raw: b"$'line\\nnext'".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("expand"),
-            vec![b"line\nnext".as_ref()]
+            vec![b"line\nnext".to_vec()]
         );
         assert_eq!(
             expand_word(
@@ -869,20 +840,18 @@ mod tests {
                     raw: b"\"$'a b'\"".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("expand"),
-            vec![b"$'a b'".as_ref()]
+            vec![b"$'a b'".to_vec()]
         );
         assert_eq!(
-            expand_parameter_text(&mut ctx, b"$'tab\\tstop'", &arena).expect("parameter text"),
+            expand_parameter_text(&mut ctx, b"$'tab\\tstop'").expect("parameter text"),
             b"tab\tstop".as_ref()
         );
     }
 
     #[test]
     fn rejects_unterminated_quotes_and_expansions() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         for raw in [
             b"'oops".as_ref(),
@@ -898,7 +867,6 @@ mod tests {
                     raw: raw.into(),
                     line: 0,
                 },
-                &arena,
             )
             .expect_err("error");
             assert!(!error.message.is_empty());
@@ -907,7 +875,6 @@ mod tests {
 
     #[test]
     fn rejects_bad_arithmetic() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         for raw in [b"$((1 / 0))".as_ref(), b"$((1 + ))", b"$((1 1))"] {
             let error = expand_word(
@@ -916,7 +883,6 @@ mod tests {
                     raw: raw.into(),
                     line: 0,
                 },
-                &arena,
             )
             .expect_err("error");
             assert!(!error.message.is_empty());
@@ -993,7 +959,6 @@ mod tests {
 
     #[test]
     fn quoted_at_produces_separate_fields() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.positional = vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()];
         assert_eq!(
@@ -1003,10 +968,9 @@ mod tests {
                     raw: b"\"$@\"".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("quoted at 3"),
-            vec![b"a".as_ref(), b"b", b"c"]
+            vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()]
         );
 
         ctx.positional = vec![b"one".to_vec()];
@@ -1017,10 +981,9 @@ mod tests {
                     raw: b"\"$@\"".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("quoted at 1"),
-            vec![b"one".as_ref()]
+            vec![b"one".to_vec()]
         );
 
         ctx.positional = Vec::new();
@@ -1031,7 +994,6 @@ mod tests {
                     raw: b"\"$@\"".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("quoted at 0"),
             Vec::<&[u8]>::new()
@@ -1040,7 +1002,6 @@ mod tests {
 
     #[test]
     fn quoted_at_with_prefix_and_suffix() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.positional = vec![b"a".to_vec(), b"b".to_vec()];
         assert_eq!(
@@ -1050,10 +1011,9 @@ mod tests {
                     raw: b"\"pre$@suf\"".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("prefix suffix"),
-            vec![b"prea".as_ref(), b"bsuf"]
+            vec![b"prea".to_vec(), b"bsuf".to_vec()]
         );
 
         ctx.positional = vec![b"only".to_vec()];
@@ -1064,10 +1024,9 @@ mod tests {
                     raw: b"\"[$@]\"".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("brackets one"),
-            vec![b"[only]".as_ref()]
+            vec![b"[only]".to_vec()]
         );
 
         ctx.positional = Vec::new();
@@ -1078,16 +1037,14 @@ mod tests {
                     raw: b"\"pre$@suf\"".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("prefix empty"),
-            vec![b"presuf".as_ref()]
+            vec![b"presuf".to_vec()]
         );
     }
 
     #[test]
     fn quoted_at_at_produces_merged_fields() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.positional = vec![b"a".to_vec(), b"b".to_vec()];
         assert_eq!(
@@ -1097,16 +1054,14 @@ mod tests {
                     raw: b"\"$@$@\"".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("at at"),
-            vec![b"a".as_ref(), b"ba", b"b"]
+            vec![b"a".to_vec(), b"ba".to_vec(), b"b".to_vec()]
         );
     }
 
     #[test]
     fn quoted_star_joins_with_ifs() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.positional = vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()];
         ctx.env.insert(b"IFS".to_vec(), b":".to_vec());
@@ -1117,10 +1072,9 @@ mod tests {
                     raw: b"\"$*\"".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("star colon"),
-            vec![b"a:b:c".as_ref()]
+            vec![b"a:b:c".to_vec()]
         );
 
         ctx.env.insert(b"IFS".to_vec(), Vec::new());
@@ -1131,10 +1085,9 @@ mod tests {
                     raw: b"\"$*\"".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("star empty ifs"),
-            vec![b"abc".as_ref()]
+            vec![b"abc".to_vec()]
         );
 
         ctx.env.remove(b"IFS".as_ref());
@@ -1145,16 +1098,14 @@ mod tests {
                     raw: b"\"$*\"".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("star unset ifs"),
-            vec![b"a b c".as_ref()]
+            vec![b"a b c".to_vec()]
         );
     }
 
     #[test]
     fn backtick_command_substitution_in_expander() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
@@ -1163,10 +1114,9 @@ mod tests {
                     raw: b"`echo hello`".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("backtick"),
-            vec![b"echo".as_ref(), b"hello"]
+            vec![b"echo".to_vec(), b"hello".to_vec()]
         );
         assert_eq!(
             expand_word(
@@ -1175,16 +1125,14 @@ mod tests {
                     raw: b"\"`echo hello`\"".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("quoted bt"),
-            vec![b"echo hello".as_ref()]
+            vec![b"echo hello".to_vec()]
         );
     }
 
     #[test]
     fn backtick_backslash_escapes() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word_text(
@@ -1193,7 +1141,6 @@ mod tests {
                     raw: b"`echo \\$USER`".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("escaped dollar"),
             b"echo $USER"
@@ -1205,7 +1152,6 @@ mod tests {
                     raw: b"\"`echo \\$USER`\"".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("escaped dollar dq"),
             b"echo $USER"
@@ -1214,16 +1160,14 @@ mod tests {
 
     #[test]
     fn here_document_expands_at_sign() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.positional = vec![b"x".to_vec(), b"y".to_vec()];
-        let result = expand_here_document(&mut ctx, b"$@\n", 0, &arena).expect("heredoc at");
+        let result = expand_here_document(&mut ctx, b"$@\n", 0).expect("heredoc at");
         assert_eq!(result, b"x y\n");
     }
 
     #[test]
     fn expand_word_empty_quoted_at_with_other_quoted() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.positional = Vec::new();
         assert_eq!(
@@ -1233,16 +1177,14 @@ mod tests {
                     raw: b"\"\"\"$@\"".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("empty at dq"),
-            vec![b"".as_ref()]
+            vec![b"".to_vec()]
         );
     }
 
     #[test]
     fn backtick_inside_double_quotes_with_buffer() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
@@ -1251,10 +1193,9 @@ mod tests {
                     raw: b"\"hello `echo world`\"".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("bt dq buffer"),
-            vec![b"hello echo world".as_ref()]
+            vec![b"hello echo world".to_vec()]
         );
     }
 
@@ -1275,10 +1216,9 @@ mod tests {
 
     #[test]
     fn here_document_with_at_expansion() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.positional = vec![b"a".to_vec(), b"b".to_vec()];
-        let result = expand_here_document(&mut ctx, b"args: $@\n", 0, &arena).expect("heredoc @");
+        let result = expand_here_document(&mut ctx, b"args: $@\n", 0).expect("heredoc @");
         assert_eq!(result, b"args: a b\n");
     }
 
@@ -1292,7 +1232,6 @@ mod tests {
 
     #[test]
     fn colon_question_error_with_null_value() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert(b"NULL".to_vec(), Vec::new());
         let err = expand_word(
@@ -1301,7 +1240,6 @@ mod tests {
                 raw: b"${NULL:?is null}".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect_err(":? with null");
         assert_eq!(&*err.message, b"is null".as_ref());
@@ -1313,7 +1251,6 @@ mod tests {
                 raw: b"${NULL:?$NOVAR}".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect_err(":? nounset propagation");
         assert_eq!(&*err.message, b"NOVAR: parameter not set".as_ref());
@@ -1324,7 +1261,6 @@ mod tests {
                 raw: b"${NOEXIST?$NOVAR}".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect_err("? nounset propagation");
         assert_eq!(&*err.message, b"NOVAR: parameter not set".as_ref());
@@ -1332,7 +1268,6 @@ mod tests {
 
     #[test]
     fn question_error_with_unset_default_message() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let err = expand_word(
             &mut ctx,
@@ -1340,7 +1275,6 @@ mod tests {
                 raw: b"${NOVAR?}".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect_err("? with unset");
         assert_eq!(&*err.message, b"NOVAR: parameter not set".as_ref());
@@ -1353,7 +1287,6 @@ mod tests {
                     raw: b"${SET:?no error}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect(":? success"),
             b"val"
@@ -1365,7 +1298,6 @@ mod tests {
                     raw: b"${SET?no error}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("? success"),
             b"val"
@@ -1377,7 +1309,6 @@ mod tests {
                 raw: b"${NOVAR:?}".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect_err(":? with unset");
         assert_eq!(
@@ -1388,7 +1319,6 @@ mod tests {
 
     #[test]
     fn dquote_backslash_preserves_literal_for_non_special_chars() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
@@ -1396,15 +1326,13 @@ mod tests {
                 raw: b"\"\\a\\b\\c\"".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect("dquote bs");
-        assert_eq!(fields, vec![b"\\a\\b\\c".as_ref()]);
+        assert_eq!(fields, vec![b"\\a\\b\\c".to_vec()]);
     }
 
     #[test]
     fn dquote_backslash_escapes_special_chars() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
@@ -1413,10 +1341,9 @@ mod tests {
                     raw: b"\"\\$\"".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("escape $"),
-            vec![b"$".as_ref()]
+            vec![b"$".to_vec()]
         );
         assert_eq!(
             expand_word(
@@ -1425,10 +1352,9 @@ mod tests {
                     raw: b"\"\\\\\"".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("escape bs"),
-            vec![b"\\".as_ref()]
+            vec![b"\\".to_vec()]
         );
         assert_eq!(
             expand_word(
@@ -1437,10 +1363,9 @@ mod tests {
                     raw: b"\"\\\"\"".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("escape dq"),
-            vec![b"\"".as_ref()],
+            vec![b"\"".to_vec()],
         );
         assert_eq!(
             expand_word(
@@ -1449,16 +1374,14 @@ mod tests {
                     raw: b"\"\\`\"".as_ref().into(),
                     line: 0,
                 },
-                &arena,
             )
             .expect("escape bt"),
-            vec![b"`".as_ref()]
+            vec![b"`".to_vec()]
         );
     }
 
     #[test]
     fn dquote_backslash_newline_is_line_continuation() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
@@ -1466,15 +1389,13 @@ mod tests {
                 raw: b"\"ab\\\ncd\"".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect("line continuation");
-        assert_eq!(fields, vec![b"abcd".as_ref()]);
+        assert_eq!(fields, vec![b"abcd".to_vec()]);
     }
 
     #[test]
     fn tilde_user_expansion() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
@@ -1482,15 +1403,13 @@ mod tests {
                 raw: b"~testuser/bin".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect("tilde user");
-        assert_eq!(fields, vec![b"/home/testuser/bin".as_ref()]);
+        assert_eq!(fields, vec![b"/home/testuser/bin".to_vec()]);
     }
 
     #[test]
     fn tilde_unknown_user_preserved() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
@@ -1498,15 +1417,13 @@ mod tests {
                 raw: b"~nosuchuser/dir".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect("tilde unknown");
-        assert_eq!(fields, vec![b"~nosuchuser/dir".as_ref()]);
+        assert_eq!(fields, vec![b"~nosuchuser/dir".to_vec()]);
     }
 
     #[test]
     fn tilde_user_without_slash() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
@@ -1514,15 +1431,13 @@ mod tests {
                 raw: b"~testuser".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect("tilde user no slash");
-        assert_eq!(fields, vec![b"/home/testuser".as_ref()]);
+        assert_eq!(fields, vec![b"/home/testuser".to_vec()]);
     }
 
     #[test]
     fn tilde_after_colon_in_assignment() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let result = expand_assignment_value(
             &mut ctx,
@@ -1530,7 +1445,6 @@ mod tests {
                 raw: b"~/bin:~testuser/lib".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect("tilde colon");
         assert_eq!(result, b"/tmp/home/bin:/home/testuser/lib");
@@ -1562,7 +1476,6 @@ mod tests {
 
     #[test]
     fn dquote_trailing_backslash_is_literal() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
@@ -1570,14 +1483,12 @@ mod tests {
                 raw: b"\"abc\\".as_ref().into(),
                 line: 0,
             },
-            &arena,
         );
         assert!(fields.is_err());
     }
 
     #[test]
     fn tilde_with_quoted_char_breaks_tilde_prefix() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
@@ -1585,15 +1496,13 @@ mod tests {
                 raw: b"~'user'".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect("tilde quoted");
-        assert_eq!(fields, vec![b"~user".as_ref()]);
+        assert_eq!(fields, vec![b"~user".to_vec()]);
     }
 
     #[test]
     fn tilde_colon_assignment_with_quotes() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let result = expand_assignment_value(
             &mut ctx,
@@ -1601,7 +1510,6 @@ mod tests {
                 raw: b"~/a:'literal:colon'".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect("colon assign with quotes");
         assert_eq!(result, b"/tmp/home/a:literal:colon");
@@ -1609,7 +1517,6 @@ mod tests {
 
     #[test]
     fn expand_word_quoted_null_adjacent_to_empty_at() {
-        let arena = ByteArena::new();
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
             ctx.positional = Vec::new();
@@ -1620,17 +1527,15 @@ mod tests {
                         raw: b"''\"$@\"".as_ref().into(),
                         line: 0
                     },
-                    &arena,
                 )
                 .unwrap(),
-                vec![b"".as_ref()]
+                vec![b"".to_vec()]
             );
         });
     }
 
     #[test]
     fn redirect_word_empty_expansion() {
-        let arena = ByteArena::new();
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
             let result = expand_redirect_word(
@@ -1639,7 +1544,6 @@ mod tests {
                     raw: b"$UNSET_VAR".as_ref().into(),
                     line: 0,
                 },
-                &arena,
             )
             .expect("redirect word empty");
             assert_eq!(result, b"");
@@ -1648,11 +1552,10 @@ mod tests {
 
     #[test]
     fn here_doc_backtick_substitution() {
-        let arena = ByteArena::new();
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
-            let result = expand_here_document(&mut ctx, b"`echo ok`\n", 0, &arena)
-                .expect("here doc backtick");
+            let result =
+                expand_here_document(&mut ctx, b"`echo ok`\n", 0).expect("here doc backtick");
             assert_eq!(result, b"echo ok\n");
         });
     }
@@ -1678,7 +1581,6 @@ mod tests {
 
     #[test]
     fn newline_inside_single_quote_increments_lineno() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
@@ -1686,15 +1588,13 @@ mod tests {
                 raw: b"'hello\nworld'".as_ref().into(),
                 line: 1,
             },
-            &arena,
         )
         .expect("single quote newline");
-        assert_eq!(fields, vec![b"hello\nworld".as_ref()]);
+        assert_eq!(fields, vec![b"hello\nworld".to_vec()]);
     }
 
     #[test]
     fn newline_inside_double_quote_increments_lineno() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
@@ -1702,15 +1602,13 @@ mod tests {
                 raw: b"\"hello\nworld\"".as_ref().into(),
                 line: 1,
             },
-            &arena,
         )
         .expect("double quote newline");
-        assert_eq!(fields, vec![b"hello\nworld".as_ref()]);
+        assert_eq!(fields, vec![b"hello\nworld".to_vec()]);
     }
 
     #[test]
     fn backslash_newline_inside_double_quote() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
@@ -1718,15 +1616,13 @@ mod tests {
                 raw: b"\"a\\\nb\"".as_ref().into(),
                 line: 1,
             },
-            &arena,
         )
         .expect("backslash newline in dquote");
-        assert_eq!(fields, vec![b"ab".as_ref()]);
+        assert_eq!(fields, vec![b"ab".to_vec()]);
     }
 
     #[test]
     fn backslash_escape_in_unquoted_context() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
@@ -1734,15 +1630,13 @@ mod tests {
                 raw: b"\\a\\b".as_ref().into(),
                 line: 1,
             },
-            &arena,
         )
         .expect("backslash escape");
-        assert_eq!(fields, vec![b"ab".as_ref()]);
+        assert_eq!(fields, vec![b"ab".to_vec()]);
     }
 
     #[test]
     fn backslash_newline_in_unquoted_context() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
@@ -1750,7 +1644,6 @@ mod tests {
                 raw: b"a\\\nb".as_ref().into(),
                 line: 1,
             },
-            &arena,
         )
         .expect("backslash newline unquoted");
         assert_eq!(fields.len(), 1);
@@ -1759,7 +1652,6 @@ mod tests {
 
     #[test]
     fn trailing_backslash_in_unquoted_context() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
@@ -1767,15 +1659,13 @@ mod tests {
                 raw: b"a\\".as_ref().into(),
                 line: 1,
             },
-            &arena,
         )
         .expect("trailing backslash");
-        assert_eq!(fields, vec![b"a".as_ref()]);
+        assert_eq!(fields, vec![b"a".to_vec()]);
     }
 
     #[test]
     fn bare_newline_in_unquoted_context() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
@@ -1783,7 +1673,6 @@ mod tests {
                 raw: b"hello\nworld".as_ref().into(),
                 line: 1,
             },
-            &arena,
         )
         .expect("bare newline");
         assert_eq!(fields.len(), 1);
@@ -1792,7 +1681,6 @@ mod tests {
 
     #[test]
     fn arithmetic_nounset_rejects_unset_variable() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.nounset_enabled = true;
         let result = expand_word(
@@ -1801,7 +1689,6 @@ mod tests {
                 raw: b"$((nosuch_var))".as_ref().into(),
                 line: 0,
             },
-            &arena,
         );
         assert!(result.is_err());
     }

@@ -911,7 +911,6 @@ pub(super) fn is_name(name: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::arena::ByteArena;
     use crate::expand::model::Expansion;
     use crate::expand::test_support::{DefaultPathContext, FakeContext, expect_one};
     use crate::expand::word::{expand_parameter_text, expand_word, expand_word_text};
@@ -965,7 +964,6 @@ mod tests {
 
     #[test]
     fn supports_parameter_operators_and_positionals() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.positional = vec![
             b"a".to_vec(),
@@ -987,7 +985,6 @@ mod tests {
                     raw: b"${10}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("expand"),
             vec![b"j".as_ref()]
@@ -998,8 +995,7 @@ mod tests {
                 &Word {
                     raw: b"$10".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .expect("expand"),
             vec![b"a0".as_ref()]
@@ -1011,7 +1007,6 @@ mod tests {
                     raw: b"${#10}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("expand"),
             vec![b"1".as_ref()]
@@ -1023,8 +1018,7 @@ mod tests {
                 &Word {
                     raw: b"$*".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .expect("expand"),
             vec![
@@ -1047,7 +1041,6 @@ mod tests {
                     raw: b"\"$*\"".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("expand"),
             vec![b"a:b:c:d:e:f:g:h:i:j".as_ref()]
@@ -1059,7 +1052,6 @@ mod tests {
                     raw: b"${UNSET-word}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("expand"),
             vec![b"word".as_ref()]
@@ -1071,7 +1063,6 @@ mod tests {
                     raw: b"${UNSET:-word}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("expand"),
             vec![b"word".as_ref()]
@@ -1083,7 +1074,6 @@ mod tests {
                     raw: b"${EMPTY-word}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("expand"),
             Vec::<&[u8]>::new()
@@ -1095,7 +1085,6 @@ mod tests {
                     raw: b"${EMPTY:-word}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("expand"),
             vec![b"word".as_ref()]
@@ -1107,7 +1096,6 @@ mod tests {
                     raw: b"${USER:+alt}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("expand"),
             vec![b"alt".as_ref()]
@@ -1119,7 +1107,6 @@ mod tests {
                     raw: b"${UNSET+alt}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("expand"),
             Vec::<&[u8]>::new()
@@ -1131,7 +1118,6 @@ mod tests {
                     raw: b"${NEW:=value}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("expand"),
             vec![b"value".as_ref()]
@@ -1146,8 +1132,7 @@ mod tests {
                 &Word {
                     raw: b"${#}".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .expect("expand"),
             vec![b"10".as_ref()]
@@ -1159,7 +1144,6 @@ mod tests {
                 raw: b"${UNSET:?boom}".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect_err("unset error");
         assert_eq!(&*error.message, b"boom".as_ref());
@@ -1170,7 +1154,6 @@ mod tests {
                 raw: b"${UNSET:?$'unterminated}".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect_err("colon-question word expansion error");
         assert!(!error.message.is_empty());
@@ -1181,7 +1164,6 @@ mod tests {
                 raw: b"${MISSING?$'unterminated}".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect_err("plain-question word expansion error");
         assert!(!error.message.is_empty());
@@ -1189,7 +1171,6 @@ mod tests {
 
     #[test]
     fn nounset_option_rejects_plain_unset_parameter_expansions() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.nounset_enabled = true;
 
@@ -1199,7 +1180,6 @@ mod tests {
                 raw: b"$UNSET".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect_err("nounset variable");
         assert_eq!(&*error.message, b"UNSET: parameter not set".as_ref());
@@ -1210,7 +1190,6 @@ mod tests {
                 raw: b"${UNSET}".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect_err("nounset braced");
         assert_eq!(&*error.message, b"UNSET: parameter not set".as_ref());
@@ -1221,7 +1200,6 @@ mod tests {
                 raw: b"$9".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect_err("nounset positional");
         assert_eq!(&*error.message, b"9: parameter not set".as_ref());
@@ -1233,7 +1211,6 @@ mod tests {
                     raw: b"${UNSET-word}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("default still works"),
             vec![b"word".as_ref()]
@@ -1245,7 +1222,6 @@ mod tests {
                     raw: b"\"$*\"".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("star exempt"),
             vec![b"alpha beta".as_ref()]
@@ -1290,24 +1266,20 @@ mod tests {
 
     #[test]
     fn parameter_text_expansion_avoids_command_substitution() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert(b"HOME".to_vec(), b"/tmp/home".to_vec());
         ctx.env.insert(b"EMPTY".to_vec(), Vec::new());
 
         assert_eq!(
-            expand_parameter_text(&mut ctx, b"${HOME:-/fallback}/.shrc", &arena)
-                .expect("parameter text"),
+            expand_parameter_text(&mut ctx, b"${HOME:-/fallback}/.shrc").expect("parameter text"),
             b"/tmp/home/.shrc"
         );
         assert_eq!(
-            expand_parameter_text(&mut ctx, b"${EMPTY:-$HOME}/nested", &arena)
-                .expect("nested default"),
+            expand_parameter_text(&mut ctx, b"${EMPTY:-$HOME}/nested").expect("nested default"),
             b"/tmp/home/nested"
         );
         assert_eq!(
-            expand_parameter_text(&mut ctx, b"$(printf nope)${HOME}", &arena)
-                .expect("literal command"),
+            expand_parameter_text(&mut ctx, b"$(printf nope)${HOME}").expect("literal command"),
             b"$(printf nope)/tmp/home"
         );
     }
@@ -1573,7 +1545,6 @@ mod tests {
 
     #[test]
     fn supports_pattern_removal_parameter_expansions() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.env
             .insert(b"PATHNAME".to_vec(), b"src/bin/main.rs".to_vec());
@@ -1587,7 +1558,6 @@ mod tests {
                     raw: b"${PATHNAME#*/}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("small prefix"),
             vec![b"bin/main.rs".as_ref()]
@@ -1599,7 +1569,6 @@ mod tests {
                     raw: b"${PATHNAME##*/}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("large prefix"),
             vec![b"main.rs".as_ref()]
@@ -1611,7 +1580,6 @@ mod tests {
                     raw: b"${PATHNAME%/*}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("small suffix"),
             vec![b"src/bin".as_ref()]
@@ -1623,7 +1591,6 @@ mod tests {
                     raw: b"${PATHNAME%%/*}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("large suffix"),
             vec![b"src".as_ref()]
@@ -1635,7 +1602,6 @@ mod tests {
                     raw: b"${PATHNAME#\"src/\"}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("quoted pattern"),
             vec![b"bin/main.rs".as_ref()]
@@ -1647,7 +1613,6 @@ mod tests {
                     raw: b"${DOTTED#*.}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("wildcard prefix"),
             vec![b"beta.gamma".as_ref()]
@@ -1659,7 +1624,6 @@ mod tests {
                     raw: b"${DOTTED##*.}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("largest wildcard prefix"),
             vec![b"gamma".as_ref()]
@@ -1671,7 +1635,6 @@ mod tests {
                     raw: b"${DOTTED%.*}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("wildcard suffix"),
             vec![b"alpha.beta".as_ref()]
@@ -1683,7 +1646,6 @@ mod tests {
                     raw: b"${DOTTED%%.*}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("largest wildcard suffix"),
             vec![b"alpha".as_ref()]
@@ -1695,7 +1657,6 @@ mod tests {
                     raw: b"${DOTTED#\"*.\"}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("quoted wildcard"),
             vec![b"alpha.beta.gamma".as_ref()]
@@ -1707,7 +1668,6 @@ mod tests {
                     raw: b"${DOTTED%}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("empty suffix pattern"),
             vec![b"alpha.beta.gamma".as_ref()]
@@ -1719,7 +1679,6 @@ mod tests {
                     raw: b"${MISSING%%*.}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("unset value"),
             Vec::<&[u8]>::new()
@@ -1728,7 +1687,6 @@ mod tests {
 
     #[test]
     fn brace_scanning_respects_quotes_and_nesting() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert(b"VAR".to_vec(), Vec::new());
 
@@ -1739,7 +1697,6 @@ mod tests {
                     raw: b"${VAR:-\"a}b\"}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("quoted brace in default"),
             b"a}b"
@@ -1752,7 +1709,6 @@ mod tests {
                     raw: b"${VAR:-$(echo ok)}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("command sub in brace"),
             b"echo ok"
@@ -1765,7 +1721,6 @@ mod tests {
                     raw: b"${VAR:-$((1+2))}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("arith in brace"),
             b"3"
@@ -1779,7 +1734,6 @@ mod tests {
                     raw: b"${VAR:-${INNER}}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("nested brace"),
             b"val"
@@ -1792,7 +1746,6 @@ mod tests {
                     raw: b"${VAR:-`echo hi`}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("backtick in brace"),
             b"echo hi"
@@ -1805,7 +1758,6 @@ mod tests {
                     raw: b"${VAR:-'a}b'}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("single quote in brace"),
             b"a}b"
@@ -1818,7 +1770,6 @@ mod tests {
                     raw: b"${VAR:-\\}}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("escaped brace"),
             b"}"
@@ -1827,7 +1778,6 @@ mod tests {
 
     #[test]
     fn error_parameter_expansion_operators() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let error = expand_word(
             &mut ctx,
@@ -1835,7 +1785,6 @@ mod tests {
                 raw: b"${UNSET:?custom error}".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect_err("colon question");
         assert_eq!(&*error.message, b"custom error".as_ref());
@@ -1846,7 +1795,6 @@ mod tests {
                 raw: b"${UNSET?also error}".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect_err("question");
         assert_eq!(&*error.message, b"also error".as_ref());
@@ -1860,7 +1808,6 @@ mod tests {
 
     #[test]
     fn brace_scanning_handles_complex_nesting() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert(b"VAR".to_vec(), Vec::new());
 
@@ -1871,7 +1818,6 @@ mod tests {
                     raw: b"${VAR:-$((2+3))}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("arith in brace scan"),
             b"5"
@@ -1884,7 +1830,6 @@ mod tests {
                     raw: b"${VAR:-$(echo deep)}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("cmd sub in brace scan"),
             b"echo deep"
@@ -1897,7 +1842,6 @@ mod tests {
                     raw: b"${VAR:-`echo bt`}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("backtick in brace scan"),
             b"echo bt"
@@ -1910,7 +1854,6 @@ mod tests {
                     raw: b"${VAR:-\"inside\"}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("dq in brace scan with escape"),
             b"inside"
@@ -1919,7 +1862,6 @@ mod tests {
 
     #[test]
     fn error_parameter_expansion_with_null_or_not_set() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert(b"EMPTY".to_vec(), Vec::new());
 
@@ -1929,7 +1871,6 @@ mod tests {
                 raw: b"${EMPTY:?null or unset}".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect_err("colon question null");
         assert_eq!(&*err.message, b"null or unset".as_ref());
@@ -1940,7 +1881,6 @@ mod tests {
                 raw: b"\"${EMPTY?not an error}\"".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect("question set but empty");
         assert_eq!(ok, vec![b"".as_ref()]);
@@ -1951,7 +1891,6 @@ mod tests {
                 raw: b"${NOEXIST?custom msg}".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect_err("question unset");
         assert_eq!(&*err.message, b"custom msg".as_ref());
@@ -1959,7 +1898,6 @@ mod tests {
 
     #[test]
     fn brace_scanning_with_arith_and_cmd_sub_and_backtick() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert(b"V".to_vec(), Vec::new());
 
@@ -1970,7 +1908,6 @@ mod tests {
                     raw: b"${V:-$((1+(2*3)))}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("nested arith in scan"),
             b"7"
@@ -1983,7 +1920,6 @@ mod tests {
                     raw: b"${V:-$(echo (hi))}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("nested cmd sub in scan"),
             b"echo (hi)"
@@ -1996,7 +1932,6 @@ mod tests {
                     raw: b"${V:-`echo \\\\x`}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("bt escape in scan"),
             b"echo \\x"
@@ -2009,7 +1944,6 @@ mod tests {
                     raw: b"${V:-\"q\\}x\"}".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("dq escape in scan"),
             b"q}x"

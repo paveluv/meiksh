@@ -22,18 +22,18 @@ pub(super) fn join_boxed_bytes(parts: &[Box<[u8]>], sep: u8) -> Vec<u8> {
 }
 
 #[derive(Debug)]
-pub(super) struct ExpandedSimpleCommand<'a> {
-    pub(super) assignments: Vec<(&'a [u8], &'a [u8])>,
-    pub(super) argv: Vec<&'a [u8]>,
-    pub(super) redirections: Vec<ExpandedRedirection<'a>>,
+pub(super) struct ExpandedSimpleCommand {
+    pub(super) assignments: Vec<(Vec<u8>, Vec<u8>)>,
+    pub(super) argv: Vec<Vec<u8>>,
+    pub(super) redirections: Vec<ExpandedRedirection>,
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct ExpandedRedirection<'a> {
+pub(super) struct ExpandedRedirection {
     pub(super) fd: i32,
     pub(super) kind: RedirectionKind,
-    pub(super) target: &'a [u8],
-    pub(super) here_doc_body: Option<&'a [u8]>,
+    pub(super) target: Vec<u8>,
+    pub(super) here_doc_body: Option<Vec<u8>>,
     pub(super) line: usize,
 }
 
@@ -294,7 +294,6 @@ pub(super) fn split_bytes(data: &[u8], sep: u8) -> impl Iterator<Item = &[u8]> {
 #[allow(unused_imports)]
 mod tests {
     use super::*;
-    use crate::arena::ByteArena;
     use crate::exec::and_or::ProcessGroupPlan;
     use crate::exec::simple::build_process_from_expanded;
     use crate::exec::test_support::{parse_test, test_shell};
@@ -311,42 +310,20 @@ mod tests {
                 stat(str("./echo"), _) -> err(sys::constants::ENOENT),
             ],
             || {
-                let arena = ByteArena::new();
                 let shell = test_shell();
-                let error = build_process_from_expanded(
-                    &shell,
-                    ExpandedSimpleCommand {
-                        assignments: Vec::new(),
-
-                        argv: Vec::new(),
-
-                        redirections: Vec::new(),
-                    },
-                    Vec::new(),
-                    Vec::new(),
-                )
-                .expect_err("empty command");
+                let error = build_process_from_expanded(&shell, Vec::new(), Vec::new(), Vec::new())
+                    .expect_err("empty command");
                 assert_eq!(error.exit_status(), 1);
 
                 let mut shell = test_shell();
                 shell.env.insert(b"PATH".to_vec(), Vec::new());
-                let expanded = ExpandedSimpleCommand {
-                    assignments: vec![(
-                        arena.intern_bytes(b"ASSIGN_VAR"),
-                        arena.intern_bytes(b"works"),
-                    )],
-                    argv: vec![arena.intern_bytes(b"echo"), arena.intern_bytes(b"hello")],
-                    redirections: Vec::new(),
-                };
-                let owned_argv: Vec<Vec<u8>> = expanded.argv.iter().map(|s| s.to_vec()).collect();
-                let owned_assignments: Vec<(Vec<u8>, Vec<u8>)> = expanded
-                    .assignments
-                    .iter()
-                    .map(|&(n, v)| (n.to_vec(), v.to_vec()))
-                    .collect();
-                let prepared =
-                    build_process_from_expanded(&shell, expanded, owned_argv, owned_assignments)
-                        .expect("process");
+                let prepared = build_process_from_expanded(
+                    &shell,
+                    vec![b"echo".to_vec(), b"hello".to_vec()],
+                    vec![(b"ASSIGN_VAR".to_vec(), b"works".to_vec())],
+                    Vec::new(),
+                )
+                .expect("process");
                 assert_eq!(
                     &*prepared.child_env,
                     &[(

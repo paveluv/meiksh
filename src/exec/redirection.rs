@@ -333,7 +333,6 @@ pub(super) fn default_fd_for_redirection(kind: RedirectionKind) -> i32 {
 #[allow(unused_imports)]
 mod tests {
     use super::*;
-    use crate::arena::ByteArena;
     use crate::exec::command::execute_nested_program;
     use crate::exec::process::ExpandedRedirection;
     use crate::exec::simple::{expand_redirections, expand_simple};
@@ -383,14 +382,14 @@ mod tests {
                         ExpandedRedirection {
                             fd: 1,
                             kind: RedirectionKind::DupOutput,
-                            target: b"-",
+                            target: b"-".to_vec(),
                             here_doc_body: None,
                             line: 0,
                         },
                         ExpandedRedirection {
                             fd: 0,
                             kind: RedirectionKind::ReadWrite,
-                            target: b"/tmp/rw.txt",
+                            target: b"/tmp/rw.txt".to_vec(),
                             here_doc_body: None,
                             line: 0,
                         },
@@ -413,7 +412,6 @@ mod tests {
                 write(fd(sys::constants::STDERR_FILENO), bytes(b"meiksh: redirection target must be a file descriptor or '-'\n")) -> auto,
             ],
             || {
-                let arena = ByteArena::new();
                 let mut shell = test_shell();
                 let error = expand_simple(
                     &mut shell,
@@ -435,7 +433,6 @@ mod tests {
                         .into_boxed_slice(),
                         ..SimpleCommand::default()
                     },
-                    &arena,
                 )
                 .expect_err("expected missing here-document body");
                 assert_eq!(error.exit_status(), 2);
@@ -461,7 +458,6 @@ mod tests {
                         .into_boxed_slice(),
                         ..SimpleCommand::default()
                     },
-                    &arena,
                 )
                 .expect_err("bad dup target");
                 assert_eq!(error.exit_status(), 1);
@@ -484,11 +480,13 @@ mod tests {
                             body_line: 0,
                         }),
                     }],
-                    &arena,
                 )
                 .expect("expand heredoc redirection");
                 assert_eq!(expanded[0].target, b"EOF");
-                assert_eq!(expanded[0].here_doc_body, Some(b"hello " as &[u8]));
+                assert_eq!(
+                    expanded[0].here_doc_body.as_deref(),
+                    Some(b"hello " as &[u8])
+                );
 
                 let mut shell = test_shell();
                 let literal = expand_redirections(
@@ -508,10 +506,12 @@ mod tests {
                             body_line: 0,
                         }),
                     }],
-                    &arena,
                 )
                 .expect("literal heredoc redirection");
-                assert_eq!(literal[0].here_doc_body, Some(b"hello $USER" as &[u8]));
+                assert_eq!(
+                    literal[0].here_doc_body.as_deref(),
+                    Some(b"hello $USER" as &[u8])
+                );
 
                 let mut shell = test_shell();
                 let error = expand_redirections(
@@ -525,7 +525,6 @@ mod tests {
                         },
                         here_doc: None,
                     }],
-                    &arena,
                 )
                 .expect_err("missing expanded heredoc body");
                 assert_eq!(error.exit_status(), 2);
@@ -548,10 +547,12 @@ mod tests {
                             body_line: 0,
                         }),
                     }],
-                    &arena,
                 )
                 .expect("strip tabs expand");
-                assert_eq!(stripped[0].here_doc_body, Some(b"hello\nworld\n" as &[u8]));
+                assert_eq!(
+                    stripped[0].here_doc_body.as_deref(),
+                    Some(b"hello\nworld\n" as &[u8])
+                );
 
                 let mut shell = test_shell();
                 let dup_err = expand_redirections(
@@ -565,7 +566,6 @@ mod tests {
                         },
                         here_doc: None,
                     }],
-                    &arena,
                 )
                 .expect_err("bad dup target in standalone");
                 assert_eq!(dup_err.exit_status(), 1);
@@ -586,8 +586,8 @@ mod tests {
                     &[ExpandedRedirection {
                         fd: 0,
                         kind: RedirectionKind::HereDoc,
-                        target: b"EOF",
-                        here_doc_body: Some(b"body\n"),
+                        target: b"EOF".to_vec(),
+                        here_doc_body: Some(b"body\n".to_vec()),
                         line: 0,
                     }],
                     false,
@@ -610,8 +610,8 @@ mod tests {
                     &[ExpandedRedirection {
                         fd: 0,
                         kind: RedirectionKind::HereDoc,
-                        target: b"EOF",
-                        here_doc_body: Some(b"body\n"),
+                        target: b"EOF".to_vec(),
+                        here_doc_body: Some(b"body\n".to_vec()),
                         line: 0,
                     }],
                     false,
@@ -779,28 +779,28 @@ mod tests {
                         ExpandedRedirection {
                             fd: 0,
                             kind: RedirectionKind::Read,
-                            target: b"/tmp/r.txt",
+                            target: b"/tmp/r.txt".to_vec(),
                             here_doc_body: None,
                             line: 0,
                         },
                         ExpandedRedirection {
                             fd: 1,
                             kind: RedirectionKind::Write,
-                            target: b"/tmp/w.txt",
+                            target: b"/tmp/w.txt".to_vec(),
                             here_doc_body: None,
                             line: 0,
                         },
                         ExpandedRedirection {
                             fd: 2,
                             kind: RedirectionKind::Append,
-                            target: b"/tmp/a.txt",
+                            target: b"/tmp/a.txt".to_vec(),
                             here_doc_body: None,
                             line: 0,
                         },
                         ExpandedRedirection {
                             fd: 1,
                             kind: RedirectionKind::ClobberWrite,
-                            target: b"/tmp/cw.txt",
+                            target: b"/tmp/cw.txt".to_vec(),
                             here_doc_body: None,
                             line: 0,
                         },
@@ -821,14 +821,14 @@ mod tests {
                     ExpandedRedirection {
                         fd: 0,
                         kind: RedirectionKind::DupInput,
-                        target: b"3",
+                        target: b"3".to_vec(),
                         here_doc_body: None,
                         line: 0,
                     },
                     ExpandedRedirection {
                         fd: 5,
                         kind: RedirectionKind::DupOutput,
-                        target: b"-",
+                        target: b"-".to_vec(),
                         here_doc_body: None,
                         line: 0,
                     },
@@ -867,7 +867,7 @@ mod tests {
                     &[ExpandedRedirection {
                         fd: 1,
                         kind: RedirectionKind::Write,
-                        target: b"/tmp/nc.txt",
+                        target: b"/tmp/nc.txt".to_vec(),
                         here_doc_body: None,
                         line: 0,
                     }],
@@ -912,14 +912,14 @@ mod tests {
                 let expanded1 = ExpandedRedirection {
                     kind: RedirectionKind::Write,
                     fd: 1,
-                    target: b"a",
+                    target: b"a".to_vec(),
                     here_doc_body: None,
                     line: 1,
                 };
                 let expanded2 = ExpandedRedirection {
                     kind: RedirectionKind::Write,
                     fd: 1,
-                    target: b"b",
+                    target: b"b".to_vec(),
                     here_doc_body: None,
                     line: 1,
                 };
@@ -940,7 +940,7 @@ mod tests {
                 let expanded = ExpandedRedirection {
                     kind: RedirectionKind::Read,
                     fd: 0,
-                    target: b"a",
+                    target: b"a".to_vec(),
                     here_doc_body: None,
                     line: 1,
                 };
@@ -960,7 +960,7 @@ mod tests {
                 let expanded = ExpandedRedirection {
                     kind: RedirectionKind::ReadWrite,
                     fd: 3,
-                    target: b"file.txt",
+                    target: b"file.txt".to_vec(),
                     here_doc_body: None,
                     line: 1,
                 };
@@ -979,7 +979,7 @@ mod tests {
                 let expanded = ExpandedRedirection {
                     kind: RedirectionKind::Write,
                     fd: 1,
-                    target: b"file.txt",
+                    target: b"file.txt".to_vec(),
                     here_doc_body: None,
                     line: 1,
                 };

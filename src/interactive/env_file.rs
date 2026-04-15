@@ -1,4 +1,3 @@
-use crate::arena::ByteArena;
 use crate::expand::word;
 use crate::shell::error::ShellError;
 use crate::shell::state::Shell;
@@ -9,9 +8,8 @@ pub(super) fn load_env_file(shell: &mut Shell) -> Result<(), ShellError> {
         return Ok(());
     }
     let env_value = shell.get_var(b"ENV").map(|s| s.to_vec());
-    let arena = ByteArena::new();
     let env_file = env_value
-        .map(|value| word::expand_parameter_text(shell, &value, &arena).map(|s| s.to_vec()))
+        .map(|value| word::expand_parameter_text(shell, &value))
         .transpose()
         .map_err(|e| shell.expand_to_err(e))?;
     if let Some(path) = env_file {
