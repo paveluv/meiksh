@@ -29,14 +29,6 @@ pub fn env_args_os() -> Vec<Vec<u8>> {
     std::env::args_os().map(|s| s.into_vec()).collect()
 }
 
-pub fn getenv(name: &[u8]) -> Option<Vec<u8>> {
-    (sys_interface().getenv)(name)
-}
-
-pub fn setenv(name: &[u8], value: &[u8]) -> SysResult<()> {
-    (sys_interface().setenv)(name, value)
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -50,7 +42,7 @@ mod tests {
         run_trace(
             trace_entries![setenv(str(b"MY_KEY"), str(b"my_val")) -> 0],
             || {
-                let result = (sys_interface().setenv)(b"MY_KEY", b"my_val");
+                let result = env_set_var(b"MY_KEY", b"my_val");
                 assert!(result.is_ok());
             },
         );
@@ -59,7 +51,7 @@ mod tests {
     #[test]
     fn unsetenv_success() {
         run_trace(trace_entries![unsetenv(str(b"MY_KEY")) -> 0], || {
-            let result = (sys_interface().unsetenv)(b"MY_KEY");
+            let result = env_unset_var(b"MY_KEY");
             assert!(result.is_ok());
         });
     }

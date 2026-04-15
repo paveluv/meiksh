@@ -34,6 +34,7 @@ pub(super) fn resolve_dot_path(shell: &Shell, path: &[u8]) -> Result<Vec<u8>, ()
 
 #[cfg(test)]
 mod tests {
+    use crate::builtin::BuiltinOutcome;
     use crate::builtin::test_support::*;
     use crate::trace_entries;
 
@@ -47,6 +48,41 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 let _ = invoke(&mut shell, &[b".".to_vec(), b"./somedir".to_vec()]);
+            },
+        );
+    }
+
+    #[test]
+    fn dot_too_many_arguments() {
+        let msg = crate::builtin::test_support::diag(b".: too many arguments");
+        run_trace(trace_entries![write(fd(2), bytes(&msg)) -> auto,], || {
+            let mut shell = test_shell();
+            let error = invoke(
+                &mut shell,
+                &[b".".to_vec(), b"a.sh".to_vec(), b"b.sh".to_vec()],
+            )
+            .expect_err("too many args");
+            assert_eq!(error.exit_status(), 2);
+        });
+    }
+
+    #[test]
+    fn dot_with_slash_path_readable_regular_file() {
+        run_trace(
+            trace_entries![
+                stat(str(b"./script.sh"), any) -> stat_file(0o644),
+                access(str(b"./script.sh"), _) -> 0,
+                open("./script.sh", _, _) -> fd(10),
+                read(fd(10), _) -> bytes(b"VAR=hello\n"),
+                read(fd(10), _) -> 0,
+                close(fd(10)) -> 0,
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(&mut shell, &[b".".to_vec(), b"./script.sh".to_vec()])
+                    .expect("dot slash path");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert_eq!(shell.get_var(b"VAR"), Some(b"hello" as &[u8]));
             },
         );
     }

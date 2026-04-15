@@ -518,4 +518,786 @@ mod tests {
             },
         );
     }
+
+    // -----------------------------------------------------------------------
+    // parse_command_options
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_options_dash_p() {
+        assert_no_syscalls(|| {
+            let argv: Vec<Vec<u8>> = vec![b"command".to_vec(), b"-p".to_vec(), b"ls".to_vec()];
+            let (use_default, mode, idx) = parse_command_options(&argv);
+            assert!(use_default);
+            assert_eq!(mode, CommandMode::Execute);
+            assert_eq!(idx, 2);
+        });
+    }
+
+    #[test]
+    fn parse_options_dash_v() {
+        assert_no_syscalls(|| {
+            let argv: Vec<Vec<u8>> = vec![b"command".to_vec(), b"-v".to_vec(), b"ls".to_vec()];
+            let (_, mode, idx) = parse_command_options(&argv);
+            assert_eq!(mode, CommandMode::QueryShort);
+            assert_eq!(idx, 2);
+        });
+    }
+
+    #[test]
+    fn parse_options_dash_big_v() {
+        assert_no_syscalls(|| {
+            let argv: Vec<Vec<u8>> = vec![b"command".to_vec(), b"-V".to_vec(), b"ls".to_vec()];
+            let (_, mode, idx) = parse_command_options(&argv);
+            assert_eq!(mode, CommandMode::QueryVerbose);
+            assert_eq!(idx, 2);
+        });
+    }
+
+    #[test]
+    fn parse_options_double_dash() {
+        assert_no_syscalls(|| {
+            let argv: Vec<Vec<u8>> =
+                vec![b"command".to_vec(), b"--".to_vec(), b"something".to_vec()];
+            let (use_default, mode, idx) = parse_command_options(&argv);
+            assert!(!use_default);
+            assert_eq!(mode, CommandMode::Execute);
+            assert_eq!(idx, 2);
+        });
+    }
+
+    #[test]
+    fn parse_options_unknown_dash_flag_stops() {
+        assert_no_syscalls(|| {
+            let argv: Vec<Vec<u8>> = vec![b"command".to_vec(), b"-z".to_vec()];
+            let (_, mode, idx) = parse_command_options(&argv);
+            assert_eq!(mode, CommandMode::Execute);
+            assert_eq!(idx, 1);
+        });
+    }
+
+    #[test]
+    fn parse_options_bare_dash_stops() {
+        assert_no_syscalls(|| {
+            let argv: Vec<Vec<u8>> = vec![b"command".to_vec(), b"-".to_vec()];
+            let (_, _, idx) = parse_command_options(&argv);
+            assert_eq!(idx, 1);
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // command_usage_status
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn usage_status_execute_mode() {
+        assert_no_syscalls(|| {
+            assert_eq!(command_usage_status(CommandMode::Execute), 127);
+            assert_eq!(command_usage_status(CommandMode::QueryShort), 1);
+            assert_eq!(command_usage_status(CommandMode::QueryVerbose), 1);
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // command -v (short description)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn command_v_external_found() {
+        run_trace(
+            trace_entries![
+                access(str(b"/usr/bin/ls"), int(libc::F_OK)) -> 0,
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"/usr/bin/ls\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"command".to_vec(), b"-v".to_vec(), b"ls".to_vec()],
+                )
+                .expect("command -v ls");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn command_v_external_not_found() {
+        run_trace(
+            trace_entries![access(any, any) -> err(libc::ENOENT)],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"PATH".to_vec(), b"/nonexistent".to_vec());
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"command".to_vec(), b"-v".to_vec(), b"nosuchcmd".to_vec()],
+                )
+                .expect("command -v nosuchcmd");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn command_v_special_builtin() {
+        run_trace(
+            trace_entries![
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"export\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"command".to_vec(), b"-v".to_vec(), b"export".to_vec()],
+                )
+                .expect("command -v export");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn command_v_regular_builtin() {
+        run_trace(
+            trace_entries![
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"echo\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"command".to_vec(), b"-v".to_vec(), b"echo".to_vec()],
+                )
+                .expect("command -v echo");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn command_v_function() {
+        run_trace(
+            trace_entries![
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"myfunc\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.functions.insert(
+                    b"myfunc"[..].into(),
+                    crate::syntax::Command::Simple(Default::default()),
+                );
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"command".to_vec(), b"-v".to_vec(), b"myfunc".to_vec()],
+                )
+                .expect("command -v myfunc");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn command_v_reserved_word() {
+        run_trace(
+            trace_entries![
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"if\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"command".to_vec(), b"-v".to_vec(), b"if".to_vec()],
+                )
+                .expect("command -v if");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn command_v_alias() {
+        run_trace(
+            trace_entries![
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"alias ll='ls -la'\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.aliases.insert(b"ll"[..].into(), b"ls -la"[..].into());
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"command".to_vec(), b"-v".to_vec(), b"ll".to_vec()],
+                )
+                .expect("command -v ll");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // command -V (verbose description)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn command_big_v_alias() {
+        run_trace(
+            trace_entries![
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"ll is an alias for 'ls -la'\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.aliases.insert(b"ll"[..].into(), b"ls -la"[..].into());
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"command".to_vec(), b"-V".to_vec(), b"ll".to_vec()],
+                )
+                .expect("command -V ll");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn command_big_v_function() {
+        run_trace(
+            trace_entries![
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"myfunc is a function\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.functions.insert(
+                    b"myfunc"[..].into(),
+                    crate::syntax::Command::Simple(Default::default()),
+                );
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"command".to_vec(), b"-V".to_vec(), b"myfunc".to_vec()],
+                )
+                .expect("command -V myfunc");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn command_big_v_special_builtin() {
+        run_trace(
+            trace_entries![
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"export is a special built-in utility\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"command".to_vec(), b"-V".to_vec(), b"export".to_vec()],
+                )
+                .expect("command -V export");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn command_big_v_regular_builtin() {
+        run_trace(
+            trace_entries![
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"echo is a regular built-in utility\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"command".to_vec(), b"-V".to_vec(), b"echo".to_vec()],
+                )
+                .expect("command -V echo");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn command_big_v_reserved_word() {
+        run_trace(
+            trace_entries![
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"if is a reserved word\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"command".to_vec(), b"-V".to_vec(), b"if".to_vec()],
+                )
+                .expect("command -V if");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn command_big_v_external() {
+        run_trace(
+            trace_entries![
+                access(str(b"/usr/bin/ls"), int(libc::F_OK)) -> 0,
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"ls is /usr/bin/ls\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"command".to_vec(), b"-V".to_vec(), b"ls".to_vec()],
+                )
+                .expect("command -V ls");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn command_big_v_not_found() {
+        run_trace(
+            trace_entries![access(any, any) -> err(libc::ENOENT)],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"PATH".to_vec(), b"/nonexistent".to_vec());
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"command".to_vec(), b"-V".to_vec(), b"nosuchcmd".to_vec()],
+                )
+                .expect("command -V nosuchcmd");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // command: too many arguments for -v / -V
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn command_v_too_many_args() {
+        let msg = diag(b"command: too many arguments");
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[
+                        b"command".to_vec(),
+                        b"-v".to_vec(),
+                        b"a".to_vec(),
+                        b"b".to_vec(),
+                    ],
+                )
+                .expect("command -v a b");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // command: no utility name in Execute mode -> 127
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn command_no_utility_execute_mode() {
+        let msg = diag(b"command: utility name required");
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(&mut shell, &[b"command".to_vec()]).expect("command (bare)");
+                assert!(matches!(outcome, BuiltinOutcome::Status(127)));
+            },
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // type builtin
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn type_special_builtin() {
+        run_trace(
+            trace_entries![
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"export is a special built-in utility\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(&mut shell, &[b"type".to_vec(), b"export".to_vec()])
+                    .expect("type export");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn type_regular_builtin() {
+        run_trace(
+            trace_entries![
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"echo is a regular built-in utility\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome =
+                    invoke(&mut shell, &[b"type".to_vec(), b"echo".to_vec()]).expect("type echo");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn type_function() {
+        run_trace(
+            trace_entries![
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"myfunc is a function\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.functions.insert(
+                    b"myfunc"[..].into(),
+                    crate::syntax::Command::Simple(Default::default()),
+                );
+                let outcome = invoke(&mut shell, &[b"type".to_vec(), b"myfunc".to_vec()])
+                    .expect("type myfunc");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn type_reserved_word() {
+        run_trace(
+            trace_entries![
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"while is a reserved word\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome =
+                    invoke(&mut shell, &[b"type".to_vec(), b"while".to_vec()]).expect("type while");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn type_alias() {
+        run_trace(
+            trace_entries![
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"ll is an alias for 'ls -la'\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.aliases.insert(b"ll"[..].into(), b"ls -la"[..].into());
+                let outcome =
+                    invoke(&mut shell, &[b"type".to_vec(), b"ll".to_vec()]).expect("type ll");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn type_external_command() {
+        run_trace(
+            trace_entries![
+                access(str(b"/usr/bin/ls"), int(libc::F_OK)) -> 0,
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"ls is /usr/bin/ls\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
+                let outcome =
+                    invoke(&mut shell, &[b"type".to_vec(), b"ls".to_vec()]).expect("type ls");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn type_multiple_mixed() {
+        let not_found_msg = diag(b"nosuchcmd: not found");
+        run_trace(
+            trace_entries![
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"echo is a regular built-in utility\n")) -> auto,
+                access(any, any) -> err(libc::ENOENT),
+                write(fd(crate::sys::STDERR_FILENO), bytes(&not_found_msg)) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"PATH".to_vec(), b"/nonexistent".to_vec());
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"type".to_vec(), b"echo".to_vec(), b"nosuchcmd".to_vec()],
+                )
+                .expect("type echo nosuchcmd");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // execute_command_utility
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn execute_command_runs_builtin_directly() {
+        run_trace(
+            trace_entries![
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"hello\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"command".to_vec(), b"echo".to_vec(), b"hello".to_vec()],
+                )
+                .expect("command echo hello");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn execute_command_external_not_found() {
+        let msg = diag(b"command: nosuchcmd: not found");
+        run_trace(
+            trace_entries![
+                access(any, any) -> err(libc::ENOENT),
+                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"PATH".to_vec(), b"/nonexistent".to_vec());
+                let outcome = invoke(&mut shell, &[b"command".to_vec(), b"nosuchcmd".to_vec()])
+                    .expect("command nosuchcmd");
+                assert!(matches!(outcome, BuiltinOutcome::Status(127)));
+            },
+        );
+    }
+
+    #[test]
+    fn execute_command_external_permission_denied() {
+        let msg = diag(b"command: noperm: Permission denied");
+        run_trace(
+            trace_entries![
+                access(str(b"/usr/bin/noperm"), int(libc::F_OK)) -> 0,
+                access(str(b"/usr/bin/noperm"), int(libc::X_OK)) -> err(libc::EACCES),
+                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
+                let outcome = invoke(&mut shell, &[b"command".to_vec(), b"noperm".to_vec()])
+                    .expect("command noperm");
+                assert!(matches!(outcome, BuiltinOutcome::Status(126)));
+            },
+        );
+    }
+
+    #[test]
+    fn execute_command_external_spawn_success() {
+        run_trace(
+            trace_entries![
+                access(str(b"/usr/bin/myext"), int(libc::F_OK)) -> 0,
+                access(str(b"/usr/bin/myext"), int(libc::X_OK)) -> 0,
+                fork() -> pid(42), child: [
+                    execvp(str(b"/usr/bin/myext"), _) -> int(-1),
+                ],
+                waitpid(42, _) -> status(0),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
+                let outcome = invoke(&mut shell, &[b"command".to_vec(), b"myext".to_vec()])
+                    .expect("command myext");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn execute_command_external_spawn_enoent() {
+        let msg = diag(b"command: myext: not found");
+        run_trace(
+            trace_entries![
+                access(str(b"/usr/bin/myext"), int(libc::F_OK)) -> 0,
+                access(str(b"/usr/bin/myext"), int(libc::X_OK)) -> 0,
+                fork() -> err(libc::ENOENT),
+                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
+                let outcome = invoke(&mut shell, &[b"command".to_vec(), b"myext".to_vec()])
+                    .expect("command myext enoent");
+                assert!(matches!(outcome, BuiltinOutcome::Status(127)));
+            },
+        );
+    }
+
+    #[test]
+    fn execute_command_external_spawn_other_error() {
+        let msg = diag(b"command: myext: Permission denied");
+        run_trace(
+            trace_entries![
+                access(str(b"/usr/bin/myext"), int(libc::F_OK)) -> 0,
+                access(str(b"/usr/bin/myext"), int(libc::X_OK)) -> 0,
+                fork() -> err(libc::EACCES),
+                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
+                let outcome = invoke(&mut shell, &[b"command".to_vec(), b"myext".to_vec()])
+                    .expect("command myext eacces");
+                assert!(matches!(outcome, BuiltinOutcome::Status(126)));
+            },
+        );
+    }
+
+    #[test]
+    fn execute_command_with_default_path() {
+        run_trace(
+            trace_entries![
+                access(str(b"/usr/bin/myext"), int(libc::F_OK)) -> 0,
+                access(str(b"/usr/bin/myext"), int(libc::X_OK)) -> 0,
+                fork() -> pid(50), child: [
+                    setenv(str(b"PATH"), str(b"/usr/bin:/bin")) -> 0,
+                    execvp(str(b"/usr/bin/myext"), _) -> int(-1),
+                ],
+                waitpid(50, _) -> status(0),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"PATH".to_vec(), b"/custom".to_vec());
+                shell.exported.insert(b"PATH".to_vec());
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"command".to_vec(), b"-p".to_vec(), b"myext".to_vec()],
+                )
+                .expect("command -p myext");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // search_path: empty dir segment in PATH
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn search_path_empty_dir_segment() {
+        run_trace(
+            trace_entries![
+                access(str(b"/a/mybin"), int(libc::F_OK)) -> err(libc::ENOENT),
+                access(str(b"./mybin"), int(libc::F_OK)) -> 0,
+                getcwd() -> cwd("/home/user"),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"PATH".to_vec(), b"/a::".to_vec());
+                let result = which(b"mybin", &shell);
+                assert_eq!(result, Some(b"/home/user/./mybin".to_vec()));
+            },
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // search_path: PATH from env_var fallback
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn search_path_fallback_to_getenv() {
+        run_trace(
+            trace_entries![
+                ..vec![crate::sys::test_support::t(
+                    "getenv",
+                    vec![crate::sys::test_support::ArgMatcher::Str(b"PATH".to_vec())],
+                    crate::sys::test_support::TraceResult::StrVal(b"/from/env".to_vec()),
+                )],
+                access(str(b"/from/env/findme"), int(libc::F_OK)) -> 0,
+            ],
+            || {
+                let shell = test_shell();
+                let result = which(b"findme", &shell);
+                assert_eq!(result, Some(b"/from/env/findme".to_vec()));
+            },
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // describe_command coverage for all branches
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn describe_command_alias() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.aliases.insert(b"ll"[..].into(), b"ls -la"[..].into());
+            let desc = describe_command(&shell, b"ll", false);
+            assert!(matches!(desc, Some(CommandDescription::Alias(_))));
+        });
+    }
+
+    #[test]
+    fn describe_command_function() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.functions.insert(
+                b"myfunc"[..].into(),
+                crate::syntax::Command::Simple(Default::default()),
+            );
+            let desc = describe_command(&shell, b"myfunc", false);
+            assert_eq!(desc, Some(CommandDescription::Function));
+        });
+    }
+
+    #[test]
+    fn describe_command_special_builtin() {
+        assert_no_syscalls(|| {
+            let shell = test_shell();
+            let desc = describe_command(&shell, b"export", false);
+            assert_eq!(desc, Some(CommandDescription::SpecialBuiltin));
+        });
+    }
+
+    #[test]
+    fn describe_command_regular_builtin() {
+        assert_no_syscalls(|| {
+            let shell = test_shell();
+            let desc = describe_command(&shell, b"echo", false);
+            assert_eq!(desc, Some(CommandDescription::RegularBuiltin));
+        });
+    }
+
+    #[test]
+    fn describe_command_reserved_word() {
+        assert_no_syscalls(|| {
+            let shell = test_shell();
+            let desc = describe_command(&shell, b"if", false);
+            assert_eq!(desc, Some(CommandDescription::ReservedWord));
+        });
+    }
+
+    #[test]
+    fn execute_command_builtin_error_converts_to_status() {
+        run_trace(
+            trace_entries![
+                write(
+                    fd(crate::sys::STDERR_FILENO),
+                    bytes(b"meiksh: shift: numeric argument required\n"),
+                ) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"command".to_vec(), b"shift".to_vec(), b"bad".to_vec()],
+                )
+                .expect("command shift bad");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
 }

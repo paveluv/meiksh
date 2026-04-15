@@ -121,6 +121,7 @@ pub(crate) enum TraceResult {
     StatFile(mode_t),
     StatFileSize(u64),
     StatFifo,
+    StatSymlink,
     DirEntryBytes(Vec<u8>),
     StrVal(Vec<u8>),
     NullStr,
@@ -504,91 +505,82 @@ fn trace_write(fd: c_int, data: &[u8]) -> isize {
         _ => apply_trace_result_isize(&entry),
     }
 }
+fn fill_stat_buf(result: &TraceResult, buf: *mut libc::stat) -> Option<c_int> {
+    match result {
+        TraceResult::StatDir => {
+            unsafe {
+                std::ptr::write_bytes(buf, 0, 1);
+                (*buf).st_mode = libc::S_IFDIR | 0o755;
+            }
+            Some(0)
+        }
+        TraceResult::StatFile(mode) => {
+            unsafe {
+                std::ptr::write_bytes(buf, 0, 1);
+                (*buf).st_mode = libc::S_IFREG | *mode;
+            }
+            Some(0)
+        }
+        TraceResult::StatFileSize(size) => {
+            unsafe {
+                std::ptr::write_bytes(buf, 0, 1);
+                (*buf).st_mode = libc::S_IFREG | 0o644;
+                (*buf).st_size = *size as i64;
+            }
+            Some(0)
+        }
+        TraceResult::StatFifo => {
+            unsafe {
+                std::ptr::write_bytes(buf, 0, 1);
+                (*buf).st_mode = libc::S_IFIFO | 0o644;
+            }
+            Some(0)
+        }
+        TraceResult::StatSymlink => {
+            unsafe {
+                std::ptr::write_bytes(buf, 0, 1);
+                (*buf).st_mode = libc::S_IFLNK | 0o777;
+            }
+            Some(0)
+        }
+        TraceResult::Err(errno) => {
+            set_errno(*errno);
+            Some(-1)
+        }
+        TraceResult::Int(v) => Some(*v as c_int),
+        _ => None,
+    }
+}
+
 fn trace_stat(path: *const c_char, buf: *mut libc::stat) -> c_int {
     let p = crate::bstr::bytes_from_cstr(unsafe { CStr::from_ptr(path) });
     let entry = trace_dispatch("stat", &[ArgMatcher::Str(p), ArgMatcher::Any]);
-    match &entry.result {
-        TraceResult::StatDir => {
-            unsafe {
-                std::ptr::write_bytes(buf, 0, 1);
-                (*buf).st_mode = libc::S_IFDIR | 0o755;
-            }
-            0
-        }
-        TraceResult::StatFile(mode) => {
-            unsafe {
-                std::ptr::write_bytes(buf, 0, 1);
-                (*buf).st_mode = libc::S_IFREG | mode;
-            }
-            0
-        }
-        TraceResult::StatFileSize(size) => {
-            unsafe {
-                std::ptr::write_bytes(buf, 0, 1);
-                (*buf).st_mode = libc::S_IFREG | 0o644;
-                (*buf).st_size = *size as i64;
-            }
-            0
-        }
-        TraceResult::StatFifo => {
-            unsafe {
-                std::ptr::write_bytes(buf, 0, 1);
-                (*buf).st_mode = libc::S_IFIFO | 0o644;
-            }
-            0
-        }
-        TraceResult::Err(errno) => {
-            set_errno(*errno);
-            -1
-        }
-        TraceResult::Int(v) => *v as c_int,
-        other => panic!(
-            "trace result type mismatch for 'stat': expected StatDir/StatFile/Err, got {other:?}"
-        ),
-    }
+    fill_stat_buf(&entry.result, buf).unwrap_or_else(|| {
+        panic!(
+            "trace result type mismatch for 'stat': expected StatDir/StatFile/Err, got {:?}",
+            entry.result
+        )
+    })
 }
+
+fn trace_lstat(path: *const c_char, buf: *mut libc::stat) -> c_int {
+    let p = crate::bstr::bytes_from_cstr(unsafe { CStr::from_ptr(path) });
+    let entry = trace_dispatch("lstat", &[ArgMatcher::Str(p), ArgMatcher::Any]);
+    fill_stat_buf(&entry.result, buf).unwrap_or_else(|| {
+        panic!("trace result type mismatch for 'lstat': expected StatDir/StatFile/StatSymlink/Err, got {:?}", entry.result)
+    })
+}
+
 fn trace_fstat(fd: c_int, buf: *mut libc::stat) -> c_int {
     let entry = trace_dispatch("fstat", &[ArgMatcher::Fd(fd), ArgMatcher::Any]);
-    match &entry.result {
-        TraceResult::StatDir => {
-            unsafe {
-                std::ptr::write_bytes(buf, 0, 1);
-                (*buf).st_mode = libc::S_IFDIR | 0o755;
-            }
-            0
-        }
-        TraceResult::StatFile(mode) => {
-            unsafe {
-                std::ptr::write_bytes(buf, 0, 1);
-                (*buf).st_mode = libc::S_IFREG | mode;
-            }
-            0
-        }
-        TraceResult::StatFileSize(size) => {
-            unsafe {
-                std::ptr::write_bytes(buf, 0, 1);
-                (*buf).st_mode = libc::S_IFREG | 0o644;
-                (*buf).st_size = *size as i64;
-            }
-            0
-        }
-        TraceResult::StatFifo => {
-            unsafe {
-                std::ptr::write_bytes(buf, 0, 1);
-                (*buf).st_mode = libc::S_IFIFO | 0o644;
-            }
-            0
-        }
-        TraceResult::Err(errno) => {
-            set_errno(*errno);
-            -1
-        }
-        TraceResult::Int(v) => *v as c_int,
-        other => panic!(
-            "trace result type mismatch for 'fstat': expected StatDir/StatFile/StatFifo/Err, got {other:?}"
-        ),
-    }
+    fill_stat_buf(&entry.result, buf).unwrap_or_else(|| {
+        panic!(
+            "trace result type mismatch for 'fstat': expected StatDir/StatFile/Err, got {:?}",
+            entry.result
+        )
+    })
 }
+
 fn trace_access(path: *const c_char, mode: c_int) -> c_int {
     let p = crate::bstr::bytes_from_cstr(unsafe { CStr::from_ptr(path) });
     let entry = trace_dispatch(
@@ -672,6 +664,22 @@ fn trace_closedir(_dirp: *mut libc::DIR) -> c_int {
     let entry = trace_dispatch("closedir", &[ArgMatcher::Any]);
     apply_trace_result_int(&entry)
 }
+fn trace_unlink(path: *const c_char) -> c_int {
+    let p = crate::bstr::bytes_from_cstr(unsafe { CStr::from_ptr(path) });
+    let entry = trace_dispatch("unlink", &[ArgMatcher::Str(p)]);
+    match &entry.result {
+        TraceResult::Int(v) => *v as c_int,
+        TraceResult::Err(errno) => {
+            set_errno(*errno);
+            -1
+        }
+        other => panic!(
+            "trace result type mismatch for 'unlink': expected Int/Err, got {:?}",
+            other
+        ),
+    }
+}
+
 fn trace_realpath(path: *const c_char, resolved: *mut c_char) -> *mut c_char {
     let p = crate::bstr::bytes_from_cstr(unsafe { CStr::from_ptr(path) });
     let entry = trace_dispatch("realpath", &[ArgMatcher::Str(p), ArgMatcher::Any]);
@@ -807,6 +815,7 @@ pub(crate) fn trace_interface() -> SystemInterface {
         open: trace_open,
         write: trace_write,
         stat: trace_stat,
+        lstat: trace_lstat,
         fstat: trace_fstat,
         access: trace_access,
         chdir: trace_chdir,
@@ -815,6 +824,7 @@ pub(crate) fn trace_interface() -> SystemInterface {
         readdir: trace_readdir,
         closedir: trace_closedir,
         realpath: trace_realpath,
+        unlink: trace_unlink,
         fork: trace_fork,
         exit_process: trace_exit_process,
         setenv: trace_setenv,
@@ -899,6 +909,9 @@ pub(crate) fn no_interface_table() -> SystemInterface {
     fn panic_stat(_: *const c_char, _: *mut libc::stat) -> c_int {
         panic!("unexpected syscall 'stat' in pure-logic test")
     }
+    fn panic_lstat(_: *const c_char, _: *mut libc::stat) -> c_int {
+        panic!("unexpected syscall 'lstat' in pure-logic test")
+    }
     fn panic_fstat(_: c_int, _: *mut libc::stat) -> c_int {
         panic!("unexpected syscall 'fstat' in pure-logic test")
     }
@@ -919,6 +932,9 @@ pub(crate) fn no_interface_table() -> SystemInterface {
     }
     fn panic_closedir(_: *mut libc::DIR) -> c_int {
         panic!("unexpected syscall 'closedir' in pure-logic test")
+    }
+    fn panic_unlink(_: *const c_char) -> c_int {
+        panic!("unexpected syscall 'unlink' in pure-logic test")
     }
     fn panic_realpath(_: *const c_char, _: *mut c_char) -> *mut c_char {
         panic!("unexpected syscall 'realpath' in pure-logic test")
@@ -997,6 +1013,7 @@ pub(crate) fn no_interface_table() -> SystemInterface {
         open: panic_open,
         write: panic_write,
         stat: panic_stat,
+        lstat: panic_lstat,
         fstat: panic_fstat,
         access: panic_access,
         chdir: panic_chdir,
@@ -1005,6 +1022,7 @@ pub(crate) fn no_interface_table() -> SystemInterface {
         readdir: panic_readdir,
         closedir: panic_closedir,
         realpath: panic_realpath,
+        unlink: panic_unlink,
         fork: panic_fork,
         exit_process: panic_exit_process,
         setenv: panic_setenv,

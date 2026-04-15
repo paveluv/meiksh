@@ -43,11 +43,29 @@ pub(super) fn format_times_value(ticks: u64, ticks_per_second: u64) -> Vec<u8> {
 mod tests {
     use super::*;
     use crate::builtin::test_support::*;
+    use crate::trace_entries;
 
     #[test]
     fn format_times_value_helper() {
         assert_no_syscalls(|| {
             assert_eq!(format_times_value(125, 100), b"0m1.25s");
         });
+    }
+
+    #[test]
+    fn times_error_branch() {
+        let msg = crate::builtin::test_support::diag(b"times: Success");
+        run_trace(
+            trace_entries![
+                times(_) -> err(libc::EACCES),
+                sysconf(_) -> 100,
+                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(&mut shell, &[b"times".to_vec()]).expect("times error");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
     }
 }

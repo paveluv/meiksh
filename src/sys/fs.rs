@@ -47,7 +47,7 @@ pub fn stat_path(path: &[u8]) -> SysResult<FileStat> {
 fn lstat_raw(path: &[u8]) -> SysResult<libc::stat> {
     let c_path = to_cstring(path)?;
     let mut buf = std::mem::MaybeUninit::<libc::stat>::zeroed();
-    let result = unsafe { libc::lstat(c_path.as_ptr(), buf.as_mut_ptr()) };
+    let result = (sys_interface().lstat)(c_path.as_ptr(), buf.as_mut_ptr());
     if result == 0 {
         Ok(unsafe { buf.assume_init() })
     } else {
@@ -173,7 +173,7 @@ pub fn read_file(path: &[u8]) -> SysResult<Vec<u8>> {
 
 pub fn unlink(path: &[u8]) -> SysResult<()> {
     let c_path = to_cstring(path)?;
-    let result = unsafe { libc::unlink(c_path.as_ptr()) };
+    let result = (sys_interface().unlink)(c_path.as_ptr());
     if result == 0 {
         Ok(())
     } else {
@@ -288,6 +288,80 @@ mod tests {
                 let s = stat_path(b"/fifo").expect("stat fifo");
                 assert!((s.mode & libc::S_IFMT) == libc::S_IFIFO);
                 let _ = stat_path(b"/plain");
+            },
+        );
+    }
+
+    #[test]
+    fn lstat_path_success() {
+        test_support::run_trace(
+            trace_entries![
+                ..vec![test_support::t(
+                    "lstat",
+                    vec![
+                        test_support::ArgMatcher::Str(b"file.txt".to_vec()),
+                        test_support::ArgMatcher::Any
+                    ],
+                    test_support::TraceResult::StatSymlink,
+                )]
+            ],
+            || {
+                let stat = lstat_path(b"file.txt").unwrap();
+                assert_eq!(stat.mode & libc::S_IFMT, libc::S_IFLNK);
+            },
+        );
+    }
+
+    #[test]
+    fn lstat_path_failure() {
+        test_support::run_trace(
+            trace_entries![
+                ..vec![test_support::t(
+                    "lstat",
+                    vec![
+                        test_support::ArgMatcher::Str(b"file.txt".to_vec()),
+                        test_support::ArgMatcher::Any
+                    ],
+                    test_support::TraceResult::Err(libc::ENOENT),
+                )]
+            ],
+            || {
+                let err = lstat_path(b"file.txt").unwrap_err();
+                assert!(matches!(err, SysError::Errno(libc::ENOENT)));
+            },
+        );
+    }
+
+    #[test]
+    fn unlink_success() {
+        test_support::run_trace(
+            trace_entries![
+                ..vec![test_support::t(
+                    "unlink",
+                    vec![test_support::ArgMatcher::Str(b"file.txt".to_vec())],
+                    test_support::TraceResult::Int(0),
+                )]
+            ],
+            || {
+                let result = unlink(b"file.txt");
+                assert!(result.is_ok());
+            },
+        );
+    }
+
+    #[test]
+    fn unlink_failure() {
+        test_support::run_trace(
+            trace_entries![
+                ..vec![test_support::t(
+                    "unlink",
+                    vec![test_support::ArgMatcher::Str(b"file.txt".to_vec())],
+                    test_support::TraceResult::Err(libc::ENOENT),
+                )]
+            ],
+            || {
+                let err = unlink(b"file.txt").unwrap_err();
+                assert!(matches!(err, SysError::Errno(libc::ENOENT)));
             },
         );
     }

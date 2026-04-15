@@ -398,6 +398,91 @@ mod tests {
     use crate::trace_entries;
 
     #[test]
+    fn wait_for_external_child_stopped_and_signaled() {
+        run_trace(
+            trace_entries![
+                waitpid(1000, _) -> stopped_sig(libc::SIGTSTP),
+                tcgetattr(fd(sys::STDIN_FILENO)) -> err(libc::ENOTTY),
+                write(fd(sys::STDERR_FILENO), bytes(b"[1] Stopped (SIGTSTP)\tdesc\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.interactive = true;
+                let handle = sys::ChildHandle {
+                    pid: 1000,
+                    stdout_fd: None,
+                };
+                let status =
+                    wait_for_external_child(&mut shell, &handle, Some(1000), Some(b"desc"))
+                        .unwrap();
+                assert_eq!(status, 128 + libc::SIGTSTP);
+                assert_eq!(shell.jobs.len(), 1);
+                assert!(matches!(
+                    shell.jobs[0].state,
+                    JobState::Stopped(libc::SIGTSTP)
+                ));
+            },
+        );
+        run_trace(
+            trace_entries![
+                waitpid(1000, _) -> signaled_sig(libc::SIGKILL),
+            ],
+            || {
+                let mut shell = test_shell();
+                let handle = sys::ChildHandle {
+                    pid: 1000,
+                    stdout_fd: None,
+                };
+                let status =
+                    wait_for_external_child(&mut shell, &handle, Some(1000), Some(b"desc"))
+                        .unwrap();
+                assert_eq!(status, 128 + libc::SIGKILL);
+            },
+        );
+    }
+
+    #[test]
+    fn wait_for_pipeline_stopped_and_signaled() {
+        run_trace(
+            trace_entries![
+                waitpid(1000, _) -> stopped_sig(libc::SIGTSTP),
+                tcgetattr(fd(sys::STDIN_FILENO)) -> err(libc::ENOTTY),
+                write(fd(sys::STDERR_FILENO), bytes(b"[1] Stopped (SIGTSTP)\tdesc\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.interactive = true;
+                let spawned = crate::exec::SpawnedProcesses {
+                    pgid: Some(1000),
+                    children: vec![sys::ChildHandle {
+                        pid: 1000,
+                        stdout_fd: None,
+                    }],
+                };
+                let last = wait_for_pipeline(&mut shell, spawned, Some(b"desc"), false).unwrap();
+                assert_eq!(last, 128 + libc::SIGTSTP);
+            },
+        );
+        run_trace(
+            trace_entries![
+                waitpid(1000, _) -> signaled_sig(libc::SIGKILL),
+            ],
+            || {
+                let mut shell = test_shell();
+                let spawned = crate::exec::SpawnedProcesses {
+                    pgid: Some(1000),
+                    children: vec![sys::ChildHandle {
+                        pid: 1000,
+                        stdout_fd: None,
+                    }],
+                };
+                let last = wait_for_pipeline(&mut shell, spawned, Some(b"desc"), false).unwrap();
+                assert_eq!(last, 128 + libc::SIGKILL);
+            },
+        );
+    }
+
+    #[test]
     fn execute_pipeline_async_single_command() {
         run_trace(
             trace_entries![
@@ -795,6 +880,96 @@ mod tests {
                 let program = parse_test("time -p true").expect("parse");
                 let status = execute_program(&mut shell, &program).expect("execute");
                 assert_eq!(status, 0);
+            },
+        );
+    }
+
+    #[test]
+    fn pipefail_returns_rightmost_nonzero() {
+        run_trace(
+            trace_entries![
+                waitpid(101, _) -> status(1),
+                waitpid(102, _) -> status(2),
+                waitpid(103, _) -> status(0),
+            ],
+            || {
+                let mut shell = test_shell();
+                let spawned = crate::exec::SpawnedProcesses {
+                    pgid: None,
+                    children: vec![
+                        sys::ChildHandle {
+                            pid: 101,
+                            stdout_fd: None,
+                        },
+                        sys::ChildHandle {
+                            pid: 102,
+                            stdout_fd: None,
+                        },
+                        sys::ChildHandle {
+                            pid: 103,
+                            stdout_fd: None,
+                        },
+                    ],
+                };
+                let result = wait_for_pipeline(&mut shell, spawned, None, true).unwrap();
+                assert_eq!(result, 2);
+            },
+        );
+    }
+
+    #[test]
+    fn spawn_pipeline_process_without_monitor_mode() {
+        run_trace(
+            trace_entries![
+                fork() -> pid(101), child: [],
+            ],
+            || {
+                let mut shell = test_shell();
+                let program = parse_test("true").unwrap();
+                let command = &program.items[0].and_or.first.commands[0];
+                crate::exec::pipeline::fork_and_execute_command(
+                    &mut shell,
+                    command,
+                    None,
+                    false,
+                    crate::exec::ProcessGroupPlan::None,
+                )
+                .unwrap();
+            },
+        );
+    }
+
+    #[test]
+    fn wait_pipeline_handoff_foreground_no_pgid() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.owns_terminal = true;
+            let spawned = crate::exec::SpawnedProcesses {
+                pgid: None,
+                children: vec![],
+            };
+            let result = wait_for_pipeline(&mut shell, spawned, None, false).unwrap();
+            assert_eq!(result, 0);
+        });
+    }
+
+    #[test]
+    fn wait_pipeline_handoff_foreground_tcgetpgrp_err() {
+        run_trace(
+            trace_entries![
+                isatty(fd(sys::STDIN_FILENO)) -> int(1),
+                isatty(fd(sys::STDERR_FILENO)) -> int(1),
+                tcgetpgrp(fd(sys::STDIN_FILENO)) -> err(libc::ENOTTY),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.owns_terminal = true;
+                let spawned = crate::exec::SpawnedProcesses {
+                    pgid: Some(100),
+                    children: vec![],
+                };
+                let result = wait_for_pipeline(&mut shell, spawned, None, false).unwrap();
+                assert_eq!(result, 0);
             },
         );
     }

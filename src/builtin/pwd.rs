@@ -91,4 +91,55 @@ mod tests {
             },
         );
     }
+
+    #[test]
+    fn pwd_logical_returns_pwd_when_valid() {
+        run_trace(
+            trace_entries![
+                getcwd() -> cwd("/home/user"),
+                realpath(any, any) -> realpath("/home/user"),
+                realpath(any, any) -> realpath("/home/user"),
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"/home/user\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"PWD".to_vec(), b"/home/user".to_vec());
+                let outcome = invoke(&mut shell, &[b"pwd".to_vec()]).expect("pwd");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn logical_pwd_is_valid_rejects_non_absolute() {
+        assert_no_syscalls(|| {
+            assert!(!logical_pwd_is_valid(b"relative/path"));
+        });
+    }
+
+    #[test]
+    fn logical_pwd_is_valid_rejects_dot_components() {
+        assert_no_syscalls(|| {
+            assert!(!logical_pwd_is_valid(b"/a/./b"));
+            assert!(!logical_pwd_is_valid(b"/a/../b"));
+        });
+    }
+
+    #[test]
+    fn pwd_logical_falls_back_to_cwd_when_paths_differ() {
+        run_trace(
+            trace_entries![
+                getcwd() -> cwd("/real/path"),
+                realpath(any, any) -> realpath("/home/link"),
+                realpath(any, any) -> realpath("/real/path"),
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"/real/path\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"PWD".to_vec(), b"/home/link".to_vec());
+                let outcome = invoke(&mut shell, &[b"pwd".to_vec()]).expect("pwd");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
 }

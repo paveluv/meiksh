@@ -540,4 +540,259 @@ mod tests {
             assert_eq!(trailing, vec![b"a" as &[u8], b""]);
         });
     }
+    #[test]
+    fn spawn_child_access_denied() {
+        run_trace(
+            trace_entries![
+                access(str("/bin/noperm"), sys::F_OK) -> 0,
+                access(str("/bin/noperm"), sys::X_OK) -> err(libc::EACCES),
+                write(fd(2), bytes(b"noperm: Permission denied\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let prepared = PreparedProcess {
+                    argv: vec![b"noperm".to_vec().into()].into(),
+                    exec_path: b"/bin/noperm".to_vec().into(),
+                    path_verified: false,
+                    child_env: vec![].into(),
+                    redirections: vec![],
+                    noclobber: false,
+                };
+                let err = crate::exec::process::spawn_prepared(
+                    &mut shell,
+                    &prepared,
+                    ProcessGroupPlan::None,
+                )
+                .unwrap_err();
+                assert_eq!(err.exit_status(), 126);
+            },
+        );
+    }
+
+    #[test]
+    fn spawn_path_verified_false_passes_both_checks() {
+        run_trace(
+            trace_entries![
+                access(str("/bin/ok"), sys::F_OK) -> 0,
+                access(str("/bin/ok"), sys::X_OK) -> 0,
+                fork() -> pid(300), child: [
+                    open(str("/bin/ok"), _, _) -> fd(20),
+                    read(fd(20), _) -> bytes(b"#!/bin/sh\n"),
+                    close(fd(20)) -> int(0),
+                    execvp(str("/bin/ok"), _) -> err(sys::ENOEXEC),
+                    open(str("/bin/ok"), _, _) -> fd(10),
+                    read(fd(10), _) -> bytes(b"true\n"),
+                    read(fd(10), _) -> int(0),
+                    close(fd(10)) -> int(0),
+                ],
+                waitpid(300, _) -> status(0),
+            ],
+            || {
+                let shell = test_shell();
+                let prepared = PreparedProcess {
+                    argv: vec![b"/bin/ok".to_vec().into()].into(),
+                    exec_path: b"/bin/ok".to_vec().into(),
+                    path_verified: false,
+                    child_env: vec![].into(),
+                    redirections: vec![],
+                    noclobber: false,
+                };
+                let child =
+                    spawn_prepared(&shell, &prepared, ProcessGroupPlan::None).expect("spawn ok");
+                assert_eq!(child.pid, 300);
+                let _ = sys::wait_pid(300, false);
+            },
+        );
+    }
+
+    #[test]
+    fn spawn_child_not_found() {
+        run_trace(
+            trace_entries![
+                access(str("/bin/missing"), sys::F_OK) -> err(libc::ENOENT),
+                write(fd(2), bytes(b"missing: not found\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let prepared = PreparedProcess {
+                    argv: vec![b"missing".to_vec().into()].into(),
+                    exec_path: b"/bin/missing".to_vec().into(),
+                    path_verified: false,
+                    child_env: vec![].into(),
+                    redirections: vec![],
+                    noclobber: false,
+                };
+                let err = crate::exec::process::spawn_prepared(
+                    &mut shell,
+                    &prepared,
+                    ProcessGroupPlan::None,
+                )
+                .unwrap_err();
+                assert_eq!(err.exit_status(), 127);
+            },
+        );
+    }
+
+    #[test]
+    fn spawn_prepared_binary_rejection_exits_126() {
+        run_trace(
+            trace_entries![
+                fork() -> pid(200), child: [
+                    open(str("/tmp/binfile"), _, _) -> fd(20),
+                    read(fd(20), _) -> bytes(b"binary\x00data\n"),
+                    close(fd(20)) -> int(0),
+                    write(fd(2), bytes(b"/tmp/binfile: cannot execute binary file\n")) -> auto,
+                ],
+                waitpid(200, _) -> status(126),
+            ],
+            || {
+                let shell = test_shell();
+                let prepared = PreparedProcess {
+                    exec_path: b"/tmp/binfile".to_vec().into(),
+                    argv: vec![b"/tmp/binfile".to_vec().into()].into_boxed_slice(),
+                    child_env: Vec::new().into_boxed_slice(),
+                    redirections: Vec::new(),
+                    noclobber: false,
+                    path_verified: true,
+                };
+                let _child = spawn_prepared(&shell, &prepared, ProcessGroupPlan::None)
+                    .expect("spawn for binary rejection");
+                let _ = sys::wait_pid(200, false);
+            },
+        );
+    }
+
+    #[test]
+    fn spawn_prepared_exec_enoent_exits_127() {
+        run_trace(
+            trace_entries![
+                fork() -> pid(201), child: [
+                    open(str("/tmp/gone"), _, _) -> fd(20),
+                    read(fd(20), _) -> bytes(b"echo hello\n"),
+                    close(fd(20)) -> int(0),
+                    execvp(str("/tmp/gone"), _) -> err(sys::ENOENT),
+                    write(fd(2), bytes(b"/tmp/gone: not found\n")) -> auto,
+                ],
+                waitpid(201, _) -> status(127),
+            ],
+            || {
+                let shell = test_shell();
+                let prepared = PreparedProcess {
+                    exec_path: b"/tmp/gone".to_vec().into(),
+                    argv: vec![b"/tmp/gone".to_vec().into()].into_boxed_slice(),
+                    child_env: Vec::new().into_boxed_slice(),
+                    redirections: Vec::new(),
+                    noclobber: false,
+                    path_verified: true,
+                };
+                let _child = spawn_prepared(&shell, &prepared, ProcessGroupPlan::None)
+                    .expect("spawn for exec enoent");
+                let _ = sys::wait_pid(201, false);
+            },
+        );
+    }
+
+    #[test]
+    fn spawn_prepared_exec_generic_error_exits_126() {
+        let eio_msg = sys::SysError::Errno(libc::EIO).strerror();
+        let mut expected_stderr = b"/tmp/badexec: ".to_vec();
+        expected_stderr.extend_from_slice(&eio_msg);
+        expected_stderr.push(b'\n');
+        run_trace(
+            trace_entries![
+                fork() -> pid(202), child: [
+                    open(str("/tmp/badexec"), _, _) -> fd(20),
+                    read(fd(20), _) -> bytes(b"echo hello\n"),
+                    close(fd(20)) -> int(0),
+                    execvp(str("/tmp/badexec"), _) -> err(libc::EIO),
+                    write(fd(2), bytes(&expected_stderr)) -> auto,
+                ],
+                waitpid(202, _) -> status(126),
+            ],
+            || {
+                let shell = test_shell();
+                let prepared = PreparedProcess {
+                    exec_path: b"/tmp/badexec".to_vec().into(),
+                    argv: vec![b"/tmp/badexec".to_vec().into()].into_boxed_slice(),
+                    child_env: Vec::new().into_boxed_slice(),
+                    redirections: Vec::new(),
+                    noclobber: false,
+                    path_verified: true,
+                };
+                let _child = spawn_prepared(&shell, &prepared, ProcessGroupPlan::None)
+                    .expect("spawn for exec eio");
+                let _ = sys::wait_pid(202, false);
+            },
+        );
+    }
+
+    #[test]
+    fn exec_prepared_in_current_process_prepare_failure_exits() {
+        run_trace(
+            trace_entries![
+                fork() -> pid(203), child: [
+                    access(str("/nonexistent/cmd"), sys::F_OK) -> err(libc::ENOENT),
+                    write(fd(2), bytes(b"cmd: not found\n")) -> auto,
+                ],
+                waitpid(203, _) -> status(127),
+            ],
+            || {
+                let pid = sys::fork_process().expect("fork");
+                if pid == 0 {
+                    let shell = test_shell();
+                    let prepared = PreparedProcess {
+                        exec_path: b"/nonexistent/cmd".to_vec().into(),
+                        argv: vec![b"cmd".to_vec().into()].into_boxed_slice(),
+                        child_env: Vec::new().into_boxed_slice(),
+                        redirections: Vec::new(),
+                        noclobber: false,
+                        path_verified: false,
+                    };
+                    exec_prepared_in_current_process(&shell, &prepared, ProcessGroupPlan::None);
+                }
+                let _ = sys::wait_pid(203, false);
+            },
+        );
+    }
+
+    #[test]
+    fn spawn_child_join_group_and_fd_action_error() {
+        run_trace(
+            trace_entries![
+                open(str("file.txt"), _, _) -> fd(10),
+                fork() -> pid(123), child: [
+                    setpgid(0, 500) -> 0,
+                    dup2(fd(10), fd(1)) -> err(libc::EBADF),
+                    write(fd(2), bytes(b"/bin/true: Bad file descriptor\n")) -> auto,
+                ],
+                close(fd(10)) -> 0,
+                waitpid(123, _) -> status(1),
+            ],
+            || {
+                let mut shell = test_shell();
+                let prepared = PreparedProcess {
+                    argv: vec![b"/bin/true".to_vec().into()].into(),
+                    exec_path: b"/bin/true".to_vec().into(),
+                    path_verified: true,
+                    child_env: vec![].into(),
+                    redirections: vec![ProcessRedirection {
+                        kind: crate::syntax::RedirectionKind::Write,
+                        fd: 1,
+                        target: b"file.txt".to_vec().into(),
+                        here_doc_body: None,
+                    }],
+                    noclobber: false,
+                };
+                let handle = crate::exec::process::spawn_prepared(
+                    &mut shell,
+                    &prepared,
+                    ProcessGroupPlan::Join(500),
+                )
+                .unwrap();
+                assert_eq!(handle.pid, 123);
+                // Manually trigger wait to consume the trace
+                let _ = sys::wait_pid(123, false);
+            },
+        );
+    }
 }

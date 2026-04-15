@@ -312,4 +312,32 @@ mod tests {
             assert_eq!(shell.get_var(b"AFTER"), None);
         });
     }
+    #[test]
+    fn background_job_message_interactive() {
+        run_trace(
+            trace_entries![
+                open(str("/dev/null"), _, _) -> fd(10),
+                fork() -> pid(123), child: [
+                    dup2(fd(10), fd(0)) -> fd(0),
+                    close(fd(10)) -> 0,
+                    setpgid(0, 0) -> 0,
+                    signal(libc::SIGINT, _) -> 0,
+                    signal(libc::SIGQUIT, _) -> 0,
+                    signal(libc::SIGTERM, _) -> 0,
+                    signal(libc::SIGQUIT, _) -> 0,
+                    signal(libc::SIGINT, _) -> 0,
+                ],
+                close(fd(10)) -> 0,
+                setpgid(123, 123) -> 0,
+                write(fd(2), bytes(b"[1] 123\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.interactive = true;
+                let program = parse_test("true &").unwrap();
+                let status = execute_program(&mut shell, &program).unwrap();
+                assert_eq!(status, 0);
+            },
+        );
+    }
 }

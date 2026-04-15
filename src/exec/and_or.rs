@@ -122,4 +122,26 @@ mod tests {
     use crate::exec::test_support::*;
     use crate::shell::Shell;
     use crate::syntax::{Assignment, HereDoc, Redirection, Word};
+
+    #[test]
+    fn spawn_and_or_monitor_mode_single_pipeline() {
+        crate::sys::test_support::run_trace(
+            crate::trace_entries![
+                fork() -> pid(123), child: [
+                    setpgid(int(0), int(0)) -> 0,
+                    signal(int(libc::SIGTSTP), _) -> 0,
+                    signal(int(libc::SIGTTIN), _) -> 0,
+                    signal(int(libc::SIGTTOU), _) -> 0,
+                ],
+                setpgid(int(123), int(123)) -> 0,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.options.monitor = true;
+                let prog = parse_test("true &").expect("parse");
+                let status = execute_program(&mut shell, &prog).unwrap();
+                assert_eq!(status, 0);
+            },
+        );
+    }
 }

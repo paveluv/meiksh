@@ -14,9 +14,7 @@ mod types;
 pub mod test_support;
 
 pub use constants::*;
-pub use env::{
-    env_args_os, env_set_var, env_unset_var, env_var, env_vars, getenv, home_dir_for_user, setenv,
-};
+pub use env::{env_args_os, env_set_var, env_unset_var, env_var, env_vars, home_dir_for_user};
 pub use error::{SysError, SysResult};
 pub use fd_io::{
     close_fd, create_pipe, duplicate_fd, duplicate_fd_to_new, ensure_blocking_read_fd, read_fd,

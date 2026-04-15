@@ -261,11 +261,9 @@ pub(super) fn execute_simple(
     } else {
         for (name, _value) in &owned_assignments {
             if shell.readonly.contains(name) {
-                return Err(shell.diagnostic(1, &{
-                    let mut msg = name.clone();
-                    msg.extend_from_slice(b": readonly variable");
-                    msg
-                }));
+                let mut msg = name.clone();
+                msg.extend_from_slice(b": readonly variable");
+                return Err(shell.diagnostic(1, &msg));
             }
         }
         let command_name = owned_argv[0].clone();
@@ -889,6 +887,146 @@ mod tests {
     }
 
     #[test]
+    fn empty_command_redirection_error() {
+        run_trace(
+            trace_entries![
+                fcntl(int(1), _, _) -> int(10),
+                open(_, _, _) -> err(libc::EACCES),
+                dup2(fd(10), fd(1)) -> fd(1),
+                close(fd(10)) -> 0,
+                write(fd(2), bytes(b"meiksh: line 1: Permission denied\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let prog = parse_test("> /forbidden").unwrap();
+                let status = execute_program(&mut shell, &prog).unwrap();
+                assert_eq!(status, 1);
+            },
+        );
+    }
+
+    #[test]
+    fn exec_no_cmd_redirection_error() {
+        run_trace(
+            trace_entries![
+                open(_, _, _) -> err(libc::EACCES),
+                write(fd(2), bytes(b"meiksh: line 1: Permission denied\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let prog = parse_test("exec > /forbidden").unwrap();
+                let err = execute_program(&mut shell, &prog).unwrap_err();
+                assert_eq!(err.exit_status(), 1);
+            },
+        );
+    }
+
+    #[test]
+    fn exec_no_cmd_assignment_error() {
+        run_trace(
+            trace_entries![
+                write(fd(2), bytes(b"meiksh: line 1: x: readonly variable\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.mark_readonly(b"x");
+                let prog = parse_test("x=2 exec").unwrap();
+                let err = execute_program(&mut shell, &prog).unwrap_err();
+                assert_eq!(err.exit_status(), 1);
+            },
+        );
+    }
+
+    #[test]
+    fn function_redirection_error() {
+        run_trace(
+            trace_entries![
+                fcntl(int(1), _, _) -> int(10),
+                open(_, _, _) -> err(libc::EACCES),
+                dup2(fd(10), fd(1)) -> fd(1),
+                close(fd(10)) -> 0,
+                write(fd(2), bytes(b"meiksh: line 1: Permission denied\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let fn_prog = parse_test("myfn() { true; }").unwrap();
+                execute_program(&mut shell, &fn_prog).unwrap();
+                let prog = parse_test("myfn > /forbidden").unwrap();
+                let status = execute_program(&mut shell, &prog).unwrap();
+                assert_eq!(status, 1);
+            },
+        );
+    }
+
+    #[test]
+    fn builtin_prefix_assignment_error() {
+        run_trace(
+            trace_entries![
+                write(fd(2), bytes(b"meiksh: line 1: x: readonly variable\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.mark_readonly(b"x");
+                let prog = parse_test("x=2 echo hi").unwrap();
+                let status = execute_program(&mut shell, &prog).unwrap();
+                assert_eq!(status, 1);
+            },
+        );
+    }
+
+    #[test]
+    fn external_command_prefix_assignment_error() {
+        run_trace(
+            trace_entries![
+                write(fd(2), bytes(b"meiksh: line 1: x: readonly variable\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.mark_readonly(b"x");
+                let prog = parse_test("x=2 /bin/true").unwrap();
+                let err = execute_program(&mut shell, &prog).unwrap_err();
+                assert_eq!(err.exit_status(), 1);
+            },
+        );
+    }
+
+    #[test]
+    fn external_command_spawn_error_subshell() {
+        run_trace(
+            trace_entries![
+                fork() -> pid(123), child: [
+                    fork() -> err(libc::ENOMEM),
+                    write(fd(2), bytes(b"/bin/fail: Cannot allocate memory\n")) -> auto,
+
+                ],
+                waitpid(123, _) -> status(1),
+            ],
+            || {
+                let mut shell = test_shell();
+                let prog = parse_test("( /bin/fail )").unwrap();
+                let status = execute_program(&mut shell, &prog).unwrap();
+                assert_eq!(status, 1);
+            },
+        );
+    }
+
+    #[test]
+    fn external_command_spawn_error_main() {
+        run_trace(
+            trace_entries![
+                fork() -> err(libc::ENOMEM),
+                write(fd(2), bytes(b"/bin/fail: Cannot allocate memory\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let prog = parse_test("/bin/fail").unwrap();
+                let status = execute_program(&mut shell, &prog).unwrap();
+                assert_eq!(status, 1);
+            },
+        );
+    }
+
+    #[test]
     fn assignment_only_command_without_words() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
@@ -898,5 +1036,37 @@ mod tests {
             assert_eq!(shell.get_var(b"X"), Some(b"1" as &[u8]));
             assert_eq!(shell.get_var(b"Y"), Some(b"2" as &[u8]));
         });
+    }
+
+    #[test]
+    fn test_execute_expanded_readonly() {
+        run_trace(
+            trace_entries![
+                write(fd(2), bytes(b"meiksh: line 1: RO: readonly variable\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.mark_readonly(b"RO");
+                let prog = parse_test("RO=val /bin/echo").unwrap();
+                let err = execute_program(&mut shell, &prog).unwrap_err();
+                assert_eq!(err.exit_status(), 1);
+            },
+        );
+    }
+    #[test]
+    fn prefix_assignment_readonly_external_error() {
+        run_trace(
+            trace_entries![
+                write(fd(2), bytes(b"meiksh: line 1: y: readonly variable\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.mark_readonly(b"y");
+                // Put y=2 in a position where the assignment loop evaluates the second item, hitting the end of the block. Wait, the loop condition returns early. To hit the loop increment/continue, we just need a successful assignment followed by a failing one, or just a successful one.
+                let prog = parse_test("x=1 y=2 /bin/true").unwrap();
+                let err = execute_program(&mut shell, &prog).unwrap_err();
+                assert_eq!(err.exit_status(), 1);
+            },
+        );
     }
 }
