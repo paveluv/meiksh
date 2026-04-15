@@ -140,7 +140,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let _ = shell.set_var(b"MAIL", b"/tmp/test_mail".to_vec());
+                let _ = shell.set_var(b"MAIL", b"/tmp/test_mail");
                 check_mail(&mut shell);
             },
         );
@@ -160,7 +160,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let _ = shell.set_var(b"MAILPATH", b"/tmp/box1%New mail!:/tmp/box2".to_vec());
+                let _ = shell.set_var(b"MAILPATH", b"/tmp/box1%New mail!:/tmp/box2");
                 check_mail(&mut shell);
             },
         );
@@ -177,7 +177,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let _ = shell.set_var(b"MAILPATH", b":/tmp/box".to_vec());
+                let _ = shell.set_var(b"MAILPATH", b":/tmp/box");
                 check_mail(&mut shell);
             },
         );
@@ -195,7 +195,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let _ = shell.set_var(b"MAIL", b"/tmp/mbox".to_vec());
+                let _ = shell.set_var(b"MAIL", b"/tmp/mbox");
                 check_mail(&mut shell);
                 check_mail(&mut shell);
             },

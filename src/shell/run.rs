@@ -475,7 +475,7 @@ impl Shell {
         assignments: &[(Vec<u8>, Vec<u8>)],
     ) -> Result<FlowSignal, ShellError> {
         for (name, value) in assignments {
-            self.set_var(name, value.clone()).map_err(|e| {
+            self.set_var(name, value).map_err(|e| {
                 let msg = var_error_message(&e);
                 self.diagnostic(1, &msg)
             })?;

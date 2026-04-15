@@ -6,7 +6,7 @@ use crate::shell::state::Shell;
 pub(super) fn getopts_set(
     shell: &mut Shell,
     name: &[u8],
-    value: Vec<u8>,
+    value: &[u8],
 ) -> Result<(), BuiltinOutcome> {
     shell
         .set_var(name, value)
@@ -62,13 +62,10 @@ pub(super) fn getopts_inner(
     charind: usize,
 ) -> Result<BuiltinOutcome, BuiltinOutcome> {
     if optind < 1 || optind > params.len() {
-        getopts_set(shell, name, b"?".to_vec())?;
+        getopts_set(shell, name, b"?")?;
         let _ = shell.unset_var(b"OPTARG");
-        getopts_set(
-            shell,
-            b"OPTIND",
-            bstr::u64_to_bytes((params.len() + 1) as u64),
-        )?;
+        let buf = bstr::u64_to_bytes((params.len() + 1) as u64);
+        getopts_set(shell, b"OPTIND", &buf)?;
         return Ok(BuiltinOutcome::Status(1));
     }
 
@@ -77,16 +74,18 @@ pub(super) fn getopts_inner(
 
     if charind == 0 {
         if arg == b"--" {
-            getopts_set(shell, name, b"?".to_vec())?;
+            getopts_set(shell, name, b"?")?;
             let _ = shell.unset_var(b"OPTARG");
-            getopts_set(shell, b"OPTIND", bstr::u64_to_bytes((optind + 1) as u64))?;
+            let buf = bstr::u64_to_bytes((optind + 1) as u64);
+            getopts_set(shell, b"OPTIND", &buf)?;
             shell.env.remove(b"_GETOPTS_CIND" as &[u8]);
             return Ok(BuiltinOutcome::Status(1));
         }
         if arg_bytes.len() < 2 || arg_bytes[0] != b'-' {
-            getopts_set(shell, name, b"?".to_vec())?;
+            getopts_set(shell, name, b"?")?;
             let _ = shell.unset_var(b"OPTARG");
-            getopts_set(shell, b"OPTIND", bstr::u64_to_bytes(optind as u64))?;
+            let buf = bstr::u64_to_bytes(optind as u64);
+            getopts_set(shell, b"OPTIND", &buf)?;
             shell.env.remove(b"_GETOPTS_CIND" as &[u8]);
             return Ok(BuiltinOutcome::Status(1));
         }
@@ -101,19 +100,19 @@ pub(super) fn getopts_inner(
 
         if takes_arg {
             if next_ci < arg_bytes.len() {
-                let optarg: Vec<u8> = arg_bytes[next_ci..].to_vec();
-                getopts_set(shell, b"OPTARG", optarg)?;
-                getopts_set(shell, b"OPTIND", bstr::u64_to_bytes((optind + 1) as u64))?;
+                getopts_set(shell, b"OPTARG", &arg_bytes[next_ci..])?;
+                let buf = bstr::u64_to_bytes((optind + 1) as u64);
+                getopts_set(shell, b"OPTIND", &buf)?;
                 shell.env.remove(b"_GETOPTS_CIND" as &[u8]);
             } else if optind < params.len() {
-                let optarg = params[optind].clone();
-                getopts_set(shell, b"OPTARG", optarg)?;
-                getopts_set(shell, b"OPTIND", bstr::u64_to_bytes((optind + 2) as u64))?;
+                getopts_set(shell, b"OPTARG", &params[optind])?;
+                let buf = bstr::u64_to_bytes((optind + 2) as u64);
+                getopts_set(shell, b"OPTIND", &buf)?;
                 shell.env.remove(b"_GETOPTS_CIND" as &[u8]);
             } else {
                 if silent {
-                    getopts_set(shell, name, b":".to_vec())?;
-                    getopts_set(shell, b"OPTARG", vec![opt_byte])?;
+                    getopts_set(shell, name, b":")?;
+                    getopts_set(shell, b"OPTARG", &[opt_byte])?;
                 } else {
                     let msg = ByteWriter::new()
                         .bytes(&shell.shell_name)
@@ -122,10 +121,11 @@ pub(super) fn getopts_inner(
                         .byte(b'\n')
                         .finish();
                     write_stderr(&msg);
-                    getopts_set(shell, name, b"?".to_vec())?;
+                    getopts_set(shell, name, b"?")?;
                     let _ = shell.unset_var(b"OPTARG");
                 }
-                getopts_set(shell, b"OPTIND", bstr::u64_to_bytes((optind + 1) as u64))?;
+                let buf = bstr::u64_to_bytes((optind + 1) as u64);
+                getopts_set(shell, b"OPTIND", &buf)?;
                 shell.env.remove(b"_GETOPTS_CIND" as &[u8]);
                 return Ok(BuiltinOutcome::Status(0));
             }
@@ -137,15 +137,16 @@ pub(super) fn getopts_inner(
                     bstr::u64_to_bytes(next_ci as u64),
                 );
             } else {
-                getopts_set(shell, b"OPTIND", bstr::u64_to_bytes((optind + 1) as u64))?;
+                let buf = bstr::u64_to_bytes((optind + 1) as u64);
+                getopts_set(shell, b"OPTIND", &buf)?;
                 shell.env.remove(b"_GETOPTS_CIND" as &[u8]);
             }
         }
-        getopts_set(shell, name, vec![opt_byte])?;
+        getopts_set(shell, name, &[opt_byte])?;
         Ok(BuiltinOutcome::Status(0))
     } else {
         if silent {
-            getopts_set(shell, b"OPTARG", vec![opt_byte])?;
+            getopts_set(shell, b"OPTARG", &[opt_byte])?;
         } else {
             let msg = ByteWriter::new()
                 .bytes(&shell.shell_name)
@@ -156,14 +157,15 @@ pub(super) fn getopts_inner(
             write_stderr(&msg);
             let _ = shell.unset_var(b"OPTARG");
         }
-        getopts_set(shell, name, b"?".to_vec())?;
+        getopts_set(shell, name, b"?")?;
         if next_ci < arg_bytes.len() {
             shell.env.insert(
                 b"_GETOPTS_CIND".to_vec(),
                 bstr::u64_to_bytes(next_ci as u64),
             );
         } else {
-            getopts_set(shell, b"OPTIND", bstr::u64_to_bytes((optind + 1) as u64))?;
+            let buf = bstr::u64_to_bytes((optind + 1) as u64);
+            getopts_set(shell, b"OPTIND", &buf)?;
             shell.env.remove(b"_GETOPTS_CIND" as &[u8]);
         }
         Ok(BuiltinOutcome::Status(0))

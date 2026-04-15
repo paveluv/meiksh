@@ -44,7 +44,8 @@ pub(super) fn expand_dollar<C: Context>(
                             let pre_expanded = expand_arithmetic_expression(ctx, &expression)?;
                             ctx.set_lineno(saved_line);
                             let value = eval_arithmetic(ctx, &pre_expanded)?;
-                            return Ok((Expansion::One(bstr::i64_to_bytes(value)), index + 2));
+                            let buf = bstr::I64Buf::new(value);
+                            return Ok((Expansion::One(buf.as_bytes().to_vec()), index + 2));
                         }
                         depth = depth.saturating_sub(1);
                     }
@@ -671,7 +672,7 @@ pub(super) fn assign_parameter<C: Context>(
         });
     }
     let value = expand_parameter_word(ctx, raw_word, quoted)?;
-    ctx.set_var(name, value.clone())?;
+    ctx.set_var(name, &value)?;
     Ok(value)
 }
 
@@ -689,7 +690,7 @@ pub(super) fn assign_parameter_text<C: Context>(
         });
     }
     let value = expand_parameter_text_owned(ctx, raw_word)?;
-    ctx.set_var(name, value.clone())?;
+    ctx.set_var(name, &value)?;
     Ok(value)
 }
 

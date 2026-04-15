@@ -104,8 +104,9 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
                     let lhs = self.resolve_var(&name)?;
                     apply_compound_assign(&op, lhs, rhs)?
                 };
+                let buf = bstr::I64Buf::new(value);
                 self.ctx
-                    .set_var(&name, bstr::i64_to_bytes(value))
+                    .set_var(name, buf.as_bytes())
                     .map_err(|e| ExpandError { message: e.message })?;
                 return Ok(value);
             }
@@ -114,7 +115,7 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
         self.parse_ternary()
     }
 
-    fn try_consume_assign_op(&mut self) -> Option<Vec<u8>> {
+    fn try_consume_assign_op(&mut self) -> Option<&'static [u8]> {
         let remaining = &self.source[self.index..];
         for op in &[
             b"<<=".as_ref(),
@@ -134,7 +135,7 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
                     return None;
                 }
                 self.index += op.len();
-                return Some(op.to_vec());
+                return Some(op);
             }
         }
         None
@@ -437,7 +438,7 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
             .ok_or_else(|| self.error_at_current(b"invalid arithmetic operand"))
     }
 
-    fn try_scan_name(&mut self) -> Option<Vec<u8>> {
+    fn try_scan_name(&mut self) -> Option<&'src [u8]> {
         self.skip_ws();
         let start = self.index;
         if self.index < self.source.len() {
@@ -452,7 +453,7 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
                         break;
                     }
                 }
-                return Some(self.source[start..self.index].to_vec());
+                return Some(&self.source[start..self.index]);
             }
         }
         None
@@ -470,21 +471,24 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
         if val_bytes.is_empty() {
             return Ok(0);
         }
-        let trimmed = trim_ascii_whitespace(&val_bytes).to_vec();
-        let mut err_msg = Vec::new();
-        err_msg.extend_from_slice(b"invalid variable value for '");
-        err_msg.extend_from_slice(name);
-        err_msg.push(b'\'');
-        if trimmed.starts_with(b"0x") || trimmed.starts_with(b"0X") {
-            bstr::parse_hex_i64(&trimmed[2..]).ok_or_else(|| self.error_at_current(&err_msg))
+        let trimmed = trim_ascii_whitespace(&val_bytes);
+        let parsed = if trimmed.starts_with(b"0x") || trimmed.starts_with(b"0X") {
+            bstr::parse_hex_i64(&trimmed[2..])
         } else if trimmed.starts_with(b"0")
             && trimmed.len() > 1
             && trimmed[1..].iter().all(|b| b.is_ascii_digit())
         {
-            bstr::parse_octal_i64(&trimmed[1..]).ok_or_else(|| self.error_at_current(&err_msg))
+            bstr::parse_octal_i64(&trimmed[1..])
         } else {
-            bstr::parse_i64(&trimmed).ok_or_else(|| self.error_at_current(&err_msg))
-        }
+            bstr::parse_i64(trimmed)
+        };
+        parsed.ok_or_else(|| {
+            let mut msg = Vec::new();
+            msg.extend_from_slice(b"invalid variable value for '");
+            msg.extend_from_slice(name);
+            msg.push(b'\'');
+            self.error_at_current(&msg)
+        })
     }
 
     fn skip_ws(&mut self) {

@@ -47,7 +47,7 @@ impl Context for Shell {
         &self.positional
     }
 
-    fn set_var(&mut self, name: &[u8], value: Vec<u8>) -> Result<(), ExpandError> {
+    fn set_var(&mut self, name: &[u8], value: &[u8]) -> Result<(), ExpandError> {
         self.set_var(name, value).map_err(|e| {
             let msg = var_error_message(&e);
             ExpandError {
@@ -176,11 +176,11 @@ mod tests {
                 Context::positional_param(&shell, 0).as_deref(),
                 Some(b"meiksh".as_slice())
             );
-            Context::set_var(&mut shell, b"CTX_SET", b"7".to_vec()).expect("ctx set");
+            Context::set_var(&mut shell, b"CTX_SET", b"7").expect("ctx set");
             assert_eq!(shell.get_var(b"CTX_SET"), Some(b"7".as_slice()));
             shell.mark_readonly(b"CTX_SET");
-            let error = Context::set_var(&mut shell, b"CTX_SET", b"8".to_vec())
-                .expect_err("readonly ctx set");
+            let error =
+                Context::set_var(&mut shell, b"CTX_SET", b"8").expect_err("readonly ctx set");
             assert_eq!(&*error.message, b"CTX_SET: readonly variable".as_slice());
         });
     }

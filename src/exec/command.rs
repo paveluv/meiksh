@@ -209,7 +209,7 @@ pub(super) fn execute_for(shell: &mut Shell, for_command: &ForCommand) -> Result
     let result = (|| {
         let mut last_status = 0;
         for value in values {
-            shell.set_var(&for_command.name, value).map_err(|e| {
+            shell.set_var(&for_command.name, &value).map_err(|e| {
                 let msg = var_error_bytes(&e);
                 shell.diagnostic(1, &msg)
             })?;

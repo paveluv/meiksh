@@ -3945,7 +3945,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let _ = shell.set_var(b"EDITOR", b":".to_vec());
+                let _ = shell.set_var(b"EDITOR", b":");
                 let result = super::read_line(&mut shell, b"").unwrap();
                 assert_eq!(result, Some(b"\n".to_vec()));
             },
@@ -3980,7 +3980,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let _ = shell.set_var(b"EDITOR", b":".to_vec());
+                let _ = shell.set_var(b"EDITOR", b":");
                 let result = super::read_line(&mut shell, b"").unwrap();
                 assert_eq!(result, Some(b"\n".to_vec()));
             },
@@ -4013,7 +4013,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let _ = shell.set_var(b"EDITOR", b":".to_vec());
+                let _ = shell.set_var(b"EDITOR", b":");
                 let result = super::read_line(&mut shell, b"").unwrap();
                 assert_eq!(result, Some(b"edited\n".to_vec()));
             },
