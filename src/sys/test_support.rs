@@ -22,7 +22,7 @@ fn syscall_lock() -> &'static Mutex<()> {
     &LOCK
 }
 
-pub(crate) fn current_interface() -> Option<SystemInterface> {
+pub(super) fn current_interface() -> Option<SystemInterface> {
     TEST_INTERFACE.with(|cell| *cell.borrow())
 }
 
@@ -48,7 +48,7 @@ pub(crate) fn test_take_pending_signal_bits() -> usize {
     TEST_PENDING_SIGNALS.with(|cell| cell.replace(0))
 }
 
-pub(crate) fn with_test_interface<T>(iface: SystemInterface, f: impl FnOnce() -> T) -> T {
+pub(super) fn with_test_interface<T>(iface: SystemInterface, f: impl FnOnce() -> T) -> T {
     let _guard = syscall_lock()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -791,7 +791,7 @@ fn trace_tcsetattr(_fd: c_int, _action: c_int, _termios_p: *const libc::termios)
 #[allow(dead_code)]
 pub(crate) struct ChildExitPanic(pub i32);
 
-pub(crate) fn trace_interface() -> SystemInterface {
+pub(super) fn trace_interface() -> SystemInterface {
     SystemInterface {
         getpid: trace_getpid,
         getppid: trace_getppid,
@@ -842,7 +842,7 @@ pub(crate) fn trace_interface() -> SystemInterface {
     }
 }
 
-pub(crate) fn no_interface_table() -> SystemInterface {
+pub(super) fn no_interface_table() -> SystemInterface {
     fn panic_getpid() -> Pid {
         panic!("unexpected syscall 'getpid' in pure-logic test")
     }
