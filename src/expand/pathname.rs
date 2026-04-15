@@ -214,7 +214,7 @@ mod tests {
         assert!(ctx.positional_params().is_empty());
         assert!(ctx.home_dir_for_user(b"nobody").is_none());
         assert!(!ctx.nounset_enabled());
-        ctx.set_var(b"NAME", b"value".to_vec()).expect("set var");
+        ctx.set_var(b"NAME", b"value").expect("set var");
         assert_eq!(ctx.env_var(b"NAME").as_deref(), Some(b"value".as_ref()));
         assert_eq!(ctx.shell_name(), b"meiksh");
         assert_eq!(

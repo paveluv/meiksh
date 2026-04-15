@@ -175,6 +175,46 @@ pub(crate) fn i64_to_bytes(val: i64) -> Vec<u8> {
     buf
 }
 
+/// Stack-allocated buffer for formatting an i64 as decimal ASCII.
+/// Maximum i64 is 20 characters (including sign for i64::MIN).
+pub(crate) struct I64Buf {
+    buf: [u8; 20],
+    start: usize,
+}
+
+impl I64Buf {
+    pub(crate) fn new(val: i64) -> Self {
+        let mut b = I64Buf {
+            buf: [0u8; 20],
+            start: 20,
+        };
+        let negative = val < 0;
+        let mut v = (val as u64).wrapping_neg();
+        if !negative {
+            v = val as u64;
+        }
+        if v == 0 {
+            b.start -= 1;
+            b.buf[b.start] = b'0';
+        } else {
+            while v > 0 {
+                b.start -= 1;
+                b.buf[b.start] = b'0' + (v % 10) as u8;
+                v /= 10;
+            }
+        }
+        if negative {
+            b.start -= 1;
+            b.buf[b.start] = b'-';
+        }
+        b
+    }
+
+    pub(crate) fn as_bytes(&self) -> &[u8] {
+        &self.buf[self.start..]
+    }
+}
+
 /// Append decimal representation of a u64.
 pub(crate) fn push_u64(buf: &mut Vec<u8>, val: u64) {
     if val == 0 {

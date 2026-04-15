@@ -51,7 +51,7 @@ pub(super) fn apply_prefix_assignments(
     assignments: &[(Vec<u8>, Vec<u8>)],
 ) -> Result<(), ShellError> {
     for (name, value) in assignments {
-        shell.set_var(name, value.clone()).map_err(|e| {
+        shell.set_var(name, value).map_err(|e| {
             let msg = var_error_bytes(&e);
             shell.diagnostic(1, &msg)
         })?;
@@ -167,7 +167,7 @@ pub(super) fn execute_simple(
             Err(error) => return Ok(shell.diagnostic_syserr(1, &error).exit_status()),
         };
         for (name, value) in &owned_assignments {
-            shell.set_var(name, value.clone()).map_err(|e| {
+            shell.set_var(name, value).map_err(|e| {
                 let msg = var_error_bytes(&e);
                 shell.diagnostic(1, &msg)
             })?;
@@ -546,8 +546,8 @@ mod tests {
             ];
             let saved = save_vars(&shell, &assignments);
 
-            shell.set_var(b"FOO", b"temp".to_vec()).unwrap();
-            shell.set_var(b"BAR", b"new".to_vec()).unwrap();
+            shell.set_var(b"FOO", b"temp").unwrap();
+            shell.set_var(b"BAR", b"new").unwrap();
             assert_eq!(shell.get_var(b"FOO"), Some(b"temp" as &[u8]));
             assert_eq!(shell.get_var(b"BAR"), Some(b"new" as &[u8]));
 

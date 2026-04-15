@@ -60,8 +60,8 @@ impl Context for FakeContext {
         &self.positional
     }
 
-    fn set_var(&mut self, name: &[u8], value: Vec<u8>) -> Result<(), ExpandError> {
-        self.env.insert(name.to_vec(), value);
+    fn set_var(&mut self, name: &[u8], value: &[u8]) -> Result<(), ExpandError> {
+        self.env.insert(name.to_vec(), value.to_vec());
         Ok(())
     }
 
@@ -129,8 +129,8 @@ impl Context for DefaultPathContext {
         &[]
     }
 
-    fn set_var(&mut self, name: &[u8], value: Vec<u8>) -> Result<(), ExpandError> {
-        self.env.insert(name.to_vec(), value);
+    fn set_var(&mut self, name: &[u8], value: &[u8]) -> Result<(), ExpandError> {
+        self.env.insert(name.to_vec(), value.to_vec());
         Ok(())
     }
 

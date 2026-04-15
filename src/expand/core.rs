@@ -10,7 +10,7 @@ pub(crate) trait Context {
     fn special_param(&self, name: u8) -> Option<Cow<'_, [u8]>>;
     fn positional_param(&self, index: usize) -> Option<Cow<'_, [u8]>>;
     fn positional_params(&self) -> &[Vec<u8>];
-    fn set_var(&mut self, name: &[u8], value: Vec<u8>) -> Result<(), ExpandError>;
+    fn set_var(&mut self, name: &[u8], value: &[u8]) -> Result<(), ExpandError>;
     fn nounset_enabled(&self) -> bool;
     fn pathname_expansion_enabled(&self) -> bool {
         true

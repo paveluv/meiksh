@@ -42,7 +42,7 @@ pub(super) fn read_with_input(
     };
     let values = split_read_assignments(&pieces, &vars, shell.get_var(b"IFS").map(|s| s.to_vec()));
     for (name, value) in vars.iter().zip(values) {
-        if let Err(error) = shell.set_var(name, value) {
+        if let Err(error) = shell.set_var(name, &value) {
             let msg = var_error_msg(b"read", &error);
             return Ok(diag_status(shell, 2, &msg));
         }

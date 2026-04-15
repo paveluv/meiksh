@@ -41,7 +41,7 @@ pub(super) fn export(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutco
     for item in &argv[index..] {
         if let Some((name, value)) = item.split_once_byte(b'=') {
             let value = expand_assignment_tilde(shell, value);
-            shell.export_var(name, Some(value))?;
+            shell.export_var(name, Some(&value))?;
         } else {
             shell.export_var(item, None)?;
         }
@@ -61,7 +61,7 @@ pub(super) fn readonly(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOut
         if let Some((name, value)) = item.split_once_byte(b'=') {
             let value = expand_assignment_tilde(shell, value);
             shell
-                .set_var(name, value)
+                .set_var(name, &value)
                 .map_err(|e| shell.diagnostic(1, &var_error_msg(b"readonly", &e)))?;
             shell.mark_readonly(name);
         } else {
@@ -256,7 +256,7 @@ mod tests {
             trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
-                shell.set_var(b"RO", b"val".to_vec()).unwrap();
+                shell.set_var(b"RO", b"val").unwrap();
                 shell.mark_readonly(b"RO");
                 let outcome =
                     invoke(&mut shell, &[b"unset".to_vec(), b"RO".to_vec()]).expect("unset RO");
@@ -343,7 +343,7 @@ mod tests {
     fn unset_double_dash_stops_option_parsing() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.set_var(b"-v", b"val".to_vec()).unwrap();
+            shell.set_var(b"-v", b"val").unwrap();
             let outcome = invoke(
                 &mut shell,
                 &[b"unset".to_vec(), b"--".to_vec(), b"-v".to_vec()],

@@ -68,7 +68,7 @@ impl Shell {
         self.history.push(trimmed.into());
     }
 
-    pub(crate) fn set_var(&mut self, name: &[u8], value: Vec<u8>) -> Result<(), VarError> {
+    pub(crate) fn set_var(&mut self, name: &[u8], value: &[u8]) -> Result<(), VarError> {
         if self.readonly.contains(name) {
             return Err(VarError::Readonly(name.into()));
         }
@@ -76,9 +76,10 @@ impl Shell {
             self.path_cache.clear();
         }
         if let Some(existing) = self.env.get_mut(name) {
-            *existing = value;
+            existing.clear();
+            existing.extend_from_slice(value);
         } else {
-            self.env.insert(name.to_vec(), value);
+            self.env.insert(name.to_vec(), value.to_vec());
         }
         if self.options.allexport && !self.exported.contains(name) {
             self.exported.insert(name.to_vec());
@@ -89,7 +90,7 @@ impl Shell {
     pub(crate) fn export_var(
         &mut self,
         name: &[u8],
-        value: Option<Vec<u8>>,
+        value: Option<&[u8]>,
     ) -> Result<(), ShellError> {
         if let Some(value) = value {
             self.set_var(name, value).map_err(|e| {
@@ -147,7 +148,7 @@ mod tests {
             assert!(!env.iter().any(|(k, _)| k == b"B"));
 
             shell.options.allexport = true;
-            shell.set_var(b"B", b"3".to_vec()).expect("allexport set");
+            shell.set_var(b"B", b"3").expect("allexport set");
             let env = shell.env_for_child();
             assert_eq!(
                 env.iter()
@@ -162,11 +163,9 @@ mod tests {
     fn readonly_variables_reject_mutation_and_unset() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.set_var(b"NAME", b"value".to_vec()).expect("set");
+            shell.set_var(b"NAME", b"value").expect("set");
             shell.mark_readonly(b"NAME");
-            let set_error = shell
-                .set_var(b"NAME", b"new".to_vec())
-                .expect_err("readonly");
+            let set_error = shell.set_var(b"NAME", b"new").expect_err("readonly");
             let msg = var_error_message(&set_error);
             assert_eq!(msg, b"NAME: readonly variable");
             let unset_error = shell.unset_var(b"NAME").expect_err("readonly");
@@ -224,10 +223,10 @@ mod tests {
             trace_entries![..vec![t_stderr("meiksh: RO: readonly variable")]],
             || {
                 let mut shell = test_shell();
-                shell.set_var(b"RO", b"orig".to_vec()).expect("set");
+                shell.set_var(b"RO", b"orig").expect("set");
                 shell.mark_readonly(b"RO");
                 let error = shell
-                    .export_var(b"RO", Some(b"new".to_vec()))
+                    .export_var(b"RO", Some(b"new"))
                     .expect_err("readonly export");
                 assert_eq!(error.exit_status(), 1);
             },

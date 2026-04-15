@@ -22,7 +22,7 @@ pub(super) fn cd(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, 
             Ok(cwd) => cwd,
             Err(_) if check_pwd => {
                 shell
-                    .set_var(b"OLDPWD", old_pwd)
+                    .set_var(b"OLDPWD", &old_pwd)
                     .map_err(|e| shell.diagnostic(1, &var_error_msg(b"cd", &e)))?;
                 return Ok(BuiltinOutcome::Status(1));
             }
@@ -33,10 +33,10 @@ pub(super) fn cd(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, 
     };
 
     shell
-        .set_var(b"OLDPWD", old_pwd)
+        .set_var(b"OLDPWD", &old_pwd)
         .map_err(|e| shell.diagnostic(1, &var_error_msg(b"cd", &e)))?;
     shell
-        .set_var(b"PWD", new_pwd.clone())
+        .set_var(b"PWD", &new_pwd)
         .map_err(|e| shell.diagnostic(1, &var_error_msg(b"cd", &e)))?;
     if print_new_pwd {
         write_stdout_line(&new_pwd);
