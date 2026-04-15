@@ -11,6 +11,7 @@ impl ShellError {
         *s
     }
 
+    #[cfg(test)]
     pub(crate) fn message_bytes(&self) -> Vec<u8> {
         crate::bstr::ByteWriter::new()
             .bytes(b"exit status ")

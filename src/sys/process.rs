@@ -8,10 +8,14 @@ use super::constants::{
 };
 use super::env::env_set_var;
 use super::error::{SysError, SysResult};
-use super::fd_io::{close_fd, create_pipe, duplicate_fd, read_fd};
+#[cfg(test)]
+use super::fd_io::read_fd;
+use super::fd_io::{close_fd, create_pipe, duplicate_fd};
 use super::interface::{last_error, record_signal, signal_mask, sys_interface};
 use super::tty::set_process_group;
-use super::types::{ChildExitStatus, ChildHandle, ChildOutput, Pid, WaitStatus};
+#[cfg(test)]
+use super::types::{ChildExitStatus, ChildOutput};
+use super::types::{ChildHandle, Pid, WaitStatus};
 
 pub(crate) fn current_pid() -> Pid {
     (sys_interface().getpid)()
@@ -153,6 +157,7 @@ pub(crate) fn query_signal_disposition(signal: c_int) -> SysResult<bool> {
 pub(crate) fn interrupted(error: &SysError) -> bool {
     error.is_eintr()
 }
+#[cfg(test)]
 impl ChildHandle {
     pub(crate) fn wait_with_output(self) -> SysResult<ChildOutput> {
         let mut output = Vec::new();
@@ -340,6 +345,7 @@ pub(crate) fn decode_wait_status(status: c_int) -> i32 {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn format_signal_exit(status: c_int) -> Option<Vec<u8>> {
     if wifsignaled(status) {
         let mut buf = b"terminated by signal ".to_vec();
@@ -433,6 +439,7 @@ pub(crate) fn wstopsig(status: c_int) -> i32 {
     (status >> 8) & 0xff
 }
 
+#[cfg(test)]
 pub(crate) fn shell_name_from_args(args: &[Vec<u8>]) -> &[u8] {
     args.first().map(|s| s.as_slice()).unwrap_or(b"meiksh")
 }

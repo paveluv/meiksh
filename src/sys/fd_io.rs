@@ -4,6 +4,7 @@ use super::constants::{F_DUPFD_CLOEXEC, F_GETFL, F_SETFL, O_NONBLOCK, S_IFIFO, S
 use super::error::{SysError, SysResult};
 use super::interface::{last_error, sys_interface};
 use super::tty::is_interactive_fd;
+#[cfg(test)]
 use super::types::FdReader;
 
 pub(crate) fn create_pipe() -> SysResult<(c_int, c_int)> {
@@ -110,6 +111,7 @@ pub(crate) fn write_all_fd(fd: c_int, mut data: &[u8]) -> SysResult<()> {
     Ok(())
 }
 
+#[cfg(test)]
 impl FdReader {
     pub(crate) fn read(&mut self, buf: &mut [u8]) -> SysResult<usize> {
         read_fd(self.fd, buf)

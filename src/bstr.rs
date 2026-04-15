@@ -11,8 +11,6 @@
 
 /// Owned byte string (analogous to `String`).
 pub(crate) type BString = Vec<u8>;
-/// Boxed byte string (analogous to `Box<str>`).
-pub(crate) type BoxBStr = Box<[u8]>;
 
 // ---------------------------------------------------------------------------
 // Extension trait
@@ -140,6 +138,7 @@ pub(crate) fn parse_octal_i64(bytes: &[u8]) -> Option<i64> {
 }
 
 /// POSIX shell name validation: `[A-Za-z_][A-Za-z0-9_]*`
+#[cfg(test)]
 pub(crate) fn is_name(s: &[u8]) -> bool {
     if s.is_empty() {
         return false;
@@ -327,6 +326,7 @@ impl ByteWriter {
         Self(Vec::new())
     }
 
+    #[cfg(test)]
     pub(crate) fn with_capacity(cap: usize) -> Self {
         Self(Vec::with_capacity(cap))
     }
@@ -371,11 +371,13 @@ impl ByteWriter {
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn hex_lower(mut self, v: u64) -> Self {
         push_u64_hex(&mut self.0, v);
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn hex_upper(mut self, v: u64) -> Self {
         push_u64_hex_upper(&mut self.0, v);
         self
@@ -386,6 +388,7 @@ impl ByteWriter {
     }
 
     /// Borrow the accumulated bytes.
+    #[cfg(test)]
     pub(crate) fn as_bytes(&self) -> &[u8] {
         &self.0
     }

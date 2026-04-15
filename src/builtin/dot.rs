@@ -38,7 +38,6 @@ pub(super) fn resolve_dot_path(shell: &Shell, path: &[u8]) -> Result<Vec<u8>, ()
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::builtin::BuiltinOutcome;
     use crate::builtin::test_support::{invoke, test_shell};
     use crate::sys::test_support::run_trace;

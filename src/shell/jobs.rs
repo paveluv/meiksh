@@ -331,6 +331,7 @@ impl Shell {
         result
     }
 
+    #[cfg(test)]
     pub(crate) fn print_jobs(&mut self) {
         let finished = self.reap_jobs();
         for (id, state) in finished {

@@ -16,10 +16,12 @@ pub(crate) struct WaitStatus {
     pub(crate) status: c_int,
 }
 
+#[cfg(test)]
 pub(crate) struct FdReader {
     pub(crate) fd: c_int,
 }
 
+#[cfg(test)]
 impl FdReader {
     pub(crate) fn new(fd: c_int) -> Self {
         Self { fd }
@@ -92,16 +94,19 @@ pub(crate) struct ChildHandle {
     pub(crate) stdout_fd: Option<c_int>,
 }
 
+#[cfg(test)]
 pub(crate) struct ChildOutput {
     pub(crate) status: ChildExitStatus,
     pub(crate) stdout: Vec<u8>,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ChildExitStatus {
     pub(crate) code: i32,
 }
 
+#[cfg(test)]
 impl ChildExitStatus {
     pub(crate) fn success(&self) -> bool {
         self.code == 0

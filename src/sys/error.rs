@@ -37,6 +37,7 @@ impl SysError {
         matches!(self, SysError::Errno(e) if *e == libc::EBADF)
     }
 
+    #[cfg(test)]
     pub(crate) fn is_eacces(&self) -> bool {
         matches!(self, SysError::Errno(e) if *e == libc::EACCES)
     }

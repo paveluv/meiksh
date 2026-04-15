@@ -34,19 +34,24 @@ pub(crate) const SIGSYS: c_int = libc::SIGSYS;
 pub(crate) const WNOHANG: c_int = libc::WNOHANG;
 pub(crate) const WUNTRACED: c_int = libc::WUNTRACED;
 pub(crate) const WCONTINUED: c_int = libc::WCONTINUED;
-pub(crate) const ENOENT: c_int = libc::ENOENT;
-pub(crate) const ENOEXEC: c_int = libc::ENOEXEC;
-pub(crate) const EBADF: c_int = libc::EBADF;
-pub(crate) const ECHILD: c_int = libc::ECHILD;
-pub(crate) const EACCES: c_int = libc::EACCES;
 pub(crate) const EEXIST: c_int = libc::EEXIST;
-pub(crate) const EINVAL: c_int = libc::EINVAL;
-pub(crate) const ENOTTY: c_int = libc::ENOTTY;
-pub(crate) const EILSEQ: c_int = libc::EILSEQ;
-pub(crate) const EIO: c_int = libc::EIO;
-pub(crate) const EISDIR: c_int = libc::EISDIR;
 pub(crate) const EINTR: c_int = libc::EINTR;
-pub(crate) const ESRCH: c_int = libc::ESRCH;
+#[cfg(test)]
+pub(crate) const ENOENT: c_int = libc::ENOENT;
+#[cfg(test)]
+pub(crate) const ENOEXEC: c_int = libc::ENOEXEC;
+#[cfg(test)]
+pub(crate) const EBADF: c_int = libc::EBADF;
+#[cfg(test)]
+pub(crate) const ECHILD: c_int = libc::ECHILD;
+#[cfg(test)]
+pub(crate) const EACCES: c_int = libc::EACCES;
+#[cfg(test)]
+pub(crate) const EINVAL: c_int = libc::EINVAL;
+#[cfg(test)]
+pub(crate) const EIO: c_int = libc::EIO;
+#[cfg(test)]
+pub(crate) const EISDIR: c_int = libc::EISDIR;
 
 pub(crate) const SIG_DFL_HANDLER: libc::sighandler_t = libc::SIG_DFL;
 pub(crate) const SIG_IGN_HANDLER: libc::sighandler_t = libc::SIG_IGN;
@@ -65,7 +70,6 @@ pub(crate) const O_CLOEXEC: c_int = libc::O_CLOEXEC;
 
 pub(crate) const F_OK: c_int = libc::F_OK;
 pub(crate) const R_OK: c_int = libc::R_OK;
-pub(crate) const W_OK: c_int = libc::W_OK;
 pub(crate) const X_OK: c_int = libc::X_OK;
 
 pub(crate) const S_IFMT: mode_t = libc::S_IFMT;

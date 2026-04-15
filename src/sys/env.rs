@@ -7,6 +7,7 @@ pub(crate) fn env_set_var(key: &[u8], value: &[u8]) -> SysResult<()> {
     (sys_interface().setenv)(key, value)
 }
 
+#[cfg(test)]
 pub(crate) fn env_unset_var(key: &[u8]) -> SysResult<()> {
     (sys_interface().unsetenv)(key)
 }
