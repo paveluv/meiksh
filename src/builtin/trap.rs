@@ -549,6 +549,13 @@ mod tests {
                 }
                 other => panic!("expected Command, got {:?}", other),
             }
+            match parse_trap_action(b"if ;") {
+                Some(TrapAction::Command { text, program }) => {
+                    assert_eq!(&*text, b"if ;");
+                    assert!(program.items.is_empty());
+                }
+                other => panic!("expected Command with empty program, got {:?}", other),
+            }
         });
     }
 
