@@ -6,59 +6,60 @@ use super::jobs::Job;
 use super::options::ShellOptions;
 use super::traps::{TrapAction, TrapCondition};
 
-pub enum FlowSignal {
+pub(crate) enum FlowSignal {
     Continue(i32),
     UtilityError(i32),
     Exit(i32),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PendingControl {
+pub(crate) enum PendingControl {
     Return(i32),
     Break(usize),
     Continue(usize),
 }
 
 #[derive(Clone)]
-pub struct Shell {
-    pub options: ShellOptions,
-    pub shell_name: Box<[u8]>,
-    pub env: HashMap<Vec<u8>, Vec<u8>>,
-    pub exported: BTreeSet<Vec<u8>>,
-    pub readonly: BTreeSet<Vec<u8>>,
-    pub aliases: HashMap<Box<[u8]>, Box<[u8]>>,
-    pub functions: HashMap<Vec<u8>, crate::syntax::Command>,
-    pub positional: Vec<Vec<u8>>,
-    pub last_status: i32,
-    pub last_background: Option<sys::Pid>,
-    pub running: bool,
-    pub jobs: Vec<Job>,
-    pub known_pid_statuses: HashMap<sys::Pid, i32>,
-    pub known_job_statuses: HashMap<usize, i32>,
-    pub trap_actions: BTreeMap<TrapCondition, TrapAction>,
-    pub ignored_on_entry: BTreeSet<TrapCondition>,
+pub(crate) struct Shell {
+    pub(crate) options: ShellOptions,
+    pub(crate) shell_name: Box<[u8]>,
+    pub(crate) env: HashMap<Vec<u8>, Vec<u8>>,
+    pub(crate) exported: BTreeSet<Vec<u8>>,
+    pub(crate) readonly: BTreeSet<Vec<u8>>,
+    pub(crate) aliases: HashMap<Box<[u8]>, Box<[u8]>>,
+    pub(crate) functions: HashMap<Vec<u8>, crate::syntax::ast::Command>,
+    pub(crate) positional: Vec<Vec<u8>>,
+    pub(crate) last_status: i32,
+    pub(crate) last_background: Option<sys::types::Pid>,
+    pub(crate) running: bool,
+    pub(crate) jobs: Vec<Job>,
+    pub(crate) known_pid_statuses: HashMap<sys::types::Pid, i32>,
+    pub(crate) known_job_statuses: HashMap<usize, i32>,
+    pub(crate) trap_actions: BTreeMap<TrapCondition, TrapAction>,
+    pub(crate) ignored_on_entry: BTreeSet<TrapCondition>,
     pub(crate) subshell_saved_traps: Option<BTreeMap<TrapCondition, TrapAction>>,
-    pub loop_depth: usize,
-    pub function_depth: usize,
+    pub(crate) loop_depth: usize,
+    pub(crate) function_depth: usize,
     /// Nesting depth of dot (`source_path`) files being executed.
-    pub source_depth: usize,
-    pub pending_control: Option<PendingControl>,
+    pub(crate) source_depth: usize,
+    pub(crate) pending_control: Option<PendingControl>,
     pub(crate) interactive: bool,
     pub(crate) errexit_suppressed: bool,
     pub(crate) owns_terminal: bool,
     pub(crate) in_subshell: bool,
     pub(crate) wait_was_interrupted: bool,
-    pub(crate) pid: sys::Pid,
+    pub(crate) pid: sys::types::Pid,
     pub(crate) lineno: usize,
-    pub path_cache: HashMap<Box<[u8]>, Vec<u8>>,
-    pub history: Vec<Box<[u8]>>,
+    pub(crate) path_cache: HashMap<Box<[u8]>, Vec<u8>>,
+    pub(crate) history: Vec<Box<[u8]>>,
     pub(crate) mail_last_check: u64,
     pub(crate) mail_sizes: HashMap<Box<[u8]>, u64>,
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{FlowSignal, PendingControl};
+    use super::*;
+
     use crate::shell::test_support::test_shell;
     use crate::trace_entries;
 

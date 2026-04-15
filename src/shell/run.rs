@@ -2,9 +2,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::bstr::{self, ByteWriter};
 use crate::builtin::{self, BuiltinOutcome};
-use crate::exec;
+use crate::exec::program;
 use crate::interactive;
-use crate::syntax::{self, Program};
+use crate::syntax;
+use crate::syntax::ast::Program;
 use crate::sys;
 
 use super::error::{ShellError, var_error_message};
@@ -29,31 +30,31 @@ impl Shell {
                 .bytes(msg)
                 .byte(b'\n')
                 .finish();
-            let _ = sys::write_all_fd(sys::STDERR_FILENO, &out);
+            let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, &out);
         } else {
             let out = ByteWriter::new()
                 .bytes(b"meiksh: ")
                 .bytes(msg)
                 .byte(b'\n')
                 .finish();
-            let _ = sys::write_all_fd(sys::STDERR_FILENO, &out);
+            let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, &out);
         }
         ShellError::Status(status)
     }
 
-    pub fn diagnostic(&self, status: i32, msg: &[u8]) -> ShellError {
+    pub(crate) fn diagnostic(&self, status: i32, msg: &[u8]) -> ShellError {
         self.diagnostic_at(self.lineno, status, msg)
     }
 
-    pub fn diagnostic_syserr(&self, status: i32, e: &sys::SysError) -> ShellError {
+    pub(crate) fn diagnostic_syserr(&self, status: i32, e: &sys::error::SysError) -> ShellError {
         self.diagnostic_at(self.lineno, status, &e.strerror())
     }
 
-    pub fn diagnostic_prefixed_syserr(
+    pub(crate) fn diagnostic_prefixed_syserr(
         &self,
         status: i32,
         prefix: &[u8],
-        e: &sys::SysError,
+        e: &sys::error::SysError,
     ) -> ShellError {
         let msg = ByteWriter::new()
             .bytes(prefix)
@@ -62,26 +63,26 @@ impl Shell {
         self.diagnostic_at(self.lineno, status, &msg)
     }
 
-    pub fn expand_to_err(&self, e: crate::expand::ExpandError) -> ShellError {
+    pub(crate) fn expand_to_err(&self, e: crate::expand::core::ExpandError) -> ShellError {
         if !e.message.is_empty() {
             self.diagnostic(1, &e.message);
         }
         ShellError::Status(1)
     }
 
-    pub fn parse_to_err(&self, e: syntax::ParseError) -> ShellError {
+    pub(crate) fn parse_to_err(&self, e: syntax::ParseError) -> ShellError {
         self.diagnostic_at(e.line.unwrap_or(0), 2, &e.message)
     }
 
-    pub fn from_env() -> Result<Self, ShellError> {
-        sys::setup_locale();
-        let args = sys::env_args_os();
+    pub(crate) fn from_env() -> Result<Self, ShellError> {
+        sys::locale::setup_locale();
+        let args = sys::env::env_args_os();
         let options = parse_options(&args)?;
         let shell_name: Box<[u8]> = options
             .shell_name_override
             .clone()
             .unwrap_or_else(|| shell_name_from_args(&args).into());
-        let raw_env = sys::env_vars();
+        let raw_env = sys::env::env_vars();
         let mut env = HashMap::new();
         let mut exported = BTreeSet::new();
         for (key, value) in &raw_env {
@@ -91,9 +92,9 @@ impl Shell {
             }
         }
         let interactive = options.force_interactive
-            || (sys::is_interactive_fd(sys::STDIN_FILENO)
-                && sys::is_interactive_fd(sys::STDERR_FILENO));
-        let _ = sys::default_signal_action(sys::SIGPIPE);
+            || (sys::tty::is_interactive_fd(sys::constants::STDIN_FILENO)
+                && sys::tty::is_interactive_fd(sys::constants::STDERR_FILENO));
+        let _ = sys::process::default_signal_action(sys::constants::SIGPIPE);
         let ignored_on_entry = Self::probe_ignored_signals();
         let trap_actions: BTreeMap<TrapCondition, TrapAction> = ignored_on_entry
             .iter()
@@ -102,7 +103,7 @@ impl Shell {
         env.insert(b"IFS".to_vec(), b" \t\n".to_vec());
         env.insert(
             b"PPID".to_vec(),
-            bstr::i64_to_bytes(sys::parent_pid() as i64),
+            bstr::i64_to_bytes(sys::process::parent_pid() as i64),
         );
         env.insert(b"OPTIND".to_vec(), b"1".to_vec());
         if !env.contains_key(&b"MAILCHECK".to_vec()) {
@@ -136,7 +137,7 @@ impl Shell {
             owns_terminal: false,
             in_subshell: false,
             wait_was_interrupted: false,
-            pid: sys::current_pid(),
+            pid: sys::process::current_pid(),
             lineno: 0,
             path_cache: HashMap::new(),
             history: Vec::new(),
@@ -146,7 +147,7 @@ impl Shell {
     }
 
     fn init_pwd(env: &mut HashMap<Vec<u8>, Vec<u8>>) {
-        let Ok(cwd) = sys::get_cwd() else { return };
+        let Ok(cwd) = sys::fs::get_cwd() else { return };
         let valid = env.get(b"PWD".as_slice()).is_some_and(|p| {
             p.starts_with(b"/")
                 && !p.split(|&b| b == b'/').any(|c| c == b"." || c == b"..")
@@ -159,8 +160,8 @@ impl Shell {
 
     fn probe_ignored_signals() -> BTreeSet<TrapCondition> {
         let mut set = BTreeSet::new();
-        for signal in sys::supported_trap_signals() {
-            if sys::query_signal_disposition(signal).unwrap_or(false) {
+        for signal in sys::process::supported_trap_signals() {
+            if sys::process::query_signal_disposition(signal).unwrap_or(false) {
                 set.insert(TrapCondition::Signal(signal));
             }
         }
@@ -203,7 +204,7 @@ impl Shell {
             owns_terminal: false,
             in_subshell: false,
             wait_was_interrupted: false,
-            pid: sys::current_pid(),
+            pid: sys::process::current_pid(),
             lineno: 0,
             path_cache: HashMap::new(),
             history: Vec::new(),
@@ -212,7 +213,7 @@ impl Shell {
         })
     }
 
-    pub fn run(&mut self) -> Result<i32, ShellError> {
+    pub(crate) fn run(&mut self) -> Result<i32, ShellError> {
         if self.interactive && !self.options.monitor {
             self.options.monitor = true;
         }
@@ -242,30 +243,35 @@ impl Shell {
     }
 
     pub(super) fn setup_interactive_signals(&self) -> Result<(), ShellError> {
-        sys::ignore_signal(sys::SIGQUIT).map_err(|e| self.diagnostic_syserr(1, &e))?;
-        sys::ignore_signal(sys::SIGTERM).map_err(|e| self.diagnostic_syserr(1, &e))?;
-        sys::install_shell_signal_handler(sys::SIGINT)
+        sys::process::ignore_signal(sys::constants::SIGQUIT)
+            .map_err(|e| self.diagnostic_syserr(1, &e))?;
+        sys::process::ignore_signal(sys::constants::SIGTERM)
+            .map_err(|e| self.diagnostic_syserr(1, &e))?;
+        sys::process::install_shell_signal_handler(sys::constants::SIGINT)
             .map_err(|e| self.diagnostic_syserr(1, &e))?;
         if self.options.monitor {
-            sys::ignore_signal(sys::SIGTSTP).map_err(|e| self.diagnostic_syserr(1, &e))?;
-            sys::ignore_signal(sys::SIGTTIN).map_err(|e| self.diagnostic_syserr(1, &e))?;
-            sys::ignore_signal(sys::SIGTTOU).map_err(|e| self.diagnostic_syserr(1, &e))?;
+            sys::process::ignore_signal(sys::constants::SIGTSTP)
+                .map_err(|e| self.diagnostic_syserr(1, &e))?;
+            sys::process::ignore_signal(sys::constants::SIGTTIN)
+                .map_err(|e| self.diagnostic_syserr(1, &e))?;
+            sys::process::ignore_signal(sys::constants::SIGTTOU)
+                .map_err(|e| self.diagnostic_syserr(1, &e))?;
         }
         Ok(())
     }
 
     fn setup_job_control(&mut self) {
-        let pid = sys::current_pid();
-        let _ = sys::set_process_group(pid, pid);
-        let _ = sys::set_foreground_pgrp(sys::STDIN_FILENO, pid);
+        let pid = sys::process::current_pid();
+        let _ = sys::tty::set_process_group(pid, pid);
+        let _ = sys::tty::set_foreground_pgrp(sys::constants::STDIN_FILENO, pid);
         self.owns_terminal = true;
     }
 
-    pub fn is_interactive(&self) -> bool {
+    pub(crate) fn is_interactive(&self) -> bool {
         self.interactive
     }
 
-    pub fn run_source(&mut self, _name: &[u8], source: &[u8]) -> Result<i32, ShellError> {
+    pub(crate) fn run_source(&mut self, _name: &[u8], source: &[u8]) -> Result<i32, ShellError> {
         self.run_source_buffer(source)
     }
 
@@ -278,18 +284,18 @@ impl Shell {
         self.execute_source_incrementally(source)
     }
 
-    pub fn execute_program(&mut self, program: &Program) -> Result<i32, ShellError> {
-        let status = exec::execute_program(self, program)?;
+    pub(crate) fn execute_program(&mut self, program: &Program) -> Result<i32, ShellError> {
+        let status = program::execute_program(self, program)?;
         self.last_status = status;
         Ok(status)
     }
 
-    pub fn execute_string(&mut self, source: &[u8]) -> Result<i32, ShellError> {
+    pub(crate) fn execute_string(&mut self, source: &[u8]) -> Result<i32, ShellError> {
         self.execute_source_incrementally(source)
     }
 
     pub(crate) fn run_standard_input(&mut self) -> Result<i32, ShellError> {
-        sys::ensure_blocking_read_fd(sys::STDIN_FILENO)
+        sys::fd_io::ensure_blocking_read_fd(sys::constants::STDIN_FILENO)
             .map_err(|e| self.diagnostic_syserr(1, &e))?;
         let mut status = 0;
         let mut source = Vec::new();
@@ -298,7 +304,7 @@ impl Shell {
 
         loop {
             let count = loop {
-                match sys::read_fd(sys::STDIN_FILENO, &mut byte) {
+                match sys::fd_io::read_fd(sys::constants::STDIN_FILENO, &mut byte) {
                     Ok(n) => break n,
                     Err(e) if e.is_eintr() => continue,
                     Err(e) => return Err(self.diagnostic_syserr(1, &e)),
@@ -397,17 +403,18 @@ impl Shell {
 
     fn echo_verbose_input(&self, source: &[u8]) {
         if self.options.verbose && !source.is_empty() {
-            let _ = sys::write_all_fd(sys::STDERR_FILENO, source);
+            let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, source);
         }
     }
 
-    pub fn capture_output(&mut self, source: &[u8]) -> Result<Vec<u8>, ShellError> {
-        let (read_fd, write_fd) = sys::create_pipe().map_err(|e| self.diagnostic_syserr(1, &e))?;
-        let pid = sys::fork_process().map_err(|e| self.diagnostic_syserr(1, &e))?;
+    pub(crate) fn capture_output(&mut self, source: &[u8]) -> Result<Vec<u8>, ShellError> {
+        let (read_fd, write_fd) =
+            sys::fd_io::create_pipe().map_err(|e| self.diagnostic_syserr(1, &e))?;
+        let pid = sys::process::fork_process().map_err(|e| self.diagnostic_syserr(1, &e))?;
         if pid == 0 {
-            let _ = sys::close_fd(read_fd);
-            let _ = sys::duplicate_fd(write_fd, sys::STDOUT_FILENO);
-            let _ = sys::close_fd(write_fd);
+            let _ = sys::fd_io::close_fd(read_fd);
+            let _ = sys::fd_io::duplicate_fd(write_fd, sys::constants::STDOUT_FILENO);
+            let _ = sys::fd_io::close_fd(write_fd);
             let mut child_shell = self.clone();
             child_shell.owns_terminal = false;
             child_shell.in_subshell = true;
@@ -415,23 +422,24 @@ impl Shell {
             let _ = child_shell.reset_traps_for_subshell();
             let status = child_shell.execute_string(source).unwrap_or(1);
             let status = child_shell.run_exit_trap(status).unwrap_or(status);
-            sys::exit_process(status as sys::RawFd);
+            sys::process::exit_process(status as sys::types::RawFd);
         }
-        sys::close_fd(write_fd).map_err(|e| self.diagnostic_syserr(1, &e))?;
+        sys::fd_io::close_fd(write_fd).map_err(|e| self.diagnostic_syserr(1, &e))?;
         let mut output = Vec::new();
         let mut buf = [0u8; 4096];
         loop {
-            let n = sys::read_fd(read_fd, &mut buf).map_err(|e| self.diagnostic_syserr(1, &e))?;
+            let n = sys::fd_io::read_fd(read_fd, &mut buf)
+                .map_err(|e| self.diagnostic_syserr(1, &e))?;
             if n == 0 {
                 break;
             }
             output.extend_from_slice(&buf[..n]);
         }
-        sys::close_fd(read_fd).map_err(|e| self.diagnostic_syserr(1, &e))?;
-        let ws = sys::wait_pid(pid, false)
+        sys::fd_io::close_fd(read_fd).map_err(|e| self.diagnostic_syserr(1, &e))?;
+        let ws = sys::process::wait_pid(pid, false)
             .map_err(|e| self.diagnostic_syserr(1, &e))?
             .expect("child status");
-        let status = sys::decode_wait_status(ws.status);
+        let status = sys::process::decode_wait_status(ws.status);
         self.last_status = status;
         Ok(output)
     }
@@ -447,7 +455,7 @@ impl Shell {
                 .finish();
             self.diagnostic(127, &msg)
         })?;
-        let bytes = sys::read_file_bytes(&resolved)
+        let bytes = sys::fs::read_file_bytes(&resolved)
             .map_err(|error| classify_script_read_error(&resolved, error))?;
         if script_prefix_cannot_be_shell_input(&bytes) {
             let msg = ByteWriter::new()
@@ -461,7 +469,7 @@ impl Shell {
 }
 
 impl Shell {
-    pub fn run_builtin(
+    pub(crate) fn run_builtin(
         &mut self,
         argv: &[Vec<u8>],
         assignments: &[(Vec<u8>, Vec<u8>)],
@@ -491,7 +499,7 @@ impl Shell {
         }
     }
 
-    pub fn has_pending_control(&self) -> bool {
+    pub(crate) fn has_pending_control(&self) -> bool {
         self.pending_control.is_some()
     }
 }
@@ -555,7 +563,10 @@ pub(super) fn parse_options(args: &[Vec<u8>]) -> Result<ShellOptions, ShellError
     while let Some(arg) = args.get(index) {
         if arg == b"-c" {
             let command = args.get(index + 1).ok_or_else(|| {
-                let _ = sys::write_all_fd(sys::STDERR_FILENO, b"meiksh: -c requires an argument\n");
+                let _ = sys::fd_io::write_all_fd(
+                    sys::constants::STDERR_FILENO,
+                    b"meiksh: -c requires an argument\n",
+                );
                 ShellError::Status(2)
             })?;
             options.command_string = Some(command.clone().into());
@@ -571,7 +582,7 @@ pub(super) fn parse_options(args: &[Vec<u8>]) -> Result<ShellOptions, ShellError
                     .bytes(arg)
                     .bytes(b" requires an argument\n")
                     .finish();
-                let _ = sys::write_all_fd(sys::STDERR_FILENO, &out);
+                let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, &out);
                 ShellError::Status(2)
             })?;
             options.set_named_option(name, enabled).map_err(|e| {
@@ -581,7 +592,7 @@ pub(super) fn parse_options(args: &[Vec<u8>]) -> Result<ShellOptions, ShellError
                     .bytes(&msg)
                     .byte(b'\n')
                     .finish();
-                let _ = sys::write_all_fd(sys::STDERR_FILENO, &out);
+                let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, &out);
                 ShellError::Status(2)
             })?;
             index += 2;
@@ -619,15 +630,17 @@ pub(super) fn parse_options(args: &[Vec<u8>]) -> Result<ShellOptions, ShellError
                             .bytes(&msg)
                             .byte(b'\n')
                             .finish();
-                        let _ = sys::write_all_fd(sys::STDERR_FILENO, &out);
+                        let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, &out);
                         ShellError::Status(2)
                     })?,
                 }
             }
             if saw_c {
                 let command = args.get(index + 1).ok_or_else(|| {
-                    let _ =
-                        sys::write_all_fd(sys::STDERR_FILENO, b"meiksh: -c requires an argument\n");
+                    let _ = sys::fd_io::write_all_fd(
+                        sys::constants::STDERR_FILENO,
+                        b"meiksh: -c requires an argument\n",
+                    );
                     ShellError::Status(2)
                 })?;
                 options.command_string = Some(command.clone().into());
@@ -660,7 +673,7 @@ pub(super) fn resolve_script_path(shell: &Shell, script: &[u8]) -> Option<Vec<u8
         return Some(script.to_vec());
     }
 
-    if sys::file_exists(script) {
+    if sys::fs::file_exists(script) {
         return Some(script.to_vec());
     }
 
@@ -671,7 +684,7 @@ pub(super) fn search_script_path(shell: &Shell, name: &[u8]) -> Option<Vec<u8>> 
     let path_env_bytes = shell
         .get_var(b"PATH")
         .map(|s| s.to_vec())
-        .or_else(|| sys::env_var(b"PATH"))
+        .or_else(|| sys::env::env_var(b"PATH"))
         .unwrap_or_default();
     for dir in path_env_bytes.split(|&b| b == b':') {
         let base = if dir.is_empty() { b".".as_slice() } else { dir };
@@ -686,7 +699,7 @@ pub(super) fn search_script_path(shell: &Shell, name: &[u8]) -> Option<Vec<u8>> 
 }
 
 pub(super) fn executable_regular_file(path: &[u8]) -> bool {
-    sys::stat_path(path)
+    sys::fs::stat_path(path)
         .map(|stat| stat.is_regular_file() && stat.is_executable())
         .unwrap_or(false)
 }
@@ -717,14 +730,14 @@ pub(super) fn stdin_parse_error_requires_more_input(error: &syntax::ParseError) 
     )
 }
 
-pub(super) fn classify_script_read_error(path: &[u8], error: sys::SysError) -> ShellError {
+pub(super) fn classify_script_read_error(path: &[u8], error: sys::error::SysError) -> ShellError {
     if error.is_enoent() {
         let msg = ByteWriter::new()
             .bytes(b"meiksh: ")
             .bytes(path)
             .bytes(b": not found\n")
             .finish();
-        let _ = sys::write_all_fd(sys::STDERR_FILENO, &msg);
+        let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, &msg);
         ShellError::Status(127)
     } else {
         let msg = ByteWriter::new()
@@ -734,7 +747,7 @@ pub(super) fn classify_script_read_error(path: &[u8], error: sys::SysError) -> S
             .bytes(&error.strerror())
             .byte(b'\n')
             .finish();
-        let _ = sys::write_all_fd(sys::STDERR_FILENO, &msg);
+        let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, &msg);
         ShellError::Status(128)
     }
 }
@@ -755,16 +768,14 @@ mod tests {
         clippy::disallowed_methods
     )]
 
+    use super::*;
+
     use libc;
 
     use crate::syntax;
     use crate::sys;
     use crate::sys::test_support::{ArgMatcher, TraceResult, assert_no_syscalls, run_trace, t};
 
-    use super::{
-        classify_script_read_error, parse_options, resolve_script_path,
-        script_prefix_cannot_be_shell_input, stdin_parse_error_requires_more_input,
-    };
     use crate::shell::state::Shell;
     use crate::shell::test_support::{capture_forked_trace, t_stderr, test_shell};
     use crate::trace_entries;
@@ -873,9 +884,9 @@ mod tests {
     fn setup_interactive_signals_ignores_sigquit_sigterm_installs_sigint() {
         run_trace(
             trace_entries![
-                signal(int(sys::SIGQUIT), any) -> 0,
-                signal(int(sys::SIGTERM), any) -> 0,
-                signal(int(sys::SIGINT), any) -> 0,
+                signal(int(sys::constants::SIGQUIT), any) -> 0,
+                signal(int(sys::constants::SIGTERM), any) -> 0,
+                signal(int(sys::constants::SIGINT), any) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -1041,7 +1052,7 @@ mod tests {
     fn resolve_script_path_searches_executable_path_entries() {
         run_trace(
             trace_entries![
-                access(str("path-script"), int(0)) -> err(sys::ENOENT),
+                access(str("path-script"), int(0)) -> err(sys::constants::ENOENT),
                 stat(str("/search-path/path-script"), any) -> stat_file(0o755),
             ],
             || {
@@ -1065,10 +1076,15 @@ mod tests {
                 ],
             ],
             || {
-                let classified =
-                    classify_script_read_error(b"missing", sys::SysError::Errno(sys::ENOENT));
+                let classified = classify_script_read_error(
+                    b"missing",
+                    sys::error::SysError::Errno(sys::constants::ENOENT),
+                );
                 assert_eq!(classified.exit_status(), 127);
-                let classified = classify_script_read_error(b"bad", sys::SysError::Errno(sys::EIO));
+                let classified = classify_script_read_error(
+                    b"bad",
+                    sys::error::SysError::Errno(sys::constants::EIO),
+                );
                 assert_eq!(classified.exit_status(), 128);
             },
         );
@@ -1100,9 +1116,9 @@ mod tests {
         run_trace(
             trace_entries![
                 pipe() -> fds(200, 201),
-                fork() -> err(sys::EINVAL),
+                fork() -> err(sys::constants::EINVAL),
                 write(
-                    fd(sys::STDERR_FILENO),
+                    fd(sys::constants::STDERR_FILENO),
                     bytes(b"meiksh: Invalid argument\n"),
                 ) -> auto,
             ],
@@ -1217,12 +1233,12 @@ mod tests {
     fn run_standard_input_retries_read_on_eintr() {
         run_trace(
             trace_entries![
-                isatty(fd(sys::STDIN_FILENO)) -> 0,
-                fstat(fd(sys::STDIN_FILENO), any) -> stat_file(0o644),
-                read(fd(sys::STDIN_FILENO), _) -> interrupt(sys::SIGINT),
-                read(fd(sys::STDIN_FILENO), _) -> bytes(b":"),
-                read(fd(sys::STDIN_FILENO), _) -> bytes(b"\n"),
-                read(fd(sys::STDIN_FILENO), _) -> 0,
+                isatty(fd(sys::constants::STDIN_FILENO)) -> 0,
+                fstat(fd(sys::constants::STDIN_FILENO), any) -> stat_file(0o644),
+                read(fd(sys::constants::STDIN_FILENO), _) -> interrupt(sys::constants::SIGINT),
+                read(fd(sys::constants::STDIN_FILENO), _) -> bytes(b":"),
+                read(fd(sys::constants::STDIN_FILENO), _) -> bytes(b"\n"),
+                read(fd(sys::constants::STDIN_FILENO), _) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -1234,8 +1250,8 @@ mod tests {
 
     fn stdin_blocking_trace() -> Vec<crate::sys::test_support::TraceEntry> {
         trace_entries![
-            isatty(fd(sys::STDIN_FILENO)) -> 0,
-            fstat(fd(sys::STDIN_FILENO), any) -> stat_file(0o644),
+            isatty(fd(sys::constants::STDIN_FILENO)) -> 0,
+            fstat(fd(sys::constants::STDIN_FILENO), any) -> stat_file(0o644),
         ]
     }
 
@@ -1244,9 +1260,9 @@ mod tests {
         run_trace(
             trace_entries![
                 ..stdin_blocking_trace(),
-                read(fd(sys::STDIN_FILENO), _) -> err(libc::EIO),
+                read(fd(sys::constants::STDIN_FILENO), _) -> err(libc::EIO),
                 write(
-                    fd(sys::STDERR_FILENO),
+                    fd(sys::constants::STDERR_FILENO),
                     bytes(b"meiksh: Input/output error\n"),
                 ) -> auto,
             ],
@@ -1262,8 +1278,8 @@ mod tests {
         run_trace(
             trace_entries![
                 ..stdin_blocking_trace(),
-                read(fd(sys::STDIN_FILENO), _) -> bytes(b":"),
-                read(fd(sys::STDIN_FILENO), _) -> 0,
+                read(fd(sys::constants::STDIN_FILENO), _) -> bytes(b":"),
+                read(fd(sys::constants::STDIN_FILENO), _) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -1297,7 +1313,7 @@ mod tests {
                 pipe() -> fds(200, 201),
                 fork() -> pid(1000), child: [
                     close(fd(200)) -> 0,
-                    dup2(fd(201), fd(sys::STDOUT_FILENO)) -> 0,
+                    dup2(fd(201), fd(sys::constants::STDOUT_FILENO)) -> 0,
                     close(fd(201)) -> 0,
                 ],
                 close(fd(201)) -> 0,
@@ -1318,8 +1334,8 @@ mod tests {
     fn load_script_source_not_found() {
         run_trace(
             trace_entries![
-                access(str("nonexistent-script"), int(0)) -> err(sys::ENOENT),
-                stat(str("/usr/bin/nonexistent-script"), any) -> err(sys::ENOENT),
+                access(str("nonexistent-script"), int(0)) -> err(sys::constants::ENOENT),
+                stat(str("/usr/bin/nonexistent-script"), any) -> err(sys::constants::ENOENT),
                 ..vec![t_stderr("meiksh: nonexistent-script: not found")],
             ],
             || {
@@ -1371,14 +1387,14 @@ mod tests {
     fn search_script_path_empty_dir_and_not_found() {
         run_trace(
             trace_entries![
-                access(str(b"missing"), int(0)) -> err(sys::ENOENT),
+                access(str(b"missing"), int(0)) -> err(sys::constants::ENOENT),
                 ..vec![t(
                     "getenv",
                     vec![ArgMatcher::Str(b"PATH".to_vec())],
                     TraceResult::StrVal(b":/nonexistent".to_vec()),
                 )],
-                stat(str(b"./missing"), any) -> err(sys::ENOENT),
-                stat(str(b"/nonexistent/missing"), any) -> err(sys::ENOENT),
+                stat(str(b"./missing"), any) -> err(sys::constants::ENOENT),
+                stat(str(b"/nonexistent/missing"), any) -> err(sys::constants::ENOENT),
             ],
             || {
                 let shell = test_shell();

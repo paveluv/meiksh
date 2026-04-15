@@ -1,4 +1,12 @@
-use super::*;
+use super::alias::shell_quote;
+use super::{BuiltinOutcome, write_stdout_line};
+use crate::bstr;
+use crate::bstr::ByteWriter;
+use crate::shell::error::ShellError;
+use crate::shell::state::Shell;
+use crate::shell::traps::{TrapAction, TrapCondition};
+use crate::sys;
+use std::collections::BTreeSet;
 
 pub(super) fn trap(shell: &mut Shell, argv: &[Vec<u8>]) -> BuiltinOutcome {
     match trap_impl(shell, argv) {
@@ -109,7 +117,7 @@ pub(super) fn print_traps(
 pub(super) fn supported_trap_conditions() -> Vec<TrapCondition> {
     let mut conditions = vec![TrapCondition::Exit];
     conditions.extend(
-        sys::supported_trap_signals()
+        sys::process::supported_trap_signals()
             .into_iter()
             .map(TrapCondition::Signal),
     );
@@ -132,28 +140,28 @@ pub(super) fn parse_trap_condition(text: &[u8]) -> Option<TrapCondition> {
     };
     match name {
         b"0" | b"EXIT" => Some(TrapCondition::Exit),
-        b"HUP" | b"1" => Some(TrapCondition::Signal(sys::SIGHUP)),
-        b"INT" | b"2" => Some(TrapCondition::Signal(sys::SIGINT)),
-        b"QUIT" | b"3" => Some(TrapCondition::Signal(sys::SIGQUIT)),
-        b"ILL" | b"4" => Some(TrapCondition::Signal(sys::SIGILL)),
-        b"ABRT" | b"6" => Some(TrapCondition::Signal(sys::SIGABRT)),
-        b"FPE" | b"8" => Some(TrapCondition::Signal(sys::SIGFPE)),
-        b"KILL" | b"9" => Some(TrapCondition::Signal(sys::SIGKILL)),
-        b"USR1" | b"10" => Some(TrapCondition::Signal(sys::SIGUSR1)),
-        b"SEGV" | b"11" => Some(TrapCondition::Signal(sys::SIGSEGV)),
-        b"USR2" | b"12" => Some(TrapCondition::Signal(sys::SIGUSR2)),
-        b"PIPE" | b"13" => Some(TrapCondition::Signal(sys::SIGPIPE)),
-        b"ALRM" | b"14" => Some(TrapCondition::Signal(sys::SIGALRM)),
-        b"TERM" | b"15" => Some(TrapCondition::Signal(sys::SIGTERM)),
-        b"CHLD" | b"17" => Some(TrapCondition::Signal(sys::SIGCHLD)),
-        b"STOP" | b"19" => Some(TrapCondition::Signal(sys::SIGSTOP)),
-        b"CONT" | b"18" => Some(TrapCondition::Signal(sys::SIGCONT)),
-        b"TRAP" | b"5" => Some(TrapCondition::Signal(sys::SIGTRAP)),
-        b"TSTP" | b"20" => Some(TrapCondition::Signal(sys::SIGTSTP)),
-        b"TTIN" | b"21" => Some(TrapCondition::Signal(sys::SIGTTIN)),
-        b"TTOU" | b"22" => Some(TrapCondition::Signal(sys::SIGTTOU)),
-        b"BUS" => Some(TrapCondition::Signal(sys::SIGBUS)),
-        b"SYS" => Some(TrapCondition::Signal(sys::SIGSYS)),
+        b"HUP" | b"1" => Some(TrapCondition::Signal(sys::constants::SIGHUP)),
+        b"INT" | b"2" => Some(TrapCondition::Signal(sys::constants::SIGINT)),
+        b"QUIT" | b"3" => Some(TrapCondition::Signal(sys::constants::SIGQUIT)),
+        b"ILL" | b"4" => Some(TrapCondition::Signal(sys::constants::SIGILL)),
+        b"ABRT" | b"6" => Some(TrapCondition::Signal(sys::constants::SIGABRT)),
+        b"FPE" | b"8" => Some(TrapCondition::Signal(sys::constants::SIGFPE)),
+        b"KILL" | b"9" => Some(TrapCondition::Signal(sys::constants::SIGKILL)),
+        b"USR1" | b"10" => Some(TrapCondition::Signal(sys::constants::SIGUSR1)),
+        b"SEGV" | b"11" => Some(TrapCondition::Signal(sys::constants::SIGSEGV)),
+        b"USR2" | b"12" => Some(TrapCondition::Signal(sys::constants::SIGUSR2)),
+        b"PIPE" | b"13" => Some(TrapCondition::Signal(sys::constants::SIGPIPE)),
+        b"ALRM" | b"14" => Some(TrapCondition::Signal(sys::constants::SIGALRM)),
+        b"TERM" | b"15" => Some(TrapCondition::Signal(sys::constants::SIGTERM)),
+        b"CHLD" | b"17" => Some(TrapCondition::Signal(sys::constants::SIGCHLD)),
+        b"STOP" | b"19" => Some(TrapCondition::Signal(sys::constants::SIGSTOP)),
+        b"CONT" | b"18" => Some(TrapCondition::Signal(sys::constants::SIGCONT)),
+        b"TRAP" | b"5" => Some(TrapCondition::Signal(sys::constants::SIGTRAP)),
+        b"TSTP" | b"20" => Some(TrapCondition::Signal(sys::constants::SIGTSTP)),
+        b"TTIN" | b"21" => Some(TrapCondition::Signal(sys::constants::SIGTTIN)),
+        b"TTOU" | b"22" => Some(TrapCondition::Signal(sys::constants::SIGTTOU)),
+        b"BUS" => Some(TrapCondition::Signal(sys::constants::SIGBUS)),
+        b"SYS" => Some(TrapCondition::Signal(sys::constants::SIGSYS)),
         _ => None,
     }
 }
@@ -161,27 +169,27 @@ pub(super) fn parse_trap_condition(text: &[u8]) -> Option<TrapCondition> {
 pub(super) fn format_trap_condition(condition: TrapCondition) -> Vec<u8> {
     match condition {
         TrapCondition::Exit => b"EXIT".to_vec(),
-        TrapCondition::Signal(sys::SIGHUP) => b"HUP".to_vec(),
-        TrapCondition::Signal(sys::SIGINT) => b"INT".to_vec(),
-        TrapCondition::Signal(sys::SIGQUIT) => b"QUIT".to_vec(),
-        TrapCondition::Signal(sys::SIGILL) => b"ILL".to_vec(),
-        TrapCondition::Signal(sys::SIGABRT) => b"ABRT".to_vec(),
-        TrapCondition::Signal(sys::SIGFPE) => b"FPE".to_vec(),
-        TrapCondition::Signal(sys::SIGKILL) => b"KILL".to_vec(),
-        TrapCondition::Signal(sys::SIGUSR1) => b"USR1".to_vec(),
-        TrapCondition::Signal(sys::SIGSEGV) => b"SEGV".to_vec(),
-        TrapCondition::Signal(sys::SIGUSR2) => b"USR2".to_vec(),
-        TrapCondition::Signal(sys::SIGPIPE) => b"PIPE".to_vec(),
-        TrapCondition::Signal(sys::SIGALRM) => b"ALRM".to_vec(),
-        TrapCondition::Signal(sys::SIGTERM) => b"TERM".to_vec(),
-        TrapCondition::Signal(sys::SIGCHLD) => b"CHLD".to_vec(),
-        TrapCondition::Signal(sys::SIGCONT) => b"CONT".to_vec(),
-        TrapCondition::Signal(sys::SIGTRAP) => b"TRAP".to_vec(),
-        TrapCondition::Signal(sys::SIGTSTP) => b"TSTP".to_vec(),
-        TrapCondition::Signal(sys::SIGTTIN) => b"TTIN".to_vec(),
-        TrapCondition::Signal(sys::SIGTTOU) => b"TTOU".to_vec(),
-        TrapCondition::Signal(sys::SIGBUS) => b"BUS".to_vec(),
-        TrapCondition::Signal(sys::SIGSYS) => b"SYS".to_vec(),
+        TrapCondition::Signal(sys::constants::SIGHUP) => b"HUP".to_vec(),
+        TrapCondition::Signal(sys::constants::SIGINT) => b"INT".to_vec(),
+        TrapCondition::Signal(sys::constants::SIGQUIT) => b"QUIT".to_vec(),
+        TrapCondition::Signal(sys::constants::SIGILL) => b"ILL".to_vec(),
+        TrapCondition::Signal(sys::constants::SIGABRT) => b"ABRT".to_vec(),
+        TrapCondition::Signal(sys::constants::SIGFPE) => b"FPE".to_vec(),
+        TrapCondition::Signal(sys::constants::SIGKILL) => b"KILL".to_vec(),
+        TrapCondition::Signal(sys::constants::SIGUSR1) => b"USR1".to_vec(),
+        TrapCondition::Signal(sys::constants::SIGSEGV) => b"SEGV".to_vec(),
+        TrapCondition::Signal(sys::constants::SIGUSR2) => b"USR2".to_vec(),
+        TrapCondition::Signal(sys::constants::SIGPIPE) => b"PIPE".to_vec(),
+        TrapCondition::Signal(sys::constants::SIGALRM) => b"ALRM".to_vec(),
+        TrapCondition::Signal(sys::constants::SIGTERM) => b"TERM".to_vec(),
+        TrapCondition::Signal(sys::constants::SIGCHLD) => b"CHLD".to_vec(),
+        TrapCondition::Signal(sys::constants::SIGCONT) => b"CONT".to_vec(),
+        TrapCondition::Signal(sys::constants::SIGTRAP) => b"TRAP".to_vec(),
+        TrapCondition::Signal(sys::constants::SIGTSTP) => b"TSTP".to_vec(),
+        TrapCondition::Signal(sys::constants::SIGTTIN) => b"TTIN".to_vec(),
+        TrapCondition::Signal(sys::constants::SIGTTOU) => b"TTOU".to_vec(),
+        TrapCondition::Signal(sys::constants::SIGBUS) => b"BUS".to_vec(),
+        TrapCondition::Signal(sys::constants::SIGSYS) => b"SYS".to_vec(),
         TrapCondition::Signal(signal) => bstr::i64_to_bytes(signal as i64),
     }
 }
@@ -212,7 +220,12 @@ pub(super) fn is_unsigned_decimal(text: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builtin::test_support::*;
+    use crate::bstr;
+    use crate::bstr::ByteWriter;
+    use crate::builtin::test_support::{invoke, test_shell};
+    use crate::shell::traps::{TrapAction, TrapCondition};
+    use crate::sys;
+    use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;
 
     #[test]
@@ -323,99 +336,99 @@ mod tests {
             assert_eq!(parse_trap_condition(b"EXIT"), Some(TrapCondition::Exit));
             assert_eq!(
                 parse_trap_condition(b"SIGHUP"),
-                Some(TrapCondition::Signal(sys::SIGHUP))
+                Some(TrapCondition::Signal(sys::constants::SIGHUP))
             );
             assert_eq!(
                 parse_trap_condition(b"HUP"),
-                Some(TrapCondition::Signal(sys::SIGHUP))
+                Some(TrapCondition::Signal(sys::constants::SIGHUP))
             );
             assert_eq!(
                 parse_trap_condition(b"1"),
-                Some(TrapCondition::Signal(sys::SIGHUP))
+                Some(TrapCondition::Signal(sys::constants::SIGHUP))
             );
             assert_eq!(
                 parse_trap_condition(b"INT"),
-                Some(TrapCondition::Signal(sys::SIGINT))
+                Some(TrapCondition::Signal(sys::constants::SIGINT))
             );
             assert_eq!(
                 parse_trap_condition(b"QUIT"),
-                Some(TrapCondition::Signal(sys::SIGQUIT))
+                Some(TrapCondition::Signal(sys::constants::SIGQUIT))
             );
             assert_eq!(
                 parse_trap_condition(b"ILL"),
-                Some(TrapCondition::Signal(sys::SIGILL))
+                Some(TrapCondition::Signal(sys::constants::SIGILL))
             );
             assert_eq!(
                 parse_trap_condition(b"ABRT"),
-                Some(TrapCondition::Signal(sys::SIGABRT))
+                Some(TrapCondition::Signal(sys::constants::SIGABRT))
             );
             assert_eq!(
                 parse_trap_condition(b"FPE"),
-                Some(TrapCondition::Signal(sys::SIGFPE))
+                Some(TrapCondition::Signal(sys::constants::SIGFPE))
             );
             assert_eq!(
                 parse_trap_condition(b"KILL"),
-                Some(TrapCondition::Signal(sys::SIGKILL))
+                Some(TrapCondition::Signal(sys::constants::SIGKILL))
             );
             assert_eq!(
                 parse_trap_condition(b"USR1"),
-                Some(TrapCondition::Signal(sys::SIGUSR1))
+                Some(TrapCondition::Signal(sys::constants::SIGUSR1))
             );
             assert_eq!(
                 parse_trap_condition(b"SEGV"),
-                Some(TrapCondition::Signal(sys::SIGSEGV))
+                Some(TrapCondition::Signal(sys::constants::SIGSEGV))
             );
             assert_eq!(
                 parse_trap_condition(b"USR2"),
-                Some(TrapCondition::Signal(sys::SIGUSR2))
+                Some(TrapCondition::Signal(sys::constants::SIGUSR2))
             );
             assert_eq!(
                 parse_trap_condition(b"PIPE"),
-                Some(TrapCondition::Signal(sys::SIGPIPE))
+                Some(TrapCondition::Signal(sys::constants::SIGPIPE))
             );
             assert_eq!(
                 parse_trap_condition(b"ALRM"),
-                Some(TrapCondition::Signal(sys::SIGALRM))
+                Some(TrapCondition::Signal(sys::constants::SIGALRM))
             );
             assert_eq!(
                 parse_trap_condition(b"TERM"),
-                Some(TrapCondition::Signal(sys::SIGTERM))
+                Some(TrapCondition::Signal(sys::constants::SIGTERM))
             );
             assert_eq!(
                 parse_trap_condition(b"CHLD"),
-                Some(TrapCondition::Signal(sys::SIGCHLD))
+                Some(TrapCondition::Signal(sys::constants::SIGCHLD))
             );
             assert_eq!(
                 parse_trap_condition(b"CONT"),
-                Some(TrapCondition::Signal(sys::SIGCONT))
+                Some(TrapCondition::Signal(sys::constants::SIGCONT))
             );
             assert_eq!(
                 parse_trap_condition(b"STOP"),
-                Some(TrapCondition::Signal(sys::SIGSTOP))
+                Some(TrapCondition::Signal(sys::constants::SIGSTOP))
             );
             assert_eq!(
                 parse_trap_condition(b"TSTP"),
-                Some(TrapCondition::Signal(sys::SIGTSTP))
+                Some(TrapCondition::Signal(sys::constants::SIGTSTP))
             );
             assert_eq!(
                 parse_trap_condition(b"TTIN"),
-                Some(TrapCondition::Signal(sys::SIGTTIN))
+                Some(TrapCondition::Signal(sys::constants::SIGTTIN))
             );
             assert_eq!(
                 parse_trap_condition(b"TTOU"),
-                Some(TrapCondition::Signal(sys::SIGTTOU))
+                Some(TrapCondition::Signal(sys::constants::SIGTTOU))
             );
             assert_eq!(
                 parse_trap_condition(b"BUS"),
-                Some(TrapCondition::Signal(sys::SIGBUS))
+                Some(TrapCondition::Signal(sys::constants::SIGBUS))
             );
             assert_eq!(
                 parse_trap_condition(b"SYS"),
-                Some(TrapCondition::Signal(sys::SIGSYS))
+                Some(TrapCondition::Signal(sys::constants::SIGSYS))
             );
             assert_eq!(
                 parse_trap_condition(b"TRAP"),
-                Some(TrapCondition::Signal(sys::SIGTRAP))
+                Some(TrapCondition::Signal(sys::constants::SIGTRAP))
             );
             assert_eq!(parse_trap_condition(b"BOGUS"), None);
         });
@@ -426,92 +439,92 @@ mod tests {
         assert_no_syscalls(|| {
             assert_eq!(format_trap_condition(TrapCondition::Exit), b"EXIT");
             assert_eq!(
-                format_trap_condition(TrapCondition::Signal(sys::SIGHUP)),
+                format_trap_condition(TrapCondition::Signal(sys::constants::SIGHUP)),
                 b"HUP"
             );
             assert_eq!(
-                format_trap_condition(TrapCondition::Signal(sys::SIGINT)),
+                format_trap_condition(TrapCondition::Signal(sys::constants::SIGINT)),
                 b"INT"
             );
             assert_eq!(
-                format_trap_condition(TrapCondition::Signal(sys::SIGQUIT)),
+                format_trap_condition(TrapCondition::Signal(sys::constants::SIGQUIT)),
                 b"QUIT"
             );
             assert_eq!(
-                format_trap_condition(TrapCondition::Signal(sys::SIGILL)),
+                format_trap_condition(TrapCondition::Signal(sys::constants::SIGILL)),
                 b"ILL"
             );
             assert_eq!(
-                format_trap_condition(TrapCondition::Signal(sys::SIGABRT)),
+                format_trap_condition(TrapCondition::Signal(sys::constants::SIGABRT)),
                 b"ABRT"
             );
             assert_eq!(
-                format_trap_condition(TrapCondition::Signal(sys::SIGFPE)),
+                format_trap_condition(TrapCondition::Signal(sys::constants::SIGFPE)),
                 b"FPE"
             );
             assert_eq!(
-                format_trap_condition(TrapCondition::Signal(sys::SIGKILL)),
+                format_trap_condition(TrapCondition::Signal(sys::constants::SIGKILL)),
                 b"KILL"
             );
             assert_eq!(
-                format_trap_condition(TrapCondition::Signal(sys::SIGUSR1)),
+                format_trap_condition(TrapCondition::Signal(sys::constants::SIGUSR1)),
                 b"USR1"
             );
             assert_eq!(
-                format_trap_condition(TrapCondition::Signal(sys::SIGSEGV)),
+                format_trap_condition(TrapCondition::Signal(sys::constants::SIGSEGV)),
                 b"SEGV"
             );
             assert_eq!(
-                format_trap_condition(TrapCondition::Signal(sys::SIGUSR2)),
+                format_trap_condition(TrapCondition::Signal(sys::constants::SIGUSR2)),
                 b"USR2"
             );
             assert_eq!(
-                format_trap_condition(TrapCondition::Signal(sys::SIGPIPE)),
+                format_trap_condition(TrapCondition::Signal(sys::constants::SIGPIPE)),
                 b"PIPE"
             );
             assert_eq!(
-                format_trap_condition(TrapCondition::Signal(sys::SIGALRM)),
+                format_trap_condition(TrapCondition::Signal(sys::constants::SIGALRM)),
                 b"ALRM"
             );
             assert_eq!(
-                format_trap_condition(TrapCondition::Signal(sys::SIGTERM)),
+                format_trap_condition(TrapCondition::Signal(sys::constants::SIGTERM)),
                 b"TERM"
             );
             assert_eq!(
-                format_trap_condition(TrapCondition::Signal(sys::SIGCHLD)),
+                format_trap_condition(TrapCondition::Signal(sys::constants::SIGCHLD)),
                 b"CHLD"
             );
             assert_eq!(
-                format_trap_condition(TrapCondition::Signal(sys::SIGCONT)),
+                format_trap_condition(TrapCondition::Signal(sys::constants::SIGCONT)),
                 b"CONT"
             );
             assert_eq!(
-                format_trap_condition(TrapCondition::Signal(sys::SIGTRAP)),
+                format_trap_condition(TrapCondition::Signal(sys::constants::SIGTRAP)),
                 b"TRAP"
             );
             assert_eq!(
-                format_trap_condition(TrapCondition::Signal(sys::SIGTSTP)),
+                format_trap_condition(TrapCondition::Signal(sys::constants::SIGTSTP)),
                 b"TSTP"
             );
             assert_eq!(
-                format_trap_condition(TrapCondition::Signal(sys::SIGTTIN)),
+                format_trap_condition(TrapCondition::Signal(sys::constants::SIGTTIN)),
                 b"TTIN"
             );
             assert_eq!(
-                format_trap_condition(TrapCondition::Signal(sys::SIGTTOU)),
+                format_trap_condition(TrapCondition::Signal(sys::constants::SIGTTOU)),
                 b"TTOU"
             );
             assert_eq!(
-                format_trap_condition(TrapCondition::Signal(sys::SIGBUS)),
+                format_trap_condition(TrapCondition::Signal(sys::constants::SIGBUS)),
                 b"BUS"
             );
             assert_eq!(
-                format_trap_condition(TrapCondition::Signal(sys::SIGSYS)),
+                format_trap_condition(TrapCondition::Signal(sys::constants::SIGSYS)),
                 b"SYS"
             );
             assert_eq!(
-                format_trap_condition(TrapCondition::Signal(sys::SIGSTOP)),
-                bstr::i64_to_bytes(sys::SIGSTOP as i64)
+                format_trap_condition(TrapCondition::Signal(sys::constants::SIGSTOP)),
+                bstr::i64_to_bytes(sys::constants::SIGSTOP as i64)
             );
         });
     }

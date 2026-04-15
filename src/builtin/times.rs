@@ -1,7 +1,13 @@
-use super::*;
+use super::{BuiltinOutcome, diag_status_syserr, write_stdout_line};
+use crate::bstr::ByteWriter;
+use crate::shell::state::Shell;
+use crate::sys;
 
 pub(super) fn times(shell: &Shell) -> BuiltinOutcome {
-    match (sys::process_times(), sys::clock_ticks_per_second()) {
+    match (
+        sys::time::process_times(),
+        sys::time::clock_ticks_per_second(),
+    ) {
         (Ok(times), Ok(ticks_per_second)) => {
             let line1 = ByteWriter::new()
                 .bytes(&format_times_value(times.user_ticks, ticks_per_second))
@@ -42,7 +48,8 @@ pub(super) fn format_times_value(ticks: u64, ticks_per_second: u64) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builtin::test_support::*;
+    use crate::builtin::test_support::{invoke, test_shell};
+    use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;
 
     #[test]
@@ -59,7 +66,7 @@ mod tests {
             trace_entries![
                 times(_) -> err(libc::EACCES),
                 sysconf(_) -> 100,
-                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+                write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {
                 let mut shell = test_shell();

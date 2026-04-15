@@ -1,4 +1,8 @@
-use super::*;
+use super::BuiltinOutcome;
+use super::command::{readable_regular_file, search_path};
+use crate::bstr::{BStrExt, ByteWriter};
+use crate::shell::error::ShellError;
+use crate::shell::state::Shell;
 
 pub(super) fn dot(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, ShellError> {
     let path = argv
@@ -34,8 +38,10 @@ pub(super) fn resolve_dot_path(shell: &Shell, path: &[u8]) -> Result<Vec<u8>, ()
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::builtin::BuiltinOutcome;
-    use crate::builtin::test_support::*;
+    use crate::builtin::test_support::{invoke, test_shell};
+    use crate::sys::test_support::run_trace;
     use crate::trace_entries;
 
     #[test]

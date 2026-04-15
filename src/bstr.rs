@@ -10,15 +10,15 @@
 /// `Display`, `format!`, `write!`, and all UTF-8 types.
 
 /// Owned byte string (analogous to `String`).
-pub type BString = Vec<u8>;
+pub(crate) type BString = Vec<u8>;
 /// Boxed byte string (analogous to `Box<str>`).
-pub type BoxBStr = Box<[u8]>;
+pub(crate) type BoxBStr = Box<[u8]>;
 
 // ---------------------------------------------------------------------------
 // Extension trait
 // ---------------------------------------------------------------------------
 
-pub trait BStrExt {
+pub(crate) trait BStrExt {
     fn trim_trailing_newlines(&self) -> &[u8];
     fn contains_byte(&self, byte: u8) -> bool;
     fn split_once_byte(&self, byte: u8) -> Option<(&[u8], &[u8])>;
@@ -63,14 +63,14 @@ impl BStrExt for [u8] {
 
 /// Create a CString from arbitrary bytes. Returns `Err` if the bytes contain
 /// an interior NUL.
-pub fn to_cstring(bytes: &[u8]) -> Result<std::ffi::CString, std::ffi::NulError> {
+pub(crate) fn to_cstring(bytes: &[u8]) -> Result<std::ffi::CString, std::ffi::NulError> {
     std::ffi::CString::new(bytes.to_vec())
 }
 
 /// Convert raw bytes from the OS (CStr, readdir d_name, getcwd result, etc.)
 /// into our internal `Vec<u8>` representation. Identity on Unix.
 #[inline]
-pub fn bytes_from_cstr(cstr: &std::ffi::CStr) -> BString {
+pub(crate) fn bytes_from_cstr(cstr: &std::ffi::CStr) -> BString {
     cstr.to_bytes().to_vec()
 }
 
@@ -79,7 +79,7 @@ pub fn bytes_from_cstr(cstr: &std::ffi::CStr) -> BString {
 // ---------------------------------------------------------------------------
 
 /// Parse a byte string as a decimal integer, returning None on failure.
-pub fn parse_i64(s: &[u8]) -> Option<i64> {
+pub(crate) fn parse_i64(s: &[u8]) -> Option<i64> {
     if s.is_empty() {
         return None;
     }
@@ -108,7 +108,7 @@ pub fn parse_i64(s: &[u8]) -> Option<i64> {
     }
 }
 
-pub fn parse_hex_i64(bytes: &[u8]) -> Option<i64> {
+pub(crate) fn parse_hex_i64(bytes: &[u8]) -> Option<i64> {
     if bytes.is_empty() {
         return None;
     }
@@ -125,7 +125,7 @@ pub fn parse_hex_i64(bytes: &[u8]) -> Option<i64> {
     Some(result)
 }
 
-pub fn parse_octal_i64(bytes: &[u8]) -> Option<i64> {
+pub(crate) fn parse_octal_i64(bytes: &[u8]) -> Option<i64> {
     if bytes.is_empty() {
         return None;
     }
@@ -140,7 +140,7 @@ pub fn parse_octal_i64(bytes: &[u8]) -> Option<i64> {
 }
 
 /// POSIX shell name validation: `[A-Za-z_][A-Za-z0-9_]*`
-pub fn is_name(s: &[u8]) -> bool {
+pub(crate) fn is_name(s: &[u8]) -> bool {
     if s.is_empty() {
         return false;
     }
@@ -158,7 +158,7 @@ pub fn is_name(s: &[u8]) -> bool {
 // ---------------------------------------------------------------------------
 
 /// Append decimal representation of an i64.
-pub fn push_i64(buf: &mut Vec<u8>, val: i64) {
+pub(crate) fn push_i64(buf: &mut Vec<u8>, val: i64) {
     if val < 0 {
         buf.push(b'-');
         // Handle i64::MIN without overflow: cast to u64 first.
@@ -170,14 +170,14 @@ pub fn push_i64(buf: &mut Vec<u8>, val: i64) {
 }
 
 /// Return decimal bytes for an i64.
-pub fn i64_to_bytes(val: i64) -> Vec<u8> {
+pub(crate) fn i64_to_bytes(val: i64) -> Vec<u8> {
     let mut buf = Vec::new();
     push_i64(&mut buf, val);
     buf
 }
 
 /// Append decimal representation of a u64.
-pub fn push_u64(buf: &mut Vec<u8>, val: u64) {
+pub(crate) fn push_u64(buf: &mut Vec<u8>, val: u64) {
     if val == 0 {
         buf.push(b'0');
         return;
@@ -192,14 +192,14 @@ pub fn push_u64(buf: &mut Vec<u8>, val: u64) {
 }
 
 /// Return decimal bytes for a u64.
-pub fn u64_to_bytes(val: u64) -> Vec<u8> {
+pub(crate) fn u64_to_bytes(val: u64) -> Vec<u8> {
     let mut buf = Vec::new();
     push_u64(&mut buf, val);
     buf
 }
 
 /// Append octal representation of a u64 (no prefix).
-pub fn push_u64_octal(buf: &mut Vec<u8>, val: u64) {
+pub(crate) fn push_u64_octal(buf: &mut Vec<u8>, val: u64) {
     if val == 0 {
         buf.push(b'0');
         return;
@@ -214,7 +214,7 @@ pub fn push_u64_octal(buf: &mut Vec<u8>, val: u64) {
 }
 
 /// Append zero-padded octal to `width` digits (e.g. width=4 -> "0022").
-pub fn push_u64_octal_padded(buf: &mut Vec<u8>, val: u64, width: usize) {
+pub(crate) fn push_u64_octal_padded(buf: &mut Vec<u8>, val: u64, width: usize) {
     let start = buf.len();
     push_u64_octal(buf, val);
     let digits = buf.len() - start;
@@ -229,7 +229,7 @@ pub fn push_u64_octal_padded(buf: &mut Vec<u8>, val: u64, width: usize) {
 }
 
 /// Append lowercase hex representation of a u64 (no prefix).
-pub fn push_u64_hex(buf: &mut Vec<u8>, val: u64) {
+pub(crate) fn push_u64_hex(buf: &mut Vec<u8>, val: u64) {
     if val == 0 {
         buf.push(b'0');
         return;
@@ -249,7 +249,7 @@ pub fn push_u64_hex(buf: &mut Vec<u8>, val: u64) {
 }
 
 /// Append uppercase hex representation of a u64 (no prefix).
-pub fn push_u64_hex_upper(buf: &mut Vec<u8>, val: u64) {
+pub(crate) fn push_u64_hex_upper(buf: &mut Vec<u8>, val: u64) {
     if val == 0 {
         buf.push(b'0');
         return;
@@ -271,7 +271,7 @@ pub fn push_u64_hex_upper(buf: &mut Vec<u8>, val: u64) {
 /// Append fixed-point f64 with the given number of decimal places.
 /// Handles negative values. Does NOT handle NaN/Inf specially —
 /// those produce "0.000..." (acceptable for POSIX shell `time` output).
-pub fn push_f64_fixed(buf: &mut Vec<u8>, val: f64, precision: usize) {
+pub(crate) fn push_f64_fixed(buf: &mut Vec<u8>, val: f64, precision: usize) {
     if val.is_nan() || val.is_infinite() {
         push_u64(buf, 0);
         if precision > 0 {
@@ -320,73 +320,73 @@ pub fn push_f64_fixed(buf: &mut Vec<u8>, val: f64, precision: usize) {
 // ByteWriter — ergonomic multi-part byte message builder
 // ---------------------------------------------------------------------------
 
-pub struct ByteWriter(pub Vec<u8>);
+pub(crate) struct ByteWriter(pub(crate) Vec<u8>);
 
 impl ByteWriter {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self(Vec::new())
     }
 
-    pub fn with_capacity(cap: usize) -> Self {
+    pub(crate) fn with_capacity(cap: usize) -> Self {
         Self(Vec::with_capacity(cap))
     }
 
-    pub fn bytes(mut self, b: &[u8]) -> Self {
+    pub(crate) fn bytes(mut self, b: &[u8]) -> Self {
         self.0.extend_from_slice(b);
         self
     }
 
-    pub fn byte(mut self, b: u8) -> Self {
+    pub(crate) fn byte(mut self, b: u8) -> Self {
         self.0.push(b);
         self
     }
 
-    pub fn u64_val(mut self, v: u64) -> Self {
+    pub(crate) fn u64_val(mut self, v: u64) -> Self {
         push_u64(&mut self.0, v);
         self
     }
 
-    pub fn i64_val(mut self, v: i64) -> Self {
+    pub(crate) fn i64_val(mut self, v: i64) -> Self {
         push_i64(&mut self.0, v);
         self
     }
 
-    pub fn i32_val(mut self, v: i32) -> Self {
+    pub(crate) fn i32_val(mut self, v: i32) -> Self {
         push_i64(&mut self.0, v as i64);
         self
     }
 
-    pub fn usize_val(mut self, v: usize) -> Self {
+    pub(crate) fn usize_val(mut self, v: usize) -> Self {
         push_u64(&mut self.0, v as u64);
         self
     }
 
-    pub fn f64_fixed(mut self, v: f64, prec: usize) -> Self {
+    pub(crate) fn f64_fixed(mut self, v: f64, prec: usize) -> Self {
         push_f64_fixed(&mut self.0, v, prec);
         self
     }
 
-    pub fn octal_padded(mut self, v: u64, w: usize) -> Self {
+    pub(crate) fn octal_padded(mut self, v: u64, w: usize) -> Self {
         push_u64_octal_padded(&mut self.0, v, w);
         self
     }
 
-    pub fn hex_lower(mut self, v: u64) -> Self {
+    pub(crate) fn hex_lower(mut self, v: u64) -> Self {
         push_u64_hex(&mut self.0, v);
         self
     }
 
-    pub fn hex_upper(mut self, v: u64) -> Self {
+    pub(crate) fn hex_upper(mut self, v: u64) -> Self {
         push_u64_hex_upper(&mut self.0, v);
         self
     }
 
-    pub fn finish(self) -> Vec<u8> {
+    pub(crate) fn finish(self) -> Vec<u8> {
         self.0
     }
 
     /// Borrow the accumulated bytes.
-    pub fn as_bytes(&self) -> &[u8] {
+    pub(crate) fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 }
@@ -396,7 +396,7 @@ impl ByteWriter {
 // ---------------------------------------------------------------------------
 
 /// Join byte slices with a separator byte.
-pub fn join_bytes(parts: &[&[u8]], sep: u8) -> BString {
+pub(crate) fn join_bytes(parts: &[&[u8]], sep: u8) -> BString {
     let mut out = Vec::new();
     for (i, part) in parts.iter().enumerate() {
         if i > 0 {
@@ -408,7 +408,7 @@ pub fn join_bytes(parts: &[&[u8]], sep: u8) -> BString {
 }
 
 /// Join owned byte strings with a separator.
-pub fn join_bstrings(parts: &[BString], sep: &[u8]) -> BString {
+pub(crate) fn join_bstrings(parts: &[BString], sep: &[u8]) -> BString {
     let mut out = Vec::new();
     for (i, part) in parts.iter().enumerate() {
         if i > 0 {

@@ -1,13 +1,13 @@
 use std::borrow::Cow;
 
 use crate::bstr;
-use crate::expand::{self, ExpandError};
+use crate::expand::core::{Context, ExpandError};
 use crate::sys;
 
 use super::error::var_error_message;
 use super::state::Shell;
 
-impl expand::Context for Shell {
+impl Context for Shell {
     fn env_var(&self, name: &[u8]) -> Option<Cow<'_, [u8]>> {
         self.env.get(name).map(|v| Cow::Borrowed(v.as_slice()))
     }
@@ -75,7 +75,7 @@ impl expand::Context for Shell {
     }
 
     fn home_dir_for_user(&self, name: &[u8]) -> Option<Cow<'_, [u8]>> {
-        sys::home_dir_for_user(name).map(Cow::Owned)
+        sys::env::home_dir_for_user(name).map(Cow::Owned)
     }
 
     fn set_lineno(&mut self, line: usize) {
@@ -91,7 +91,9 @@ impl expand::Context for Shell {
 
 #[cfg(test)]
 mod tests {
-    use crate::expand;
+    use super::*;
+
+    use crate::expand::core::Context;
     use crate::sys;
     use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;
@@ -110,43 +112,43 @@ mod tests {
             shell.options.noclobber = true;
             shell.options.command_string = Some(b"printf ok"[..].into());
             assert_eq!(
-                expand::Context::special_param(&shell, b'?').as_deref(),
+                Context::special_param(&shell, b'?').as_deref(),
                 Some(b"17".as_slice())
             );
             assert_eq!(
-                expand::Context::special_param(&shell, b'$').as_deref(),
+                Context::special_param(&shell, b'$').as_deref(),
                 Some(b"12345".as_slice())
             );
             assert_eq!(
-                expand::Context::special_param(&shell, b'#').as_deref(),
+                Context::special_param(&shell, b'#').as_deref(),
                 Some(b"2".as_slice())
             );
             assert_eq!(
-                expand::Context::special_param(&shell, b'!').as_deref(),
+                Context::special_param(&shell, b'!').as_deref(),
                 Some(b"42".as_slice())
             );
             assert_eq!(
-                expand::Context::special_param(&shell, b'-').as_deref(),
+                Context::special_param(&shell, b'-').as_deref(),
                 Some(b"aCc".as_slice())
             );
             assert_eq!(
-                expand::Context::special_param(&shell, b'*').as_deref(),
+                Context::special_param(&shell, b'*').as_deref(),
                 Some(b"first second".as_slice())
             );
             assert_eq!(
-                expand::Context::special_param(&shell, b'@').as_deref(),
+                Context::special_param(&shell, b'@').as_deref(),
                 Some(b"first second".as_slice())
             );
             assert_eq!(
-                expand::Context::special_param(&shell, b'1').as_deref(),
+                Context::special_param(&shell, b'1').as_deref(),
                 Some(b"first".as_slice())
             );
             assert_eq!(
-                expand::Context::special_param(&shell, b'0').as_deref(),
+                Context::special_param(&shell, b'0').as_deref(),
                 Some(b"meiksh".as_slice())
             );
-            assert_eq!(expand::Context::special_param(&shell, b'9'), None);
-            assert_eq!(expand::Context::special_param(&shell, b'x'), None);
+            assert_eq!(Context::special_param(&shell, b'9'), None);
+            assert_eq!(Context::special_param(&shell, b'x'), None);
         });
     }
 
@@ -171,15 +173,15 @@ mod tests {
     fn context_trait_methods_work() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            assert_eq!(expand::Context::shell_name(&shell), b"meiksh");
+            assert_eq!(Context::shell_name(&shell), b"meiksh");
             assert_eq!(
-                expand::Context::positional_param(&shell, 0).as_deref(),
+                Context::positional_param(&shell, 0).as_deref(),
                 Some(b"meiksh".as_slice())
             );
-            expand::Context::set_var(&mut shell, b"CTX_SET", b"7".to_vec()).expect("ctx set");
+            Context::set_var(&mut shell, b"CTX_SET", b"7".to_vec()).expect("ctx set");
             assert_eq!(shell.get_var(b"CTX_SET"), Some(b"7".as_slice()));
             shell.mark_readonly(b"CTX_SET");
-            let error = expand::Context::set_var(&mut shell, b"CTX_SET", b"8".to_vec())
+            let error = Context::set_var(&mut shell, b"CTX_SET", b"8".to_vec())
                 .expect_err("readonly ctx set");
             assert_eq!(&*error.message, b"CTX_SET: readonly variable".as_slice());
         });
@@ -189,8 +191,7 @@ mod tests {
     fn command_substitute_success() {
         run_trace(trace_entries![..capture_forked_trace(0, 1000)], || {
             let mut shell = test_shell();
-            let substituted =
-                expand::Context::command_substitute(&mut shell, b"true").expect("subst");
+            let substituted = Context::command_substitute(&mut shell, b"true").expect("subst");
             assert_eq!(substituted, b"");
             assert_eq!(shell.last_status, 0);
         });
@@ -200,8 +201,7 @@ mod tests {
     fn command_substitute_sets_last_status_on_nonzero_exit() {
         run_trace(trace_entries![..capture_forked_trace(1, 1000)], || {
             let mut shell = test_shell();
-            let output =
-                expand::Context::command_substitute(&mut shell, b"false").expect("subst ok");
+            let output = Context::command_substitute(&mut shell, b"false").expect("subst ok");
             assert_eq!(output, b"");
             assert_eq!(shell.last_status, 1);
         });
@@ -211,12 +211,12 @@ mod tests {
     fn command_substitute_maps_error() {
         run_trace(
             trace_entries![
-                pipe() -> err(sys::EIO),
+                pipe() -> err(sys::constants::EIO),
                 ..vec![t_stderr("meiksh: Input/output error")],
             ],
             || {
                 let mut shell = test_shell();
-                let result = crate::expand::Context::command_substitute(&mut shell, b"true");
+                let result = Context::command_substitute(&mut shell, b"true");
                 assert!(result.is_err());
             },
         );

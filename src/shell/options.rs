@@ -1,25 +1,25 @@
 use crate::bstr::ByteWriter;
 
 #[derive(Clone, Debug, Default)]
-pub struct ShellOptions {
-    pub allexport: bool,
-    pub command_string: Option<Box<[u8]>>,
-    pub errexit: bool,
-    pub syntax_check_only: bool,
-    pub force_interactive: bool,
-    pub hashall: bool,
-    pub monitor: bool,
-    pub noclobber: bool,
-    pub noglob: bool,
-    pub notify: bool,
-    pub nounset: bool,
-    pub pipefail: bool,
-    pub verbose: bool,
-    pub xtrace: bool,
-    pub script_path: Option<Vec<u8>>,
-    pub shell_name_override: Option<Box<[u8]>>,
-    pub positional: Vec<Vec<u8>>,
-    pub vi_mode: bool,
+pub(crate) struct ShellOptions {
+    pub(crate) allexport: bool,
+    pub(crate) command_string: Option<Box<[u8]>>,
+    pub(crate) errexit: bool,
+    pub(crate) syntax_check_only: bool,
+    pub(crate) force_interactive: bool,
+    pub(crate) hashall: bool,
+    pub(crate) monitor: bool,
+    pub(crate) noclobber: bool,
+    pub(crate) noglob: bool,
+    pub(crate) notify: bool,
+    pub(crate) nounset: bool,
+    pub(crate) pipefail: bool,
+    pub(crate) verbose: bool,
+    pub(crate) xtrace: bool,
+    pub(crate) script_path: Option<Vec<u8>>,
+    pub(crate) shell_name_override: Option<Box<[u8]>>,
+    pub(crate) positional: Vec<Vec<u8>>,
+    pub(crate) vi_mode: bool,
 }
 
 const REPORTABLE_OPTION_NAMES: [(&[u8], u8); 11] = [
@@ -37,7 +37,7 @@ const REPORTABLE_OPTION_NAMES: [(&[u8], u8); 11] = [
 ];
 
 impl ShellOptions {
-    pub fn set_short_option(&mut self, ch: u8, enabled: bool) -> Result<(), OptionError> {
+    pub(crate) fn set_short_option(&mut self, ch: u8, enabled: bool) -> Result<(), OptionError> {
         match ch {
             b'a' => self.allexport = enabled,
             b'b' => self.notify = enabled,
@@ -56,7 +56,11 @@ impl ShellOptions {
         Ok(())
     }
 
-    pub fn set_named_option(&mut self, name: &[u8], enabled: bool) -> Result<(), OptionError> {
+    pub(crate) fn set_named_option(
+        &mut self,
+        name: &[u8],
+        enabled: bool,
+    ) -> Result<(), OptionError> {
         if name == b"pipefail" {
             self.pipefail = enabled;
             return Ok(());
@@ -74,7 +78,7 @@ impl ShellOptions {
         self.set_short_option(*letter, enabled)
     }
 
-    pub fn reportable_options(&self) -> [(&'static [u8], bool); 12] {
+    pub(crate) fn reportable_options(&self) -> [(&'static [u8], bool); 12] {
         [
             (b"allexport" as &[u8], self.allexport),
             (b"errexit", self.errexit),
@@ -93,7 +97,7 @@ impl ShellOptions {
 }
 
 #[derive(Debug)]
-pub enum OptionError {
+pub(crate) enum OptionError {
     InvalidShort(u8),
     InvalidName(Box<[u8]>),
 }
@@ -113,7 +117,7 @@ pub(super) fn option_error_message(e: &OptionError) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::ShellOptions;
+    use super::*;
 
     #[test]
     fn set_short_option_accepts_new_options() {

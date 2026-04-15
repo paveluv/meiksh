@@ -1,22 +1,17 @@
-#![allow(unused_imports)]
-
-use std::collections::HashMap;
-
 use crate::arena::ByteArena;
-use crate::bstr::ByteWriter;
-use crate::builtin;
-use crate::expand;
-use crate::shell::{
-    BlockingWaitOutcome, FlowSignal, JobState, PendingControl, Shell, ShellError, VarError,
-};
-use crate::syntax::{
-    AndOr, CaseCommand, Command, ForCommand, FunctionDef, HereDoc, IfCommand, ListItem, LogicalOp,
-    LoopCommand, LoopKind, Pipeline, Program, RedirectionKind, SimpleCommand, TimedMode,
+use crate::expand::word;
+use crate::shell::error::ShellError;
+use crate::shell::state::{PendingControl, Shell};
+use crate::syntax::ast::{
+    CaseCommand, Command, ForCommand, IfCommand, LoopCommand, LoopKind, Program, RedirectionKind,
 };
 use crate::sys;
 
+use super::process::ExpandedRedirection;
 use super::program::execute_list_item;
-use super::*;
+use super::redirection::{RedirectionRef, apply_shell_redirections};
+use super::render::case_pattern_matches;
+use super::simple::{execute_simple, expand_redirections, var_error_bytes};
 
 pub(super) fn execute_command(shell: &mut Shell, command: &Command) -> Result<i32, ShellError> {
     execute_command_inner(shell, command, false)
@@ -37,7 +32,7 @@ pub(super) fn execute_command_inner(
     match command {
         Command::Simple(simple) => execute_simple(shell, simple, allow_exec_in_place),
         Command::Subshell(program) => {
-            let pid = sys::fork_process().map_err(|e| shell.diagnostic_syserr(1, &e))?;
+            let pid = sys::process::fork_process().map_err(|e| shell.diagnostic_syserr(1, &e))?;
             if pid == 0 {
                 let mut child_shell = shell.clone();
                 child_shell.owns_terminal = false;
@@ -49,17 +44,17 @@ pub(super) fn execute_command_inner(
                     Err(error) => error.exit_status(),
                 };
                 let status = child_shell.run_exit_trap(status).unwrap_or(status);
-                sys::exit_process(status as sys::RawFd);
+                sys::process::exit_process(status as sys::types::RawFd);
             }
             let ws = loop {
-                match sys::wait_pid(pid, false) {
+                match sys::process::wait_pid(pid, false) {
                     Ok(Some(ws)) => break ws,
                     Ok(None) => continue,
                     Err(e) if e.is_eintr() => continue,
                     Err(e) => return Err(shell.diagnostic_syserr(1, &e)),
                 }
             };
-            Ok(sys::decode_wait_status(ws.status))
+            Ok(sys::process::decode_wait_status(ws.status))
         }
         Command::Group(program) => execute_nested_program(shell, program),
         Command::FunctionDef(function) => {
@@ -81,7 +76,7 @@ pub(super) fn execute_command_inner(
 pub(super) fn execute_redirected(
     shell: &mut Shell,
     command: &Command,
-    redirections: &[crate::syntax::Redirection],
+    redirections: &[crate::syntax::ast::Redirection],
     allow_exec_in_place: bool,
 ) -> Result<i32, ShellError> {
     let arena = ByteArena::new();
@@ -199,7 +194,7 @@ pub(super) fn execute_for(shell: &mut Shell, for_command: &ForCommand) -> Result
     let values: Vec<Vec<u8>> = if let Some(items) = &for_command.items {
         let mut values = Vec::new();
         for item in items {
-            for s in expand::expand_word(shell, item, &arena).map_err(|e| shell.expand_to_err(e))? {
+            for s in word::expand_word(shell, item, &arena).map_err(|e| shell.expand_to_err(e))? {
                 values.push(s.to_vec());
             }
         }
@@ -252,14 +247,14 @@ pub(super) fn execute_case(
     case_command: &CaseCommand,
 ) -> Result<i32, ShellError> {
     let arena = ByteArena::new();
-    let word = expand::expand_word_text(shell, &case_command.word, &arena)
+    let word = word::expand_word_text(shell, &case_command.word, &arena)
         .map_err(|e| shell.expand_to_err(e))?;
     let arms = &case_command.arms;
     let mut matched = false;
     for (i, arm) in arms.iter().enumerate() {
         if !matched {
             for pattern in &arm.patterns {
-                let pattern = expand::expand_word_pattern(shell, pattern, &arena)
+                let pattern = word::expand_word_pattern(shell, pattern, &arena)
                     .map_err(|e| shell.expand_to_err(e))?;
                 if case_pattern_matches(word, pattern) {
                     matched = true;
@@ -315,9 +310,11 @@ pub(super) fn execute_nested_program(
 #[allow(unused_imports)]
 mod tests {
     use super::*;
-    use crate::exec::test_support::*;
-    use crate::shell::Shell;
-    use crate::syntax::{Assignment, HereDoc, Redirection, Word};
+    use crate::exec::program::execute_program;
+    use crate::exec::test_support::{parse_test, t_stderr, test_shell};
+    use crate::shell::state::Shell;
+    use crate::syntax::ast::{Assignment, HereDoc, Redirection, Word};
+    use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;
 
     #[test]
@@ -473,7 +470,7 @@ mod tests {
     fn control_flow_propagates_across_functions_and_loops() {
         run_trace(
             trace_entries![
-                write(fd(sys::STDERR_FILENO), bytes(b"meiksh: line 1: break: only meaningful in a loop\n")) -> auto,
+                write(fd(sys::constants::STDERR_FILENO), bytes(b"meiksh: line 1: break: only meaningful in a loop\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -633,7 +630,7 @@ mod tests {
     fn for_readonly_variable_error() {
         run_trace(
             trace_entries![
-                write(fd(sys::STDERR_FILENO), bytes(b"meiksh: line 1: item: readonly variable\n")) -> auto,
+                write(fd(sys::constants::STDERR_FILENO), bytes(b"meiksh: line 1: item: readonly variable\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();

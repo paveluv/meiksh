@@ -1,4 +1,8 @@
-use super::*;
+use super::alias::shell_quote_if_needed;
+use super::{BuiltinOutcome, diag_status, option_error_msg, parse_usize, write_stdout_line};
+use crate::bstr::ByteWriter;
+use crate::shell::error::ShellError;
+use crate::shell::state::Shell;
 
 pub(super) fn set(shell: &mut Shell, argv: &[Vec<u8>]) -> BuiltinOutcome {
     if argv.len() == 1 {
@@ -101,7 +105,8 @@ pub(super) fn shift(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcom
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builtin::test_support::*;
+    use crate::builtin::test_support::{invoke, test_shell};
+    use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;
 
     #[test]

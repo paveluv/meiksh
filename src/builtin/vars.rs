@@ -1,4 +1,10 @@
-use super::*;
+use super::alias::shell_quote;
+use super::{BuiltinOutcome, var_error_msg, write_stdout_line};
+use crate::bstr::BStrExt;
+use crate::bstr::ByteWriter;
+use crate::shell::error::ShellError;
+use crate::shell::state::Shell;
+use crate::sys;
 
 pub(super) fn expand_assignment_tilde(shell: &Shell, value: &[u8]) -> Vec<u8> {
     if value.first() != Some(&b'~') {
@@ -13,7 +19,7 @@ pub(super) fn expand_assignment_tilde(shell: &Shell, value: &[u8]) -> Vec<u8> {
             None => return value.to_vec(),
         }
     } else {
-        match sys::home_dir_for_user(user) {
+        match sys::env::home_dir_for_user(user) {
             Some(dir) => dir,
             None => return value.to_vec(),
         }
@@ -194,7 +200,8 @@ pub(super) fn parse_unset_target(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builtin::test_support::*;
+    use crate::builtin::test_support::{diag, invoke, test_shell};
+    use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;
 
     #[test]
@@ -246,7 +253,7 @@ mod tests {
     fn unset_readonly_var_error() {
         let msg = diag(b"unset: readonly variable: RO");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 shell.set_var(b"RO", b"val".to_vec()).unwrap();
@@ -291,7 +298,7 @@ mod tests {
     fn export_dash_p_with_operands_errors() {
         let msg = diag(b"export: -p does not accept operands");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto],
             || {
                 let mut shell = test_shell();
                 let error = invoke(
@@ -308,7 +315,7 @@ mod tests {
     fn export_invalid_option_errors() {
         let msg = diag(b"export: invalid option: -z");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto],
             || {
                 let mut shell = test_shell();
                 let error = invoke(&mut shell, &[b"export".to_vec(), b"-z".to_vec()])
@@ -322,7 +329,7 @@ mod tests {
     fn readonly_invalid_option_errors() {
         let msg = diag(b"readonly: invalid option: -x");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto],
             || {
                 let mut shell = test_shell();
                 let error = invoke(&mut shell, &[b"readonly".to_vec(), b"-x".to_vec()])
@@ -351,7 +358,7 @@ mod tests {
     fn unset_invalid_option_errors() {
         let msg = diag(b"unset: invalid option: -z");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto],
             || {
                 let mut shell = test_shell();
                 let error =

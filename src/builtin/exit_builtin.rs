@@ -1,4 +1,6 @@
-use super::*;
+use super::{BuiltinOutcome, parse_i32};
+use crate::shell::error::ShellError;
+use crate::shell::state::Shell;
 
 pub(super) fn exit(shell: &Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, ShellError> {
     let status = match argv.get(1) {

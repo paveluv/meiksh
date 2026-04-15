@@ -1,4 +1,7 @@
-use super::*;
+use super::{BuiltinOutcome, diag_status_syserr};
+use crate::shell::error::ShellError;
+use crate::shell::state::Shell;
+use crate::sys;
 
 pub(super) fn echo_builtin(shell: &Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, ShellError> {
     let mut out: Vec<u8> = Vec::new();
@@ -9,7 +12,7 @@ pub(super) fn echo_builtin(shell: &Shell, argv: &[Vec<u8>]) -> Result<BuiltinOut
         out.extend_from_slice(arg);
     }
     out.push(b'\n');
-    if let Err(e) = sys::write_all_fd(sys::STDOUT_FILENO, &out) {
+    if let Err(e) = sys::fd_io::write_all_fd(sys::constants::STDOUT_FILENO, &out) {
         return Ok(diag_status_syserr(shell, 1, b"echo: write error: ", &e));
     }
     Ok(BuiltinOutcome::Status(0))
@@ -18,7 +21,8 @@ pub(super) fn echo_builtin(shell: &Shell, argv: &[Vec<u8>]) -> Result<BuiltinOut
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builtin::test_support::*;
+    use crate::builtin::test_support::{diag, invoke, test_shell};
+    use crate::sys::test_support::run_trace;
     use crate::trace_entries;
 
     #[test]

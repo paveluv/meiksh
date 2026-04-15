@@ -1,20 +1,24 @@
-use super::*;
+use super::{BuiltinOutcome, write_stdout_line};
+use crate::bstr::{self, ByteWriter};
+use crate::shell::error::ShellError;
+use crate::shell::state::Shell;
+use crate::sys;
 
 pub(super) fn ulimit_resource_for_option(ch: u8) -> Option<(i32, &'static [u8], u64)> {
     match ch {
-        b'c' => Some((sys::RLIMIT_CORE, b"core file size (blocks)", 512)),
-        b'd' => Some((sys::RLIMIT_DATA, b"data seg size (kbytes)", 1024)),
-        b'f' => Some((sys::RLIMIT_FSIZE, b"file size (blocks)", 512)),
-        b'n' => Some((sys::RLIMIT_NOFILE, b"open files", 1)),
-        b's' => Some((sys::RLIMIT_STACK, b"stack size (kbytes)", 1024)),
-        b't' => Some((sys::RLIMIT_CPU, b"cpu time (seconds)", 1)),
-        b'v' => Some((sys::RLIMIT_AS, b"virtual memory (kbytes)", 1024)),
+        b'c' => Some((sys::constants::RLIMIT_CORE, b"core file size (blocks)", 512)),
+        b'd' => Some((sys::constants::RLIMIT_DATA, b"data seg size (kbytes)", 1024)),
+        b'f' => Some((sys::constants::RLIMIT_FSIZE, b"file size (blocks)", 512)),
+        b'n' => Some((sys::constants::RLIMIT_NOFILE, b"open files", 1)),
+        b's' => Some((sys::constants::RLIMIT_STACK, b"stack size (kbytes)", 1024)),
+        b't' => Some((sys::constants::RLIMIT_CPU, b"cpu time (seconds)", 1)),
+        b'v' => Some((sys::constants::RLIMIT_AS, b"virtual memory (kbytes)", 1024)),
         _ => None,
     }
 }
 
 pub(super) fn format_limit(val: u64) -> Vec<u8> {
-    if val == sys::RLIM_INFINITY {
+    if val == sys::constants::RLIM_INFINITY {
         b"unlimited".to_vec()
     } else {
         bstr::u64_to_bytes(val)
@@ -60,10 +64,10 @@ pub(super) fn ulimit(shell: &Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, 
     if report_all {
         for &opt in &[b'c', b'd', b'f', b'n', b's', b't', b'v'] {
             let (resource, desc, unit) = ulimit_resource_for_option(opt).unwrap();
-            let (soft, hard) = sys::getrlimit(resource)
+            let (soft, hard) = sys::process::getrlimit(resource)
                 .map_err(|e| shell.diagnostic_prefixed_syserr(1, b"ulimit: ", &e))?;
             let val = if use_hard { hard } else { soft };
-            let display = if val == sys::RLIM_INFINITY {
+            let display = if val == sys::constants::RLIM_INFINITY {
                 b"unlimited".to_vec()
             } else {
                 bstr::u64_to_bytes(val / unit)
@@ -86,10 +90,10 @@ pub(super) fn ulimit(shell: &Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, 
     let (resource, _desc, unit) = ulimit_resource_for_option(opt).unwrap();
 
     if let Some(val_str) = new_limit {
-        let (soft, hard) = sys::getrlimit(resource)
+        let (soft, hard) = sys::process::getrlimit(resource)
             .map_err(|e| shell.diagnostic_prefixed_syserr(1, b"ulimit: ", &e))?;
         let raw_val = if val_str == b"unlimited" {
-            sys::RLIM_INFINITY
+            sys::constants::RLIM_INFINITY
         } else {
             let Some(n) = bstr::parse_i64(val_str).filter(|&v| v >= 0) else {
                 let msg = ByteWriter::new()
@@ -102,15 +106,15 @@ pub(super) fn ulimit(shell: &Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, 
         };
         let new_soft = if use_soft { raw_val } else { soft };
         let new_hard = if use_hard { raw_val } else { hard };
-        sys::setrlimit(resource, new_soft, new_hard)
+        sys::process::setrlimit(resource, new_soft, new_hard)
             .map_err(|e| shell.diagnostic_prefixed_syserr(1, b"ulimit: ", &e))?;
         return Ok(BuiltinOutcome::Status(0));
     }
 
-    let (soft, hard) = sys::getrlimit(resource)
+    let (soft, hard) = sys::process::getrlimit(resource)
         .map_err(|e| shell.diagnostic_prefixed_syserr(1, b"ulimit: ", &e))?;
     let val = if use_hard { hard } else { soft };
-    let display = format_limit(if val == sys::RLIM_INFINITY {
+    let display = format_limit(if val == sys::constants::RLIM_INFINITY {
         val
     } else {
         val / unit
@@ -122,10 +126,11 @@ pub(super) fn ulimit(shell: &Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sys;
 
     #[test]
     fn format_limit_covers_both_branches() {
-        assert_eq!(format_limit(sys::RLIM_INFINITY), b"unlimited");
+        assert_eq!(format_limit(sys::constants::RLIM_INFINITY), b"unlimited");
         assert_eq!(format_limit(42), b"42");
     }
 

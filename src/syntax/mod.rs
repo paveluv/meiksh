@@ -1,22 +1,22 @@
-mod ast;
+pub(crate) mod ast;
 mod token;
 
 use std::collections::HashMap;
 
-pub use ast::*;
+use ast::Program;
 use token::{Parser, SavedAliasState};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ParseError {
-    pub message: Box<[u8]>,
-    pub line: Option<usize>,
+pub(crate) struct ParseError {
+    pub(crate) message: Box<[u8]>,
+    pub(crate) line: Option<usize>,
 }
 
-pub fn parse(source: &[u8]) -> Result<Program, ParseError> {
+pub(crate) fn parse(source: &[u8]) -> Result<Program, ParseError> {
     parse_with_aliases(source, &HashMap::new())
 }
 
-pub fn parse_with_aliases(
+pub(crate) fn parse_with_aliases(
     source: &[u8],
     aliases: &HashMap<Box<[u8]>, Box<[u8]>>,
 ) -> Result<Program, ParseError> {
@@ -24,7 +24,7 @@ pub fn parse_with_aliases(
     parser.parse_program_until(|_| false, false, false)
 }
 
-pub struct ParseSession<'src> {
+pub(crate) struct ParseSession<'src> {
     source: &'src [u8],
     pos: usize,
     line: usize,
@@ -32,7 +32,7 @@ pub struct ParseSession<'src> {
 }
 
 impl<'src> ParseSession<'src> {
-    pub fn new(source: &'src [u8]) -> Result<Self, ParseError> {
+    pub(crate) fn new(source: &'src [u8]) -> Result<Self, ParseError> {
         Ok(Self {
             source,
             pos: 0,
@@ -41,7 +41,7 @@ impl<'src> ParseSession<'src> {
         })
     }
 
-    pub fn next_command(
+    pub(crate) fn next_command(
         &mut self,
         aliases: &HashMap<Box<[u8]>, Box<[u8]>>,
     ) -> Result<Option<Program>, ParseError> {
@@ -60,16 +60,16 @@ impl<'src> ParseSession<'src> {
         result
     }
 
-    pub fn current_line(&self) -> usize {
+    pub(crate) fn current_line(&self) -> usize {
         self.line
     }
 
-    pub fn current_pos(&self) -> usize {
+    pub(crate) fn current_pos(&self) -> usize {
         self.pos
     }
 }
 
-pub fn is_name(name: &[u8]) -> bool {
+pub(crate) fn is_name(name: &[u8]) -> bool {
     !name.is_empty()
         && token::BYTE_CLASS[name[0] as usize] & token::BC_NAME_START != 0
         && name[1..]
@@ -86,6 +86,11 @@ pub fn is_name(name: &[u8]) -> bool {
     clippy::disallowed_methods
 )]
 mod tests {
+    use super::ast::{
+        AndOr, Assignment, CaseArm, CaseCommand, Command, ElifBranch, ForCommand, FunctionDef,
+        HereDoc, IfCommand, ListItem, LogicalOp, LoopCommand, LoopKind, Pipeline, Program,
+        Redirection, RedirectionKind, SimpleCommand, TimedMode, Word,
+    };
     use super::token::{Token, alias_has_trailing_blank, parse_here_doc_delimiter};
     use super::*;
 

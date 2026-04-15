@@ -1,4 +1,8 @@
-use super::*;
+use super::{BuiltinOutcome, remove_file_bytes, write_stdout_line};
+use crate::bstr::{self, BStrExt, ByteWriter};
+use crate::shell::error::ShellError;
+use crate::shell::state::Shell;
+use crate::sys;
 
 pub(super) fn fc_resolve_operand(history: &[Box<[u8]>], op: &[u8]) -> Option<usize> {
     if let Some(n) = bstr::parse_i64(op) {
@@ -187,18 +191,18 @@ pub(super) fn fc(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, 
 
     let tmp_path = ByteWriter::new()
         .bytes(b"/tmp/fc_edit_")
-        .i64_val(sys::current_pid() as i64)
+        .i64_val(sys::process::current_pid() as i64)
         .finish();
     let cmd_text = &history[idx];
-    let fd = sys::open_file(
+    let fd = sys::fs::open_file(
         &tmp_path,
-        sys::O_WRONLY | sys::O_CREAT | sys::O_TRUNC,
+        sys::constants::O_WRONLY | sys::constants::O_CREAT | sys::constants::O_TRUNC,
         0o600,
     )
     .map_err(|e| shell.diagnostic_prefixed_syserr(1, b"fc: ", &e))?;
-    let _ = sys::write_all_fd(fd, cmd_text);
-    let _ = sys::write_all_fd(fd, b"\n");
-    let _ = sys::close_fd(fd);
+    let _ = sys::fd_io::write_all_fd(fd, cmd_text);
+    let _ = sys::fd_io::write_all_fd(fd, b"\n");
+    let _ = sys::fd_io::close_fd(fd);
 
     let edit_cmd = ByteWriter::new()
         .bytes(editor_cmd)
@@ -213,8 +217,8 @@ pub(super) fn fc(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, 
         return Ok(BuiltinOutcome::Status(edit_status));
     }
 
-    let edited =
-        sys::read_file(&tmp_path).map_err(|e| shell.diagnostic_prefixed_syserr(1, b"fc: ", &e))?;
+    let edited = sys::fs::read_file(&tmp_path)
+        .map_err(|e| shell.diagnostic_prefixed_syserr(1, b"fc: ", &e))?;
     remove_file_bytes(&tmp_path);
 
     let edited = edited.trim_trailing_newlines();

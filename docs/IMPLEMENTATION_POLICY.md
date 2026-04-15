@@ -5,19 +5,19 @@ This document records project rules, POSIX implementation-defined choices, and t
 ## Project Constraints
 
 - Language: Rust
-- Dependency policy: keep dependencies minimal; low-level POSIX interface access lives in `src/sys.rs`
-- FFI boundary policy: `libc` is permitted only in `src/sys.rs`, with a narrow documented exception for `tests/integration/basic.rs`; all other modules must go through shell-owned helpers exposed from that layer instead of importing `libc` directly
-- Portability policy: do not introduce `#[cfg(target_os = ...)]` switches as a normal implementation technique; platform differences should be absorbed through POSIX-facing helpers in `src/sys.rs`, preferably by relying on `libc`-provided types and constants rather than open-coding per-OS values
+- Dependency policy: keep dependencies minimal; low-level POSIX interface access lives in `src/sys/`
+- FFI boundary policy: `libc` is permitted only in `src/sys/`, with a narrow documented exception for `tests/integration/basic.rs`; all other modules must go through shell-owned helpers exposed from that layer instead of importing `libc` directly
+- Portability policy: do not introduce `#[cfg(target_os = ...)]` switches as a normal implementation technique; platform differences should be absorbed through POSIX-facing helpers in `src/sys/`, preferably by relying on `libc`-provided types and constants rather than open-coding per-OS values
 - Source policy: no reuse of existing shell source code
 - Semantic target: Issue 8 first, with Issue 7 compatibility notes when needed for documentation review
 - Conformance policy: POSIX behavior decisions must be based on the local POSIX reference documents in `docs/posix/`, not on probing whatever `/bin/sh` happens to do on the host system
 
 ## Low-Level Interface Boundary
 
-- `src/sys.rs` is the only production module that may depend on `libc` directly.
-- `tests/integration/basic.rs` may also depend on `libc` for test-only setup of inherited file-descriptor state where using `src/sys.rs` helpers is not practical inside `pre_exec`.
-- Code outside `src/sys.rs` should express OS needs in terms of shell-owned helper functions, data types, and constants from `src/sys.rs`.
-- If a required interface or constant is missing, extend `src/sys.rs` instead of importing `libc` elsewhere.
+- `src/sys/` is the only production module that may depend on `libc` directly.
+- `tests/integration/basic.rs` may also depend on `libc` for test-only setup of inherited file-descriptor state where using `src/sys/` helpers is not practical inside `pre_exec`.
+- Code outside `src/sys/` should express OS needs in terms of shell-owned helper functions, data types, and constants from `src/sys/`.
+- If a required interface or constant is missing, extend `src/sys/` instead of importing `libc` elsewhere.
 - New platform-specific `target_os` branching is not an acceptable default approach for production code or tests.
 - Do not copy the old test-local `target_os` pattern into new code; use `libc`-provided constants instead.
 
@@ -27,18 +27,69 @@ The following `std` types and methods are banned from production code (enforced 
 
 - **Types**: `std::fs::{File, OpenOptions, DirEntry, ReadDir, Metadata}`, `std::process::{Command, Child, Stdio, ExitStatus}`, `std::io::{Error, Result}`
 - **Methods**: `std::env::{var, vars, set_var, remove_var, args_os, args, set_current_dir, current_dir, current_exe}`, `std::fs::{read_to_string, write, metadata, read_dir, create_dir, remove_file}`, `std::path::Path::{exists, is_file, is_dir, metadata, canonicalize}`, `std::io::{Error::last_os_error, stdin, stdout, stderr}`, `std::process::exit`
-- **Errno constants**: production code must use `sys::ENOENT`, `sys::ENOEXEC`, etc. instead of `libc::ENOENT`, `libc::ENOEXEC`, etc.
+- **Errno constants**: production code must use `crate::sys::constants::ENOENT`, `crate::sys::constants::ENOEXEC`, etc. instead of `libc::ENOENT`, `libc::ENOEXEC`, etc.
 
 ### Custom error types
 
-- `sys::SysError` replaces `std::io::Error` everywhere. Variants: `SysError::Errno(c_int)` for raw errno values, `SysError::NulInPath` for paths containing NUL bytes.
-- `sys::SysResult<T>` is the standard result alias (`Result<T, SysError>`).
-- Errno handling is fully mockable: `sys::set_errno` / `sys::last_error` replace direct `libc::__errno_location` access. Tests use a thread-local `TEST_ERRNO`.
+- `sys::error::SysError` replaces `std::io::Error` everywhere. Variants: `SysError::Errno(c_int)` for raw errno values, `SysError::NulInPath` for paths containing NUL bytes.
+- `sys::error::SysResult<T>` is the standard result alias (`Result<T, SysError>`).
+- Errno handling is fully mockable: `sys::interface::set_errno` / `sys::interface::last_error` replace direct `libc::__errno_location` access. Tests use a thread-local `TEST_ERRNO`.
 
 ### Environment and process control
 
 - All environment and process-control operations route through `SystemInterface` function pointers so they can be mocked in tests.
-- `sys::exit_process` wraps `libc::_exit`; `std::process::exit` is banned.
+- `sys::process::exit_process` wraps `libc::_exit`; `std::process::exit` is banned.
+
+## Import and Visibility Conventions
+
+### Visibility
+
+Every entity uses the narrowest visibility that compiles:
+
+| Visibility | When to use |
+|---|---|
+| private | Item used only within its own file |
+| `pub(super)` | Item used only by sibling submodules within the same parent |
+| `pub(crate)` | Item used from other top-level modules |
+| `pub` | Item accessible from external crates — **only** `shell::run::run_from_env` and `sys::process::exit_process` |
+
+Module declarations in `mod.rs` follow the same principle: `mod` (private) if only the parent accesses the submodule, `pub(super) mod` for sibling-only access, `pub(crate) mod` for crate-wide access, `pub mod` only along the path to the two `pub` items above.
+
+### No re-exports
+
+`pub use`, `pub(crate) use`, and `pub(super) use` are prohibited for types, functions, constants, and traits. Every `use` statement must point to the module that defines the item. This eliminates the illusion that an entity belongs to a parent module when it actually lives in a submodule.
+
+The only exception is `pub(crate) use` for `macro_rules!` macros in `lib.rs`, which is the standard Rust mechanism for making macros importable as items.
+
+### Path convention
+
+The `use` path prefix signals the item's visibility at a glance:
+
+| Path prefix | Visibility of target item |
+|---|---|
+| `use meiksh::` | `pub` — used only in `main.rs` |
+| `use crate::` | `pub(crate)` — cross-module access within the crate |
+| `use super::` | `pub(super)` — sibling access within the same parent module, or access to items defined in the parent `mod.rs` |
+
+### Wildcard imports
+
+Wildcard imports (`use X::*`) are prohibited in production code.
+
+In colocated `mod tests` blocks, `use super::*;` is permitted (and required for consistency) since it imports from the same file. All other wildcard imports are prohibited in test code as well — imports from test helpers or other modules must be explicit.
+
+### Test module import pattern
+
+Every `mod tests` block begins with `use super::*;` followed by any explicit imports from other modules:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::sys::test_support::{assert_no_syscalls, run_trace};
+    // ...
+}
+```
 
 ## POSIX Implementation-Defined Choices
 

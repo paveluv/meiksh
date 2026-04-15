@@ -1,4 +1,9 @@
-use super::*;
+use super::alias::{format_alias_definition, shell_quote};
+use super::{BuiltinOutcome, diag_status, is_builtin, is_special_builtin, run, write_stdout_line};
+use crate::bstr::{BStrExt, ByteWriter};
+use crate::shell::error::ShellError;
+use crate::shell::state::Shell;
+use crate::sys;
 
 pub(super) const DEFAULT_COMMAND_PATH: &[u8] = b"/usr/bin:/bin";
 
@@ -216,7 +221,7 @@ pub(super) fn hash(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome
             continue;
         }
         match search_path(name, shell, false, |p| {
-            sys::access_path(p, sys::X_OK).is_ok()
+            sys::fs::access_path(p, sys::constants::X_OK).is_ok()
         }) {
             Some(path) => {
                 shell.path_cache.insert(name.as_slice().into(), path);
@@ -257,7 +262,7 @@ pub(super) fn execute_command_utility(
         return Ok(diag_status(shell, 127, &msg));
     };
 
-    if sys::access_path(&path, sys::X_OK).is_err() {
+    if sys::fs::access_path(&path, sys::constants::X_OK).is_err() {
         let msg = ByteWriter::new()
             .bytes(b"command: ")
             .bytes(name)
@@ -277,12 +282,14 @@ pub(super) fn execute_command_utility(
         .collect();
     let argv_strs: Vec<&[u8]> = argv.iter().map(|v| v.as_slice()).collect();
 
-    match sys::spawn_child(&path, &argv_strs, Some(&env_pairs), &[], None, false, None) {
+    match sys::process::spawn_child(&path, &argv_strs, Some(&env_pairs), &[], None, false, None) {
         Ok(handle) => {
-            let ws = sys::wait_pid(handle.pid, false)
+            let ws = sys::process::wait_pid(handle.pid, false)
                 .map_err(|e| shell.diagnostic(1, &e.strerror()))?
                 .expect("child status");
-            Ok(BuiltinOutcome::Status(sys::decode_wait_status(ws.status)))
+            Ok(BuiltinOutcome::Status(sys::process::decode_wait_status(
+                ws.status,
+            )))
         }
         Err(error) if error.is_enoent() => {
             let msg = ByteWriter::new()
@@ -328,7 +335,7 @@ pub(super) fn search_path(
         path_env_owned = shell
             .get_var(b"PATH")
             .map(|s| s.to_vec())
-            .or_else(|| sys::env_var(b"PATH"))
+            .or_else(|| sys::env::env_var(b"PATH"))
             .unwrap_or_default();
         &path_env_owned
     };
@@ -352,18 +359,18 @@ pub(super) fn search_path(
 }
 
 pub(super) fn path_exists(path: &[u8]) -> bool {
-    sys::file_exists(path)
+    sys::fs::file_exists(path)
 }
 
 pub(super) fn readable_regular_file(path: &[u8]) -> bool {
-    sys::is_regular_file(path) && sys::access_path(path, sys::R_OK).is_ok()
+    sys::fs::is_regular_file(path) && sys::fs::access_path(path, sys::constants::R_OK).is_ok()
 }
 
 pub(super) fn absolute_path(path: &[u8]) -> Option<Vec<u8>> {
     if path.first() == Some(&b'/') {
         return Some(path.to_vec());
     }
-    sys::get_cwd().ok().map(|cwd| {
+    sys::fs::get_cwd().ok().map(|cwd| {
         let mut result = cwd;
         result.push(b'/');
         result.extend_from_slice(path);
@@ -399,13 +406,14 @@ pub(super) fn is_reserved_word_name(word: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builtin::test_support::*;
+    use crate::builtin::test_support::{diag, invoke, test_shell};
+    use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;
 
     #[test]
     fn command_runs_builtin() {
         run_trace(
-            trace_entries![write(fd(crate::sys::STDOUT_FILENO), bytes(b"hello\n")) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"hello\n")) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(
@@ -449,7 +457,7 @@ mod tests {
     fn command_no_utility_name() {
         let msg = diag(b"command: utility name required");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome =
@@ -465,7 +473,7 @@ mod tests {
         run_trace(
             trace_entries![
                 access(any, any) -> err(libc::ENOENT),
-                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+                write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -508,7 +516,7 @@ mod tests {
         run_trace(
             trace_entries![
                 access(any, any) -> err(libc::ENOENT),
-                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+                write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -608,7 +616,7 @@ mod tests {
         run_trace(
             trace_entries![
                 access(str(b"/usr/bin/ls"), int(libc::F_OK)) -> 0,
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"/usr/bin/ls\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"/usr/bin/ls\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -644,7 +652,7 @@ mod tests {
     fn command_v_special_builtin() {
         run_trace(
             trace_entries![
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"export\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"export\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -662,7 +670,7 @@ mod tests {
     fn command_v_regular_builtin() {
         run_trace(
             trace_entries![
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"echo\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"echo\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -680,13 +688,13 @@ mod tests {
     fn command_v_function() {
         run_trace(
             trace_entries![
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"myfunc\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"myfunc\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
                 shell.functions.insert(
                     b"myfunc"[..].into(),
-                    crate::syntax::Command::Simple(Default::default()),
+                    crate::syntax::ast::Command::Simple(Default::default()),
                 );
                 let outcome = invoke(
                     &mut shell,
@@ -702,7 +710,7 @@ mod tests {
     fn command_v_reserved_word() {
         run_trace(
             trace_entries![
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"if\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"if\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -720,7 +728,7 @@ mod tests {
     fn command_v_alias() {
         run_trace(
             trace_entries![
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"alias ll='ls -la'\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"alias ll='ls -la'\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -743,7 +751,7 @@ mod tests {
     fn command_big_v_alias() {
         run_trace(
             trace_entries![
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"ll is an alias for 'ls -la'\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"ll is an alias for 'ls -la'\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -762,13 +770,13 @@ mod tests {
     fn command_big_v_function() {
         run_trace(
             trace_entries![
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"myfunc is a function\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"myfunc is a function\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
                 shell.functions.insert(
                     b"myfunc"[..].into(),
-                    crate::syntax::Command::Simple(Default::default()),
+                    crate::syntax::ast::Command::Simple(Default::default()),
                 );
                 let outcome = invoke(
                     &mut shell,
@@ -784,7 +792,7 @@ mod tests {
     fn command_big_v_special_builtin() {
         run_trace(
             trace_entries![
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"export is a special built-in utility\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"export is a special built-in utility\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -802,7 +810,7 @@ mod tests {
     fn command_big_v_regular_builtin() {
         run_trace(
             trace_entries![
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"echo is a regular built-in utility\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"echo is a regular built-in utility\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -820,7 +828,7 @@ mod tests {
     fn command_big_v_reserved_word() {
         run_trace(
             trace_entries![
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"if is a reserved word\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"if is a reserved word\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -839,7 +847,7 @@ mod tests {
         run_trace(
             trace_entries![
                 access(str(b"/usr/bin/ls"), int(libc::F_OK)) -> 0,
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"ls is /usr/bin/ls\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"ls is /usr/bin/ls\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -879,7 +887,7 @@ mod tests {
     fn command_v_too_many_args() {
         let msg = diag(b"command: too many arguments");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(
@@ -905,7 +913,7 @@ mod tests {
     fn command_no_utility_execute_mode() {
         let msg = diag(b"command: utility name required");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(&mut shell, &[b"command".to_vec()]).expect("command (bare)");
@@ -922,7 +930,7 @@ mod tests {
     fn type_special_builtin() {
         run_trace(
             trace_entries![
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"export is a special built-in utility\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"export is a special built-in utility\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -937,7 +945,7 @@ mod tests {
     fn type_regular_builtin() {
         run_trace(
             trace_entries![
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"echo is a regular built-in utility\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"echo is a regular built-in utility\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -952,13 +960,13 @@ mod tests {
     fn type_function() {
         run_trace(
             trace_entries![
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"myfunc is a function\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"myfunc is a function\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
                 shell.functions.insert(
                     b"myfunc"[..].into(),
-                    crate::syntax::Command::Simple(Default::default()),
+                    crate::syntax::ast::Command::Simple(Default::default()),
                 );
                 let outcome = invoke(&mut shell, &[b"type".to_vec(), b"myfunc".to_vec()])
                     .expect("type myfunc");
@@ -971,7 +979,7 @@ mod tests {
     fn type_reserved_word() {
         run_trace(
             trace_entries![
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"while is a reserved word\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"while is a reserved word\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -986,7 +994,7 @@ mod tests {
     fn type_alias() {
         run_trace(
             trace_entries![
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"ll is an alias for 'ls -la'\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"ll is an alias for 'ls -la'\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -1003,7 +1011,7 @@ mod tests {
         run_trace(
             trace_entries![
                 access(str(b"/usr/bin/ls"), int(libc::F_OK)) -> 0,
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"ls is /usr/bin/ls\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"ls is /usr/bin/ls\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -1020,9 +1028,9 @@ mod tests {
         let not_found_msg = diag(b"nosuchcmd: not found");
         run_trace(
             trace_entries![
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"echo is a regular built-in utility\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"echo is a regular built-in utility\n")) -> auto,
                 access(any, any) -> err(libc::ENOENT),
-                write(fd(crate::sys::STDERR_FILENO), bytes(&not_found_msg)) -> auto,
+                write(fd(crate::sys::constants::STDERR_FILENO), bytes(&not_found_msg)) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -1045,7 +1053,7 @@ mod tests {
     fn execute_command_runs_builtin_directly() {
         run_trace(
             trace_entries![
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"hello\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"hello\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -1065,7 +1073,7 @@ mod tests {
         run_trace(
             trace_entries![
                 access(any, any) -> err(libc::ENOENT),
-                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+                write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -1084,7 +1092,7 @@ mod tests {
             trace_entries![
                 access(str(b"/usr/bin/noperm"), int(libc::F_OK)) -> 0,
                 access(str(b"/usr/bin/noperm"), int(libc::X_OK)) -> err(libc::EACCES),
-                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+                write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -1125,7 +1133,7 @@ mod tests {
                 access(str(b"/usr/bin/myext"), int(libc::F_OK)) -> 0,
                 access(str(b"/usr/bin/myext"), int(libc::X_OK)) -> 0,
                 fork() -> err(libc::ENOENT),
-                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+                write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -1145,7 +1153,7 @@ mod tests {
                 access(str(b"/usr/bin/myext"), int(libc::F_OK)) -> 0,
                 access(str(b"/usr/bin/myext"), int(libc::X_OK)) -> 0,
                 fork() -> err(libc::EACCES),
-                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+                write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -1247,7 +1255,7 @@ mod tests {
             let mut shell = test_shell();
             shell.functions.insert(
                 b"myfunc"[..].into(),
-                crate::syntax::Command::Simple(Default::default()),
+                crate::syntax::ast::Command::Simple(Default::default()),
             );
             let desc = describe_command(&shell, b"myfunc", false);
             assert_eq!(desc, Some(CommandDescription::Function));
@@ -1286,7 +1294,7 @@ mod tests {
         run_trace(
             trace_entries![
                 write(
-                    fd(crate::sys::STDERR_FILENO),
+                    fd(crate::sys::constants::STDERR_FILENO),
                     bytes(b"meiksh: shift: numeric argument required\n"),
                 ) -> auto,
             ],

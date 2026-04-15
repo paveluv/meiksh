@@ -1,7 +1,7 @@
-use std::collections::BTreeSet;
-
-use crate::bstr::{self, BStrExt, ByteWriter};
-use crate::shell::{OptionError, Shell, ShellError, TrapAction, TrapCondition, VarError};
+use crate::bstr::{self, ByteWriter};
+use crate::shell::error::{ShellError, VarError};
+use crate::shell::options::OptionError;
+use crate::shell::state::Shell;
 use crate::sys;
 
 fn remove_file_bytes(path: &[u8]) {
@@ -11,18 +11,18 @@ fn remove_file_bytes(path: &[u8]) {
 }
 
 fn write_stderr(msg: &[u8]) {
-    let _ = sys::write_all_fd(sys::STDERR_FILENO, msg);
+    let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, msg);
 }
 
 #[cfg(test)]
 fn write_stdout(msg: &[u8]) {
-    let _ = sys::write_all_fd(sys::STDOUT_FILENO, msg);
+    let _ = sys::fd_io::write_all_fd(sys::constants::STDOUT_FILENO, msg);
 }
 
 fn write_stdout_line(msg: &[u8]) {
     let mut buf = msg.to_vec();
     buf.push(b'\n');
-    let _ = sys::write_all_fd(sys::STDOUT_FILENO, &buf);
+    let _ = sys::fd_io::write_all_fd(sys::constants::STDOUT_FILENO, &buf);
 }
 
 fn diag_status(shell: &Shell, status: i32, msg: &[u8]) -> BuiltinOutcome {
@@ -34,7 +34,7 @@ fn diag_status_syserr(
     shell: &Shell,
     status: i32,
     prefix: &[u8],
-    e: &sys::SysError,
+    e: &sys::error::SysError,
 ) -> BuiltinOutcome {
     let msg = ByteWriter::new()
         .bytes(prefix)
@@ -84,7 +84,7 @@ fn option_error_msg(prefix: &[u8], e: &OptionError) -> Vec<u8> {
 }
 
 #[derive(Debug)]
-pub enum BuiltinOutcome {
+pub(crate) enum BuiltinOutcome {
     Status(i32),
     UtilityError(i32),
     Exit(i32),
@@ -134,7 +134,7 @@ const BUILTIN_NAMES: &[&[u8]] = &[
     b"wait",
 ];
 
-pub fn is_builtin(name: &[u8]) -> bool {
+pub(crate) fn is_builtin(name: &[u8]) -> bool {
     BUILTIN_NAMES.binary_search(&name).is_ok()
 }
 
@@ -156,7 +156,7 @@ const SPECIAL_BUILTIN_NAMES: &[&[u8]] = &[
     b"unset",
 ];
 
-pub fn is_special_builtin(name: &[u8]) -> bool {
+pub(crate) fn is_special_builtin(name: &[u8]) -> bool {
     SPECIAL_BUILTIN_NAMES.binary_search(&name).is_ok()
 }
 
@@ -184,31 +184,31 @@ mod ulimit;
 mod umask;
 mod vars;
 
-use alias::*;
-use cd::*;
-use command::*;
-use dot::*;
-use echo::*;
-use eval::*;
-use exec::*;
-use exit_builtin::*;
-use fc::*;
-use flow::*;
-use getopts::*;
-use jobs::*;
-use kill::*;
-use printf::*;
-use pwd::*;
-use read::*;
-use set::*;
-use test_builtin::*;
-use times::*;
-use trap::*;
-use ulimit::*;
-use umask::*;
-use vars::*;
+use alias::{alias, unalias};
+use cd::cd;
+use command::{command, hash, type_builtin};
+use dot::dot;
+use echo::echo_builtin;
+use eval::eval;
+use exec::exec_builtin;
+use exit_builtin::exit;
+use fc::fc;
+use flow::{break_builtin, continue_builtin, return_builtin};
+use getopts::getopts;
+use jobs::{bg, fg, jobs, wait};
+use kill::kill;
+use printf::printf_builtin;
+use pwd::pwd;
+use read::read;
+use set::{set, shift};
+use test_builtin::test_builtin;
+use times::times;
+use trap::trap;
+use ulimit::ulimit;
+use umask::umask;
+use vars::{export, readonly, unset};
 
-pub fn run(
+pub(crate) fn run(
     shell: &mut Shell,
     argv: &[Vec<u8>],
     cmd_assignments: &[(Vec<u8>, Vec<u8>)],
@@ -262,12 +262,12 @@ pub fn run(
 
 #[cfg(test)]
 pub(super) mod test_support {
-    use super::*;
-
-    use crate::shell::ShellOptions;
+    use crate::shell::error::ShellError;
+    use crate::shell::options::ShellOptions;
+    use crate::shell::state::Shell;
     use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-    pub(crate) use crate::sys::test_support::{assert_no_syscalls, run_trace};
+    use super::BuiltinOutcome;
 
     pub(crate) fn test_shell() -> Shell {
         Shell {
@@ -323,8 +323,12 @@ pub(super) mod test_support {
 
 #[cfg(test)]
 mod tests {
+    use super::cd::resolve_cd_target;
+    use super::printf::{parse_hex_i64, parse_octal_i64};
     use super::*;
-    use crate::builtin::test_support::*;
+    use crate::builtin::test_support::{diag, invoke, test_shell};
+    use crate::sys;
+    use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;
 
     #[test]
@@ -365,7 +369,7 @@ mod tests {
     #[test]
     fn write_stdout_coverage() {
         run_trace(
-            trace_entries![write(fd(crate::sys::STDOUT_FILENO), bytes(b"hi")) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"hi")) -> auto,],
             || {
                 write_stdout(b"hi");
             },
@@ -376,10 +380,10 @@ mod tests {
     fn diag_status_syserr_coverage() {
         let msg = diag(b"open: No such file or directory");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let shell = test_shell();
-                let e = sys::SysError::Errno(libc::ENOENT);
+                let e = sys::error::SysError::Errno(libc::ENOENT);
                 let outcome = diag_status_syserr(&shell, 1, b"open: ", &e);
                 assert!(matches!(outcome, BuiltinOutcome::Status(1)));
             },

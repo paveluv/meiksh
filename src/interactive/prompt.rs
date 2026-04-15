@@ -1,12 +1,12 @@
 use crate::arena::ByteArena;
 use crate::bstr;
-use crate::expand;
-use crate::shell::Shell;
+use crate::expand::word;
+use crate::shell::state::Shell;
 use crate::sys;
 
-pub(super) fn write_prompt(prompt_str: &[u8]) -> sys::SysResult<()> {
+pub(super) fn write_prompt(prompt_str: &[u8]) -> sys::error::SysResult<()> {
     loop {
-        match sys::write_all_fd(sys::STDERR_FILENO, prompt_str) {
+        match sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, prompt_str) {
             Ok(()) => return Ok(()),
             Err(e) if e.is_eintr() => continue,
             Err(e) => return Err(e),
@@ -14,11 +14,11 @@ pub(super) fn write_prompt(prompt_str: &[u8]) -> sys::SysResult<()> {
     }
 }
 
-pub(super) fn read_line() -> sys::SysResult<Option<Vec<u8>>> {
+pub(super) fn read_line() -> sys::error::SysResult<Option<Vec<u8>>> {
     let mut line = Vec::<u8>::new();
     let mut byte = [0u8; 1];
     loop {
-        match sys::read_fd(sys::STDIN_FILENO, &mut byte) {
+        match sys::fd_io::read_fd(sys::constants::STDIN_FILENO, &mut byte) {
             Ok(0) => return Ok(if line.is_empty() { None } else { Some(line) }),
             Ok(_) => {
                 line.push(byte[0]);
@@ -27,7 +27,7 @@ pub(super) fn read_line() -> sys::SysResult<Option<Vec<u8>>> {
                 }
             }
             Err(e) if e.is_eintr() => {
-                let _ = sys::write_all_fd(sys::STDERR_FILENO, b"\n");
+                let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, b"\n");
                 return Ok(Some(Vec::new()));
             }
             Err(e) => return Err(e),
@@ -39,7 +39,7 @@ pub(super) fn expand_prompt(shell: &mut Shell, var: &[u8], default: &[u8]) -> Ve
     let raw = shell.get_var(var).unwrap_or(default).to_vec();
     let histnum = shell.history_number();
     let arena = ByteArena::new();
-    let expanded = expand::expand_parameter_text(shell, &raw, &arena).unwrap_or(&raw);
+    let expanded = word::expand_parameter_text(shell, &raw, &arena).unwrap_or(&raw);
     expand_prompt_exclamation(expanded, histnum)
 }
 
@@ -70,7 +70,9 @@ pub(super) fn expand_prompt_exclamation(s: &[u8], histnum: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interactive::test_support::*;
+    use crate::interactive::test_support::test_shell;
+    use crate::sys;
+    use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;
 
     #[test]
@@ -86,7 +88,7 @@ mod tests {
     #[test]
     fn read_line_propagates_non_eintr_error() {
         run_trace(
-            trace_entries![read(fd(sys::STDIN_FILENO), _) -> err(sys::EBADF)],
+            trace_entries![read(fd(sys::constants::STDIN_FILENO), _) -> err(sys::constants::EBADF)],
             || {
                 let err = read_line().expect_err("should propagate EBADF");
                 assert!(!err.is_eintr());
@@ -98,8 +100,8 @@ mod tests {
     fn read_line_returns_empty_on_eintr() {
         run_trace(
             trace_entries![
-                read(fd(sys::STDIN_FILENO), _) -> err(sys::EINTR),
-                write(fd(sys::STDERR_FILENO), bytes(b"\n")) -> auto,
+                read(fd(sys::constants::STDIN_FILENO), _) -> err(sys::constants::EINTR),
+                write(fd(sys::constants::STDERR_FILENO), bytes(b"\n")) -> auto,
             ],
             || {
                 let result = read_line().expect("should not fail on EINTR");

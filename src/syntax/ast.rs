@@ -2,15 +2,15 @@ use super::ParseError;
 use super::token::{Parser, Token};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Program {
-    pub items: Box<[ListItem]>,
+pub(crate) struct Program {
+    pub(crate) items: Box<[ListItem]>,
 }
 
 #[derive(Clone, Debug)]
-pub struct ListItem {
-    pub and_or: AndOr,
-    pub asynchronous: bool,
-    pub line: usize,
+pub(crate) struct ListItem {
+    pub(crate) and_or: AndOr,
+    pub(crate) asynchronous: bool,
+    pub(crate) line: usize,
 }
 
 impl PartialEq for ListItem {
@@ -21,33 +21,33 @@ impl PartialEq for ListItem {
 impl Eq for ListItem {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AndOr {
-    pub first: Pipeline,
-    pub rest: Box<[(LogicalOp, Pipeline)]>,
+pub(crate) struct AndOr {
+    pub(crate) first: Pipeline,
+    pub(crate) rest: Box<[(LogicalOp, Pipeline)]>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LogicalOp {
+pub(crate) enum LogicalOp {
     And,
     Or,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TimedMode {
+pub(crate) enum TimedMode {
     Off,
     Default,
     Posix,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Pipeline {
-    pub negated: bool,
-    pub timed: TimedMode,
-    pub commands: Box<[Command]>,
+pub(crate) struct Pipeline {
+    pub(crate) negated: bool,
+    pub(crate) timed: TimedMode,
+    pub(crate) commands: Box<[Command]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Command {
+pub(crate) enum Command {
     Simple(SimpleCommand),
     Subshell(Program),
     Group(Program),
@@ -60,22 +60,22 @@ pub enum Command {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct SimpleCommand {
-    pub assignments: Box<[Assignment]>,
-    pub words: Box<[Word]>,
-    pub redirections: Box<[Redirection]>,
+pub(crate) struct SimpleCommand {
+    pub(crate) assignments: Box<[Assignment]>,
+    pub(crate) words: Box<[Word]>,
+    pub(crate) redirections: Box<[Redirection]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Assignment {
-    pub name: Box<[u8]>,
-    pub value: Word,
+pub(crate) struct Assignment {
+    pub(crate) name: Box<[u8]>,
+    pub(crate) value: Word,
 }
 
 #[derive(Clone, Debug)]
-pub struct Word {
-    pub raw: Box<[u8]>,
-    pub line: usize,
+pub(crate) struct Word {
+    pub(crate) raw: Box<[u8]>,
+    pub(crate) line: usize,
 }
 
 impl PartialEq for Word {
@@ -86,67 +86,67 @@ impl PartialEq for Word {
 impl Eq for Word {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Redirection {
-    pub fd: Option<i32>,
-    pub kind: RedirectionKind,
-    pub target: Word,
-    pub here_doc: Option<HereDoc>,
+pub(crate) struct Redirection {
+    pub(crate) fd: Option<i32>,
+    pub(crate) kind: RedirectionKind,
+    pub(crate) target: Word,
+    pub(crate) here_doc: Option<HereDoc>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FunctionDef {
-    pub name: Box<[u8]>,
-    pub body: Box<Command>,
+pub(crate) struct FunctionDef {
+    pub(crate) name: Box<[u8]>,
+    pub(crate) body: Box<Command>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct IfCommand {
-    pub condition: Program,
-    pub then_branch: Program,
-    pub elif_branches: Box<[ElifBranch]>,
-    pub else_branch: Option<Program>,
+pub(crate) struct IfCommand {
+    pub(crate) condition: Program,
+    pub(crate) then_branch: Program,
+    pub(crate) elif_branches: Box<[ElifBranch]>,
+    pub(crate) else_branch: Option<Program>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ElifBranch {
-    pub condition: Program,
-    pub body: Program,
+pub(crate) struct ElifBranch {
+    pub(crate) condition: Program,
+    pub(crate) body: Program,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LoopCommand {
-    pub kind: LoopKind,
-    pub condition: Program,
-    pub body: Program,
+pub(crate) struct LoopCommand {
+    pub(crate) kind: LoopKind,
+    pub(crate) condition: Program,
+    pub(crate) body: Program,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ForCommand {
-    pub name: Box<[u8]>,
-    pub items: Option<Box<[Word]>>,
-    pub body: Program,
+pub(crate) struct ForCommand {
+    pub(crate) name: Box<[u8]>,
+    pub(crate) items: Option<Box<[Word]>>,
+    pub(crate) body: Program,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CaseCommand {
-    pub word: Word,
-    pub arms: Box<[CaseArm]>,
+pub(crate) struct CaseCommand {
+    pub(crate) word: Word,
+    pub(crate) arms: Box<[CaseArm]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CaseArm {
-    pub patterns: Box<[Word]>,
-    pub body: Program,
-    pub fallthrough: bool,
+pub(crate) struct CaseArm {
+    pub(crate) patterns: Box<[Word]>,
+    pub(crate) body: Program,
+    pub(crate) fallthrough: bool,
 }
 
 #[derive(Clone, Debug)]
-pub struct HereDoc {
-    pub delimiter: Box<[u8]>,
-    pub body: Box<[u8]>,
-    pub expand: bool,
-    pub strip_tabs: bool,
-    pub body_line: usize,
+pub(crate) struct HereDoc {
+    pub(crate) delimiter: Box<[u8]>,
+    pub(crate) body: Box<[u8]>,
+    pub(crate) expand: bool,
+    pub(crate) strip_tabs: bool,
+    pub(crate) body_line: usize,
 }
 
 impl PartialEq for HereDoc {
@@ -160,13 +160,13 @@ impl PartialEq for HereDoc {
 impl Eq for HereDoc {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LoopKind {
+pub(crate) enum LoopKind {
     While,
     Until,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RedirectionKind {
+pub(crate) enum RedirectionKind {
     Read,
     Write,
     ClobberWrite,

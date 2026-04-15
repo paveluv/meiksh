@@ -1,21 +1,22 @@
-#![allow(unused_imports)]
-
-use std::collections::HashMap;
-
 use crate::arena::ByteArena;
 use crate::bstr::ByteWriter;
 use crate::builtin;
-use crate::expand;
-use crate::shell::{
-    BlockingWaitOutcome, FlowSignal, JobState, PendingControl, Shell, ShellError, VarError,
-};
-use crate::syntax::{
-    AndOr, CaseCommand, Command, ForCommand, FunctionDef, HereDoc, IfCommand, ListItem, LogicalOp,
-    LoopCommand, LoopKind, Pipeline, Program, RedirectionKind, SimpleCommand, TimedMode,
-};
+use crate::expand::word;
+use crate::shell::error::{ShellError, VarError};
+use crate::shell::state::{FlowSignal, PendingControl, Shell};
+use crate::syntax::ast::{RedirectionKind, SimpleCommand};
 use crate::sys;
 
-use super::*;
+use super::and_or::ProcessGroupPlan;
+use super::command::execute_command;
+use super::pipeline::wait_for_external_child;
+use super::process::{
+    ExpandedRedirection, ExpandedSimpleCommand, PreparedProcess, ProcessRedirection,
+    exec_prepared_in_current_process, join_boxed_bytes, resolve_command_path, spawn_prepared,
+};
+use super::redirection::{
+    apply_shell_redirection, apply_shell_redirections, default_fd_for_redirection,
+};
 
 pub(super) fn var_error_bytes(e: &VarError) -> Vec<u8> {
     match e {
@@ -101,7 +102,7 @@ pub(super) fn write_xtrace(shell: &mut Shell, expanded: &ExpandedSimpleCommand<'
     }
     let arena = ByteArena::new();
     let ps4_raw = shell.get_var(b"PS4").unwrap_or(b"+ ").to_vec();
-    let prefix = expand::expand_parameter_text(shell, &ps4_raw, &arena).unwrap_or(b"+ ");
+    let prefix = word::expand_parameter_text(shell, &ps4_raw, &arena).unwrap_or(b"+ ");
     let mut line = prefix.to_vec();
     for (name, value) in &expanded.assignments {
         line.extend_from_slice(name);
@@ -116,7 +117,7 @@ pub(super) fn write_xtrace(shell: &mut Shell, expanded: &ExpandedSimpleCommand<'
         line.extend_from_slice(word);
     }
     line.push(b'\n');
-    let _ = sys::write_all_fd(sys::STDERR_FILENO, &line);
+    let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, &line);
 }
 
 pub(super) fn has_command_substitution(simple: &SimpleCommand) -> bool {
@@ -275,7 +276,7 @@ pub(super) fn execute_simple(
                 .bytes(&command_name)
                 .bytes(b": not found\n")
                 .finish();
-            let _ = sys::write_all_fd(sys::STDERR_FILENO, &msg);
+            let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, &msg);
             return Ok(127);
         }
         let desc = join_boxed_bytes(&prepared.argv, b' ');
@@ -294,7 +295,7 @@ pub(super) fn execute_simple(
                 Err(error) => return Ok(error.exit_status()),
             };
             let pgid = handle.pid;
-            let _ = sys::set_process_group(pgid, pgid);
+            let _ = sys::tty::set_process_group(pgid, pgid);
             let status = wait_for_external_child(shell, &handle, Some(pgid), Some(&desc))?;
             Ok(status)
         }
@@ -305,7 +306,7 @@ pub(super) fn is_declaration_utility(name: &[u8]) -> bool {
     name == b"export" || name == b"readonly"
 }
 
-pub(super) fn find_declaration_context(words: &[crate::syntax::Word]) -> bool {
+pub(super) fn find_declaration_context(words: &[crate::syntax::ast::Word]) -> bool {
     let mut i = 0;
     while i < words.len() {
         let raw: &[u8] = &words[i].raw;
@@ -328,7 +329,7 @@ pub(super) fn expand_simple<'a>(
 ) -> Result<ExpandedSimpleCommand<'a>, ShellError> {
     let mut assignments = Vec::new();
     for assignment in &simple.assignments {
-        let value = expand::expand_assignment_value(shell, &assignment.value, arena)
+        let value = word::expand_assignment_value(shell, &assignment.value, arena)
             .map_err(|e| shell.expand_to_err(e))?;
         assignments.push((arena.intern_bytes(&assignment.name), value));
     }
@@ -337,7 +338,7 @@ pub(super) fn expand_simple<'a>(
     let argv = if declaration_ctx {
         expand_words_declaration(shell, &simple.words, arena)?
     } else {
-        expand::expand_words(shell, &simple.words, arena).map_err(|e| shell.expand_to_err(e))?
+        word::expand_words(shell, &simple.words, arena).map_err(|e| shell.expand_to_err(e))?
     };
     let mut redirections = Vec::new();
     for redirection in &simple.redirections {
@@ -350,14 +351,14 @@ pub(super) fn expand_simple<'a>(
                 .as_ref()
                 .ok_or_else(|| shell.diagnostic(2, b"missing here-document body" as &[u8]))?;
             let body = if here_doc.expand {
-                expand::expand_here_document(shell, &here_doc.body, here_doc.body_line, arena)
+                word::expand_here_document(shell, &here_doc.body, here_doc.body_line, arena)
                     .map_err(|e| shell.expand_to_err(e))?
             } else {
                 arena.intern_bytes(&here_doc.body)
             };
             (arena.intern_bytes(&here_doc.delimiter), Some(body))
         } else {
-            let target = expand::expand_redirect_word(shell, &redirection.target, arena)
+            let target = word::expand_redirect_word(shell, &redirection.target, arena)
                 .map_err(|e| shell.expand_to_err(e))?;
             if matches!(
                 redirection.kind,
@@ -394,31 +395,29 @@ pub(super) fn parse_i32_bytes(s: &[u8]) -> Option<i32> {
 
 pub(super) fn expand_words_declaration<'a>(
     shell: &mut Shell,
-    words: &[crate::syntax::Word],
+    words: &[crate::syntax::ast::Word],
     arena: &'a ByteArena,
 ) -> Result<Vec<&'a [u8]>, ShellError> {
     let mut result = Vec::new();
     let mut found_cmd = false;
     for word in words {
         if !found_cmd {
-            result.extend(
-                expand::expand_word(shell, word, arena).map_err(|e| shell.expand_to_err(e))?,
-            );
+            result
+                .extend(word::expand_word(shell, word, arena).map_err(|e| shell.expand_to_err(e))?);
             if result
                 .last()
                 .is_some_and(|s: &&[u8]| !s.is_empty() && *s != b"command")
             {
                 found_cmd = true;
             }
-        } else if expand::word_is_assignment(&word.raw) {
+        } else if word::word_is_assignment(&word.raw) {
             result.push(
-                expand::expand_word_as_declaration_assignment(shell, word, arena)
+                word::expand_word_as_declaration_assignment(shell, word, arena)
                     .map_err(|e| shell.expand_to_err(e))?,
             );
         } else {
-            result.extend(
-                expand::expand_word(shell, word, arena).map_err(|e| shell.expand_to_err(e))?,
-            );
+            result
+                .extend(word::expand_word(shell, word, arena).map_err(|e| shell.expand_to_err(e))?);
         }
     }
     Ok(result)
@@ -426,7 +425,7 @@ pub(super) fn expand_words_declaration<'a>(
 
 pub(super) fn expand_redirections<'a>(
     shell: &mut Shell,
-    redirections: &[crate::syntax::Redirection],
+    redirections: &[crate::syntax::ast::Redirection],
     arena: &'a ByteArena,
 ) -> Result<Vec<ExpandedRedirection<'a>>, ShellError> {
     let mut expanded_vec = Vec::new();
@@ -440,14 +439,14 @@ pub(super) fn expand_redirections<'a>(
                 .as_ref()
                 .ok_or_else(|| shell.diagnostic(2, b"missing here-document body" as &[u8]))?;
             let body = if here_doc.expand {
-                expand::expand_here_document(shell, &here_doc.body, here_doc.body_line, arena)
+                word::expand_here_document(shell, &here_doc.body, here_doc.body_line, arena)
                     .map_err(|e| shell.expand_to_err(e))?
             } else {
                 arena.intern_bytes(&here_doc.body)
             };
             (arena.intern_bytes(&here_doc.delimiter), Some(body))
         } else {
-            let target = expand::expand_redirect_word(shell, &redirection.target, arena)
+            let target = word::expand_redirect_word(shell, &redirection.target, arena)
                 .map_err(|e| shell.expand_to_err(e))?;
             if matches!(
                 redirection.kind,
@@ -525,9 +524,11 @@ pub(super) fn build_process_from_expanded(
 #[allow(unused_imports)]
 mod tests {
     use super::*;
-    use crate::exec::test_support::*;
-    use crate::shell::Shell;
-    use crate::syntax::{Assignment, HereDoc, Redirection, Word};
+    use crate::exec::program::execute_program;
+    use crate::exec::test_support::{parse_test, test_shell};
+    use crate::shell::state::Shell;
+    use crate::syntax::ast::{Assignment, HereDoc, Redirection, Word};
+    use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;
 
     #[test]
@@ -823,7 +824,7 @@ mod tests {
     #[test]
     fn readonly_var_blocks_external_cmd_prefix_assignment() {
         run_trace(
-            trace_entries![write(fd(sys::STDERR_FILENO), bytes(b"meiksh: line 1: X: readonly variable\n")) -> auto],
+            trace_entries![write(fd(sys::constants::STDERR_FILENO), bytes(b"meiksh: line 1: X: readonly variable\n")) -> auto],
             || {
                 let mut shell = test_shell();
                 shell.env.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
@@ -874,7 +875,7 @@ mod tests {
     #[test]
     fn apply_prefix_assignments_readonly_error() {
         run_trace(
-            trace_entries![write(fd(sys::STDERR_FILENO), bytes(b"meiksh: RO: readonly variable\n")) -> auto],
+            trace_entries![write(fd(sys::constants::STDERR_FILENO), bytes(b"meiksh: RO: readonly variable\n")) -> auto],
             || {
                 let mut shell = test_shell();
                 shell.readonly.insert(b"RO".to_vec());

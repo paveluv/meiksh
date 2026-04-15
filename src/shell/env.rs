@@ -5,7 +5,7 @@ use super::run::stdin_parse_error_requires_more_input;
 use super::state::Shell;
 
 impl Shell {
-    pub fn env_for_child(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
+    pub(crate) fn env_for_child(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
         self.exported
             .iter()
             .filter_map(|name| {
@@ -16,7 +16,7 @@ impl Shell {
             .collect()
     }
 
-    pub fn env_for_exec_utility(
+    pub(crate) fn env_for_exec_utility(
         &self,
         cmd_assignments: &[(Vec<u8>, Vec<u8>)],
     ) -> Vec<(Vec<u8>, Vec<u8>)> {
@@ -31,19 +31,19 @@ impl Shell {
         env
     }
 
-    pub fn get_var(&self, name: &[u8]) -> Option<&[u8]> {
+    pub(crate) fn get_var(&self, name: &[u8]) -> Option<&[u8]> {
         self.env.get(name).map(Vec::as_slice)
     }
 
-    pub fn input_is_incomplete(&self, error: &crate::syntax::ParseError) -> bool {
+    pub(crate) fn input_is_incomplete(&self, error: &crate::syntax::ParseError) -> bool {
         stdin_parse_error_requires_more_input(error)
     }
 
-    pub fn history_number(&self) -> usize {
+    pub(crate) fn history_number(&self) -> usize {
         self.history.len() + 1
     }
 
-    pub fn add_history(&mut self, line: &[u8]) {
+    pub(crate) fn add_history(&mut self, line: &[u8]) {
         let mut end = line.len();
         while end > 0
             && (line[end - 1] == b' '
@@ -68,7 +68,7 @@ impl Shell {
         self.history.push(trimmed.into());
     }
 
-    pub fn set_var(&mut self, name: &[u8], value: Vec<u8>) -> Result<(), VarError> {
+    pub(crate) fn set_var(&mut self, name: &[u8], value: Vec<u8>) -> Result<(), VarError> {
         if self.readonly.contains(name) {
             return Err(VarError::Readonly(name.into()));
         }
@@ -86,7 +86,11 @@ impl Shell {
         Ok(())
     }
 
-    pub fn export_var(&mut self, name: &[u8], value: Option<Vec<u8>>) -> Result<(), ShellError> {
+    pub(crate) fn export_var(
+        &mut self,
+        name: &[u8],
+        value: Option<Vec<u8>>,
+    ) -> Result<(), ShellError> {
         if let Some(value) = value {
             self.set_var(name, value).map_err(|e| {
                 let msg = var_error_message(&e);
@@ -99,11 +103,11 @@ impl Shell {
         Ok(())
     }
 
-    pub fn mark_readonly(&mut self, name: &[u8]) {
+    pub(crate) fn mark_readonly(&mut self, name: &[u8]) {
         self.readonly.insert(name.to_vec());
     }
 
-    pub fn unset_var(&mut self, name: &[u8]) -> Result<(), VarError> {
+    pub(crate) fn unset_var(&mut self, name: &[u8]) -> Result<(), VarError> {
         if self.readonly.contains(name) {
             return Err(VarError::Readonly(name.into()));
         }
@@ -112,13 +116,15 @@ impl Shell {
         Ok(())
     }
 
-    pub fn set_positional(&mut self, values: Vec<Vec<u8>>) {
+    pub(crate) fn set_positional(&mut self, values: Vec<Vec<u8>>) {
         self.positional = values;
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     use crate::shell::test_support::t_stderr;
     use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;

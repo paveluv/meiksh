@@ -1,8 +1,8 @@
 use crate::bstr;
-use crate::shell::Shell;
+use crate::shell::state::Shell;
 use crate::sys;
 
-pub(crate) fn check_mail(shell: &mut Shell) {
+pub(super) fn check_mail(shell: &mut Shell) {
     let has_mail = shell.get_var(b"MAIL").is_some();
     let has_mailpath = shell.get_var(b"MAILPATH").is_some();
     if !has_mail && !has_mailpath {
@@ -13,7 +13,7 @@ pub(crate) fn check_mail(shell: &mut Shell) {
         .get_var(b"MAILCHECK")
         .and_then(|v| bstr::parse_i64(v).map(|n| n as u64))
         .unwrap_or(600);
-    let now = sys::monotonic_clock_ns() / 1_000_000_000;
+    let now = sys::time::monotonic_clock_ns() / 1_000_000_000;
     if shell.mail_last_check != 0 && now.saturating_sub(shell.mail_last_check) < check_interval {
         return;
     }
@@ -42,18 +42,18 @@ pub(crate) fn check_mail(shell: &mut Shell) {
         if path.is_empty() {
             continue;
         }
-        let size = sys::stat_path(&path).map(|st| st.size).unwrap_or(0);
+        let size = sys::fs::stat_path(&path).map(|st| st.size).unwrap_or(0);
         let prev = shell.mail_sizes.get(path.as_slice()).copied().unwrap_or(0);
         if size > prev {
             let msg = custom_msg.unwrap_or_else(|| b"you have mail".to_vec());
-            let _ = sys::write_all_fd(sys::STDERR_FILENO, &msg);
-            let _ = sys::write_all_fd(sys::STDERR_FILENO, b"\n");
+            let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, &msg);
+            let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, b"\n");
         }
         shell.mail_sizes.insert(path.into(), size);
     }
 }
 
-pub(crate) fn command_is_fc(line: &[u8]) -> bool {
+pub(super) fn command_is_fc(line: &[u8]) -> bool {
     let mut rest = line;
     loop {
         while !rest.is_empty() && rest[0].is_ascii_whitespace() {
@@ -99,7 +99,8 @@ pub(crate) fn command_is_fc(line: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interactive::test_support::*;
+    use crate::interactive::test_support::test_shell;
+    use crate::sys::test_support::assert_no_syscalls;
 
     #[test]
     fn command_is_fc_tests() {

@@ -5,10 +5,10 @@ use super::error::SysResult;
 use super::interface::{last_error, sys_interface};
 use super::types::Pid;
 
-pub fn is_interactive_fd(fd: c_int) -> bool {
+pub(crate) fn is_interactive_fd(fd: c_int) -> bool {
     (sys_interface().isatty)(fd) == 1
 }
-pub fn current_foreground_pgrp(fd: c_int) -> SysResult<Pid> {
+pub(crate) fn current_foreground_pgrp(fd: c_int) -> SysResult<Pid> {
     let result = (sys_interface().tcgetpgrp)(fd);
     if result >= 0 {
         Ok(result)
@@ -17,7 +17,7 @@ pub fn current_foreground_pgrp(fd: c_int) -> SysResult<Pid> {
     }
 }
 
-pub fn set_foreground_pgrp(fd: c_int, pgrp: Pid) -> SysResult<()> {
+pub(crate) fn set_foreground_pgrp(fd: c_int, pgrp: Pid) -> SysResult<()> {
     let result = (sys_interface().tcsetpgrp)(fd, pgrp);
     if result == 0 {
         Ok(())
@@ -26,7 +26,7 @@ pub fn set_foreground_pgrp(fd: c_int, pgrp: Pid) -> SysResult<()> {
     }
 }
 
-pub fn set_process_group(pid: Pid, pgid: Pid) -> SysResult<()> {
+pub(crate) fn set_process_group(pid: Pid, pgid: Pid) -> SysResult<()> {
     let result = (sys_interface().setpgid)(pid, pgid);
     if result == 0 {
         Ok(())
@@ -35,7 +35,7 @@ pub fn set_process_group(pid: Pid, pgid: Pid) -> SysResult<()> {
     }
 }
 
-pub fn get_terminal_attrs(fd: c_int) -> SysResult<libc::termios> {
+pub(crate) fn get_terminal_attrs(fd: c_int) -> SysResult<libc::termios> {
     let mut termios = unsafe { std::mem::zeroed::<libc::termios>() };
     let result = (sys_interface().tcgetattr)(fd, &mut termios);
     if result == 0 {
@@ -45,7 +45,7 @@ pub fn get_terminal_attrs(fd: c_int) -> SysResult<libc::termios> {
     }
 }
 
-pub fn set_terminal_attrs(fd: c_int, termios: &libc::termios) -> SysResult<()> {
+pub(crate) fn set_terminal_attrs(fd: c_int, termios: &libc::termios) -> SysResult<()> {
     let result = (sys_interface().tcsetattr)(fd, TCSADRAIN, termios);
     if result == 0 {
         Ok(())
@@ -53,18 +53,19 @@ pub fn set_terminal_attrs(fd: c_int, termios: &libc::termios) -> SysResult<()> {
         Err(last_error())
     }
 }
-pub fn isatty_fd(fd: c_int) -> bool {
+pub(crate) fn isatty_fd(fd: c_int) -> bool {
     (sys_interface().isatty)(fd) != 0
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use libc::c_int;
 
     use crate::sys::test_support;
 
-    use super::*;
     use super::super::interface::{SystemInterface, default_interface};
+    use super::super::types::Pid;
 
     #[test]
     fn success_terminal_control() {

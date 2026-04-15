@@ -6,15 +6,15 @@ use crate::trace_entries;
 use super::options::ShellOptions;
 use super::state::Shell;
 
-pub fn fake_handle(pid: sys::Pid) -> sys::ChildHandle {
-    sys::ChildHandle {
+pub fn fake_handle(pid: sys::types::Pid) -> sys::types::ChildHandle {
+    sys::types::ChildHandle {
         pid,
         stdout_fd: None,
     }
 }
 
 pub fn t_stderr(msg: &str) -> crate::sys::test_support::TraceEntry {
-    trace_entries![write(fd(sys::STDERR_FILENO), bytes(format!("{msg}\n"))) -> auto]
+    trace_entries![write(fd(sys::constants::STDERR_FILENO), bytes(format!("{msg}\n"))) -> auto]
         .pop()
         .expect("t_stderr trace")
 }
@@ -64,7 +64,7 @@ pub fn capture_forked_trace(
         pipe() -> fds(200, 201),
         fork() -> pid(pid), child: [
             close(fd(200)) -> 0,
-            dup2(fd(201), fd(sys::STDOUT_FILENO)) -> 0,
+            dup2(fd(201), fd(sys::constants::STDOUT_FILENO)) -> 0,
             close(fd(201)) -> 0,
         ],
         close(fd(201)) -> 0,

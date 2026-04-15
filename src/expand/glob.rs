@@ -1,4 +1,4 @@
-pub fn pattern_matches(text: &[u8], pattern: &[u8]) -> bool {
+pub(crate) fn pattern_matches(text: &[u8], pattern: &[u8]) -> bool {
     pattern_matches_inner(text, 0, pattern, 0)
 }
 
@@ -56,7 +56,7 @@ pub(super) fn pattern_matches_inner(text: &[u8], ti: usize, pattern: &[u8], pi: 
 }
 
 pub(super) fn match_charclass(class: &[u8], ch: u8) -> bool {
-    crate::sys::classify_byte(class, ch)
+    crate::sys::locale::classify_byte(class, ch)
 }
 
 pub(super) fn match_bracket(
@@ -203,22 +203,8 @@ fn try_consume_range(
 }
 
 #[cfg(test)]
-#[allow(unused_imports)]
 mod tests {
-    use std::borrow::Cow;
-
     use super::*;
-    use crate::arena::ByteArena;
-    use crate::bstr;
-    use crate::expand::arithmetic::*;
-    use crate::expand::core::{Context, ExpandError};
-    use crate::expand::glob::*;
-    use crate::expand::model::*;
-    use crate::expand::parameter::*;
-    use crate::expand::pathname::*;
-    use crate::expand::test_support::*;
-    use crate::expand::word::*;
-    use crate::syntax::Word;
 
     #[test]
     fn bracket_helpers_cover_missing_closer() {

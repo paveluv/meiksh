@@ -48,13 +48,13 @@ pub(super) fn expand_path_segments(
 
     if !segment.iter().any(|&b| is_glob_byte(b)) {
         let next = path_join(base, segment);
-        if sys::file_exists(&next) {
+        if sys::fs::file_exists(&next) {
             expand_path_segments(&next, segments, index + 1, absolute, matches);
         }
         return;
     }
 
-    let Ok(mut names) = sys::read_dir_entries(base) else {
+    let Ok(mut names) = sys::fs::read_dir_entries(base) else {
         return;
     };
     names.sort();
@@ -79,22 +79,14 @@ pub(super) fn path_join(base: &[u8], name: &[u8]) -> Vec<u8> {
 }
 
 #[cfg(test)]
-#[allow(unused_imports)]
 mod tests {
-    use std::borrow::Cow;
-
     use super::*;
     use crate::arena::ByteArena;
-    use crate::bstr;
-    use crate::expand::arithmetic::*;
-    use crate::expand::core::{Context, ExpandError};
-    use crate::expand::glob::*;
-    use crate::expand::model::*;
-    use crate::expand::parameter::*;
-    use crate::expand::pathname::*;
-    use crate::expand::test_support::*;
-    use crate::expand::word::*;
-    use crate::syntax::Word;
+    use crate::expand::core::Context;
+    use crate::expand::test_support::{DefaultPathContext, FakeContext};
+    use crate::expand::word::{expand_redirect_word, expand_word, expand_word_text};
+    use crate::syntax::ast::Word;
+    use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;
 
     #[test]
@@ -236,7 +228,7 @@ mod tests {
     fn unmatched_glob_returns_pattern_literally() {
         let arena = ByteArena::new();
         run_trace(
-            trace_entries![opendir(_) -> err(crate::sys::ENOENT)],
+            trace_entries![opendir(_) -> err(crate::sys::constants::ENOENT)],
             || {
                 let mut ctx = DefaultPathContext::new();
                 assert_eq!(
