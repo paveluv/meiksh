@@ -71,6 +71,7 @@ pub(super) fn expand_prompt_exclamation(s: &[u8], histnum: usize) -> Vec<u8> {
 mod tests {
     use super::*;
     use crate::interactive::test_support::*;
+    use crate::trace_entries;
 
     #[test]
     fn prompt_prefers_ps1() {
@@ -85,11 +86,7 @@ mod tests {
     #[test]
     fn read_line_propagates_non_eintr_error() {
         run_trace(
-            vec![t(
-                "read",
-                vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                TraceResult::Err(sys::EBADF),
-            )],
+            trace_entries![read(fd(sys::STDIN_FILENO), _) -> err(sys::EBADF)],
             || {
                 let err = read_line().expect_err("should propagate EBADF");
                 assert!(!err.is_eintr());
@@ -100,20 +97,9 @@ mod tests {
     #[test]
     fn read_line_returns_empty_on_eintr() {
         run_trace(
-            vec![
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
-                    TraceResult::Err(sys::EINTR),
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
+            trace_entries![
+                read(fd(sys::STDIN_FILENO), _) -> err(sys::EINTR),
+                write(fd(sys::STDERR_FILENO), bytes(b"\n")) -> auto,
             ],
             || {
                 let result = read_line().expect("should not fail on EINTR");

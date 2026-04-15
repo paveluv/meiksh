@@ -213,6 +213,7 @@ pub(super) fn is_unsigned_decimal(text: &[u8]) -> bool {
 mod tests {
     use super::*;
     use crate::builtin::test_support::*;
+    use crate::trace_entries;
 
     #[test]
     fn trap_set_and_reset_via_dash() {
@@ -250,14 +251,9 @@ mod tests {
     #[test]
     fn trap_invalid_condition_error() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(2),
-                    ArgMatcher::Bytes(b"meiksh: trap: invalid condition: BOGUS\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![
+                write(fd(2), bytes(b"meiksh: trap: invalid condition: BOGUS\n")) -> auto
+            ],
             || {
                 let mut shell = test_shell();
                 invoke(
@@ -285,14 +281,9 @@ mod tests {
     #[test]
     fn trap_dash_dash_no_args_prints() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(1),
-                    ArgMatcher::Bytes(b"trap -- 'echo bye' EXIT\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![
+                write(fd(1), bytes(b"trap -- 'echo bye' EXIT\n")) -> auto
+            ],
             || {
                 let mut shell = test_shell();
                 shell.trap_actions.insert(
@@ -307,14 +298,9 @@ mod tests {
     #[test]
     fn trap_dash_p_specific_condition_prints() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(1),
-                    ArgMatcher::Bytes(b"trap -- 'echo done' EXIT\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![
+                write(fd(1), bytes(b"trap -- 'echo done' EXIT\n")) -> auto
+            ],
             || {
                 let mut shell = test_shell();
                 shell.trap_actions.insert(

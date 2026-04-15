@@ -405,24 +405,16 @@ mod tests {
     use crate::exec::test_support::*;
     use crate::shell::Shell;
     use crate::syntax::{Assignment, HereDoc, Redirection, Word};
+    use crate::trace_entries;
 
     #[test]
     fn execute_pipeline_async_single_command() {
         run_trace(
-            vec![
-                t_fork(
-                    TraceResult::Pid(1000),
-                    vec![t(
-                        "setpgid",
-                        vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
-                        TraceResult::Int(0),
-                    )],
-                ),
-                t(
-                    "setpgid",
-                    vec![ArgMatcher::Int(1000), ArgMatcher::Int(1000)],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                fork() -> pid(1000), child: [
+                    setpgid(int(0), int(0)) -> 0,
+                ],
+                setpgid(int(1000), int(1000)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -449,101 +441,31 @@ mod tests {
     #[test]
     fn execute_pipeline_negated_multi_command() {
         run_trace(
-            vec![
-                t("pipe", vec![], TraceResult::Fds(200, 201)),
-                t_fork(
-                    TraceResult::Pid(1000),
-                    vec![
-                        t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
-                        t(
-                            "dup2",
-                            vec![ArgMatcher::Fd(201), ArgMatcher::Fd(1)],
-                            TraceResult::Int(0),
-                        ),
-                        t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
-                        t(
-                            "setpgid",
-                            vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
-                            TraceResult::Int(0),
-                        ),
-                        t(
-                            "write",
-                            vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"ok".to_vec())],
-                            TraceResult::Int(2),
-                        ),
-                    ],
-                ),
-                t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
-                t(
-                    "setpgid",
-                    vec![ArgMatcher::Int(1000), ArgMatcher::Int(1000)],
-                    TraceResult::Int(0),
-                ),
-                t_fork(
-                    TraceResult::Pid(1001),
-                    vec![
-                        t(
-                            "dup2",
-                            vec![ArgMatcher::Fd(200), ArgMatcher::Fd(0)],
-                            TraceResult::Int(0),
-                        ),
-                        t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
-                        t(
-                            "setpgid",
-                            vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)],
-                            TraceResult::Int(0),
-                        ),
-                        t(
-                            "stat",
-                            vec![ArgMatcher::Str("/usr/bin/wc".into()), ArgMatcher::Any],
-                            TraceResult::StatFile(0o755),
-                        ),
-                        t(
-                            "open",
-                            vec![
-                                ArgMatcher::Str("/usr/bin/wc".into()),
-                                ArgMatcher::Any,
-                                ArgMatcher::Any,
-                            ],
-                            TraceResult::Fd(20),
-                        ),
-                        t(
-                            "read",
-                            vec![ArgMatcher::Fd(20), ArgMatcher::Any],
-                            TraceResult::Bytes(b"#!/bin/sh\n".to_vec()),
-                        ),
-                        t("close", vec![ArgMatcher::Fd(20)], TraceResult::Int(0)),
-                        t(
-                            "execvp",
-                            vec![ArgMatcher::Str("/usr/bin/wc".into()), ArgMatcher::Any],
-                            TraceResult::Int(0),
-                        ),
-                    ],
-                ),
-                t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
-                t(
-                    "setpgid",
-                    vec![ArgMatcher::Int(1001), ArgMatcher::Int(1000)],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "waitpid",
-                    vec![
-                        ArgMatcher::Int(1000),
-                        ArgMatcher::Any,
-                        ArgMatcher::Int(sys::WUNTRACED as i64),
-                    ],
-                    TraceResult::Status(0),
-                ),
-                t(
-                    "waitpid",
-                    vec![
-                        ArgMatcher::Int(1001),
-                        ArgMatcher::Any,
-                        ArgMatcher::Int(sys::WUNTRACED as i64),
-                    ],
-                    TraceResult::Status(0),
-                ),
+            trace_entries![
+                pipe() -> fds(200, 201),
+                fork() -> pid(1000), child: [
+                    close(fd(200)) -> 0,
+                    dup2(fd(201), fd(1)) -> 0,
+                    close(fd(201)) -> 0,
+                    setpgid(int(0), int(0)) -> 0,
+                    write(fd(1), bytes(b"ok")) -> 2,
+                ],
+                close(fd(201)) -> 0,
+                setpgid(int(1000), int(1000)) -> 0,
+                fork() -> pid(1001), child: [
+                    dup2(fd(200), fd(0)) -> 0,
+                    close(fd(200)) -> 0,
+                    setpgid(int(0), int(1000)) -> 0,
+                    stat(str("/usr/bin/wc"), _) -> stat_file(0o755),
+                    open(str("/usr/bin/wc"), _, _) -> fd(20),
+                    read(fd(20), _) -> bytes(b"#!/bin/sh\n"),
+                    close(fd(20)) -> 0,
+                    execvp(str("/usr/bin/wc"), _) -> 0,
+                ],
+                close(fd(200)) -> 0,
+                setpgid(int(1001), int(1000)) -> 0,
+                waitpid(int(1000), _, int(sys::WUNTRACED as i64)) -> status(0),
+                waitpid(int(1001), _, int(sys::WUNTRACED as i64)) -> status(0),
             ],
             || {
                 let mut shell = test_shell();
@@ -617,69 +539,27 @@ mod tests {
         };
 
         run_trace(
-            vec![
-                t("pipe", vec![], TraceResult::Fds(200, 201)),
-                t_fork(
-                    TraceResult::Pid(1000),
-                    vec![
-                        t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
-                        t(
-                            "dup2",
-                            vec![ArgMatcher::Fd(201), ArgMatcher::Fd(1)],
-                            TraceResult::Int(0),
-                        ),
-                        t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
-                        t(
-                            "setpgid",
-                            vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
-                            TraceResult::Int(0),
-                        ),
-                        t_fork(TraceResult::Pid(2000), vec![]),
-                        t(
-                            "waitpid",
-                            vec![ArgMatcher::Int(2000), ArgMatcher::Any, ArgMatcher::Int(0)],
-                            TraceResult::Status(0),
-                        ),
-                    ],
-                ),
-                t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
-                t(
-                    "setpgid",
-                    vec![ArgMatcher::Int(1000), ArgMatcher::Int(1000)],
-                    TraceResult::Int(0),
-                ),
-                t_fork(
-                    TraceResult::Pid(1001),
-                    vec![
-                        t(
-                            "dup2",
-                            vec![ArgMatcher::Fd(200), ArgMatcher::Fd(0)],
-                            TraceResult::Int(0),
-                        ),
-                        t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
-                        t(
-                            "setpgid",
-                            vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)],
-                            TraceResult::Int(0),
-                        ),
-                    ],
-                ),
-                t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
-                t(
-                    "setpgid",
-                    vec![ArgMatcher::Int(1001), ArgMatcher::Int(1000)],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)],
-                    TraceResult::Status(0),
-                ),
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(1001), ArgMatcher::Any, ArgMatcher::Int(0)],
-                    TraceResult::Status(0),
-                ),
+            trace_entries![
+                pipe() -> fds(200, 201),
+                fork() -> pid(1000), child: [
+                    close(fd(200)) -> 0,
+                    dup2(fd(201), fd(1)) -> 0,
+                    close(fd(201)) -> 0,
+                    setpgid(int(0), int(0)) -> 0,
+                    fork() -> pid(2000), child: [],
+                    waitpid(int(2000), _, int(0)) -> status(0),
+                ],
+                close(fd(201)) -> 0,
+                setpgid(int(1000), int(1000)) -> 0,
+                fork() -> pid(1001), child: [
+                    dup2(fd(200), fd(0)) -> 0,
+                    close(fd(200)) -> 0,
+                    setpgid(int(0), int(1000)) -> 0,
+                ],
+                close(fd(200)) -> 0,
+                setpgid(int(1001), int(1000)) -> 0,
+                waitpid(int(1000), _, int(0)) -> status(0),
+                waitpid(int(1001), _, int(0)) -> status(0),
             ],
             || {
                 let mut shell = test_shell();
@@ -783,171 +663,64 @@ mod tests {
             .into_boxed_slice(),
         };
         run_trace(
-            vec![
-                t("pipe", vec![], TraceResult::Fds(200, 201)),
-                t_fork(
-                    TraceResult::Pid(1000),
-                    vec![
-                        t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
-                        t(
-                            "dup2",
-                            vec![ArgMatcher::Fd(201), ArgMatcher::Fd(1)],
-                            TraceResult::Int(0),
-                        ),
-                        t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
-                        t(
-                            "setpgid",
-                            vec![ArgMatcher::Int(0), ArgMatcher::Int(0)],
-                            TraceResult::Int(0),
-                        ),
-                    ],
-                ),
-                t("close", vec![ArgMatcher::Fd(201)], TraceResult::Int(0)),
-                t(
-                    "setpgid",
-                    vec![ArgMatcher::Int(1000), ArgMatcher::Int(1000)],
-                    TraceResult::Int(0),
-                ),
-                t("pipe", vec![], TraceResult::Fds(202, 203)),
-                t_fork(
-                    TraceResult::Pid(1001),
-                    vec![
-                        t(
-                            "dup2",
-                            vec![ArgMatcher::Fd(200), ArgMatcher::Fd(0)],
-                            TraceResult::Int(0),
-                        ),
-                        t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
-                        t("close", vec![ArgMatcher::Fd(202)], TraceResult::Int(0)),
-                        t(
-                            "dup2",
-                            vec![ArgMatcher::Fd(203), ArgMatcher::Fd(1)],
-                            TraceResult::Int(0),
-                        ),
-                        t("close", vec![ArgMatcher::Fd(203)], TraceResult::Int(0)),
-                        t(
-                            "setpgid",
-                            vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)],
-                            TraceResult::Int(0),
-                        ),
-                    ],
-                ),
-                t("close", vec![ArgMatcher::Fd(200)], TraceResult::Int(0)),
-                t("close", vec![ArgMatcher::Fd(203)], TraceResult::Int(0)),
-                t(
-                    "setpgid",
-                    vec![ArgMatcher::Int(1001), ArgMatcher::Int(1000)],
-                    TraceResult::Int(0),
-                ),
-                t("pipe", vec![], TraceResult::Fds(204, 205)),
-                t_fork(
-                    TraceResult::Pid(1002),
-                    vec![
-                        t(
-                            "dup2",
-                            vec![ArgMatcher::Fd(202), ArgMatcher::Fd(0)],
-                            TraceResult::Int(0),
-                        ),
-                        t("close", vec![ArgMatcher::Fd(202)], TraceResult::Int(0)),
-                        t("close", vec![ArgMatcher::Fd(204)], TraceResult::Int(0)),
-                        t(
-                            "dup2",
-                            vec![ArgMatcher::Fd(205), ArgMatcher::Fd(1)],
-                            TraceResult::Int(0),
-                        ),
-                        t("close", vec![ArgMatcher::Fd(205)], TraceResult::Int(0)),
-                        t(
-                            "setpgid",
-                            vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)],
-                            TraceResult::Int(0),
-                        ),
-                    ],
-                ),
-                t("close", vec![ArgMatcher::Fd(202)], TraceResult::Int(0)),
-                t("close", vec![ArgMatcher::Fd(205)], TraceResult::Int(0)),
-                t(
-                    "setpgid",
-                    vec![ArgMatcher::Int(1002), ArgMatcher::Int(1000)],
-                    TraceResult::Int(0),
-                ),
-                t("pipe", vec![], TraceResult::Fds(206, 207)),
-                t_fork(
-                    TraceResult::Pid(1003),
-                    vec![
-                        t(
-                            "dup2",
-                            vec![ArgMatcher::Fd(204), ArgMatcher::Fd(0)],
-                            TraceResult::Int(0),
-                        ),
-                        t("close", vec![ArgMatcher::Fd(204)], TraceResult::Int(0)),
-                        t("close", vec![ArgMatcher::Fd(206)], TraceResult::Int(0)),
-                        t(
-                            "dup2",
-                            vec![ArgMatcher::Fd(207), ArgMatcher::Fd(1)],
-                            TraceResult::Int(0),
-                        ),
-                        t("close", vec![ArgMatcher::Fd(207)], TraceResult::Int(0)),
-                        t(
-                            "setpgid",
-                            vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)],
-                            TraceResult::Int(0),
-                        ),
-                    ],
-                ),
-                t("close", vec![ArgMatcher::Fd(204)], TraceResult::Int(0)),
-                t("close", vec![ArgMatcher::Fd(207)], TraceResult::Int(0)),
-                t(
-                    "setpgid",
-                    vec![ArgMatcher::Int(1003), ArgMatcher::Int(1000)],
-                    TraceResult::Int(0),
-                ),
-                t_fork(
-                    TraceResult::Pid(1004),
-                    vec![
-                        t(
-                            "dup2",
-                            vec![ArgMatcher::Fd(206), ArgMatcher::Fd(0)],
-                            TraceResult::Int(0),
-                        ),
-                        t("close", vec![ArgMatcher::Fd(206)], TraceResult::Int(0)),
-                        t(
-                            "setpgid",
-                            vec![ArgMatcher::Int(0), ArgMatcher::Int(1000)],
-                            TraceResult::Int(0),
-                        ),
-                    ],
-                ),
-                t("close", vec![ArgMatcher::Fd(206)], TraceResult::Int(0)),
-                t(
-                    "setpgid",
-                    vec![ArgMatcher::Int(1004), ArgMatcher::Int(1000)],
-                    TraceResult::Int(0),
-                ),
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)],
-                    TraceResult::Status(0),
-                ),
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(1001), ArgMatcher::Any, ArgMatcher::Int(0)],
-                    TraceResult::Status(0),
-                ),
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(1002), ArgMatcher::Any, ArgMatcher::Int(0)],
-                    TraceResult::Status(0),
-                ),
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(1003), ArgMatcher::Any, ArgMatcher::Int(0)],
-                    TraceResult::Status(0),
-                ),
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(1004), ArgMatcher::Any, ArgMatcher::Int(0)],
-                    TraceResult::Status(0),
-                ),
+            trace_entries![
+                pipe() -> fds(200, 201),
+                fork() -> pid(1000), child: [
+                    close(fd(200)) -> 0,
+                    dup2(fd(201), fd(1)) -> 0,
+                    close(fd(201)) -> 0,
+                    setpgid(int(0), int(0)) -> 0,
+                ],
+                close(fd(201)) -> 0,
+                setpgid(int(1000), int(1000)) -> 0,
+                pipe() -> fds(202, 203),
+                fork() -> pid(1001), child: [
+                    dup2(fd(200), fd(0)) -> 0,
+                    close(fd(200)) -> 0,
+                    close(fd(202)) -> 0,
+                    dup2(fd(203), fd(1)) -> 0,
+                    close(fd(203)) -> 0,
+                    setpgid(int(0), int(1000)) -> 0,
+                ],
+                close(fd(200)) -> 0,
+                close(fd(203)) -> 0,
+                setpgid(int(1001), int(1000)) -> 0,
+                pipe() -> fds(204, 205),
+                fork() -> pid(1002), child: [
+                    dup2(fd(202), fd(0)) -> 0,
+                    close(fd(202)) -> 0,
+                    close(fd(204)) -> 0,
+                    dup2(fd(205), fd(1)) -> 0,
+                    close(fd(205)) -> 0,
+                    setpgid(int(0), int(1000)) -> 0,
+                ],
+                close(fd(202)) -> 0,
+                close(fd(205)) -> 0,
+                setpgid(int(1002), int(1000)) -> 0,
+                pipe() -> fds(206, 207),
+                fork() -> pid(1003), child: [
+                    dup2(fd(204), fd(0)) -> 0,
+                    close(fd(204)) -> 0,
+                    close(fd(206)) -> 0,
+                    dup2(fd(207), fd(1)) -> 0,
+                    close(fd(207)) -> 0,
+                    setpgid(int(0), int(1000)) -> 0,
+                ],
+                close(fd(204)) -> 0,
+                close(fd(207)) -> 0,
+                setpgid(int(1003), int(1000)) -> 0,
+                fork() -> pid(1004), child: [
+                    dup2(fd(206), fd(0)) -> 0,
+                    close(fd(206)) -> 0,
+                    setpgid(int(0), int(1000)) -> 0,
+                ],
+                close(fd(206)) -> 0,
+                setpgid(int(1004), int(1000)) -> 0,
+                waitpid(int(1000), _, int(0)) -> status(0),
+                waitpid(int(1001), _, int(0)) -> status(0),
+                waitpid(int(1002), _, int(0)) -> status(0),
+                waitpid(int(1003), _, int(0)) -> status(0),
+                waitpid(int(1004), _, int(0)) -> status(0),
             ],
             || {
                 let mut shell = test_shell();
@@ -993,45 +766,16 @@ mod tests {
     #[test]
     fn timed_pipeline_exercises_time_report() {
         run_trace(
-            vec![
-                t(
-                    "monotonic_clock_ns",
-                    vec![],
-                    TraceResult::Int(1_000_000_000),
-                ),
-                t("times", vec![ArgMatcher::Any], TraceResult::Int(0)),
-                t("sysconf", vec![ArgMatcher::Any], TraceResult::Int(100)),
-                t(
-                    "monotonic_clock_ns",
-                    vec![],
-                    TraceResult::Int(2_000_000_000),
-                ),
-                t("times", vec![ArgMatcher::Any], TraceResult::Int(0)),
-                t("sysconf", vec![ArgMatcher::Any], TraceResult::Int(100)),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"\nreal\t0m1.000s\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"user\t0m0.000s\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"sys\t0m0.000s\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
+            trace_entries![
+                monotonic_clock_ns() -> 1_000_000_000,
+                times(_) -> 0,
+                sysconf(_) -> 100,
+                monotonic_clock_ns() -> 2_000_000_000,
+                times(_) -> 0,
+                sysconf(_) -> 100,
+                write(fd(sys::STDERR_FILENO), bytes(b"\nreal\t0m1.000s\n")) -> auto,
+                write(fd(sys::STDERR_FILENO), bytes(b"user\t0m0.000s\n")) -> auto,
+                write(fd(sys::STDERR_FILENO), bytes(b"sys\t0m0.000s\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -1045,45 +789,16 @@ mod tests {
     #[test]
     fn timed_pipeline_posix_mode() {
         run_trace(
-            vec![
-                t(
-                    "monotonic_clock_ns",
-                    vec![],
-                    TraceResult::Int(1_000_000_000),
-                ),
-                t("times", vec![ArgMatcher::Any], TraceResult::Int(0)),
-                t("sysconf", vec![ArgMatcher::Any], TraceResult::Int(100)),
-                t(
-                    "monotonic_clock_ns",
-                    vec![],
-                    TraceResult::Int(2_500_000_000),
-                ),
-                t("times", vec![ArgMatcher::Any], TraceResult::Int(0)),
-                t("sysconf", vec![ArgMatcher::Any], TraceResult::Int(100)),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"real 1.50\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"user 0.00\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"sys 0.00\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
+            trace_entries![
+                monotonic_clock_ns() -> 1_000_000_000,
+                times(_) -> 0,
+                sysconf(_) -> 100,
+                monotonic_clock_ns() -> 2_500_000_000,
+                times(_) -> 0,
+                sysconf(_) -> 100,
+                write(fd(sys::STDERR_FILENO), bytes(b"real 1.50\n")) -> auto,
+                write(fd(sys::STDERR_FILENO), bytes(b"user 0.00\n")) -> auto,
+                write(fd(sys::STDERR_FILENO), bytes(b"sys 0.00\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();

@@ -296,18 +296,14 @@ mod tests {
     use crate::exec::test_support::*;
     use crate::shell::Shell;
     use crate::syntax::{Assignment, HereDoc, Redirection, Word};
+    use crate::trace_entries;
 
     #[test]
     fn build_process_from_expanded_covers_empty_and_assignment_env() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(b"meiksh: empty command\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![
+                write(fd(sys::STDERR_FILENO), bytes(b"meiksh: empty command\n")) -> auto,
+            ],
             || {
                 let arena = ByteArena::new();
                 let shell = test_shell();
@@ -363,57 +359,18 @@ mod tests {
     #[test]
     fn spawn_prepared_enoexec_falls_back_to_source() {
         run_trace(
-            vec![
-                t_fork(
-                    TraceResult::Pid(1000),
-                    vec![
-                        t(
-                            "open",
-                            vec![
-                                ArgMatcher::Str("/tmp/script.sh".into()),
-                                ArgMatcher::Any,
-                                ArgMatcher::Any,
-                            ],
-                            TraceResult::Fd(20),
-                        ),
-                        t(
-                            "read",
-                            vec![ArgMatcher::Fd(20), ArgMatcher::Any],
-                            TraceResult::Bytes(b"echo hello\n".to_vec()),
-                        ),
-                        t("close", vec![ArgMatcher::Fd(20)], TraceResult::Int(0)),
-                        t(
-                            "execvp",
-                            vec![ArgMatcher::Str("/tmp/script.sh".into()), ArgMatcher::Any],
-                            TraceResult::Err(sys::ENOEXEC),
-                        ),
-                        t(
-                            "open",
-                            vec![
-                                ArgMatcher::Str("/tmp/script.sh".into()),
-                                ArgMatcher::Any,
-                                ArgMatcher::Any,
-                            ],
-                            TraceResult::Fd(10),
-                        ),
-                        t(
-                            "read",
-                            vec![ArgMatcher::Fd(10), ArgMatcher::Any],
-                            TraceResult::Bytes(b"true\n".to_vec()),
-                        ),
-                        t(
-                            "read",
-                            vec![ArgMatcher::Fd(10), ArgMatcher::Any],
-                            TraceResult::Int(0),
-                        ),
-                        t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
-                    ],
-                ),
-                t(
-                    "waitpid",
-                    vec![ArgMatcher::Int(1000), ArgMatcher::Any, ArgMatcher::Int(0)],
-                    TraceResult::Status(0),
-                ),
+            trace_entries![
+                fork() -> pid(1000), child: [
+                    open(str("/tmp/script.sh"), _, _) -> fd(20),
+                    read(fd(20), _) -> bytes(b"echo hello\n"),
+                    close(fd(20)) -> int(0),
+                    execvp(str("/tmp/script.sh"), _) -> err(sys::ENOEXEC),
+                    open(str("/tmp/script.sh"), _, _) -> fd(10),
+                    read(fd(10), _) -> bytes(b"true\n"),
+                    read(fd(10), _) -> int(0),
+                    close(fd(10)) -> int(0),
+                ],
+                waitpid(1000, _) -> status(0),
             ],
             || {
                 let shell = test_shell();
@@ -439,23 +396,9 @@ mod tests {
     #[test]
     fn spawn_prepared_errors_for_missing_executable() {
         run_trace(
-            vec![
-                t(
-                    "access",
-                    vec![
-                        ArgMatcher::Str("/nonexistent/missing".into()),
-                        ArgMatcher::Int(0),
-                    ],
-                    TraceResult::Err(sys::ENOENT),
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"missing: not found\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
+            trace_entries![
+                access(str("/nonexistent/missing"), int(0)) -> err(sys::ENOENT),
+                write(fd(sys::STDERR_FILENO), bytes(b"missing: not found\n")) -> auto,
             ],
             || {
                 let missing = PreparedProcess {
@@ -477,46 +420,28 @@ mod tests {
     #[test]
     fn file_needs_binary_rejection_handles_errors_and_empty() {
         run_trace(
-            vec![t(
-                "open",
-                vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
-                TraceResult::Err(sys::EACCES),
-            )],
-            || {
-                assert!(!file_needs_binary_rejection(b"/some/file"));
-            },
-        );
-        run_trace(
-            vec![
-                t(
-                    "open",
-                    vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Fd(50),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(50), ArgMatcher::Any],
-                    TraceResult::Err(libc::EIO),
-                ),
-                t("close", vec![ArgMatcher::Fd(50)], TraceResult::Int(0)),
+            trace_entries![
+                open(_, _, _) -> err(sys::EACCES),
             ],
             || {
                 assert!(!file_needs_binary_rejection(b"/some/file"));
             },
         );
         run_trace(
-            vec![
-                t(
-                    "open",
-                    vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Fd(50),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(50), ArgMatcher::Any],
-                    TraceResult::Int(0),
-                ),
-                t("close", vec![ArgMatcher::Fd(50)], TraceResult::Int(0)),
+            trace_entries![
+                open(_, _, _) -> fd(50),
+                read(fd(50), _) -> err(libc::EIO),
+                close(fd(50)) -> int(0),
+            ],
+            || {
+                assert!(!file_needs_binary_rejection(b"/some/file"));
+            },
+        );
+        run_trace(
+            trace_entries![
+                open(_, _, _) -> fd(50),
+                read(fd(50), _) -> int(0),
+                close(fd(50)) -> int(0),
             ],
             || {
                 assert!(!file_needs_binary_rejection(b"/some/file"));
@@ -546,18 +471,10 @@ mod tests {
     #[test]
     fn file_needs_binary_rejection_elf_prefix_allowed() {
         run_trace(
-            vec![
-                t(
-                    "open",
-                    vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Fd(50),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(50), ArgMatcher::Any],
-                    TraceResult::Bytes(b"\x7fELF\x02\x01\x01\x00".to_vec()),
-                ),
-                t("close", vec![ArgMatcher::Fd(50)], TraceResult::Int(0)),
+            trace_entries![
+                open(_, _, _) -> fd(50),
+                read(fd(50), _) -> bytes(b"\x7fELF\x02\x01\x01\x00"),
+                close(fd(50)) -> int(0),
             ],
             || {
                 assert!(!file_needs_binary_rejection(b"/some/elf"));
@@ -568,18 +485,10 @@ mod tests {
     #[test]
     fn file_needs_binary_rejection_shebang_allowed() {
         run_trace(
-            vec![
-                t(
-                    "open",
-                    vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Fd(50),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(50), ArgMatcher::Any],
-                    TraceResult::Bytes(b"#!/bin/sh\necho hi\n".to_vec()),
-                ),
-                t("close", vec![ArgMatcher::Fd(50)], TraceResult::Int(0)),
+            trace_entries![
+                open(_, _, _) -> fd(50),
+                read(fd(50), _) -> bytes(b"#!/bin/sh\necho hi\n"),
+                close(fd(50)) -> int(0),
             ],
             || {
                 assert!(!file_needs_binary_rejection(b"/some/script"));
@@ -590,18 +499,10 @@ mod tests {
     #[test]
     fn file_needs_binary_rejection_null_byte_triggers() {
         run_trace(
-            vec![
-                t(
-                    "open",
-                    vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Fd(50),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(50), ArgMatcher::Any],
-                    TraceResult::Bytes(b"binary\x00data\n".to_vec()),
-                ),
-                t("close", vec![ArgMatcher::Fd(50)], TraceResult::Int(0)),
+            trace_entries![
+                open(_, _, _) -> fd(50),
+                read(fd(50), _) -> bytes(b"binary\x00data\n"),
+                close(fd(50)) -> int(0),
             ],
             || {
                 assert!(file_needs_binary_rejection(b"/some/binary"));
@@ -612,18 +513,10 @@ mod tests {
     #[test]
     fn file_needs_binary_rejection_text_without_null_ok() {
         run_trace(
-            vec![
-                t(
-                    "open",
-                    vec![ArgMatcher::Any, ArgMatcher::Any, ArgMatcher::Any],
-                    TraceResult::Fd(50),
-                ),
-                t(
-                    "read",
-                    vec![ArgMatcher::Fd(50), ArgMatcher::Any],
-                    TraceResult::Bytes(b"just plain text\n".to_vec()),
-                ),
-                t("close", vec![ArgMatcher::Fd(50)], TraceResult::Int(0)),
+            trace_entries![
+                open(_, _, _) -> fd(50),
+                read(fd(50), _) -> bytes(b"just plain text\n"),
+                close(fd(50)) -> int(0),
             ],
             || {
                 assert!(!file_needs_binary_rejection(b"/some/text"));

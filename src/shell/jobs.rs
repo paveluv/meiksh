@@ -761,9 +761,9 @@ mod tests {
     #[test]
     fn continue_job_errors_when_job_missing() {
         run_trace(
-            vec![
-                t_stderr("meiksh: job 99: not found"),
-                t_stderr("meiksh: job 99: not found"),
+            trace_entries![
+                write(fd(sys::STDERR_FILENO), bytes(b"meiksh: job 99: not found\n")) -> auto,
+                write(fd(sys::STDERR_FILENO), bytes(b"meiksh: job 99: not found\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();

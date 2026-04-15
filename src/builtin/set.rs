@@ -102,27 +102,14 @@ pub(super) fn shift(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcom
 mod tests {
     use super::*;
     use crate::builtin::test_support::*;
+    use crate::trace_entries;
 
     #[test]
     fn shift_rejects_invalid_arguments() {
         run_trace(
-            vec![
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(2),
-                        ArgMatcher::Bytes(b"meiksh: shift: 5: shift count out of range\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(2),
-                        ArgMatcher::Bytes(b"meiksh: shift: numeric argument required\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
+            trace_entries![
+                write(fd(2), bytes(b"meiksh: shift: 5: shift count out of range\n")) -> auto,
+                write(fd(2), bytes(b"meiksh: shift: numeric argument required\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -162,14 +149,9 @@ mod tests {
     #[test]
     fn set_dash_o_invalid_name() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(2),
-                    ArgMatcher::Bytes(b"meiksh: set: invalid option: bogus\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![
+                write(fd(2), bytes(b"meiksh: set: invalid option: bogus\n")) -> auto,
+            ],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(
@@ -196,14 +178,9 @@ mod tests {
     #[test]
     fn shift_count_exceeds_positional_len() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(2),
-                    ArgMatcher::Bytes(b"meiksh: shift: 5: shift count out of range\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![
+                write(fd(2), bytes(b"meiksh: shift: 5: shift count out of range\n")) -> auto,
+            ],
             || {
                 let mut shell = test_shell();
                 shell.positional = vec![b"a".to_vec(), b"b".to_vec()];
@@ -217,17 +194,9 @@ mod tests {
     #[test]
     fn set_no_args_lists_env() {
         run_trace(
-            vec![
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"A=1\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"B=2\n".to_vec())],
-                    TraceResult::Auto,
-                ),
+            trace_entries![
+                write(fd(1), bytes(b"A=1\n")) -> auto,
+                write(fd(1), bytes(b"B=2\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -241,65 +210,49 @@ mod tests {
 
     #[test]
     fn set_minus_o_no_name_lists_options() {
-        let options = [
-            b"allexport off\n" as &[u8],
-            b"errexit off\n",
-            b"hashall off\n",
-            b"monitor off\n",
-            b"noclobber off\n",
-            b"noglob off\n",
-            b"noexec off\n",
-            b"notify off\n",
-            b"nounset off\n",
-            b"pipefail off\n",
-            b"verbose off\n",
-            b"xtrace off\n",
-        ];
-        let trace: Vec<_> = options
-            .iter()
-            .map(|m| {
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(m.to_vec())],
-                    TraceResult::Auto,
-                )
-            })
-            .collect();
-        run_trace(trace, || {
-            let mut shell = test_shell();
-            let _ = invoke(&mut shell, &[b"set".to_vec(), b"-o".to_vec()]);
-        });
+        run_trace(
+            trace_entries![
+                write(fd(1), bytes(b"allexport off\n")) -> auto,
+                write(fd(1), bytes(b"errexit off\n")) -> auto,
+                write(fd(1), bytes(b"hashall off\n")) -> auto,
+                write(fd(1), bytes(b"monitor off\n")) -> auto,
+                write(fd(1), bytes(b"noclobber off\n")) -> auto,
+                write(fd(1), bytes(b"noglob off\n")) -> auto,
+                write(fd(1), bytes(b"noexec off\n")) -> auto,
+                write(fd(1), bytes(b"notify off\n")) -> auto,
+                write(fd(1), bytes(b"nounset off\n")) -> auto,
+                write(fd(1), bytes(b"pipefail off\n")) -> auto,
+                write(fd(1), bytes(b"verbose off\n")) -> auto,
+                write(fd(1), bytes(b"xtrace off\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let _ = invoke(&mut shell, &[b"set".to_vec(), b"-o".to_vec()]);
+            },
+        );
     }
 
     #[test]
     fn set_plus_o_no_name_lists_reinput() {
-        let options = [
-            b"set +o allexport\n" as &[u8],
-            b"set +o errexit\n",
-            b"set +o hashall\n",
-            b"set +o monitor\n",
-            b"set +o noclobber\n",
-            b"set +o noglob\n",
-            b"set +o noexec\n",
-            b"set +o notify\n",
-            b"set +o nounset\n",
-            b"set +o pipefail\n",
-            b"set +o verbose\n",
-            b"set +o xtrace\n",
-        ];
-        let trace: Vec<_> = options
-            .iter()
-            .map(|m| {
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(m.to_vec())],
-                    TraceResult::Auto,
-                )
-            })
-            .collect();
-        run_trace(trace, || {
-            let mut shell = test_shell();
-            let _ = invoke(&mut shell, &[b"set".to_vec(), b"+o".to_vec()]);
-        });
+        run_trace(
+            trace_entries![
+                write(fd(1), bytes(b"set +o allexport\n")) -> auto,
+                write(fd(1), bytes(b"set +o errexit\n")) -> auto,
+                write(fd(1), bytes(b"set +o hashall\n")) -> auto,
+                write(fd(1), bytes(b"set +o monitor\n")) -> auto,
+                write(fd(1), bytes(b"set +o noclobber\n")) -> auto,
+                write(fd(1), bytes(b"set +o noglob\n")) -> auto,
+                write(fd(1), bytes(b"set +o noexec\n")) -> auto,
+                write(fd(1), bytes(b"set +o notify\n")) -> auto,
+                write(fd(1), bytes(b"set +o nounset\n")) -> auto,
+                write(fd(1), bytes(b"set +o pipefail\n")) -> auto,
+                write(fd(1), bytes(b"set +o verbose\n")) -> auto,
+                write(fd(1), bytes(b"set +o xtrace\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let _ = invoke(&mut shell, &[b"set".to_vec(), b"+o".to_vec()]);
+            },
+        );
     }
 }

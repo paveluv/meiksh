@@ -195,6 +195,7 @@ mod tests {
     use crate::expand::test_support::*;
     use crate::expand::word::*;
     use crate::syntax::Word;
+    use crate::trace_entries;
 
     #[test]
     fn performs_field_splitting_more_like_posix() {
@@ -242,11 +243,7 @@ mod tests {
     #[test]
     fn field_and_pattern_helpers_cover_corner_cases() {
         run_trace(
-            vec![t(
-                "opendir",
-                vec![ArgMatcher::Any],
-                TraceResult::Err(crate::sys::ENOENT),
-            )],
+            trace_entries![opendir(_) -> err(crate::sys::ENOENT)],
             || {
                 let segs = vec![Segment::Text(b"*.txt".to_vec(), QuoteState::Expanded)];
                 assert_eq!(

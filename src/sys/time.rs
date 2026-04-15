@@ -43,12 +43,11 @@ pub fn clock_ticks_per_second() -> SysResult<u64> {
 
 #[cfg(test)]
 mod tests {
-    use libc::{c_char, c_int, c_long, mode_t};
-    use std::collections::HashMap;
-    use std::ffi::CString;
+    use libc::{c_int, c_long};
 
     use crate::sys::test_support;
     use crate::sys::types::ClockTicks;
+    use crate::trace_entries;
 
     use super::*;
     use crate::sys::*;
@@ -117,42 +116,19 @@ mod tests {
 
     #[test]
     fn trace_sysconf_dispatch() {
-        test_support::run_trace(
-            vec![test_support::t(
-                "sysconf",
-                vec![test_support::ArgMatcher::Any],
-                test_support::TraceResult::Int(100),
-            )],
-            || {
-                assert_eq!(clock_ticks_per_second().expect("sysconf"), 100);
-            },
-        );
+        test_support::run_trace(trace_entries![sysconf(_) -> 100], || {
+            assert_eq!(clock_ticks_per_second().expect("sysconf"), 100);
+        });
     }
 
     #[test]
     fn trace_umask_times_sysconf_and_monotonic_dispatch() {
         test_support::run_trace(
-            vec![
-                test_support::t(
-                    "umask",
-                    vec![test_support::ArgMatcher::Any],
-                    test_support::TraceResult::Int(0o22),
-                ),
-                test_support::t(
-                    "times",
-                    vec![test_support::ArgMatcher::Any],
-                    test_support::TraceResult::Int(500),
-                ),
-                test_support::t(
-                    "sysconf",
-                    vec![test_support::ArgMatcher::Any],
-                    test_support::TraceResult::Int(100),
-                ),
-                test_support::t(
-                    "monotonic_clock_ns",
-                    vec![],
-                    test_support::TraceResult::Int(123456),
-                ),
+            trace_entries![
+                umask(_) -> 0o22,
+                times(_) -> 500,
+                sysconf(_) -> 100,
+                monotonic_clock_ns() -> 123456,
             ],
             || {
                 assert_eq!(set_umask(0o77), 0o22);
@@ -166,16 +142,9 @@ mod tests {
 
     #[test]
     fn trace_times_err_path() {
-        test_support::run_trace(
-            vec![test_support::t(
-                "times",
-                vec![test_support::ArgMatcher::Any],
-                test_support::TraceResult::Err(libc::EINVAL),
-            )],
-            || {
-                assert!(process_times().is_err());
-            },
-        );
+        test_support::run_trace(trace_entries![times(_) -> err(libc::EINVAL)], || {
+            assert!(process_times().is_err());
+        });
     }
 
     #[test]

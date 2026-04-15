@@ -128,32 +128,14 @@ mod tests {
 
     #[test]
     fn check_mail_detects_new_mail() {
-        use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
+        use crate::sys::test_support::run_trace;
+        use crate::trace_entries;
         run_trace(
-            vec![
-                t(
-                    "monotonic_clock_ns",
-                    vec![],
-                    TraceResult::Int(1_000_000_000),
-                ),
-                t(
-                    "stat",
-                    vec![ArgMatcher::Str("/tmp/test_mail".into()), ArgMatcher::Any],
-                    TraceResult::StatFileSize(42),
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(2),
-                        ArgMatcher::Bytes(b"you have mail".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(2), ArgMatcher::Bytes(b"\n".to_vec())],
-                    TraceResult::Auto,
-                ),
+            trace_entries![
+                monotonic_clock_ns() -> 1_000_000_000,
+                stat(str("/tmp/test_mail"), _) -> stat_file_size(42),
+                write(fd(2), bytes(b"you have mail")) -> auto,
+                write(fd(2), bytes(b"\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -165,34 +147,15 @@ mod tests {
 
     #[test]
     fn check_mail_with_mailpath_and_custom_message() {
-        use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
+        use crate::sys::test_support::run_trace;
+        use crate::trace_entries;
         run_trace(
-            vec![
-                t(
-                    "monotonic_clock_ns",
-                    vec![],
-                    TraceResult::Int(1_000_000_000),
-                ),
-                t(
-                    "stat",
-                    vec![ArgMatcher::Str("/tmp/box1".into()), ArgMatcher::Any],
-                    TraceResult::StatFileSize(10),
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(2), ArgMatcher::Bytes(b"New mail!".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(2), ArgMatcher::Bytes(b"\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "stat",
-                    vec![ArgMatcher::Str("/tmp/box2".into()), ArgMatcher::Any],
-                    TraceResult::StatFileSize(0),
-                ),
+            trace_entries![
+                monotonic_clock_ns() -> 1_000_000_000,
+                stat(str("/tmp/box1"), _) -> stat_file_size(10),
+                write(fd(2), bytes(b"New mail!")) -> auto,
+                write(fd(2), bytes(b"\n")) -> auto,
+                stat(str("/tmp/box2"), _) -> stat_file_size(0),
             ],
             || {
                 let mut shell = test_shell();
@@ -204,19 +167,12 @@ mod tests {
 
     #[test]
     fn check_mail_skips_empty_path() {
-        use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
+        use crate::sys::test_support::run_trace;
+        use crate::trace_entries;
         run_trace(
-            vec![
-                t(
-                    "monotonic_clock_ns",
-                    vec![],
-                    TraceResult::Int(1_000_000_000),
-                ),
-                t(
-                    "stat",
-                    vec![ArgMatcher::Str("/tmp/box".into()), ArgMatcher::Any],
-                    TraceResult::StatFileSize(0),
-                ),
+            trace_entries![
+                monotonic_clock_ns() -> 1_000_000_000,
+                stat(str("/tmp/box"), _) -> stat_file_size(0),
             ],
             || {
                 let mut shell = test_shell();
@@ -228,24 +184,13 @@ mod tests {
 
     #[test]
     fn check_mail_respects_interval() {
-        use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
+        use crate::sys::test_support::run_trace;
+        use crate::trace_entries;
         run_trace(
-            vec![
-                t(
-                    "monotonic_clock_ns",
-                    vec![],
-                    TraceResult::Int(1_000_000_000),
-                ),
-                t(
-                    "stat",
-                    vec![ArgMatcher::Str("/tmp/mbox".into()), ArgMatcher::Any],
-                    TraceResult::StatFileSize(0),
-                ),
-                t(
-                    "monotonic_clock_ns",
-                    vec![],
-                    TraceResult::Int(2_000_000_000),
-                ),
+            trace_entries![
+                monotonic_clock_ns() -> 1_000_000_000,
+                stat(str("/tmp/mbox"), _) -> stat_file_size(0),
+                monotonic_clock_ns() -> 2_000_000_000,
             ],
             || {
                 let mut shell = test_shell();

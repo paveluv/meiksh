@@ -317,23 +317,16 @@ mod tests {
     use crate::exec::test_support::*;
     use crate::shell::Shell;
     use crate::syntax::{Assignment, HereDoc, Redirection, Word};
+    use crate::trace_entries;
 
     #[test]
     fn apply_child_fd_actions_applies_dup_close() {
         run_trace(
-            vec![
-                t(
-                    "dup2",
-                    vec![ArgMatcher::Fd(10), ArgMatcher::Fd(90)],
-                    TraceResult::Int(90),
-                ),
-                t(
-                    "dup2",
-                    vec![ArgMatcher::Fd(90), ArgMatcher::Fd(91)],
-                    TraceResult::Int(91),
-                ),
-                t("close", vec![ArgMatcher::Fd(91)], TraceResult::Int(0)),
-                t("close", vec![ArgMatcher::Fd(123_456)], TraceResult::Int(0)),
+            trace_entries![
+                dup2(fd(10), fd(90)) -> 90,
+                dup2(fd(90), fd(91)) -> 91,
+                close(fd(91)) -> 0,
+                close(fd(123_456)) -> 0,
             ],
             || {
                 apply_child_fd_actions(&[
@@ -357,15 +350,9 @@ mod tests {
     #[test]
     fn prepare_redirections_produces_correct_fd_actions() {
         run_trace(
-            vec![t(
-                "open",
-                vec![
-                    ArgMatcher::Str("/tmp/rw.txt".into()),
-                    ArgMatcher::Any,
-                    ArgMatcher::Any,
-                ],
-                TraceResult::Fd(100),
-            )],
+            trace_entries![
+                open(str("/tmp/rw.txt"), _, _) -> fd(100),
+            ],
             || {
                 let prepared = prepare_redirections(
                     &[
@@ -395,45 +382,11 @@ mod tests {
     #[test]
     fn heredoc_expansion_error_paths() {
         run_trace(
-            vec![
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"meiksh: missing here-document body\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(
-                            b"meiksh: redirection target must be a file descriptor or '-'\n"
-                                .to_vec(),
-                        ),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(b"meiksh: missing here-document body\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(sys::STDERR_FILENO),
-                        ArgMatcher::Bytes(
-                            b"meiksh: redirection target must be a file descriptor or '-'\n"
-                                .to_vec(),
-                        ),
-                    ],
-                    TraceResult::Auto,
-                ),
+            trace_entries![
+                write(fd(sys::STDERR_FILENO), bytes(b"meiksh: missing here-document body\n")) -> auto,
+                write(fd(sys::STDERR_FILENO), bytes(b"meiksh: redirection target must be a file descriptor or '-'\n")) -> auto,
+                write(fd(sys::STDERR_FILENO), bytes(b"meiksh: missing here-document body\n")) -> auto,
+                write(fd(sys::STDERR_FILENO), bytes(b"meiksh: redirection target must be a file descriptor or '-'\n")) -> auto,
             ],
             || {
                 let arena = ByteArena::new();
@@ -599,14 +552,10 @@ mod tests {
     #[test]
     fn prepare_redirections_creates_heredoc_pipe() {
         run_trace(
-            vec![
-                t("pipe", vec![], TraceResult::Fds(10, 11)),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(11), ArgMatcher::Bytes(b"body\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t("close", vec![ArgMatcher::Fd(11)], TraceResult::Int(0)),
+            trace_entries![
+                pipe() -> fds(10, 11),
+                write(fd(11), bytes(b"body\n")) -> auto,
+                close(fd(11)) -> 0,
             ],
             || {
                 let prepared = prepare_redirections(
@@ -628,13 +577,9 @@ mod tests {
     #[test]
     fn prepare_redirections_heredoc_write_error() {
         run_trace(
-            vec![
-                t("pipe", vec![], TraceResult::Fds(10, 11)),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(11), ArgMatcher::Bytes(b"body\n".to_vec())],
-                    TraceResult::Err(sys::EIO),
-                ),
+            trace_entries![
+                pipe() -> fds(10, 11),
+                write(fd(11), bytes(b"body\n")) -> err(sys::EIO),
             ],
             || {
                 let err = prepare_redirections(
@@ -656,30 +601,14 @@ mod tests {
     #[test]
     fn execute_nested_program_sets_up_heredoc_fd() {
         run_trace(
-            vec![
-                t(
-                    "fcntl",
-                    vec![
-                        ArgMatcher::Fd(0),
-                        ArgMatcher::Int(1030),
-                        ArgMatcher::Int(10),
-                    ],
-                    TraceResult::Err(sys::EBADF),
-                ),
-                t("pipe", vec![], TraceResult::Fds(10, 11)),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(11), ArgMatcher::Bytes(b"hello\n".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t("close", vec![ArgMatcher::Fd(11)], TraceResult::Int(0)),
-                t(
-                    "dup2",
-                    vec![ArgMatcher::Fd(10), ArgMatcher::Fd(0)],
-                    TraceResult::Int(0),
-                ),
-                t("close", vec![ArgMatcher::Fd(10)], TraceResult::Int(0)),
-                t("close", vec![ArgMatcher::Fd(0)], TraceResult::Int(0)),
+            trace_entries![
+                fcntl(fd(0), int(1030), int(10)) -> err(sys::EBADF),
+                pipe() -> fds(10, 11),
+                write(fd(11), bytes(b"hello\n")) -> auto,
+                close(fd(11)) -> 0,
+                dup2(fd(10), fd(0)) -> 0,
+                close(fd(10)) -> 0,
+                close(fd(0)) -> 0,
             ],
             || {
                 let heredoc_program = parse_test(": <<EOF\nhello\nEOF\n").expect("parse heredoc");
@@ -701,15 +630,9 @@ mod tests {
     #[test]
     fn open_for_write_noclobber_new_file_succeeds() {
         run_trace(
-            vec![t(
-                "open",
-                vec![
-                    ArgMatcher::Str("/new/file.txt".into()),
-                    ArgMatcher::Any,
-                    ArgMatcher::Any,
-                ],
-                TraceResult::Int(10),
-            )],
+            trace_entries![
+                open(str("/new/file.txt"), _, _) -> 10,
+            ],
             || {
                 let fd = open_for_write_noclobber(b"/new/file.txt").expect("new file");
                 assert_eq!(fd, 10);
@@ -720,30 +643,10 @@ mod tests {
     #[test]
     fn open_for_write_noclobber_non_regular_reopens() {
         run_trace(
-            vec![
-                t(
-                    "open",
-                    vec![
-                        ArgMatcher::Str("/dev/null".into()),
-                        ArgMatcher::Any,
-                        ArgMatcher::Any,
-                    ],
-                    TraceResult::Err(sys::EEXIST),
-                ),
-                t(
-                    "stat",
-                    vec![ArgMatcher::Str("/dev/null".into()), ArgMatcher::Any],
-                    TraceResult::StatFifo,
-                ),
-                t(
-                    "open",
-                    vec![
-                        ArgMatcher::Str("/dev/null".into()),
-                        ArgMatcher::Any,
-                        ArgMatcher::Any,
-                    ],
-                    TraceResult::Int(11),
-                ),
+            trace_entries![
+                open(str("/dev/null"), _, _) -> err(sys::EEXIST),
+                stat(str("/dev/null"), _) -> stat_fifo,
+                open(str("/dev/null"), _, _) -> 11,
             ],
             || {
                 let fd = open_for_write_noclobber(b"/dev/null").expect("fifo reopen");
@@ -755,15 +658,9 @@ mod tests {
     #[test]
     fn open_for_write_noclobber_other_error() {
         run_trace(
-            vec![t(
-                "open",
-                vec![
-                    ArgMatcher::Str("/noperm".into()),
-                    ArgMatcher::Any,
-                    ArgMatcher::Any,
-                ],
-                TraceResult::Err(libc::EACCES),
-            )],
+            trace_entries![
+                open(str("/noperm"), _, _) -> err(libc::EACCES),
+            ],
             || {
                 let err = open_for_write_noclobber(b"/noperm").expect_err("eacces");
                 assert_eq!(err.errno(), Some(libc::EACCES));
@@ -788,7 +685,9 @@ mod tests {
     #[test]
     fn close_parent_redirection_fds_only_closes_marked() {
         run_trace(
-            vec![t("close", vec![ArgMatcher::Fd(77)], TraceResult::Int(0))],
+            trace_entries![
+                close(fd(77)) -> 0,
+            ],
             || {
                 let prepared = PreparedRedirections {
                     actions: vec![
@@ -817,11 +716,9 @@ mod tests {
     #[test]
     fn apply_child_fd_actions_close_ebadf_ignored() {
         run_trace(
-            vec![t(
-                "close",
-                vec![ArgMatcher::Fd(999)],
-                TraceResult::Err(sys::EBADF),
-            )],
+            trace_entries![
+                close(fd(999)) -> err(sys::EBADF),
+            ],
             || {
                 apply_child_fd_actions(&[ChildFdAction::CloseFd { target_fd: 999 }])
                     .expect("ebadf on close should be ignored");
@@ -832,11 +729,9 @@ mod tests {
     #[test]
     fn apply_child_fd_actions_close_non_ebadf_propagates() {
         run_trace(
-            vec![t(
-                "close",
-                vec![ArgMatcher::Fd(999)],
-                TraceResult::Err(sys::EIO),
-            )],
+            trace_entries![
+                close(fd(999)) -> err(sys::EIO),
+            ],
             || {
                 let err = apply_child_fd_actions(&[ChildFdAction::CloseFd { target_fd: 999 }])
                     .expect_err("non-ebadf close should fail");
@@ -848,43 +743,11 @@ mod tests {
     #[test]
     fn prepare_redirections_read_write_append_noclobber() {
         run_trace(
-            vec![
-                t(
-                    "open",
-                    vec![
-                        ArgMatcher::Str("/tmp/r.txt".into()),
-                        ArgMatcher::Any,
-                        ArgMatcher::Any,
-                    ],
-                    TraceResult::Fd(10),
-                ),
-                t(
-                    "open",
-                    vec![
-                        ArgMatcher::Str("/tmp/w.txt".into()),
-                        ArgMatcher::Any,
-                        ArgMatcher::Any,
-                    ],
-                    TraceResult::Fd(11),
-                ),
-                t(
-                    "open",
-                    vec![
-                        ArgMatcher::Str("/tmp/a.txt".into()),
-                        ArgMatcher::Any,
-                        ArgMatcher::Any,
-                    ],
-                    TraceResult::Fd(12),
-                ),
-                t(
-                    "open",
-                    vec![
-                        ArgMatcher::Str("/tmp/cw.txt".into()),
-                        ArgMatcher::Any,
-                        ArgMatcher::Any,
-                    ],
-                    TraceResult::Fd(13),
-                ),
+            trace_entries![
+                open(str("/tmp/r.txt"), _, _) -> fd(10),
+                open(str("/tmp/w.txt"), _, _) -> fd(11),
+                open(str("/tmp/a.txt"), _, _) -> fd(12),
+                open(str("/tmp/cw.txt"), _, _) -> fd(13),
             ],
             || {
                 let prepared = prepare_redirections(
@@ -972,15 +835,9 @@ mod tests {
     #[test]
     fn prepare_redirections_noclobber_uses_excl() {
         run_trace(
-            vec![t(
-                "open",
-                vec![
-                    ArgMatcher::Str("/tmp/nc.txt".into()),
-                    ArgMatcher::Any,
-                    ArgMatcher::Any,
-                ],
-                TraceResult::Fd(20),
-            )],
+            trace_entries![
+                open(str("/tmp/nc.txt"), _, _) -> fd(20),
+            ],
             || {
                 let prepared = prepare_redirections(
                     &[ExpandedRedirection {
@@ -1001,21 +858,9 @@ mod tests {
     #[test]
     fn open_for_write_noclobber_regular_file_fails() {
         run_trace(
-            vec![
-                t(
-                    "open",
-                    vec![
-                        ArgMatcher::Str("/exists.txt".into()),
-                        ArgMatcher::Any,
-                        ArgMatcher::Any,
-                    ],
-                    TraceResult::Err(sys::EEXIST),
-                ),
-                t(
-                    "stat",
-                    vec![ArgMatcher::Str("/exists.txt".into()), ArgMatcher::Any],
-                    TraceResult::StatFile(0o644),
-                ),
+            trace_entries![
+                open(str("/exists.txt"), _, _) -> err(sys::EEXIST),
+                stat(str("/exists.txt"), _) -> stat_file(0o644),
             ],
             || {
                 let err = open_for_write_noclobber(b"/exists.txt").expect_err("should fail");

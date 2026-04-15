@@ -625,18 +625,12 @@ pub(super) fn printf_format_hex(out: &mut Vec<u8>, spec: &[u8], val: u64, upper:
 mod tests {
     use super::*;
     use crate::builtin::test_support::*;
+    use crate::trace_entries;
 
     #[test]
     fn printf_format_loop_basic() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(1),
-                    ArgMatcher::Bytes(b"hello world".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(fd(1), bytes(b"hello world")) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(
@@ -657,11 +651,7 @@ mod tests {
     #[test]
     fn printf_literal_percent_sign() {
         run_trace(
-            vec![t(
-                "write",
-                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"100%".to_vec())],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(fd(1), bytes(b"100%")) -> auto,],
             || {
                 let mut shell = test_shell();
                 invoke(&mut shell, &[b"printf".to_vec(), b"100%%".to_vec()]).expect("printf %%");
@@ -672,11 +662,7 @@ mod tests {
     #[test]
     fn printf_escape_sequences() {
         run_trace(
-            vec![t(
-                "write",
-                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"a\tb\n".to_vec())],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(fd(1), bytes(b"a\tb\n")) -> auto,],
             || {
                 let mut shell = test_shell();
                 invoke(&mut shell, &[b"printf".to_vec(), b"a\\tb\\n".to_vec()])
@@ -687,126 +673,80 @@ mod tests {
 
     #[test]
     fn printf_format_signed_integer() {
-        run_trace(
-            vec![t(
-                "write",
-                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"42".to_vec())],
-                TraceResult::Auto,
-            )],
-            || {
-                let mut shell = test_shell();
-                invoke(
-                    &mut shell,
-                    &[b"printf".to_vec(), b"%d".to_vec(), b"42".to_vec()],
-                )
-                .expect("printf %d");
-            },
-        );
+        run_trace(trace_entries![write(fd(1), bytes(b"42")) -> auto,], || {
+            let mut shell = test_shell();
+            invoke(
+                &mut shell,
+                &[b"printf".to_vec(), b"%d".to_vec(), b"42".to_vec()],
+            )
+            .expect("printf %d");
+        });
     }
 
     #[test]
     fn printf_format_unsigned_integer() {
-        run_trace(
-            vec![t(
-                "write",
-                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"42".to_vec())],
-                TraceResult::Auto,
-            )],
-            || {
-                let mut shell = test_shell();
-                invoke(
-                    &mut shell,
-                    &[b"printf".to_vec(), b"%u".to_vec(), b"42".to_vec()],
-                )
-                .expect("printf %u");
-            },
-        );
+        run_trace(trace_entries![write(fd(1), bytes(b"42")) -> auto,], || {
+            let mut shell = test_shell();
+            invoke(
+                &mut shell,
+                &[b"printf".to_vec(), b"%u".to_vec(), b"42".to_vec()],
+            )
+            .expect("printf %u");
+        });
     }
 
     #[test]
     fn printf_format_octal_output() {
-        run_trace(
-            vec![t(
-                "write",
-                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"52".to_vec())],
-                TraceResult::Auto,
-            )],
-            || {
-                let mut shell = test_shell();
-                invoke(
-                    &mut shell,
-                    &[b"printf".to_vec(), b"%o".to_vec(), b"42".to_vec()],
-                )
-                .expect("printf %o");
-            },
-        );
+        run_trace(trace_entries![write(fd(1), bytes(b"52")) -> auto,], || {
+            let mut shell = test_shell();
+            invoke(
+                &mut shell,
+                &[b"printf".to_vec(), b"%o".to_vec(), b"42".to_vec()],
+            )
+            .expect("printf %o");
+        });
     }
 
     #[test]
     fn printf_format_hex_output() {
-        run_trace(
-            vec![t(
-                "write",
-                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"2a".to_vec())],
-                TraceResult::Auto,
-            )],
-            || {
-                let mut shell = test_shell();
-                invoke(
-                    &mut shell,
-                    &[b"printf".to_vec(), b"%x".to_vec(), b"42".to_vec()],
-                )
-                .expect("printf %x");
-            },
-        );
+        run_trace(trace_entries![write(fd(1), bytes(b"2a")) -> auto,], || {
+            let mut shell = test_shell();
+            invoke(
+                &mut shell,
+                &[b"printf".to_vec(), b"%x".to_vec(), b"42".to_vec()],
+            )
+            .expect("printf %x");
+        });
     }
 
     #[test]
     fn printf_format_hex_upper() {
-        run_trace(
-            vec![t(
-                "write",
-                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"2A".to_vec())],
-                TraceResult::Auto,
-            )],
-            || {
-                let mut shell = test_shell();
-                invoke(
-                    &mut shell,
-                    &[b"printf".to_vec(), b"%X".to_vec(), b"42".to_vec()],
-                )
-                .expect("printf %X");
-            },
-        );
+        run_trace(trace_entries![write(fd(1), bytes(b"2A")) -> auto,], || {
+            let mut shell = test_shell();
+            invoke(
+                &mut shell,
+                &[b"printf".to_vec(), b"%X".to_vec(), b"42".to_vec()],
+            )
+            .expect("printf %X");
+        });
     }
 
     #[test]
     fn printf_char_format() {
-        run_trace(
-            vec![t(
-                "write",
-                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"A".to_vec())],
-                TraceResult::Auto,
-            )],
-            || {
-                let mut shell = test_shell();
-                invoke(
-                    &mut shell,
-                    &[b"printf".to_vec(), b"%c".to_vec(), b"ABC".to_vec()],
-                )
-                .expect("printf %c");
-            },
-        );
+        run_trace(trace_entries![write(fd(1), bytes(b"A")) -> auto,], || {
+            let mut shell = test_shell();
+            invoke(
+                &mut shell,
+                &[b"printf".to_vec(), b"%c".to_vec(), b"ABC".to_vec()],
+            )
+            .expect("printf %c");
+        });
     }
 
     #[test]
     fn printf_b_format_with_escape() {
         run_trace(
-            vec![t(
-                "write",
-                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"a\tb".to_vec())],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(fd(1), bytes(b"a\tb")) -> auto,],
             || {
                 let mut shell = test_shell();
                 invoke(
@@ -821,11 +761,7 @@ mod tests {
     #[test]
     fn printf_b_format_backslash_c_stops() {
         run_trace(
-            vec![t(
-                "write",
-                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"hello".to_vec())],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(fd(1), bytes(b"hello")) -> auto,],
             || {
                 let mut shell = test_shell();
                 invoke(
@@ -844,11 +780,7 @@ mod tests {
     #[test]
     fn printf_width_padding() {
         run_trace(
-            vec![t(
-                "write",
-                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"  hi".to_vec())],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(fd(1), bytes(b"  hi")) -> auto,],
             || {
                 let mut shell = test_shell();
                 invoke(
@@ -863,11 +795,7 @@ mod tests {
     #[test]
     fn printf_left_align_width() {
         run_trace(
-            vec![t(
-                "write",
-                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"hi  ".to_vec())],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(fd(1), bytes(b"hi  ")) -> auto,],
             || {
                 let mut shell = test_shell();
                 invoke(
@@ -881,31 +809,20 @@ mod tests {
 
     #[test]
     fn printf_precision_truncation() {
-        run_trace(
-            vec![t(
-                "write",
-                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"hel".to_vec())],
-                TraceResult::Auto,
-            )],
-            || {
-                let mut shell = test_shell();
-                invoke(
-                    &mut shell,
-                    &[b"printf".to_vec(), b"%.3s".to_vec(), b"hello".to_vec()],
-                )
-                .expect("printf %.3s");
-            },
-        );
+        run_trace(trace_entries![write(fd(1), bytes(b"hel")) -> auto,], || {
+            let mut shell = test_shell();
+            invoke(
+                &mut shell,
+                &[b"printf".to_vec(), b"%.3s".to_vec(), b"hello".to_vec()],
+            )
+            .expect("printf %.3s");
+        });
     }
 
     #[test]
     fn printf_width_and_precision_combined() {
         run_trace(
-            vec![t(
-                "write",
-                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"  hel".to_vec())],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(fd(1), bytes(b"  hel")) -> auto,],
             || {
                 let mut shell = test_shell();
                 invoke(
@@ -920,11 +837,7 @@ mod tests {
     #[test]
     fn printf_zero_padded_integer() {
         run_trace(
-            vec![t(
-                "write",
-                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"00042".to_vec())],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(fd(1), bytes(b"00042")) -> auto,],
             || {
                 let mut shell = test_shell();
                 invoke(
@@ -939,11 +852,7 @@ mod tests {
     #[test]
     fn printf_left_padded_integer() {
         run_trace(
-            vec![t(
-                "write",
-                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"42   ".to_vec())],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(fd(1), bytes(b"42   ")) -> auto,],
             || {
                 let mut shell = test_shell();
                 invoke(
@@ -958,11 +867,7 @@ mod tests {
     #[test]
     fn printf_negative_zero_padded() {
         run_trace(
-            vec![t(
-                "write",
-                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"-0042".to_vec())],
-                TraceResult::Auto,
-            )],
+            trace_entries![write(fd(1), bytes(b"-0042")) -> auto,],
             || {
                 let mut shell = test_shell();
                 invoke(
@@ -1228,17 +1133,9 @@ mod tests {
     #[test]
     fn printf_format_reuse_with_multiple_args() {
         run_trace(
-            vec![
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"a ".to_vec())],
-                    TraceResult::Auto,
-                ),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"b ".to_vec())],
-                    TraceResult::Auto,
-                ),
+            trace_entries![
+                write(fd(1), bytes(b"a ")) -> auto,
+                write(fd(1), bytes(b"b ")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -1271,14 +1168,9 @@ mod tests {
     #[test]
     fn printf_missing_format_operand() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(2),
-                    ArgMatcher::Bytes(b"meiksh: printf: missing format operand\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![
+                write(fd(2), bytes(b"meiksh: printf: missing format operand\n")) -> auto,
+            ],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(&mut shell, &[b"printf".to_vec()]).expect("printf no args");
@@ -1289,46 +1181,28 @@ mod tests {
 
     #[test]
     fn printf_unknown_conversion() {
-        run_trace(
-            vec![t(
-                "write",
-                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"%Q".to_vec())],
-                TraceResult::Auto,
-            )],
-            || {
-                let mut shell = test_shell();
-                invoke(&mut shell, &[b"printf".to_vec(), b"%Q".to_vec()]).expect("printf %Q");
-            },
-        );
+        run_trace(trace_entries![write(fd(1), bytes(b"%Q")) -> auto,], || {
+            let mut shell = test_shell();
+            invoke(&mut shell, &[b"printf".to_vec(), b"%Q".to_vec()]).expect("printf %Q");
+        });
     }
 
     #[test]
     fn printf_incomplete_format_spec() {
-        run_trace(
-            vec![t(
-                "write",
-                vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"%5".to_vec())],
-                TraceResult::Auto,
-            )],
-            || {
-                let mut shell = test_shell();
-                invoke(&mut shell, &[b"printf".to_vec(), b"%5".to_vec()])
-                    .expect("printf %5 incomplete");
-            },
-        );
+        run_trace(trace_entries![write(fd(1), bytes(b"%5")) -> auto,], || {
+            let mut shell = test_shell();
+            invoke(&mut shell, &[b"printf".to_vec(), b"%5".to_vec()])
+                .expect("printf %5 incomplete");
+        });
     }
 
     #[test]
     fn printf_format_parse_numeric_error() {
         let msg = diag(b"printf: abc: invalid number");
         run_trace(
-            vec![
-                trace_write_stderr(&msg),
-                t(
-                    "write",
-                    vec![ArgMatcher::Fd(1), ArgMatcher::Bytes(b"0".to_vec())],
-                    TraceResult::Auto,
-                ),
+            trace_entries![
+                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+                write(fd(1), bytes(b"0")) -> auto,
             ],
             || {
                 let mut shell = test_shell();

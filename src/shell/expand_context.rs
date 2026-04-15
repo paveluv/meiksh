@@ -96,7 +96,8 @@ impl expand::Context for Shell {
 mod tests {
     use crate::expand;
     use crate::sys;
-    use crate::sys::test_support::{TraceResult, assert_no_syscalls, run_trace, t};
+    use crate::sys::test_support::{assert_no_syscalls, run_trace};
+    use crate::trace_entries;
 
     use crate::shell::test_support::{capture_forked_trace, t_stderr, test_shell};
 
@@ -189,7 +190,7 @@ mod tests {
 
     #[test]
     fn command_substitute_success() {
-        run_trace(capture_forked_trace(0, 1000), || {
+        run_trace(trace_entries![..capture_forked_trace(0, 1000)], || {
             let mut shell = test_shell();
             let substituted =
                 expand::Context::command_substitute(&mut shell, b"true").expect("subst");
@@ -200,7 +201,7 @@ mod tests {
 
     #[test]
     fn command_substitute_sets_last_status_on_nonzero_exit() {
-        run_trace(capture_forked_trace(1, 1000), || {
+        run_trace(trace_entries![..capture_forked_trace(1, 1000)], || {
             let mut shell = test_shell();
             let output =
                 expand::Context::command_substitute(&mut shell, b"false").expect("subst ok");
@@ -212,9 +213,9 @@ mod tests {
     #[test]
     fn command_substitute_maps_error() {
         run_trace(
-            vec![
-                t("pipe", vec![], TraceResult::Err(sys::EIO)),
-                t_stderr("meiksh: Input/output error"),
+            trace_entries![
+                pipe() -> err(sys::EIO),
+                ..vec![t_stderr("meiksh: Input/output error")],
             ],
             || {
                 let mut shell = test_shell();

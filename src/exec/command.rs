@@ -318,6 +318,7 @@ mod tests {
     use crate::exec::test_support::*;
     use crate::shell::Shell;
     use crate::syntax::{Assignment, HereDoc, Redirection, Word};
+    use crate::trace_entries;
 
     #[test]
     fn execute_if_and_loop_commands() {
@@ -471,16 +472,9 @@ mod tests {
     #[test]
     fn control_flow_propagates_across_functions_and_loops() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(
-                        b"meiksh: line 1: break: only meaningful in a loop\n".to_vec(),
-                    ),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![
+                write(fd(sys::STDERR_FILENO), bytes(b"meiksh: line 1: break: only meaningful in a loop\n")) -> auto,
+            ],
             || {
                 let mut shell = test_shell();
                 let program = parse_test("f() { return 6; VALUE=bad; }; f").expect("parse");
@@ -638,14 +632,9 @@ mod tests {
     #[allow(clippy::disallowed_methods)]
     fn for_readonly_variable_error() {
         run_trace(
-            vec![t(
-                "write",
-                vec![
-                    ArgMatcher::Fd(sys::STDERR_FILENO),
-                    ArgMatcher::Bytes(b"meiksh: line 1: item: readonly variable\n".to_vec()),
-                ],
-                TraceResult::Auto,
-            )],
+            trace_entries![
+                write(fd(sys::STDERR_FILENO), bytes(b"meiksh: line 1: item: readonly variable\n")) -> auto,
+            ],
             || {
                 let mut shell = test_shell();
                 shell.readonly.insert(b"item".to_vec());

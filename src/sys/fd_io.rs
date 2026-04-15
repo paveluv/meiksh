@@ -118,12 +118,9 @@ impl FdReader {
 
 #[cfg(test)]
 mod tests {
-    use libc::{c_char, c_int, c_long, mode_t};
-    use std::collections::HashMap;
-    use std::ffi::CString;
+    use libc::c_int;
 
     use crate::sys::test_support;
-    use crate::sys::types::ClockTicks;
 
     use super::*;
     use crate::sys::*;
@@ -259,33 +256,14 @@ mod tests {
 
     #[test]
     fn ensure_blocking_read_fd_clears_nonblocking_for_tty() {
-        use test_support::{ArgMatcher, TraceResult, run_trace, t};
+        use crate::trace_entries;
+        use test_support::run_trace;
 
         run_trace(
-            vec![
-                t(
-                    "isatty",
-                    vec![ArgMatcher::Fd(STDIN_FILENO)],
-                    TraceResult::Int(1),
-                ),
-                t(
-                    "fcntl",
-                    vec![
-                        ArgMatcher::Fd(STDIN_FILENO),
-                        ArgMatcher::Int(F_GETFL as i64),
-                        ArgMatcher::Int(0),
-                    ],
-                    TraceResult::Int((O_NONBLOCK | 0o2) as i64),
-                ),
-                t(
-                    "fcntl",
-                    vec![
-                        ArgMatcher::Fd(STDIN_FILENO),
-                        ArgMatcher::Int(F_SETFL as i64),
-                        ArgMatcher::Int(0o2),
-                    ],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                isatty(fd(STDIN_FILENO)) -> int(1),
+                fcntl(fd(STDIN_FILENO), int(F_GETFL), int(0)) -> int((O_NONBLOCK | 0o2)),
+                fcntl(fd(STDIN_FILENO), int(F_SETFL), int(0o2)) -> int(0),
             ],
             || {
                 ensure_blocking_read_fd(STDIN_FILENO).expect("tty blocking");
@@ -295,34 +273,15 @@ mod tests {
 
     #[test]
     fn ensure_blocking_read_fd_clears_nonblocking_for_fifo() {
-        use test_support::{ArgMatcher, TraceResult, run_trace, t};
+        use crate::trace_entries;
+        use test_support::run_trace;
 
         run_trace(
-            vec![
-                t("isatty", vec![ArgMatcher::Fd(42)], TraceResult::Int(0)),
-                t(
-                    "fstat",
-                    vec![ArgMatcher::Fd(42), ArgMatcher::Any],
-                    TraceResult::StatFifo,
-                ),
-                t(
-                    "fcntl",
-                    vec![
-                        ArgMatcher::Fd(42),
-                        ArgMatcher::Int(F_GETFL as i64),
-                        ArgMatcher::Int(0),
-                    ],
-                    TraceResult::Int((O_NONBLOCK | 0o2) as i64),
-                ),
-                t(
-                    "fcntl",
-                    vec![
-                        ArgMatcher::Fd(42),
-                        ArgMatcher::Int(F_SETFL as i64),
-                        ArgMatcher::Int(0o2),
-                    ],
-                    TraceResult::Int(0),
-                ),
+            trace_entries![
+                isatty(fd(42)) -> int(0),
+                fstat(fd(42), _) -> stat_fifo,
+                fcntl(fd(42), int(F_GETFL), int(0)) -> int((O_NONBLOCK | 0o2)),
+                fcntl(fd(42), int(F_SETFL), int(0o2)) -> int(0),
             ],
             || {
                 ensure_blocking_read_fd(42).expect("fifo blocking");
@@ -332,24 +291,13 @@ mod tests {
 
     #[test]
     fn ensure_blocking_read_fd_surfaces_fcntl_errors() {
-        use test_support::{ArgMatcher, TraceResult, run_trace, t};
+        use crate::trace_entries;
+        use test_support::run_trace;
 
         run_trace(
-            vec![
-                t(
-                    "isatty",
-                    vec![ArgMatcher::Fd(STDIN_FILENO)],
-                    TraceResult::Int(1),
-                ),
-                t(
-                    "fcntl",
-                    vec![
-                        ArgMatcher::Fd(STDIN_FILENO),
-                        ArgMatcher::Int(F_GETFL as i64),
-                        ArgMatcher::Int(0),
-                    ],
-                    TraceResult::Err(libc::EIO),
-                ),
+            trace_entries![
+                isatty(fd(STDIN_FILENO)) -> int(1),
+                fcntl(fd(STDIN_FILENO), int(F_GETFL), int(0)) -> err(libc::EIO),
             ],
             || {
                 assert!(ensure_blocking_read_fd(STDIN_FILENO).is_err());
@@ -359,15 +307,13 @@ mod tests {
 
     #[test]
     fn fifo_like_fd_fstat_error() {
-        use test_support::{ArgMatcher, TraceResult, run_trace, t};
+        use crate::trace_entries;
+        use test_support::run_trace;
+
         run_trace(
-            vec![
-                t("isatty", vec![ArgMatcher::Fd(99)], TraceResult::Int(0)),
-                t(
-                    "fstat",
-                    vec![ArgMatcher::Fd(99), ArgMatcher::Any],
-                    TraceResult::Err(libc::EBADF),
-                ),
+            trace_entries![
+                isatty(fd(99)) -> int(0),
+                fstat(fd(99), _) -> err(libc::EBADF),
             ],
             || {
                 ensure_blocking_read_fd(99).expect("regular fd no-op");

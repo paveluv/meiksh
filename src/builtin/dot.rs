@@ -35,24 +35,14 @@ pub(super) fn resolve_dot_path(shell: &Shell, path: &[u8]) -> Result<Vec<u8>, ()
 #[cfg(test)]
 mod tests {
     use crate::builtin::test_support::*;
+    use crate::trace_entries;
 
     #[test]
     fn dot_with_slash_path_not_regular_file() {
         run_trace(
-            vec![
-                t(
-                    "stat",
-                    vec![ArgMatcher::Str(b"./somedir".to_vec()), ArgMatcher::Any],
-                    TraceResult::StatDir,
-                ),
-                t(
-                    "write",
-                    vec![
-                        ArgMatcher::Fd(2),
-                        ArgMatcher::Bytes(b"meiksh: .: ./somedir: not found\n".to_vec()),
-                    ],
-                    TraceResult::Auto,
-                ),
+            trace_entries![
+                stat(str(b"./somedir"), any) -> stat_dir,
+                write(fd(2), bytes(b"meiksh: .: ./somedir: not found\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
