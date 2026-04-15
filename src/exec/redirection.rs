@@ -1038,4 +1038,27 @@ mod tests {
             },
         );
     }
+
+    #[test]
+    fn prepare_redirections_read_open_error() {
+        run_trace(
+            trace_entries![
+                open(str("/no/such/file"), _, _) -> err(libc::ENOENT),
+            ],
+            || {
+                let err = prepare_redirections(
+                    &[ExpandedRedirection {
+                        fd: 0,
+                        kind: RedirectionKind::Read,
+                        target: b"/no/such/file".to_vec(),
+                        here_doc_body: None,
+                        line: 0,
+                    }],
+                    false,
+                )
+                .expect_err("read open should fail");
+                assert_eq!(err.errno(), Some(libc::ENOENT));
+            },
+        );
+    }
 }

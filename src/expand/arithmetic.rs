@@ -1320,4 +1320,19 @@ mod tests {
         let result = expand_arithmetic_expression(&mut ctx, b"1\n+\n2").expect("newline arith");
         assert_eq!(result, b"1\n+\n2");
     }
+
+    #[test]
+    fn arith_invalid_variable_value_error() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert(b"bad".to_vec(), b"notanumber".to_vec());
+        let err = expand_word(
+            &mut ctx,
+            &Word {
+                raw: b"$((bad + 1))".as_ref().into(),
+                line: 0,
+            },
+        )
+        .unwrap_err();
+        assert!(err.message.windows(7).any(|w| w == b"invalid"));
+    }
 }
