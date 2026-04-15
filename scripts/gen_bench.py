@@ -13,20 +13,25 @@ Usage:
 
 import textwrap
 
-# Tunable iteration counts -- adjust to hit ~20-30s on the *slowest* shell
-# under test.  Fork-heavy sections (functions, subshells) dominate wall-time
-# on every shell, so keep those modest and let the in-process sections
-# (arithmetic, expansion, splitting, traps) carry meaningful weight.
-ARITH_ITERS = 500
-EXPAND_ITERS = 350
-FUNC_ITERS = 150
-SPLIT_ITERS = 400
-SUBSHELL_ITERS = 50
-IO_ITERS = 200
-TRAP_ITERS = 600
+# Tunable iteration counts -- calibrated so each of the 10 sections takes
+# approximately 6 seconds on the release build of meiksh, for a total
+# benchmark runtime of ~60 seconds.
+ARITH_ITERS = 196_300
+EXPAND_ITERS = 135_600
+FUNC_ITERS = 6_400
+SPLIT_ITERS = 271_400
+GLOB_FILES = 500
+GLOB_ITERS = 2_800
+SUBSHELL_ITERS = 300
+IO_WRITE_ITERS = 1_000
+IO_HEREDOC_ITERS = 2_500
+IO_FD_ITERS = 2_500
+TRAP_ITERS = 307_000
 PARSE_DEPTH = 200
 CASE_ARMS = 300
 PIPELINE_CHAINS = 150
+PARSE_REPEATS = 2_600
+COMBINED_ITERS = 188_400
 
 
 def emit_header():
@@ -205,14 +210,14 @@ def emit_globbing():
         f'  gdir="$BENCH_DIR/globtest"',
         f'  mkdir -p "$gdir"',
         f"  j=0",
-        f"  while [ $j -lt 500 ]; do",
+        f"  while [ $j -lt {GLOB_FILES} ]; do",
         f'    : > "$gdir/file_${{j}}.txt"',
         f'    : > "$gdir/data_${{j}}.dat"',
         f'    : > "$gdir/log_${{j}}.log"',
         f"    j=$(( j + 1 ))",
         f"  done",
         f"  i=0",
-        f"  while [ $i -lt 200 ]; do",
+        f"  while [ $i -lt {GLOB_ITERS} ]; do",
         f'    set -- "$gdir"/*.txt',
         f"    c1=$#",
         f'    set -- "$gdir"/*.dat',
@@ -255,7 +260,7 @@ def emit_io():
         f'  iofile="$BENCH_DIR/iotest.txt"',
         f'  : > "$iofile"',
         f"  i=0",
-        f"  while [ $i -lt {IO_ITERS} ]; do",
+        f"  while [ $i -lt {IO_WRITE_ITERS} ]; do",
         f'    echo "line_$i alpha bravo charlie delta echo foxtrot golf hotel" >> "$iofile"',
         f"    i=$(( i + 1 ))",
         f"  done",
@@ -266,7 +271,7 @@ def emit_io():
         f"",
         f'  outfile="$BENCH_DIR/ioout.txt"',
         f"  i=0",
-        f"  while [ $i -lt 500 ]; do",
+        f"  while [ $i -lt {IO_HEREDOC_ITERS} ]; do",
     ]
     # Here-document stress
     lines += [
@@ -282,7 +287,7 @@ def emit_io():
     lines += [
         f'  fdfile="$BENCH_DIR/fdtest.txt"',
         f"  i=0",
-        f"  while [ $i -lt 500 ]; do",
+        f"  while [ $i -lt {IO_FD_ITERS} ]; do",
         f'    echo "fd_line_$i" 3>"$fdfile" >&3',
         f"    i=$(( i + 1 ))",
         f"  done",
@@ -312,7 +317,7 @@ def emit_traps():
 
 def emit_deep_parse():
     """Generate deeply nested control structures that stress the parser."""
-    lines = [f"bench_parse() {{"]
+    lines = [f"_bench_parse_once() {{"]
     lines.append("  x=1")
 
     # Nested if/else chain
@@ -345,6 +350,14 @@ def emit_deep_parse():
     lines.append('  : "$r"')
 
     lines.append("}")
+    lines.append("")
+    lines.append("bench_parse() {")
+    lines.append("  _i=0")
+    lines.append(f"  while [ $_i -lt {PARSE_REPEATS} ]; do")
+    lines.append("    _bench_parse_once")
+    lines.append("    _i=$(( _i + 1 ))")
+    lines.append("  done")
+    lines.append("}")
     return "\n".join(lines)
 
 
@@ -354,7 +367,7 @@ def emit_combined_stress():
         "bench_combined() {",
         "  template='hello-world-this-is-a-benchmark-template-string'",
         "  i=0",
-        "  while [ $i -lt 300 ]; do",
+        f"  while [ $i -lt {COMBINED_ITERS} ]; do",
         "    a=${template#*-}",
         "    b=${template%-*}",
         "    c=$(( i * 31 + ${#template} ))",
