@@ -1,11 +1,11 @@
 use std::borrow::Cow;
 
 #[derive(Debug)]
-pub struct ExpandError {
-    pub message: Box<[u8]>,
+pub(crate) struct ExpandError {
+    pub(crate) message: Box<[u8]>,
 }
 
-pub trait Context {
+pub(crate) trait Context {
     fn env_var(&self, name: &[u8]) -> Option<Cow<'_, [u8]>>;
     fn special_param(&self, name: u8) -> Option<Cow<'_, [u8]>>;
     fn positional_param(&self, index: usize) -> Option<Cow<'_, [u8]>>;

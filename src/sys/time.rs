@@ -3,17 +3,17 @@ use super::error::SysResult;
 use super::interface::{last_error, sys_interface};
 use super::types::{ClockTicks, FileModeMask, ProcessTimes};
 
-pub fn current_umask() -> FileModeMask {
+pub(crate) fn current_umask() -> FileModeMask {
     let mask = (sys_interface().umask)(0);
     (sys_interface().umask)(mask);
     mask & 0o777
 }
 
-pub fn set_umask(mask: FileModeMask) -> FileModeMask {
+pub(crate) fn set_umask(mask: FileModeMask) -> FileModeMask {
     (sys_interface().umask)(mask & 0o777) & 0o777
 }
 
-pub fn process_times() -> SysResult<ProcessTimes> {
+pub(crate) fn process_times() -> SysResult<ProcessTimes> {
     let mut raw = std::mem::MaybeUninit::<libc::tms>::zeroed();
     let result = (sys_interface().times)(raw.as_mut_ptr());
     if result == ClockTicks::MAX {
@@ -28,11 +28,11 @@ pub fn process_times() -> SysResult<ProcessTimes> {
     })
 }
 
-pub fn monotonic_clock_ns() -> u64 {
+pub(crate) fn monotonic_clock_ns() -> u64 {
     (sys_interface().monotonic_clock_ns)()
 }
 
-pub fn clock_ticks_per_second() -> SysResult<u64> {
+pub(crate) fn clock_ticks_per_second() -> SysResult<u64> {
     let result = (sys_interface().sysconf)(SC_CLK_TCK);
     if result > 0 {
         Ok(result as u64)
@@ -43,15 +43,16 @@ pub fn clock_ticks_per_second() -> SysResult<u64> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use libc::{c_int, c_long};
 
     use crate::sys::test_support;
     use crate::sys::types::ClockTicks;
     use crate::trace_entries;
 
-    use super::*;
     use super::super::interface::{SystemInterface, default_interface};
-    use crate::sys::*;
+    use super::super::types::{FileModeMask, ProcessTimes};
+    use crate::sys::process::{getrlimit, setrlimit};
 
     #[test]
     fn success_umask_times_sysconf() {

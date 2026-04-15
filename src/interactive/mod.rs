@@ -1,4 +1,5 @@
-use crate::shell::{Shell, ShellError};
+use crate::shell::error::ShellError;
+use crate::shell::state::Shell;
 use crate::sys;
 
 mod env_file;
@@ -6,25 +7,19 @@ mod history;
 mod mail;
 mod prompt;
 mod repl;
-pub(crate) mod vi_editing;
-
-pub(crate) use mail::{check_mail, command_is_fc};
-pub(crate) use vi_editing as vi;
-
-use history::append_history;
-use prompt::{expand_prompt, read_line, write_prompt};
-use repl::run_loop;
+mod vi_editing;
 
 fn remove_file_bytes(path: &[u8]) {
-    let _ = sys::unlink(path);
+    let _ = sys::fs::unlink(path);
 }
 
-pub fn run(shell: &mut Shell) -> Result<i32, ShellError> {
-    sys::ensure_blocking_read_fd(sys::STDIN_FILENO).map_err(|e| shell.diagnostic_syserr(1, &e))?;
-    run_loop(shell)
+pub(crate) fn run(shell: &mut Shell) -> Result<i32, ShellError> {
+    sys::fd_io::ensure_blocking_read_fd(sys::constants::STDIN_FILENO)
+        .map_err(|e| shell.diagnostic_syserr(1, &e))?;
+    repl::run_loop(shell)
 }
 
-pub fn load_env_file(shell: &mut Shell) -> Result<(), ShellError> {
+pub(crate) fn load_env_file(shell: &mut Shell) -> Result<(), ShellError> {
     env_file::load_env_file(shell)
 }
 #[cfg(test)]
@@ -34,13 +29,11 @@ pub fn load_env_file(shell: &mut Shell) -> Result<(), ShellError> {
     clippy::disallowed_methods
 )]
 pub(super) mod test_support {
-    use super::*;
-    use crate::shell::ShellOptions;
+    use crate::shell::options::ShellOptions;
+    use crate::shell::state::Shell;
+    use crate::sys;
+    use crate::sys::test_support::{ArgMatcher, TraceEntry, TraceResult, t};
     use std::collections::{BTreeMap, BTreeSet, HashMap};
-
-    pub(crate) use crate::sys::test_support::{
-        ArgMatcher, TraceEntry, TraceResult, assert_no_syscalls, run_trace, t,
-    };
 
     pub(crate) fn read_line_trace(input: &[u8]) -> Vec<TraceEntry> {
         input
@@ -48,7 +41,10 @@ pub(super) mod test_support {
             .map(|&b| {
                 t(
                     "read",
-                    vec![ArgMatcher::Fd(sys::STDIN_FILENO), ArgMatcher::Any],
+                    vec![
+                        ArgMatcher::Fd(sys::constants::STDIN_FILENO),
+                        ArgMatcher::Any,
+                    ],
                     TraceResult::Bytes(vec![b]),
                 )
             })

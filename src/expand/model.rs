@@ -179,22 +179,17 @@ pub(super) fn is_glob_byte(b: u8) -> bool {
 }
 
 #[cfg(test)]
-#[allow(unused_imports)]
 mod tests {
-    use std::borrow::Cow;
-
     use super::*;
     use crate::arena::ByteArena;
-    use crate::bstr;
-    use crate::expand::arithmetic::*;
-    use crate::expand::core::{Context, ExpandError};
-    use crate::expand::glob::*;
-    use crate::expand::model::*;
-    use crate::expand::parameter::*;
-    use crate::expand::pathname::*;
-    use crate::expand::test_support::*;
-    use crate::expand::word::*;
-    use crate::syntax::Word;
+    use crate::expand::glob::{match_bracket, pattern_matches};
+    use crate::expand::pathname::{expand_path_segments, expand_pathname};
+    use crate::expand::test_support::FakeContext;
+    use crate::expand::word::{
+        expand_here_document, expand_redirect_word, expand_word, flatten_expansion,
+    };
+    use crate::syntax::ast::Word;
+    use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;
 
     #[test]
@@ -243,7 +238,7 @@ mod tests {
     #[test]
     fn field_and_pattern_helpers_cover_corner_cases() {
         run_trace(
-            trace_entries![opendir(_) -> err(crate::sys::ENOENT)],
+            trace_entries![opendir(_) -> err(crate::sys::constants::ENOENT)],
             || {
                 let segs = vec![Segment::Text(b"*.txt".to_vec(), QuoteState::Expanded)];
                 assert_eq!(

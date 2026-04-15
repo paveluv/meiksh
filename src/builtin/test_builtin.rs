@@ -1,4 +1,9 @@
-use super::*;
+use super::BuiltinOutcome;
+use crate::bstr;
+use crate::bstr::ByteWriter;
+use crate::shell::error::ShellError;
+use crate::shell::state::Shell;
+use crate::sys;
 
 pub(super) fn test_builtin(shell: &Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, ShellError> {
     let is_bracket = argv[0] == b"[";
@@ -80,29 +85,33 @@ pub(super) fn test_unary(_shell: &Shell, op: &[u8], operand: &[u8]) -> TestResul
     match op {
         b"-n" => Ok(!operand.is_empty()),
         b"-z" => Ok(operand.is_empty()),
-        b"-b" => Ok(sys::stat_path(operand)
+        b"-b" => Ok(sys::fs::stat_path(operand)
             .map(|s| s.is_block_special())
             .unwrap_or(false)),
-        b"-c" => Ok(sys::stat_path(operand)
+        b"-c" => Ok(sys::fs::stat_path(operand)
             .map(|s| s.is_char_special())
             .unwrap_or(false)),
-        b"-d" => Ok(sys::stat_path(operand).map(|s| s.is_dir()).unwrap_or(false)),
-        b"-e" => Ok(sys::stat_path(operand).is_ok()),
-        b"-f" => Ok(sys::stat_path(operand)
+        b"-d" => Ok(sys::fs::stat_path(operand)
+            .map(|s| s.is_dir())
+            .unwrap_or(false)),
+        b"-e" => Ok(sys::fs::stat_path(operand).is_ok()),
+        b"-f" => Ok(sys::fs::stat_path(operand)
             .map(|s| s.is_regular_file())
             .unwrap_or(false)),
-        b"-g" => Ok(sys::stat_path(operand)
+        b"-g" => Ok(sys::fs::stat_path(operand)
             .map(|s| s.is_setgid())
             .unwrap_or(false)),
-        b"-h" | b"-L" => Ok(sys::lstat_path(operand)
+        b"-h" | b"-L" => Ok(sys::fs::lstat_path(operand)
             .map(|s| s.is_symlink())
             .unwrap_or(false)),
-        b"-p" => Ok(sys::stat_path(operand)
+        b"-p" => Ok(sys::fs::stat_path(operand)
             .map(|s| s.is_fifo())
             .unwrap_or(false)),
-        b"-r" => Ok(sys::access_path(operand, libc::R_OK).is_ok()),
-        b"-s" => Ok(sys::stat_path(operand).map(|s| s.size > 0).unwrap_or(false)),
-        b"-S" => Ok(sys::stat_path(operand)
+        b"-r" => Ok(sys::fs::access_path(operand, libc::R_OK).is_ok()),
+        b"-s" => Ok(sys::fs::stat_path(operand)
+            .map(|s| s.size > 0)
+            .unwrap_or(false)),
+        b"-S" => Ok(sys::fs::stat_path(operand)
             .map(|s| s.is_socket())
             .unwrap_or(false)),
         b"-t" => {
@@ -119,13 +128,13 @@ pub(super) fn test_unary(_shell: &Shell, op: &[u8], operand: &[u8]) -> TestResul
                     msg.extend_from_slice(b": not a valid fd");
                     msg
                 })?;
-            Ok(sys::isatty_fd(fd))
+            Ok(sys::tty::isatty_fd(fd))
         }
-        b"-u" => Ok(sys::stat_path(operand)
+        b"-u" => Ok(sys::fs::stat_path(operand)
             .map(|s| s.is_setuid())
             .unwrap_or(false)),
-        b"-w" => Ok(sys::access_path(operand, libc::W_OK).is_ok()),
-        b"-x" => Ok(sys::access_path(operand, libc::X_OK).is_ok()),
+        b"-w" => Ok(sys::fs::access_path(operand, libc::W_OK).is_ok()),
+        b"-x" => Ok(sys::fs::access_path(operand, libc::X_OK).is_ok()),
         _ => {
             let mut msg = b"unknown unary operator: ".to_vec();
             msg.extend_from_slice(op);
@@ -169,15 +178,15 @@ pub(super) fn test_integer_binary(left: &[u8], op: &[u8], right: &[u8]) -> Optio
 pub(super) fn test_file_binary(left: &[u8], op: &[u8], right: &[u8]) -> Option<TestResult> {
     match op {
         b"-ef" => {
-            let a = sys::stat_path(left).ok();
-            let b = sys::stat_path(right).ok();
+            let a = sys::fs::stat_path(left).ok();
+            let b = sys::fs::stat_path(right).ok();
             Some(Ok(a.is_some()
                 && b.is_some()
                 && a.as_ref().unwrap().same_file(b.as_ref().unwrap())))
         }
         b"-nt" => {
-            let a = sys::stat_path(left).ok();
-            let b = sys::stat_path(right).ok();
+            let a = sys::fs::stat_path(left).ok();
+            let b = sys::fs::stat_path(right).ok();
             Some(Ok(match (a, b) {
                 (Some(a), Some(b)) => a.newer_than(&b),
                 (Some(_), None) => true,
@@ -185,8 +194,8 @@ pub(super) fn test_file_binary(left: &[u8], op: &[u8], right: &[u8]) -> Option<T
             }))
         }
         b"-ot" => {
-            let a = sys::stat_path(left).ok();
-            let b = sys::stat_path(right).ok();
+            let a = sys::fs::stat_path(left).ok();
+            let b = sys::fs::stat_path(right).ok();
             Some(Ok(match (a, b) {
                 (Some(a), Some(b)) => b.newer_than(&a),
                 (None, Some(_)) => true,
@@ -204,7 +213,8 @@ pub(super) fn test_file_binary(left: &[u8], op: &[u8], right: &[u8]) -> Option<T
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builtin::test_support::*;
+    use crate::builtin::test_support::{diag, invoke, test_shell};
+    use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;
 
     #[test]
@@ -364,7 +374,7 @@ mod tests {
     fn test_bracket_missing_closing() {
         let msg = diag(b"[: missing ']'");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome =
@@ -405,7 +415,7 @@ mod tests {
     fn test_four_args_invalid() {
         let msg = diag(b"test: unknown operator: b");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(
@@ -427,7 +437,7 @@ mod tests {
     fn test_five_args_too_many() {
         let msg = diag(b"test: too many arguments");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(
@@ -450,7 +460,7 @@ mod tests {
     fn test_unknown_operator_error() {
         let msg = diag(b"test: unknown operator: -zz");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(
@@ -627,7 +637,7 @@ mod tests {
     fn test_unary_tty_invalid_fd() {
         let msg = diag(b"test: abc: not a valid fd");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(
@@ -730,7 +740,7 @@ mod tests {
     fn test_six_args_too_many() {
         let msg = diag(b"test: too many arguments");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(
@@ -838,7 +848,7 @@ mod tests {
     fn test_unary_tty_negative_fd() {
         let msg = diag(b"test: -1: not a valid fd");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(

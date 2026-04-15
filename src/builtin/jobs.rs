@@ -1,4 +1,8 @@
-use super::*;
+use super::{BuiltinOutcome, diag_status, parse_usize, write_stdout_line};
+use crate::bstr::{self, ByteWriter};
+use crate::shell::error::ShellError;
+use crate::shell::state::Shell;
+use crate::sys;
 
 pub(super) fn jobs(shell: &mut Shell, argv: &[Vec<u8>]) -> BuiltinOutcome {
     let (mode, index) = match parse_jobs_options(argv) {
@@ -21,7 +25,7 @@ pub(super) fn jobs(shell: &mut Shell, argv: &[Vec<u8>]) -> BuiltinOutcome {
             }
             let marker = job_current_marker(*id, current_id, previous_id);
             match state {
-                crate::shell::ReapedJobState::Done(status, cmd) => {
+                crate::shell::jobs::ReapedJobState::Done(status, cmd) => {
                     let state_bytes = if *status == 0 {
                         b"Done".to_vec()
                     } else {
@@ -43,20 +47,20 @@ pub(super) fn jobs(shell: &mut Shell, argv: &[Vec<u8>]) -> BuiltinOutcome {
                         .finish();
                     write_stdout_line(&line);
                 }
-                crate::shell::ReapedJobState::Signaled(sig, cmd) => {
+                crate::shell::jobs::ReapedJobState::Signaled(sig, cmd) => {
                     let line = ByteWriter::new()
                         .byte(b'[')
                         .usize_val(*id)
                         .bytes(b"] ")
                         .byte(marker)
                         .bytes(b" Terminated (")
-                        .bytes(sys::signal_name(*sig))
+                        .bytes(sys::process::signal_name(*sig))
                         .bytes(b")\t")
                         .bytes(cmd)
                         .finish();
                     write_stdout_line(&line);
                 }
-                crate::shell::ReapedJobState::Stopped(..) => {}
+                crate::shell::jobs::ReapedJobState::Stopped(..) => {}
             }
         }
     }
@@ -118,18 +122,18 @@ pub(super) fn job_current_marker(id: usize, current: Option<usize>, previous: Op
     }
 }
 
-pub(super) fn format_job_state(job: &crate::shell::Job) -> (Vec<u8>, Vec<u8>) {
+pub(super) fn format_job_state(job: &crate::shell::jobs::Job) -> (Vec<u8>, Vec<u8>) {
     let pid_str = job_display_pid(job)
         .map(|p| bstr::i64_to_bytes(p as i64))
         .unwrap_or_default();
     let state = match job.state {
-        crate::shell::JobState::Running => b"Running".to_vec(),
-        crate::shell::JobState::Stopped(sig) => ByteWriter::new()
+        crate::shell::jobs::JobState::Running => b"Running".to_vec(),
+        crate::shell::jobs::JobState::Stopped(sig) => ByteWriter::new()
             .bytes(b"Stopped (")
-            .bytes(sys::signal_name(sig))
+            .bytes(sys::process::signal_name(sig))
             .byte(b')')
             .finish(),
-        crate::shell::JobState::Done(status) => {
+        crate::shell::jobs::JobState::Done(status) => {
             if status == 0 {
                 b"Done".to_vec()
             } else {
@@ -197,7 +201,7 @@ pub(super) fn parse_jobs_operands(
     Ok(Some(ids))
 }
 
-pub(super) fn job_display_pid(job: &crate::shell::Job) -> Option<sys::Pid> {
+pub(super) fn job_display_pid(job: &crate::shell::jobs::Job) -> Option<sys::types::Pid> {
     job.pgid
         .or_else(|| job.children.first().map(|child| child.pid))
         .or_else(|| job.last_pid)
@@ -228,7 +232,7 @@ pub(super) fn bg(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, 
                 .jobs
                 .iter()
                 .rev()
-                .find(|j| matches!(j.state, crate::shell::JobState::Stopped(_)))
+                .find(|j| matches!(j.state, crate::shell::jobs::JobState::Stopped(_)))
                 .map(|j| j.id)
         })
         .ok_or_else(|| shell.diagnostic(1, b"bg: no current job"))?;
@@ -266,7 +270,7 @@ pub(super) fn wait(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome
 #[derive(Clone, Copy)]
 pub(super) enum WaitOperand {
     Job(usize),
-    Pid(sys::Pid),
+    Pid(sys::types::Pid),
 }
 
 pub(super) fn resolve_job_id(shell: &Shell, operand: Option<&[u8]>) -> Option<usize> {
@@ -306,7 +310,7 @@ pub(super) fn parse_wait_operand(operand: &[u8], shell: &Shell) -> Result<WaitOp
             });
     }
     bstr::parse_i64(operand)
-        .map(|v| WaitOperand::Pid(v as sys::Pid))
+        .map(|v| WaitOperand::Pid(v as sys::types::Pid))
         .ok_or_else(|| {
             ByteWriter::new()
                 .bytes(b"wait: invalid process id: ")
@@ -318,11 +322,13 @@ pub(super) fn parse_wait_operand(operand: &[u8], shell: &Shell) -> Result<WaitOp
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builtin::test_support::*;
+    use crate::builtin::test_support::{diag, invoke, test_shell};
+    use crate::sys;
+    use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;
 
-    fn fake_handle(pid: sys::Pid) -> sys::ChildHandle {
-        sys::ChildHandle {
+    fn fake_handle(pid: sys::types::Pid) -> sys::types::ChildHandle {
+        sys::types::ChildHandle {
             pid,
             stdout_fd: None,
         }
@@ -332,19 +338,19 @@ mod tests {
     fn jobs_stopped_job_output() {
         run_trace(
             trace_entries![write(
-                fd(crate::sys::STDOUT_FILENO),
+                fd(crate::sys::constants::STDOUT_FILENO),
                 bytes(b"[1] + Stopped (SIGTSTP) vim\n"),
             ) -> auto,],
             || {
                 let mut shell = test_shell();
-                shell.jobs.push(crate::shell::Job {
+                shell.jobs.push(crate::shell::jobs::Job {
                     id: 1,
                     command: b"vim"[..].into(),
                     pgid: Some(111),
                     last_pid: Some(111),
                     last_status: None,
                     children: vec![],
-                    state: crate::shell::JobState::Stopped(sys::SIGTSTP),
+                    state: crate::shell::jobs::JobState::Stopped(sys::constants::SIGTSTP),
                     saved_termios: None,
                 });
                 invoke(&mut shell, &[b"jobs".to_vec()]).expect("jobs");
@@ -356,7 +362,7 @@ mod tests {
     fn jobs_invalid_option_error() {
         run_trace(
             trace_entries![write(
-                fd(crate::sys::STDERR_FILENO),
+                fd(crate::sys::constants::STDERR_FILENO),
                 bytes(b"meiksh: jobs: invalid option: -z\n"),
             ) -> auto,],
             || {
@@ -371,41 +377,41 @@ mod tests {
     #[test]
     fn format_job_state_coverage() {
         assert_no_syscalls(|| {
-            let running_job = crate::shell::Job {
+            let running_job = crate::shell::jobs::Job {
                 id: 1,
                 command: b"cmd"[..].into(),
                 pgid: Some(999),
                 last_pid: Some(999),
                 last_status: None,
                 children: vec![],
-                state: crate::shell::JobState::Running,
+                state: crate::shell::jobs::JobState::Running,
                 saved_termios: None,
             };
             let (state, pid) = format_job_state(&running_job);
             assert_eq!(state, b"Running");
             assert_eq!(pid, b"999");
 
-            let done_job = crate::shell::Job {
+            let done_job = crate::shell::jobs::Job {
                 id: 2,
                 command: b"cmd"[..].into(),
                 pgid: Some(888),
                 last_pid: Some(888),
                 last_status: None,
                 children: vec![],
-                state: crate::shell::JobState::Done(0),
+                state: crate::shell::jobs::JobState::Done(0),
                 saved_termios: None,
             };
             let (state, _) = format_job_state(&done_job);
             assert_eq!(state, b"Done");
 
-            let done_fail = crate::shell::Job {
+            let done_fail = crate::shell::jobs::Job {
                 id: 3,
                 command: b"cmd"[..].into(),
                 pgid: Some(777),
                 last_pid: Some(777),
                 last_status: None,
                 children: vec![],
-                state: crate::shell::JobState::Done(42),
+                state: crate::shell::jobs::JobState::Done(42),
                 saved_termios: None,
             };
             let (state, _) = format_job_state(&done_fail);
@@ -439,7 +445,7 @@ mod tests {
     fn fg_no_job_control_error() {
         run_trace(
             trace_entries![write(
-                fd(crate::sys::STDERR_FILENO),
+                fd(crate::sys::constants::STDERR_FILENO),
                 bytes(b"meiksh: fg: no job control\n"),
             ) -> auto,],
             || {
@@ -454,7 +460,7 @@ mod tests {
     fn bg_no_job_control_error() {
         run_trace(
             trace_entries![write(
-                fd(crate::sys::STDERR_FILENO),
+                fd(crate::sys::constants::STDERR_FILENO),
                 bytes(b"meiksh: bg: no job control\n"),
             ) -> auto,],
             || {
@@ -469,7 +475,7 @@ mod tests {
     fn fg_no_current_job_error() {
         run_trace(
             trace_entries![write(
-                fd(crate::sys::STDERR_FILENO),
+                fd(crate::sys::constants::STDERR_FILENO),
                 bytes(b"meiksh: fg: no current job\n"),
             ) -> auto,],
             || {
@@ -484,7 +490,7 @@ mod tests {
     fn bg_no_current_job_error() {
         run_trace(
             trace_entries![write(
-                fd(crate::sys::STDERR_FILENO),
+                fd(crate::sys::constants::STDERR_FILENO),
                 bytes(b"meiksh: bg: no current job\n"),
             ) -> auto,],
             || {
@@ -499,7 +505,7 @@ mod tests {
     fn wait_invalid_job_id() {
         run_trace(
             trace_entries![write(
-                fd(crate::sys::STDERR_FILENO),
+                fd(crate::sys::constants::STDERR_FILENO),
                 bytes(b"meiksh: wait: invalid job id: %nosuch\n"),
             ) -> auto,],
             || {
@@ -515,7 +521,7 @@ mod tests {
     fn wait_invalid_pid() {
         run_trace(
             trace_entries![write(
-                fd(crate::sys::STDERR_FILENO),
+                fd(crate::sys::constants::STDERR_FILENO),
                 bytes(b"meiksh: wait: invalid process id: abc\n"),
             ) -> auto,],
             || {
@@ -548,24 +554,24 @@ mod tests {
     fn resolve_job_id_variants() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.jobs.push(crate::shell::Job {
+            shell.jobs.push(crate::shell::jobs::Job {
                 id: 1,
                 command: b"sleep"[..].into(),
                 pgid: Some(100),
                 last_pid: Some(100),
                 last_status: None,
                 children: vec![],
-                state: crate::shell::JobState::Running,
+                state: crate::shell::jobs::JobState::Running,
                 saved_termios: None,
             });
-            shell.jobs.push(crate::shell::Job {
+            shell.jobs.push(crate::shell::jobs::Job {
                 id: 2,
                 command: b"vim"[..].into(),
                 pgid: Some(200),
                 last_pid: Some(200),
                 last_status: None,
                 children: vec![],
-                state: crate::shell::JobState::Running,
+                state: crate::shell::jobs::JobState::Running,
                 saved_termios: None,
             });
 
@@ -601,7 +607,7 @@ mod tests {
     fn fg_no_job_control() {
         let msg = diag(b"fg: no job control");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(&mut shell, &[b"fg".to_vec()]).expect("fg");
@@ -614,7 +620,7 @@ mod tests {
     fn bg_no_job_control() {
         let msg = diag(b"bg: no job control");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(&mut shell, &[b"bg".to_vec()]).expect("bg");
@@ -628,18 +634,18 @@ mod tests {
         run_trace(
             trace_entries![
                 waitpid(1001, _) -> status(0),
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"[1]   Done\tsleep 10\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"[1]   Done\tsleep 10\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
-                shell.jobs.push(crate::shell::Job {
+                shell.jobs.push(crate::shell::jobs::Job {
                     id: 1,
                     command: b"sleep 10"[..].into(),
                     pgid: Some(1001),
                     last_pid: Some(1001),
                     last_status: None,
                     children: vec![fake_handle(1001)],
-                    state: crate::shell::JobState::Running,
+                    state: crate::shell::jobs::JobState::Running,
                     saved_termios: None,
                 });
                 let outcome = invoke(&mut shell, &[b"jobs".to_vec()]).expect("jobs");
@@ -653,18 +659,18 @@ mod tests {
         run_trace(
             trace_entries![
                 waitpid(1002, _) -> status(42),
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"[1]   Done(42)\texit 42\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"[1]   Done(42)\texit 42\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
-                shell.jobs.push(crate::shell::Job {
+                shell.jobs.push(crate::shell::jobs::Job {
                     id: 1,
                     command: b"exit 42"[..].into(),
                     pgid: Some(1002),
                     last_pid: Some(1002),
                     last_status: None,
                     children: vec![fake_handle(1002)],
-                    state: crate::shell::JobState::Running,
+                    state: crate::shell::jobs::JobState::Running,
                     saved_termios: None,
                 });
                 let outcome = invoke(&mut shell, &[b"jobs".to_vec()]).expect("jobs");
@@ -677,22 +683,22 @@ mod tests {
     fn jobs_reaped_signaled() {
         run_trace(
             trace_entries![
-                waitpid(1003, _) -> signaled_sig(sys::SIGTERM),
+                waitpid(1003, _) -> signaled_sig(sys::constants::SIGTERM),
                 write(
-                    fd(crate::sys::STDOUT_FILENO),
+                    fd(crate::sys::constants::STDOUT_FILENO),
                     bytes(b"[1]   Terminated (SIGTERM)\tkilled\n"),
                 ) -> auto,
             ],
             || {
                 let mut shell = test_shell();
-                shell.jobs.push(crate::shell::Job {
+                shell.jobs.push(crate::shell::jobs::Job {
                     id: 1,
                     command: b"killed"[..].into(),
                     pgid: Some(1003),
                     last_pid: Some(1003),
                     last_status: None,
                     children: vec![fake_handle(1003)],
-                    state: crate::shell::JobState::Running,
+                    state: crate::shell::jobs::JobState::Running,
                     saved_termios: None,
                 });
                 let outcome = invoke(&mut shell, &[b"jobs".to_vec()]).expect("jobs");
@@ -706,18 +712,18 @@ mod tests {
         run_trace(
             trace_entries![
                 waitpid(555, _) -> pid(0),
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"555\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"555\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
-                shell.jobs.push(crate::shell::Job {
+                shell.jobs.push(crate::shell::jobs::Job {
                     id: 1,
                     command: b"sleep 60"[..].into(),
                     pgid: Some(555),
                     last_pid: Some(555),
                     last_status: None,
                     children: vec![fake_handle(555)],
-                    state: crate::shell::JobState::Running,
+                    state: crate::shell::jobs::JobState::Running,
                     saved_termios: None,
                 });
                 let outcome =
@@ -733,20 +739,20 @@ mod tests {
             trace_entries![
                 waitpid(777, _) -> pid(0),
                 write(
-                    fd(crate::sys::STDOUT_FILENO),
+                    fd(crate::sys::constants::STDOUT_FILENO),
                     bytes(b"[1] + 777 Running sleep 99\n"),
                 ) -> auto,
             ],
             || {
                 let mut shell = test_shell();
-                shell.jobs.push(crate::shell::Job {
+                shell.jobs.push(crate::shell::jobs::Job {
                     id: 1,
                     command: b"sleep 99"[..].into(),
                     pgid: Some(777),
                     last_pid: Some(777),
                     last_status: None,
                     children: vec![fake_handle(777)],
-                    state: crate::shell::JobState::Running,
+                    state: crate::shell::jobs::JobState::Running,
                     saved_termios: None,
                 });
                 let outcome =
@@ -762,20 +768,20 @@ mod tests {
             trace_entries![
                 waitpid(777, _) -> pid(0),
                 write(
-                    fd(crate::sys::STDOUT_FILENO),
+                    fd(crate::sys::constants::STDOUT_FILENO),
                     bytes(b"[1] + Running sleep 99\n"),
                 ) -> auto,
             ],
             || {
                 let mut shell = test_shell();
-                shell.jobs.push(crate::shell::Job {
+                shell.jobs.push(crate::shell::jobs::Job {
                     id: 1,
                     command: b"sleep 99"[..].into(),
                     pgid: Some(777),
                     last_pid: Some(777),
                     last_status: None,
                     children: vec![fake_handle(777)],
-                    state: crate::shell::JobState::Running,
+                    state: crate::shell::jobs::JobState::Running,
                     saved_termios: None,
                 });
                 let outcome = invoke(&mut shell, &[b"jobs".to_vec()]).expect("jobs");
@@ -790,28 +796,28 @@ mod tests {
             trace_entries![
                 waitpid(2001, _) -> status(0),
                 waitpid(2002, _) -> status(0),
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"[2]   Done\techo b\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"[2]   Done\techo b\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
-                shell.jobs.push(crate::shell::Job {
+                shell.jobs.push(crate::shell::jobs::Job {
                     id: 1,
                     command: b"echo a"[..].into(),
                     pgid: Some(2001),
                     last_pid: Some(2001),
                     last_status: None,
                     children: vec![fake_handle(2001)],
-                    state: crate::shell::JobState::Running,
+                    state: crate::shell::jobs::JobState::Running,
                     saved_termios: None,
                 });
-                shell.jobs.push(crate::shell::Job {
+                shell.jobs.push(crate::shell::jobs::Job {
                     id: 2,
                     command: b"echo b"[..].into(),
                     pgid: Some(2002),
                     last_pid: Some(2002),
                     last_status: None,
                     children: vec![fake_handle(2002)],
-                    state: crate::shell::JobState::Running,
+                    state: crate::shell::jobs::JobState::Running,
                     saved_termios: None,
                 });
                 let outcome =
@@ -825,14 +831,14 @@ mod tests {
     fn parse_jobs_operands_valid_id() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.jobs.push(crate::shell::Job {
+            shell.jobs.push(crate::shell::jobs::Job {
                 id: 1,
                 command: b"sleep"[..].into(),
                 pgid: Some(100),
                 last_pid: Some(100),
                 last_status: None,
                 children: vec![],
-                state: crate::shell::JobState::Running,
+                state: crate::shell::jobs::JobState::Running,
                 saved_termios: None,
             });
             let result = parse_jobs_operands(&[b"%1".to_vec()], &shell);
@@ -854,14 +860,14 @@ mod tests {
     fn resolve_job_id_bare_operand_without_percent() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.jobs.push(crate::shell::Job {
+            shell.jobs.push(crate::shell::jobs::Job {
                 id: 3,
                 command: b"sleep"[..].into(),
                 pgid: Some(100),
                 last_pid: Some(100),
                 last_status: None,
                 children: vec![],
-                state: crate::shell::JobState::Running,
+                state: crate::shell::jobs::JobState::Running,
                 saved_termios: None,
             });
             assert_eq!(resolve_job_id(&shell, Some(b"3")), Some(3));
@@ -873,14 +879,14 @@ mod tests {
     fn resolve_job_id_substring_search() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.jobs.push(crate::shell::Job {
+            shell.jobs.push(crate::shell::jobs::Job {
                 id: 1,
                 command: b"sleep 999"[..].into(),
                 pgid: Some(100),
                 last_pid: Some(100),
                 last_status: None,
                 children: vec![],
-                state: crate::shell::JobState::Running,
+                state: crate::shell::jobs::JobState::Running,
                 saved_termios: None,
             });
             assert_eq!(resolve_job_id(&shell, Some(b"%?999")), Some(1));
@@ -892,21 +898,21 @@ mod tests {
     fn fg_with_valid_job() {
         run_trace(
             trace_entries![
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"sleep 10\n")) -> auto,
-                kill(int(-500), int(sys::SIGCONT)) -> 0,
-                waitpid(int(500), _, int(sys::WUNTRACED)) -> status(0),
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"sleep 10\n")) -> auto,
+                kill(int(-500), int(sys::constants::SIGCONT)) -> 0,
+                waitpid(int(500), _, int(sys::constants::WUNTRACED)) -> status(0),
             ],
             || {
                 let mut shell = test_shell();
                 shell.options.monitor = true;
-                shell.jobs.push(crate::shell::Job {
+                shell.jobs.push(crate::shell::jobs::Job {
                     id: 1,
                     command: b"sleep 10"[..].into(),
                     pgid: Some(500),
                     last_pid: Some(500),
                     last_status: None,
                     children: vec![fake_handle(500)],
-                    state: crate::shell::JobState::Stopped(sys::SIGTSTP),
+                    state: crate::shell::jobs::JobState::Stopped(sys::constants::SIGTSTP),
                     saved_termios: None,
                 });
                 let outcome = invoke(&mut shell, &[b"fg".to_vec(), b"%1".to_vec()]).expect("fg %1");
@@ -919,20 +925,20 @@ mod tests {
     fn bg_with_valid_job() {
         run_trace(
             trace_entries![
-                kill(int(-600), int(sys::SIGCONT)) -> 0,
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"[1] sleep 20\n")) -> auto,
+                kill(int(-600), int(sys::constants::SIGCONT)) -> 0,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"[1] sleep 20\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
                 shell.options.monitor = true;
-                shell.jobs.push(crate::shell::Job {
+                shell.jobs.push(crate::shell::jobs::Job {
                     id: 1,
                     command: b"sleep 20"[..].into(),
                     pgid: Some(600),
                     last_pid: Some(600),
                     last_status: None,
                     children: vec![fake_handle(600)],
-                    state: crate::shell::JobState::Stopped(sys::SIGTSTP),
+                    state: crate::shell::jobs::JobState::Stopped(sys::constants::SIGTSTP),
                     saved_termios: None,
                 });
                 let outcome = invoke(&mut shell, &[b"bg".to_vec(), b"%1".to_vec()]).expect("bg %1");
@@ -945,18 +951,18 @@ mod tests {
     fn wait_with_job_operand() {
         run_trace(
             trace_entries![
-                waitpid(int(700), _, int(sys::WUNTRACED)) -> status(5),
+                waitpid(int(700), _, int(sys::constants::WUNTRACED)) -> status(5),
             ],
             || {
                 let mut shell = test_shell();
-                shell.jobs.push(crate::shell::Job {
+                shell.jobs.push(crate::shell::jobs::Job {
                     id: 1,
                     command: b"exit 5"[..].into(),
                     pgid: Some(700),
                     last_pid: Some(700),
                     last_status: None,
                     children: vec![fake_handle(700)],
-                    state: crate::shell::JobState::Running,
+                    state: crate::shell::jobs::JobState::Running,
                     saved_termios: None,
                 });
                 let outcome =
@@ -969,50 +975,50 @@ mod tests {
     #[test]
     fn job_display_pid_fallbacks() {
         assert_no_syscalls(|| {
-            let job_with_pgid = crate::shell::Job {
+            let job_with_pgid = crate::shell::jobs::Job {
                 id: 1,
                 command: b"cmd"[..].into(),
                 pgid: Some(100),
                 last_pid: Some(200),
                 last_status: None,
                 children: vec![],
-                state: crate::shell::JobState::Running,
+                state: crate::shell::jobs::JobState::Running,
                 saved_termios: None,
             };
             assert_eq!(job_display_pid(&job_with_pgid), Some(100));
 
-            let job_with_children = crate::shell::Job {
+            let job_with_children = crate::shell::jobs::Job {
                 id: 2,
                 command: b"cmd"[..].into(),
                 pgid: None,
                 last_pid: Some(300),
                 last_status: None,
                 children: vec![fake_handle(250)],
-                state: crate::shell::JobState::Running,
+                state: crate::shell::jobs::JobState::Running,
                 saved_termios: None,
             };
             assert_eq!(job_display_pid(&job_with_children), Some(250));
 
-            let job_with_last_pid = crate::shell::Job {
+            let job_with_last_pid = crate::shell::jobs::Job {
                 id: 3,
                 command: b"cmd"[..].into(),
                 pgid: None,
                 last_pid: Some(400),
                 last_status: None,
                 children: vec![],
-                state: crate::shell::JobState::Running,
+                state: crate::shell::jobs::JobState::Running,
                 saved_termios: None,
             };
             assert_eq!(job_display_pid(&job_with_last_pid), Some(400));
 
-            let job_no_pid = crate::shell::Job {
+            let job_no_pid = crate::shell::jobs::Job {
                 id: 4,
                 command: b"cmd"[..].into(),
                 pgid: None,
                 last_pid: None,
                 last_status: None,
                 children: vec![],
-                state: crate::shell::JobState::Running,
+                state: crate::shell::jobs::JobState::Running,
                 saved_termios: None,
             };
             assert_eq!(job_display_pid(&job_no_pid), None);
@@ -1022,14 +1028,14 @@ mod tests {
     #[test]
     fn format_job_state_stopped() {
         assert_no_syscalls(|| {
-            let job = crate::shell::Job {
+            let job = crate::shell::jobs::Job {
                 id: 1,
                 command: b"vim"[..].into(),
                 pgid: Some(999),
                 last_pid: Some(999),
                 last_status: None,
                 children: vec![],
-                state: crate::shell::JobState::Stopped(sys::SIGTSTP),
+                state: crate::shell::jobs::JobState::Stopped(sys::constants::SIGTSTP),
                 saved_termios: None,
             };
             let (state, pid) = format_job_state(&job);
@@ -1044,28 +1050,28 @@ mod tests {
             trace_entries![
                 waitpid(3001, _) -> status(0),
                 waitpid(444, _) -> pid(0),
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"444\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"444\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
-                shell.jobs.push(crate::shell::Job {
+                shell.jobs.push(crate::shell::jobs::Job {
                     id: 1,
                     command: b"done"[..].into(),
                     pgid: Some(3001),
                     last_pid: Some(3001),
                     last_status: None,
                     children: vec![fake_handle(3001)],
-                    state: crate::shell::JobState::Running,
+                    state: crate::shell::jobs::JobState::Running,
                     saved_termios: None,
                 });
-                shell.jobs.push(crate::shell::Job {
+                shell.jobs.push(crate::shell::jobs::Job {
                     id: 2,
                     command: b"running"[..].into(),
                     pgid: Some(444),
                     last_pid: Some(444),
                     last_status: None,
                     children: vec![fake_handle(444)],
-                    state: crate::shell::JobState::Running,
+                    state: crate::shell::jobs::JobState::Running,
                     saved_termios: None,
                 });
                 let outcome =
@@ -1080,7 +1086,7 @@ mod tests {
         run_trace(
             trace_entries![
                 write(
-                    fd(crate::sys::STDERR_FILENO),
+                    fd(crate::sys::constants::STDERR_FILENO),
                     bytes(b"meiksh: jobs: invalid job id: %nosuch\n"),
                 ) -> auto,
             ],
@@ -1097,14 +1103,14 @@ mod tests {
     fn resolve_job_id_prefix_search() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.jobs.push(crate::shell::Job {
+            shell.jobs.push(crate::shell::jobs::Job {
                 id: 1,
                 command: b"sleep 10"[..].into(),
                 pgid: Some(100),
                 last_pid: Some(100),
                 last_status: None,
                 children: vec![],
-                state: crate::shell::JobState::Running,
+                state: crate::shell::jobs::JobState::Running,
                 saved_termios: None,
             });
             assert_eq!(resolve_job_id(&shell, Some(b"%sleep")), Some(1));
@@ -1116,23 +1122,23 @@ mod tests {
     fn jobs_reaped_stopped_is_silent() {
         run_trace(
             trace_entries![
-                waitpid(300, _) -> stopped_sig(crate::sys::SIGTSTP),
+                waitpid(300, _) -> stopped_sig(crate::sys::constants::SIGTSTP),
                 waitpid(300, _) -> pid(0),
                 write(fd(1), bytes(b"[1] + Stopped (SIGTSTP) stopped-cmd\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
-                shell.jobs.push(crate::shell::Job {
+                shell.jobs.push(crate::shell::jobs::Job {
                     id: 1,
                     command: b"stopped-cmd"[..].into(),
                     pgid: Some(300),
                     last_pid: Some(300),
                     last_status: None,
-                    children: vec![crate::sys::ChildHandle {
+                    children: vec![crate::sys::types::ChildHandle {
                         pid: 300,
                         stdout_fd: None,
                     }],
-                    state: crate::shell::JobState::Running,
+                    state: crate::shell::jobs::JobState::Running,
                     saved_termios: None,
                 });
                 let outcome = invoke(&mut shell, &[b"jobs".to_vec()]).expect("jobs");
@@ -1151,30 +1157,30 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.jobs.push(crate::shell::Job {
+                shell.jobs.push(crate::shell::jobs::Job {
                     id: 1,
                     command: b"sleep 1"[..].into(),
                     pgid: Some(100),
                     last_pid: Some(100),
                     last_status: None,
-                    children: vec![crate::sys::ChildHandle {
+                    children: vec![crate::sys::types::ChildHandle {
                         pid: 100,
                         stdout_fd: None,
                     }],
-                    state: crate::shell::JobState::Running,
+                    state: crate::shell::jobs::JobState::Running,
                     saved_termios: None,
                 });
-                shell.jobs.push(crate::shell::Job {
+                shell.jobs.push(crate::shell::jobs::Job {
                     id: 2,
                     command: b"sleep 2"[..].into(),
                     pgid: Some(200),
                     last_pid: Some(200),
                     last_status: None,
-                    children: vec![crate::sys::ChildHandle {
+                    children: vec![crate::sys::types::ChildHandle {
                         pid: 200,
                         stdout_fd: None,
                     }],
-                    state: crate::shell::JobState::Running,
+                    state: crate::shell::jobs::JobState::Running,
                     saved_termios: None,
                 });
                 let outcome =

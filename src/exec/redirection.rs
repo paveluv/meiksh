@@ -1,21 +1,11 @@
-#![allow(unused_imports)]
-
 use std::collections::HashMap;
 
-use crate::arena::ByteArena;
-use crate::bstr::ByteWriter;
-use crate::builtin;
-use crate::expand;
-use crate::shell::{
-    BlockingWaitOutcome, FlowSignal, JobState, PendingControl, Shell, ShellError, VarError,
-};
-use crate::syntax::{
-    AndOr, CaseCommand, Command, ForCommand, FunctionDef, HereDoc, IfCommand, ListItem, LogicalOp,
-    LoopCommand, LoopKind, Pipeline, Program, RedirectionKind, SimpleCommand, TimedMode,
-};
+use crate::syntax::ast::RedirectionKind;
 use crate::sys;
 
-use super::*;
+#[cfg(test)]
+use super::and_or::ProcessGroupPlan;
+use super::simple::parse_i32_bytes;
 
 pub(super) trait RedirectionRef {
     fn fd(&self) -> i32;
@@ -58,7 +48,7 @@ pub(super) fn close_parent_redirection_fds(prepared_redirections: &PreparedRedir
             ..
         } = action
         {
-            let _ = sys::close_fd(*fd);
+            let _ = sys::fd_io::close_fd(*fd);
         }
     }
 }
@@ -66,12 +56,16 @@ pub(super) fn close_parent_redirection_fds(prepared_redirections: &PreparedRedir
 pub(super) fn prepare_redirections<R: RedirectionRef>(
     redirections: &[R],
     noclobber: bool,
-) -> Result<PreparedRedirections, sys::SysError> {
+) -> Result<PreparedRedirections, sys::error::SysError> {
     let mut prepared = PreparedRedirections::default();
     for redirection in redirections {
         match redirection.kind() {
             RedirectionKind::Read => {
-                let fd = sys::open_file(redirection.target(), sys::O_RDONLY | sys::O_CLOEXEC, 0)?;
+                let fd = sys::fs::open_file(
+                    redirection.target(),
+                    sys::constants::O_RDONLY | sys::constants::O_CLOEXEC,
+                    0,
+                )?;
                 prepared.actions.push(ChildFdAction::DupRawFd {
                     fd,
                     target_fd: redirection.fd(),
@@ -82,8 +76,11 @@ pub(super) fn prepare_redirections<R: RedirectionRef>(
                 let fd = if noclobber && redirection.kind() == RedirectionKind::Write {
                     open_for_write_noclobber(redirection.target())?
                 } else {
-                    let flags = sys::O_WRONLY | sys::O_CREAT | sys::O_TRUNC | sys::O_CLOEXEC;
-                    sys::open_file(redirection.target(), flags, 0o666)?
+                    let flags = sys::constants::O_WRONLY
+                        | sys::constants::O_CREAT
+                        | sys::constants::O_TRUNC
+                        | sys::constants::O_CLOEXEC;
+                    sys::fs::open_file(redirection.target(), flags, 0o666)?
                 };
                 prepared.actions.push(ChildFdAction::DupRawFd {
                     fd,
@@ -92,8 +89,11 @@ pub(super) fn prepare_redirections<R: RedirectionRef>(
                 });
             }
             RedirectionKind::Append => {
-                let flags = sys::O_WRONLY | sys::O_CREAT | sys::O_APPEND | sys::O_CLOEXEC;
-                let fd = sys::open_file(redirection.target(), flags, 0o666)?;
+                let flags = sys::constants::O_WRONLY
+                    | sys::constants::O_CREAT
+                    | sys::constants::O_APPEND
+                    | sys::constants::O_CLOEXEC;
+                let fd = sys::fs::open_file(redirection.target(), flags, 0o666)?;
                 prepared.actions.push(ChildFdAction::DupRawFd {
                     fd,
                     target_fd: redirection.fd(),
@@ -101,10 +101,10 @@ pub(super) fn prepare_redirections<R: RedirectionRef>(
                 });
             }
             RedirectionKind::HereDoc => {
-                let (read_fd, write_fd) = sys::create_pipe()?;
+                let (read_fd, write_fd) = sys::fd_io::create_pipe()?;
                 let body = redirection.here_doc_body().unwrap_or(b"");
-                sys::write_all_fd(write_fd, body)?;
-                sys::close_fd(write_fd)?;
+                sys::fd_io::write_all_fd(write_fd, body)?;
+                sys::fd_io::close_fd(write_fd)?;
                 prepared.actions.push(ChildFdAction::DupRawFd {
                     fd: read_fd,
                     target_fd: redirection.fd(),
@@ -112,8 +112,9 @@ pub(super) fn prepare_redirections<R: RedirectionRef>(
                 });
             }
             RedirectionKind::ReadWrite => {
-                let flags = sys::O_RDWR | sys::O_CREAT | sys::O_CLOEXEC;
-                let fd = sys::open_file(redirection.target(), flags, 0o666)?;
+                let flags =
+                    sys::constants::O_RDWR | sys::constants::O_CREAT | sys::constants::O_CLOEXEC;
+                let fd = sys::fs::open_file(redirection.target(), flags, 0o666)?;
                 prepared.actions.push(ChildFdAction::DupRawFd {
                     fd,
                     target_fd: redirection.fd(),
@@ -139,20 +140,20 @@ pub(super) fn prepare_redirections<R: RedirectionRef>(
     Ok(prepared)
 }
 
-pub(super) fn apply_child_fd_actions(actions: &[ChildFdAction]) -> sys::SysResult<()> {
+pub(super) fn apply_child_fd_actions(actions: &[ChildFdAction]) -> sys::error::SysResult<()> {
     for action in actions {
         match action {
             ChildFdAction::DupRawFd { fd, target_fd, .. } => {
-                sys::duplicate_fd(*fd, *target_fd)?;
+                sys::fd_io::duplicate_fd(*fd, *target_fd)?;
             }
             ChildFdAction::DupFd {
                 source_fd,
                 target_fd,
             } => {
-                sys::duplicate_fd(*source_fd, *target_fd)?;
+                sys::fd_io::duplicate_fd(*source_fd, *target_fd)?;
             }
             ChildFdAction::CloseFd { target_fd } => {
-                if let Err(error) = sys::close_fd(*target_fd) {
+                if let Err(error) = sys::fd_io::close_fd(*target_fd) {
                     if !error.is_ebadf() {
                         return Err(error);
                     }
@@ -167,12 +168,12 @@ pub(super) fn apply_child_fd_actions(actions: &[ChildFdAction]) -> sys::SysResul
 pub(super) fn apply_child_setup(
     actions: &[ChildFdAction],
     process_group: ProcessGroupPlan,
-) -> sys::SysResult<()> {
+) -> sys::error::SysResult<()> {
     apply_child_fd_actions(actions)?;
     match process_group {
         ProcessGroupPlan::None => {}
-        ProcessGroupPlan::NewGroup => sys::set_process_group(0, 0)?,
-        ProcessGroupPlan::Join(pgid) => sys::set_process_group(0, pgid)?,
+        ProcessGroupPlan::NewGroup => sys::tty::set_process_group(0, 0)?,
+        ProcessGroupPlan::Join(pgid) => sys::tty::set_process_group(0, pgid)?,
     }
     Ok(())
 }
@@ -182,11 +183,11 @@ impl Drop for ShellRedirectionGuard {
         for (target_fd, saved_fd) in self.saved.iter().rev() {
             match saved_fd {
                 Some(saved_fd) => {
-                    let _ = sys::duplicate_fd(*saved_fd, *target_fd);
-                    let _ = sys::close_fd(*saved_fd);
+                    let _ = sys::fd_io::duplicate_fd(*saved_fd, *target_fd);
+                    let _ = sys::fd_io::close_fd(*saved_fd);
                 }
                 None => {
-                    let _ = sys::close_fd(*target_fd);
+                    let _ = sys::fd_io::close_fd(*target_fd);
                 }
             }
         }
@@ -196,13 +197,13 @@ impl Drop for ShellRedirectionGuard {
 pub(super) fn apply_shell_redirections<R: RedirectionRef>(
     redirections: &[R],
     noclobber: bool,
-) -> Result<ShellRedirectionGuard, sys::SysError> {
+) -> Result<ShellRedirectionGuard, sys::error::SysError> {
     let mut guard = ShellRedirectionGuard { saved: Vec::new() };
     let mut saved = HashMap::new();
 
     for redirection in redirections {
         if let std::collections::hash_map::Entry::Vacant(entry) = saved.entry(redirection.fd()) {
-            let original = match sys::duplicate_fd_to_new(redirection.fd()) {
+            let original = match sys::fd_io::duplicate_fd_to_new(redirection.fd()) {
                 Ok(fd) => Some(fd),
                 Err(error) if error.is_ebadf() => None,
                 Err(error) => return Err(error),
@@ -216,15 +217,22 @@ pub(super) fn apply_shell_redirections<R: RedirectionRef>(
     Ok(guard)
 }
 
-pub(super) fn open_for_write_noclobber(path: &[u8]) -> sys::SysResult<i32> {
-    let flags = sys::O_WRONLY | sys::O_CREAT | sys::O_EXCL | sys::O_CLOEXEC;
-    match sys::open_file(path, flags, 0o666) {
+pub(super) fn open_for_write_noclobber(path: &[u8]) -> sys::error::SysResult<i32> {
+    let flags = sys::constants::O_WRONLY
+        | sys::constants::O_CREAT
+        | sys::constants::O_EXCL
+        | sys::constants::O_CLOEXEC;
+    match sys::fs::open_file(path, flags, 0o666) {
         Ok(fd) => Ok(fd),
-        Err(e) if e.errno() == Some(sys::EEXIST) => {
-            if sys::is_regular_file(path) {
+        Err(e) if e.errno() == Some(sys::constants::EEXIST) => {
+            if sys::fs::is_regular_file(path) {
                 Err(e)
             } else {
-                sys::open_file(path, sys::O_WRONLY | sys::O_CLOEXEC, 0o666)
+                sys::fs::open_file(
+                    path,
+                    sys::constants::O_WRONLY | sys::constants::O_CLOEXEC,
+                    0o666,
+                )
             }
         }
         Err(e) => Err(e),
@@ -234,36 +242,47 @@ pub(super) fn open_for_write_noclobber(path: &[u8]) -> sys::SysResult<i32> {
 pub(super) fn apply_shell_redirection<R: RedirectionRef>(
     redirection: &R,
     noclobber: bool,
-) -> sys::SysResult<()> {
+) -> sys::error::SysResult<()> {
     match redirection.kind() {
         RedirectionKind::Read => {
-            let fd = sys::open_file(redirection.target(), sys::O_RDONLY | sys::O_CLOEXEC, 0)?;
+            let fd = sys::fs::open_file(
+                redirection.target(),
+                sys::constants::O_RDONLY | sys::constants::O_CLOEXEC,
+                0,
+            )?;
             replace_shell_fd(fd, redirection.fd())?;
         }
         RedirectionKind::Write | RedirectionKind::ClobberWrite => {
             let fd = if noclobber && redirection.kind() == RedirectionKind::Write {
                 open_for_write_noclobber(redirection.target())?
             } else {
-                let flags = sys::O_WRONLY | sys::O_CREAT | sys::O_TRUNC | sys::O_CLOEXEC;
-                sys::open_file(redirection.target(), flags, 0o666)?
+                let flags = sys::constants::O_WRONLY
+                    | sys::constants::O_CREAT
+                    | sys::constants::O_TRUNC
+                    | sys::constants::O_CLOEXEC;
+                sys::fs::open_file(redirection.target(), flags, 0o666)?
             };
             replace_shell_fd(fd, redirection.fd())?;
         }
         RedirectionKind::Append => {
-            let flags = sys::O_WRONLY | sys::O_CREAT | sys::O_APPEND | sys::O_CLOEXEC;
-            let fd = sys::open_file(redirection.target(), flags, 0o666)?;
+            let flags = sys::constants::O_WRONLY
+                | sys::constants::O_CREAT
+                | sys::constants::O_APPEND
+                | sys::constants::O_CLOEXEC;
+            let fd = sys::fs::open_file(redirection.target(), flags, 0o666)?;
             replace_shell_fd(fd, redirection.fd())?;
         }
         RedirectionKind::HereDoc => {
-            let (read_fd, write_fd) = sys::create_pipe()?;
+            let (read_fd, write_fd) = sys::fd_io::create_pipe()?;
             let body = redirection.here_doc_body().unwrap_or(b"");
-            sys::write_all_fd(write_fd, body)?;
-            sys::close_fd(write_fd)?;
+            sys::fd_io::write_all_fd(write_fd, body)?;
+            sys::fd_io::close_fd(write_fd)?;
             replace_shell_fd(read_fd, redirection.fd())?;
         }
         RedirectionKind::ReadWrite => {
-            let flags = sys::O_RDWR | sys::O_CREAT | sys::O_CLOEXEC;
-            let fd = sys::open_file(redirection.target(), flags, 0o666)?;
+            let flags =
+                sys::constants::O_RDWR | sys::constants::O_CREAT | sys::constants::O_CLOEXEC;
+            let fd = sys::fs::open_file(redirection.target(), flags, 0o666)?;
             replace_shell_fd(fd, redirection.fd())?;
         }
         RedirectionKind::DupInput | RedirectionKind::DupOutput => {
@@ -272,24 +291,24 @@ pub(super) fn apply_shell_redirection<R: RedirectionRef>(
             } else {
                 let source_fd =
                     parse_i32_bytes(redirection.target()).expect("validated at expansion");
-                sys::duplicate_fd(source_fd, redirection.fd())?;
+                sys::fd_io::duplicate_fd(source_fd, redirection.fd())?;
             }
         }
     }
     Ok(())
 }
 
-pub(super) fn replace_shell_fd(fd: i32, target_fd: i32) -> sys::SysResult<()> {
+pub(super) fn replace_shell_fd(fd: i32, target_fd: i32) -> sys::error::SysResult<()> {
     if fd == target_fd {
         return Ok(());
     }
-    sys::duplicate_fd(fd, target_fd)?;
-    sys::close_fd(fd)?;
+    sys::fd_io::duplicate_fd(fd, target_fd)?;
+    sys::fd_io::close_fd(fd)?;
     Ok(())
 }
 
-pub(super) fn close_shell_fd(target_fd: i32) -> sys::SysResult<()> {
-    if let Err(error) = sys::close_fd(target_fd) {
+pub(super) fn close_shell_fd(target_fd: i32) -> sys::error::SysResult<()> {
+    if let Err(error) = sys::fd_io::close_fd(target_fd) {
         if !error.is_ebadf() {
             return Err(error);
         }
@@ -314,9 +333,14 @@ pub(super) fn default_fd_for_redirection(kind: RedirectionKind) -> i32 {
 #[allow(unused_imports)]
 mod tests {
     use super::*;
-    use crate::exec::test_support::*;
-    use crate::shell::Shell;
-    use crate::syntax::{Assignment, HereDoc, Redirection, Word};
+    use crate::arena::ByteArena;
+    use crate::exec::command::execute_nested_program;
+    use crate::exec::process::ExpandedRedirection;
+    use crate::exec::simple::{expand_redirections, expand_simple};
+    use crate::exec::test_support::{parse_test, test_shell};
+    use crate::shell::state::Shell;
+    use crate::syntax::ast::{Assignment, HereDoc, Redirection, SimpleCommand, Word};
+    use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;
 
     #[test]
@@ -383,10 +407,10 @@ mod tests {
     fn heredoc_expansion_error_paths() {
         run_trace(
             trace_entries![
-                write(fd(sys::STDERR_FILENO), bytes(b"meiksh: missing here-document body\n")) -> auto,
-                write(fd(sys::STDERR_FILENO), bytes(b"meiksh: redirection target must be a file descriptor or '-'\n")) -> auto,
-                write(fd(sys::STDERR_FILENO), bytes(b"meiksh: missing here-document body\n")) -> auto,
-                write(fd(sys::STDERR_FILENO), bytes(b"meiksh: redirection target must be a file descriptor or '-'\n")) -> auto,
+                write(fd(sys::constants::STDERR_FILENO), bytes(b"meiksh: missing here-document body\n")) -> auto,
+                write(fd(sys::constants::STDERR_FILENO), bytes(b"meiksh: redirection target must be a file descriptor or '-'\n")) -> auto,
+                write(fd(sys::constants::STDERR_FILENO), bytes(b"meiksh: missing here-document body\n")) -> auto,
+                write(fd(sys::constants::STDERR_FILENO), bytes(b"meiksh: redirection target must be a file descriptor or '-'\n")) -> auto,
             ],
             || {
                 let arena = ByteArena::new();
@@ -579,7 +603,7 @@ mod tests {
         run_trace(
             trace_entries![
                 pipe() -> fds(10, 11),
-                write(fd(11), bytes(b"body\n")) -> err(sys::EIO),
+                write(fd(11), bytes(b"body\n")) -> err(sys::constants::EIO),
             ],
             || {
                 let err = prepare_redirections(
@@ -602,7 +626,7 @@ mod tests {
     fn execute_nested_program_sets_up_heredoc_fd() {
         run_trace(
             trace_entries![
-                fcntl(fd(0), int(1030), int(10)) -> err(sys::EBADF),
+                fcntl(fd(0), int(1030), int(10)) -> err(sys::constants::EBADF),
                 pipe() -> fds(10, 11),
                 write(fd(11), bytes(b"hello\n")) -> auto,
                 close(fd(11)) -> 0,
@@ -644,7 +668,7 @@ mod tests {
     fn open_for_write_noclobber_non_regular_reopens() {
         run_trace(
             trace_entries![
-                open(str("/dev/null"), _, _) -> err(sys::EEXIST),
+                open(str("/dev/null"), _, _) -> err(sys::constants::EEXIST),
                 stat(str("/dev/null"), _) -> stat_fifo,
                 open(str("/dev/null"), _, _) -> 11,
             ],
@@ -717,7 +741,7 @@ mod tests {
     fn apply_child_fd_actions_close_ebadf_ignored() {
         run_trace(
             trace_entries![
-                close(fd(999)) -> err(sys::EBADF),
+                close(fd(999)) -> err(sys::constants::EBADF),
             ],
             || {
                 apply_child_fd_actions(&[ChildFdAction::CloseFd { target_fd: 999 }])
@@ -730,12 +754,12 @@ mod tests {
     fn apply_child_fd_actions_close_non_ebadf_propagates() {
         run_trace(
             trace_entries![
-                close(fd(999)) -> err(sys::EIO),
+                close(fd(999)) -> err(sys::constants::EIO),
             ],
             || {
                 let err = apply_child_fd_actions(&[ChildFdAction::CloseFd { target_fd: 999 }])
                     .expect_err("non-ebadf close should fail");
-                assert_eq!(err.errno(), Some(sys::EIO));
+                assert_eq!(err.errno(), Some(sys::constants::EIO));
             },
         );
     }
@@ -859,12 +883,12 @@ mod tests {
     fn open_for_write_noclobber_regular_file_fails() {
         run_trace(
             trace_entries![
-                open(str("/exists.txt"), _, _) -> err(sys::EEXIST),
+                open(str("/exists.txt"), _, _) -> err(sys::constants::EEXIST),
                 stat(str("/exists.txt"), _) -> stat_file(0o644),
             ],
             || {
                 let err = open_for_write_noclobber(b"/exists.txt").expect_err("should fail");
-                assert_eq!(err.errno(), Some(sys::EEXIST));
+                assert_eq!(err.errno(), Some(sys::constants::EEXIST));
             },
         );
     }

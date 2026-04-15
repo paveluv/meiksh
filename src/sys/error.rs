@@ -4,22 +4,22 @@ use std::ffi::CStr;
 use super::constants::EINTR;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SysError {
+pub(crate) enum SysError {
     Errno(c_int),
     NulInPath,
 }
 
-pub type SysResult<T> = Result<T, SysError>;
+pub(crate) type SysResult<T> = Result<T, SysError>;
 
 impl SysError {
-    pub fn errno(&self) -> Option<c_int> {
+    pub(crate) fn errno(&self) -> Option<c_int> {
         match self {
             SysError::Errno(e) => Some(*e),
             _ => None,
         }
     }
 
-    pub fn strerror(&self) -> Vec<u8> {
+    pub(crate) fn strerror(&self) -> Vec<u8> {
         match self {
             SysError::Errno(errno) => {
                 let msg = unsafe { CStr::from_ptr(libc::strerror(*errno)) };
@@ -29,23 +29,23 @@ impl SysError {
         }
     }
 
-    pub fn is_enoent(&self) -> bool {
+    pub(crate) fn is_enoent(&self) -> bool {
         matches!(self, SysError::Errno(e) if *e == libc::ENOENT)
     }
 
-    pub fn is_ebadf(&self) -> bool {
+    pub(crate) fn is_ebadf(&self) -> bool {
         matches!(self, SysError::Errno(e) if *e == libc::EBADF)
     }
 
-    pub fn is_eacces(&self) -> bool {
+    pub(crate) fn is_eacces(&self) -> bool {
         matches!(self, SysError::Errno(e) if *e == libc::EACCES)
     }
 
-    pub fn is_enoexec(&self) -> bool {
+    pub(crate) fn is_enoexec(&self) -> bool {
         matches!(self, SysError::Errno(e) if *e == libc::ENOEXEC)
     }
 
-    pub fn is_eintr(&self) -> bool {
+    pub(crate) fn is_eintr(&self) -> bool {
         matches!(self, SysError::Errno(e) if *e == EINTR)
     }
 }

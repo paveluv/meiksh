@@ -1,21 +1,14 @@
-#![allow(unused_imports)]
-
-use std::collections::HashMap;
-
-use crate::arena::ByteArena;
 use crate::bstr::ByteWriter;
-use crate::builtin;
-use crate::expand;
-use crate::shell::{
-    BlockingWaitOutcome, FlowSignal, JobState, PendingControl, Shell, ShellError, VarError,
-};
-use crate::syntax::{
-    AndOr, CaseCommand, Command, ForCommand, FunctionDef, HereDoc, IfCommand, ListItem, LogicalOp,
-    LoopCommand, LoopKind, Pipeline, Program, RedirectionKind, SimpleCommand, TimedMode,
-};
+use crate::shell::error::ShellError;
+use crate::shell::state::Shell;
+use crate::syntax::ast::RedirectionKind;
 use crate::sys;
 
-use super::*;
+use super::and_or::ProcessGroupPlan;
+use super::redirection::{
+    PreparedRedirections, RedirectionRef, apply_child_fd_actions, close_parent_redirection_fds,
+    prepare_redirections,
+};
 
 pub(super) fn join_boxed_bytes(parts: &[Box<[u8]>], sep: u8) -> Vec<u8> {
     let mut out = Vec::new();
@@ -78,19 +71,23 @@ impl RedirectionRef for ProcessRedirection {
 }
 
 pub(super) fn file_needs_binary_rejection(path: &[u8]) -> bool {
-    let fd = match sys::open_file(path, sys::O_RDONLY | sys::O_CLOEXEC, 0) {
+    let fd = match sys::fs::open_file(
+        path,
+        sys::constants::O_RDONLY | sys::constants::O_CLOEXEC,
+        0,
+    ) {
         Ok(fd) => fd,
         Err(_) => return false,
     };
     let mut buf = [0u8; 256];
-    let n = match sys::read_fd(fd, &mut buf) {
+    let n = match sys::fd_io::read_fd(fd, &mut buf) {
         Ok(n) => n,
         Err(_) => {
-            let _ = sys::close_fd(fd);
+            let _ = sys::fd_io::close_fd(fd);
             return false;
         }
     };
-    let _ = sys::close_fd(fd);
+    let _ = sys::fd_io::close_fd(fd);
     if n == 0 {
         return false;
     }
@@ -113,20 +110,20 @@ pub(super) fn prepare_prepared_process(
         && !prepared.exec_path.is_empty()
         && prepared.exec_path.contains(&b'/')
     {
-        if sys::access_path(&prepared.exec_path, sys::F_OK).is_err() {
+        if sys::fs::access_path(&prepared.exec_path, sys::constants::F_OK).is_err() {
             let msg = ByteWriter::new()
                 .bytes(&prepared.argv[0])
                 .bytes(b": not found\n")
                 .finish();
-            let _ = sys::write_all_fd(sys::STDERR_FILENO, &msg);
+            let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, &msg);
             return Err(ShellError::Status(127));
         }
-        if sys::access_path(&prepared.exec_path, sys::X_OK).is_err() {
+        if sys::fs::access_path(&prepared.exec_path, sys::constants::X_OK).is_err() {
             let msg = ByteWriter::new()
                 .bytes(&prepared.argv[0])
                 .bytes(b": Permission denied\n")
                 .finish();
-            let _ = sys::write_all_fd(sys::STDERR_FILENO, &msg);
+            let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, &msg);
             return Err(ShellError::Status(126));
         }
     }
@@ -143,10 +140,10 @@ pub(super) fn run_prepared_process(
 ) -> ! {
     match process_group {
         ProcessGroupPlan::NewGroup => {
-            let _ = sys::set_process_group(0, 0);
+            let _ = sys::tty::set_process_group(0, 0);
         }
         ProcessGroupPlan::Join(pgid) => {
-            let _ = sys::set_process_group(0, pgid);
+            let _ = sys::tty::set_process_group(0, pgid);
         }
         ProcessGroupPlan::None => {}
     }
@@ -157,12 +154,12 @@ pub(super) fn run_prepared_process(
             .bytes(&err.strerror())
             .byte(b'\n')
             .finish();
-        let _ = sys::write_all_fd(sys::STDERR_FILENO, &msg);
-        sys::exit_process(1);
+        let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, &msg);
+        sys::process::exit_process(1);
     }
 
     for (key, value) in &prepared.child_env {
-        let _ = sys::env_set_var(key, value);
+        let _ = sys::env::env_set_var(key, value);
     }
 
     if file_needs_binary_rejection(&prepared.exec_path) {
@@ -170,12 +167,12 @@ pub(super) fn run_prepared_process(
             .bytes(&prepared.argv[0])
             .bytes(b": cannot execute binary file\n")
             .finish();
-        let _ = sys::write_all_fd(sys::STDERR_FILENO, &msg);
-        sys::exit_process(126);
+        let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, &msg);
+        sys::process::exit_process(126);
     }
 
     shell.restore_signals_for_child();
-    match sys::exec_replace(&prepared.exec_path, &prepared.argv) {
+    match sys::process::exec_replace(&prepared.exec_path, &prepared.argv) {
         Err(err) if err.is_enoexec() => {
             let mut child_shell = shell.clone();
             child_shell.owns_terminal = false;
@@ -184,15 +181,15 @@ pub(super) fn run_prepared_process(
             child_shell.shell_name = prepared.argv[0].clone();
             child_shell.positional = prepared.argv[1..].iter().map(|s| s.to_vec()).collect();
             let status = child_shell.source_path(&prepared.exec_path).unwrap_or(126);
-            sys::exit_process(status as sys::RawFd);
+            sys::process::exit_process(status as sys::types::RawFd);
         }
         Err(err) if err.is_enoent() => {
             let msg = ByteWriter::new()
                 .bytes(&prepared.argv[0])
                 .bytes(b": not found\n")
                 .finish();
-            let _ = sys::write_all_fd(sys::STDERR_FILENO, &msg);
-            sys::exit_process(127);
+            let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, &msg);
+            sys::process::exit_process(127);
         }
         Err(err) => {
             let msg = ByteWriter::new()
@@ -201,10 +198,10 @@ pub(super) fn run_prepared_process(
                 .bytes(&err.strerror())
                 .byte(b'\n')
                 .finish();
-            let _ = sys::write_all_fd(sys::STDERR_FILENO, &msg);
-            sys::exit_process(126);
+            let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, &msg);
+            sys::process::exit_process(126);
         }
-        Ok(()) => sys::exit_process(0),
+        Ok(()) => sys::process::exit_process(0),
     }
 }
 
@@ -215,7 +212,7 @@ pub(super) fn exec_prepared_in_current_process(
 ) -> ! {
     let prepared_redirections = match prepare_prepared_process(shell, prepared) {
         Ok(prepared_redirections) => prepared_redirections,
-        Err(error) => sys::exit_process(error.exit_status() as sys::RawFd),
+        Err(error) => sys::process::exit_process(error.exit_status() as sys::types::RawFd),
     };
     run_prepared_process(shell, prepared, process_group, &prepared_redirections)
 }
@@ -224,17 +221,17 @@ pub(super) fn spawn_prepared(
     shell: &Shell,
     prepared: &PreparedProcess,
     process_group: ProcessGroupPlan,
-) -> Result<sys::ChildHandle, ShellError> {
+) -> Result<sys::types::ChildHandle, ShellError> {
     let prepared_redirections = prepare_prepared_process(shell, prepared)?;
 
-    let pid = sys::fork_process().map_err(|e| {
+    let pid = sys::process::fork_process().map_err(|e| {
         let msg = ByteWriter::new()
             .bytes(&prepared.argv[0])
             .bytes(b": ")
             .bytes(&e.strerror())
             .byte(b'\n')
             .finish();
-        let _ = sys::write_all_fd(sys::STDERR_FILENO, &msg);
+        let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, &msg);
         ShellError::Status(1)
     })?;
     if pid == 0 {
@@ -243,7 +240,7 @@ pub(super) fn spawn_prepared(
 
     close_parent_redirection_fds(&prepared_redirections);
 
-    Ok(sys::ChildHandle {
+    Ok(sys::types::ChildHandle {
         pid,
         stdout_fd: None,
     })
@@ -267,7 +264,7 @@ pub(super) fn resolve_command_path(
     let path = path_override
         .map(|s| s.to_vec())
         .or_else(|| shell.get_var(b"PATH").map(|s| s.to_vec()))
-        .or_else(|| sys::env_var(b"PATH"))
+        .or_else(|| sys::env::env_var(b"PATH"))
         .unwrap_or_default();
 
     split_bytes(&path, b':')
@@ -283,7 +280,7 @@ pub(super) fn resolve_command_path(
             candidate
         })
         .find(|candidate| {
-            sys::stat_path(candidate)
+            sys::fs::stat_path(candidate)
                 .map(|stat| stat.is_regular_file() && stat.is_executable())
                 .unwrap_or(false)
         })
@@ -297,17 +294,21 @@ pub(super) fn split_bytes(data: &[u8], sep: u8) -> impl Iterator<Item = &[u8]> {
 #[allow(unused_imports)]
 mod tests {
     use super::*;
-    use crate::exec::test_support::*;
-    use crate::shell::Shell;
-    use crate::syntax::{Assignment, HereDoc, Redirection, Word};
+    use crate::arena::ByteArena;
+    use crate::exec::and_or::ProcessGroupPlan;
+    use crate::exec::simple::build_process_from_expanded;
+    use crate::exec::test_support::{parse_test, test_shell};
+    use crate::shell::state::Shell;
+    use crate::syntax::ast::{Assignment, HereDoc, Redirection, Word};
+    use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;
 
     #[test]
     fn build_process_from_expanded_covers_empty_and_assignment_env() {
         run_trace(
             trace_entries![
-                write(fd(sys::STDERR_FILENO), bytes(b"meiksh: empty command\n")) -> auto,
-                stat(str("./echo"), _) -> err(sys::ENOENT),
+                write(fd(sys::constants::STDERR_FILENO), bytes(b"meiksh: empty command\n")) -> auto,
+                stat(str("./echo"), _) -> err(sys::constants::ENOENT),
             ],
             || {
                 let arena = ByteArena::new();
@@ -369,7 +370,7 @@ mod tests {
                     open(str("/tmp/script.sh"), _, _) -> fd(20),
                     read(fd(20), _) -> bytes(b"echo hello\n"),
                     close(fd(20)) -> int(0),
-                    execvp(str("/tmp/script.sh"), _) -> err(sys::ENOEXEC),
+                    execvp(str("/tmp/script.sh"), _) -> err(sys::constants::ENOEXEC),
                     open(str("/tmp/script.sh"), _, _) -> fd(10),
                     read(fd(10), _) -> bytes(b"true\n"),
                     read(fd(10), _) -> int(0),
@@ -402,8 +403,8 @@ mod tests {
     fn spawn_prepared_errors_for_missing_executable() {
         run_trace(
             trace_entries![
-                access(str("/nonexistent/missing"), int(0)) -> err(sys::ENOENT),
-                write(fd(sys::STDERR_FILENO), bytes(b"missing: not found\n")) -> auto,
+                access(str("/nonexistent/missing"), int(0)) -> err(sys::constants::ENOENT),
+                write(fd(sys::constants::STDERR_FILENO), bytes(b"missing: not found\n")) -> auto,
             ],
             || {
                 let missing = PreparedProcess {
@@ -426,7 +427,7 @@ mod tests {
     fn file_needs_binary_rejection_handles_errors_and_empty() {
         run_trace(
             trace_entries![
-                open(_, _, _) -> err(sys::EACCES),
+                open(_, _, _) -> err(sys::constants::EACCES),
             ],
             || {
                 assert!(!file_needs_binary_rejection(b"/some/file"));
@@ -549,8 +550,8 @@ mod tests {
     fn spawn_child_access_denied() {
         run_trace(
             trace_entries![
-                access(str("/bin/noperm"), sys::F_OK) -> 0,
-                access(str("/bin/noperm"), sys::X_OK) -> err(libc::EACCES),
+                access(str("/bin/noperm"), sys::constants::F_OK) -> 0,
+                access(str("/bin/noperm"), sys::constants::X_OK) -> err(libc::EACCES),
                 write(fd(2), bytes(b"noperm: Permission denied\n")) -> auto,
             ],
             || {
@@ -578,13 +579,13 @@ mod tests {
     fn spawn_path_verified_false_passes_both_checks() {
         run_trace(
             trace_entries![
-                access(str("/bin/ok"), sys::F_OK) -> 0,
-                access(str("/bin/ok"), sys::X_OK) -> 0,
+                access(str("/bin/ok"), sys::constants::F_OK) -> 0,
+                access(str("/bin/ok"), sys::constants::X_OK) -> 0,
                 fork() -> pid(300), child: [
                     open(str("/bin/ok"), _, _) -> fd(20),
                     read(fd(20), _) -> bytes(b"#!/bin/sh\n"),
                     close(fd(20)) -> int(0),
-                    execvp(str("/bin/ok"), _) -> err(sys::ENOEXEC),
+                    execvp(str("/bin/ok"), _) -> err(sys::constants::ENOEXEC),
                     open(str("/bin/ok"), _, _) -> fd(10),
                     read(fd(10), _) -> bytes(b"true\n"),
                     read(fd(10), _) -> int(0),
@@ -605,7 +606,7 @@ mod tests {
                 let child =
                     spawn_prepared(&shell, &prepared, ProcessGroupPlan::None).expect("spawn ok");
                 assert_eq!(child.pid, 300);
-                let _ = sys::wait_pid(300, false);
+                let _ = sys::process::wait_pid(300, false);
             },
         );
     }
@@ -614,7 +615,7 @@ mod tests {
     fn spawn_child_not_found() {
         run_trace(
             trace_entries![
-                access(str("/bin/missing"), sys::F_OK) -> err(libc::ENOENT),
+                access(str("/bin/missing"), sys::constants::F_OK) -> err(libc::ENOENT),
                 write(fd(2), bytes(b"missing: not found\n")) -> auto,
             ],
             || {
@@ -662,7 +663,7 @@ mod tests {
                 };
                 let _child = spawn_prepared(&shell, &prepared, ProcessGroupPlan::None)
                     .expect("spawn for binary rejection");
-                let _ = sys::wait_pid(200, false);
+                let _ = sys::process::wait_pid(200, false);
             },
         );
     }
@@ -675,7 +676,7 @@ mod tests {
                     open(str("/tmp/gone"), _, _) -> fd(20),
                     read(fd(20), _) -> bytes(b"echo hello\n"),
                     close(fd(20)) -> int(0),
-                    execvp(str("/tmp/gone"), _) -> err(sys::ENOENT),
+                    execvp(str("/tmp/gone"), _) -> err(sys::constants::ENOENT),
                     write(fd(2), bytes(b"/tmp/gone: not found\n")) -> auto,
                 ],
                 waitpid(201, _) -> status(127),
@@ -692,14 +693,14 @@ mod tests {
                 };
                 let _child = spawn_prepared(&shell, &prepared, ProcessGroupPlan::None)
                     .expect("spawn for exec enoent");
-                let _ = sys::wait_pid(201, false);
+                let _ = sys::process::wait_pid(201, false);
             },
         );
     }
 
     #[test]
     fn spawn_prepared_exec_generic_error_exits_126() {
-        let eio_msg = sys::SysError::Errno(libc::EIO).strerror();
+        let eio_msg = sys::error::SysError::Errno(libc::EIO).strerror();
         let mut expected_stderr = b"/tmp/badexec: ".to_vec();
         expected_stderr.extend_from_slice(&eio_msg);
         expected_stderr.push(b'\n');
@@ -726,7 +727,7 @@ mod tests {
                 };
                 let _child = spawn_prepared(&shell, &prepared, ProcessGroupPlan::None)
                     .expect("spawn for exec eio");
-                let _ = sys::wait_pid(202, false);
+                let _ = sys::process::wait_pid(202, false);
             },
         );
     }
@@ -736,13 +737,13 @@ mod tests {
         run_trace(
             trace_entries![
                 fork() -> pid(203), child: [
-                    access(str("/nonexistent/cmd"), sys::F_OK) -> err(libc::ENOENT),
+                    access(str("/nonexistent/cmd"), sys::constants::F_OK) -> err(libc::ENOENT),
                     write(fd(2), bytes(b"cmd: not found\n")) -> auto,
                 ],
                 waitpid(203, _) -> status(127),
             ],
             || {
-                let pid = sys::fork_process().expect("fork");
+                let pid = sys::process::fork_process().expect("fork");
                 if pid == 0 {
                     let shell = test_shell();
                     let prepared = PreparedProcess {
@@ -755,7 +756,7 @@ mod tests {
                     };
                     exec_prepared_in_current_process(&shell, &prepared, ProcessGroupPlan::None);
                 }
-                let _ = sys::wait_pid(203, false);
+                let _ = sys::process::wait_pid(203, false);
             },
         );
     }
@@ -781,7 +782,7 @@ mod tests {
                     path_verified: true,
                     child_env: vec![].into(),
                     redirections: vec![ProcessRedirection {
-                        kind: crate::syntax::RedirectionKind::Write,
+                        kind: crate::syntax::ast::RedirectionKind::Write,
                         fd: 1,
                         target: b"file.txt".to_vec().into(),
                         here_doc_body: None,
@@ -796,7 +797,7 @@ mod tests {
                 .unwrap();
                 assert_eq!(handle.pid, 123);
                 // Manually trigger wait to consume the trace
-                let _ = sys::wait_pid(123, false);
+                let _ = sys::process::wait_pid(123, false);
             },
         );
     }

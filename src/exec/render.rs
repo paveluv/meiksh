@@ -1,24 +1,11 @@
-#![allow(unused_imports)]
-
-use std::collections::HashMap;
-
-use crate::arena::ByteArena;
-use crate::bstr::ByteWriter;
-use crate::builtin;
-use crate::expand;
-use crate::shell::{
-    BlockingWaitOutcome, FlowSignal, JobState, PendingControl, Shell, ShellError, VarError,
-};
-use crate::syntax::{
+use crate::expand::glob;
+use crate::syntax::ast::{
     AndOr, CaseCommand, Command, ForCommand, FunctionDef, HereDoc, IfCommand, ListItem, LogicalOp,
     LoopCommand, LoopKind, Pipeline, Program, RedirectionKind, SimpleCommand, TimedMode,
 };
-use crate::sys;
-
-use super::*;
 
 pub(super) fn case_pattern_matches(text: &[u8], pattern: &[u8]) -> bool {
-    expand::pattern_matches(text, pattern)
+    glob::pattern_matches(text, pattern)
 }
 
 #[cfg(test)]
@@ -260,7 +247,7 @@ pub(super) fn render_simple_into(simple: &SimpleCommand, buf: &mut Vec<u8>) {
 }
 
 pub(super) fn render_redirections_into(
-    redirections: &[crate::syntax::Redirection],
+    redirections: &[crate::syntax::ast::Redirection],
     redir_buf: &mut Vec<u8>,
     heredocs: &mut Vec<Vec<u8>>,
 ) {
@@ -276,7 +263,7 @@ pub(super) fn render_redirections_into(
 }
 
 pub(super) fn render_redirection_operator_into(
-    redirection: &crate::syntax::Redirection,
+    redirection: &crate::syntax::ast::Redirection,
     buf: &mut Vec<u8>,
 ) {
     if let Some(fd) = redirection.fd {
@@ -318,7 +305,7 @@ pub(super) fn render_here_doc_body(here_doc: &HereDoc) -> Vec<u8> {
 
 pub(super) fn render_command_line_with_redirections_into(
     base: Vec<u8>,
-    redirections: &[crate::syntax::Redirection],
+    redirections: &[crate::syntax::ast::Redirection],
     buf: &mut Vec<u8>,
 ) {
     let mut redir_text = Vec::new();
@@ -344,7 +331,7 @@ pub(super) fn render_command_line_with_redirections_into(
 
 pub(super) fn render_redirected_command_into(
     command: &Command,
-    redirections: &[crate::syntax::Redirection],
+    redirections: &[crate::syntax::ast::Redirection],
     buf: &mut Vec<u8>,
 ) {
     let base = render_command(command);
@@ -355,9 +342,10 @@ pub(super) fn render_redirected_command_into(
 #[allow(unused_imports)]
 mod tests {
     use super::*;
-    use crate::exec::test_support::*;
-    use crate::shell::Shell;
-    use crate::syntax::{Assignment, HereDoc, Redirection, Word};
+    use crate::exec::test_support::parse_test;
+    use crate::shell::state::Shell;
+    use crate::syntax::ast::{Assignment, HereDoc, Redirection, SimpleCommand, Word};
+    use crate::sys::test_support::assert_no_syscalls;
 
     #[test]
     fn render_simple_handles_redirection_syntax() {
@@ -750,7 +738,7 @@ mod tests {
                     raw: b"val".to_vec().into(),
                     line: 0,
                 },
-                arms: vec![crate::syntax::CaseArm {
+                arms: vec![crate::syntax::ast::CaseArm {
                     patterns: vec![Word {
                         raw: b"a".to_vec().into(),
                         line: 0,
@@ -817,7 +805,7 @@ mod tests {
             let if_cmd = IfCommand {
                 condition: true_program.clone(),
                 then_branch: true_program.clone(),
-                elif_branches: vec![crate::syntax::ElifBranch {
+                elif_branches: vec![crate::syntax::ast::ElifBranch {
                     condition: true_program.clone(),
                     body: true_program.clone(),
                 }]
@@ -963,7 +951,7 @@ mod tests {
                     line: 0,
                 },
                 arms: vec![
-                    crate::syntax::CaseArm {
+                    crate::syntax::ast::CaseArm {
                         patterns: vec![
                             Word {
                                 raw: b"a".to_vec().into(),
@@ -978,7 +966,7 @@ mod tests {
                         body: body.clone(),
                         fallthrough: true,
                     },
-                    crate::syntax::CaseArm {
+                    crate::syntax::ast::CaseArm {
                         patterns: vec![Word {
                             raw: b"c".to_vec().into(),
                             line: 0,

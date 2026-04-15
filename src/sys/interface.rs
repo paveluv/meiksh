@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use std::ffi::CStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use super::constants::*;
+use super::constants::{
+    SIGABRT, SIGALRM, SIGBUS, SIGCHLD, SIGCONT, SIGFPE, SIGHUP, SIGILL, SIGINT, SIGPIPE, SIGQUIT,
+    SIGSEGV, SIGSYS, SIGTERM, SIGTRAP, SIGTSTP, SIGTTIN, SIGTTOU, SIGUSR1, SIGUSR2,
+};
 use super::error::{SysError, SysResult};
 use super::types::{ClockTicks, FileModeMask, Pid};
 
@@ -311,13 +314,16 @@ pub(super) fn flush_coverage() {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use std::ffi::CString;
 
     use crate::sys::test_support;
     use crate::trace_entries;
 
-    use super::*;
-    use crate::sys::*;
+    use crate::sys::constants::STDIN_FILENO;
+    use crate::sys::locale::{classify_byte, setup_locale};
+    use crate::sys::process::{current_pid, parent_pid};
+    use crate::sys::time::monotonic_clock_ns;
 
     #[test]
     fn default_interface_pending_signal_bits() {

@@ -6,7 +6,7 @@ use super::interface::{last_error, sys_interface};
 use super::tty::is_interactive_fd;
 use super::types::FdReader;
 
-pub fn create_pipe() -> SysResult<(c_int, c_int)> {
+pub(crate) fn create_pipe() -> SysResult<(c_int, c_int)> {
     let mut fds = [0; 2];
     let result = (sys_interface().pipe)(&mut fds);
     if result == 0 {
@@ -16,7 +16,7 @@ pub fn create_pipe() -> SysResult<(c_int, c_int)> {
     }
 }
 
-pub fn duplicate_fd(oldfd: c_int, newfd: c_int) -> SysResult<()> {
+pub(crate) fn duplicate_fd(oldfd: c_int, newfd: c_int) -> SysResult<()> {
     let result = (sys_interface().dup2)(oldfd, newfd);
     if result >= 0 {
         Ok(())
@@ -25,7 +25,7 @@ pub fn duplicate_fd(oldfd: c_int, newfd: c_int) -> SysResult<()> {
     }
 }
 
-pub fn duplicate_fd_to_new(fd: c_int) -> SysResult<c_int> {
+pub(crate) fn duplicate_fd_to_new(fd: c_int) -> SysResult<c_int> {
     let result = (sys_interface().fcntl)(fd, F_DUPFD_CLOEXEC, 10);
     if result >= 0 {
         Ok(result)
@@ -34,7 +34,7 @@ pub fn duplicate_fd_to_new(fd: c_int) -> SysResult<c_int> {
     }
 }
 
-pub fn close_fd(fd: c_int) -> SysResult<()> {
+pub(crate) fn close_fd(fd: c_int) -> SysResult<()> {
     let result = (sys_interface().close)(fd);
     if result == 0 {
         Ok(())
@@ -71,7 +71,7 @@ fn fifo_like_fd(fd: c_int) -> bool {
     (buf.st_mode & S_IFMT) == S_IFIFO
 }
 
-pub fn ensure_blocking_read_fd(fd: c_int) -> SysResult<()> {
+pub(crate) fn ensure_blocking_read_fd(fd: c_int) -> SysResult<()> {
     if !is_interactive_fd(fd) && !fifo_like_fd(fd) {
         return Ok(());
     }
@@ -82,7 +82,7 @@ pub fn ensure_blocking_read_fd(fd: c_int) -> SysResult<()> {
     Ok(())
 }
 
-pub fn read_fd(fd: c_int, buf: &mut [u8]) -> SysResult<usize> {
+pub(crate) fn read_fd(fd: c_int, buf: &mut [u8]) -> SysResult<usize> {
     let result = (sys_interface().read)(fd, buf);
     if result >= 0 {
         Ok(result as usize)
@@ -90,7 +90,7 @@ pub fn read_fd(fd: c_int, buf: &mut [u8]) -> SysResult<usize> {
         Err(last_error())
     }
 }
-pub fn write_fd(fd: c_int, data: &[u8]) -> SysResult<usize> {
+pub(crate) fn write_fd(fd: c_int, data: &[u8]) -> SysResult<usize> {
     let result = (sys_interface().write)(fd, data);
     if result >= 0 {
         Ok(result as usize)
@@ -99,7 +99,7 @@ pub fn write_fd(fd: c_int, data: &[u8]) -> SysResult<usize> {
     }
 }
 
-pub fn write_all_fd(fd: c_int, mut data: &[u8]) -> SysResult<()> {
+pub(crate) fn write_all_fd(fd: c_int, mut data: &[u8]) -> SysResult<()> {
     while !data.is_empty() {
         let n = write_fd(fd, data)?;
         if n == 0 {
@@ -111,20 +111,25 @@ pub fn write_all_fd(fd: c_int, mut data: &[u8]) -> SysResult<()> {
 }
 
 impl FdReader {
-    pub fn read(&mut self, buf: &mut [u8]) -> SysResult<usize> {
+    pub(crate) fn read(&mut self, buf: &mut [u8]) -> SysResult<usize> {
         read_fd(self.fd, buf)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use libc::c_int;
 
     use crate::sys::test_support;
 
-    use super::*;
+    use super::super::constants::{F_DUPFD_CLOEXEC, F_GETFL, F_SETFL, O_NONBLOCK, STDIN_FILENO};
+    use super::super::error::SysError;
     use super::super::interface::{SystemInterface, default_interface};
-    use crate::sys::*;
+    use super::super::tty::{
+        current_foreground_pgrp, is_interactive_fd, set_foreground_pgrp, set_process_group,
+    };
+    use super::super::types::Pid;
 
     #[test]
     fn pipe_roundtrip() {

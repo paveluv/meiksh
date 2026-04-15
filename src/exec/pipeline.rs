@@ -1,21 +1,13 @@
-#![allow(unused_imports)]
-
-use std::collections::HashMap;
-
-use crate::arena::ByteArena;
 use crate::bstr::ByteWriter;
-use crate::builtin;
-use crate::expand;
-use crate::shell::{
-    BlockingWaitOutcome, FlowSignal, JobState, PendingControl, Shell, ShellError, VarError,
-};
-use crate::syntax::{
-    AndOr, CaseCommand, Command, ForCommand, FunctionDef, HereDoc, IfCommand, ListItem, LogicalOp,
-    LoopCommand, LoopKind, Pipeline, Program, RedirectionKind, SimpleCommand, TimedMode,
-};
+use crate::shell::error::ShellError;
+use crate::shell::jobs::{BlockingWaitOutcome, JobState};
+use crate::shell::state::Shell;
+use crate::syntax::ast::{Command, Pipeline, TimedMode};
 use crate::sys;
 
-use super::*;
+use super::and_or::{ProcessGroupPlan, SpawnedProcesses};
+use super::command::{execute_command, execute_command_in_pipeline_child};
+use super::render::render_pipeline;
 
 pub(super) fn execute_pipeline(
     shell: &mut Shell,
@@ -85,14 +77,14 @@ pub(super) struct TimeSnapshot {
 
 impl TimeSnapshot {
     fn now() -> Self {
-        let wall_ns = sys::monotonic_clock_ns();
-        let times = sys::process_times().unwrap_or(sys::ProcessTimes {
+        let wall_ns = sys::time::monotonic_clock_ns();
+        let times = sys::time::process_times().unwrap_or(sys::types::ProcessTimes {
             user_ticks: 0,
             system_ticks: 0,
             child_user_ticks: 0,
             child_system_ticks: 0,
         });
-        let ticks_per_sec = sys::clock_ticks_per_second().unwrap_or(100);
+        let ticks_per_sec = sys::time::clock_ticks_per_second().unwrap_or(100);
         Self {
             wall_ns,
             user_ticks: times.user_ticks,
@@ -124,9 +116,18 @@ pub(super) fn write_time_report(before: &TimeSnapshot, mode: TimedMode) {
                     .byte(b'\n')
                     .finish()
             };
-            let _ = sys::write_all_fd(sys::STDERR_FILENO, &posix_fmt(b"real", real_secs));
-            let _ = sys::write_all_fd(sys::STDERR_FILENO, &posix_fmt(b"user", user_secs));
-            let _ = sys::write_all_fd(sys::STDERR_FILENO, &posix_fmt(b"sys", sys_secs));
+            let _ = sys::fd_io::write_all_fd(
+                sys::constants::STDERR_FILENO,
+                &posix_fmt(b"real", real_secs),
+            );
+            let _ = sys::fd_io::write_all_fd(
+                sys::constants::STDERR_FILENO,
+                &posix_fmt(b"user", user_secs),
+            );
+            let _ = sys::fd_io::write_all_fd(
+                sys::constants::STDERR_FILENO,
+                &posix_fmt(b"sys", sys_secs),
+            );
         }
         _ => {
             let fmt = |secs: f64| -> Vec<u8> {
@@ -144,19 +145,19 @@ pub(super) fn write_time_report(before: &TimeSnapshot, mode: TimedMode) {
                 .bytes(&fmt(real_secs))
                 .byte(b'\n')
                 .finish();
-            let _ = sys::write_all_fd(sys::STDERR_FILENO, &msg);
+            let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, &msg);
             msg = ByteWriter::new()
                 .bytes(b"user\t")
                 .bytes(&fmt(user_secs))
                 .byte(b'\n')
                 .finish();
-            let _ = sys::write_all_fd(sys::STDERR_FILENO, &msg);
+            let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, &msg);
             msg = ByteWriter::new()
                 .bytes(b"sys\t")
                 .bytes(&fmt(sys_secs))
                 .byte(b'\n')
                 .finish();
-            let _ = sys::write_all_fd(sys::STDERR_FILENO, &msg);
+            let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, &msg);
         }
     }
 }
@@ -164,34 +165,34 @@ pub(super) fn write_time_report(before: &TimeSnapshot, mode: TimedMode) {
 pub(super) fn fork_and_execute_command(
     shell: &mut Shell,
     command: &Command,
-    stdin_fd: Option<sys::RawFd>,
+    stdin_fd: Option<sys::types::RawFd>,
     pipe_stdout: bool,
     process_group: ProcessGroupPlan,
-) -> Result<sys::ChildHandle, ShellError> {
+) -> Result<sys::types::ChildHandle, ShellError> {
     let stdout_pipe = if pipe_stdout {
-        let (r, w) = sys::create_pipe().map_err(|e| shell.diagnostic_syserr(1, &e))?;
+        let (r, w) = sys::fd_io::create_pipe().map_err(|e| shell.diagnostic_syserr(1, &e))?;
         Some((r, w))
     } else {
         Option::None
     };
 
-    let pid = sys::fork_process().map_err(|e| shell.diagnostic_syserr(1, &e))?;
+    let pid = sys::process::fork_process().map_err(|e| shell.diagnostic_syserr(1, &e))?;
     if pid == 0 {
         if let Some(fd) = stdin_fd {
-            let _ = sys::duplicate_fd(fd, sys::STDIN_FILENO);
-            let _ = sys::close_fd(fd);
+            let _ = sys::fd_io::duplicate_fd(fd, sys::constants::STDIN_FILENO);
+            let _ = sys::fd_io::close_fd(fd);
         }
         if let Some((r, w)) = stdout_pipe {
-            let _ = sys::close_fd(r);
-            let _ = sys::duplicate_fd(w, sys::STDOUT_FILENO);
-            let _ = sys::close_fd(w);
+            let _ = sys::fd_io::close_fd(r);
+            let _ = sys::fd_io::duplicate_fd(w, sys::constants::STDOUT_FILENO);
+            let _ = sys::fd_io::close_fd(w);
         }
         match process_group {
             ProcessGroupPlan::NewGroup => {
-                let _ = sys::set_process_group(0, 0);
+                let _ = sys::tty::set_process_group(0, 0);
             }
             ProcessGroupPlan::Join(pgid) => {
-                let _ = sys::set_process_group(0, pgid);
+                let _ = sys::tty::set_process_group(0, pgid);
             }
             _ => {}
         }
@@ -202,18 +203,18 @@ pub(super) fn fork_and_execute_command(
         let _ = child_shell.reset_traps_for_subshell();
         let status = execute_command_in_pipeline_child(&mut child_shell, command).unwrap_or(1);
         let status = child_shell.run_exit_trap(status).unwrap_or(status);
-        sys::exit_process(status as sys::RawFd);
+        sys::process::exit_process(status as sys::types::RawFd);
     }
 
     if let Some(fd) = stdin_fd {
-        let _ = sys::close_fd(fd);
+        let _ = sys::fd_io::close_fd(fd);
     }
     let stdout_read = stdout_pipe.map(|(r, w)| {
-        let _ = sys::close_fd(w);
+        let _ = sys::fd_io::close_fd(w);
         r
     });
 
-    Ok(sys::ChildHandle {
+    Ok(sys::types::ChildHandle {
         pid,
         stdout_fd: stdout_read,
     })
@@ -241,13 +242,13 @@ pub(super) fn spawn_pipeline(
 
         if pgid.is_none() {
             let child_pgid = handle.pid;
-            let _ = sys::set_process_group(child_pgid, child_pgid);
+            let _ = sys::tty::set_process_group(child_pgid, child_pgid);
             pgid = Some(child_pgid);
         } else if let Some(job_pgid) = pgid {
-            let _ = sys::set_process_group(handle.pid, job_pgid);
+            let _ = sys::tty::set_process_group(handle.pid, job_pgid);
         }
         previous_stdout_fd = handle.stdout_fd;
-        children.push(sys::ChildHandle {
+        children.push(sys::types::ChildHandle {
             pid: handle.pid,
             stdout_fd: None,
         });
@@ -303,17 +304,18 @@ pub(super) fn wait_for_children_inner(
                 let idx = shell.jobs.iter().position(|j| j.id == id).unwrap();
                 shell.jobs[idx].state = JobState::Stopped(sig);
                 if shell.interactive {
-                    shell.jobs[idx].saved_termios = sys::get_terminal_attrs(sys::STDIN_FILENO).ok();
+                    shell.jobs[idx].saved_termios =
+                        sys::tty::get_terminal_attrs(sys::constants::STDIN_FILENO).ok();
                     let msg = ByteWriter::new()
                         .byte(b'[')
                         .usize_val(id)
                         .bytes(b"] Stopped (")
-                        .bytes(sys::signal_name(sig))
+                        .bytes(sys::process::signal_name(sig))
                         .bytes(b")\t")
                         .bytes(&shell.jobs[idx].command)
                         .byte(b'\n')
                         .finish();
-                    let _ = sys::write_all_fd(sys::STDERR_FILENO, &msg);
+                    let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, &msg);
                 }
                 return Ok((128 + sig, 128 + sig));
             }
@@ -325,8 +327,8 @@ pub(super) fn wait_for_children_inner(
 
 pub(super) fn wait_for_external_child(
     shell: &mut Shell,
-    handle: &sys::ChildHandle,
-    pgid: Option<sys::Pid>,
+    handle: &sys::types::ChildHandle,
+    pgid: Option<sys::types::Pid>,
     command_desc: Option<&[u8]>,
 ) -> Result<i32, ShellError> {
     let saved_foreground = if shell.owns_terminal {
@@ -351,40 +353,43 @@ pub(super) fn wait_for_external_child(
             let idx = shell.jobs.iter().position(|j| j.id == id).unwrap();
             shell.jobs[idx].state = JobState::Stopped(sig);
             if shell.interactive {
-                shell.jobs[idx].saved_termios = sys::get_terminal_attrs(sys::STDIN_FILENO).ok();
+                shell.jobs[idx].saved_termios =
+                    sys::tty::get_terminal_attrs(sys::constants::STDIN_FILENO).ok();
                 let msg = ByteWriter::new()
                     .byte(b'[')
                     .usize_val(id)
                     .bytes(b"] Stopped (")
-                    .bytes(sys::signal_name(sig))
+                    .bytes(sys::process::signal_name(sig))
                     .bytes(b")\t")
                     .bytes(&shell.jobs[idx].command)
                     .byte(b'\n')
                     .finish();
-                let _ = sys::write_all_fd(sys::STDERR_FILENO, &msg);
+                let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, &msg);
             }
             Ok(128 + sig)
         }
     }
 }
 
-pub(super) fn handoff_foreground(pgid: Option<sys::Pid>) -> Option<sys::Pid> {
+pub(super) fn handoff_foreground(pgid: Option<sys::types::Pid>) -> Option<sys::types::Pid> {
     let Some(pgid) = pgid else {
         return None;
     };
-    if !(sys::is_interactive_fd(sys::STDIN_FILENO) && sys::is_interactive_fd(sys::STDERR_FILENO)) {
+    if !(sys::tty::is_interactive_fd(sys::constants::STDIN_FILENO)
+        && sys::tty::is_interactive_fd(sys::constants::STDERR_FILENO))
+    {
         return None;
     }
-    let Ok(saved) = sys::current_foreground_pgrp(sys::STDIN_FILENO) else {
+    let Ok(saved) = sys::tty::current_foreground_pgrp(sys::constants::STDIN_FILENO) else {
         return None;
     };
-    let _ = sys::set_foreground_pgrp(sys::STDIN_FILENO, pgid);
+    let _ = sys::tty::set_foreground_pgrp(sys::constants::STDIN_FILENO, pgid);
     Some(saved)
 }
 
-pub(super) fn restore_foreground(saved_foreground: Option<sys::Pid>) {
+pub(super) fn restore_foreground(saved_foreground: Option<sys::types::Pid>) {
     if let Some(pgid) = saved_foreground {
-        let _ = sys::set_foreground_pgrp(sys::STDIN_FILENO, pgid);
+        let _ = sys::tty::set_foreground_pgrp(sys::constants::STDIN_FILENO, pgid);
     }
 }
 
@@ -392,9 +397,15 @@ pub(super) fn restore_foreground(saved_foreground: Option<sys::Pid>) {
 #[allow(unused_imports)]
 mod tests {
     use super::*;
-    use crate::exec::test_support::*;
-    use crate::shell::Shell;
-    use crate::syntax::{Assignment, HereDoc, Redirection, Word};
+    use crate::exec::program::execute_program;
+    use crate::exec::test_support::{parse_test, test_shell};
+    use crate::shell::state::Shell;
+    use crate::syntax::ast::{
+        AndOr, Assignment, CaseCommand, Command, ForCommand, FunctionDef, HereDoc, IfCommand,
+        ListItem, LoopCommand, LoopKind, Pipeline, Program, Redirection, SimpleCommand, TimedMode,
+        Word,
+    };
+    use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;
 
     #[test]
@@ -402,13 +413,13 @@ mod tests {
         run_trace(
             trace_entries![
                 waitpid(1000, _) -> stopped_sig(libc::SIGTSTP),
-                tcgetattr(fd(sys::STDIN_FILENO)) -> err(libc::ENOTTY),
-                write(fd(sys::STDERR_FILENO), bytes(b"[1] Stopped (SIGTSTP)\tdesc\n")) -> auto,
+                tcgetattr(fd(sys::constants::STDIN_FILENO)) -> err(libc::ENOTTY),
+                write(fd(sys::constants::STDERR_FILENO), bytes(b"[1] Stopped (SIGTSTP)\tdesc\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
                 shell.interactive = true;
-                let handle = sys::ChildHandle {
+                let handle = sys::types::ChildHandle {
                     pid: 1000,
                     stdout_fd: None,
                 };
@@ -429,7 +440,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let handle = sys::ChildHandle {
+                let handle = sys::types::ChildHandle {
                     pid: 1000,
                     stdout_fd: None,
                 };
@@ -446,15 +457,15 @@ mod tests {
         run_trace(
             trace_entries![
                 waitpid(1000, _) -> stopped_sig(libc::SIGTSTP),
-                tcgetattr(fd(sys::STDIN_FILENO)) -> err(libc::ENOTTY),
-                write(fd(sys::STDERR_FILENO), bytes(b"[1] Stopped (SIGTSTP)\tdesc\n")) -> auto,
+                tcgetattr(fd(sys::constants::STDIN_FILENO)) -> err(libc::ENOTTY),
+                write(fd(sys::constants::STDERR_FILENO), bytes(b"[1] Stopped (SIGTSTP)\tdesc\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
                 shell.interactive = true;
-                let spawned = crate::exec::SpawnedProcesses {
+                let spawned = crate::exec::and_or::SpawnedProcesses {
                     pgid: Some(1000),
-                    children: vec![sys::ChildHandle {
+                    children: vec![sys::types::ChildHandle {
                         pid: 1000,
                         stdout_fd: None,
                     }],
@@ -469,9 +480,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let spawned = crate::exec::SpawnedProcesses {
+                let spawned = crate::exec::and_or::SpawnedProcesses {
                     pgid: Some(1000),
-                    children: vec![sys::ChildHandle {
+                    children: vec![sys::types::ChildHandle {
                         pid: 1000,
                         stdout_fd: None,
                     }],
@@ -539,8 +550,8 @@ mod tests {
                 ],
                 close(fd(200)) -> 0,
                 setpgid(int(1001), int(1000)) -> 0,
-                waitpid(int(1000), _, int(sys::WUNTRACED as i64)) -> status(0),
-                waitpid(int(1001), _, int(sys::WUNTRACED as i64)) -> status(0),
+                waitpid(int(1000), _, int(sys::constants::WUNTRACED as i64)) -> status(0),
+                waitpid(int(1001), _, int(sys::constants::WUNTRACED as i64)) -> status(0),
             ],
             || {
                 let mut shell = test_shell();
@@ -695,7 +706,7 @@ mod tests {
                 Command::If(IfCommand {
                     condition: program.clone(),
                     then_branch: program.clone(),
-                    elif_branches: vec![crate::syntax::ElifBranch {
+                    elif_branches: vec![crate::syntax::ast::ElifBranch {
                         condition: program.clone(),
                         body: program.clone(),
                     }]
@@ -723,7 +734,7 @@ mod tests {
                         raw: b"item".to_vec().into(),
                         line: 0,
                     },
-                    arms: vec![crate::syntax::CaseArm {
+                    arms: vec![crate::syntax::ast::CaseArm {
                         patterns: vec![Word {
                             raw: b"item".to_vec().into(),
                             line: 0,
@@ -848,9 +859,9 @@ mod tests {
                 monotonic_clock_ns() -> 2_000_000_000,
                 times(_) -> 0,
                 sysconf(_) -> 100,
-                write(fd(sys::STDERR_FILENO), bytes(b"\nreal\t0m1.000s\n")) -> auto,
-                write(fd(sys::STDERR_FILENO), bytes(b"user\t0m0.000s\n")) -> auto,
-                write(fd(sys::STDERR_FILENO), bytes(b"sys\t0m0.000s\n")) -> auto,
+                write(fd(sys::constants::STDERR_FILENO), bytes(b"\nreal\t0m1.000s\n")) -> auto,
+                write(fd(sys::constants::STDERR_FILENO), bytes(b"user\t0m0.000s\n")) -> auto,
+                write(fd(sys::constants::STDERR_FILENO), bytes(b"sys\t0m0.000s\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -871,9 +882,9 @@ mod tests {
                 monotonic_clock_ns() -> 2_500_000_000,
                 times(_) -> 0,
                 sysconf(_) -> 100,
-                write(fd(sys::STDERR_FILENO), bytes(b"real 1.50\n")) -> auto,
-                write(fd(sys::STDERR_FILENO), bytes(b"user 0.00\n")) -> auto,
-                write(fd(sys::STDERR_FILENO), bytes(b"sys 0.00\n")) -> auto,
+                write(fd(sys::constants::STDERR_FILENO), bytes(b"real 1.50\n")) -> auto,
+                write(fd(sys::constants::STDERR_FILENO), bytes(b"user 0.00\n")) -> auto,
+                write(fd(sys::constants::STDERR_FILENO), bytes(b"sys 0.00\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -894,18 +905,18 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let spawned = crate::exec::SpawnedProcesses {
+                let spawned = crate::exec::and_or::SpawnedProcesses {
                     pgid: None,
                     children: vec![
-                        sys::ChildHandle {
+                        sys::types::ChildHandle {
                             pid: 101,
                             stdout_fd: None,
                         },
-                        sys::ChildHandle {
+                        sys::types::ChildHandle {
                             pid: 102,
                             stdout_fd: None,
                         },
-                        sys::ChildHandle {
+                        sys::types::ChildHandle {
                             pid: 103,
                             stdout_fd: None,
                         },
@@ -932,7 +943,7 @@ mod tests {
                     command,
                     None,
                     false,
-                    crate::exec::ProcessGroupPlan::None,
+                    crate::exec::and_or::ProcessGroupPlan::None,
                 )
                 .unwrap();
             },
@@ -944,7 +955,7 @@ mod tests {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
             shell.owns_terminal = true;
-            let spawned = crate::exec::SpawnedProcesses {
+            let spawned = crate::exec::and_or::SpawnedProcesses {
                 pgid: None,
                 children: vec![],
             };
@@ -957,14 +968,14 @@ mod tests {
     fn wait_pipeline_handoff_foreground_tcgetpgrp_err() {
         run_trace(
             trace_entries![
-                isatty(fd(sys::STDIN_FILENO)) -> int(1),
-                isatty(fd(sys::STDERR_FILENO)) -> int(1),
-                tcgetpgrp(fd(sys::STDIN_FILENO)) -> err(libc::ENOTTY),
+                isatty(fd(sys::constants::STDIN_FILENO)) -> int(1),
+                isatty(fd(sys::constants::STDERR_FILENO)) -> int(1),
+                tcgetpgrp(fd(sys::constants::STDIN_FILENO)) -> err(libc::ENOTTY),
             ],
             || {
                 let mut shell = test_shell();
                 shell.owns_terminal = true;
-                let spawned = crate::exec::SpawnedProcesses {
+                let spawned = crate::exec::and_or::SpawnedProcesses {
                     pgid: Some(100),
                     children: vec![],
                 };

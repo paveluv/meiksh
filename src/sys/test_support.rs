@@ -1223,7 +1223,7 @@ where
     I: IntoIterator<Item = B>,
     B: AsRef<[u8]>,
 {
-    use crate::sys::STDIN_FILENO;
+    use crate::sys::constants::STDIN_FILENO;
     let mut out: Vec<TraceEntry> = chunks
         .into_iter()
         .map(|chunk| {

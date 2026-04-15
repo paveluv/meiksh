@@ -1,4 +1,8 @@
-use super::*;
+use super::{BuiltinOutcome, diag_status, write_stdout_line};
+use crate::bstr::ByteWriter;
+use crate::shell::error::ShellError;
+use crate::shell::state::Shell;
+use crate::sys;
 
 pub(super) fn pwd(shell: &Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, ShellError> {
     let mut logical = true;
@@ -28,11 +32,11 @@ pub(super) fn pwd_output(shell: &Shell, logical: bool) -> Result<Vec<u8>, ShellE
     if logical {
         return current_logical_pwd(shell);
     }
-    sys::get_cwd().map_err(|e| shell.diagnostic(1, &e.strerror()))
+    sys::fs::get_cwd().map_err(|e| shell.diagnostic(1, &e.strerror()))
 }
 
 pub(super) fn current_logical_pwd(shell: &Shell) -> Result<Vec<u8>, ShellError> {
-    let cwd = sys::get_cwd().map_err(|e| shell.diagnostic(1, &e.strerror()))?;
+    let cwd = sys::fs::get_cwd().map_err(|e| shell.diagnostic(1, &e.strerror()))?;
     if let Some(pwd) = shell.get_var(b"PWD")
         && logical_pwd_is_valid(pwd)
         && paths_match_logically(pwd, &cwd)
@@ -55,20 +59,21 @@ pub(super) fn logical_pwd_is_valid(path: &[u8]) -> bool {
 }
 
 pub(super) fn paths_match_logically(lhs: &[u8], rhs: &[u8]) -> bool {
-    sys::canonicalize(lhs).ok() == sys::canonicalize(rhs).ok()
+    sys::fs::canonicalize(lhs).ok() == sys::fs::canonicalize(rhs).ok()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builtin::test_support::*;
+    use crate::builtin::test_support::{diag, invoke, test_shell};
+    use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;
 
     #[test]
     fn pwd_invalid_option() {
         let msg = diag(b"pwd: invalid option: -z");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome =
@@ -82,7 +87,7 @@ mod tests {
     fn pwd_too_many_args() {
         let msg = diag(b"pwd: too many arguments");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome =
@@ -99,7 +104,7 @@ mod tests {
                 getcwd() -> cwd("/home/user"),
                 realpath(any, any) -> realpath("/home/user"),
                 realpath(any, any) -> realpath("/home/user"),
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"/home/user\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"/home/user\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -132,7 +137,7 @@ mod tests {
                 getcwd() -> cwd("/real/path"),
                 realpath(any, any) -> realpath("/home/link"),
                 realpath(any, any) -> realpath("/real/path"),
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"/real/path\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"/real/path\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();

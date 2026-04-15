@@ -1,11 +1,12 @@
-use crate::shell::{Shell, ShellError};
+use crate::shell::error::ShellError;
+use crate::shell::state::Shell;
 use crate::sys;
 
 pub(super) fn append_history(shell: &Shell, line: &[u8]) -> Result<(), ShellError> {
     let history = history_path(shell);
-    let fd = match sys::open_file(
+    let fd = match sys::fs::open_file(
         &history,
-        sys::O_WRONLY | sys::O_CREAT | sys::O_APPEND,
+        sys::constants::O_WRONLY | sys::constants::O_CREAT | sys::constants::O_APPEND,
         0o644,
     ) {
         Ok(fd) => fd,
@@ -15,8 +16,8 @@ pub(super) fn append_history(shell: &Shell, line: &[u8]) -> Result<(), ShellErro
     if entry.is_empty() || entry[entry.len() - 1] != b'\n' {
         entry.push(b'\n');
     }
-    let _ = sys::write_all_fd(fd, &entry);
-    sys::close_fd(fd).map_err(|e| shell.diagnostic_syserr(1, &e))?;
+    let _ = sys::fd_io::write_all_fd(fd, &entry);
+    sys::fd_io::close_fd(fd).map_err(|e| shell.diagnostic_syserr(1, &e))?;
     Ok(())
 }
 
@@ -37,7 +38,9 @@ pub(super) fn history_path(shell: &Shell) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interactive::test_support::*;
+    use crate::interactive::test_support::test_shell;
+    use crate::sys;
+    use crate::sys::test_support::run_trace;
     use crate::trace_entries;
 
     #[test]
@@ -62,7 +65,7 @@ mod tests {
     fn append_history_silently_ignores_open_error() {
         run_trace(
             trace_entries![
-                open(str("/tmp/history-dir"), _, _) -> err(sys::EISDIR),
+                open(str("/tmp/history-dir"), _, _) -> err(sys::constants::EISDIR),
             ],
             || {
                 let mut shell = test_shell();

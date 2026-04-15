@@ -2,17 +2,15 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use crate::shell::{Shell, ShellOptions};
-use crate::syntax::{Assignment, HereDoc, Redirection, Word};
+use crate::shell::options::ShellOptions;
+use crate::shell::state::Shell;
+use crate::syntax::ast::{Assignment, HereDoc, Redirection, Word};
 use crate::sys;
-
-pub(super) use crate::sys::test_support::{
-    ArgMatcher, TraceEntry, TraceResult, assert_no_syscalls, run_trace, t, t_fork,
-};
+use crate::sys::test_support::{ArgMatcher, TraceEntry, TraceResult, t};
 
 pub(super) fn parse_test(
     source: &str,
-) -> Result<crate::syntax::Program, crate::syntax::ParseError> {
+) -> Result<crate::syntax::ast::Program, crate::syntax::ParseError> {
     crate::syntax::parse(source.as_bytes())
 }
 
@@ -57,7 +55,7 @@ pub(super) fn t_stderr(msg: &str) -> TraceEntry {
     t(
         "write",
         vec![
-            ArgMatcher::Fd(sys::STDERR_FILENO),
+            ArgMatcher::Fd(sys::constants::STDERR_FILENO),
             ArgMatcher::Bytes(format!("{msg}\n").into_bytes()),
         ],
         TraceResult::Auto,

@@ -1,34 +1,22 @@
-#![allow(unused_imports)]
-
-use std::collections::HashMap;
-
-use crate::arena::ByteArena;
-use crate::bstr::ByteWriter;
-use crate::builtin;
-use crate::expand;
-use crate::shell::{
-    BlockingWaitOutcome, FlowSignal, JobState, PendingControl, Shell, ShellError, VarError,
-};
-use crate::syntax::{
-    AndOr, CaseCommand, Command, ForCommand, FunctionDef, HereDoc, IfCommand, ListItem, LogicalOp,
-    LoopCommand, LoopKind, Pipeline, Program, RedirectionKind, SimpleCommand, TimedMode,
-};
+use crate::shell::error::ShellError;
+use crate::shell::state::Shell;
+use crate::syntax::ast::{AndOr, LogicalOp};
 use crate::sys;
 
+use super::pipeline::{execute_pipeline, spawn_pipeline};
 use super::program::check_errexit;
-use super::*;
 
 #[derive(Clone, Copy, Debug)]
 pub(super) enum ProcessGroupPlan {
     #[cfg_attr(not(test), allow(dead_code))]
     None,
     NewGroup,
-    Join(sys::Pid),
+    Join(sys::types::Pid),
 }
 
 pub(super) struct SpawnedProcesses {
-    pub(super) children: Vec<sys::ChildHandle>,
-    pub(super) pgid: Option<sys::Pid>,
+    pub(super) children: Vec<sys::types::ChildHandle>,
+    pub(super) pgid: Option<sys::types::Pid>,
 }
 
 pub(super) fn execute_and_or(shell: &mut Shell, node: &AndOr) -> Result<i32, ShellError> {
@@ -78,16 +66,16 @@ pub(super) fn spawn_and_or(
     if node.rest.is_empty() && !ignore_int_quit {
         return spawn_pipeline(shell, &node.first, stdin_override);
     }
-    let pid = sys::fork_process().map_err(|e| shell.diagnostic_syserr(1, &e))?;
+    let pid = sys::process::fork_process().map_err(|e| shell.diagnostic_syserr(1, &e))?;
     if pid == 0 {
         if let Some(fd) = stdin_override {
-            let _ = sys::duplicate_fd(fd, sys::STDIN_FILENO);
-            let _ = sys::close_fd(fd);
+            let _ = sys::fd_io::duplicate_fd(fd, sys::constants::STDIN_FILENO);
+            let _ = sys::fd_io::close_fd(fd);
         }
-        let _ = sys::set_process_group(0, 0);
+        let _ = sys::tty::set_process_group(0, 0);
         if ignore_int_quit {
-            let _ = sys::ignore_signal(sys::SIGINT);
-            let _ = sys::ignore_signal(sys::SIGQUIT);
+            let _ = sys::process::ignore_signal(sys::constants::SIGINT);
+            let _ = sys::process::ignore_signal(sys::constants::SIGQUIT);
         }
         let mut child_shell = shell.clone();
         child_shell.owns_terminal = false;
@@ -100,14 +88,14 @@ pub(super) fn spawn_and_or(
             execute_and_or(&mut child_shell, node).unwrap_or(1)
         };
         let status = child_shell.run_exit_trap(status).unwrap_or(status);
-        sys::exit_process(status as sys::RawFd);
+        sys::process::exit_process(status as sys::types::RawFd);
     }
     if let Some(fd) = stdin_override {
-        let _ = sys::close_fd(fd);
+        let _ = sys::fd_io::close_fd(fd);
     }
-    let _ = sys::set_process_group(pid, pid);
+    let _ = sys::tty::set_process_group(pid, pid);
     Ok(SpawnedProcesses {
-        children: vec![sys::ChildHandle {
+        children: vec![sys::types::ChildHandle {
             pid,
             stdout_fd: None,
         }],
@@ -119,9 +107,10 @@ pub(super) fn spawn_and_or(
 #[allow(unused_imports)]
 mod tests {
     use super::*;
-    use crate::exec::test_support::*;
-    use crate::shell::Shell;
-    use crate::syntax::{Assignment, HereDoc, Redirection, Word};
+    use crate::exec::program::execute_program;
+    use crate::exec::test_support::{parse_test, test_shell};
+    use crate::shell::state::Shell;
+    use crate::syntax::ast::{Assignment, HereDoc, Redirection, Word};
 
     #[test]
     fn spawn_and_or_monitor_mode_single_pipeline() {

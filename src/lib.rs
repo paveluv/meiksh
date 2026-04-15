@@ -2,18 +2,15 @@
 #![warn(clippy::disallowed_methods)]
 #![warn(clippy::disallowed_macros)]
 
-#[macro_use]
-pub mod sys;
-pub mod arena;
-pub mod bstr;
-pub mod builtin;
-pub mod exec;
-pub mod expand;
-pub mod interactive;
+pub(crate) mod arena;
+pub(crate) mod bstr;
+pub(crate) mod builtin;
+pub(crate) mod exec;
+pub(crate) mod expand;
+pub(crate) mod interactive;
 pub mod shell;
-pub mod syntax;
-
-pub use shell::run_from_env;
+pub(crate) mod syntax;
+pub mod sys;
 
 #[cfg(test)]
 #[allow(unused_macros)]
@@ -27,7 +24,7 @@ macro_rules! syscall_test {
         fn $name() {
             let trace = $crate::syscall_test!(@trace_entries $($trace)*);
             $crate::sys::test_support::run_trace(trace, || {
-                let mut shell = $crate::shell::Shell::from_args(
+                let mut shell = $crate::shell::state::Shell::from_args(
                     &["meiksh", $($arg),*]
                 ).expect("Shell::from_args");
                 let _ = shell.run();

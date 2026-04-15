@@ -1,17 +1,17 @@
 use crate::bstr::ByteWriter;
 
 #[derive(Debug)]
-pub enum ShellError {
+pub(crate) enum ShellError {
     Status(i32),
 }
 
 impl ShellError {
-    pub fn exit_status(&self) -> i32 {
+    pub(crate) fn exit_status(&self) -> i32 {
         let ShellError::Status(s) = self;
         *s
     }
 
-    pub fn message_bytes(&self) -> Vec<u8> {
+    pub(crate) fn message_bytes(&self) -> Vec<u8> {
         crate::bstr::ByteWriter::new()
             .bytes(b"exit status ")
             .i64_val(self.exit_status() as i64)
@@ -20,7 +20,7 @@ impl ShellError {
 }
 
 #[derive(Debug)]
-pub enum VarError {
+pub(crate) enum VarError {
     Readonly(Box<[u8]>),
 }
 
@@ -35,12 +35,13 @@ pub(super) fn var_error_message(e: &VarError) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use crate::expand::ExpandError;
+    use super::*;
+
+    use crate::expand::core::ExpandError;
     use crate::syntax;
     use crate::sys::test_support::run_trace;
     use crate::trace_entries;
 
-    use super::ShellError;
     use crate::shell::test_support::{t_stderr, test_shell};
 
     #[test]

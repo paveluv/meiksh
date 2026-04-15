@@ -1,6 +1,11 @@
 use libc::{c_char, c_int};
 
-use super::constants::*;
+use super::constants::{
+    SIG_DFL_HANDLER, SIG_ERR_HANDLER, SIG_IGN_HANDLER, SIGABRT, SIGALRM, SIGBUS, SIGCHLD, SIGCONT,
+    SIGFPE, SIGHUP, SIGILL, SIGINT, SIGKILL, SIGPIPE, SIGQUIT, SIGSEGV, SIGSTOP, SIGSYS, SIGTERM,
+    SIGTRAP, SIGTSTP, SIGTTIN, SIGTTOU, SIGUSR1, SIGUSR2, STDIN_FILENO, STDOUT_FILENO, WCONTINUED,
+    WNOHANG, WUNTRACED,
+};
 use super::env::env_set_var;
 use super::error::{SysError, SysResult};
 use super::fd_io::{close_fd, create_pipe, duplicate_fd, read_fd};
@@ -8,14 +13,14 @@ use super::interface::{last_error, record_signal, signal_mask, sys_interface};
 use super::tty::set_process_group;
 use super::types::{ChildExitStatus, ChildHandle, ChildOutput, Pid, WaitStatus};
 
-pub fn current_pid() -> Pid {
+pub(crate) fn current_pid() -> Pid {
     (sys_interface().getpid)()
 }
 
-pub fn parent_pid() -> Pid {
+pub(crate) fn parent_pid() -> Pid {
     (sys_interface().getppid)()
 }
-pub fn has_same_real_and_effective_ids() -> bool {
+pub(crate) fn has_same_real_and_effective_ids() -> bool {
     #[cfg(test)]
     if let Some((uid, euid, gid, egid)) = super::test_support::current_process_ids() {
         return uid == euid && gid == egid;
@@ -23,7 +28,7 @@ pub fn has_same_real_and_effective_ids() -> bool {
     unsafe { libc::getuid() == libc::geteuid() && libc::getgid() == libc::getegid() }
 }
 
-pub fn wait_pid(pid: Pid, nohang: bool) -> SysResult<Option<WaitStatus>> {
+pub(crate) fn wait_pid(pid: Pid, nohang: bool) -> SysResult<Option<WaitStatus>> {
     let mut status = 0;
     let options = if nohang { WNOHANG } else { 0 };
     let result = (sys_interface().waitpid)(pid, &mut status, options);
@@ -39,7 +44,7 @@ pub fn wait_pid(pid: Pid, nohang: bool) -> SysResult<Option<WaitStatus>> {
     }
 }
 
-pub fn wait_pid_untraced(pid: Pid, _nohang: bool) -> SysResult<Option<WaitStatus>> {
+pub(crate) fn wait_pid_untraced(pid: Pid, _nohang: bool) -> SysResult<Option<WaitStatus>> {
     let mut status = 0;
     let result = (sys_interface().waitpid)(pid, &mut status, WUNTRACED);
     if result > 0 {
@@ -54,7 +59,7 @@ pub fn wait_pid_untraced(pid: Pid, _nohang: bool) -> SysResult<Option<WaitStatus
     }
 }
 
-pub fn wait_pid_job_status(pid: Pid) -> SysResult<Option<WaitStatus>> {
+pub(crate) fn wait_pid_job_status(pid: Pid) -> SysResult<Option<WaitStatus>> {
     let mut status = 0;
     let options = WUNTRACED | WCONTINUED | WNOHANG;
     let result = (sys_interface().waitpid)(pid, &mut status, options);
@@ -70,7 +75,7 @@ pub fn wait_pid_job_status(pid: Pid) -> SysResult<Option<WaitStatus>> {
     }
 }
 
-pub fn send_signal(pid: Pid, signal: c_int) -> SysResult<()> {
+pub(crate) fn send_signal(pid: Pid, signal: c_int) -> SysResult<()> {
     let result = (sys_interface().kill)(pid, signal);
     if result == 0 {
         Ok(())
@@ -79,7 +84,7 @@ pub fn send_signal(pid: Pid, signal: c_int) -> SysResult<()> {
     }
 }
 
-pub fn install_shell_signal_handler(signal: c_int) -> SysResult<()> {
+pub(crate) fn install_shell_signal_handler(signal: c_int) -> SysResult<()> {
     let result = (sys_interface().signal)(signal, record_signal as *const () as libc::sighandler_t);
     if result == SIG_ERR_HANDLER {
         Err(last_error())
@@ -88,7 +93,7 @@ pub fn install_shell_signal_handler(signal: c_int) -> SysResult<()> {
     }
 }
 
-pub fn ignore_signal(signal: c_int) -> SysResult<()> {
+pub(crate) fn ignore_signal(signal: c_int) -> SysResult<()> {
     let result = (sys_interface().signal)(signal, SIG_IGN_HANDLER);
     if result == SIG_ERR_HANDLER {
         Err(last_error())
@@ -97,7 +102,7 @@ pub fn ignore_signal(signal: c_int) -> SysResult<()> {
     }
 }
 
-pub fn default_signal_action(signal: c_int) -> SysResult<()> {
+pub(crate) fn default_signal_action(signal: c_int) -> SysResult<()> {
     let result = (sys_interface().signal)(signal, SIG_DFL_HANDLER);
     if result == SIG_ERR_HANDLER {
         Err(last_error())
@@ -106,7 +111,7 @@ pub fn default_signal_action(signal: c_int) -> SysResult<()> {
     }
 }
 
-pub fn has_pending_signal() -> Option<c_int> {
+pub(crate) fn has_pending_signal() -> Option<c_int> {
     let bits = (sys_interface().pending_signal_bits)();
 
     supported_trap_signals().into_iter().find(|signal| {
@@ -116,7 +121,7 @@ pub fn has_pending_signal() -> Option<c_int> {
     })
 }
 
-pub fn take_pending_signals() -> Vec<c_int> {
+pub(crate) fn take_pending_signals() -> Vec<c_int> {
     let bits = (sys_interface().take_pending_signal_bits)();
 
     supported_trap_signals()
@@ -129,14 +134,14 @@ pub fn take_pending_signals() -> Vec<c_int> {
         .collect()
 }
 
-pub fn supported_trap_signals() -> Vec<c_int> {
+pub(crate) fn supported_trap_signals() -> Vec<c_int> {
     vec![
         SIGHUP, SIGINT, SIGQUIT, SIGILL, SIGABRT, SIGFPE, SIGBUS, SIGUSR1, SIGSEGV, SIGUSR2,
         SIGPIPE, SIGALRM, SIGTERM, SIGCHLD, SIGCONT, SIGTRAP, SIGTSTP, SIGTTIN, SIGTTOU, SIGSYS,
     ]
 }
 
-pub fn query_signal_disposition(signal: c_int) -> SysResult<bool> {
+pub(crate) fn query_signal_disposition(signal: c_int) -> SysResult<bool> {
     let prev = (sys_interface().signal)(signal, SIG_IGN_HANDLER);
     if prev == SIG_ERR_HANDLER {
         return Err(last_error());
@@ -145,11 +150,11 @@ pub fn query_signal_disposition(signal: c_int) -> SysResult<bool> {
     Ok(prev == SIG_IGN_HANDLER)
 }
 
-pub fn interrupted(error: &SysError) -> bool {
+pub(crate) fn interrupted(error: &SysError) -> bool {
     error.is_eintr()
 }
 impl ChildHandle {
-    pub fn wait_with_output(self) -> SysResult<ChildOutput> {
+    pub(crate) fn wait_with_output(self) -> SysResult<ChildOutput> {
         let mut output = Vec::new();
         if let Some(fd) = self.stdout_fd {
             let mut buf = [0u8; 8192];
@@ -171,7 +176,7 @@ impl ChildHandle {
         })
     }
 
-    pub fn wait(self) -> SysResult<ChildExitStatus> {
+    pub(crate) fn wait(self) -> SysResult<ChildExitStatus> {
         if let Some(fd) = self.stdout_fd {
             close_fd(fd)?;
         }
@@ -181,7 +186,7 @@ impl ChildHandle {
         })
     }
 }
-pub fn fork_process() -> SysResult<Pid> {
+pub(crate) fn fork_process() -> SysResult<Pid> {
     let pid = (sys_interface().fork)();
     if pid < 0 { Err(last_error()) } else { Ok(pid) }
 }
@@ -191,7 +196,7 @@ pub fn exit_process(status: c_int) -> ! {
     unreachable!()
 }
 
-pub fn spawn_child(
+pub(crate) fn spawn_child(
     program: &[u8],
     argv: &[&[u8]],
     env_vars: Option<&[(&[u8], &[u8])]>,
@@ -251,7 +256,7 @@ pub fn spawn_child(
         stdout_fd: stdout_read,
     })
 }
-pub fn getrlimit(resource: i32) -> SysResult<(u64, u64)> {
+pub(crate) fn getrlimit(resource: i32) -> SysResult<(u64, u64)> {
     let mut rlim = std::mem::MaybeUninit::<libc::rlimit>::zeroed();
     let rc = unsafe { libc::getrlimit(resource as libc::__rlimit_resource_t, rlim.as_mut_ptr()) };
     if rc < 0 {
@@ -261,7 +266,7 @@ pub fn getrlimit(resource: i32) -> SysResult<(u64, u64)> {
     Ok((rlim.rlim_cur, rlim.rlim_max))
 }
 
-pub fn setrlimit(resource: i32, soft: u64, hard: u64) -> SysResult<()> {
+pub(crate) fn setrlimit(resource: i32, soft: u64, hard: u64) -> SysResult<()> {
     let rlim = libc::rlimit {
         rlim_cur: soft,
         rlim_max: hard,
@@ -272,7 +277,7 @@ pub fn setrlimit(resource: i32, soft: u64, hard: u64) -> SysResult<()> {
     }
     Ok(())
 }
-pub fn exec_replace<S: AsRef<[u8]>>(file: &[u8], argv: &[S]) -> SysResult<()> {
+pub(crate) fn exec_replace<S: AsRef<[u8]>>(file: &[u8], argv: &[S]) -> SysResult<()> {
     let c_file = crate::bstr::to_cstring(file).map_err(|_| SysError::NulInPath)?;
     let mut owned = Vec::with_capacity(argv.len());
     for arg in argv {
@@ -292,7 +297,7 @@ pub fn exec_replace<S: AsRef<[u8]>>(file: &[u8], argv: &[S]) -> SysResult<()> {
     }
 }
 
-pub fn exec_replace_with_env(
+pub(crate) fn exec_replace_with_env(
     file: &[u8],
     argv: &[Vec<u8>],
     env: &[(Vec<u8>, Vec<u8>)],
@@ -325,7 +330,7 @@ pub fn exec_replace_with_env(
     }
 }
 
-pub fn decode_wait_status(status: c_int) -> i32 {
+pub(crate) fn decode_wait_status(status: c_int) -> i32 {
     if wifexited(status) {
         wexitstatus(status)
     } else if wifsignaled(status) {
@@ -335,7 +340,7 @@ pub fn decode_wait_status(status: c_int) -> i32 {
     }
 }
 
-pub fn format_signal_exit(status: c_int) -> Option<Vec<u8>> {
+pub(crate) fn format_signal_exit(status: c_int) -> Option<Vec<u8>> {
     if wifsignaled(status) {
         let mut buf = b"terminated by signal ".to_vec();
         crate::bstr::push_i64(&mut buf, wtermsig(status) as i64);
@@ -345,7 +350,7 @@ pub fn format_signal_exit(status: c_int) -> Option<Vec<u8>> {
     }
 }
 
-pub fn signal_name(sig: c_int) -> &'static [u8] {
+pub(crate) fn signal_name(sig: c_int) -> &'static [u8] {
     match sig {
         SIGHUP => b"SIGHUP",
         SIGINT => b"SIGINT",
@@ -373,7 +378,7 @@ pub fn signal_name(sig: c_int) -> &'static [u8] {
     }
 }
 
-pub fn all_signal_names() -> &'static [(&'static [u8], c_int)] {
+pub(crate) fn all_signal_names() -> &'static [(&'static [u8], c_int)] {
     &[
         (b"HUP", SIGHUP),
         (b"INT", SIGINT),
@@ -404,45 +409,53 @@ fn wifexited(status: c_int) -> bool {
     (status & 0x7f) == 0
 }
 
-pub fn wexitstatus(status: c_int) -> i32 {
+pub(crate) fn wexitstatus(status: c_int) -> i32 {
     (status >> 8) & 0xff
 }
 
-pub fn wifsignaled(status: c_int) -> bool {
+pub(crate) fn wifsignaled(status: c_int) -> bool {
     (status & 0x7f) != 0 && (status & 0x7f) != 0x7f
 }
 
-pub fn wtermsig(status: c_int) -> i32 {
+pub(crate) fn wtermsig(status: c_int) -> i32 {
     status & 0x7f
 }
 
-pub fn wifstopped(status: c_int) -> bool {
+pub(crate) fn wifstopped(status: c_int) -> bool {
     (status & 0xff) == 0x7f
 }
 
-pub fn wifcontinued(status: c_int) -> bool {
+pub(crate) fn wifcontinued(status: c_int) -> bool {
     status == 0xffff
 }
 
-pub fn wstopsig(status: c_int) -> i32 {
+pub(crate) fn wstopsig(status: c_int) -> i32 {
     (status >> 8) & 0xff
 }
 
-pub fn shell_name_from_args(args: &[Vec<u8>]) -> &[u8] {
+pub(crate) fn shell_name_from_args(args: &[Vec<u8>]) -> &[u8] {
     args.first().map(|s| s.as_slice()).unwrap_or(b"meiksh")
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use libc::{c_char, c_int};
     use std::ffi::CString;
 
     use crate::sys::test_support;
     use crate::trace_entries;
 
-    use super::*;
-    use super::super::interface::{SystemInterface, default_interface};
-    use crate::sys::*;
+    use super::super::constants::{
+        EINTR, ENOENT, F_GETFL, F_SETFL, O_NONBLOCK, SIGABRT, SIGALRM, SIGCHLD, SIGCONT, SIGHUP,
+        SIGINT, SIGPIPE, SIGQUIT, SIGTERM, SIGTRAP, SIGUSR1, SIGUSR2, STDIN_FILENO, STDOUT_FILENO,
+    };
+    use super::super::error::SysError;
+    use super::super::interface::{SystemInterface, default_interface, sys_interface};
+    use super::super::types::{ChildHandle, FdReader, Pid, WaitStatus};
+    use crate::sys::env::home_dir_for_user;
+    use crate::sys::fd_io::ensure_blocking_read_fd;
+    use crate::sys::fs::{canonicalize, get_cwd};
 
     #[test]
     fn decodes_wait_status_shapes() {

@@ -1,5 +1,5 @@
 use crate::bstr::{self, ByteWriter};
-use crate::shell::Shell;
+use crate::shell::state::Shell;
 use crate::sys;
 
 struct RawMode {
@@ -7,26 +7,26 @@ struct RawMode {
 }
 
 impl RawMode {
-    fn enter() -> sys::SysResult<Self> {
-        let saved = sys::get_terminal_attrs(sys::STDIN_FILENO)?;
+    fn enter() -> sys::error::SysResult<Self> {
+        let saved = sys::tty::get_terminal_attrs(sys::constants::STDIN_FILENO)?;
         let mut raw = saved;
         raw.c_lflag &= !(libc::ICANON | libc::ECHO | libc::ISIG);
         raw.c_cc[libc::VMIN] = 1;
         raw.c_cc[libc::VTIME] = 0;
-        sys::set_terminal_attrs(sys::STDIN_FILENO, &raw)?;
+        sys::tty::set_terminal_attrs(sys::constants::STDIN_FILENO, &raw)?;
         Ok(Self { saved })
     }
 }
 
 impl Drop for RawMode {
     fn drop(&mut self) {
-        let _ = sys::set_terminal_attrs(sys::STDIN_FILENO, &self.saved);
+        let _ = sys::tty::set_terminal_attrs(sys::constants::STDIN_FILENO, &self.saved);
     }
 }
 
-fn read_byte() -> sys::SysResult<Option<u8>> {
+fn read_byte() -> sys::error::SysResult<Option<u8>> {
     let mut buf = [0u8; 1];
-    match sys::read_fd(sys::STDIN_FILENO, &mut buf) {
+    match sys::fd_io::read_fd(sys::constants::STDIN_FILENO, &mut buf) {
         Ok(0) => Ok(None),
         Ok(_) => Ok(Some(buf[0])),
         Err(e) => Err(e),
@@ -34,7 +34,7 @@ fn read_byte() -> sys::SysResult<Option<u8>> {
 }
 
 fn write_bytes(data: &[u8]) {
-    let _ = sys::write_all_fd(sys::STDOUT_FILENO, data);
+    let _ = sys::fd_io::write_all_fd(sys::constants::STDOUT_FILENO, data);
 }
 
 fn bell() {
@@ -43,7 +43,7 @@ fn bell() {
 
 fn redraw(line: &[u8], cursor: usize, prompt: &[u8]) {
     write_bytes(b"\r\x1b[K");
-    let _ = sys::write_all_fd(sys::STDERR_FILENO, prompt);
+    let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, prompt);
     let mut buf = Vec::with_capacity(line.len() + 20);
     buf.extend_from_slice(line);
     let cursor_back = line.len().saturating_sub(cursor);
@@ -55,11 +55,11 @@ fn redraw(line: &[u8], cursor: usize, prompt: &[u8]) {
     write_bytes(&buf);
 }
 
-pub(crate) fn is_word_char(c: u8) -> bool {
+fn is_word_char(c: u8) -> bool {
     c.is_ascii_alphanumeric() || c == b'_'
 }
 
-pub(crate) fn word_forward(line: &[u8], pos: usize) -> usize {
+fn word_forward(line: &[u8], pos: usize) -> usize {
     let mut p = pos;
     let len = line.len();
     if p >= len {
@@ -80,7 +80,7 @@ pub(crate) fn word_forward(line: &[u8], pos: usize) -> usize {
     p
 }
 
-pub(crate) fn word_backward(line: &[u8], pos: usize) -> usize {
+fn word_backward(line: &[u8], pos: usize) -> usize {
     if pos == 0 {
         return 0;
     }
@@ -103,7 +103,7 @@ pub(crate) fn word_backward(line: &[u8], pos: usize) -> usize {
     p
 }
 
-pub(crate) fn bigword_forward(line: &[u8], pos: usize) -> usize {
+fn bigword_forward(line: &[u8], pos: usize) -> usize {
     let mut p = pos;
     let len = line.len();
     while p < len && !line[p].is_ascii_whitespace() {
@@ -115,7 +115,7 @@ pub(crate) fn bigword_forward(line: &[u8], pos: usize) -> usize {
     p
 }
 
-pub(crate) fn bigword_backward(line: &[u8], pos: usize) -> usize {
+fn bigword_backward(line: &[u8], pos: usize) -> usize {
     if pos == 0 {
         return 0;
     }
@@ -129,7 +129,7 @@ pub(crate) fn bigword_backward(line: &[u8], pos: usize) -> usize {
     p
 }
 
-pub(crate) fn word_end(line: &[u8], pos: usize) -> usize {
+fn word_end(line: &[u8], pos: usize) -> usize {
     let len = line.len();
     if pos + 1 >= len {
         return pos;
@@ -153,7 +153,7 @@ pub(crate) fn word_end(line: &[u8], pos: usize) -> usize {
     p
 }
 
-pub(crate) fn bigword_end(line: &[u8], pos: usize) -> usize {
+fn bigword_end(line: &[u8], pos: usize) -> usize {
     let len = line.len();
     if pos + 1 >= len {
         return pos;
@@ -172,7 +172,7 @@ pub(crate) fn bigword_end(line: &[u8], pos: usize) -> usize {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum ViAction {
+enum ViAction {
     Redraw,
     Bell,
     Return(Option<Vec<u8>>),
@@ -189,7 +189,7 @@ pub(crate) enum ViAction {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum PendingInput {
+enum PendingInput {
     None,
     CountDigits,
     FindTarget { cmd: u8, count: usize },
@@ -200,7 +200,7 @@ pub(crate) enum PendingInput {
     SearchInput { direction: u8 },
 }
 
-pub(crate) struct ViState {
+struct ViState {
     pub line: Vec<u8>,
     pub cursor: usize,
     pub insert_mode: bool,
@@ -217,7 +217,7 @@ pub(crate) struct ViState {
 }
 
 impl ViState {
-    pub(crate) fn new(erase_char: u8, hist_len: usize) -> Self {
+    fn new(erase_char: u8, hist_len: usize) -> Self {
         Self {
             line: Vec::new(),
             cursor: 0,
@@ -235,7 +235,7 @@ impl ViState {
         }
     }
 
-    pub(crate) fn process_byte(&mut self, byte: u8, history: &[Box<[u8]>]) -> Vec<ViAction> {
+    fn process_byte(&mut self, byte: u8, history: &[Box<[u8]>]) -> Vec<ViAction> {
         let mut actions = Vec::new();
 
         match &self.pending {
@@ -869,13 +869,15 @@ impl ViState {
             }
             b'v' => {
                 let mut tmp = b"/tmp/meiksh_vi_edit_".to_vec();
-                bstr::push_u64(&mut tmp, sys::current_pid() as u64);
-                if let Ok(fd) =
-                    sys::open_file(&tmp, sys::O_WRONLY | sys::O_CREAT | sys::O_TRUNC, 0o600)
-                {
-                    let _ = sys::write_all_fd(fd, &self.line);
-                    let _ = sys::write_all_fd(fd, b"\n");
-                    let _ = sys::close_fd(fd);
+                bstr::push_u64(&mut tmp, sys::process::current_pid() as u64);
+                if let Ok(fd) = sys::fs::open_file(
+                    &tmp,
+                    sys::constants::O_WRONLY | sys::constants::O_CREAT | sys::constants::O_TRUNC,
+                    0o600,
+                ) {
+                    let _ = sys::fd_io::write_all_fd(fd, &self.line);
+                    let _ = sys::fd_io::write_all_fd(fd, b"\n");
+                    let _ = sys::fd_io::close_fd(fd);
                 }
                 actions.push(ViAction::RunEditor {
                     editor: Vec::new(),
@@ -945,7 +947,7 @@ impl ViState {
                 if let Ok(matches) = glob_expand(&glob_pat) {
                     if matches.len() == 1 {
                         let replacement = &matches[0];
-                        let is_dir = sys::stat_path(replacement)
+                        let is_dir = sys::fs::stat_path(replacement)
                             .map(|s| s.is_dir())
                             .unwrap_or(false);
                         let mut rep = replacement.clone();
@@ -1044,12 +1046,7 @@ impl ViState {
         std::mem::take(actions)
     }
 
-    pub(crate) fn do_search(
-        &mut self,
-        direction: u8,
-        history: &[Box<[u8]>],
-        actions: &mut Vec<ViAction>,
-    ) {
+    fn do_search(&mut self, direction: u8, history: &[Box<[u8]>], actions: &mut Vec<ViAction>) {
         let pat = &self.search_buf;
         let hist_len = self.hist_len;
         match direction {
@@ -1098,14 +1095,17 @@ impl ViState {
     }
 }
 
-pub fn read_line(shell: &mut Shell, prompt: &[u8]) -> sys::SysResult<Option<Vec<u8>>> {
+pub(super) fn read_line(
+    shell: &mut Shell,
+    prompt: &[u8],
+) -> sys::error::SysResult<Option<Vec<u8>>> {
     let _raw = match RawMode::enter() {
         Ok(r) => r,
-        Err(_) => return super::read_line(),
+        Err(_) => return super::prompt::read_line(),
     };
 
     let erase_char = {
-        if let Ok(attrs) = sys::get_terminal_attrs(sys::STDIN_FILENO) {
+        if let Ok(attrs) = sys::tty::get_terminal_attrs(sys::constants::STDIN_FILENO) {
             attrs.c_cc[libc::VERASE]
         } else {
             0x7f
@@ -1149,7 +1149,7 @@ pub fn read_line(shell: &mut Shell, prompt: &[u8]) -> sys::SysResult<Option<Vec<
                         .or_else(|| shell.get_var(b"EDITOR"))
                         .unwrap_or(b"vi")
                         .to_vec();
-                    let _ = sys::set_terminal_attrs(sys::STDIN_FILENO, &_raw.saved);
+                    let _ = sys::tty::set_terminal_attrs(sys::constants::STDIN_FILENO, &_raw.saved);
                     write_bytes(b"\r\n");
                     let mut edit_cmd = editor;
                     edit_cmd.push(b' ');
@@ -1159,8 +1159,9 @@ pub fn read_line(shell: &mut Shell, prompt: &[u8]) -> sys::SysResult<Option<Vec<
                     raw_restored.c_lflag &= !(libc::ICANON | libc::ECHO | libc::ISIG);
                     raw_restored.c_cc[libc::VMIN] = 1;
                     raw_restored.c_cc[libc::VTIME] = 0;
-                    let _ = sys::set_terminal_attrs(sys::STDIN_FILENO, &raw_restored);
-                    if let Ok(content) = sys::read_file(&tmp_path) {
+                    let _ =
+                        sys::tty::set_terminal_attrs(sys::constants::STDIN_FILENO, &raw_restored);
+                    if let Ok(content) = sys::fs::read_file(&tmp_path) {
                         let mut end = content.len();
                         while end > 0
                             && (content[end - 1] == b' '
@@ -1194,7 +1195,7 @@ pub fn read_line(shell: &mut Shell, prompt: &[u8]) -> sys::SysResult<Option<Vec<
     }
 }
 
-pub(crate) fn do_find(line: &[u8], cursor: usize, cmd: u8, target: u8) -> Option<usize> {
+fn do_find(line: &[u8], cursor: usize, cmd: u8, target: u8) -> Option<usize> {
     match cmd {
         b'f' => {
             for i in (cursor + 1)..line.len() {
@@ -1232,12 +1233,7 @@ pub(crate) fn do_find(line: &[u8], cursor: usize, cmd: u8, target: u8) -> Option
     }
 }
 
-pub(crate) fn resolve_motion(
-    line: &[u8],
-    cursor: usize,
-    motion: u8,
-    count: usize,
-) -> (usize, usize) {
+fn resolve_motion(line: &[u8], cursor: usize, motion: u8, count: usize) -> (usize, usize) {
     let target = match motion {
         b'w' => {
             let mut p = cursor;
@@ -1297,7 +1293,7 @@ pub(crate) fn resolve_motion(
     }
 }
 
-pub(crate) fn replay_cmd(
+fn replay_cmd(
     line: &mut Vec<u8>,
     cursor: &mut usize,
     yank_buf: &mut Vec<u8>,
@@ -1375,7 +1371,7 @@ pub(crate) fn replay_cmd(
     }
 }
 
-pub(crate) fn glob_expand(pattern: &[u8]) -> Result<Vec<Vec<u8>>, ()> {
+fn glob_expand(pattern: &[u8]) -> Result<Vec<Vec<u8>>, ()> {
     let c_pattern = std::ffi::CString::new(pattern.to_vec()).map_err(|_| ())?;
     let mut glob_buf: libc::glob_t = unsafe { std::mem::zeroed() };
     let ret = unsafe {
@@ -1402,10 +1398,9 @@ pub(crate) fn glob_expand(pattern: &[u8]) -> Result<Vec<Vec<u8>>, ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interactive::test_support::*;
-    use crate::interactive::vi;
+    use crate::interactive::test_support::test_shell;
+    use crate::sys::constants::{STDIN_FILENO, STDOUT_FILENO};
     use crate::sys::test_support::run_trace;
-    use crate::sys::{STDIN_FILENO, STDOUT_FILENO};
     use crate::trace_entries;
 
     fn has_return(actions: &[ViAction]) -> bool {
@@ -1433,7 +1428,14 @@ mod tests {
 
     #[allow(non_snake_case)]
     mod vi_tests {
-        use super::*;
+        use super::super::{
+            PendingInput, ViAction, ViState, bigword_backward, bigword_end, bigword_forward,
+            do_find, glob_expand, is_word_char, replay_cmd, resolve_motion, word_backward,
+            word_end, word_forward,
+        };
+        use super::{feed_bytes, get_return, has_bell, has_return};
+        use crate::sys::test_support::{assert_no_syscalls, run_trace};
+        use crate::trace_entries;
 
         #[test]
         fn word_forward_covers_all_branches() {
@@ -3664,7 +3666,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell, b"").unwrap();
+                let result = super::read_line(&mut shell, b"").unwrap();
                 assert_eq!(result, Some(b"h\n".to_vec()));
             },
         );
@@ -3683,7 +3685,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell, b"").unwrap();
+                let result = super::read_line(&mut shell, b"").unwrap();
                 assert_eq!(result, None);
             },
         );
@@ -3708,7 +3710,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell, b"").unwrap();
+                let result = super::read_line(&mut shell, b"").unwrap();
                 assert_eq!(result, Some(b"a\n".to_vec()));
             },
         );
@@ -3735,7 +3737,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell, b"").unwrap();
+                let result = super::read_line(&mut shell, b"").unwrap();
                 assert_eq!(result, Some(b"ab\n".to_vec()));
             },
         );
@@ -3757,7 +3759,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell, b"").unwrap();
+                let result = super::read_line(&mut shell, b"").unwrap();
                 assert_eq!(result, Some(b"x\n".to_vec()));
             },
         );
@@ -3776,7 +3778,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell, b"").unwrap();
+                let result = super::read_line(&mut shell, b"").unwrap();
                 assert_eq!(result, Some(b"\n".to_vec()));
             },
         );
@@ -3791,7 +3793,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell, b"").unwrap();
+                let result = super::read_line(&mut shell, b"").unwrap();
                 assert_eq!(result, None);
             },
         );
@@ -3819,7 +3821,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell, b"").unwrap();
+                let result = super::read_line(&mut shell, b"").unwrap();
                 assert_eq!(result, Some(b"ab\n".to_vec()));
             },
         );
@@ -3837,7 +3839,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell, b"");
+                let result = super::read_line(&mut shell, b"");
                 assert!(result.is_err());
             },
         );
@@ -3863,7 +3865,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell, b"").unwrap();
+                let result = super::read_line(&mut shell, b"").unwrap();
                 assert_eq!(result, Some(b"a\n".to_vec()));
             },
         );
@@ -3884,7 +3886,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell, b"").unwrap();
+                let result = super::read_line(&mut shell, b"").unwrap();
                 assert_eq!(result, Some(b"\n".to_vec()));
             },
         );
@@ -3912,7 +3914,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let result = vi::read_line(&mut shell, b"").unwrap();
+                let result = super::read_line(&mut shell, b"").unwrap();
                 assert_eq!(result, Some(b"a\n".to_vec()));
             },
         );
@@ -3944,7 +3946,7 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 let _ = shell.set_var(b"EDITOR", b":".to_vec());
-                let result = vi::read_line(&mut shell, b"").unwrap();
+                let result = super::read_line(&mut shell, b"").unwrap();
                 assert_eq!(result, Some(b"\n".to_vec()));
             },
         );
@@ -3979,7 +3981,7 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 let _ = shell.set_var(b"EDITOR", b":".to_vec());
-                let result = vi::read_line(&mut shell, b"").unwrap();
+                let result = super::read_line(&mut shell, b"").unwrap();
                 assert_eq!(result, Some(b"\n".to_vec()));
             },
         );
@@ -4012,7 +4014,7 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 let _ = shell.set_var(b"EDITOR", b":".to_vec());
-                let result = vi::read_line(&mut shell, b"").unwrap();
+                let result = super::read_line(&mut shell, b"").unwrap();
                 assert_eq!(result, Some(b"edited\n".to_vec()));
             },
         );

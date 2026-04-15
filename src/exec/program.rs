@@ -1,23 +1,13 @@
-#![allow(unused_imports)]
-
-use std::collections::HashMap;
-
-use crate::arena::ByteArena;
 use crate::bstr::ByteWriter;
-use crate::builtin;
-use crate::expand;
-use crate::shell::{
-    BlockingWaitOutcome, FlowSignal, JobState, PendingControl, Shell, ShellError, VarError,
-};
-use crate::syntax::{
-    AndOr, CaseCommand, Command, ForCommand, FunctionDef, HereDoc, IfCommand, ListItem, LogicalOp,
-    LoopCommand, LoopKind, Pipeline, Program, RedirectionKind, SimpleCommand, TimedMode,
-};
+use crate::shell::error::ShellError;
+use crate::shell::state::Shell;
+use crate::syntax::ast::{ListItem, Program};
 use crate::sys;
 
-use super::*;
+use super::and_or::{execute_and_or, spawn_and_or};
+use super::render::render_and_or;
 
-pub fn execute_program(shell: &mut Shell, program: &Program) -> Result<i32, ShellError> {
+pub(crate) fn execute_program(shell: &mut Shell, program: &Program) -> Result<i32, ShellError> {
     let mut status = 0;
     for item in &program.items {
         status = execute_list_item(shell, item)?;
@@ -46,7 +36,7 @@ pub(super) fn execute_list_item(shell: &mut Shell, item: &ListItem) -> Result<i3
     if item.asynchronous {
         let stdin_override = if !shell.options.monitor {
             Some(
-                sys::open_file(b"/dev/null", sys::O_RDONLY, 0)
+                sys::fs::open_file(b"/dev/null", sys::constants::O_RDONLY, 0)
                     .map_err(|e| shell.diagnostic_syserr(1, &e))?,
             )
         } else {
@@ -64,7 +54,7 @@ pub(super) fn execute_list_item(shell: &mut Shell, item: &ListItem) -> Result<i3
                 .i64_val(last_pid as i64)
                 .byte(b'\n')
                 .finish();
-            let _ = sys::write_all_fd(sys::STDERR_FILENO, &msg);
+            let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, &msg);
         }
         Ok(0)
     } else {
@@ -76,9 +66,10 @@ pub(super) fn execute_list_item(shell: &mut Shell, item: &ListItem) -> Result<i3
 #[allow(unused_imports)]
 mod tests {
     use super::*;
-    use crate::exec::test_support::*;
-    use crate::shell::Shell;
-    use crate::syntax::{Assignment, HereDoc, Redirection, Word};
+    use crate::exec::test_support::{parse_test, t_stderr, test_shell};
+    use crate::shell::state::Shell;
+    use crate::syntax::ast::{Assignment, HereDoc, Redirection, Word};
+    use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;
 
     #[test]
@@ -264,7 +255,7 @@ mod tests {
     fn special_builtin_utility_error_exits_noninteractive() {
         run_trace(
             trace_entries![write(
-                fd(sys::STDERR_FILENO),
+                fd(sys::constants::STDERR_FILENO),
                 bytes(b"meiksh: line 1: set: invalid option: Z\n"),
             ) -> auto,],
             || {
@@ -279,7 +270,7 @@ mod tests {
     fn special_builtin_utility_error_continues_interactive() {
         run_trace(
             trace_entries![write(
-                fd(sys::STDERR_FILENO),
+                fd(sys::constants::STDERR_FILENO),
                 bytes(b"meiksh: set: invalid option: Z\n"),
             ) -> auto,],
             || {

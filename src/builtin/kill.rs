@@ -1,4 +1,9 @@
-use super::*;
+use super::jobs::resolve_job_id;
+use super::{BuiltinOutcome, diag_status, parse_i32, write_stdout_line};
+use crate::bstr::{self, ByteWriter};
+use crate::shell::error::ShellError;
+use crate::shell::state::Shell;
+use crate::sys;
 
 pub(super) fn kill(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, ShellError> {
     if argv.len() < 2 {
@@ -12,7 +17,7 @@ pub(super) fn kill(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome
     let mut args = &argv[1..];
     if args[0] == b"-l" || args[0] == b"-L" {
         if args.len() == 1 {
-            let names: Vec<&[u8]> = sys::all_signal_names()
+            let names: Vec<&[u8]> = sys::process::all_signal_names()
                 .iter()
                 .map(|(name, _)| {
                     let n = *name;
@@ -26,7 +31,7 @@ pub(super) fn kill(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome
         for arg in &args[1..] {
             if let Some(code) = parse_i32(arg) {
                 let sig = if code > 128 { code - 128 } else { code };
-                let name = sys::signal_name(sig);
+                let name = sys::process::signal_name(sig);
                 if name != b"UNKNOWN" {
                     write_stdout_line(&name[3..]);
                 } else {
@@ -47,7 +52,7 @@ pub(super) fn kill(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome
         return Ok(BuiltinOutcome::Status(0));
     }
 
-    let mut signal = sys::SIGTERM;
+    let mut signal = sys::constants::SIGTERM;
     if args[0] == b"-s" {
         if args.len() < 3 {
             return Ok(diag_status(shell, 2, b"kill: -s requires a signal name"));
@@ -77,7 +82,7 @@ pub(super) fn kill(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome
                     .pgid
                     .unwrap_or_else(|| job.children.first().map(|c| c.pid).unwrap_or(0));
                 if pid != 0 {
-                    if sys::send_signal(-pid, signal).is_err() {
+                    if sys::process::send_signal(-pid, signal).is_err() {
                         let msg = ByteWriter::new()
                             .bytes(b"kill: (")
                             .i64_val(pid as i64)
@@ -85,10 +90,10 @@ pub(super) fn kill(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome
                             .finish();
                         shell.diagnostic(1, &msg);
                         status = 1;
-                    } else if signal == sys::SIGCONT && resolved_id.is_some() {
+                    } else if signal == sys::constants::SIGCONT && resolved_id.is_some() {
                         let id = resolved_id.unwrap();
                         if let Some(j) = shell.jobs.iter_mut().find(|j| j.id == id) {
-                            j.state = crate::shell::JobState::Running;
+                            j.state = crate::shell::jobs::JobState::Running;
                         }
                     }
                 }
@@ -101,7 +106,7 @@ pub(super) fn kill(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome
                 shell.diagnostic(1, &msg);
                 status = 1;
             }
-        } else if let Some(pid) = bstr::parse_i64(operand).map(|v| v as sys::Pid) {
+        } else if let Some(pid) = bstr::parse_i64(operand).map(|v| v as sys::types::Pid) {
             let effective_target = if pid > 0 {
                 shell
                     .jobs
@@ -113,7 +118,7 @@ pub(super) fn kill(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome
             } else {
                 pid
             };
-            if sys::send_signal(effective_target, signal).is_err() {
+            if sys::process::send_signal(effective_target, signal).is_err() {
                 let msg = ByteWriter::new()
                     .bytes(b"kill: (")
                     .i64_val(pid as i64)
@@ -144,7 +149,7 @@ pub(super) fn parse_kill_signal(shell: &Shell, spec: &[u8]) -> Result<i32, Shell
     } else {
         &upper
     };
-    for (n, sig) in sys::all_signal_names() {
+    for (n, sig) in sys::process::all_signal_names() {
         let cmp_name = if n.starts_with(b"SIG") { &n[3..] } else { *n };
         if cmp_name == name {
             return Ok(*sig);
@@ -160,14 +165,17 @@ pub(super) fn parse_kill_signal(shell: &Shell, spec: &[u8]) -> Result<i32, Shell
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builtin::test_support::*;
+    use crate::bstr;
+    use crate::builtin::test_support::{diag, invoke, test_shell};
+    use crate::sys;
+    use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;
 
     #[test]
     fn kill_no_args() {
         let msg = diag(b"kill: usage: kill [-s sigspec | -signum] pid... | -l [exit_status]");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(&mut shell, &[b"kill".to_vec()]).expect("kill");
@@ -180,9 +188,9 @@ mod tests {
     fn kill_dash_l_lists_signals() {
         run_trace(
             trace_entries![write(
-                fd(crate::sys::STDOUT_FILENO),
+                fd(crate::sys::constants::STDOUT_FILENO),
                 bytes({
-                    let names: Vec<&[u8]> = sys::all_signal_names()
+                    let names: Vec<&[u8]> = sys::process::all_signal_names()
                         .iter()
                         .map(|(n, _)| {
                             let n = *n;
@@ -205,11 +213,11 @@ mod tests {
 
     #[test]
     fn kill_dash_l_exit_code() {
-        let sig_name = sys::signal_name(9);
+        let sig_name = sys::process::signal_name(9);
         let mut expected = sig_name[3..].to_vec();
         expected.push(b'\n');
         run_trace(
-            trace_entries![write(fd(crate::sys::STDOUT_FILENO), bytes(expected)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDOUT_FILENO), bytes(expected)) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(
@@ -224,11 +232,11 @@ mod tests {
 
     #[test]
     fn kill_dash_l_exit_code_above_128() {
-        let sig_name = sys::signal_name(9);
+        let sig_name = sys::process::signal_name(9);
         let mut expected = sig_name[3..].to_vec();
         expected.push(b'\n');
         run_trace(
-            trace_entries![write(fd(crate::sys::STDOUT_FILENO), bytes(expected)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDOUT_FILENO), bytes(expected)) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(
@@ -245,7 +253,7 @@ mod tests {
     fn kill_dash_l_unknown_signal() {
         let msg = diag(b"kill: unknown signal: 999");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(
@@ -262,7 +270,7 @@ mod tests {
     fn kill_dash_l_invalid_exit_status() {
         let msg = diag(b"kill: invalid exit status: abc");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(
@@ -279,7 +287,7 @@ mod tests {
     fn kill_dash_s_no_signal() {
         let msg = diag(b"kill: -s requires a signal name");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome =
@@ -293,7 +301,7 @@ mod tests {
     fn kill_no_pid_after_signal() {
         let msg = diag(b"kill: no process id specified");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(
@@ -310,7 +318,7 @@ mod tests {
     fn kill_invalid_pid() {
         let msg = diag(b"kill: invalid pid: abc");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome =
@@ -324,7 +332,7 @@ mod tests {
     fn kill_job_not_found() {
         let msg = diag(b"kill: %99: no such job");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome =
@@ -346,7 +354,10 @@ mod tests {
     fn parse_kill_signal_sig_prefix() {
         assert_no_syscalls(|| {
             let shell = test_shell();
-            assert_eq!(parse_kill_signal(&shell, b"SIGTERM").unwrap(), sys::SIGTERM);
+            assert_eq!(
+                parse_kill_signal(&shell, b"SIGTERM").unwrap(),
+                sys::constants::SIGTERM
+            );
         });
     }
 
@@ -354,7 +365,7 @@ mod tests {
     fn parse_kill_signal_unknown() {
         let msg = diag(b"kill: unknown signal: NOSUCHSIG");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let shell = test_shell();
                 assert!(parse_kill_signal(&shell, b"NOSUCHSIG").is_err());
@@ -374,21 +385,21 @@ mod tests {
     fn kill_dash_s_with_signal_name_sends_to_pid() {
         run_trace(
             trace_entries![
-                kill(int(-42i64), int(sys::SIGTERM as i64)) -> 0,
+                kill(int(-42i64), int(sys::constants::SIGTERM as i64)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
-                shell.jobs.push(crate::shell::Job {
+                shell.jobs.push(crate::shell::jobs::Job {
                     id: 1,
                     command: b"sleep"[..].into(),
                     pgid: Some(42),
                     last_pid: Some(42),
                     last_status: None,
-                    children: vec![sys::ChildHandle {
+                    children: vec![sys::types::ChildHandle {
                         pid: 42,
                         stdout_fd: None,
                     }],
-                    state: crate::shell::JobState::Running,
+                    state: crate::shell::jobs::JobState::Running,
                     saved_termios: None,
                 });
                 let outcome = invoke(
@@ -410,7 +421,7 @@ mod tests {
     fn kill_dash_dash_separator() {
         run_trace(
             trace_entries![
-                kill(int(99i64), int(sys::SIGTERM as i64)) -> 0,
+                kill(int(99i64), int(sys::constants::SIGTERM as i64)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -428,21 +439,21 @@ mod tests {
     fn kill_job_with_pgid_success() {
         run_trace(
             trace_entries![
-                kill(int(-100i64), int(sys::SIGTERM as i64)) -> 0,
+                kill(int(-100i64), int(sys::constants::SIGTERM as i64)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
-                shell.jobs.push(crate::shell::Job {
+                shell.jobs.push(crate::shell::jobs::Job {
                     id: 1,
                     command: b"sleep"[..].into(),
                     pgid: Some(100),
                     last_pid: Some(100),
                     last_status: None,
-                    children: vec![sys::ChildHandle {
+                    children: vec![sys::types::ChildHandle {
                         pid: 100,
                         stdout_fd: None,
                     }],
-                    state: crate::shell::JobState::Running,
+                    state: crate::shell::jobs::JobState::Running,
                     saved_termios: None,
                 });
                 let outcome =
@@ -457,22 +468,22 @@ mod tests {
         let msg = diag(b"kill: (100): No such process");
         run_trace(
             trace_entries![
-                kill(int(-100i64), int(sys::SIGTERM as i64)) -> err(libc::ESRCH),
-                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+                kill(int(-100i64), int(sys::constants::SIGTERM as i64)) -> err(libc::ESRCH),
+                write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {
                 let mut shell = test_shell();
-                shell.jobs.push(crate::shell::Job {
+                shell.jobs.push(crate::shell::jobs::Job {
                     id: 1,
                     command: b"sleep"[..].into(),
                     pgid: Some(100),
                     last_pid: Some(100),
                     last_status: None,
-                    children: vec![sys::ChildHandle {
+                    children: vec![sys::types::ChildHandle {
                         pid: 100,
                         stdout_fd: None,
                     }],
-                    state: crate::shell::JobState::Running,
+                    state: crate::shell::jobs::JobState::Running,
                     saved_termios: None,
                 });
                 let outcome =
@@ -486,21 +497,21 @@ mod tests {
     fn kill_job_sigcont_updates_state() {
         run_trace(
             trace_entries![
-                kill(int(-200i64), int(sys::SIGCONT as i64)) -> 0,
+                kill(int(-200i64), int(sys::constants::SIGCONT as i64)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
-                shell.jobs.push(crate::shell::Job {
+                shell.jobs.push(crate::shell::jobs::Job {
                     id: 1,
                     command: b"sleep"[..].into(),
                     pgid: Some(200),
                     last_pid: Some(200),
                     last_status: None,
-                    children: vec![sys::ChildHandle {
+                    children: vec![sys::types::ChildHandle {
                         pid: 200,
                         stdout_fd: None,
                     }],
-                    state: crate::shell::JobState::Stopped(0),
+                    state: crate::shell::jobs::JobState::Stopped(0),
                     saved_termios: None,
                 });
                 let outcome = invoke(
@@ -509,7 +520,7 @@ mod tests {
                 )
                 .expect("kill -CONT %1");
                 assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-                assert_eq!(shell.jobs[0].state, crate::shell::JobState::Running);
+                assert_eq!(shell.jobs[0].state, crate::shell::jobs::JobState::Running);
             },
         );
     }
@@ -519,8 +530,8 @@ mod tests {
         let msg = diag(b"kill: (999): No such process");
         run_trace(
             trace_entries![
-                kill(int(999i64), int(sys::SIGTERM as i64)) -> err(libc::ESRCH),
-                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+                kill(int(999i64), int(sys::constants::SIGTERM as i64)) -> err(libc::ESRCH),
+                write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -535,7 +546,7 @@ mod tests {
     fn kill_negative_pid_via_separator() {
         run_trace(
             trace_entries![
-                kill(int(-42i64), int(sys::SIGTERM as i64)) -> 0,
+                kill(int(-42i64), int(sys::constants::SIGTERM as i64)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -553,21 +564,21 @@ mod tests {
     fn kill_job_no_pgid_uses_first_child_pid() {
         run_trace(
             trace_entries![
-                kill(int(-300i64), int(sys::SIGTERM as i64)) -> 0,
+                kill(int(-300i64), int(sys::constants::SIGTERM as i64)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
-                shell.jobs.push(crate::shell::Job {
+                shell.jobs.push(crate::shell::jobs::Job {
                     id: 1,
                     command: b"cmd"[..].into(),
                     pgid: None,
                     last_pid: Some(300),
                     last_status: None,
-                    children: vec![sys::ChildHandle {
+                    children: vec![sys::types::ChildHandle {
                         pid: 300,
                         stdout_fd: None,
                     }],
-                    state: crate::shell::JobState::Running,
+                    state: crate::shell::jobs::JobState::Running,
                     saved_termios: None,
                 });
                 let outcome = invoke(&mut shell, &[b"kill".to_vec(), b"%1".to_vec()])
@@ -581,14 +592,14 @@ mod tests {
     fn kill_job_pid_zero_is_noop() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.jobs.push(crate::shell::Job {
+            shell.jobs.push(crate::shell::jobs::Job {
                 id: 1,
                 command: b"empty"[..].into(),
                 pgid: None,
                 last_pid: None,
                 last_status: None,
                 children: vec![],
-                state: crate::shell::JobState::Running,
+                state: crate::shell::jobs::JobState::Running,
                 saved_termios: None,
             });
             let outcome =

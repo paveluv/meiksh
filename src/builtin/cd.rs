@@ -1,4 +1,9 @@
-use super::*;
+use super::pwd::current_logical_pwd;
+use super::{BuiltinOutcome, var_error_msg, write_stdout_line};
+use crate::bstr::ByteWriter;
+use crate::shell::error::ShellError;
+use crate::shell::state::Shell;
+use crate::sys;
 
 pub(super) fn cd(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, ShellError> {
     let (target, print_new_pwd, physical, check_pwd) = parse_cd_target(shell, argv)?;
@@ -10,10 +15,10 @@ pub(super) fn cd(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, 
     };
 
     let old_pwd = current_logical_pwd(shell)?;
-    sys::change_dir(&curpath).map_err(|e| shell.diagnostic(1, &e.strerror()))?;
+    sys::fs::change_dir(&curpath).map_err(|e| shell.diagnostic(1, &e.strerror()))?;
 
     let new_pwd = if physical {
-        match sys::get_cwd() {
+        match sys::fs::get_cwd() {
             Ok(cwd) => cwd,
             Err(_) if check_pwd => {
                 shell
@@ -173,7 +178,7 @@ pub(super) fn resolve_cd_target(
             c.extend_from_slice(target);
             c
         };
-        if sys::is_directory(&candidate) {
+        if sys::fs::is_directory(&candidate) {
             let should_print = print_new_pwd || !prefix.is_empty();
             let pwd_target = if prefix.is_empty() {
                 target.to_vec()
@@ -190,7 +195,8 @@ pub(super) fn resolve_cd_target(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builtin::test_support::*;
+    use crate::builtin::test_support::{diag, invoke, test_shell};
+    use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;
 
     #[test]
@@ -256,7 +262,7 @@ mod tests {
     fn cd_home_not_set() {
         run_trace(
             trace_entries![write(
-                fd(crate::sys::STDERR_FILENO),
+                fd(crate::sys::constants::STDERR_FILENO),
                 bytes(b"meiksh: cd: HOME not set\n"),
             ) -> auto,],
             || {
@@ -275,7 +281,7 @@ mod tests {
                 realpath(any, any) -> realpath("/home"),
                 realpath(any, any) -> realpath("/home"),
                 chdir(str(b"/opt/subdir")) -> 0,
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"/opt/subdir\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"/opt/subdir\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -292,7 +298,7 @@ mod tests {
     fn cd_invalid_option() {
         let msg = diag(b"cd: invalid option: -z");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 let _ = invoke(&mut shell, &[b"cd".to_vec(), b"-z".to_vec()]);
@@ -304,7 +310,7 @@ mod tests {
     fn cd_too_many_args() {
         let msg = diag(b"cd: too many arguments");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 let _ = invoke(&mut shell, &[b"cd".to_vec(), b"a".to_vec(), b"b".to_vec()]);
@@ -316,7 +322,7 @@ mod tests {
     fn cd_empty_dir() {
         let msg = diag(b"cd: empty directory");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 let _ = invoke(&mut shell, &[b"cd".to_vec(), b"".to_vec()]);

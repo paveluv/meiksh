@@ -1,21 +1,22 @@
 use crate::arena::ByteArena;
-use crate::expand;
-use crate::shell::{Shell, ShellError};
+use crate::expand::word;
+use crate::shell::error::ShellError;
+use crate::shell::state::Shell;
 use crate::sys;
 
 pub(super) fn load_env_file(shell: &mut Shell) -> Result<(), ShellError> {
-    if !sys::has_same_real_and_effective_ids() {
+    if !sys::process::has_same_real_and_effective_ids() {
         return Ok(());
     }
     let env_value = shell.get_var(b"ENV").map(|s| s.to_vec());
     let arena = ByteArena::new();
     let env_file = env_value
-        .map(|value| expand::expand_parameter_text(shell, &value, &arena).map(|s| s.to_vec()))
+        .map(|value| word::expand_parameter_text(shell, &value, &arena).map(|s| s.to_vec()))
         .transpose()
         .map_err(|e| shell.expand_to_err(e))?;
     if let Some(path) = env_file {
         let is_absolute = !path.is_empty() && path[0] == b'/';
-        if is_absolute && sys::file_exists(&path) {
+        if is_absolute && sys::fs::file_exists(&path) {
             let _ = shell.source_path(&path)?;
         }
     }
@@ -25,7 +26,9 @@ pub(super) fn load_env_file(shell: &mut Shell) -> Result<(), ShellError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interactive::test_support::*;
+    use crate::interactive::test_support::test_shell;
+    use crate::sys;
+    use crate::sys::test_support::run_trace;
     use crate::trace_entries;
 
     #[test]
@@ -40,7 +43,7 @@ mod tests {
     #[test]
     fn load_env_file_ignores_missing_absolute_path() {
         run_trace(
-            trace_entries![access(str("/tmp/meiksh-missing-env.sh"), int(0)) -> err(sys::ENOENT),],
+            trace_entries![access(str("/tmp/meiksh-missing-env.sh"), int(0)) -> err(sys::constants::ENOENT),],
             || {
                 let mut shell = test_shell();
                 shell
@@ -117,7 +120,7 @@ mod tests {
                 read(fd(10), _) -> 0,
                 close(fd(10)) -> 0,
                 write(
-                    fd(sys::STDERR_FILENO),
+                    fd(sys::constants::STDERR_FILENO),
                     bytes(b"meiksh: line 2: unterminated single quote\n"),
                 ) -> auto,
             ],

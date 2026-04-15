@@ -1,4 +1,9 @@
-use super::*;
+use super::BuiltinOutcome;
+use super::command::which_in_path;
+use crate::bstr::{BStrExt, ByteWriter};
+use crate::shell::error::ShellError;
+use crate::shell::state::Shell;
+use crate::sys;
 
 pub(super) fn exec_builtin(
     shell: &Shell,
@@ -25,21 +30,23 @@ pub(super) fn exec_builtin(
         return Err(shell.diagnostic(127, &msg));
     };
     let env = shell.env_for_exec_utility(cmd_assignments);
-    sys::exec_replace_with_env(&program_path, &args.to_vec(), &env)
+    sys::process::exec_replace_with_env(&program_path, &args.to_vec(), &env)
         .map_err(|e| shell.diagnostic(1, &e.strerror()))?;
     Ok(BuiltinOutcome::Status(0))
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::builtin::test_support::*;
+    use super::*;
+    use crate::builtin::test_support::{diag, invoke, test_shell};
+    use crate::sys::test_support::run_trace;
     use crate::trace_entries;
 
     #[test]
     fn exec_nul_byte_arg_error() {
         let msg = diag(b"exec: invalid argument");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 let _ = invoke(&mut shell, &[b"exec".to_vec(), b"foo\x00bar".to_vec()]);
@@ -54,7 +61,7 @@ mod tests {
             trace_entries![
                 access(any, any) -> err(libc::ENOENT),
                 access(any, any) -> err(libc::ENOENT),
-                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+                write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {
                 let mut shell = test_shell();

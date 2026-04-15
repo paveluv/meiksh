@@ -1,4 +1,7 @@
-use super::*;
+use super::{BuiltinOutcome, diag_status, parse_usize, var_error_msg, write_stderr};
+use crate::bstr::{self, ByteWriter};
+use crate::shell::error::ShellError;
+use crate::shell::state::Shell;
 
 pub(super) fn getopts_set(
     shell: &mut Shell,
@@ -170,14 +173,15 @@ pub(super) fn getopts_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builtin::test_support::*;
+    use crate::builtin::test_support::{diag, invoke, test_shell};
+    use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;
 
     #[test]
     fn getopts_too_few_args() {
         let msg = diag(b"getopts: usage: getopts optstring name [arg ...]");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(&mut shell, &[b"getopts".to_vec()]).expect("getopts");
@@ -212,7 +216,7 @@ mod tests {
         let msg = diag(b"getopts: readonly variable: OPTIND");
         run_trace(
             trace_entries![
-                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+                write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {
                 let mut shell = test_shell();

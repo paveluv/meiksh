@@ -3,38 +3,38 @@ use std::collections::HashMap;
 use super::error::SysResult;
 use super::interface::sys_interface;
 
-pub fn env_set_var(key: &[u8], value: &[u8]) -> SysResult<()> {
+pub(crate) fn env_set_var(key: &[u8], value: &[u8]) -> SysResult<()> {
     (sys_interface().setenv)(key, value)
 }
 
-pub fn env_unset_var(key: &[u8]) -> SysResult<()> {
+pub(crate) fn env_unset_var(key: &[u8]) -> SysResult<()> {
     (sys_interface().unsetenv)(key)
 }
 
-pub fn env_var(key: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn env_var(key: &[u8]) -> Option<Vec<u8>> {
     (sys_interface().getenv)(key)
 }
 
-pub fn env_vars() -> HashMap<Vec<u8>, Vec<u8>> {
+pub(crate) fn env_vars() -> HashMap<Vec<u8>, Vec<u8>> {
     (sys_interface().get_environ)()
 }
 
-pub fn home_dir_for_user(name: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn home_dir_for_user(name: &[u8]) -> Option<Vec<u8>> {
     (sys_interface().getpwnam)(name)
 }
 
 #[allow(clippy::disallowed_methods)]
-pub fn env_args_os() -> Vec<Vec<u8>> {
+pub(crate) fn env_args_os() -> Vec<Vec<u8>> {
     use std::os::unix::ffi::OsStringExt;
     std::env::args_os().map(|s| s.into_vec()).collect()
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use std::collections::HashMap;
 
-    use super::*;
-    use crate::sys::interface::default_interface;
+    use super::super::interface::{default_interface, sys_interface};
     use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
     use crate::trace_entries;
 

@@ -8,7 +8,7 @@
 /// `UnsafeCell` is required to communicate interior mutability to the
 /// compiler: `intern()` takes `&self` (so callers can hold multiple returned
 /// `&[u8]` references simultaneously) but mutates the entry list.
-pub struct ByteArena {
+pub(crate) struct ByteArena {
     entries: std::cell::UnsafeCell<Vec<Box<[u8]>>>,
 }
 
@@ -19,7 +19,7 @@ impl Default for ByteArena {
 }
 
 impl ByteArena {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             entries: std::cell::UnsafeCell::new(Vec::new()),
         }
@@ -27,7 +27,7 @@ impl ByteArena {
 
     /// Intern an owned `Vec<u8>`, returning a reference that lives as long as
     /// the arena.
-    pub fn intern_vec(&self, s: Vec<u8>) -> &[u8] {
+    pub(crate) fn intern_vec(&self, s: Vec<u8>) -> &[u8] {
         let boxed: Box<[u8]> = s.into_boxed_slice();
         let ptr: *const [u8] = &*boxed;
         // SAFETY: The arena is single-threaded and only grows (no removal).
@@ -42,7 +42,7 @@ impl ByteArena {
     }
 
     /// Convenience: intern a borrowed `&[u8]` (copies into the arena).
-    pub fn intern_bytes(&self, s: &[u8]) -> &[u8] {
+    pub(crate) fn intern_bytes(&self, s: &[u8]) -> &[u8] {
         self.intern_vec(s.to_vec())
     }
 }

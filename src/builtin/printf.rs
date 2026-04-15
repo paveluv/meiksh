@@ -1,4 +1,8 @@
-use super::*;
+use super::{BuiltinOutcome, parse_usize};
+use crate::bstr::{self, BStrExt, ByteWriter};
+use crate::shell::error::ShellError;
+use crate::shell::state::Shell;
+use crate::sys;
 
 pub(super) fn printf_builtin(
     shell: &Shell,
@@ -15,7 +19,7 @@ pub(super) fn printf_builtin(
     loop {
         let (output, consumed, stop, error) = printf_format(shell, format, args, arg_idx);
         if !output.is_empty() {
-            let _ = sys::write_all_fd(sys::STDOUT_FILENO, &output);
+            let _ = sys::fd_io::write_all_fd(sys::constants::STDOUT_FILENO, &output);
         }
         if error {
             had_error = true;
@@ -625,7 +629,8 @@ pub(super) fn printf_format_hex(out: &mut Vec<u8>, spec: &[u8], val: u64, upper:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builtin::test_support::*;
+    use crate::builtin::test_support::{diag, invoke, test_shell};
+    use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;
 
     #[test]
@@ -1202,7 +1207,7 @@ mod tests {
         let msg = diag(b"printf: abc: invalid number");
         run_trace(
             trace_entries![
-                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+                write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
                 write(fd(1), bytes(b"0")) -> auto,
             ],
             || {
@@ -1396,7 +1401,7 @@ mod tests {
         let msg = diag(b"printf: \"42abc\": not completely converted");
         run_trace(
             trace_entries![
-                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+                write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {
                 let shell = test_shell();

@@ -1,4 +1,7 @@
-use super::*;
+use super::{BuiltinOutcome, parse_i32, parse_usize};
+use crate::bstr::ByteWriter;
+use crate::shell::error::ShellError;
+use crate::shell::state::Shell;
 
 pub(super) fn return_builtin(
     shell: &Shell,
@@ -74,14 +77,16 @@ pub(super) fn parse_loop_count(
 
 #[cfg(test)]
 mod tests {
-    use crate::builtin::test_support::*;
+    use super::*;
+    use crate::builtin::test_support::{diag, invoke, test_shell};
+    use crate::sys::test_support::run_trace;
     use crate::trace_entries;
 
     #[test]
     fn return_too_many_args() {
         let msg = diag(b"return: too many arguments");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 shell.function_depth = 1;
@@ -97,7 +102,7 @@ mod tests {
     fn continue_not_in_loop() {
         let msg = diag(b"continue: only meaningful in a loop");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 let _ = invoke(&mut shell, &[b"continue".to_vec()]);
@@ -109,7 +114,7 @@ mod tests {
     fn break_too_many_args() {
         let msg = diag(b"break: too many arguments");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 shell.loop_depth = 1;
@@ -125,7 +130,7 @@ mod tests {
     fn break_invalid_number() {
         let msg = diag(b"break: numeric argument required");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 shell.loop_depth = 1;
@@ -138,7 +143,7 @@ mod tests {
     fn break_zero_level() {
         let msg = diag(b"break: numeric argument required");
         run_trace(
-            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let mut shell = test_shell();
                 shell.loop_depth = 1;

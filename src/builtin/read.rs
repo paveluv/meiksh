@@ -1,4 +1,8 @@
-use super::*;
+use super::{BuiltinOutcome, diag_status, var_error_msg};
+use crate::bstr::ByteWriter;
+use crate::shell::error::ShellError;
+use crate::shell::state::Shell;
+use crate::sys;
 
 #[derive(Clone, Copy)]
 pub(super) struct ReadOptions {
@@ -7,9 +11,9 @@ pub(super) struct ReadOptions {
 }
 
 pub(super) fn read(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, ShellError> {
-    sys::ensure_blocking_read_fd(sys::STDIN_FILENO)
+    sys::fd_io::ensure_blocking_read_fd(sys::constants::STDIN_FILENO)
         .map_err(|e| shell.diagnostic(1, &e.strerror()))?;
-    read_with_input(shell, argv, sys::STDIN_FILENO)
+    read_with_input(shell, argv, sys::constants::STDIN_FILENO)
 }
 
 pub(super) fn read_with_input(
@@ -84,21 +88,21 @@ pub(super) fn read_logical_line(
     shell: &Shell,
     options: ReadOptions,
     input_fd: i32,
-) -> sys::SysResult<(Vec<(Vec<u8>, bool)>, bool)> {
+) -> sys::error::SysResult<(Vec<(Vec<u8>, bool)>, bool)> {
     let mut pieces = Vec::new();
     let mut current = Vec::new();
     let mut current_quoted = false;
 
     loop {
         let mut byte = [0u8; 1];
-        let count = sys::read_fd(input_fd, &mut byte)?;
+        let count = sys::fd_io::read_fd(input_fd, &mut byte)?;
         if count == 0 {
             push_read_piece(&mut pieces, &mut current, current_quoted);
             return Ok((pieces, false));
         }
         let ch = byte[0];
         if !options.raw && ch == b'\\' {
-            let count = sys::read_fd(input_fd, &mut byte)?;
+            let count = sys::fd_io::read_fd(input_fd, &mut byte)?;
             if count == 0 {
                 current.push(b'\\');
                 push_read_piece(&mut pieces, &mut current, current_quoted);
@@ -110,7 +114,7 @@ pub(super) fn read_logical_line(
                 current_quoted = false;
                 if shell.is_interactive() {
                     let prompt = shell.get_var(b"PS2").unwrap_or(b"> ");
-                    let _ = sys::write_all_fd(sys::STDERR_FILENO, prompt);
+                    let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, prompt);
                 }
                 continue;
             }
@@ -254,8 +258,8 @@ pub(super) fn trim_read_ifs_whitespace(chars: &[(u8, bool)], ifs_ws: &[u8]) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builtin::test_support::*;
-    use crate::sys::test_support::{ArgMatcher, TraceResult, t};
+    use crate::builtin::test_support::{diag, test_shell};
+    use crate::sys::test_support::{ArgMatcher, TraceResult, assert_no_syscalls, run_trace, t};
     use crate::trace_entries;
 
     fn byte_reads(fd: i32, input: &[u8]) -> Vec<crate::sys::test_support::TraceEntry> {
@@ -427,7 +431,7 @@ mod tests {
         let msg = diag(b"read: invalid usage");
         run_trace(
             trace_entries![
-                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+                write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -439,7 +443,7 @@ mod tests {
 
     #[test]
     fn read_with_input_read_error_returns_diag() {
-        let eio_str = crate::sys::SysError::Errno(libc::EIO).strerror();
+        let eio_str = crate::sys::error::SysError::Errno(libc::EIO).strerror();
         let mut diag_body = b"read: ".to_vec();
         diag_body.extend_from_slice(&eio_str);
         let msg = diag(&diag_body);
@@ -451,7 +455,7 @@ mod tests {
         run_trace(
             trace_entries![
                 ..reads,
-                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+                write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -468,7 +472,7 @@ mod tests {
         run_trace(
             trace_entries![
                 ..reads,
-                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+                write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -616,7 +620,7 @@ mod tests {
         run_trace(
             trace_entries![
                 ..before,
-                write(fd(crate::sys::STDERR_FILENO), bytes(b"> ")) -> auto,
+                write(fd(crate::sys::constants::STDERR_FILENO), bytes(b"> ")) -> auto,
                 ..after,
             ],
             || {

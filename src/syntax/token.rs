@@ -229,7 +229,7 @@ fn word_to_keyword_token(w: &[u8]) -> Option<Token> {
     }
 }
 
-pub struct Parser<'a> {
+pub(super) struct Parser<'a> {
     pub(super) line: usize,
     cached_byte: Option<u8>,
     pub(super) aliases: &'a HashMap<Box<[u8]>, Box<[u8]>>,
@@ -276,7 +276,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn current_line(&self) -> usize {
+    pub(super) fn current_line(&self) -> usize {
         self.line
     }
 

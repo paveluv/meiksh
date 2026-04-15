@@ -1,4 +1,8 @@
-use super::*;
+use super::{BuiltinOutcome, diag_status, write_stdout_line};
+use crate::bstr::ByteWriter;
+use crate::shell::error::ShellError;
+use crate::shell::state::Shell;
+use crate::sys;
 
 pub(super) fn umask(shell: &Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, ShellError> {
     let mut symbolic_output = false;
@@ -24,7 +28,7 @@ pub(super) fn umask(shell: &Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, S
         }
     }
 
-    let current = sys::current_umask() as u16;
+    let current = sys::time::current_umask() as u16;
     if index == argv.len() {
         if symbolic_output {
             write_stdout_line(&format_umask_symbolic(current));
@@ -45,7 +49,7 @@ pub(super) fn umask(shell: &Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, S
             .finish();
         return Ok(diag_status(shell, 1, &msg));
     };
-    sys::set_umask(mask as sys::FileModeMask);
+    sys::time::set_umask(mask as sys::types::FileModeMask);
     Ok(BuiltinOutcome::Status(0))
 }
 
@@ -198,7 +202,8 @@ pub(super) fn symbolic_permissions_for_class(mask: u16, class_mask: u16, shift: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builtin::test_support::*;
+    use crate::builtin::test_support::{diag, invoke, test_shell};
+    use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;
 
     #[test]
@@ -226,7 +231,7 @@ mod tests {
             trace_entries![
                 umask(_) -> 0o22,
                 umask(_) -> 0o22,
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"0022\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"0022\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -242,7 +247,7 @@ mod tests {
             trace_entries![
                 umask(_) -> 0o22,
                 umask(_) -> 0o22,
-                write(fd(crate::sys::STDOUT_FILENO), bytes(b"u=rwx,g=rx,o=rx\n")) -> auto,
+                write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"u=rwx,g=rx,o=rx\n")) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -278,7 +283,7 @@ mod tests {
         let msg = diag(b"umask: invalid option: -x");
         run_trace(
             trace_entries![
-                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+                write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -296,7 +301,7 @@ mod tests {
             trace_entries![
                 umask(_) -> 0o22,
                 umask(_) -> 0o22,
-                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+                write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {
                 let mut shell = test_shell();
@@ -317,7 +322,7 @@ mod tests {
             trace_entries![
                 umask(_) -> 0o22,
                 umask(_) -> 0o22,
-                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+                write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {
                 let mut shell = test_shell();

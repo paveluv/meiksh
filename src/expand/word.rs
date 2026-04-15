@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use crate::arena::ByteArena;
 use crate::bstr;
-use crate::syntax::Word;
+use crate::syntax::ast::Word;
 
 use super::core::{Context, ExpandError};
 use super::model::{
@@ -12,7 +12,7 @@ use super::model::{
 use super::parameter::{expand_dollar, expand_parameter_dollar};
 use super::pathname::expand_pathname;
 
-pub fn expand_words<'a, C: Context>(
+pub(crate) fn expand_words<'a, C: Context>(
     ctx: &mut C,
     words: &[Word],
     arena: &'a ByteArena,
@@ -24,7 +24,7 @@ pub fn expand_words<'a, C: Context>(
     Ok(result)
 }
 
-pub fn expand_word_as_declaration_assignment<'a, C: Context>(
+pub(crate) fn expand_word_as_declaration_assignment<'a, C: Context>(
     ctx: &mut C,
     word: &Word,
     arena: &'a ByteArena,
@@ -43,7 +43,7 @@ pub fn expand_word_as_declaration_assignment<'a, C: Context>(
     Ok(arena.intern_vec(combined))
 }
 
-pub fn word_is_assignment(raw: &[u8]) -> bool {
+pub(crate) fn word_is_assignment(raw: &[u8]) -> bool {
     word_assignment_value(raw).is_some()
 }
 
@@ -69,7 +69,7 @@ pub(super) fn word_assignment_value(raw: &[u8]) -> Option<&[u8]> {
     None
 }
 
-pub fn expand_word<'a, C: Context>(
+pub(crate) fn expand_word<'a, C: Context>(
     ctx: &mut C,
     word: &Word,
     arena: &'a ByteArena,
@@ -128,7 +128,7 @@ pub fn expand_word<'a, C: Context>(
     Ok(result)
 }
 
-pub fn expand_redirect_word<'a, C: Context>(
+pub(crate) fn expand_redirect_word<'a, C: Context>(
     ctx: &mut C,
     word: &Word,
     arena: &'a ByteArena,
@@ -206,7 +206,7 @@ pub(super) fn expand_word_with_at_fields(
     Ok(fields)
 }
 
-pub fn expand_word_text<'a, C: Context>(
+pub(crate) fn expand_word_text<'a, C: Context>(
     ctx: &mut C,
     word: &Word,
     arena: &'a ByteArena,
@@ -215,7 +215,7 @@ pub fn expand_word_text<'a, C: Context>(
     expand_word_text_assignment(ctx, word, false, arena)
 }
 
-pub fn expand_word_pattern<'a, C: Context>(
+pub(crate) fn expand_word_pattern<'a, C: Context>(
     ctx: &mut C,
     word: &Word,
     arena: &'a ByteArena,
@@ -225,7 +225,7 @@ pub fn expand_word_pattern<'a, C: Context>(
     Ok(arena.intern_vec(render_pattern_from_segments(&expanded.segments)))
 }
 
-pub fn expand_assignment_value<'a, C: Context>(
+pub(crate) fn expand_assignment_value<'a, C: Context>(
     ctx: &mut C,
     word: &Word,
     arena: &'a ByteArena,
@@ -336,7 +336,7 @@ pub(super) fn split_on_unquoted_colons(raw: &[u8]) -> Vec<Vec<u8>> {
     parts
 }
 
-pub fn expand_parameter_text<'a, C: Context>(
+pub(crate) fn expand_parameter_text<'a, C: Context>(
     ctx: &mut C,
     raw: &[u8],
     arena: &'a ByteArena,
@@ -635,7 +635,7 @@ pub(super) fn scan_backtick_command(
     })
 }
 
-pub fn expand_here_document<'a, C: Context>(
+pub(crate) fn expand_here_document<'a, C: Context>(
     ctx: &mut C,
     text: &[u8],
     body_line: usize,
@@ -696,22 +696,19 @@ pub fn expand_here_document<'a, C: Context>(
 }
 
 #[cfg(test)]
-#[allow(unused_imports)]
 mod tests {
-    use std::borrow::Cow;
-
     use super::*;
     use crate::arena::ByteArena;
-    use crate::bstr;
-    use crate::expand::arithmetic::*;
-    use crate::expand::core::{Context, ExpandError};
-    use crate::expand::glob::*;
-    use crate::expand::model::*;
-    use crate::expand::parameter::*;
-    use crate::expand::pathname::*;
-    use crate::expand::test_support::*;
-    use crate::expand::word::*;
-    use crate::syntax::Word;
+    use crate::expand::arithmetic::{
+        ArithmeticParser, eval_arithmetic, expand_arithmetic_expression,
+    };
+    use crate::expand::core::Context;
+    use crate::expand::glob::pattern_matches;
+    use crate::expand::model::{QuoteState, Segment, flatten_segments, push_segment};
+    use crate::expand::parameter::lookup_param;
+    use crate::expand::test_support::FakeContext;
+    use crate::syntax::ast::Word;
+    use crate::sys::test_support::assert_no_syscalls;
 
     #[test]
     fn expands_home_and_params() {

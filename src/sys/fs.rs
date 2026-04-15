@@ -22,7 +22,7 @@ fn stat_raw(path: &[u8]) -> SysResult<libc::stat> {
     }
 }
 
-pub fn open_file(path: &[u8], flags: c_int, mode: mode_t) -> SysResult<c_int> {
+pub(crate) fn open_file(path: &[u8], flags: c_int, mode: mode_t) -> SysResult<c_int> {
     let c_path = to_cstring(path)?;
     let result = (sys_interface().open)(c_path.as_ptr(), flags, mode);
     if result >= 0 {
@@ -32,7 +32,7 @@ pub fn open_file(path: &[u8], flags: c_int, mode: mode_t) -> SysResult<c_int> {
     }
 }
 
-pub fn stat_path(path: &[u8]) -> SysResult<FileStat> {
+pub(crate) fn stat_path(path: &[u8]) -> SysResult<FileStat> {
     let raw = stat_raw(path)?;
     Ok(FileStat {
         mode: raw.st_mode,
@@ -55,7 +55,7 @@ fn lstat_raw(path: &[u8]) -> SysResult<libc::stat> {
     }
 }
 
-pub fn lstat_path(path: &[u8]) -> SysResult<FileStat> {
+pub(crate) fn lstat_path(path: &[u8]) -> SysResult<FileStat> {
     let raw = lstat_raw(path)?;
     Ok(FileStat {
         mode: raw.st_mode,
@@ -67,7 +67,7 @@ pub fn lstat_path(path: &[u8]) -> SysResult<FileStat> {
     })
 }
 
-pub fn access_path(path: &[u8], mode: c_int) -> SysResult<()> {
+pub(crate) fn access_path(path: &[u8], mode: c_int) -> SysResult<()> {
     let c_path = to_cstring(path)?;
     let result = (sys_interface().access)(c_path.as_ptr(), mode);
     if result == 0 {
@@ -77,21 +77,21 @@ pub fn access_path(path: &[u8], mode: c_int) -> SysResult<()> {
     }
 }
 
-pub fn file_exists(path: &[u8]) -> bool {
+pub(crate) fn file_exists(path: &[u8]) -> bool {
     access_path(path, F_OK).is_ok()
 }
 
-pub fn is_directory(path: &[u8]) -> bool {
+pub(crate) fn is_directory(path: &[u8]) -> bool {
     stat_path(path).map(|s| s.is_dir()).unwrap_or(false)
 }
 
-pub fn is_regular_file(path: &[u8]) -> bool {
+pub(crate) fn is_regular_file(path: &[u8]) -> bool {
     stat_path(path)
         .map(|s| s.is_regular_file())
         .unwrap_or(false)
 }
 
-pub fn change_dir(path: &[u8]) -> SysResult<()> {
+pub(crate) fn change_dir(path: &[u8]) -> SysResult<()> {
     let c_path = to_cstring(path)?;
     let result = (sys_interface().chdir)(c_path.as_ptr());
     if result == 0 {
@@ -101,7 +101,7 @@ pub fn change_dir(path: &[u8]) -> SysResult<()> {
     }
 }
 
-pub fn get_cwd() -> SysResult<Vec<u8>> {
+pub(crate) fn get_cwd() -> SysResult<Vec<u8>> {
     let mut buf = vec![0u8; 4096];
     let result = (sys_interface().getcwd)(buf.as_mut_ptr().cast(), buf.len());
     if result.is_null() {
@@ -112,7 +112,7 @@ pub fn get_cwd() -> SysResult<Vec<u8>> {
     }
 }
 
-pub fn read_dir_entries(path: &[u8]) -> SysResult<Vec<Vec<u8>>> {
+pub(crate) fn read_dir_entries(path: &[u8]) -> SysResult<Vec<Vec<u8>>> {
     let c_path = to_cstring(path)?;
     let dirp = (sys_interface().opendir)(c_path.as_ptr());
     if dirp.is_null() {
@@ -140,7 +140,7 @@ pub fn read_dir_entries(path: &[u8]) -> SysResult<Vec<Vec<u8>>> {
     Ok(entries)
 }
 
-pub fn canonicalize(path: &[u8]) -> SysResult<Vec<u8>> {
+pub(crate) fn canonicalize(path: &[u8]) -> SysResult<Vec<u8>> {
     let c_path = to_cstring(path)?;
     let result = (sys_interface().realpath)(c_path.as_ptr(), std::ptr::null_mut());
     if result.is_null() {
@@ -152,7 +152,7 @@ pub fn canonicalize(path: &[u8]) -> SysResult<Vec<u8>> {
     }
 }
 
-pub fn read_file_bytes(path: &[u8]) -> SysResult<Vec<u8>> {
+pub(crate) fn read_file_bytes(path: &[u8]) -> SysResult<Vec<u8>> {
     let fd = open_file(path, O_RDONLY | O_CLOEXEC, 0)?;
     let mut contents = Vec::new();
     let mut buf = [0u8; 8192];
@@ -167,11 +167,11 @@ pub fn read_file_bytes(path: &[u8]) -> SysResult<Vec<u8>> {
     Ok(contents)
 }
 
-pub fn read_file(path: &[u8]) -> SysResult<Vec<u8>> {
+pub(crate) fn read_file(path: &[u8]) -> SysResult<Vec<u8>> {
     read_file_bytes(path)
 }
 
-pub fn unlink(path: &[u8]) -> SysResult<()> {
+pub(crate) fn unlink(path: &[u8]) -> SysResult<()> {
     let c_path = to_cstring(path)?;
     let result = (sys_interface().unlink)(c_path.as_ptr());
     if result == 0 {
@@ -181,7 +181,7 @@ pub fn unlink(path: &[u8]) -> SysResult<()> {
     }
 }
 
-pub fn open_for_redirect(
+pub(crate) fn open_for_redirect(
     path: &[u8],
     flags: c_int,
     mode: mode_t,
@@ -197,14 +197,15 @@ pub fn open_for_redirect(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use libc::{c_char, c_int, mode_t};
 
     use crate::sys::test_support;
     use crate::trace_entries;
 
-    use super::*;
+    use super::super::constants::{O_CREAT, O_EXCL, O_TRUNC, O_WRONLY};
+    use super::super::error::SysError;
     use super::super::interface::{SystemInterface, default_interface};
-    use crate::sys::*;
 
     #[test]
     fn read_dir_entries_readdir_error() {
