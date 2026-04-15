@@ -8,63 +8,63 @@ use super::error::{SysError, SysResult};
 use super::types::{ClockTicks, FileModeMask, Pid};
 
 #[derive(Clone, Copy)]
-pub(crate) struct SystemInterface {
-    pub(crate) getpid: fn() -> Pid,
-    pub(crate) getppid: fn() -> Pid,
-    pub(crate) waitpid: fn(Pid, *mut c_int, c_int) -> Pid,
-    pub(crate) kill: fn(Pid, c_int) -> c_int,
-    pub(crate) signal: fn(c_int, libc::sighandler_t) -> libc::sighandler_t,
-    pub(crate) isatty: fn(c_int) -> c_int,
-    pub(crate) tcgetpgrp: fn(c_int) -> Pid,
-    pub(crate) tcsetpgrp: fn(c_int, Pid) -> c_int,
-    pub(crate) setpgid: fn(Pid, Pid) -> c_int,
-    pub(crate) pipe: fn(&mut [c_int; 2]) -> c_int,
-    pub(crate) dup2: fn(c_int, c_int) -> c_int,
-    pub(crate) close: fn(c_int) -> c_int,
-    pub(crate) fcntl: fn(c_int, c_int, c_int) -> c_int,
-    pub(crate) read: fn(c_int, &mut [u8]) -> isize,
-    pub(crate) umask: fn(FileModeMask) -> FileModeMask,
-    pub(crate) times: fn(*mut libc::tms) -> ClockTicks,
-    pub(crate) sysconf: fn(c_int) -> c_long,
-    pub(crate) execvp: fn(*const c_char, *const *const c_char) -> c_int,
-    pub(crate) execve: fn(*const c_char, *const *const c_char, *const *const c_char) -> c_int,
+pub(super) struct SystemInterface {
+    pub(super) getpid: fn() -> Pid,
+    pub(super) getppid: fn() -> Pid,
+    pub(super) waitpid: fn(Pid, *mut c_int, c_int) -> Pid,
+    pub(super) kill: fn(Pid, c_int) -> c_int,
+    pub(super) signal: fn(c_int, libc::sighandler_t) -> libc::sighandler_t,
+    pub(super) isatty: fn(c_int) -> c_int,
+    pub(super) tcgetpgrp: fn(c_int) -> Pid,
+    pub(super) tcsetpgrp: fn(c_int, Pid) -> c_int,
+    pub(super) setpgid: fn(Pid, Pid) -> c_int,
+    pub(super) pipe: fn(&mut [c_int; 2]) -> c_int,
+    pub(super) dup2: fn(c_int, c_int) -> c_int,
+    pub(super) close: fn(c_int) -> c_int,
+    pub(super) fcntl: fn(c_int, c_int, c_int) -> c_int,
+    pub(super) read: fn(c_int, &mut [u8]) -> isize,
+    pub(super) umask: fn(FileModeMask) -> FileModeMask,
+    pub(super) times: fn(*mut libc::tms) -> ClockTicks,
+    pub(super) sysconf: fn(c_int) -> c_long,
+    pub(super) execvp: fn(*const c_char, *const *const c_char) -> c_int,
+    pub(super) execve: fn(*const c_char, *const *const c_char, *const *const c_char) -> c_int,
     // Filesystem
-    pub(crate) open: fn(*const c_char, c_int, mode_t) -> c_int,
-    pub(crate) write: fn(c_int, &[u8]) -> isize,
-    pub(crate) stat: fn(*const c_char, *mut libc::stat) -> c_int,
-    pub(crate) lstat: fn(*const c_char, *mut libc::stat) -> c_int,
-    pub(crate) fstat: fn(c_int, *mut libc::stat) -> c_int,
-    pub(crate) access: fn(*const c_char, c_int) -> c_int,
-    pub(crate) chdir: fn(*const c_char) -> c_int,
-    pub(crate) getcwd: fn(*mut c_char, usize) -> *mut c_char,
-    pub(crate) opendir: fn(*const c_char) -> *mut libc::DIR,
-    pub(crate) readdir: fn(*mut libc::DIR) -> *mut libc::dirent,
-    pub(crate) closedir: fn(*mut libc::DIR) -> c_int,
-    pub(crate) realpath: fn(*const c_char, *mut c_char) -> *mut c_char,
-    pub(crate) unlink: fn(*const c_char) -> c_int,
+    pub(super) open: fn(*const c_char, c_int, mode_t) -> c_int,
+    pub(super) write: fn(c_int, &[u8]) -> isize,
+    pub(super) stat: fn(*const c_char, *mut libc::stat) -> c_int,
+    pub(super) lstat: fn(*const c_char, *mut libc::stat) -> c_int,
+    pub(super) fstat: fn(c_int, *mut libc::stat) -> c_int,
+    pub(super) access: fn(*const c_char, c_int) -> c_int,
+    pub(super) chdir: fn(*const c_char) -> c_int,
+    pub(super) getcwd: fn(*mut c_char, usize) -> *mut c_char,
+    pub(super) opendir: fn(*const c_char) -> *mut libc::DIR,
+    pub(super) readdir: fn(*mut libc::DIR) -> *mut libc::dirent,
+    pub(super) closedir: fn(*mut libc::DIR) -> c_int,
+    pub(super) realpath: fn(*const c_char, *mut c_char) -> *mut c_char,
+    pub(super) unlink: fn(*const c_char) -> c_int,
     // Process
-    pub(crate) fork: fn() -> Pid,
-    pub(crate) exit_process: fn(c_int),
+    pub(super) fork: fn() -> Pid,
+    pub(super) exit_process: fn(c_int),
     // Environment
-    pub(crate) setenv: fn(&[u8], &[u8]) -> SysResult<()>,
-    pub(crate) unsetenv: fn(&[u8]) -> SysResult<()>,
-    pub(crate) getenv: fn(&[u8]) -> Option<Vec<u8>>,
-    pub(crate) get_environ: fn() -> HashMap<Vec<u8>, Vec<u8>>,
+    pub(super) setenv: fn(&[u8], &[u8]) -> SysResult<()>,
+    pub(super) unsetenv: fn(&[u8]) -> SysResult<()>,
+    pub(super) getenv: fn(&[u8]) -> Option<Vec<u8>>,
+    pub(super) get_environ: fn() -> HashMap<Vec<u8>, Vec<u8>>,
     // Terminal attributes
-    pub(crate) tcgetattr: fn(c_int, *mut libc::termios) -> c_int,
-    pub(crate) tcsetattr: fn(c_int, c_int, *const libc::termios) -> c_int,
+    pub(super) tcgetattr: fn(c_int, *mut libc::termios) -> c_int,
+    pub(super) tcsetattr: fn(c_int, c_int, *const libc::termios) -> c_int,
     // User database
-    pub(crate) getpwnam: fn(&[u8]) -> Option<Vec<u8>>,
+    pub(super) getpwnam: fn(&[u8]) -> Option<Vec<u8>>,
     // Signal state
-    pub(crate) pending_signal_bits: fn() -> usize,
-    pub(crate) take_pending_signal_bits: fn() -> usize,
-    pub(crate) monotonic_clock_ns: fn() -> u64,
+    pub(super) pending_signal_bits: fn() -> usize,
+    pub(super) take_pending_signal_bits: fn() -> usize,
+    pub(super) monotonic_clock_ns: fn() -> u64,
     // Locale
-    pub(crate) setup_locale: fn(),
-    pub(crate) classify_byte: fn(&[u8], u8) -> bool,
+    pub(super) setup_locale: fn(),
+    pub(super) classify_byte: fn(&[u8], u8) -> bool,
 }
 
-pub(crate) fn default_interface() -> SystemInterface {
+pub(super) fn default_interface() -> SystemInterface {
     SystemInterface {
         getpid: || unsafe { libc::getpid() },
         getppid: || unsafe { libc::getppid() },
@@ -217,7 +217,7 @@ pub(crate) fn default_interface() -> SystemInterface {
         },
     }
 }
-pub(crate) fn signal_mask(signal: c_int) -> Option<usize> {
+pub(super) fn signal_mask(signal: c_int) -> Option<usize> {
     let bit = match signal {
         SIGHUP => 0,
         SIGINT => 1,
@@ -245,13 +245,13 @@ pub(crate) fn signal_mask(signal: c_int) -> Option<usize> {
 }
 static PENDING_SIGNALS: AtomicUsize = AtomicUsize::new(0);
 
-pub(crate) extern "C" fn record_signal(sig: c_int) {
+pub(super) extern "C" fn record_signal(sig: c_int) {
     if let Some(mask) = signal_mask(sig) {
         PENDING_SIGNALS.fetch_or(mask, Ordering::SeqCst);
     }
 }
 
-pub(crate) fn sys_interface() -> SystemInterface {
+pub(super) fn sys_interface() -> SystemInterface {
     #[cfg(test)]
     {
         return super::test_support::current_interface()
@@ -264,7 +264,7 @@ pub(crate) fn sys_interface() -> SystemInterface {
     }
 }
 
-pub(crate) fn set_errno(errno: c_int) {
+pub(super) fn set_errno(errno: c_int) {
     #[cfg(test)]
     {
         super::test_support::set_test_errno(errno);
@@ -289,7 +289,7 @@ unsafe fn errno_ptr() -> *mut c_int {
     }
 }
 
-pub(crate) fn last_error() -> SysError {
+pub(super) fn last_error() -> SysError {
     #[cfg(test)]
     {
         return super::test_support::take_test_error();
@@ -300,7 +300,7 @@ pub(crate) fn last_error() -> SysError {
 }
 
 #[cfg(coverage)]
-pub(crate) fn flush_coverage() {
+pub(super) fn flush_coverage() {
     unsafe {
         unsafe extern "C" {
             fn __llvm_profile_write_file() -> c_int;
@@ -493,11 +493,9 @@ mod tests {
     #[test]
     fn default_interface_lstat_and_unlink_error_on_null() {
         let tbl = default_interface();
-        unsafe {
-            let mut buf = std::mem::MaybeUninit::<libc::stat>::zeroed();
-            assert!((tbl.lstat)(std::ptr::null(), buf.as_mut_ptr()) < 0);
-            assert!((tbl.unlink)(std::ptr::null()) < 0);
-        }
+        let mut buf = std::mem::MaybeUninit::<libc::stat>::zeroed();
+        assert!((tbl.lstat)(std::ptr::null(), buf.as_mut_ptr()) < 0);
+        assert!((tbl.unlink)(std::ptr::null()) < 0);
     }
 
     #[test]

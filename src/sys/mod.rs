@@ -47,7 +47,3 @@ pub use types::{
     RawFd, WaitStatus,
 };
 
-#[allow(unused_imports)]
-pub(crate) use interface::{
-    SystemInterface, default_interface, last_error, record_signal, set_errno, sys_interface,
-};

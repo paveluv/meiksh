@@ -123,6 +123,7 @@ mod tests {
     use crate::sys::test_support;
 
     use super::*;
+    use super::super::interface::{SystemInterface, default_interface};
     use crate::sys::*;
 
     #[test]

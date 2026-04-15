@@ -50,6 +50,7 @@ mod tests {
     use crate::trace_entries;
 
     use super::*;
+    use super::super::interface::{SystemInterface, default_interface};
     use crate::sys::*;
 
     #[test]

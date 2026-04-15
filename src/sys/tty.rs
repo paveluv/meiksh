@@ -64,7 +64,7 @@ mod tests {
     use crate::sys::test_support;
 
     use super::*;
-    use crate::sys::*;
+    use super::super::interface::{SystemInterface, default_interface};
 
     #[test]
     fn success_terminal_control() {
