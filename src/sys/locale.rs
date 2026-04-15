@@ -10,16 +10,10 @@ pub fn classify_byte(class: &[u8], byte: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use libc::{c_char, c_int, c_long, mode_t};
-    use std::collections::HashMap;
-    use std::ffi::CString;
-
     use crate::sys::test_support;
-    use crate::sys::types::ClockTicks;
     use crate::trace_entries;
 
     use super::*;
-    use crate::sys::*;
 
     #[test]
     fn trace_setup_locale_is_noop() {

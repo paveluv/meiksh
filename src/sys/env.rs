@@ -43,7 +43,6 @@ mod tests {
 
     use super::*;
     use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
-    use crate::sys::*;
     use crate::trace_entries;
 
     #[test]

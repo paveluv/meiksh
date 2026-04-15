@@ -270,16 +270,6 @@ pub(super) fn wait_for_pipeline(
     }
 }
 
-#[cfg(test)]
-pub(super) fn wait_for_children(
-    shell: &mut Shell,
-    spawned: SpawnedProcesses,
-    command_desc: Option<&[u8]>,
-) -> Result<i32, ShellError> {
-    let (last_status, _) = wait_for_children_inner(shell, spawned, command_desc)?;
-    Ok(last_status)
-}
-
 pub(super) fn wait_for_children_inner(
     shell: &mut Shell,
     mut spawned: SpawnedProcesses,

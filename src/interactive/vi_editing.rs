@@ -1431,6 +1431,7 @@ mod tests {
         all
     }
 
+    #[allow(non_snake_case)]
     mod vi_tests {
         use super::*;
 
